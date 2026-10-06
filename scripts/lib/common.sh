@@ -111,7 +111,8 @@ host_version_info() {
   else
     APP_GIT_COMMIT="unknown"
   fi
-  export APP_VERSION APP_GIT_COMMIT
+  APP_BUILT_AT="${APP_BUILT_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  export APP_VERSION APP_GIT_COMMIT APP_BUILT_AT
 }
 
 # Чистые функции (.env, пути, LDAP, RAM, сводка портов)
@@ -120,3 +121,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/envlib.sh"
 
 # shellcheck source=dockerlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/dockerlib.sh"
+
+# shellcheck source=verifylib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"

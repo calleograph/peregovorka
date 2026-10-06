@@ -22,6 +22,12 @@ RUN pip install -r requirements.txt \
 
 COPY app ./app
 
+# Метаданные сборки — в конце (кэш слоёв torch/GigaAM не сбрасывается); запекаются в образ.
+ARG APP_VERSION=0.0.0
+ARG APP_GIT_COMMIT=unknown
+ARG APP_BUILT_AT=unknown
+ENV APP_VERSION=${APP_VERSION} APP_GIT_COMMIT=${APP_GIT_COMMIT} APP_BUILT_AT=${APP_BUILT_AT}
+
 # uid совпадает с backend (10001): backend читает и удаляет файлы записей, созданные ASR на общем томе.
 RUN useradd --system --uid 10001 --no-create-home asr && mkdir -p /data/recordings && chown asr /data/recordings
 USER asr

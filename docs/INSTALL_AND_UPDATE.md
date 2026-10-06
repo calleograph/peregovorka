@@ -154,7 +154,7 @@ sudo git clone ... /opt/peregovorka && sudo chown -R $USER: /opt/peregovorka
 
 ### 2.5 Этапы установщика, сбои и повторный запуск
 
-`install.sh` работает этапами: `prerequisites → preflight → dirs → models → build → database → migrations → services → healthcheck → nginx → firewall`.
+`install.sh` работает этапами (проверенная на реальном сервере последовательность): `prerequisites → preflight → dirs → models → pull → build → database → migrations → services → healthcheck → nginx → firewall → verify → report`, то есть: скачать/собрать образы → поднять **только** PostgreSQL+Redis и дождаться healthy → миграция Alembic → **проверка, что ревизия БД = head** → остальные сервисы → healthcheck → nginx → итоговая проверка.
 Каждый этап печатает `[ok]/[warn]/[FAIL]`, сбой — одной строкой вида `FAIL stage=build service=backend subsystem=docker-buildkit` (по `subsystem` видно, что сломалось: Docker/хост или сам проект).
 
 - **host nginx включается последним** — когда приложение уже запущено и здорово. Если что-то упало раньше, nginx и его порты остаются как до установки. При ошибке `nginx -t` свои изменения откатываются, reload не выполняется.
@@ -166,6 +166,23 @@ sudo git clone ... /opt/peregovorka && sudo chown -R $USER: /opt/peregovorka
 - BuildKit падает характерной ошибкой Docker/containerd (`exporting to image`, `mount callback failed`, `failed to open writer … locked`) → в логе явный **FALLBACK** на legacy builder (`DOCKER_BUILDKIT=0`), пока ваш Docker его поддерживает; ошибка помечается как проблема **Docker**, а не проекта;
 - упал `RUN`/`COPY` в Dockerfile → `subsystem=dockerfile/project`, fallback не применяется.
 Режим можно задать явно: `BUILD_MODE=auto|buildkit|legacy` в `.env`. Установщик **никогда** не делает `docker system prune`, не удаляет `/var/lib/docker|containerd`, не размонтирует чужие mount'ы и не перезапускает Docker/containerd. При обнаружении зависших `containerd-mount` он лишь выводит диагностику — решение за администратором сервера.
+
+**Сетевые сбои скачивания.** `docker pull`/сборка при тайм-ауте registry/CDN/зеркала пакетов повторяются до 3 раз (пауза ~10 с, номер попытки в логе), уже скачанные слои не удаляются; итог при полном отказе — `FAIL subsystem=registry-network` (это не ошибка приложения и не Dockerfile).
+
+### 2.6 Итоговая проверка («доказательство работоспособности»), параметры хоста, управление
+
+Этап `verify` (и отдельно `scripts/verify.sh`, только чтение) проверяет: состояние и Docker healthcheck всех контейнеров; PostgreSQL; Redis; backend (ready); ASR и **загрузку модели GigaAM**; LiveKit (HTTP и сигналинг через web); web; фактическую ревизию Alembic (`current == head`); HTTP-цепочку (web, host nginx → web, `/internal/` закрыт); слушающие порты LiveKit; версию сборки (`version`, `commit`, `built_at`). Затем — `[ok] Peregovorka deployment completed` и памятка администратору (URL, каталоги, модель, порты, оставшиеся WARN, команды, путь к nginx-конфигу). Любая ошибка проверки — `FAIL stage=verify`, установка не считается успешной.
+
+Типичные WARN, которые установщик **сам не исправляет** (это глобальные настройки хоста — решает администратор):
+- `vm.overcommit_memory != 1` (Redis): `sudo sysctl -w vm.overcommit_memory=1`, постоянно — `echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-peregovorka.conf`. Последствие: при фоновом сохранении Redis возможна ошибка fork «Cannot allocate memory». Параметр влияет на все приложения сервера.
+- `net.core.rmem_max` < 5000000 (LiveKit предупреждает «UDP receive buffer is too small»): `sudo sysctl -w net.core.rmem_max=5000000 net.core.wmem_max=5000000` и запись в `/etc/sysctl.d/`. Последствие: под нагрузкой потери UDP-пакетов и ухудшение звука/видео; для пробного запуска не критично.
+- RTC-порты LiveKit: HTTP-прокси (в т.ч. Nginx Proxy Manager) **не заменяет** доступность `ICE/TCP` и `ICE/UDP` для клиентов — проверяйте порты с клиентского компьютера.
+
+Управление: `scripts/status.sh`, `scripts/logs.sh [сервис] -f`, `scripts/ctl.sh restart|stop|start [сервис]` (только своего compose-проекта, данные не удаляются). Глубокий тест: `scripts/smoke-test.sh [--login ЛОГИН]` — LDAP bind, сигналинг, модель и тестовый инференс ASR, внутренняя сессия; с `--login` — реальная аутентификация (пароль запрашивается без эха, не сохраняется и не логируется).
+
+**Версия работающего кода.** `version`, `commit` и `built_at` «запекаются» в образы при сборке (не переопределяются при запуске) и доступны на `/api/v1/version`, в «Система» админки и в итоговой проверке: `commit=unknown` помечается предупреждением.
+
+**Зачем три порта на shared-host** (`8106` → `18400` → `18480`): внешний прокси/NPM (HTTPS, зарезервированный общий порт, например 8106) → **host nginx :18400** — управляемый Peregovorka ingress (свой site-файл, WebSocket, закрытый `/internal`, `nginx -t` до reload; его конфигурацию установщик ведёт сам и не требует правки общих файлов) → **web 127.0.0.1:18480** — контейнер (интерфейс, `/api`, `/livekit`). Упрощать до «NPM → приложение» автоматически нельзя без пересмотра WebSocket-заголовков, границы безопасности и автономности конфигурации; при желании существующий site можно направить прямо на `127.0.0.1:18480` вручную (тогда `/internal/` нужно закрыть самостоятельно). **Общие nginx-файлы установщик не редактирует**: только собственный site (или готовый фрагмент `location`, который печатает сводка). Если вы правите общий файл вручную — используйте резервную копию, временный файл, `nginx -t` и только затем reload.
 
 ---
 

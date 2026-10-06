@@ -12,11 +12,15 @@ BUILD_SERVICES=(livekit backend asr web)
 SELECTED_BUILD_MODE=""
 
 # --------------------------------------------------------------- классификация ошибок
-# stdin: лог сборки → stdout: project | infra | unknown
+# stdin: лог сборки → stdout: network | project | infra | unknown
+#  network — временная сетевая ошибка registry/CDN/зеркала пакетов (повторяется, не ошибка проекта и не Docker);
 #  project — ошибка Dockerfile/исходников (упал RUN, COPY, синтаксис);
 #  infra   — сбой подсистемы Docker/containerd/диска (экспорт образа, snapshot, mount, место).
 classify_build_error() {
   local t; t="$(cat)"
+  if grep -qiE 'failed to copy: read tcp|tls handshake timeout|i/o timeout|connection timed out|temporary failure in name resolution|read timed out|readtimeouterror|connection reset by peer|unexpected eof|net/http: request canceled|dial tcp.*(timeout|refused)|toomanyrequests|received unexpected http status: 50[234]' <<<"$t"; then
+    echo network; return
+  fi
   if grep -qiE 'did not complete successfully|dockerfile parse error|unknown instruction|failed to read dockerfile|failed to compute cache key|COPY failed|lstat .*no such file|not found in build context' <<<"$t" \
      && ! grep -qiE 'containerd-mount|tmpmounts|failed to open writer|mount callback failed' <<<"$t"; then
     echo project; return
@@ -97,6 +101,32 @@ select_build_mode() {
   return 1
 }
 
+
+# ----------------------------------------------------- повторы при сетевых сбоях registry/CDN
+# retry_cmd метка попыток пауза команда… — повторяет ТОЛЬКО при временной сетевой ошибке (классификация network);
+# уже скачанные слои не удаляются (никаких prune), повтор докачивает.
+retry_cmd() {
+  local label="$1" n="$2" pause="$3" i=1 log rc kind; shift 3
+  log="$(mktemp)"
+  while :; do
+    info "$label: попытка $i/$n"
+    "$@" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    [ "$rc" -eq 0 ] && { rm -f "$log"; return 0; }
+    kind="$(classify_build_error < "$log")"
+    if [ "$kind" = "network" ] && [ "$i" -lt "$n" ]; then
+      warn "$label: временная сетевая ошибка registry/CDN (не ошибка проекта) — повтор через ${pause}с; скачанные слои сохраняются"
+      sleep "$pause"; i=$((i+1)); continue
+    fi
+    [ "$kind" = "network" ] && fail "FAIL subsystem=registry-network: $label не выполнен за $n попытки (сеть/registry недоступны). Проверьте доступ сервера к registry и повторите — установка продолжится."
+    rm -f "$log"; return "$rc"
+  done
+}
+
+# Образы сторонних сервисов (PostgreSQL, Redis) — отдельно и с повторами: так сетевой сбой не выглядит ошибкой приложения.
+pull_base_images() {
+  retry_cmd "docker compose pull postgres redis" 3 "${PULL_RETRY_PAUSE:-10}" dc pull postgres redis
+}
+
 # ------------------------------------------------------------------- образы проекта
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
 svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.9.0}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
@@ -157,8 +187,17 @@ build_images() {
     if ! build_needed "$s"; then ok "stage=build service=$s: образ $(svc_image "$s") актуален (исходники не менялись) — пропуск"; continue; fi
     log="${DATA_ROOT}/state/build-$s.log"; mode="$SELECTED_BUILD_MODE"
     info "stage=build service=$s builder=$mode → $(svc_image "$s")"
-    if _compose_build_one "$s" "$mode" "$log"; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово"; continue; fi
-    kind="$(classify_build_error < "$log")"
+    local attempt=1 built=0
+    while :; do
+      if _compose_build_one "$s" "$mode" "$log"; then built=1; break; fi
+      kind="$(classify_build_error < "$log")"
+      if [ "$kind" = "network" ] && [ "$attempt" -lt 3 ]; then
+        warn "stage=build service=$s: временная сетевая ошибка registry/CDN (попытка $attempt/3) — повтор через ${PULL_RETRY_PAUSE:-10}с; кэш слоёв сохраняется"
+        sleep "${PULL_RETRY_PAUSE:-10}"; attempt=$((attempt+1)); continue
+      fi
+      break
+    done
+    if [ "$built" -eq 1 ]; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово"; continue; fi
     if [ "$kind" = "infra" ] && [ "$mode" = "buildkit" ] && [ "${BUILD_MODE:-auto}" = "auto" ]; then
       warn "FALLBACK: сборка $s через BuildKit упала на уровне Docker/containerd (не из-за Dockerfile) — повтор через legacy builder"
       report_stale_mounts warn
@@ -167,6 +206,7 @@ build_images() {
       kind="$(classify_build_error < "$log")"
     fi
     case "$kind" in
+      network) fail "FAIL stage=build service=$s subsystem=registry-network (сеть/registry/зеркала пакетов недоступны после 3 попыток, НЕ ошибка проекта). Лог: $log" ;;
       infra)   fail "FAIL stage=build service=$s subsystem=docker-build (инфраструктура Docker/containerd, НЕ ошибка проекта). Лог: $log"; report_stale_mounts warn ;;
       project) fail "FAIL stage=build service=$s subsystem=dockerfile/project (ошибка сборки проекта). Лог: $log" ;;
       *)       fail "FAIL stage=build service=$s subsystem=unknown (см. лог: $log)" ;;

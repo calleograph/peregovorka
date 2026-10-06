@@ -235,3 +235,22 @@ def test_internal_smoke_session_end_to_end(client_with_workers):
             ]
 
     assert c.portal.call(_leftovers) == [[], [], []], "smoke обязан убрать за собой"
+
+
+def test_internal_diag_reports_components_without_secrets(client):
+    assert client.get("/internal/v1/diag").status_code == 401
+    r = client.get("/internal/v1/diag", headers={"Authorization": "Bearer internal-test-token"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["postgres"]["ok"] and body["redis"]["ok"] and body["ldap"]["ok"]
+    assert body["livekit"]["ok"] is False and body["asr"]["ok"] is False and body["ok"] is False
+    assert {"version", "commit", "built_at"} <= set(body)
+    assert "secret" not in r.text.lower() and "internal-test-token" not in r.text
+
+
+def test_version_endpoint_exposes_build_metadata(tmp_path, directory):
+    from .conftest import make_settings, running_app
+
+    s = make_settings(tmp_path, app_version="0.1.0", app_git_commit="1d620bd", app_built_at="2026-10-06T10:00:00Z")
+    with running_app(s, directory) as c:
+        assert c.get("/api/v1/version").json() == {"version": "0.1.0", "commit": "1d620bd", "built_at": "2026-10-06T10:00:00Z"}

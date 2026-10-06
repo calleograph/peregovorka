@@ -10,6 +10,7 @@ class AsrSettings(BaseSettings):
 
     app_version: str = "0.0.0"
     app_git_commit: str = "unknown"
+    app_built_at: str = "unknown"
     log_level: str = "INFO"
     log_format: str = "json"
     health_port: int = 8090

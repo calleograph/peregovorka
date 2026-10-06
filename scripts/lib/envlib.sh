@@ -103,6 +103,20 @@ print_network_summary() { # читает переменные окружения
  передавать Upgrade/WebSocket; ставить X-Forwarded-Proto: https.
  Существующие site-файлы nginx установщик не изменяет: если нужно «вписать» новый сайт в уже
  занятый порт (например 8106), сделайте это отдельно — направьте его на 127.0.0.1:${NGINX_LISTEN_PORT:-?}.
+
+ Зачем три уровня: внешний прокси/NPM (HTTPS, внешний порт, например 8106) → host nginx :${NGINX_LISTEN_PORT:-?} (управляемый
+ Peregovorka ingress: свой site-файл, WebSocket, закрытый /internal) → web 127.0.0.1:${WEB_PORT:-?} (контейнер: SPA, /api,
+ /livekit). Пример для существующего site (WebSocket обязателен):
+     location / {
+         proxy_pass http://127.0.0.1:${NGINX_LISTEN_PORT:-?};
+         proxy_http_version 1.1;
+         proxy_set_header Host \$host;
+         proxy_set_header Upgrade \$http_upgrade;
+         proxy_set_header Connection "upgrade";
+         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
+         proxy_read_timeout 3600s;
+     }
 ================================================================================
 EOF
 }
@@ -136,4 +150,26 @@ own_nginx_site_ok() {
     [ "$(cat "$site")" = "$(render_nginx_site)" ] || return 1
   fi
   return 0
+}
+
+# ------------------------------------------------------------ параметры ядра (только чтение)
+# proc_sys vm.overcommit_memory → значение из /proc/sys (PROC_SYS_ROOT — для тестов). Пусто, если недоступно.
+proc_sys() { local f="${PROC_SYS_ROOT:-/proc/sys}/${1//.//}"; [ -r "$f" ] && tr -d '[:space:]' < "$f"; }
+
+# kernel_tuning_check ok_fn warn_fn — WARN, не отказ: установщик/preflight sysctl НЕ меняют (на shared-host это глобальные
+# настройки хоста, их применяет администратор осознанно).
+kernel_tuning_check() {
+  local ok="$1" warn="$2" v want=5000000
+  v="$(proc_sys vm.overcommit_memory)"
+  if [ -z "$v" ]; then "$warn" "vm.overcommit_memory: значение недоступно для чтения (не Linux или нет /proc/sys)"
+  elif [ "$v" = "1" ]; then "$ok" "vm.overcommit_memory = 1 (рекомендация Redis выполнена)"
+  else
+    "$warn" "vm.overcommit_memory = $v (рекомендуется 1). Redis при фоновом сохранении (fork) может получить «Cannot allocate memory» и не сохранить данные при нехватке памяти; Redis пишет WARNING при старте. Параметр глобален для хоста — влияет на все приложения сервера. Команды администратору: sudo sysctl -w vm.overcommit_memory=1 ; постоянно: echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-peregovorka.conf (установщик это НЕ делает)."
+  fi
+  v="$(proc_sys net.core.rmem_max)"
+  if [ -z "$v" ]; then "$warn" "net.core.rmem_max: значение недоступно для чтения"
+  elif [ "$v" -ge "$want" ] 2>/dev/null; then "$ok" "net.core.rmem_max = $v (рекомендация LiveKit ≥ $want выполнена)"
+  else
+    "$warn" "UDP receive buffer ниже рекомендованного: net.core.rmem_max = $v, LiveKit рекомендует $want. Под нагрузкой (много участников, видео, экран) возможны потери UDP-пакетов, треск и подвисание медиа; для пробного запуска не критично. Команды администратору: sudo sysctl -w net.core.rmem_max=$want net.core.wmem_max=$want ; постоянно: printf 'net.core.rmem_max = $want\nnet.core.wmem_max = $want\n' | sudo tee /etc/sysctl.d/99-peregovorka-udp.conf (установщик это НЕ делает)."
+  fi
 }

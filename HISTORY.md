@@ -153,3 +153,23 @@ PCM→WAV, секреты в настройках и аудите, отключ�
 **Проверка.** Shell-тесты 74 (подставной docker: BuildKit ок / сломан с реальным текстом ошибки / оба сломаны / принудительные режимы; классификация; отпечатки исходников и возобновление; распознавание своего nginx-site и отказ при чужом; порядок этапов dry-run — nginx после healthcheck; в плане нет prune/umount). Backend не менялся.
 
 **Не проверялось.** Реальный повтор на сервере с неисправным BuildKit (fallback проверен на подставном docker); `docker buildx`-ветка при установленном buildx; поведение legacy builder при будущем удалении из Docker.
+
+---
+
+## 2026-10-07 — Итоговая проверка развёртывания, предупреждения хоста, повторы pull, версия в образах
+
+**Контекст.** Первый реальный успешный запуск (shared-host, Ubuntu 24.04): все сервисы healthy, GigaAM загружен, Alembic 0002 (head). Партия замечаний — научить установщик не только ставить и восстанавливаться, но и **доказывать** работоспособность и показывать оставшиеся production-WARN.
+
+**Сделано.**
+1. Preflight/verify: `vm.overcommit_memory` (Redis) и `net.core.rmem_max` (LiveKit, рекомендуется 5 000 000) — только WARN с текущим/рекомендуемым значением, последствием и командами администратору; sysctl установщик не меняет.
+2. Новые этапы установщика: `pull` (PostgreSQL/Redis, до 3 попыток при сетевых сбоях registry/CDN, слои не удаляются; сетевые ошибки сборки тоже повторяются; итог `subsystem=registry-network`), `verify`, `report`. Последовательность: pull/build → postgres+redis → healthy → миграция → **проверка `alembic current == head`** (иначе FAIL, вывод команды и код 0 больше не считаются доказательством) → остальные сервисы → healthcheck → nginx → итоговая проверка → памятка.
+3. `scripts/lib/verifylib.sh`, `scripts/verify.sh`: контейнеры/Docker healthcheck, PostgreSQL, Redis, backend ready, ASR и загрузка модели, LiveKit (HTTP, сигналинг через web), web, Alembic, HTTP-цепочка (в т.ч. host nginx → web, `/internal/` закрыт), слушающие порты (LiveKit HTTP 127.0.0.1, RTC TCP/UDP), версия сборки; явное предупреждение, что HTTP-прокси не заменяет RTC-порты; финал «Peregovorka deployment completed» только без FAIL. Памятка администратору (URL, каталоги, модель, порты, WARN, команды, nginx-конфиг). `scripts/ctl.sh` — restart/stop/start своего проекта.
+4. Smoke-test: LDAP bind (backend `/internal/v1/diag`), сигналинг LiveKit, модель GigaAM и тестовый инференс (`POST /selftest` ASR, отдельно от healthcheck), внутренняя сессия, Alembic; `--login ЛОГИН` — реальная аутентификация (пароль без эха, не сохраняется, не логируется).
+5. Версия: `version`/`commit`/`built_at` запекаются в образы (ARG→ENV в конце Dockerfile, кэш слоёв не сбрасывается), runtime-переопределение из compose убрано (оно давало `commit=unknown`); `/api/v1/version` отдаёт `built_at`.
+6. uvicorn: `--ws websockets-sansio` (проверено запуском: legacy-реализация даёт DeprecationWarning, sansio — нет).
+7. web: из образа убран entrypoint-скрипт, переписывавший `default.conf` (источник предупреждения «can not modify … read-only file system?»); права файлов выставлены на uid 101, режим ФС не ослаблялся.
+8. Документация: схема `8106 → 18400 → 18480`, политика nginx (общие файлы не редактируются; готовый `location` в сводке), последовательность установки, WARN хоста.
+
+**Проверка.** Shell-тесты 95 (классификация сетевых ошибок, 3 попытки/без повтора для ошибок проекта, sysctl-WARN, alembic current vs head на подставном docker, порядок этапов dry-run, ctl.sh). Backend 107, ASR 24, `tsc`, `bash -n`.
+
+**Не проверялось.** Работа `verify`/smoke-test на живом сервере (проверены функции и порядок этапов на подставном docker), `read_only` для web (в репозитории не включался), предупреждение uvicorn на реальном образе, живая комната с клиентами.

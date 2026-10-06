@@ -8,7 +8,15 @@ cat > "$BIN/docker" <<'DOCK'
 #!/usr/bin/env bash
 case "$1" in
   version) echo 29.1.3 ;;
-  compose) case "$2" in version) echo 2.40.3 ;; *) echo "compose $*" ;; esac ;;
+  compose)
+    if [ "$2" = version ]; then echo 2.40.3; exit 0; fi
+    case "$*" in
+      *"alembic current"*)
+        echo "INFO  [alembic.runtime.migration] Context impl PostgresqlImpl."
+        if [ "${FAKE_ALEMBIC_CUR:-0002}" = "0002" ]; then echo "0002 (head)"; else echo "${FAKE_ALEMBIC_CUR}"; fi ;;
+      *"alembic heads"*) echo "0002 (head)" ;;
+      *) echo "compose $*" ;;
+    esac ;;
   buildx) echo "buildx: command not found" >&2; exit 1 ;;
   info) echo overlayfs ;;
   image) case "$2" in
@@ -101,8 +109,58 @@ NGINX_SITES_ENABLED=$NG/en
 ENVF
 env PATH="$BIN:$PATH" FAKE_IMAGE=none bash "$IW/scripts/install.sh" --profile shared-host --dry-run --skip-preflight 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$TMP/install-dry.out"
 pos() { grep -n "== stage: $1 ==" "$TMP/install-dry.out" | head -1 | cut -d: -f1; }
-t "dry-run установщика завершился" grep -q "Установка завершена" "$TMP/install-dry.out"
+t "dry-run установщика завершился" grep -q "Dry-run завершён" "$TMP/install-dry.out"
 t "порядок: build < database < migrations < services < healthcheck < nginx" bash -c '[ "$1" -lt "$2" ] && [ "$2" -lt "$3" ] && [ "$3" -lt "$4" ] && [ "$4" -lt "$5" ] && [ "$5" -lt "$6" ]' _ "$(pos build)" "$(pos database)" "$(pos migrations)" "$(pos services)" "$(pos healthcheck)" "$(pos nginx)"
 t "в плане нет prune/удаления /var/lib/docker|containerd/umount" bash -c '! grep -qiE "prune|rm -rf /var/lib|umount" "$1"' _ "$TMP/install-dry.out"
 t "up идёт с --no-build (без скрытой сборки BuildKit)" grep -q "up -d --no-build" "$TMP/install-dry.out"
 t "неизвестный этап отвергается" bash -c 'env PATH="$2:$PATH" bash "$1/scripts/install.sh" --profile shared-host --dry-run --skip-preflight --from nonexistent 2>&1 | grep -q "Неизвестный этап"' _ "$IW" "$BIN"
+
+
+# ---- параметры ядра: только предупреждения, с командами администратору
+PS="$TMP/procsys"; mkdir -p "$PS/vm" "$PS/net/core"
+kt() { env PROC_SYS_ROOT="$PS" bash -c 'source "$1"; o=""; w=""; ko(){ o+="$*"$'"'"'\n'"'"'; }; kw(){ w+="$*"$'"'"'\n'"'"'; }; kernel_tuning_check ko kw; eval "$2"' _ "$ROOT/scripts/lib/envlib.sh" "$1"; }
+echo 0 > "$PS/vm/overcommit_memory"; echo 425984 > "$PS/net/core/rmem_max"
+t "overcommit=0 → WARN с командой sysctl, не отказ" kt 'grep -q "sysctl -w vm.overcommit_memory=1" <<<"$w" && grep -q "Cannot allocate memory" <<<"$w"'
+t "rmem_max=425984 → WARN с текущим и рекомендуемым" kt 'grep -q "425984" <<<"$w" && grep -q "5000000" <<<"$w" && grep -q "net.core.rmem_max=5000000" <<<"$w"'
+t "предупреждение объясняет влияние на медиатрафик" kt 'grep -qi "потер" <<<"$w"'
+t "установщик sysctl не меняет (в коде нет sysctl -w вне текста подсказок)" bash -c '! grep -rnE "^[[:space:]]*(sudo[[:space:]]+)?sysctl[[:space:]]+-w" "$1/scripts" --include=*.sh | grep -v "echo\|warn\|\"\$warn\"\|#" ' _ "$ROOT"
+echo 1 > "$PS/vm/overcommit_memory"; echo 5000000 > "$PS/net/core/rmem_max"
+t "оба параметра в норме → ok без WARN" kt '[ -z "$w" ] && grep -q "overcommit_memory = 1" <<<"$o" && grep -q "rmem_max = 5000000" <<<"$o"'
+rm -f "$PS/vm/overcommit_memory"
+t "параметр недоступен → WARN, не падение" kt 'grep -q "недоступно" <<<"$w"'
+
+# ---- сетевые сбои registry/CDN: повтор, но не для ошибок проекта
+t "тайм-аут pull → network" bash -c 'source "$1"; [ "$(printf "%s" "failed to copy: read tcp 10.0.0.1:443: read: connection timed out" | classify_build_error)" = network ]' _ "$ROOT/scripts/lib/dockerlib.sh"
+t "pip Read timed out при сборке → network" bash -c 'source "$1"; [ "$(printf "%s" "pip._vendor.urllib3.exceptions.ReadTimeoutError: Read timed out. process did not complete successfully" | classify_build_error)" = network ]' _ "$ROOT/scripts/lib/dockerlib.sh"
+RC="$TMP/retry"; mkdir -p "$RC"
+cat > "$RC/flaky.sh" <<'FL'
+#!/usr/bin/env bash
+n=$(cat "$COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$COUNT"
+if [ "$n" -le "$FAIL_UNTIL" ]; then echo "$MSG" >&2; exit 1; fi
+echo done
+FL
+chmod +x "$RC/flaky.sh"
+rcase() { # rcase FAIL_UNTIL MSG → печатает число попыток и код
+  rm -f "$RC/count"; local out rc
+  out="$(env COUNT="$RC/count" FAIL_UNTIL="$1" MSG="$2" PULL_RETRY_PAUSE=0 bash -c 'source "$1"; retry_cmd pull 3 0 "$2"; echo "rc=$?"' _ "$LIB" "$RC/flaky.sh" 2>&1)"
+  echo "$out" | grep "^rc=" ; echo "attempts=$(cat "$RC/count")"
+}
+NETMSG="failed to copy: read tcp 10.0.0.1:443: read: connection timed out"; export RC LIB NETMSG; export -f rcase
+t "сеть упала 2 раза, 3-я попытка успешна" bash -c '[ "$(rcase 2 "$NETMSG" | tr "\n" " ")" = "rc=0 attempts=3 " ]' _
+t "сеть недоступна все 3 попытки → отказ (код ≠ 0, 3 попытки)" bash -c 'r="$(rcase 9 "$NETMSG" | tr "\n" " ")"; [ "$r" = "rc=1 attempts=3 " ]'
+t "ошибка проекта не повторяется (1 попытка)" bash -c 'r="$(rcase 9 "COPY failed: file not found" | tr "\n" " ")"; [ "$r" = "rc=1 attempts=1 " ]'
+t "в логе повтора виден номер попытки" bash -c 'env COUNT="$1/count" FAIL_UNTIL=1 MSG="TLS handshake timeout" bash -c "source \"$2\"; rm -f \"$1/count\"; retry_cmd pull 3 0 \"$1/flaky.sh\"" 2>&1 | grep -q "попытка 2/3"' _ "$RC" "$LIB"
+
+# ---- Alembic: фактическая ревизия, а не только код возврата
+t "alembic_rev: «0002 (head)»" bash -c 'source "$1"; [ "$(printf "INFO log\n0002 (head)\n" | alembic_rev)" = 0002 ]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "alembic_rev: пустой вывод → пусто" bash -c 'source "$1"; [ -z "$(printf "" | alembic_rev)" ]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "ревизия БД = head → ok" dk FAKE_ALEMBIC_CUR=0002 'alembic_verify exec && [ "$ALEMBIC_CUR" = 0002 ]'
+t "ревизия БД отстаёт от head → FAIL" dk FAKE_ALEMBIC_CUR=0001 '! alembic_verify exec && [ "$ALEMBIC_CUR" = 0001 ] && [ "$ALEMBIC_HEAD" = 0002 ]'
+
+# ---- порядок этапов: pull→build, verify после nginx, report последним; ctl.sh
+posd() { grep -n "== stage: $1 ==" "$TMP/install-dry.out" | head -1 | cut -d: -f1; }
+t "pull раньше build" bash -c '[ "$1" -lt "$2" ]' _ "$(posd pull)" "$(posd build)"
+t "database (postgres+redis) раньше migrations раньше services" bash -c '[ "$1" -lt "$2" ] && [ "$2" -lt "$3" ]' _ "$(posd database)" "$(posd migrations)" "$(posd services)"
+t "verify после nginx, report — последним" bash -c '[ "$1" -lt "$2" ] && [ "$2" -lt "$3" ]' _ "$(posd nginx)" "$(posd verify)" "$(posd report)"
+t "миграции: в плане есть проверка current==head" grep -q "alembic current == alembic heads" "$TMP/install-dry.out"
+t "ctl.sh отвергает неизвестный сервис" bash -c '! bash "$1/scripts/ctl.sh" restart nonexistent --env "$2" >/dev/null 2>&1' _ "$IW" "$IW/.env"

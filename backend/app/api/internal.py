@@ -111,3 +111,39 @@ async def smoke(request: Request):
             await db.commit()
     ok = error is None and steps and all(steps.values())
     return {"ok": bool(ok), "steps": steps, "error": error}
+
+
+@router.get("/diag", dependencies=[Depends(require_internal)])
+async def diag(request: Request):
+    """Диагностика для smoke-test: БД, Redis, LDAP (bind сервисной учётки), LiveKit, ASR, версия сборки. Секреты не возвращаются."""
+    import httpx
+    from sqlalchemy import text
+
+    app = request.app
+    s = app.state.settings
+    out: dict = {"version": s.app_version, "commit": s.app_git_commit, "built_at": s.app_built_at}
+    try:
+        async with app.state.session_maker() as db:
+            await db.execute(text("SELECT 1"))
+        out["postgres"] = {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        out["postgres"] = {"ok": False, "error": type(exc).__name__}
+    try:
+        await app.state.redis.ping()
+        out["redis"] = {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        out["redis"] = {"ok": False, "error": type(exc).__name__}
+    try:
+        await asyncio.to_thread(app.state.directory.check_service_account)
+        out["ldap"] = {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        out["ldap"] = {"ok": False, "error": getattr(exc, "code", type(exc).__name__)}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            out["livekit"] = {"ok": (await c.get(s.livekit_http_url + "/")).status_code == 200}
+    except Exception as exc:  # noqa: BLE001
+        out["livekit"] = {"ok": False, "error": type(exc).__name__}
+    hb = await app.state.bridge.heartbeat()
+    out["asr"] = {"ok": bool(hb and hb.get("model_loaded")), "provider": (hb or {}).get("provider"), "commit": (hb or {}).get("commit")}
+    out["ok"] = all(out[k]["ok"] for k in ("postgres", "redis", "ldap", "livekit", "asr"))
+    return out

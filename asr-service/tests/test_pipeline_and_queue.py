@@ -188,3 +188,18 @@ def test_readyz_reflects_model_state_without_running_inference():
     r = client.get("/readyz")
     assert r.status_code == 200 and r.json()["ready"] is True
     assert time.monotonic()  # healthcheck мгновенный: инференс не вызывается
+
+
+def test_selftest_endpoint_is_separate_from_health_and_needs_loaded_model():
+    from fastapi.testclient import TestClient
+
+    state = {"model_loaded": False}
+
+    async def selftest():
+        return {"ok": True, "ms": 5}
+
+    client = TestClient(create_health_app(lambda: dict(state), selftest))
+    assert client.post("/selftest").status_code == 503
+    state["model_loaded"] = True
+    assert client.post("/selftest").json() == {"ok": True, "ms": 5}
+    assert client.get("/healthz").status_code == 200  # healthcheck инференс не запускает

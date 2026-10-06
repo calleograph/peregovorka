@@ -6,7 +6,8 @@
 #       [--skip-start] [--configure-firewall]
 #
 # Этапы (в этом порядке):
-#   prerequisites → preflight → dirs → models → build → database → migrations → services → healthcheck → nginx → firewall
+#   prerequisites → preflight → dirs → models → pull → build → database(postgres+redis, ждём healthy) → migrations
+#   (+проверка alembic current == head) → services → healthcheck → nginx → firewall → verify (итоговая проверка) → report
 # host nginx активируется ПОСЛЕДНИМ, только когда приложение уже запущено и здорово: при сбое раньше внешний мир
 # (nginx, порты) остаётся как до установки. Каждый этап печатает [ok]/[warn]/[FAIL]; сбой — одной строкой
 # «FAIL stage=… subsystem=…», где subsystem отличает проблему Docker/хоста от проблемы проекта.
@@ -28,7 +29,7 @@ set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-STAGES=(prerequisites preflight dirs models build database migrations services healthcheck nginx firewall)
+STAGES=(prerequisites preflight dirs models pull build database migrations services healthcheck nginx firewall verify report)
 PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""
 FORCE_BUILD=0; ADOPT=0
 while [ $# -gt 0 ]; do
@@ -154,6 +155,11 @@ stage_models() {
   fail_stage models "Модель ASR не подготовлена ($ckpt). Выполните scripts/models.sh (или --from-dir для закрытой сети) и повторите; --skip-models пропускает проверку."
 }
 
+stage_pull() {
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] docker compose pull postgres redis (до 3 попыток при сетевых сбоях registry/CDN)"; return 0; fi
+  pull_base_images || fail_stage registry-network "Не удалось скачать образы PostgreSQL/Redis (сеть/registry). Повторите установку — докачка продолжится."
+}
+
 stage_build() {
   if [ "$DRY_RUN" = "1" ]; then
     info "[dry-run] проверка builder'а: пробная сборка BuildKit; при инфраструктурном сбое — fallback на legacy (BUILD_MODE=${BUILD_MODE:-auto})"
@@ -192,7 +198,11 @@ stage_database() {
 }
 
 stage_migrations() {
-  dc_run run --rm --no-deps backend alembic upgrade head
+  dc_run run --rm --no-deps -T backend alembic upgrade head
+  [ "$DRY_RUN" = "1" ] && { info "[dry-run] затем: alembic current == alembic heads (иначе FAIL)"; return 0; }
+  # Код возврата «0» и пустой вывод — не доказательство: сверяем фактическую ревизию БД с head.
+  if alembic_verify run; then ok "Alembic: ${ALEMBIC_CUR} (head)"
+  else fail_stage alembic "после миграции ревизия БД «${ALEMBIC_CUR:-не определена}» не совпадает с head «${ALEMBIC_HEAD:-не определён}»."; fi
 }
 
 stage_services() {
@@ -268,11 +278,40 @@ stage_firewall() {
   fi
 }
 
+stage_verify() {
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] итоговая проверка: контейнеры/healthcheck, PostgreSQL, Redis, backend, ASR+модель, LiveKit, web, alembic, HTTP-цепочка, порты, параметры ядра"; return 0; fi
+  if ! verify_deployment; then fail_stage verification "итоговая проверка нашла ошибки (выше). Приложение НЕ считается работоспособным."; fi
+}
+
+stage_report() {
+  [ "$DRY_RUN" = "1" ] && return 0
+  local model="${DATA_ROOT}/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" w
+  log; log "================ Памятка администратору ================"
+  log " URL приложения:   ${APP_PUBLIC_URL:-?}"
+  log " Внутренние URL:   web http://127.0.0.1:${WEB_PORT}  |  host nginx http://127.0.0.1:${NGINX_LISTEN_PORT:-—}"
+  log " Compose-проект:   ${COMPOSE_PROJECT_NAME}   (каталог проекта: ${REPO_ROOT})"
+  log " Данные:           ${DATA_ROOT}"
+  log " Модель ASR:       ${ASR_MODEL_NAME:-v3_e2e_rnnt} → ${model}"
+  log " Версия:           ${APP_VERSION} commit=${APP_GIT_COMMIT} built_at=${APP_BUILT_AT:-?}  (builder: ${SELECTED_BUILD_MODE:-не менялся})"
+  log " Порты для клиентов (напрямую, не через HTTP-прокси): ${LIVEKIT_TCP_PORT}/tcp, ${LIVEKIT_UDP_PORT}/udp"
+  [ "${NGINX_MANAGE:-no}" = "yes" ] && log " nginx-конфиг:     ${NGINX_SITES_AVAILABLE}/${NGINX_SITE_NAME}  (symlink: ${NGINX_SITES_ENABLED}/${NGINX_SITE_NAME})"
+  log " Команды:          scripts/status.sh | scripts/logs.sh [сервис] -f | scripts/verify.sh | scripts/smoke-test.sh"
+  log "                   scripts/ctl.sh restart [сервис] | scripts/ctl.sh stop | scripts/ctl.sh start"
+  if [ "${#VERIFY_WARNINGS[@]}" -gt 0 ]; then
+    log " Оставшиеся предупреждения (${#VERIFY_WARNINGS[@]}):"
+    for w in "${VERIFY_WARNINGS[@]}"; do log "   - $(printf '%s' "$w" | cut -c1-220)"; done
+  else log " Предупреждений нет."; fi
+  log "========================================================="
+  print_network_summary
+  ok "Peregovorka deployment completed"
+}
+
 # ---------------------------------------------------------------------- запуск
 run_stage prerequisites stage_prerequisites
 run_stage preflight     stage_preflight
 run_stage dirs          stage_dirs
 run_stage models        stage_models
+run_stage pull          stage_pull
 run_stage build         stage_build
 if [ "$SKIP_START" -eq 1 ]; then ok "Запуск сервисов пропущен (--skip-start): образы готовы, nginx не тронут."; exit 0; fi
 run_stage database      stage_database
@@ -281,11 +320,11 @@ run_stage services      stage_services
 run_stage healthcheck   stage_healthcheck
 run_stage nginx         stage_nginx
 run_stage firewall      stage_firewall
+run_stage verify        stage_verify
 
 if [ "$DRY_RUN" != "1" ]; then
   mkdir -p "$DATA_ROOT/state"
   printf '%s project=%s commit=%s builder=%s stages=%s\n' "$(date -Is)" "$COMPOSE_PROJECT_NAME" "$APP_GIT_COMMIT" "${SELECTED_BUILD_MODE:-n/a}" "${COMPLETED[*]}" >> "$DATA_ROOT/state/install-history.log"
 fi
-ok "Установка завершена."
-print_network_summary
-log "Дальше: scripts/smoke-test.sh"
+run_stage report        stage_report
+[ "$DRY_RUN" = "1" ] && ok "Dry-run завершён: перечисленные этапы будут выполнены по порядку." || log "Дальше (по желанию): scripts/smoke-test.sh [--login ЛОГИН]"

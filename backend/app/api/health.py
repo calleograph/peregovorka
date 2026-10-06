@@ -58,4 +58,4 @@ async def ready(request: Request):
 @router.get("/version")
 async def version(request: Request):
     s = request.app.state.settings
-    return {"version": s.app_version, "commit": s.app_git_commit}
+    return {"version": s.app_version, "commit": s.app_git_commit, "built_at": s.app_built_at}

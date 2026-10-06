@@ -18,8 +18,7 @@ x-logging: &default-logging
     max-file: "5"
 
 x-app-env: &app-env
-  APP_VERSION: ${APP_VERSION:-0.0.0}
-  APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+  # APP_VERSION/APP_GIT_COMMIT/APP_BUILT_AT намеренно НЕ передаются при запуске: они запечены в образ при сборке
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_FORMAT: ${LOG_FORMAT:-json}
   POSTGRES_HOST: postgres
@@ -109,6 +108,7 @@ services:
       args:
         APP_VERSION: ${APP_VERSION:-0.0.0}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+        APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-backend:${IMAGE_TAG:?}
     restart: unless-stopped
     depends_on:
@@ -168,6 +168,7 @@ services:
         GIGAAM_GIT_COMMIT: ${GIGAAM_GIT_COMMIT:?}
         APP_VERSION: ${APP_VERSION:-0.0.0}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+        APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-asr:${IMAGE_TAG}
     restart: unless-stopped
     depends_on:

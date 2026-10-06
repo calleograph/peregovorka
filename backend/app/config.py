@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # --- экземпляр
     app_version: str = "0.0.0"
     app_git_commit: str = "unknown"
+    app_built_at: str = "unknown"
     app_public_url: str = "http://localhost:8080"
     log_level: str = "INFO"
     log_format: str = "json"  # json | console

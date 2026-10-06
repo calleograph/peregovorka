@@ -38,11 +38,20 @@ async def amain() -> None:
             "provider": provider.info.as_dict(), "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors,
-            "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit,
+            "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
 
+    async def selftest() -> dict:
+        import time as _t
+
+        import numpy as _np
+
+        started = _t.monotonic()
+        res = await asyncio.to_thread(provider.transcribe, _np.zeros(16000, dtype=_np.int16), language=settings.asr_language)
+        return {"ok": True, "ms": int((_t.monotonic() - started) * 1000), "provider": provider.info.as_dict(), "text_len": len(res.text)}
+
     # health-сервер поднимаем СРАЗУ: /healthz отвечает, пока модель ещё грузится.
-    server = uvicorn.Server(uvicorn.Config(create_health_app(snapshot), host="0.0.0.0", port=settings.health_port,
+    server = uvicorn.Server(uvicorn.Config(create_health_app(snapshot, selftest), host="0.0.0.0", port=settings.health_port,
                                            log_level="warning", access_log=False))
     health_task = asyncio.create_task(server.serve(), name="health")
 
