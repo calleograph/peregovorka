@@ -1,0 +1,10 @@
+# Рантайм-зависимости без torch (torch ставится в Dockerfile из ASR_TORCH_INDEX_URL: CPU или CUDA).
+numpy>=2,<3
+redis==8.1.0
+fastapi==0.142.2
+uvicorn==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+livekit==1.1.20
+livekit-api==1.2.1
+silero-vad==6.2.3

@@ -1,0 +1,13 @@
+# Необязательное дополнение для ASR_DEVICE=cuda (требуется NVIDIA Container
+# Toolkit на хосте). Подключается скриптами автоматически, если в .env
+# ASR_DEVICE=cuda:  -f deployment/compose.yml -f deployment/compose.gpu.yml
+# Для GPU соберите образ с CUDA-индексом torch (ASR_TORCH_INDEX_URL).
+services:
+  asr:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

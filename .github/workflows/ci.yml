@@ -1,0 +1,52 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r backend/requirements-dev.txt
+      - run: pytest -q
+        working-directory: backend
+
+  asr:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # torch/GigaAM в тестах не нужны: используются подставные провайдер и VAD
+      - run: pip install "numpy>=2,<3" redis fastapi uvicorn pydantic pydantic-settings pytest pytest-asyncio fakeredis httpx
+      - run: pytest -q
+        working-directory: asr-service
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test && npm run build
+        working-directory: frontend
+
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: for f in scripts/*.sh scripts/lib/*.sh; do bash -n "$f"; done
+      - run: sudo apt-get install -y shellcheck && shellcheck -S warning scripts/*.sh scripts/lib/*.sh || true
+      - name: compose config
+        run: |
+          cp .env.example .env
+          mkdir -p /tmp/vm-ca && touch /tmp/vm-ca/ad-ca.pem
+          sed -i 's#^LDAP_CA_FILE=.*#LDAP_CA_FILE=/tmp/vm-ca/ad-ca.pem#; s#^DATA_ROOT=.*#DATA_ROOT=/tmp/vm-data#' .env
+          docker compose -p ci --project-directory deployment --env-file .env -f deployment/compose.yml config -q

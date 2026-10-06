@@ -1,0 +1,196 @@
+# Развёртывание и обновление — пошаговая инструкция
+
+Для кого: администратор, который впервые ставит систему и затем обновляет её. Подробности по портам, AD, данным и диагностике —
+в [DEPLOYMENT.md](../DEPLOYMENT.md). Все команды выполняются на сервере из каталога проекта (если не сказано иначе).
+Обновления везде идут **только через Git** — ручное копирование каталогов не используется.
+
+---
+
+## 0. Что подготовить заранее
+
+| Что | Зачем |
+| --- | --- |
+| Сервер Ubuntu 24.04 x86_64, ≥ 4 ядра, ≥ 8 ГБ RAM, ≥ 30 ГБ диска (модель ASR ~1–2 ГБ + записи) | запуск контейнеров; GPU необязателен |
+| Docker + Docker Compose plugin | в профиле **shared-host** ставится вручную; в **standalone** его поставит `install.sh` |
+| DNS-имя, например `meet.<ваш домен>`, и HTTPS-сертификат | **без HTTPS браузер не даст микрофон и экран** |
+| Свободные порты: веб (TCP), ICE/TCP и ICE/UDP LiveKit, loopback-порт LiveKit API | значения выбираете сами, `preflight.sh` их проверит |
+| AD: DNS-имена контроллеров (LDAPS 636), PEM-файл доверенного CA, сервисная учётка **только на чтение**, группа администраторов | вход и права |
+| Репозиторий на GitHub (раздел 1) и доступ сервера к нему | обновления через `git pull` |
+| (по желанию) сервис обезличивания, ключ LLM, SMB-ресурс с учёткой для записи | протоколы |
+
+---
+
+## 1. Публикация проекта на GitHub (один раз, на вашем компьютере)
+
+Рекомендуется **приватный** репозиторий: в проекте лежит документация о вашей инфраструктуре. Секреты (`.env`), старый PHP-код
+(`legacy/php/`), данные и `node_modules` в репозиторий **не попадают** (`.gitignore`).
+
+1. На github.com → **New repository** → имя, например `voicemeet`, **Private**, без README/.gitignore (репозиторий уже готов локально).
+2. В каталоге проекта (локальный коммит уже создан):
+   ```bash
+   git remote add origin git@github.com:<организация-или-логин>/voicemeet.git      # или https://github.com/.../voicemeet.git
+   git push -u origin main
+   git tag -a v0.1.0 -m "Первый релиз"
+   git push origin v0.1.0
+   ```
+   (SSH-ключ или токен доступа GitHub настраивается в вашем аккаунте; при HTTPS на вопрос пароля вводится **personal access token**.)
+3. Вкладка **Actions** покажет прогон CI (тесты backend, ASR, frontend, проверка скриптов и compose). Зелёный CI — условие для релиза.
+4. **Доступ сервера на чтение** (рекомендуется deploy key):
+   ```bash
+   # на сервере, от пользователя, который будет делать деплой
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/voicemeet_deploy -C "voicemeet-deploy@$(hostname)"
+   cat ~/.ssh/voicemeet_deploy.pub
+   ```
+   GitHub → репозиторий → **Settings → Deploy keys → Add deploy key** → вставить ключ, **без** права записи. Затем:
+   ```bash
+   printf 'Host github-voicemeet\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/voicemeet_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+   chmod 600 ~/.ssh/config
+   ```
+   Адрес для клонирования: `git@github-voicemeet:<организация-или-логин>/voicemeet.git`.
+
+> Релизы: версия — тег `vX.Y.Z` (+ файл `VERSION`). На сервер выкатывайте **тег или SHA**, а не «что там сейчас в main».
+
+---
+
+## 2. Первичное развёртывание
+
+### 2.1 Общие шаги (оба профиля)
+
+```bash
+# 1) код (shared-host: /var/www/projects/voicemeet; standalone: /opt/voicemeet)
+git clone git@github-voicemeet:<орг>/voicemeet.git /var/www/projects/voicemeet
+cd /var/www/projects/voicemeet
+git checkout v0.1.0                       # воспроизводимая версия
+
+# 2) конфигурация (секреты — только здесь, в Git не попадает)
+cp .env.example .env && chmod 600 .env
+openssl rand -base64 32                   # → APP_MASTER_KEY
+openssl rand -hex 32                      # → LIVEKIT_API_SECRET, INTERNAL_API_TOKEN, POSTGRES_PASSWORD, REDIS_PASSWORD (по отдельному значению)
+$EDITOR .env
+```
+
+Что обязательно заполнить в `.env` (остальное — по умолчанию из `.env.example`):
+
+- `COMPOSE_PROJECT_NAME` — **уникальное** имя экземпляра (например `voicemeet-prod`); от него зависят имена контейнеров/сетей/томов.
+- `INSTALL_PROFILE` — `shared-host` или `standalone`; `APP_PUBLIC_URL=https://meet.<домен>`; `LIVEKIT_PUBLIC_URL=wss://meet.<домен>/livekit`.
+- `DATA_ROOT` — каталог постоянных данных **вне** checkout (например `/srv/voicemeet-data`).
+- Порты: `WEB_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`, `NGINX_LISTEN_PORT` — свободные; `LIVEKIT_NODE_IP` — IP сервера, по которому до него доходят клиенты.
+- Ключи: `LIVEKIT_API_KEY/SECRET`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_MASTER_KEY`, `INTERNAL_API_TOKEN`. **Сохраните копию `APP_MASTER_KEY` отдельно** — без него зашифрованные настройки (пароль SMB, токены, ключ LLM) невосстановимы.
+- AD: `LDAP_URIS` (только `ldaps://` с DNS-именами из сертификата), `LDAP_BASE_DN`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_CA_FILE` (путь к PEM на хосте), `LDAP_ADMIN_GROUP_DN`.
+- `TRUSTED_PROXY_HOPS` — сколько прокси перед контейнером web (host-nginx = 1; внешний reverse proxy + host-nginx = 2).
+
+```bash
+# 3) модель распознавания (в Git её нет)
+scripts/models.sh                         # с интернетом; в закрытой сети: scripts/models.sh --from-dir /путь/к/gigaam
+
+# 4) проверка — ничего не меняет; исправьте все FAIL
+scripts/preflight.sh
+
+# 5) план установки — тоже ничего не меняет; прочитайте
+scripts/install.sh --profile shared-host --dry-run       # или --profile standalone
+
+# 6) установка (повторный запуск безопасен)
+scripts/install.sh --profile shared-host                 # standalone: добавьте --configure-firewall, если хотите правила ufw
+
+# 7) проверка работы
+scripts/status.sh
+scripts/smoke-test.sh
+```
+
+### 2.2 Shared-host (сервер с Moodle/другими приложениями)
+
+- Docker должен быть уже установлен — иначе установка остановится (это намеренно).
+- Установщик создаёт **только**: каталоги в `DATA_ROOT`, **один** новый site-файл nginx `NGINX_SITE_NAME` + симлинк, проект docker-compose. Перед включением выполняется `nginx -t`; при ошибке свои изменения откатываются и nginx **не перезагружается**. `sites-available/projects`, Apache, PHP-FPM, Moodle, файрвол не затрагиваются.
+- Внешний reverse proxy должен направлять `meet.<домен>` на `NGINX_LISTEN_PORT` сервера, передавать `X-Forwarded-Proto: https` и пропускать WebSocket (`Upgrade`) для `/api/v1/ws` и `/livekit/`.
+- **Откройте для клиентов** (напрямую, без HTTP-прокси) `LIVEKIT_TCP_PORT/tcp` и `LIVEKIT_UDP_PORT/udp` сервера. Файрвол сервера установщик не меняет.
+
+### 2.3 Standalone (новый сервер)
+
+```bash
+sudo apt-get update && sudo apt-get install -y git     # единственное ручное требование
+sudo git clone ... /opt/voicemeet && sudo chown -R $USER: /opt/voicemeet
+```
+Дальше — шаги 1–7 выше. `install.sh --profile standalone` сам поставит Docker и nginx (`apt install`, без `upgrade`/`reboot`). TLS: либо внешний прокси, либо задайте `NGINX_TLS_CERT`/`NGINX_TLS_KEY`.
+
+### 2.4 Первая настройка в интерфейсе
+
+1. Откройте `https://meet.<домен>`, войдите доменной учёткой из группы администраторов. В шапке появится «Администрирование».
+2. **Система** — все пять проверок (PostgreSQL, Redis, LiveKit, ASR, Active Directory) должны быть зелёными. ASR становится зелёным после загрузки модели (1–2 мин после старта).
+3. **Переговорки → Создать комнату**: название, идентификатор, доступ (кнопка «Найти» ищет группы/пользователей в AD), транскрибация/запись/камера/экран, сроки хранения. Без записей доступа комната видна только администраторам.
+4. **Хранилище** — локальный каталог (`/data/exports`) или SMB (сервер, ресурс, учётка, пароль) → «Проверить подключение».
+5. **Обезличивание** и **LLM и протокол** — адрес/токен/ключ → «Проверить подключение»; инструкции для протокола; при желании автосоздание.
+6. **Экран** — профиль трансляции (по умолчанию «Чёткость» для слайдов и текста).
+7. **Система → Общие настройки** — часовой пояс (для имён папок и времени в протоколах).
+8. **Проверка с двумя браузерами/компьютерами**: оба входят в комнату, говорят — в панели справа появляются реплики с именами; «Показать экран» — второй видит экран на большой сцене; завершите встречу — в хранилище появилась папка `комната / дата, день недели / время / protocol.txt`.
+
+---
+
+## 3. Обновление (штатный путь)
+
+**У разработчика** (на своём компьютере):
+```bash
+# внести изменения, прогнать тесты локально/в CI
+git add -A && git commit -m "Что изменено"
+git push origin main
+# выпуск релиза
+echo 0.1.1 > VERSION && git commit -am "Версия 0.1.1" && git tag -a v0.1.1 -m "Релиз 0.1.1"
+git push origin main v0.1.1
+```
+Дождитесь зелёного CI.
+
+**На сервере**:
+```bash
+cd /var/www/projects/voicemeet
+scripts/deploy.sh --ref v0.1.1 --dry-run     # что изменится (коммит, наличие миграций)
+scripts/deploy.sh --ref v0.1.1               # обновление
+scripts/smoke-test.sh                        # проверка после обновления
+```
+
+Что делает `deploy.sh`: проверяет, что в рабочей копии нет локальных правок (иначе отказ) → `git fetch` → переход на указанный тег/SHA (без `--ref` — fast-forward ветки) → `preflight` → **если в релизе есть миграции БД — автоматический backup** → сборка **только образов этого проекта** → `alembic upgrade head` → перезапуск сервисов этого compose-проекта → проверка health. Он **никогда** не делает `docker system prune`, не трогает чужие контейнеры и не удаляет тома.
+
+Правила:
+- `.env` и `DATA_ROOT` при обновлении не меняются. Новые переменные, появившиеся в `.env.example`, добавьте в `.env` руками (сверьте: `diff .env.example .env`; `preflight.sh` скажет, чего не хватает).
+- Миграции делаются «расширяющими» (см. [docs/MIGRATIONS.md](MIGRATIONS.md)): откат кода без отката БД, как правило, возможен.
+- Обновлять лучше вне рабочих часов: на время пересоздания контейнеров активные встречи прерываются (клиенты переподключаются сами).
+
+---
+
+## 4. Откат
+
+```bash
+scripts/rollback.sh                    # к версии, стоявшей до последнего деплоя (образы должны быть на сервере)
+scripts/rollback.sh --to <SHA>         # к конкретному коммиту
+```
+Откат возвращает **код и образы**, но **не схему БД**. Если между версиями были миграции, скрипт покажет предупреждение и попросит ввести `rollback-code-only`. Для полного возврата данных используйте backup, сделанный перед деплоем:
+```bash
+ls $DATA_ROOT/backups/                           # файлы вида <проект>-db-<время>-pre-<sha>.dump
+scripts/restore.sh $DATA_ROOT/backups/<файл>.dump    # потребует ввести имя проекта; перед восстановлением делает страховочный дамп
+```
+
+---
+
+## 5. Резервные копии и обслуживание
+
+```bash
+scripts/backup.sh --keep 14 --with-env            # дамп БД (+копия .env с секретами — храните защищённо)
+scripts/backup.sh --with-recordings               # + архив записей и выгрузок
+```
+Регулярный запуск — cron/systemd-таймер на сервере, например: `15 2 * * *  cd /var/www/projects/voicemeet && scripts/backup.sh --keep 14`.
+Проверяйте раз в квартал восстановление на тестовом экземпляре.
+
+Мониторинг вручную: `scripts/status.sh`, `scripts/logs.sh backend -f`, вкладка «Система» в админке.
+
+---
+
+## 6. Типовые проблемы
+
+| Симптом | Что делать |
+| --- | --- |
+| `preflight` ругается на порт | выберите другой порт в `.env`; автоматически порты не занимаются |
+| «Не удалось подключиться к серверу звонков» | страница не по HTTPS; не доходит `LIVEKIT_PUBLIC_URL` (`/livekit/` не проксируется с Upgrade); `scripts/logs.sh livekit` |
+| Подключились, но нет звука | закрыты `LIVEKIT_UDP_PORT/udp` и `LIVEKIT_TCP_PORT/tcp` на пути клиент → сервер; неверный `LIVEKIT_NODE_IP` |
+| Не входит доменная учётка | `scripts/logs.sh backend` (коды `invalid_credentials`, `tls_error`, `service_account_error`); проверьте CA и имена в `LDAP_URIS`; блокировка нашей защитой от перебора снимается через 15 мин |
+| Текста нет | вкладка «Система»: ASR красный → `scripts/models.sh`, `scripts/logs.sh asr`; в комнате выключена транскрибация или остановлена запись |
+| Краткий протокол «failed» | в строке протокола — причина: не настроено обезличивание/LLM, сервис вернул `verification.clean=false`, таймаут |
+| В хранилище нет файлов | «Хранилище → Проверить подключение»; для SMB — права учётки на запись, доступность `445/tcp` с сервера |
+| `deploy.sh`: «есть локальные изменения» | на сервере ничего не правят вручную: `git status`, `git checkout -- <файл>` либо `git stash` |

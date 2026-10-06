@@ -1,0 +1,153 @@
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { api, type AclEntry, type ApiError, type DirHit, type RoomAdmin } from "../../api";
+
+interface Form {
+  id?: string; slug: string; name: string; description: string; is_enabled: boolean; max_participants: number;
+  password: string; clearPassword: boolean; transcription_enabled: boolean; record_audio: boolean;
+  camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
+  protocol_instructions: string; aclText: string;
+}
+
+const empty: Form = {
+  slug: "", name: "", description: "", is_enabled: true, max_participants: 20, password: "", clearPassword: false,
+  transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
+  text_retention_days: "", audio_retention_days: "", protocol_instructions: "", aclText: "",
+};
+
+// ACL в форме: по строке на запись — «group: <DN группы AD>» или «user: <objectGUID>».
+const parseAcl = (t: string): AclEntry[] => t.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+  const m = /^(group|user)\s*:\s*(.+)$/i.exec(l);
+  return m ? { subject_type: m[1].toLowerCase() as "group" | "user", subject_ref: m[2].trim() } : { subject_type: "group", subject_ref: l };
+});
+const aclToText = (acl: AclEntry[]) => acl.map((a) => `${a.subject_type}: ${a.subject_ref}`).join("\n");
+const days = (v: string) => (v.trim() === "" ? null : Number(v));
+
+function toForm(r: RoomAdmin): Form {
+  return { id: r.id, slug: r.slug, name: r.name, description: r.description ?? "", is_enabled: r.is_enabled,
+    max_participants: r.max_participants, password: "", clearPassword: false, transcription_enabled: r.transcription_enabled,
+    record_audio: r.record_audio, camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
+    text_retention_days: r.text_retention_days?.toString() ?? "", audio_retention_days: r.audio_retention_days?.toString() ?? "",
+    protocol_instructions: r.protocol_instructions ?? "", aclText: aclToText(r.acl) };
+}
+
+export default function RoomsAdmin() {
+  const [rooms, setRooms] = useState<RoomAdmin[]>([]);
+  const [form, setForm] = useState<Form | null>(null);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+
+  const load = useCallback(() => api.admin.rooms().then(setRooms).catch((e) => setError(e.message)), []);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!form) return;
+    setError(""); setNote("");
+    const base = {
+      name: form.name, description: form.description || null, is_enabled: form.is_enabled, max_participants: form.max_participants,
+      transcription_enabled: form.transcription_enabled, record_audio: form.record_audio, camera_allowed: form.camera_allowed,
+      screen_share_allowed: form.screen_share_allowed, text_retention_days: days(form.text_retention_days),
+      audio_retention_days: days(form.audio_retention_days), protocol_instructions: form.protocol_instructions || null,
+      acl: parseAcl(form.aclText),
+    };
+    try {
+      if (form.id) {
+        await api.admin.patchRoom(form.id, { ...base, ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}) });
+      } else {
+        await api.admin.createRoom({ ...base, slug: form.slug, password: form.password || null });
+      }
+      setForm(null); setNote("Сохранено"); await load();
+    } catch (err) { setError((err as ApiError).message); }
+  };
+
+  const remove = async (r: RoomAdmin) => {
+    if (!window.confirm(`Удалить комнату «${r.name}» вместе с историей встреч?`)) return;
+    try { await api.admin.deleteRoom(r.id); await load(); } catch (err) { setError((err as ApiError).message); }
+  };
+
+  const [hits, setHits] = useState<DirHit[]>([]);
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState<"group" | "user">("group");
+  const [searchMsg, setSearchMsg] = useState("");
+  const search = async () => {
+    setSearchMsg("");
+    try { const r = await api.admin.search(kind, q); setHits(r); if (!r.length) setSearchMsg("Ничего не найдено"); }
+    catch (e) { setHits([]); setSearchMsg((e as ApiError).message); }
+  };
+  const addHit = (h: DirHit) => setForm((f) => {
+    if (!f) return f;
+    const line = `${h.kind}: ${h.ref}`;
+    const lines = f.aclText.split(/\r?\n/);
+    return lines.includes(line) ? f : { ...f, aclText: [...lines.filter(Boolean), line].join(String.fromCharCode(10)) };
+  });
+
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
+
+  return (
+    <section>
+      <h2>Переговорки</h2>
+      {note && <div className="alert">{note}</div>}
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {!form && <button className="btn primary" onClick={() => setForm({ ...empty })}>Создать комнату</button>}
+
+      {form && (
+        <form className="card form" onSubmit={save}>
+          <h3>{form.id ? "Изменение комнаты" : "Новая комната"}</h3>
+          <div className="cols">
+            <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} required /></label>
+            <label>Технический идентификатор<input value={form.slug} onChange={(e) => set("slug", e.target.value)} disabled={!!form.id} required pattern="[a-z0-9][a-z0-9\-]{1,62}" placeholder="meeting-room-1" /></label>
+          </div>
+          <label>Описание<input value={form.description} onChange={(e) => set("description", e.target.value)} /></label>
+          <div className="cols">
+            <label>Макс. участников<input type="number" min={1} max={200} value={form.max_participants} onChange={(e) => set("max_participants", Number(e.target.value))} /></label>
+            <label>Пароль комнаты {form.id && <span className="muted small">(пусто — не менять)</span>}
+              <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" disabled={form.clearPassword} /></label>
+            {form.id && <label className="check"><input type="checkbox" checked={form.clearPassword} onChange={(e) => set("clearPassword", e.target.checked)} /> Убрать пароль</label>}
+          </div>
+          <div className="checks">
+            {([["is_enabled", "Комната включена"], ["transcription_enabled", "Транскрибация"], ["record_audio", "Запись аудио"],
+               ["camera_allowed", "Камера"], ["screen_share_allowed", "Демонстрация экрана"]] as const).map(([k, label]) => (
+              <label key={k} className="check"><input type="checkbox" checked={form[k]} onChange={(e) => set(k, e.target.checked)} /> {label}</label>
+            ))}
+          </div>
+          <div className="cols">
+            <label>Хранить текст, дней <span className="muted small">(пусто — бессрочно)</span><input type="number" min={0} value={form.text_retention_days} onChange={(e) => set("text_retention_days", e.target.value)} /></label>
+            <label>Хранить аудио, дней <span className="muted small">(пусто — бессрочно)</span><input type="number" min={0} value={form.audio_retention_days} onChange={(e) => set("audio_retention_days", e.target.value)} /></label>
+          </div>
+          <label>Кто имеет доступ <span className="muted small">(по строке: «group: DN группы AD» или «user: objectGUID»; пусто — только администраторы)</span>
+            <textarea rows={4} value={form.aclText} onChange={(e) => set("aclText", e.target.value)} placeholder="group: CN=Staff,OU=Groups,DC=corp,DC=local" /></label>
+          <div className="picker">
+            <div className="row">
+              <select value={kind} onChange={(e) => setKind(e.target.value as "group" | "user")}><option value="group">Группа AD</option><option value="user">Пользователь AD</option></select>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск в каталоге (от 2 символов)" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} />
+              <button type="button" className="btn" onClick={search} disabled={q.trim().length < 2}>Найти</button>
+            </div>
+            {searchMsg && <div className="muted small">{searchMsg}</div>}
+            {hits.map((h) => (
+              <div key={h.ref} className="hit"><span>{h.name}{h.sam ? ` (${h.sam})` : ""} <span className="muted small">{h.kind === "group" ? h.ref : h.email}</span></span>
+                <button type="button" className="btn mini" onClick={() => addHit(h)}>Добавить</button></div>
+            ))}
+          </div>
+          <label>Инструкции для протокола комнаты <span className="muted small">(добавляются к общим инструкциям при создании краткого протокола)</span>
+            <textarea rows={3} value={form.protocol_instructions} onChange={(e) => set("protocol_instructions", e.target.value)} /></label>
+          <div className="row"><button className="btn primary">Сохранить</button><button type="button" className="btn ghost" onClick={() => setForm(null)}>Отмена</button></div>
+        </form>
+      )}
+
+      <table className="table">
+        <thead><tr><th>Название</th><th>Идентификатор</th><th>Состояние</th><th>Доступ</th><th>Опции</th><th /></tr></thead>
+        <tbody>
+          {rooms.map((r) => (
+            <tr key={r.id}>
+              <td>{r.name}</td><td><code>{r.slug}</code></td>
+              <td>{r.is_enabled ? "включена" : "отключена"}{r.active_meeting_id && <span className="badge"> идёт встреча</span>}</td>
+              <td>{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
+              <td className="small">{[r.has_password && "пароль", r.transcription_enabled && "текст", r.record_audio && "аудио", r.camera_allowed && "камера", r.screen_share_allowed && "экран"].filter(Boolean).join(", ")}</td>
+              <td className="actions"><button className="btn ghost" onClick={() => setForm(toForm(r))}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}

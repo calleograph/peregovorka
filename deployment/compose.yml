@@ -1,0 +1,222 @@
+# Compose-описание ОДНОГО экземпляра системы.
+#
+# Запускать только через scripts/*.sh (они задают --project-directory, --env-file
+# и -p ${COMPOSE_PROJECT_NAME}). Имена контейнеров, сетей и volumes НЕ
+# фиксируются: compose строит их из COMPOSE_PROJECT_NAME, поэтому два экземпляра
+# и чужие проекты на одном хосте не конфликтуют.
+#
+# Порты хоста — только из переменных БЕЗ значений по умолчанию (${VAR:?...}):
+# незаполненная переменная = отказ запуска, а не молчаливый захват порта.
+# PostgreSQL и Redis не публикуются.
+
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-env: &app-env
+  APP_VERSION: ${APP_VERSION:-0.0.0}
+  APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:?}
+  POSTGRES_USER: ${POSTGRES_USER:?}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+  LIVEKIT_INTERNAL_URL: ws://livekit:7880
+  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?}
+  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - ${DATA_ROOT:?DATA_ROOT is required}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes", "--save", "60", "1000"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?}
+    volumes:
+      - ${DATA_ROOT}/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  livekit:
+    build:
+      context: ./livekit
+      args:
+        LIVEKIT_IMAGE_TAG: ${LIVEKIT_IMAGE_TAG:?}
+    image: ${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG}
+    restart: unless-stopped
+    # Внутренние порты ICE равны опубликованным: LiveKit сообщает клиентам
+    # именно эти значения в ICE-кандидатах, расхождение ломает подключение.
+    ports:
+      - "127.0.0.1:${LIVEKIT_HTTP_PORT:?}:7880/tcp"
+      - "${LIVEKIT_BIND_ADDR:?}:${LIVEKIT_TCP_PORT:?}:${LIVEKIT_TCP_PORT}/tcp"
+      - "${LIVEKIT_BIND_ADDR}:${LIVEKIT_UDP_PORT:?}:${LIVEKIT_UDP_PORT}/udp"
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        log_level: info
+        rtc:
+          tcp_port: ${LIVEKIT_TCP_PORT}
+          udp_port: ${LIVEKIT_UDP_PORT}
+          use_external_ip: false
+          node_ip: ${LIVEKIT_NODE_IP:?}
+        keys:
+          ${LIVEKIT_API_KEY:?}: ${LIVEKIT_API_SECRET:?}
+        webhook:
+          api_key: ${LIVEKIT_API_KEY}
+          urls:
+            - http://backend:8000/internal/v1/livekit/webhook
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+
+  backend:
+    build:
+      context: ../backend
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+    image: ${COMPOSE_PROJECT_NAME}-backend:${IMAGE_TAG:?}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:?}
+      APP_MASTER_KEY: ${APP_MASTER_KEY:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?}
+      LIVEKIT_TOKEN_TTL_SECONDS: ${LIVEKIT_TOKEN_TTL_SECONDS:-300}
+      LDAP_URIS: ${LDAP_URIS:?}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:?}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:?}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:?}
+      LDAP_CA_FILE: /run/secrets/ldap-ca.pem
+      LDAP_LOGIN_ATTRIBUTE: ${LDAP_LOGIN_ATTRIBUTE:-sAMAccountName}
+      LDAP_DISPLAY_NAME_ATTRIBUTE: ${LDAP_DISPLAY_NAME_ATTRIBUTE:-displayName}
+      LDAP_ADMIN_GROUP_DN: ${LDAP_ADMIN_GROUP_DN:?}
+      LDAP_ACCESS_GROUP_DN: ${LDAP_ACCESS_GROUP_DN:-}
+      LDAP_TIMEOUT_SECONDS: ${LDAP_TIMEOUT_SECONDS:-5}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-28800}
+      SESSION_ABSOLUTE_TIMEOUT_SECONDS: ${SESSION_ABSOLUTE_TIMEOUT_SECONDS:-86400}
+      LOGIN_MAX_FAILURES_PER_USER: ${LOGIN_MAX_FAILURES_PER_USER:-3}
+      LOGIN_MAX_FAILURES_PER_IP: ${LOGIN_MAX_FAILURES_PER_IP:-20}
+      LOGIN_FAILURE_WINDOW_SECONDS: ${LOGIN_FAILURE_WINDOW_SECONDS:-900}
+      LOGIN_LOCKOUT_SECONDS: ${LOGIN_LOCKOUT_SECONDS:-900}
+      DEFAULT_TEXT_RETENTION_DAYS: ${DEFAULT_TEXT_RETENTION_DAYS:-365}
+      DEFAULT_AUDIO_RETENTION_DAYS: ${DEFAULT_AUDIO_RETENTION_DAYS:-30}
+      MEETING_END_GRACE_SECONDS: ${MEETING_END_GRACE_SECONDS:-30}
+      DATA_DIR: /data
+      DOCS_ENABLED: ${DOCS_ENABLED:-false}
+    volumes:
+      - ${LDAP_CA_FILE:?}:/run/secrets/ldap-ca.pem:ro
+      - ${DATA_ROOT}/exports:/data/exports
+      - ${DATA_ROOT}/recordings:/data/recordings
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  asr:
+    build:
+      context: ../asr-service
+      args:
+        TORCH_INDEX_URL: ${ASR_TORCH_INDEX_URL:?}
+        GIGAAM_GIT_COMMIT: ${GIGAAM_GIT_COMMIT:?}
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+    image: ${COMPOSE_PROJECT_NAME}-asr:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      ASR_PROVIDER: ${ASR_PROVIDER:-gigaam}
+      ASR_MODEL_NAME: ${ASR_MODEL_NAME:-v3_e2e_rnnt}
+      ASR_MODEL_DIR: /models/gigaam
+      ASR_DEVICE: ${ASR_DEVICE:-cpu}
+      ASR_MAX_CONCURRENT_INFERENCE: ${ASR_MAX_CONCURRENT_INFERENCE:-1}
+      ASR_QUEUE_SIZE: ${ASR_QUEUE_SIZE:-64}
+      ASR_CPU_THREADS: ${ASR_CPU_THREADS:-0}
+      ASR_LANGUAGE: ${ASR_LANGUAGE:-ru}
+      ASR_VAD_THRESHOLD: ${ASR_VAD_THRESHOLD:-0.5}
+      ASR_VAD_END_SILENCE_MS: ${ASR_VAD_END_SILENCE_MS:-700}
+      ASR_VAD_MIN_SPEECH_MS: ${ASR_VAD_MIN_SPEECH_MS:-250}
+      ASR_VAD_PAD_MS: ${ASR_VAD_PAD_MS:-200}
+      ASR_MAX_SEGMENT_SECONDS: ${ASR_MAX_SEGMENT_SECONDS:-20}
+      RECORDINGS_DIR: /data/recordings
+    volumes:
+      - ${DATA_ROOT}/models:/models:ro
+      - ${DATA_ROOT}/recordings:/data/recordings
+    healthcheck:
+      # Лёгкая проверка процесса; готовность модели — /readyz (без инференса).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 120s
+    stop_grace_period: 20s
+    logging: *default-logging
+
+  web:
+    build:
+      context: ../frontend
+    image: ${COMPOSE_PROJECT_NAME}-web:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDR:?}:${WEB_PORT:?}:8080/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
