@@ -106,3 +106,34 @@ print_network_summary() { # читает переменные окружения
 ================================================================================
 EOF
 }
+
+# ---------------------------------------------------------------- nginx: собственный site
+# Рендер site-файла из шаблона (те же подстановки, что использует install.sh). Печатает результат.
+render_nginx_site() {
+  local tpl pid
+  if [ -n "${NGINX_TLS_CERT:-}" ]; then tpl="$REPO_ROOT/deployment/nginx/site.tls.conf.tpl"; else tpl="$REPO_ROOT/deployment/nginx/site.http.conf.tpl"; fi
+  pid="$(printf '%s' "$COMPOSE_PROJECT_NAME" | tr -c 'a-zA-Z0-9' '_')"
+  sed -e "s|@@PROJECT@@|${COMPOSE_PROJECT_NAME}|g" -e "s|@@PROJECT_ID@@|${pid}|g" \
+      -e "s|@@LISTEN_PORT@@|${NGINX_LISTEN_PORT}|g" -e "s|@@SERVER_NAME@@|${NGINX_SERVER_NAME}|g" \
+      -e "s|@@WEB_PORT@@|${WEB_PORT}|g" -e "s|@@TLS_CERT@@|${NGINX_TLS_CERT:-}|g" -e "s|@@TLS_KEY@@|${NGINX_TLS_KEY:-}|g" "$tpl"
+}
+
+# Наш ли это уже установленный site: файл с marker'ом ЭТОГО проекта, нужный listen и корректный symlink.
+# Не зависит от прав на просмотр процессов (ss -p) и от root. Вызывать: own_nginx_site_ok [strict]
+# strict — дополнительно: содержимое файла совпадает с тем, что установщик сгенерировал бы сейчас.
+own_nginx_site_ok() {
+  local site="$NGINX_SITES_AVAILABLE/$NGINX_SITE_NAME" link="$NGINX_SITES_ENABLED/$NGINX_SITE_NAME"
+  [ -f "$site" ] || return 1
+  grep -qx "# managed-by: peregovorka:${COMPOSE_PROJECT_NAME}" "$site" 2>/dev/null || return 1
+  grep -Eq "^[[:space:]]*listen[[:space:]]+(\[::\]:|[0-9.]+:)?${NGINX_LISTEN_PORT}([[:space:];]|\$)" "$site" 2>/dev/null || return 1
+  { [ -L "$link" ] || [ -f "$link" ]; } || return 1
+  if [ -L "$link" ]; then
+    [ "$(readlink -f "$link" 2>/dev/null)" = "$(readlink -f "$site" 2>/dev/null)" ] || return 1
+  else
+    cmp -s "$site" "$link" || return 1   # не symlink (копия) — принимаем только если содержимое идентично
+  fi
+  if [ "${1:-}" = "strict" ]; then
+    [ "$(cat "$site")" = "$(render_nginx_site)" ] || return 1
+  fi
+  return 0
+}

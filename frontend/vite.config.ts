@@ -12,6 +12,7 @@ export default defineConfig({
       "/api": { target: backend, changeOrigin: false, ws: true },
     },
   },
-  build: { sourcemap: false, target: "es2022" },
+  // livekit-client даёт крупный чанк страницы комнаты: это не ошибка (грузится лениво), порог предупреждения поднят.
+  build: { sourcemap: false, target: "es2022", chunkSizeWarningLimit: 900 },
   test: { environment: "node" },
 });

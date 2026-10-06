@@ -45,7 +45,8 @@
 | `asr-service/app/` | провайдер GigaAM, Silero VAD, сегментатор, очередь инференса, конвейер трека (+запись PCM, флаги), LiveKit-воркер, менеджер, health |
 | `frontend/src/` | вход, комнаты, комната (LiveKit, трансляция экрана, запись, транскрипция), история и протоколы, админка (10 вкладок) |
 | `frontend/src/screenShare.ts` | профили трансляции экрана (чёткость / сбалансированный / плавность) |
-| `scripts/lib/envlib.sh`, `tests/scripts/run.sh` | чистые функции (безопасная запись .env, проверка DATA_ROOT, разбор LDAP URI, RAM, сводка портов) и 45 shell-тестов (в CI) |
+| `scripts/lib/envlib.sh`, `scripts/lib/dockerlib.sh`, `tests/scripts/` | чистые функции (.env, DATA_ROOT, LDAP URI, RAM, сводка портов, распознавание своего nginx-site) и Docker-build подсистема (диагностика, пробная сборка, fallback BuildKit→legacy, отпечатки исходников для возобновления); 74 shell-теста (в CI) |
+| `scripts/install.sh` | установка этапами (prerequisites→preflight→dirs→models→build→database→migrations→services→healthcheck→nginx→firewall), возобновление, nginx — последним |
 | `scripts/setup.sh` | мастер установки (вопросы с валидацией, свободные порты, секреты, самопроверка .env, preflight, план, установка по «y») |
 | `scripts/*.sh`, `deployment/` | preflight, install, deploy, rollback, backup, restore, status, logs, smoke-test, models; compose, образ LiveKit, nginx-шаблоны |
 | `docs/INSTALL_AND_UPDATE.md`, `docs/AUDIT.md` | пошаговая инструкция развёртывания/обновления; аудит интерфейса и админки |
@@ -89,6 +90,7 @@ SDK, smbprotocol, httpx, GigaAM (pinned commit), silero-vad, torch, React 18 + T
 - Отбрасывание сегментов при переполнении очереди ASR не восстанавливается (`dropped` в `/readyz` и «Система»).
 - Per-IP лимит входа best-effort (`TRUSTED_PROXY_HOPS`); основной барьер — лимит по логину.
 - Первая реальная установка (Ubuntu 24.04, shared-host) выявила 6 дефектов мастера/preflight/models — исправлены (HISTORY.md), повторная чистая установка на сервере ещё не выполнялась.
+- Реальная несовместимость BuildKit на Ubuntu 24.04 (docker.io 29.1.3, containerd 2.2.1, overlayfs): сборка падает на экспорте образа (`mount callback failed … containerd-mount`, `failed to open writer … locked`) независимо от параллельности (гипотеза о параллельной сборке backend+ASR опровергнута); `DOCKER_BUILDKIT=0` работает. Установщик проверяет builder пробной сборкой и явно переключается на legacy; деструктивных действий над Docker не выполняет. Legacy builder в новых версиях Docker может исчезнуть.
 - Контрольные суммы модели не проверяются (по решению владельца: файлы upstream могут меняться); проверяется только размер.
 - Предположены и не подтверждены: тег `LIVEKIT_IMAGE_TAG` и путь `/livekit-server` в образе LiveKit; VP9 для экрана зависит от браузера (SDK использует резервный кодек).
 - Выгруженные во внешнее хранилище файлы не удаляются по срокам хранения; нет контроля свободного места под записи.

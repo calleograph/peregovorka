@@ -17,13 +17,14 @@ set -uo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-PHASE="pre"; SKIP_NET=0; PROFILE_ARG=""
+PHASE="pre"; SKIP_NET=0; PROFILE_ARG=""; PROBE_BUILD=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
     --profile) PROFILE_ARG="$2"; shift 2 ;;
     --phase) PHASE="$2"; shift 2 ;;
     --skip-network) SKIP_NET=1; shift ;;
+    --probe-build) PROBE_BUILD=1; shift ;;
     -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
@@ -188,10 +189,19 @@ dups="$(printf '%s\n' "${WEB_PORT:-}" "${LIVEKIT_HTTP_PORT:-}" "${LIVEKIT_TCP_PO
 if [ "${NGINX_MANAGE:-no}" = "yes" ] && [ -n "${NGINX_LISTEN_PORT:-}" ]; then
   port_busy tcp "$NGINX_LISTEN_PORT"; rc=$?
   if [ "$rc" -eq 0 ]; then
-    if command -v ss >/dev/null && ss -H -ltnp "sport = :$NGINX_LISTEN_PORT" 2>/dev/null | grep -q nginx; then
-      pwarn "NGINX_LISTEN_PORT $NGINX_LISTEN_PORT уже слушает nginx — допустимо только при уникальном server_name (проверяется ниже)"
+    if own_nginx_site_ok; then
+      pass "NGINX_LISTEN_PORT tcp/$NGINX_LISTEN_PORT занят НАШИМ nginx-site «$NGINX_SITE_NAME» (marker, listen и symlink совпадают) — повторный запуск"
     else
-      pfail "NGINX_LISTEN_PORT tcp/$NGINX_LISTEN_PORT занят не nginx"
+      ssinfo="$(ss -H -ltnp "sport = :$NGINX_LISTEN_PORT" 2>/dev/null || true)"
+      if printf '%s' "$ssinfo" | grep -q 'users:'; then
+        if printf '%s' "$ssinfo" | grep -q nginx; then
+          pwarn "NGINX_LISTEN_PORT $NGINX_LISTEN_PORT уже слушает чужой nginx-site — допустимо только при уникальном server_name (проверяется ниже)"
+        else
+          pfail "NGINX_LISTEN_PORT tcp/$NGINX_LISTEN_PORT занят не nginx: $(printf '%s' "$ssinfo" | grep -o 'users:(([^)]*)' | head -1)"
+        fi
+      else
+        pfail "NGINX_LISTEN_PORT tcp/$NGINX_LISTEN_PORT занят, владелец не определён (нет прав видеть процессы) и это не наш установленный site. Проверьте: sudo ss -ltnp 'sport = :$NGINX_LISTEN_PORT'"
+      fi
     fi
   elif [ "$rc" -eq 1 ]; then pass "NGINX_LISTEN_PORT tcp/$NGINX_LISTEN_PORT свободен"; fi
 fi
@@ -202,8 +212,12 @@ if ! command -v docker >/dev/null 2>&1; then
   if [ "$PROFILE" = "shared-host" ]; then pfail "Docker не установлен. В профиле shared-host установка Docker запрещена — установите его вручную и повторите."
   else pwarn "Docker не установлен — install.sh --profile standalone установит его"; fi
 else
-  if docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then pass "Docker: $(docker version --format '{{.Server.Version}}')"; else pfail "Docker установлен, но демон недоступен для текущего пользователя"; fi
-  if docker compose version >/dev/null 2>&1; then pass "Compose: $(docker compose version --short 2>/dev/null)"; else pfail "Плагин docker compose недоступен"; fi
+  docker_diag pass pwarn pfail || true
+  if [ "$PROBE_BUILD" -eq 1 ]; then
+    if select_build_mode; then pass "Сборка образов: builder=$SELECTED_BUILD_MODE (проверено пробной сборкой)"; else pfail "Сборка образов на этом сервере невозможна (subsystem=docker-build/buildkit) — см. сообщения выше"; fi
+  else
+    info "Реальная пробная сборка выполняется на этапе build установщика (или: preflight.sh --probe-build)."
+  fi
 
   if [ "$N_FAIL" -eq 0 ] || docker compose version >/dev/null 2>&1; then
     if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then

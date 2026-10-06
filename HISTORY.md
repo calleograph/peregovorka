@@ -136,3 +136,20 @@ PCM→WAV, секреты в настройках и аудите, отключ�
 **Проверка.** Новые 45 shell-тестов (`tests/scripts/run.sh`, в CI): квотирование (DN с кириллицей и пробелами, `# $ \ " '`, подстановки команд), CHANGE_ME в комментарии, DATA_ROOT, LDAP URI, RAM, сквозной прогон мастера с неверными ответами, models.sh. Backend — 105 тестов. Скрипты `bash -n` без ошибок.
 
 **Не проверялось.** Чистая переустановка на реальном сервере после исправлений; проверка прав `.env` (600) выполняется только на Linux.
+
+---
+
+## 2026-10-07 — Установщик: этапы, возобновление, BuildKit-fallback, свой nginx-site (по итогам реального развёртывания)
+
+**Найдено на сервере** (Ubuntu 24.04.1, docker.io 29.1.3, containerd 2.2.1, Compose 2.40.3, overlayfs): `docker compose build` стабильно падает на стадии `exporting to image` (`mount callback failed on /var/lib/containerd/tmpmounts/containerd-mount…`, `failed to open writer: ref … locked`), остаются stale mount'ы; воспроизведено на одном `backend` без параллельной сборки — гипотеза «виновата параллельная сборка backend+ASR» **опровергнута**. `DOCKER_BUILDKIT=0` собирает backend/asr/web. Также: installer включал nginx до сборки; повторный preflight считал порт собственного nginx чужим (без root `ss -p` не показывает процесс); отсутствовала диагностика buildx/Bake.
+
+**Сделано.**
+1. `scripts/lib/dockerlib.sh`: диагностика (Docker, Compose, buildx, storage driver, Bake, stale `containerd-mount`), классификация ошибок сборки (infra vs project), пробная реальная сборка, выбор builder'а `BUILD_MODE=auto|buildkit|legacy` с явным **FALLBACK** на `DOCKER_BUILDKIT=0` (и `COMPOSE_BAKE=false`), автоматический повтор проблемной службы через legacy; сообщения `FAIL stage=build service=… subsystem=docker-buildkit|docker-build|dockerfile/project`. Stale mount'ы только диагностируются; никаких prune/umount/рестартов/удаления `/var/lib/*`.
+2. `install.sh` переписан этапами с возобновлением: prerequisites → preflight → dirs → models → build → database → migrations → services → healthcheck → **nginx (последним)** → firewall; `--from`, `--force-build`, `--adopt-images`, `--skip-models`; при сбое — `FAIL stage=… subsystem=…` и подсказка продолжить; при нездоровых сервисах останавливаются только прикладные контейнеры проекта; откат собственных изменений nginx при ошибке `nginx -t` сохранён. Образы не пересобираются, если отпечаток исходников (и параметры) не менялся (`state/build-fingerprints`); `up` — только с `--no-build`, чтобы не запускать скрытую сборку BuildKit. `deploy.sh` использует ту же сборку.
+3. `preflight.sh`: порт `NGINX_LISTEN_PORT` занят собственным site (marker + `listen` + symlink, без зависимости от прав на `ss -p`) — допустим; неопределённый владелец — FAIL с подсказкой `sudo ss`; отчёт Docker (`docker_diag`), `--probe-build`.
+4. `deployment/livekit/Dockerfile`: `ARG LIVEKIT_IMAGE_TAG=v1.9.0` (warning `InvalidDefaultArgInFrom` убран). `frontend`: предупреждение Vite о размере чанка не блокирует сборку (порог 900 КБ; чанк комнаты грузится лениво).
+5. Документация: `docs/INSTALL_AND_UPDATE.md` §2.5, `.env.example` (`BUILD_MODE`), PROJECT.md.
+
+**Проверка.** Shell-тесты 74 (подставной docker: BuildKit ок / сломан с реальным текстом ошибки / оба сломаны / принудительные режимы; классификация; отпечатки исходников и возобновление; распознавание своего nginx-site и отказ при чужом; порядок этапов dry-run — nginx после healthcheck; в плане нет prune/umount). Backend не менялся.
+
+**Не проверялось.** Реальный повтор на сервере с неисправным BuildKit (fallback проверен на подставном docker); `docker buildx`-ветка при установленном buildx; поведение legacy builder при будущем удалении из Docker.

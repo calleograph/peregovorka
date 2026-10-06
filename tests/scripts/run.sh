@@ -89,5 +89,8 @@ t "models.sh отказывает при UNC в DATA_ROOT" bash -c '! bash "$1/s
 rm -rf "$M/data"; echo x > "$M/src/v3_e2e_rnnt.ckpt"
 t "слишком маленький файл сохраняется как .failed" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$M"
 
+# shellcheck source=part_docker.sh
+source "$ROOT/tests/scripts/part_docker.sh"
+
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

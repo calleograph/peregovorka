@@ -68,7 +68,7 @@ fi
 if [ "$DRY_RUN" = "1" ]; then
   if [ -n "$REF" ]; then info "[dry-run] git checkout --detach ${TARGET:0:12}"; else info "[dry-run] git merge --ff-only ${TARGET:0:12}"; fi
   [ "$MIG_CHANGED" -eq 1 ] && info "[dry-run] scripts/backup.sh (обнаружены миграции)"
-  info "[dry-run] preflight; compose build; alembic upgrade head; compose up -d; health checks"
+  info "[dry-run] preflight; сборка образов (BuildKit с проверкой, fallback legacy); alembic upgrade head; compose up -d; health checks"
   exit 0
 fi
 
@@ -89,10 +89,11 @@ if [ "$MIG_CHANGED" -eq 1 ]; then
 fi
 
 # 5. Сборка ТОЛЬКО образов проекта, миграции, запуск.
-dc build
-dc up -d postgres redis
+build_images || die "FAIL stage=build subsystem=docker-build: сборка образов не удалась (код и контейнеры не тронуты; логи: $DATA_ROOT/state/build-*.log)"
+require_images
+dc up -d --no-build postgres redis
 dc run --rm --no-deps backend alembic upgrade head
-dc up -d
+dc up -d --no-build
 
 # 6. Журнал деплоев (для rollback.sh).
 mkdir -p "$DATA_ROOT/state"

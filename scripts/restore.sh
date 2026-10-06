@@ -34,5 +34,5 @@ info "pg_restore…"
 dc exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error < "$FILE" \
   || die "pg_restore завершился с ошибкой. Страховочный дамп 'pre-restore' сохранён в каталоге резервных копий."
 info "Запуск сервисов…"
-dc up -d backend asr web
+dc up -d --no-build backend asr web
 ok "Восстановление завершено. Проверьте: scripts/status.sh && scripts/smoke-test.sh"

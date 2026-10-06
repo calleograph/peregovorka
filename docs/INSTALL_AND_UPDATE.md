@@ -152,6 +152,23 @@ sudo git clone ... /opt/peregovorka && sudo chown -R $USER: /opt/peregovorka
 
 ---
 
+### 2.5 Этапы установщика, сбои и повторный запуск
+
+`install.sh` работает этапами: `prerequisites → preflight → dirs → models → build → database → migrations → services → healthcheck → nginx → firewall`.
+Каждый этап печатает `[ok]/[warn]/[FAIL]`, сбой — одной строкой вида `FAIL stage=build service=backend subsystem=docker-buildkit` (по `subsystem` видно, что сломалось: Docker/хост или сам проект).
+
+- **host nginx включается последним** — когда приложение уже запущено и здорово. Если что-то упало раньше, nginx и его порты остаются как до установки. При ошибке `nginx -t` свои изменения откатываются, reload не выполняется.
+- **Повторный запуск безопасен** — просто выполните ту же команду. Готовое пропускается: образы не пересобираются, если исходники не менялись; собственный nginx-site (marker `managed-by: peregovorka:<проект>`, `listen`, symlink) распознаётся и не считается конфликтом порта; занятые **своими** контейнерами порты допустимы. `--from ЭТАП` начинает с указанного этапа; `--force-build` — пересобрать образы; `--adopt-images` — принять образы, собранные вручную, как актуальные (ваше явное решение).
+- **Сбой прикладных сервисов** (не стали healthy): установщик останавливает только прикладные контейнеры проекта (`web backend asr livekit`), данные БД не трогает, nginx не включает.
+
+**Сборка и BuildKit.** `preflight` показывает версии Docker/Compose/`buildx`, storage driver, режим сборки и устаревшие mount'ы containerd. Установщик перед сборкой реально проверяет builder (`FROM scratch`-образ):
+- BuildKit работает → используется он (`COMPOSE_BAKE=false` — Bake отключён ради предсказуемости);
+- BuildKit падает характерной ошибкой Docker/containerd (`exporting to image`, `mount callback failed`, `failed to open writer … locked`) → в логе явный **FALLBACK** на legacy builder (`DOCKER_BUILDKIT=0`), пока ваш Docker его поддерживает; ошибка помечается как проблема **Docker**, а не проекта;
+- упал `RUN`/`COPY` в Dockerfile → `subsystem=dockerfile/project`, fallback не применяется.
+Режим можно задать явно: `BUILD_MODE=auto|buildkit|legacy` в `.env`. Установщик **никогда** не делает `docker system prune`, не удаляет `/var/lib/docker|containerd`, не размонтирует чужие mount'ы и не перезапускает Docker/containerd. При обнаружении зависших `containerd-mount` он лишь выводит диагностику — решение за администратором сервера.
+
+---
+
 ## 3. Обновление (штатный путь)
 
 **У разработчика** (на своём компьютере):

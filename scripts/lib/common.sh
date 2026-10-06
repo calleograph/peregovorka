@@ -117,3 +117,6 @@ host_version_info() {
 # Чистые функции (.env, пути, LDAP, RAM, сводка портов)
 # shellcheck source=envlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/envlib.sh"
+
+# shellcheck source=dockerlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/dockerlib.sh"
