@@ -20,7 +20,7 @@
 
 ---
 
-## 0.1 Установка одной командой (репозиторий публичный)
+## 0.1 Установка одной командой (рекомендуется)
 
 ```bash
 git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projects/peregovorka   && cd /var/www/projects/peregovorka && scripts/setup.sh --profile shared-host
@@ -34,7 +34,9 @@ git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projec
 
 ---
 
-## 1. Публикация проекта на GitHub (один раз, на вашем компьютере)
+## 1. GitHub: публикация, релизы и доступ сервера (для владельца репозитория)
+
+Репозиторий публичный: `https://github.com/leonheard/peregovorka` — серверу достаточно обычного `git clone` по HTTPS, deploy key не нужен. Ниже — как выпускать релизы; если репозиторий приватный, используйте deploy key (последний пункт).
 
 Рекомендуется **приватный** репозиторий: в проекте лежит документация о вашей инфраструктуре. Секреты (`.env`), старый PHP-код
 (`legacy/php/`), данные и `node_modules` в репозиторий **не попадают** (`.gitignore`).
