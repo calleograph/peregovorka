@@ -129,7 +129,7 @@ pull_base_images() {
 
 # ------------------------------------------------------------------- образы проекта
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
-svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-latest}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
+svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.13.7}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
 svc_extra() { case "$1" in
   livekit) echo "${LIVEKIT_IMAGE_TAG:-}" ;;
   asr) echo "${ASR_TORCH_INDEX_URL:-}|${GIGAAM_GIT_COMMIT:-}|${IMAGE_TAG:-}" ;;
@@ -166,15 +166,34 @@ adopt_images() {
   done
 }
 
-_compose_build_one() { # _compose_build_one svc mode
-  local svc="$1" mode="$2" log="$3"
+# Индикатор долгой сборки: раз в BUILD_TICK секунд (60) печатает «сборка идёт N мин», рост лога и последнюю строку. Сборка ASR (torch,
+# pip install gigaam с GitHub) может идти 15+ минут — это не зависание, пока лог растёт/есть сетевая активность. Таймаутов, убивающих
+# сборку, нет; при завершении родителя индикатор сам останавливается.
+_build_ticker() { # log svc parent_pid
+  local log="$1" svc="$2" parent="$3" start prev=0 cur last mins
+  start=$(date +%s)
+  while sleep "${BUILD_TICK:-60}"; do
+    kill -0 "$parent" 2>/dev/null || exit 0
+    cur="$(fsize "$log" 2>/dev/null || echo 0)"; mins=$(( ($(date +%s) - start) / 60 ))
+    last="$(tail -c 3000 "$log" 2>/dev/null | tr '' '
+' | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-110)"
+    printf '%s[i]%s сборка %s идёт %d мин (лог +%d КБ за интервал). Последняя строка: %s
+' "$C_DIM" "$C_OFF" "$svc" "$mins" $(( (cur - prev) / 1024 )) "${last:-—}" >&2
+    prev=$cur
+  done
+}
+
+_compose_build_one() { # _compose_build_one svc mode log
+  local svc="$1" mode="$2" log="$3" rc tp
   compose_args
+  _build_ticker "$log" "$svc" "$$" & tp=$!
   if [ "$mode" = "legacy" ]; then
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   else
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   fi
-  return "${PIPESTATUS[0]}"
+  kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null
+  return "$rc"
 }
 
 # build_images [svc…] — собирает только то, что нужно. Возврат 0/1; сообщения: stage=build service=… subsystem=…

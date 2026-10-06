@@ -34,11 +34,11 @@ printf 'A_PASSWORD=hunter22\nLIVEKIT_API_KEY=abcdef12\nX_PORT=8000\nSHORT_TOKEN=
 t "env_secret_values: только секреты длиннее 5 символов" eq "$(env_secret_values "$TMP/sec.env" | sort | tr '\n' ' ')" "abcdef12 hunter22 "
 
 # ---- реальный WebSocket Upgrade: трактовка кодов
-t "101 → OK" eq "$(ws_verdict 101)" OK
-t "404 → FAIL, в пояснении /rtc/v1" bash -c 'source "$1"; [ "$(ws_verdict 404)" = FAIL ] && ws_verdict 404 >/dev/null; ws_verdict 404 >/dev/null; [[ "$WS_NOTE" == *"rtc/v1"* ]]' _ "$ROOT/scripts/lib/verifylib.sh"
-t "400/426 → FAIL (прокси не передаёт Upgrade)" eq "$(ws_verdict 426)$(ws_verdict 400)" "FAILFAIL"
-t "нет ответа → WARNING" eq "$(ws_verdict 000)" WARNING
-t "401 → WARNING" eq "$(ws_verdict 401)" WARNING
+t "101 → OK" bash -c 'set -u; source "$1"; ws_verdict 101; [ "$WS_STATUS" = OK ]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "404 → FAIL, в пояснении /rtc/v1" bash -c 'set -u; source "$1"; ws_verdict 404; [ "$WS_STATUS" = FAIL ] && [[ "$WS_NOTE" == *"rtc/v1"* ]]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "400/426 → FAIL (прокси не передаёт Upgrade)" bash -c 'set -u; source "$1"; ws_verdict 426; a=$WS_STATUS; ws_verdict 400; [ "$a$WS_STATUS" = FAILFAIL ]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "нет ответа → WARNING" bash -c 'set -u; source "$1"; ws_verdict 000; [ "$WS_STATUS" = WARNING ]' _ "$ROOT/scripts/lib/verifylib.sh"
+t "401 → WARNING" bash -c 'set -u; source "$1"; ws_verdict 401; [ "$WS_STATUS" = WARNING ]' _ "$ROOT/scripts/lib/verifylib.sh"
 
 # ---- TLS: без сети — только классификация URL
 tls_check "http://meet.example.org"; t "http:// → WARNING (нужен защищённый контекст)" eq "$TLS_STATUS" WARNING
@@ -56,16 +56,16 @@ t "tune-kernel.sh перечисляет рекомендованные знач
 
 # ---- версии: проверенный набор согласован с тем, что реально собирается
 cv() { grep -E "^$1=" "$ROOT/deployment/compat.env" | cut -d= -f2; }
-t "LiveKit по умолчанию: одинаковый тег в Dockerfile, .env.example и dockerlib (latest — клиенты совместимы с более новыми серверами)" eq "$(grep -E '^ARG LIVEKIT_IMAGE_TAG=' "$ROOT/deployment/livekit/Dockerfile" | cut -d= -f2)|$(grep -E '^LIVEKIT_IMAGE_TAG=' "$ROOT/.env.example" | cut -d= -f2)|$(grep -oE 'LIVEKIT_IMAGE_TAG:-[a-z0-9.]+' "$ROOT/scripts/lib/dockerlib.sh" | head -1 | cut -d- -f2)" "latest|latest|latest"
+t "LiveKit закреплён: один и тот же проверенный тег в Dockerfile, .env.example, dockerlib и compat.env (не latest)" eq "$(grep -E '^ARG LIVEKIT_IMAGE_TAG=' "$ROOT/deployment/livekit/Dockerfile" | cut -d= -f2)|$(grep -E '^LIVEKIT_IMAGE_TAG=' "$ROOT/.env.example" | cut -d= -f2)|$(grep -oE 'LIVEKIT_IMAGE_TAG:-[a-z0-9.]+' "$ROOT/scripts/lib/dockerlib.sh" | head -1 | cut -d- -f2)|$(cv TESTED_LIVEKIT_SERVER)" "v1.13.7|v1.13.7|v1.13.7|v1.13.7"
 t "compat.env фиксирует проверенную версию сервера" bash -c 'grep -qE "^TESTED_LIVEKIT_SERVER=v[0-9]+\.[0-9]+\.[0-9]+$" "$1/deployment/compat.env"' _ "$ROOT"
-t "compat.env: Python SDK = requirements ASR" bash -c 'grep -qE "^livekit(==|>=)" "$1/asr-service/requirements.txt"' _ "$ROOT"
+t "compat.env: Python SDK/API и JS SDK зафиксированы точно (==) на проверенных версиях" bash -c '. "$1/deployment/compat.env"; grep -qx "livekit==${TESTED_LIVEKIT_PYTHON_SDK}\(  #.*\)\?" <(sed "s/  #.*//" "$1/asr-service/requirements.txt") && grep -qx "livekit-api==${TESTED_LIVEKIT_API_PYTHON}" <(sed "s/  #.*//" "$1/asr-service/requirements.txt") && grep -qx "livekit-api==${TESTED_LIVEKIT_API_PYTHON}" <(sed "s/  #.*//" "$1/backend/requirements.txt") && grep -q "\"livekit-client\": \"${TESTED_LIVEKIT_CLIENT_JS}\"" "$1/frontend/package.json"' _ "$ROOT"
 t "compat.env: livekit-client = package-lock" eq "$(cv TESTED_LIVEKIT_CLIENT_JS)" "$(grep -A2 '"node_modules/livekit-client"' "$ROOT/frontend/package-lock.json" | grep -m1 '"version"' | cut -d'"' -f4)"
-t "compat_check: совпадение → OK" bash -c 'source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG="$(grep -E "^TESTED_LIVEKIT_SERVER=" "$2/deployment/compat.env" | cut -d= -f2)"; [ "$(compat_check)" = OK ]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
-t "compat_check: latest → OK" bash -c 'source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG=latest; [ "$(compat_check)" = OK ]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
-t "зависимости Python — диапазоны (≥ проверенной, < следующего мажора), без жёстких ==" bash -c '! grep -E "^[A-Za-z]" "$1/backend/requirements.txt" "$1/asr-service/requirements.txt" | grep -v "^.*:#" | grep -E "==" ' _ "$ROOT"
+t "compat_check: совпадение → OK (без подоболочки, под set -u)" bash -c 'set -u; source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG="$(grep -E "^TESTED_LIVEKIT_SERVER=" "$2/deployment/compat.env" | cut -d= -f2)"; compat_check; [ "$COMPAT_STATUS" = OK ] && [ -n "$COMPAT_NOTE" ]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
+t "compat_check: latest → WARNING (в production нужен проверенный тег)" bash -c 'set -u; source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG=latest; compat_check; [ "$COMPAT_STATUS" = WARNING ] && [[ "$COMPAT_NOTE" == *update.sh* ]]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
+t "зависимости Python — диапазоны (≥ проверенной, < следующего мажора), кроме закреплённых LiveKit-компонентов" bash -c '! grep -E "^[A-Za-z]" "$1/backend/requirements.txt" "$1/asr-service/requirements.txt" | sed "s/^[^:]*://" | grep -v "^livekit" | grep -E "=="' _ "$ROOT"
 t "в образах версии баз задаются ARG (можно переопределить)" bash -c 'grep -q "^ARG PYTHON_VERSION" "$1/backend/Dockerfile" && grep -q "^ARG NODE_VERSION" "$1/frontend/Dockerfile" && grep -q "^ARG NGINX_VERSION" "$1/frontend/Dockerfile"' _ "$ROOT"
-t "deploy.sh --pull обновляет базовые образы" bash -c 'grep -q -- "--pull)" "$1/scripts/deploy.sh" && grep -q "PULL_BASES:+--pull" "$1/scripts/lib/dockerlib.sh"' _ "$ROOT"
-t "compat_check: другая версия → WARNING (не блокировка)" bash -c 'source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG=v9.9.9; [ "$(compat_check)" = WARNING ]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
+t "update.sh --pull обновляет базовые образы (deploy.sh — обёртка над update.sh)" bash -c 'grep -q -- "--pull)" "$1/scripts/update.sh" && grep -q "PULL_BASES:+--pull" "$1/scripts/lib/dockerlib.sh" && grep -q "exec .*update.sh" "$1/scripts/deploy.sh"' _ "$ROOT"
+t "compat_check: другая (старая) версия → WARNING (не блокировка)" bash -c 'set -u; source "$2/scripts/lib/envlib.sh"; source "$1"; REPO_ROOT="$2"; LIVEKIT_IMAGE_TAG=v1.9.0; compat_check; [ "$COMPAT_STATUS" = WARNING ] && [[ "$COMPAT_NOTE" == *СТАРШЕ* ]]' _ "$ROOT/scripts/lib/verifylib.sh" "$ROOT"
 
 # ---- nginx: реальная схема публичного URL не подменяется
 t "web nginx: X-Forwarded-Proto берётся из map с запасным \$scheme" bash -c 'grep -q "map \$http_x_forwarded_proto \$xfp" "$1/frontend/nginx.conf" && ! grep -q "X-Forwarded-Proto \$http_x_forwarded_proto" "$1/frontend/nginx.conf"' _ "$ROOT"
@@ -95,6 +95,6 @@ rtc() { bash -c 'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; shift; n=0; 
 t "ASR: 6 потоков × 2 параллельных на 8 ядер — предупреждение о переподписке" bash -c 'out="$(env NPROC_OVERRIDE=8 ASR_CPU_THREADS=6 ASR_MAX_CONCURRENT_INFERENCE=2 bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$1")"; printf "%s" "$out" | grep -q "12 потоков на 8 ядер"' _ "$ROOT"
 t "ASR: 6 потоков × 1 на 8 ядер — без предупреждений" bash -c 'out="$(env NPROC_OVERRIDE=8 ASR_CPU_THREADS=6 ASR_MAX_CONCURRENT_INFERENCE=1 bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$1")"; [ -z "$out" ]' _ "$ROOT"
 t "ASR_CPU_THREADS=0 — предупреждение «все ядра»" bash -c 'out="$(env NPROC_OVERRIDE=8 ASR_CPU_THREADS=0 bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$1")"; printf "%s" "$out" | grep -q "ВСЕ ядра"' _ "$ROOT"
-t "LiveKit v1.9.0 — предупреждение про 404 на /rtc/v1; latest и v1.13.7 — нет" bash -c 'chk(){ env NPROC_OVERRIDE=8 ASR_CPU_THREADS=4 LIVEKIT_IMAGE_TAG="$1" bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$2"; }; chk v1.9.0 "$1" | grep -q "404 на /rtc/v1" && [ -z "$(chk latest "$1")" ] && [ -z "$(chk v1.13.7 "$1")" ] && [ -z "$(chk v1.14.0 "$1")" ]' _ "$ROOT"
+t "LiveKit v1.9.0 — предупреждение про 404 на /rtc/v1; v1.13.7 и новее — нет" bash -c 'chk(){ env NPROC_OVERRIDE=8 ASR_CPU_THREADS=4 LIVEKIT_IMAGE_TAG="$1" bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$2"; }; chk v1.9.0 "$1" | grep -q "404 на /rtc/v1" && [ -z "$(chk v1.13.7 "$1")" ] && [ -z "$(chk v1.14.0 "$1")" ]' _ "$ROOT"
 t "semver_lt сравнивает числа, а не строки (v1.9.0 < v1.13.7)" bash -c 'source "$1/scripts/lib/envlib.sh"; semver_lt v1.9.0 v1.13.7 && ! semver_lt v1.13.7 v1.9.0 && ! semver_lt v1.13.7 v1.13.7' _ "$ROOT"
 t "собственный nginx-site без realtime-директив распознаётся" bash -c 'source "$1/scripts/lib/envlib.sh"; printf "location /livekit/ {}\n" > "$2/old.conf"; ! site_realtime_ok "$2/old.conf" && site_realtime_ok "$1/deployment/nginx/site.http.conf.tpl"' _ "$ROOT" "$TMP"

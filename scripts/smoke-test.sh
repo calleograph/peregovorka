@@ -68,8 +68,8 @@ else rec "ASR" WARNING "модель не загружена/не готова (
 log "-- LiveKit --"
 c="$(http_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$c" = 200 ] && rec "LiveKit HTTP" OK "127.0.0.1:${LIVEKIT_HTTP_PORT}" || rec "LiveKit HTTP" FAIL "HTTP $c"
 LKV="$(dc exec -T livekit livekit-server --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-cv="$(compat_check)"; [ -n "$LKV" ] && COMPAT_NOTE="$COMPAT_NOTE; фактически запущен ${LKV}"
-[ "$cv" = OK ] && rec "Версия LiveKit" OK "$COMPAT_NOTE" || rec "Версия LiveKit" WARNING "$COMPAT_NOTE"
+compat_check; [ -n "$LKV" ] && COMPAT_NOTE="$COMPAT_NOTE; фактически запущен ${LKV}"
+rec "Версия LiveKit" "$COMPAT_STATUS" "$COMPAT_NOTE"
 # 1) изнутри: backend → LiveKit (реальный WebSocket Upgrade на /rtc/v1)
 IN_STATUS="$(printf '%s' "$DIAG" | grep -o '"rtc_v1_internal": *{[^}]*}' | grep -o '"status": *[0-9]*' | grep -o '[0-9]*$')"
 case "${IN_STATUS:-}" in
@@ -85,14 +85,14 @@ r=urllib.request.Request('http://127.0.0.1:8000/internal/v1/diag/token',headers=
 print(json.load(urllib.request.urlopen(r,timeout=15))['token'])" | tr -d '\r\n')"
 if [ -n "$TOKEN" ]; then
   Q="?access_token=${TOKEN}&auto_subscribe=0&sdk=js&protocol=15&version=smoke"
-  code="$(ws_upgrade_code "${BASE}/livekit/rtc/v1${Q}")"; v="$(ws_verdict "$code")"
-  rec "LiveKit WebSocket (через web)" "$v" "$WS_NOTE"
+  code="$(ws_upgrade_code "${BASE}/livekit/rtc/v1${Q}")"; ws_verdict "$code"
+  rec "LiveKit WebSocket (через web)" "$WS_STATUS" "$WS_NOTE"
   PUB="${LIVEKIT_PUBLIC_URL:-}"
   if [ "$NO_PUBLIC" = 1 ] || [ -z "$PUB" ]; then rec "LiveKit WebSocket (публичный URL)" SKIP "не проверялся"
   else
     purl="$(printf '%s' "$PUB" | sed -e 's#^wss://#https://#' -e 's#^ws://#http://#')"
-    code="$(ws_upgrade_code "${purl%/}/rtc/v1${Q}" 8)"; v="$(ws_verdict "$code")"
-    rec "LiveKit WebSocket (публичный URL)" "$v" "${PUB}: $WS_NOTE"
+    code="$(ws_upgrade_code "${purl%/}/rtc/v1${Q}" 8)"; ws_verdict "$code"
+    rec "LiveKit WebSocket (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
   fi
 else rec "LiveKit WebSocket" WARNING "не удалось получить тестовый токен у backend"; fi
 TOKEN=""
@@ -144,6 +144,6 @@ done
 log "==============================================="
 if [ "$FAILS" -eq 0 ]; then
   [ "$WARNS" -gt 0 ] && warn "Предупреждений: $WARNS (не блокируют; см. пояснения выше)"
-  ok "SMOKE TEST ПРОЙДЕН"; exit 0
+  ok "SMOKE TEST ПРОЙДЕН"; log "Smoke test: PASS"; exit 0
 fi
 fail "SMOKE TEST: ошибок — $FAILS"; exit 1

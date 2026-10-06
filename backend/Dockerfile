@@ -1,13 +1,14 @@
 ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim
 
-ARG APP_VERSION=0.0.0
-ARG APP_GIT_COMMIT=unknown
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
-    APP_VERSION=${APP_VERSION} APP_GIT_COMMIT=${APP_GIT_COMMIT}
+# Версия/commit/время сборки — в КОНЦЕ файла: их изменение не должно сбрасывать кэш слоёв с зависимостями.
+# Сетевые операции (apt, pip) повторяются при временных сбоях сети/зеркал.
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_RETRIES=5 PIP_DEFAULT_TIMEOUT=60
 
 # Шрифт с кириллицей для экспорта протоколов в PDF
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \n    && rm -rf /var/lib/apt/lists/*
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
 COPY requirements.txt .

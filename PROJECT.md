@@ -38,6 +38,13 @@ md/txt/docx/pdf; шаблоны инструкций (общие — админ,
 **Хранилища**: протоколы (`storage`) и записи (`audio_storage`) — раздельные настройки в БД, `local|smb`; недоступность
 хранилища записей не теряет файл (статус `failed`, повторная выгрузка автоматически и кнопкой).
 
+**Обновление** (`scripts/update.sh`, `lib/updatelib.sh`): fetch → список commit'ов → отказ при локальных изменениях (stash только по `--stash`, не применяется автоматически) → копия `.env` (600) и сравнение
+с `.env.example` по именам (безопасные новые параметры дописываются, остальное — «требуют решения»; секреты не печатаются) → `git merge --ff-only` → перезапуск скрипта новой версией (фаза 2) →
+закрепление LiveKit на проверенной версии (`deployment/compat.env`; `latest` в production не используется) → preflight → проверка моделей (ничего не скачивается повторно) → backup БД →
+сборка (retry apt/pip/npm/git/docker pull, fallback BuildKit→legacy, commit и время сборки в образах и `/version.json`, индикатор долгой сборки) → Alembic (`current == head`) → up и ожидание healthcheck →
+миграция собственного nginx-site (по marker) → verify (сравнивает git HEAD с commit образов) → smoke-test → итог. Состояние: `DATA_ROOT/state/last-update.state`; `rollback.sh` останавливается,
+если ревизия БД неизвестна коду целевой версии (git rollback ≠ database rollback). Прерванное обновление повторяется той же командой.
+
 **Realtime-аудит** (`docs/realtime-performance-audit.md`, статусы hypothesis/confirmed/fixed/measured): критический путь входа — `Room.connect`; `getUserMedia`,
 WebSocket событий и ASR идут параллельно/независимо; жизненный цикл Room и показа экрана логируется с `client_instance_id` (фазы `ROOM_CREATE … ROOM_DISPOSE`, `SCREEN_*`);
 статистика WebRTC (кодек, FPS, битрейт, потери, jitter, RTT, NACK/PLI/FIR, кадры, путь ICE) + детектор заморозки по `framesDecoded`; запись аудио ASR — через ограниченную очередь
@@ -57,15 +64,15 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 | `backend/app/api/` | `meetings`, `templates`, `client`, `admin`, `admin_system`, `internal` (webhook, diag, smoke), `ws`, `health` |
 | `asr-service/app/` | каталог моделей и менеджер переключения (`catalog`, `runtimes`, `model_manager`, `scoring`, `assets/selftest_ru.wav`), GigaAM-провайдер (потоки torch: `ASR_CPU_THREADS`, `ASR_INTEROP_THREADS`), VAD, очередь (тайминги каждого сегмента в журнале), воркер комнаты, `bench.py` |
 | `frontend/src/` | `pages/RoomPage` (этапы входа, плитки, показ экрана, ресайз панели), `MeetingPage`/`HistoryPage`, админка (`pages/admin/*`, поля с примерами в `fields.ts`), `markdown.ts` (безопасный разбор), `diagnostics.ts`, `mediaErrors.ts`, `liveSocket.ts` |
-| `scripts/` | `setup`, `install`, `preflight`, `deploy [--pull]`, `smoke-test` (таблица), `diag`, `tune-kernel`, `asr-bench`, `collect-metrics`, `check-updates`, `verify`, `ctl`, `backup/restore/rollback`; `lib/mask.sh` (маскирование секретов) |
+| `scripts/` | `setup`, `install` (первая установка/repair), **`update`** (штатное обновление), `check-updates`, `preflight`, `smoke-test` (таблица), `verify`, `diag`, `tune-kernel`, `asr-bench`, `collect-metrics`, `ctl`, `backup/restore`, `rollback` (с проверкой ревизии БД), `deploy` (обёртка над `update`); `lib/updatelib.sh` (обновление/откат), `lib/mask.sh` (маскирование секретов) |
 | `deployment/` | `compose.yml`, `compat.env` (проверенные версии), образ LiveKit, шаблоны nginx (`X-Forwarded-Proto` сохраняется) |
 | `docs/` | `INSTALL_AND_UPDATE`, `COMPATIBILITY`, `ACCEPTANCE_TEST`, `ASR_CONTRACT`, `MIGRATIONS`, `AUDIT`; корень: `DEPLOYMENT.md` (в т.ч. требования к reverse proxy §3.1) |
 
 ## 4. Технологии и версии
 
 Python 3.12 (образы), FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16 и Redis 7 (мажор закреплён намеренно), LiveKit Server
-(`LIVEKIT_IMAGE_TAG`, по умолчанию `latest`, проверен v1.13.7), `livekit` 1.1.20 / `livekit-api` 1.2.1 (Python), GigaAM (закреплённый коммит),
-silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vitest 5, `livekit-client` 2.22.3. Python-зависимости заданы диапазонами
+(`LIVEKIT_IMAGE_TAG`, **закреплён v1.13.7**), `livekit` 1.1.20 / `livekit-api` 1.2.1 (Python, `==`), GigaAM (закреплённый коммит),
+silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vitest 5, `livekit-client` 2.22.3 (точно). Прочие Python-зависимости заданы диапазонами
 (≥ проверенной, < следующего мажора), npm — `^` + lock; базовые образы — через ARG (`docs/COMPATIBILITY.md`).
 
 ## 5. Конфигурация
@@ -82,7 +89,7 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 | Backend | 138 тестов pytest проходят (SQLite + fakeredis + подставной каталог; HTTP-мокирование LLM/обезличивания): доступ после завершения (lease/release/политика/grants), протоколы (инструкция, правка, экспорт docx/pdf/md/txt), шаблоны, удаления с аудитом, выгрузка записей и недоступность хранилища, диагностика/маскирование/WebSocket-проба, тайминги, `room_finished` внутри льготного периода, выбор ASR-модели (проверка файлов, настройка + Redis, тест/сравнение через подставной ASR) |
 | ASR | 58 тестов (потоки torch через подставной torch, тайминги сегментов, порядок закрытия потоков/комнаты; каталог моделей, переключение и ошибки, тест/сравнение, WER/CER/пунктуация, GGUF-адаптер на подставной команде, HTTP-защита); реальные модели/LiveKit **не запускались** |
 | Frontend | 46 тестов vitest (Markdown/XSS, ошибки устройств, тайминги, backoff), `tsc`, `vite build`; прогнан в Chrome против локального стенда (подставной AD, без LiveKit/ASR): админка, страница встречи, окно протокола, просмотр/правка, подтверждение удаления, ветка отказа входа; макет комнаты проверен на статичной разметке с боевым CSS |
-| Shell | 154 теста (маскирование секретов, трактовка кодов WS, параметры ядра, согласованность версий, nginx `X-Forwarded-Proto`, мастер, `.env`, docker-подсистема на подставном docker) |
+| Shell | 217 тестов (в т. ч. `update.sh` на временном origin-репозитории с подставным docker: dry-run, локальные изменения, stash, .env, LiveKit-пин, ожидание healthcheck, повтор после прерывания, non-ff) (маскирование секретов, трактовка кодов WS, параметры ядра, согласованность версий, nginx `X-Forwarded-Proto`, мастер, `.env`, docker-подсистема на подставном docker) |
 | Миграции | 0001–0003, тест сверки схемы с моделями |
 
 ## 7. Известные ограничения и непроверенное
@@ -108,6 +115,9 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 - Права на хранилище SMB, TLS-проверка и RTC-порты проверяются скриптами только на целевом сервере.
 - Группы пользователя фиксируются в сессии при входе. «Один показывающий» — правило клиента. Выгруженные во внешнее хранилище файлы по срокам
   хранения не удаляются. Контрольные суммы модели не проверяются (решение владельца).
+- **`update.sh` проверен на подставных git/docker, не на реальном сервере.** Реальная проверка — обновление production-инсталляции с 1d620bd до 1f25d40 прошло вручную; штатный `update.sh` на реальных контейнерах ещё не запускался
+  (сборка ASR, `docker compose` в рабочем окружении, `nginx -t` под sudo, backup БД).
+- В `backend/Dockerfile` (commit c5e3378) была ошибка — буквальный `\n` в строке установки шрифта, из-за чего `apt-get` получал пакет «n» и падал с кодом 100 при **каждой** сборке; исправлена. Диагноз «временный сбой сети» был неверным.
 - BuildKit на Ubuntu 24.04 (docker.io 29.1.3) нестабилен — установщик проверяет builder и переключается на legacy.
 
 ## 8. Незавершённые задачи

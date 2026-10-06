@@ -3,11 +3,17 @@ ARG NGINX_VERSION=stable
 FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+ENV NPM_CONFIG_FETCH_RETRIES=5 NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=60000
+RUN for i in 1 2 3 4; do npm ci --no-audit --no-fund && ok=1 && break; echo "npm ci: сбой, повтор $i/4"; sleep $((i * 10)); done; [ "${ok:-0}" = 1 ]
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
 RUN npm run build
+# Сведения о сборке для проверки verify.sh (должны совпадать с git HEAD): отдельный слой в конце, кэш npm не сбрасывается.
+ARG APP_VERSION=0.0.0
+ARG APP_GIT_COMMIT=unknown
+ARG APP_BUILT_AT=unknown
+RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' "$APP_VERSION" "$APP_GIT_COMMIT" "$APP_BUILT_AT" > dist/version.json
 
 FROM nginxinc/nginx-unprivileged:${NGINX_VERSION}-alpine
 # Конфиг уже финальный: скрипт entrypoint, пытающийся переписывать default.conf (IPv6 listen), не нужен и ругается

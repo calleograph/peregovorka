@@ -203,6 +203,7 @@ realtime_config_check() {
     else "$ok" "ASR: потоков torch $thr × параллелизм $conc = $((thr * conc)) ≤ ядер $cpus"; fi
   fi
   tag="${LIVEKIT_IMAGE_TAG:-}"
+  if [ "$tag" = "latest" ]; then "$warn" "LIVEKIT_IMAGE_TAG=latest: версия не воспроизводима; в production нужен проверенный тег (deployment/compat.env). scripts/update.sh выставит его сам"; fi
   want="$(grep -E '^TESTED_LIVEKIT_SERVER=' "${REPO_ROOT:-.}/deployment/compat.env" 2>/dev/null | cut -d= -f2)"
   if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ -n "$want" ] && semver_lt "$tag" "$want"; then
     "$warn" "LIVEKIT_IMAGE_TAG=$tag старше проверенной $want: сервер v1.9.0 подтверждённо отвечает 404 на /rtc/v1, клиенты уходят на запасной путь и вход в комнату затягивается на секунды. Обновите (latest или не ниже $want): docs/COMPATIBILITY.md"

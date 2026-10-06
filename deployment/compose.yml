@@ -223,6 +223,10 @@ services:
   web:
     build:
       context: ../frontend
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+        APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-web:${IMAGE_TAG}
     restart: unless-stopped
     depends_on:

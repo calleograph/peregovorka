@@ -16,10 +16,10 @@
 
 | Компонент | Версия | Где задаётся |
 | --- | --- | --- |
-| LiveKit Server | v1.13.7 (проверена как минимальная «хорошая»; по умолчанию ставится `latest`) | `.env`: `LIVEKIT_IMAGE_TAG` |
-| livekit-client (браузер) | 2.22.3 | `frontend/package.json` (`^2.22.3`), `package-lock.json` |
-| livekit (Python SDK, ASR) | 1.1.20 | `asr-service/requirements.txt` (`>=1.1.20,<2`) |
-| livekit-api (Python, backend и ASR) | 1.2.1 | `requirements.txt` (`>=1.2.1,<2`) |
+| LiveKit Server | **v1.13.7** (закреплён; `latest` в production не используется) | `.env`: `LIVEKIT_IMAGE_TAG` (выставляет `update.sh` из `compat.env`) |
+| livekit-client (браузер) | 2.22.3 | `frontend/package.json` (точно), `package-lock.json` |
+| livekit (Python SDK, ASR) | 1.1.20 | `asr-service/requirements.txt` (`==1.1.20`) |
+| livekit-api (Python, backend и ASR) | 1.2.1 | `requirements.txt` (`==1.2.1`) |
 
 Тот же набор записан в `deployment/compat.env` (справочно: установщик при отличии только предупреждает).
 Теги LiveKit Server проверены по Docker Hub / GitHub Releases на 2026-10-06 (v1.13.7 — релиз 2026-09-14; v1.13.8 вышел 2026-10-06
@@ -33,7 +33,7 @@
 | Python-зависимости | диапазоны `>=проверенная,<следующий мажор` | пересборка приносит исправления; границы защищают от несовместимых мажорных выпусков |
 | npm-зависимости | `^` в `package.json`, точные версии — в `package-lock.json` | воспроизводимая сборка; обновление — `npm update` |
 | Node / nginx / Python (базовые образы) | `ARG NODE_VERSION=lts`, `NGINX_VERSION=stable`, `PYTHON_VERSION=3.12` | переопределяются при сборке; Python 3.12 — под колёса torch/silero |
-| LiveKit Server | `latest` по умолчанию, любой тег допустим | см. выше |
+| LiveKit Server и SDK | **закреплены** на проверенном наборе (`deployment/compat.env`); обновляются только разработчиками после проверки | воспроизводимость и защита от несовместимости: старый сервер даёт 404 на `/rtc/v1`, непроверенный новый — неизвестные риски |
 | PostgreSQL 16, Redis 7 | **мажорная версия закреплена намеренно** | смена мажорной версии PostgreSQL требует миграции каталога данных |
 | GigaAM | закреплённый коммит (`GIGAAM_GIT_COMMIT`) | API модели не стабилен; прогрев при старте ловит несовместимость |
 
@@ -41,11 +41,11 @@
 
 ```bash
 scripts/check-updates.sh        # что вышло нового (ничего не меняет)
-scripts/deploy.sh --pull        # пересобрать образы на свежих базах и зависимостях и обновить
+scripts/update.sh --pull        # пересобрать образы на свежих базах и зависимостях (кроме закреплённых LiveKit-компонентов) и обновить
 scripts/smoke-test.sh           # убедиться: /rtc/v1 → 101, ASR, LDAP, TLS, порты
 ```
 
-`deploy.sh --pull` обновляет базовые образы и зависимости в допустимых пределах; без `--pull` образы пересобираются только при
+`update.sh --pull` обновляет базовые образы и зависимости в допустимых пределах; без `--pull` образы пересобираются только при
 изменении исходников. Если новая версия что-то сломала, задайте конкретный тег (`LIVEKIT_IMAGE_TAG=v1.13.7`) или зафиксируйте
 библиотеку (`==`) и сообщите разработчикам.
 

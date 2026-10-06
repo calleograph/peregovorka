@@ -271,16 +271,9 @@ nginx (без `upgrade`), но не делает `dist-upgrade`/`reboot`.
 
 ## 9. Обновление
 
-```bash
-scripts/deploy.sh --dry-run          # что будет сделано
-scripts/deploy.sh                    # fast-forward по upstream-ветке
-scripts/deploy.sh --ref v1.2.0       # либо конкретный тег/SHA (воспроизводимо)
-```
-
-Deploy отказывает при локальных изменениях в рабочей копии и при не-fast-forward.
-Если между версиями изменились миграции — автоматически делается backup БД
-(`--no-backup` — только осознанно). Версия и commit видны в
-`GET /api/v1/version` и в админке.
+Штатно и единственным рекомендуемым способом: `./scripts/check-updates.sh` → `./scripts/update.sh` (полный сценарий, backup `.env`/БД, модели, сборка с retry и commit в образах,
+Alembic, ожидание healthcheck, verify, smoke-test, итог). Подробности, сбои, откат и восстановление после прерывания — `docs/INSTALL_AND_UPDATE.md` раздел 3.
+`install.sh` — для первой установки и repair/reconfigure (`--from ЭТАП`), `deploy.sh` — обёртка над `update.sh`.
 
 ## 10. Backup, restore, rollback
 
@@ -328,5 +321,5 @@ scripts/asr-bench.sh --wav речь.wav --threads 2,4   # выбор поток�
 ## 12. Правила для разработчика (Git)
 
 Основная ветка — стабильная; релизы помечаются тегами. Сервер обновляется
-только через `deploy.sh` (Git), без ручного копирования. Схема БД меняется
+только через `update.sh` (Git), без ручного копирования. Схема БД меняется
 только миграциями Alembic (`backend/migrations/versions`).

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # check-updates.sh — какие более новые версии ключевых компонентов вышли (ничего не меняет и не скачивает образы).
 #   scripts/check-updates.sh [--env FILE]
-# Сравнивает то, что используется (.env, requirements, package-lock), с последними релизами: LiveKit Server (GitHub),
-# livekit / livekit-api (PyPI), livekit-client (npm). Нужен доступ в интернет только у того, кто запускает проверку
-# (рабочая станция администратора или сервер с выходом наружу). Обновление — осознанно: поменять LIVEKIT_IMAGE_TAG в .env
-# (можно на более новую версию или `latest`), затем scripts/deploy.sh и scripts/smoke-test.sh (проверит /rtc/v1).
+# 1) Приложение: git fetch origin и список новых commit'ов, новые параметры .env.example (только имена).
+# 2) Компоненты реального времени: что используется (.env, requirements, package-lock) против последних релизов: LiveKit Server (GitHub),
+#    livekit / livekit-api (PyPI), livekit-client (npm). Это справочная информация: в production используется ПРОВЕРЕННЫЙ набор
+#    (deployment/compat.env), его меняют разработчики после проверки.
+# Обновить установку: ./scripts/update.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 while [ $# -gt 0 ]; do case "$1" in --env) ENV_FILE="$2"; shift 2 ;; *) die "Неизвестный аргумент: $1" ;; esac; done
@@ -21,6 +22,27 @@ except Exception:
 }
 row() { printf '%-28s %-14s %-14s %s\n' "$1" "$2" "$3" "$4"; }
 verdict() { if [ "$3" = "?" ]; then echo "не удалось получить (нет сети?)"; elif [ "$2" = "$3" ]; then echo "актуально"; elif [ "$2" = latest ]; then echo "плавающий тег latest"; else echo "ЕСТЬ НОВЕЕ"; fi; }
+
+if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  log "== Обновления приложения (git) =="
+  HEAD12="$(git -C "$REPO_ROOT" rev-parse HEAD | cut -c1-12)"
+  if upd_git_fetch >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    UP="$(git -C "$REPO_ROOT" rev-parse '@{u}')"; N="$(git -C "$REPO_ROOT" rev-list --count "HEAD..$UP")"
+    if [ "$N" -eq 0 ]; then ok "Установка на актуальной версии (${HEAD12})"
+    else
+      warn "Доступно обновлений: $N (${HEAD12} → ${UP:0:12})"; git -C "$REPO_ROOT" log --oneline --no-decorate -n 15 "HEAD..$UP" | sed 's/^/  /'
+      if [ -f "$ENV_FILE" ]; then
+        TMPX="$(mktemp)"; git -C "$REPO_ROOT" show "$UP:.env.example" > "$TMPX" 2>/dev/null && { upd_env_classify "$ENV_FILE" "$TMPX"
+          [ "${#UPD_NEW_SAFE[@]}" -gt 0 ] && log "  Новые параметры .env (добавятся автоматически): ${UPD_NEW_SAFE[*]}"
+          [ "${#UPD_NEW_DECIDE[@]}" -gt 0 ] && log "  Новые параметры, требующие решения: ${UPD_NEW_DECIDE[*]}"; }
+        rm -f "$TMPX"
+      fi
+      git -C "$REPO_ROOT" diff --quiet "HEAD" "$UP" -- backend/migrations/versions 2>/dev/null || log "  Есть миграции БД (перед ними update.sh сделает backup)"
+      info "Обновить:  ./scripts/update.sh   (сначала можно: ./scripts/update.sh --dry-run)"
+    fi
+  else warn "Не удалось проверить origin (нет сети/доступа к GitHub или у ветки нет upstream)"; fi
+  log
+fi
 
 lk_now="${LIVEKIT_IMAGE_TAG:-$(grep -E '^TESTED_LIVEKIT_SERVER=' "$REPO_ROOT/deployment/compat.env" 2>/dev/null | cut -d= -f2)}"
 lk_new="$(curl -fsS -m 15 https://api.github.com/repos/livekit/livekit/releases/latest 2>/dev/null | jget "d['tag_name']")"
@@ -40,4 +62,4 @@ row "livekit-client (браузер)" "${js_now:-?}" "$js_new" "$(verdict x "${j
 log
 info "Правило: версии сервера и клиентов обновляйте вместе и проверяйте scripts/smoke-test.sh (строка «LiveKit /rtc/v1»)."
 info "Сборка берёт Python-зависимости по диапазонам из requirements, а npm — по package-lock.json (npm update livekit-client обновит его)."
-info "Свежую версию сервера можно задать в .env: LIVEKIT_IMAGE_TAG=<тег> (или latest), затем scripts/deploy.sh."
+info "Версии LiveKit/SDK в production меняют разработчики вместе с deployment/compat.env после проверки; на сервере они приходят с ./scripts/update.sh."

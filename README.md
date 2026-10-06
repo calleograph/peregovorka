@@ -19,7 +19,7 @@ git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projec
 ```
 Мастер задаёт вопросы, подбирает свободные порты, создаёт `.env` с секретами, проверяет сервер (`preflight`), показывает план и
 **применяет его только после вашего подтверждения**. Для чистого сервера — `--profile standalone`. Подробности и обновление — в
-[docs/INSTALL_AND_UPDATE.md](docs/INSTALL_AND_UPDATE.md).
+[docs/INSTALL_AND_UPDATE.md](docs/INSTALL_AND_UPDATE.md) (обновление: `./scripts/check-updates.sh` → `./scripts/update.sh`).
 
 ## Документация
 

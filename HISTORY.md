@@ -257,3 +257,28 @@ SMB; smoke-test/diag/tune-kernel на сервере. Системные тре�
 **Проверка.** backend 138, ASR 58, vitest 46, shell 154, `tsc`, `vite build`; Chrome против локального стенда (без ошибок страницы).
 
 **Не проверялось.** Ничего из realtime на реальном LiveKit/клиентах: время входа после обновления сервера, причина подвисаний экрана, выгода параллельного инференса, FFI-warning, влияние VAD на качество, внешние прокси-слои. Статус `measured` в аудите ни у одного пункта.
+
+---
+
+## 2026-10-06 — Штатное обновление: scripts/update.sh, откат с проверкой БД, версии образов, retry сборки
+
+**Контекст.** Реальное обновление production-инсталляции 1d620bd → 1f25d40 прошло вручную и показало: баг `COMPAT_NOTE: unbound variable` в verify/smoke, `commit=unknown` в образах при ручной сборке,
+verify сразу после `up -d` (web ещё `starting`), сбой `apt-get` (код 100) при сборке, очень долгая сборка ASR (pip + GitHub), ручные длинные команды git/docker/alembic.
+
+**Найдено и исправлено.**
+1. **`COMPAT_NOTE`/`WS_NOTE`:** функции `compat_check`/`ws_verdict` вызывались через `$(...)` — значения, заданные в подоболочке, не возвращались, и под `set -u` проверка падала. Теперь результат — глобальные
+   `COMPAT_STATUS/NOTE`, `WS_STATUS/NOTE`, вызов напрямую, служебные переменные инициализируются в `verifylib.sh`.
+2. **Причина «временного» сбоя apt (код 100):** в `backend/Dockerfile` (мой commit c5e3378) была буквальная последовательность `\n` вместо переноса строки → `apt-get install … fonts-dejavu-core \n` устанавливал пакет «n» и падал **при каждой
+   сборке**. Исправлено; добавлен тест на отсутствие `\n` в Dockerfile. Кроме того, ARG/ENV с commit стояли в начале Dockerfile backend/ASR и сбрасывали кэш слоёв (включая torch) при каждом обновлении — перенесены в конец.
+3. **commit=unknown:** сборка образов теперь всегда идёт через `update.sh` с `APP_VERSION/APP_GIT_COMMIT/APP_BUILT_AT` (`APP_BUILD_TIME` — псевдоним); web получил `version.json`; `verify` сравнивает git HEAD с commit образов backend/asr/web.
+4. **Retry сети:** `apt` (`Acquire::Retries=5`), `pip` (`PIP_RETRIES` + цикл повтора для torch, зависимостей и GigaAM), `npm ci` (повтор), `docker pull`, `git fetch`; повторяется только упавший сервис, кэш сохраняется; индикатор долгой сборки раз в минуту.
+5. **LiveKit закреплён** (v1.13.7; `latest` не используется); `livekit`, `livekit-api` (Python) и `livekit-client` (JS) — точные версии; `update.sh` закрепляет `LIVEKIT_IMAGE_TAG` по `compat.env`.
+
+**Сделано.** `scripts/update.sh` (16 этапов; фаза 2 запускается новой версией скрипта после `git merge --ff-only`), `scripts/lib/updatelib.sh`; `rollback.sh` переписан (состояние `last-update.state`, образы `prev-<sha>`, остановка при ревизии БД,
+неизвестной коду цели); `deploy.sh` — обёртка; `check-updates.sh` показывает commit'ы и новые параметры; ожидание healthcheck с прогрессом; миграция собственного nginx-site по marker (копия, `nginx -t`, откат при ошибке);
+права на запуск (`+x`) у всех `scripts/*.sh` в git (раньше новые скрипты были 644); документация (`INSTALL_AND_UPDATE.md` разделы 3.1–3.11, `DEPLOYMENT.md`, `COMPATIBILITY.md`, `MIGRATIONS.md`).
+
+**Проверка.** shell-тесты 217 (в т. ч. `update.sh` на временном origin с подставным docker), `tsc`, `vite build`, vitest 46.
+
+**Не проверялось.** Штатный `update.sh` на реальном сервере и реальных контейнерах; сборка ASR после перестановки слоёв Dockerfile; `nginx -t`/reload под sudo в миграции site; backup/restore на реальной БД; fallback BuildKit на реальном
+сбое Docker. ASR-параметры (потоки × параллелизм) не менялись — только предупреждение.

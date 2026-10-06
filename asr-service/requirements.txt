@@ -7,6 +7,6 @@ fastapi>=0.142.2,<1
 uvicorn>=0.54.0,<1
 pydantic>=2.13.5,<3
 pydantic-settings>=2.15.0,<3
-livekit>=1.1.20,<2
-livekit-api>=1.2.1,<2
+livekit==1.1.20  # проверенная версия (deployment/compat.env)
+livekit-api==1.2.1  # проверенная версия (deployment/compat.env)
 silero-vad>=6.2.3,<7

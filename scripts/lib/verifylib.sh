@@ -3,6 +3,10 @@
 # Только чтение: ничего не меняет в системе. Используется install.sh (этапы migrations и verify) и scripts/verify.sh.
 # Секреты не выводятся.
 
+# Служебные переменные результата (устанавливаются функциями НАПРЯМУЮ, а не через $(...): значения из подоболочки не возвращаются).
+# Инициализация здесь, чтобы `set -u` в вызывающих скриптах никогда не падал из-за необъявленной переменной.
+COMPAT_STATUS=""; COMPAT_NOTE=""; WS_STATUS=""; WS_NOTE=""; TLS_STATUS=""; TLS_NOTE=""
+
 # ------------------------------------------------------------------------- Alembic
 # stdin → первая ревизия из вывода `alembic current|heads` (строки вида «0002 (head)» или «0002»). Логи alembic игнорируются.
 alembic_rev() { grep -E '^[0-9A-Za-z_]+( \(head\))?[[:space:]]*$' | head -1 | awk '{print $1}'; }
@@ -60,16 +64,17 @@ ws_upgrade_code() {
       -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null || true
 }
 
-# ws_verdict КОД → OK|WARNING|FAIL и пояснение (в WS_NOTE)
+# ws_verdict КОД → WS_STATUS (OK|WARNING|FAIL) и WS_NOTE. Вызывать НАПРЯМУЮ (не через $(...)).
 ws_verdict() {
-  case "$1" in
-    101) WS_NOTE="WebSocket Upgrade выполнен (101)"; echo OK ;;
-    401|403) WS_NOTE="HTTP $1: сервер достигнут, но токен отклонён — проверьте LIVEKIT_API_KEY/SECRET"; echo WARNING ;;
-    404) WS_NOTE="HTTP 404: путь /rtc/v1 не найден — LiveKit устарел (SDK уйдёт в медленный запасной путь /rtc) либо прокси не передаёт /livekit/"; echo FAIL ;;
-    400|426|200|301|302) WS_NOTE="HTTP $1 вместо 101: прокси не передаёт заголовки Upgrade/Connection (нужны proxy_http_version 1.1, Upgrade, Connection upgrade)"; echo FAIL ;;
-    000|"") WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось"; echo WARNING ;;
-    *) WS_NOTE="HTTP $1"; echo FAIL ;;
+  WS_STATUS=FAIL; WS_NOTE="HTTP ${1:-?}"
+  case "${1:-}" in
+    101) WS_STATUS=OK; WS_NOTE="WebSocket Upgrade выполнен (101)" ;;
+    401|403) WS_STATUS=WARNING; WS_NOTE="HTTP $1: сервер достигнут, но токен отклонён — проверьте LIVEKIT_API_KEY/SECRET" ;;
+    404) WS_NOTE="HTTP 404: путь /rtc/v1 не найден — LiveKit устарел (SDK уйдёт в медленный запасной путь /rtc) либо прокси не передаёт /livekit/" ;;
+    400|426|200|301|302) WS_NOTE="HTTP $1 вместо 101: прокси не передаёт заголовки Upgrade/Connection (нужны proxy_http_version 1.1, Upgrade, Connection upgrade)" ;;
+    000|"") WS_STATUS=WARNING; WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось" ;;
   esac
+  return 0
 }
 
 # tls_check URL → TLS_STATUS (OK|WARNING|FAIL|SKIP) и TLS_NOTE. Без -k: проверяется доверие к цепочке и имя хоста; затем срок
@@ -109,16 +114,38 @@ tls_check() {
   return 0
 }
 
-# compat_check — сравнение версий с проверенным набором (deployment/compat.env). Только информирование (WARN), не блокировка:
-# решающая проверка — реальный WebSocket на /rtc/v1. Заполняет COMPAT_NOTE; печатает OK|WARNING.
+# compat_check — сравнение версии LiveKit с проверенной (deployment/compat.env). Результат: COMPAT_STATUS (OK|WARNING), COMPAT_NOTE.
+# Вызывать НАПРЯМУЮ. Только информирование: решающая проверка — реальный WebSocket на /rtc/v1 (scripts/smoke-test.sh).
 compat_check() {
-  local f="$REPO_ROOT/deployment/compat.env" want have
-  COMPAT_NOTE=""
-  [ -r "$f" ] || { COMPAT_NOTE="deployment/compat.env не найден"; echo WARNING; return 0; }
+  local f="${REPO_ROOT:-.}/deployment/compat.env" want have
+  COMPAT_STATUS=WARNING; COMPAT_NOTE=""
+  [ -r "$f" ] || { COMPAT_NOTE="deployment/compat.env не найден"; return 0; }
   want="$(grep -E '^TESTED_LIVEKIT_SERVER=' "$f" | cut -d= -f2)"; have="${LIVEKIT_IMAGE_TAG:-}"
-  if [ "$have" = "$want" ]; then COMPAT_NOTE="LiveKit Server ${have} = проверенная версия"; echo OK
-  elif [ "$have" = "latest" ] || [ -z "$have" ]; then COMPAT_NOTE="LiveKit Server: latest (проверено на ${want}); клиенты обратно совместимы с более новыми серверами, решающая проверка — проба /rtc/v1"; echo OK
-  else COMPAT_NOTE="LiveKit Server ${have} отличается от проверенной ${want}: допустимо, но если это СТАРАЯ версия (ниже проверенной), вход в комнату может замедляться (/rtc/v1 → 404). Решающая проверка — scripts/smoke-test.sh"; echo WARNING; fi
+  if [ "$have" = "$want" ]; then COMPAT_STATUS=OK; COMPAT_NOTE="LiveKit Server ${have} = проверенная версия"
+  elif [ "$have" = "latest" ] || [ -z "$have" ]; then COMPAT_NOTE="LIVEKIT_IMAGE_TAG=${have:-не задан}: в production нужен проверенный тег ${want} (scripts/update.sh выставит его сам)"
+  elif semver_lt "$have" "$want" 2>/dev/null; then COMPAT_NOTE="LiveKit Server ${have} СТАРШЕ проверенной ${want}: вход в комнату может замедляться (/rtc/v1 → 404). Обновите: scripts/update.sh"
+  else COMPAT_NOTE="LiveKit Server ${have} новее проверенной ${want}: допустимо, но не проверялось; решающая проверка — scripts/smoke-test.sh"; fi
+  return 0
+}
+
+# check_build_versions — сравнивает git HEAD с commit, «запечённым» в образах backend/asr/web (build ARG → ENV/version.json).
+# Несовпадение или commit=unknown → предупреждение (образ собран вручную или не из этого commit): scripts/update.sh --force-build.
+check_build_versions() {
+  local head b a w
+  head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null | cut -c1-12)"
+  [ -n "$head" ] || { v_warn "git HEAD не определён — сравнение версий образов пропущено"; return 0; }
+  read -r _ b <<<"$(svc_http backend http://127.0.0.1:8000/api/v1/version)"
+  read -r _ a <<<"$(svc_http asr http://127.0.0.1:8090/readyz)"
+  w="$(dc exec -T web wget -qO- http://127.0.0.1:8080/version.json 2>/dev/null || true)"
+  local name val
+  for name in backend asr web; do
+    case "$name" in backend) val="$b" ;; asr) val="$a" ;; web) val="$w" ;; esac
+    val="$(printf '%s' "$val" | grep -o '"commit": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    if [ -z "$val" ]; then v_warn "Версия образа $name не определена (старый образ без version.json/commit?) — пересоберите: scripts/update.sh --force-build"
+    elif [ "$val" = unknown ]; then v_warn "Образ $name: commit=unknown (собран без данных Git, например вручную командой docker compose build) — пересоберите: scripts/update.sh --force-build"
+    elif [ "$val" != "$head" ]; then v_warn "Образ $name собран из commit $val, а git HEAD = $head — пересоберите: scripts/update.sh --force-build"
+    else v_ok "Образ $name: commit $val = git HEAD"; fi
+  done
 }
 
 verify_deployment() {
@@ -158,6 +185,8 @@ verify_deployment() {
     v_ok "ASR healthy; модель загружена: $(printf '%s' "$body" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4) ($(printf '%s' "$body" | grep -o '"device":"[^"]*"' | head -1 | cut -d'"' -f4))"
   else v_fail "ASR не готов или модель не загружена (HTTP $code): $(printf '%s' "$body" | cut -c1-200)"; fi
 
+  check_build_versions
+
   log "-- HTTP-цепочка --"
   if command -v curl >/dev/null 2>&1; then
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/")"; [ "$code" = 200 ] && v_ok "Internal HTTP (web ${web_addr}:${WEB_PORT}): $code" || v_fail "Web ${web_addr}:${WEB_PORT} вернул $code"
@@ -165,7 +194,7 @@ verify_deployment() {
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/internal/v1/smoke")"; [ "$code" = 404 ] && v_ok "Внутренний API снаружи закрыт (404)" || v_fail "/internal/ доступен снаружи (код $code) — должен быть 404"
     code="$(_curl_code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "http://${web_addr}:${WEB_PORT}/livekit/rtc")"
     case "$code" in 101|400|401|403|426) v_ok "Сигналинг LiveKit через web (/livekit/) достижим (HTTP $code)" ;; *) v_fail "Сигналинг LiveKit через web недоступен (HTTP $code) — проверьте прокси /livekit/" ;; esac
-    local cv; cv="$(compat_check)"; if [ "$cv" = OK ]; then v_ok "$COMPAT_NOTE"; else v_warn "$COMPAT_NOTE"; fi
+    compat_check; if [ "$COMPAT_STATUS" = OK ]; then v_ok "$COMPAT_NOTE"; else v_warn "$COMPAT_NOTE"; fi
     code="$(_curl_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$code" = 200 ] && v_ok "LiveKit HTTP healthy ($code)" || v_fail "LiveKit HTTP 127.0.0.1:${LIVEKIT_HTTP_PORT}: $code"
     if [ "${NGINX_MANAGE:-no}" = "yes" ]; then
       code="$(_curl_code -H "Host: ${NGINX_SERVER_NAME}" "http://127.0.0.1:${NGINX_LISTEN_PORT}/healthz")"
