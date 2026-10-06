@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import uuid
 from typing import Any
@@ -260,7 +261,8 @@ async def client_diagnostics(request: Request, su: SessionUser = Depends(require
     r = request.app.state.redis
     ev = [_json.loads(x) for x in await r.lrange("clientdiag:events", 0, 99)]
     mt = [_json.loads(x) for x in await r.lrange("clientdiag:metrics", 0, 99)]
-    return {"events": ev, "metrics": mt}
+    lc = [_json.loads(x) for x in await r.lrange("clientdiag:lifecycle", 0, 199)]
+    return {"events": ev, "metrics": mt, "lifecycle": lc}
 
 
 _host_stats = diagnostics.host_stats
@@ -301,6 +303,21 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
     online = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).join(Meeting, Meeting.id == MeetingParticipant.meeting_id)
                                .where(Meeting.ended_at.is_(None), MeetingParticipant.left_at.is_(None)))).scalar_one()
     out["live"] = {"users_online": online}
+    counters = {k: int(v) for k, v in (await app.state.redis.hgetall("counters:realtime")).items()}
+    cm = [json.loads(x) for x in await app.state.redis.lrange("clientdiag:metrics", 0, 99)]
+
+    def avg(key: str):
+        vals = [m[key] for m in cm if isinstance(m.get(key), (int, float))]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    joins = max(counters.get("room_create", 0), 1)
+    out["realtime"] = {
+        "active_meetings": (await db.execute(select(func.count()).select_from(Meeting).where(Meeting.ended_at.is_(None)))).scalar_one(),
+        "users_online": online, "counters": counters, "rooms_per_join": round((counters.get("room_create", 0) + counters.get("room_create_rejoin", 0)) / joins, 2),
+        "client": {"samples": len(cm), "rtt_ms": avg("rtt_ms"), "packet_loss_pct": avg("packet_loss_pct"),
+                   "bitrate_out_kbps": avg("bitrate_out_kbps"), "bitrate_in_kbps": avg("bitrate_in_kbps")},
+        "recording": {k: (hb or {}).get(k) for k in ("recorder_queue", "recorder_dropped", "recorder_written_mb")},
+    }
     out["recording_export"] = {
         "failed": (await db.execute(select(func.count()).select_from(Recording).where(Recording.export_status.in_(("pending", "failed"))))).scalar_one()}
     out["counts"] = {

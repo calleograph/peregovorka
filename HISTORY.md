@@ -233,3 +233,27 @@ SMB; smoke-test/diag/tune-kernel на сервере. Системные тре�
 
 **Не проверялось / ограничения.** Реальный transcribe.cpp: в образ он не входит, интерфейс командной строки не подтверждён (адаптер настраивается `ASR_GGUF_BIN/ASR_GGUF_ARGS`, проверен на
 подставной команде); реальная загрузка и переключение Full ↔ Q5_K_M, замер CPU/RAM/скорости/качества на реальных моделях; RAM внешнего процесса — максимум дочернего (Linux). Тестовый WAV синтетический.
+
+---
+
+## 2026-10-06 — Аудит производительности realtime: путь входа, жизненный цикл Room, ASR, запись, прокси
+
+**Контекст.** После расширения ВМ до 8 vCPU / 16 ГБ ускорения нет, ресурсы простаивают → искать задержки в пайплайне, а не наращивать железо. Референс — актуальный Jitsi Meet stable
+(скачаны `jitsi-meet-web 1.0.9442`, `jitsi-meet-web-config 1.0.9442`, `jitsi-videobridge2 2.3-318-gbf271b11f`; прочитаны `config.js`, nginx-пример, sysctl/systemd JVB, `reference.conf` JVB/jitsi-media-transform/ice4j;
+из lib-jitsi-meet master — `IceFailedHandling`, `RTPStatsCollector`, `TPCUtils`; из GigaAM main — `decoding.py`, `model.py`). Код JVB (Java) не изучался.
+
+**Сделано.**
+1. Результат оформлен в `docs/realtime-performance-audit.md` (симптом → измерения → реализация → референс → причина → исправление → эффект → результат; статусы hypothesis/confirmed/fixed/measured; сравнение с Jitsi по 16 темам).
+2. Frontend: `getUserMedia` параллельно `Room.connect`; `startAudio()` вынесен из критического пути; WebSocket событий и комната — сразу после `/join`; `performance.mark/measure`; метрики `room_create/livekit_connect/get_user_media/backend_ws_connect/total_join`;
+   `client_instance_id` и фазы `ROOM_*`/`SCREEN_*` (журнал комнаты + сервер); счётчики reconnect/rejoin и «объектов Room на один вход»; статистика WebRTC (кодек, FPS, битрейт, потери, jitter, RTT, NACK/PLI/FIR, кадры, ICE-путь), детектор заморозки экрана;
+   раздельные настройки камеры и экрана (`roomOptions.ts`); «Транскрибация временно недоступна» при пропаже ASR.
+3. ASR: удалён неиспользуемый `threading.Lock` (потокобезопасность обоснована исходниками GigaAM); предупреждение «потоки × параллелизм > ядер»; логирование `os.cpu_count/torch threads`; тайминги сегмента (`vad_wait/preprocessing/inference/decoding/end_to_end`);
+   запись PCM через ограниченную очередь и поток-писатель с явным учётом потерь; VAD-параметры из админки на лету; `asr-bench.sh --concurrency`.
+4. Backend/админка: новые метрики и счётчики, раздел «Реальное время» в «Состоянии системы», таблица фаз Room, рабочая задержка и RTF в карточке ASR, форма VAD.
+5. Прокси/установщик: `proxy_buffering off; proxy_request_buffering off; tcp_nodelay on` для `/api/v1/ws` и `/livekit/`; `preflight`/`verify` — рекомендации (потоки×параллелизм, версия LiveKit старее проверенной, собственный site без realtime-директив); чек-лист и приёмочный сценарий дополнены.
+
+**Решения «не менять» (с обоснованием в аудите).** sysctl — не трогать; `uvicorn --workers` — не увеличивать (фоновые задачи в lifespan продублировались бы); железо — не наращивать.
+
+**Проверка.** backend 138, ASR 58, vitest 46, shell 154, `tsc`, `vite build`; Chrome против локального стенда (без ошибок страницы).
+
+**Не проверялось.** Ничего из realtime на реальном LiveKit/клиентах: время входа после обновления сервера, причина подвисаний экрана, выгода параллельного инференса, FFI-warning, влияние VAD на качество, внешние прокси-слои. Статус `measured` в аудите ни у одного пункта.

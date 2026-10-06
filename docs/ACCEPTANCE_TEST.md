@@ -31,6 +31,14 @@
 | 11 | Обычный участник вышел со страницы встречи → доступ закрыт; прямая ссылка не открывает | 404 |
 | 12 | Админ повторно открывает историю и протокол | доступ есть |
 
+## Дополнительно для аудита realtime (`docs/realtime-performance-audit.md`)
+
+- Время входа каждого из 3 пользователей и разбивка по этапам (админка → «Время входа»; в комнате «⚙ Диагностика»): `join_api_ms`, `livekit_connect_ms` (`signaling` + `ice`), `get_user_media_ms`, `backend_ws_connect_ms`, `total_join_ms`.
+- «Диагностика клиентов» → «Жизненный цикл Room»: у всех фаз участника один и тот же `instance`; число объектов Room на вход ≈ 1,0.
+- Сетевой обрыв 5–15 с: время восстановления (RECONNECTING → RECONNECTED), создан ли новый Room (`reason=rejoin`).
+- Показ экрана: FPS, битрейт, NACK/PLI, потери, `screen_frozen`, причина ограничения качества; остановка/повторный запуск не трогают микрофон и транскрипцию.
+- ASR: журнал сегментов (`vad_wait_ms`, `queue_wait_ms`, `inference_ms`, `decoding_ms`, `end_to_end_ms`, RTF); `scripts/asr-bench.sh --concurrency 1,2`.
+
 ## Что занести в отчёт
 
 - CPU: max/avg хоста и по контейнерам (`collect-metrics.sh`); RAM: max; пропускная способность LiveKit; потери пакетов;

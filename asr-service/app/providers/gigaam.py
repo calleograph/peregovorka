@@ -13,7 +13,8 @@ head. Версия пакета зафиксирована в Dockerfile (GIGAAM
 from __future__ import annotations
 
 import logging
-import threading
+import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +36,6 @@ class GigaAmProvider:
         self._model = None
         self._torch = None
         self._ready = False
-        self._lock = threading.Lock()
         self.model_id, self.runtime, self.quant = model_id, "pytorch", quant
         self.info = ModelInfo(provider="gigaam", name=model_name, device=device, runtime="pytorch", model_id=model_id, quant=quant)
 
@@ -77,7 +77,7 @@ class GigaAmProvider:
             except RuntimeError as exc:  # inter-op пул уже создан: менять можно только до первой работы torch
                 log.warning("ASR_INTEROP_THREADS не применён", extra={"error": str(exc)[:200]})
         self.threads = {"intra": int(torch.get_num_threads()), "interop": int(torch.get_num_interop_threads())}
-        log.info("Потоки torch", extra={"intra_threads": self.threads["intra"], "interop_threads": self.threads["interop"],
+        log.info("Потоки torch", extra={"cpu_count": os.cpu_count(), "intra_threads": self.threads["intra"], "interop_threads": self.threads["interop"],
                                         "requested_intra": self._cpu_threads, "requested_interop": self._interop_threads})
         return self.threads
 
@@ -88,11 +88,19 @@ class GigaAmProvider:
         torch, model = self._torch, self._model
         if torch is None or model is None:
             raise RuntimeError("Модель не загружена")
+        # Одна общая копия модели используется из нескольких потоков БЕЗ блокировки: forward() и RNNTGreedyDecoding.decode() в GigaAM
+        # не меняют состояние объекта (все скрытые состояния — локальные переменные; токенизатор SentencePiece только читает) — проверено по
+        # исходникам gigaam/model.py и gigaam/decoding.py. Параллелизм ограничивает InferenceQueue (ASR_MAX_CONCURRENT_INFERENCE).
+        t0 = time.perf_counter()
         param = next(model.parameters())
         with torch.inference_mode():
             wav = torch.from_numpy(pcm.astype(np.float32) / 32768.0).to(param.device).to(param.dtype).unsqueeze(0)
             length = torch.full([1], wav.shape[-1], device=param.device)
+            t1 = time.perf_counter()
             encoded, encoded_len = model.forward(wav, length)
+            t2 = time.perf_counter()
             decoded = model.decoding.decode(model.head, encoded, encoded_len)
+            t3 = time.perf_counter()
         text = str(decoded[0][0]).strip()
-        return TranscriptionResult(text=text, language=language or "ru")
+        return TranscriptionResult(text=text, language=language or "ru", timings={
+            "preprocessing_ms": round((t1 - t0) * 1000, 1), "inference_ms": round((t2 - t1) * 1000, 1), "decoding_ms": round((t3 - t2) * 1000, 1)})

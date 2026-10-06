@@ -181,3 +181,37 @@ kernel_tuning_check() {
     fi
   done
 }
+
+
+# ----------------------------------------------------------- рекомендации реального времени (только чтение)
+# semver_lt A B → 0, если версия A (vX.Y.Z) старше B
+semver_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sort -V | head -1)" = "${1#v}" ]; }
+
+# site_realtime_ok FILE → 0, если в собственном nginx-site у путей WebSocket/LiveKit отключена буферизация и включён tcp_nodelay
+site_realtime_ok() { [ -r "$1" ] && grep -q 'proxy_buffering off' "$1" && grep -q 'proxy_request_buffering off' "$1" && grep -q 'tcp_nodelay on' "$1"; }
+
+# realtime_config_check ok_fn warn_fn — читает окружение (.env уже загружен): потоки ASR × параллелизм против числа CPU, версия LiveKit,
+# собственный nginx-site. Ничего не меняет.
+realtime_config_check() {
+  local ok="$1" warn="$2" cpus thr conc tag want f
+  cpus="${NPROC_OVERRIDE:-$(nproc 2>/dev/null || echo 0)}"; thr="${ASR_CPU_THREADS:-0}"; conc="${ASR_MAX_CONCURRENT_INFERENCE:-1}"
+  if [[ "$cpus" =~ ^[0-9]+$ ]] && [ "$cpus" -gt 0 ]; then
+    if [ "$thr" = 0 ]; then
+      "$warn" "ASR_CPU_THREADS=0: torch займёт ВСЕ ядра хоста ($cpus). На общем сервере задайте число потоков (рекомендация: половина vCPU) и подберите по задержке: scripts/asr-bench.sh"
+    elif [ $((thr * conc)) -gt "$cpus" ]; then
+      "$warn" "ASR_CPU_THREADS($thr) × ASR_MAX_CONCURRENT_INFERENCE($conc) = $((thr * conc)) потоков на $cpus ядер: параллельные распознавания мешают друг другу и растят задержку. Уменьшите потоки или параллелизм (оценить выгоду: scripts/asr-bench.sh --concurrency 1,$conc)"
+    else "$ok" "ASR: потоков torch $thr × параллелизм $conc = $((thr * conc)) ≤ ядер $cpus"; fi
+  fi
+  tag="${LIVEKIT_IMAGE_TAG:-}"
+  want="$(grep -E '^TESTED_LIVEKIT_SERVER=' "${REPO_ROOT:-.}/deployment/compat.env" 2>/dev/null | cut -d= -f2)"
+  if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ -n "$want" ] && semver_lt "$tag" "$want"; then
+    "$warn" "LIVEKIT_IMAGE_TAG=$tag старше проверенной $want: сервер v1.9.0 подтверждённо отвечает 404 на /rtc/v1, клиенты уходят на запасной путь и вход в комнату затягивается на секунды. Обновите (latest или не ниже $want): docs/COMPATIBILITY.md"
+  fi
+  f="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}/${NGINX_SITE_NAME:-}"
+  if [ -n "${NGINX_SITE_NAME:-}" ] && [ -r "$f" ]; then
+    if site_realtime_ok "$f"; then "$ok" "nginx-site ${NGINX_SITE_NAME}: для /api/v1/ws и /livekit/ отключена буферизация, включён tcp_nodelay"
+    else "$warn" "nginx-site ${NGINX_SITE_NAME} создан до настройки realtime: добавьте в location /api/v1/ws и /livekit/ — proxy_buffering off; proxy_request_buffering off; tcp_nodelay on; (или пересоздайте site: scripts/install.sh --from nginx)"; fi
+    grep -Eq 'X-Forwarded-Proto[[:space:]]+http;' "$f" && "$warn" "nginx-site подменяет X-Forwarded-Proto на http — приложение потеряет реальную схему публичного URL"
+  fi
+  return 0
+}

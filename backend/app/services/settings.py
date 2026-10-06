@@ -226,6 +226,12 @@ class AsrModelSettings(_Group):
     """Какая модель распознавания активна. Пусто — модель по умолчанию из .env (ASR_MODEL_ID). Список моделей ведёт сам ASR (каталог)."""
 
     active_model: str = ""
+    # Параметры VAD (деление речи на реплики). Пусто — значение из .env (ASR_VAD_*). Применяются к НОВЫМ трекам без перезапуска ASR.
+    vad_threshold: float | None = Field(default=None, gt=0, lt=1)
+    vad_end_silence_ms: int | None = Field(default=None, ge=100, le=5000)
+    vad_min_speech_ms: int | None = Field(default=None, ge=32, le=5000)
+    vad_pad_ms: int | None = Field(default=None, ge=0, le=1000)
+    vad_max_segment_seconds: float | None = Field(default=None, ge=3.0, le=25.0)
 
     @field_validator("active_model")
     @classmethod

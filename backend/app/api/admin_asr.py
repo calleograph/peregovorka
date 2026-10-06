@@ -51,7 +51,9 @@ async def models(request: Request, su: SessionUser = Depends(require_admin), db:
     if not reachable:  # запасной источник: последний heartbeat (модели без деталей)
         hb = await request.app.state.bridge.heartbeat()
         return {"reachable": False, "desired": desired, "error": UNREACHABLE, "models": (hb or {}).get("models", []), "active_id": (hb or {}).get("active_model")}
-    return {"reachable": True, "desired": desired, **data}
+    hb = await request.app.state.bridge.heartbeat()
+    live = {k: (hb or {}).get(k) for k in ("avg_infer_ms", "avg_queue_ms", "rtf", "processed", "dropped", "queue_depth")}
+    return {"reachable": True, "desired": desired, "live": live, **data}
 
 
 @router.put("/active")

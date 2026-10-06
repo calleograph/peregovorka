@@ -62,6 +62,7 @@
 | Заголовки `Upgrade` и `Connection: upgrade` передаются дальше; HTTP/1.1 к бэкенду; таймаут чтения ≥ 1 часа для этих путей | иначе соединение рвётся через минуту | обрывы встреч |
 | `Host` сохраняется; `X-Forwarded-For` добавляется; **`X-Forwarded-Proto` передаётся как есть** (`https`), не подменяется на `http` | приложение определяет реальный публичный URL (Origin/CSRF, ссылки) | ошибки входа/CSRF, «смешанное содержимое» |
 | Путь `/livekit/` передаётся без изменений (до `web`) | сервер звонков ждёт `/rtc/v1` | 404 на `/rtc/v1` → медленный вход |
+| Для `/livekit/` и `/api/v1/ws`: **без буферизации** (`proxy_buffering off`, `proxy_request_buffering off`) и `tcp_nodelay on` | минимальная задержка сигналинга и событий (то же делает пример nginx Jitsi) | лишние десятки–сотни мс на каждое сообщение |
 | Медиа **не** проксируется: клиенты ходят напрямую на `LIVEKIT_NODE_IP` по `LIVEKIT_TCP_PORT/tcp` и `LIVEKIT_UDP_PORT/udp` | WebRTC | нет звука и видео, хотя страница открывается |
 
 Примеры включения WebSocket: **nginx** — `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 3600s;`

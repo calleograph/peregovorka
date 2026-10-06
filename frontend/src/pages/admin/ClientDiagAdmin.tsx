@@ -17,8 +17,9 @@ const n = (v: unknown, unit = "") => (typeof v === "number" ? `${Math.round(v * 
 export default function ClientDiagAdmin() {
   const [events, setEvents] = useState<ClientEventRow[]>([]);
   const [metrics, setMetrics] = useState<ClientMetricRow[]>([]);
+  const [lifecycle, setLifecycle] = useState<ClientEventRow[]>([]);
   const [err, setErr] = useState("");
-  const load = useCallback(() => api.admin.clientDiagnostics().then((d) => { setEvents(d.events); setMetrics(d.metrics); setErr(""); }).catch((e) => setErr((e as ApiError).message)), []);
+  const load = useCallback(() => api.admin.clientDiagnostics().then((d) => { setEvents(d.events); setMetrics(d.metrics); setLifecycle(d.lifecycle ?? []); setErr(""); }).catch((e) => setErr((e as ApiError).message)), []);
   useEffect(() => { void load(); const i = window.setInterval(load, 10000); return () => window.clearInterval(i); }, [load]);
   return (
     <section>
@@ -29,6 +30,12 @@ export default function ClientDiagAdmin() {
       <table className="table compact"><thead><tr><th>Время</th><th>Пользователь</th><th>Событие</th><th>Причина</th><th>Подробности</th></tr></thead><tbody>
         {events.length === 0 && <tr><td colSpan={5} className="muted">Событий пока нет.</td></tr>}
         {events.slice(0, 100).map((e, i) => <tr key={i}><td>{t(e.ts)}</td><td>{e.user}</td><td>{EVENT_LABEL[e.event] ?? e.event}</td><td><code>{e.reason ?? ""}</code></td><td className="small">{e.detail ?? ""}</td></tr>)}
+      </tbody></table>
+      <h3>Жизненный цикл Room и показа экрана</h3>
+      <p className="muted small">Фазы ROOM_CREATE → CONNECT_START → SIGNALING_CONNECTED → ICE_CONNECTED → CONNECT_OK → RECONNECTING/RECONNECTED → DISCONNECTED → ROOM_DISPOSE и SCREEN_*. Одинаковый <code>instance</code> у всех фаз — один и тот же объект (нормальное переподключение); новый <code>instance</code> с <code>reason=rejoin</code> — создан новый Room.</p>
+      <table className="table compact"><thead><tr><th>Время</th><th>Пользователь</th><th>Фаза</th><th>Подробности</th></tr></thead><tbody>
+        {lifecycle.length === 0 && <tr><td colSpan={4} className="muted">Фаз пока нет.</td></tr>}
+        {lifecycle.slice(0, 120).map((e, i) => <tr key={i}><td>{t(e.ts)}</td><td>{e.user}</td><td><code>{e.reason ?? ""}</code></td><td className="small">{e.detail ?? ""}</td></tr>)}
       </tbody></table>
       <h3>Качество связи</h3>
       <div style={{ overflowX: "auto" }}>

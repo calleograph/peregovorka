@@ -28,6 +28,10 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        # realtime: без буферизации и с отключённым алгоритмом Нейгла — задержка сигналинга/событий минимальна (у Jitsi тот же tcp_nodelay на WebSocket)
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
     }
 
     location /livekit/ {
@@ -41,6 +45,10 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        # realtime: без буферизации и с отключённым алгоритмом Нейгла — задержка сигналинга/событий минимальна (у Jitsi тот же tcp_nodelay на WebSocket)
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
     }
 
     location / {

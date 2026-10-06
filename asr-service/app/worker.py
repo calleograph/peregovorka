@@ -15,10 +15,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .audio.segmenter import SegmenterConfig
 from .audio.vad import VadFactory
 from .config import AsrSettings
 from .inference import InferenceQueue
+from .runtime_config import segmenter_config
 from .pipeline import Flags, ParticipantPipeline, is_user_microphone_track
 from .publisher import SegmentPublisher
 
@@ -43,10 +43,6 @@ class RoomWorker:
         self._queue = queue
         self._publisher = publisher
         self._vad_factory = vad_factory
-        self._cfg = SegmenterConfig(
-            threshold=settings.asr_vad_threshold, end_silence_ms=settings.asr_vad_end_silence_ms,
-            min_speech_ms=settings.asr_vad_min_speech_ms, pad_ms=settings.asr_vad_pad_ms,
-            max_segment_s=settings.asr_max_segment_seconds)
         self.flags = Flags(transcribe=info.transcribe, record_audio=info.record_audio)
         self._room = None
         self._stop = asyncio.Event()
@@ -172,7 +168,7 @@ class RoomWorker:
             return
         pipeline = ParticipantPipeline(
             meeting_id=self.info.meeting_id, room_name=self.info.room_name, identity=identity,
-            vad_factory=self._vad_factory, seg_cfg=self._cfg, queue=self._queue, publisher=self._publisher,
+            vad_factory=self._vad_factory, seg_cfg=segmenter_config(self._s), queue=self._queue, publisher=self._publisher,
             flags=self.flags, recordings_dir=self._s.recordings_dir)
 
         async def frames() -> AsyncIterator[tuple[np.ndarray, float]]:

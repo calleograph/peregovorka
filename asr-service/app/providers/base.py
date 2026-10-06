@@ -39,6 +39,7 @@ class TranscriptionResult:
     text: str
     language: str | None = None
     confidence: float | None = None
+    timings: dict | None = None  # preprocessing_ms / inference_ms / decoding_ms — если движок умеет их разделять
 
 
 class AsrProvider(Protocol):

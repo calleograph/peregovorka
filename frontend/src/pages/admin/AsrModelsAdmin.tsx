@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type AsrCompare, type AsrModel, type AsrModels, type AsrTestResult } from "../../api";
 import { bytes } from "../../util";
+import { vadFields } from "./fields";
+import SettingsForm from "./SettingsForm";
 
 const RUNTIME_LABEL: Record<string, string> = { pytorch: "PyTorch", gguf: "GGUF · transcribe.cpp", onnx: "ONNX" };
 const STATUS: Record<string, [string, string]> = {
@@ -88,6 +90,9 @@ export default function AsrModelsAdmin() {
         <div className="card"><div className="l">Состояние</div><div className="v" style={{ fontSize: 16 }}>{data.ready ? "готова" : data.loading_id ? "загружается…" : "не готова"}</div>
           <div className="l">{active?.load_ms ? `загрузка заняла ${(active.load_ms / 1000).toFixed(1)} с` : ""}</div></div>
         <div className="card"><div className="l">Установлено моделей</div><div className="v">{installed} из {data.models.length}</div></div>
+        <div className="card" title="Средние по последним распознанным сегментам рабочей встречи"><div className="l">Рабочая задержка распознавания</div>
+          <div className="v" style={{ fontSize: 16 }}>{data.live?.avg_infer_ms != null ? `${data.live.avg_infer_ms} мс` : "—"}</div>
+          <div className="l">RTF {data.live?.rtf ?? "—"} · очередь {data.live?.avg_queue_ms ?? "—"} мс · отброшено {data.live?.dropped ?? "—"}</div></div>
       </div>
 
       {blocked && (
@@ -144,6 +149,10 @@ export default function AsrModelsAdmin() {
           <p className="muted small">{cmp?.note ?? "RTF — время распознавания / длительность аудио (меньше — быстрее). CPU — процессорное время одного прогона. RAM — размер процесса ASR. WER/CER — доля ошибок слов/символов относительно эталона; пунктуация — сколько знаков поставлено и насколько они в тех же местах, что в эталоне. Синтезированная речь — только для сравнения моделей между собой, не абсолютная оценка качества."}</p>
         </div>
       )}
+      <div style={{ marginTop: 16 }}>
+        <SettingsForm key="asr-vad" group="asr" title="Параметры деления речи (VAD)" fields={vadFields}
+          intro="Влияют на задержку и качество реплик: слишком короткая пауза дробит фразы, слишком длинная — задерживает текст. Применяются к новым трекам без перезапуска ASR; пустое поле — значение из .env. Проверьте на реальных разговорах: обрезание концов слов, короткие реплики, длинная речь, пунктуация." />
+      </div>
       <p className="muted small">Все прогоны пишутся в журнал аудита. Метрики рабочего распознавания (inference_ms, audio_duration_ms, realtime_factor, queue_wait_ms) — в журнале ASR по каждому сегменту и в разделе «Состояние системы».</p>
     </section>
   );

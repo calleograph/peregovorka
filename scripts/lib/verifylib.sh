@@ -181,6 +181,7 @@ verify_deployment() {
 
   log "-- параметры хоста для production --"
   kernel_tuning_check v_ok v_warn
+  realtime_config_check v_ok v_warn
 
   return "$VERIFY_FAILS"
 }

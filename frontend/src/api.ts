@@ -38,6 +38,11 @@ export interface SystemStatus {
   versions?: { livekit_server: string; livekit_python_sdk_asr: string | null };
   live?: { users_online: number };
   recording_export?: { failed: number };
+  realtime?: {
+    active_meetings: number; users_online: number; counters: Record<string, number>; rooms_per_join: number;
+    client: { samples: number; rtt_ms: number | null; packet_loss_pct: number | null; bitrate_out_kbps: number | null; bitrate_in_kbps: number | null };
+    recording: { recorder_queue: number | null; recorder_dropped: number | null; recorder_written_mb: number | null };
+  };
 }
 export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null }
 export interface RecordingRow {
@@ -79,6 +84,7 @@ export interface AsrModel {
 export interface AsrModels {
   reachable: boolean; desired: string; active_id: string | null; loading_id?: string | null; device?: string; ready?: boolean; error?: string;
   threads?: { intra?: number; interop?: number }; test_audio_s?: number | null; models: AsrModel[];
+  live?: { avg_infer_ms: number | null; avg_queue_ms: number | null; rtf: number | null; processed: number | null; dropped: number | null; queue_depth: number | null };
 }
 export interface AsrTestResult {
   ok: boolean; error?: string; skipped?: boolean; model_id: string; title: string; runtime: string; quant?: string; device?: string; audio_s?: number;
@@ -199,7 +205,7 @@ export const api = {
     recordings: () => request<RecordingRow[]>("GET", "/admin/recordings"),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
-    clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[] }>("GET", "/admin/client-diagnostics"),
+    clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[] }>("GET", "/admin/client-diagnostics"),
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
     asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),
     setAsrModel: (modelId: string) => request<{ ok: boolean; desired: string; note: string }>("PUT", "/admin/asr/active", { model_id: modelId }),

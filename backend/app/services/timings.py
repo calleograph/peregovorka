@@ -8,6 +8,11 @@
   participant_active_ms  — браузер: от нажатия «Войти» до состояния «подключено» в комнате;
   microphone_publish_ms  — браузер: от запроса микрофона до публикации трека;
   asr_join_ms            — ASR: от команды старта сессии до входа воркера в комнату LiveKit;
+  room_create_ms         — браузер: от ответа /join до созданного объекта Room;
+  livekit_connect_ms     — браузер: весь Room.connect (сигналинг + ICE);
+  get_user_media_ms      — браузер: getUserMedia микрофона (включая запрос разрешения), идёт ПАРАЛЛЕЛЬНО подключению;
+  backend_ws_connect_ms  — браузер: открытие WebSocket событий приложения (независимо от LiveKit);
+  total_join_ms          — браузер: от нажатия «Войти» до состояния «подключено»;
   asr_first_segment_ms   — ASR: от входа воркера до первой опубликованной реплики встречи.
 Сравнение этих средних отделяет тормоз backend от прокси, сигналинга, ICE, публикации медиа и ASR.
 """
@@ -18,7 +23,8 @@ import math
 from redis.asyncio import Redis
 
 NAMES = ("join_backend_ms", "join_api_ms", "signaling_connect_ms", "ice_connect_ms", "participant_active_ms",
-         "microphone_publish_ms", "asr_join_ms", "asr_first_segment_ms")
+         "microphone_publish_ms", "asr_join_ms", "asr_first_segment_ms",
+         "room_create_ms", "livekit_connect_ms", "get_user_media_ms", "backend_ws_connect_ms", "total_join_ms")
 KEEP = 200
 TTL_SECONDS = 86400
 MAX_MS = 600_000

@@ -22,7 +22,11 @@ EVENTS = {
     "device_error", "mic_failed", "camera_failed", "publish_failed", "autoplay_blocked",
     "screen_track_published", "screen_track_unpublished", "screen_track_ended", "screen_share_restarted",
     "backend_ws_connected", "backend_ws_reconnecting", "rejoin_started", "rejoin_failed",
+    "room_lifecycle", "screen_lifecycle", "screen_frozen",
 }
+LIFECYCLE = {"room_lifecycle", "screen_lifecycle"}
+COUNTERS_KEY, LIFECYCLE_KEY = "counters:realtime", "clientdiag:lifecycle"
+COUNTED = {"reconnecting", "reconnected", "disconnected", "rejoin_started", "rejoin_failed", "screen_frozen", "screen_share_failed", "screen_share_ended_by_browser", "join_failed"}
 EVENTS_KEY, METRICS_KEY = "clientdiag:events", "clientdiag:metrics"
 
 
@@ -38,10 +42,10 @@ def _str(v: Any, n: int) -> str | None:
     return str(v)[:n] if isinstance(v, (str, int, float)) and str(v) else None
 
 
-async def _push(request: Request, key: str, item: dict) -> None:
+async def _push(request: Request, key: str, item: dict, keep: int = 200) -> None:
     r = request.app.state.redis
     await r.lpush(key, json.dumps(item, ensure_ascii=False))
-    await r.ltrim(key, 0, 199)
+    await r.ltrim(key, 0, keep - 1)
     await r.expire(key, 86400)
 
 
@@ -53,7 +57,17 @@ async def client_event(request: Request, body: dict[str, Any] = Body(...), su: S
     item = {"ts": time.time(), "event": ev, "user": su.sam_account_name, "meeting_id": _str(body.get("meeting_id"), 40),
             "reason": _str(body.get("reason"), 80), "detail": _str(body.get("detail"), 300)}
     log.info("client_event", extra={k: v for k, v in item.items() if k != "ts"})
-    await _push(request, EVENTS_KEY, item)
+    r = request.app.state.redis
+    field = None
+    if ev in COUNTED:
+        field = ev
+    elif ev == "room_lifecycle" and item["reason"] == "ROOM_CREATE":  # сколько объектов Room создано (больше входов — значит, Room пересоздаётся)
+        field = "room_create_rejoin" if "reason=rejoin" in (item["detail"] or "") else "room_create"
+    if field:
+        await r.hincrby(COUNTERS_KEY, field, 1)
+        await r.expire(COUNTERS_KEY, 86400)
+    # фазы жизненного цикла пишутся отдельно: их много, и они не должны вытеснять ошибки
+    await _push(request, LIFECYCLE_KEY if ev in LIFECYCLE else EVENTS_KEY, item, keep=400 if ev in LIFECYCLE else 200)
 
 
 @router.post("/metrics", status_code=204)
@@ -67,11 +81,14 @@ async def client_metrics(request: Request, body: dict[str, Any] = Body(...), su:
         "candidate": _str(body.get("candidate"), 20), "quality": _str(body.get("quality"), 20),
         "join_api_ms": _num(body.get("join_api_ms"), 0, 600000), "signaling_connect_ms": _num(body.get("signaling_connect_ms"), 0, 600000),
         "ice_connect_ms": _num(body.get("ice_connect_ms"), 0, 600000), "participant_active_ms": _num(body.get("participant_active_ms"), 0, 600000),
-        "microphone_publish_ms": _num(body.get("microphone_publish_ms"), 0, 600000),
+        "microphone_publish_ms": _num(body.get("microphone_publish_ms"), 0, 600000), "room_create_ms": _num(body.get("room_create_ms"), 0, 600000),
+        "livekit_connect_ms": _num(body.get("livekit_connect_ms"), 0, 600000), "get_user_media_ms": _num(body.get("get_user_media_ms"), 0, 600000),
+        "backend_ws_connect_ms": _num(body.get("backend_ws_connect_ms"), 0, 600000), "total_join_ms": _num(body.get("total_join_ms"), 0, 600000),
         "screen": {"fps": _num(screen.get("fps"), 0, 240), "bitrate_kbps": _num(screen.get("bitrate_kbps"), 0, 1e6),
                    "width": _num(screen.get("width"), 0, 20000), "height": _num(screen.get("height"), 0, 20000),
                    "limit_reason": _str(screen.get("limit_reason"), 30), "frames_dropped": _num(screen.get("frames_dropped"), 0, 1e9)},
     }
     await _push(request, METRICS_KEY, item)
-    for name in ("join_api_ms", "signaling_connect_ms", "ice_connect_ms", "participant_active_ms", "microphone_publish_ms"):
+    for name in ("join_api_ms", "signaling_connect_ms", "ice_connect_ms", "participant_active_ms", "microphone_publish_ms", "room_create_ms",
+                 "livekit_connect_ms", "get_user_media_ms", "backend_ws_connect_ms", "total_join_ms"):
         await timings.record(request.app.state.redis, name, item.get(name))

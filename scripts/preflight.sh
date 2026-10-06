@@ -137,6 +137,10 @@ fi
 log; log "== Параметры ядра (только предупреждения; установщик sysctl не меняет) =="
 kernel_tuning_check pass pwarn
 
+log; log "== Рекомендации реального времени (только предупреждения) =="
+realtime_config_check pass pwarn
+info "Если перед проектом стоят внешние прокси (например панель вида Nginx Proxy Manager → системный nginx → nginx проекта): WebSocket Upgrade, X-Forwarded-Proto и отсутствие буферизации нужны на КАЖДОМ слое — чек-лист в DEPLOYMENT.md §3.1"
+
 log; log "== Каталоги и диск =="
 check_dir_parent() {
   local d="$1" p="$1"

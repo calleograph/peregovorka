@@ -29,6 +29,7 @@ class Job:
     segment: SpeechSegment
     on_result: Callable[["JobResult"], Awaitable[None]]
     enqueued_at: float = field(default_factory=time.monotonic)
+    vad_wait_ms: int = 0  # от конца речи до постановки в очередь (пауза-конец реплики VAD)
 
 
 @dataclass
@@ -109,10 +110,13 @@ class InferenceQueue:
                 self.processed += 1
                 self._lat.append((infer_ms, queue_ms, job.segment.duration_s))
                 # Текст реплик в журнал НЕ пишется — только тайминги: по ним видно, тормозит ли распознавание.
+                tm = result.timings or {}
                 log.info("Сегмент распознан", extra={
-                    "meeting_id": job.meeting_id, "participant": job.identity, "audio_duration_ms": audio_ms,
-                    "inference_ms": infer_ms, "realtime_factor": round(infer_ms / audio_ms, 3) if audio_ms else None,
-                    "queue_wait_ms": queue_ms, "total_latency_ms": total_ms, "has_text": bool(result.text.strip()),
+                    "meeting_id": job.meeting_id, "participant": job.identity, "speech_duration_ms": audio_ms, "audio_duration_ms": audio_ms,
+                    "vad_wait_ms": job.vad_wait_ms, "queue_wait_ms": queue_ms, "preprocessing_ms": tm.get("preprocessing_ms"),
+                    "inference_ms": infer_ms, "model_inference_ms": tm.get("inference_ms"), "decoding_ms": tm.get("decoding_ms"),
+                    "total_latency_ms": total_ms, "end_to_end_ms": job.vad_wait_ms + total_ms,
+                    "realtime_factor": round(infer_ms / audio_ms, 3) if audio_ms else None, "has_text": bool(result.text.strip()),
                     "model_id": getattr(getattr(self._provider, "info", None), "model_id", ""), "runtime": getattr(getattr(self._provider, "info", None), "runtime", "")})
                 if result.text.strip():
                     await job.on_result(JobResult(job, result, queue_ms, infer_ms, total_ms))

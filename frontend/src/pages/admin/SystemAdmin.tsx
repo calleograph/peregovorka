@@ -10,6 +10,11 @@ const TIMING_LABEL: Record<string, [string, string]> = {
   ice_connect_ms: ["Установка медиасоединения (ICE)", "Согласование пути для звука/видео. Долго — закрыты UDP/TCP-порты медиа, VPN, сложная сеть."],
   participant_active_ms: ["От нажатия «Войти» до комнаты", "Главный показатель: ориентир 1–2 секунды."],
   microphone_publish_ms: ["Публикация микрофона", "От запроса микрофона до публикации. Включает время, пока пользователь отвечает на запрос браузера."],
+  room_create_ms: ["Создание Room", "От ответа /join до созданного объекта Room в браузере: должно быть единицы миллисекунд."],
+  livekit_connect_ms: ["Room.connect (всего)", "Сигналинг + ICE. Главный кандидат на «лишние секунды»: 404 на /rtc/v1 с откатом на /rtc, WebSocket на прокси, закрытые порты медиа."],
+  get_user_media_ms: ["getUserMedia (микрофон)", "Идёт ПАРАЛЛЕЛЬНО подключению; включает время ответа пользователя на запрос браузера."],
+  backend_ws_connect_ms: ["Канал событий (WebSocket)", "Открытие /api/v1/ws; независим от LiveKit и на вход в комнату не влияет."],
+  total_join_ms: ["Всего: «Войти» → в комнате", "Итоговый показатель; цель 1–2 с в LAN/VPN."],
   asr_join_ms: ["Вход ASR в комнату", "От старта встречи до входа сервиса распознавания в комнату (на вход пользователя не влияет)."],
   asr_first_segment_ms: ["Первая реплика встречи", "От конца первой фразы до её публикации: включает «холодный» старт распознавания."],
 };
@@ -93,6 +98,22 @@ export default function SystemAdmin() {
           return <tr key={k} title={hint}><td>{label}<div className="muted small">{hint}</div></td><td>{t ? ms(t.avg) : "—"}</td><td>{t ? ms(t.p95) : "—"}</td><td>{t ? ms(t.max) : "—"}</td><td>{t?.n ?? 0}</td></tr>;
         })}
       </tbody></table>
+
+      {s.realtime && (
+        <>
+          <h3>Реальное время</h3>
+          <div className="kpi">
+            <div className="card"><div className="l">Идёт встреч · пользователей онлайн</div><div className="v">{s.realtime.active_meetings} · {s.realtime.users_online}</div></div>
+            <div className="card"><div className="l">RTT (среднее по клиентам)</div><div className="v">{s.realtime.client.rtt_ms ?? "—"}{s.realtime.client.rtt_ms != null ? " мс" : ""}</div></div>
+            <div className="card"><div className="l">Потери пакетов</div><div className="v">{s.realtime.client.packet_loss_pct ?? "—"}{s.realtime.client.packet_loss_pct != null ? " %" : ""}</div></div>
+            <div className="card"><div className="l">Битрейт исх. / вх.</div><div className="v" style={{ fontSize: 16 }}>{s.realtime.client.bitrate_out_kbps ?? "—"} / {s.realtime.client.bitrate_in_kbps ?? "—"} кбит/с</div></div>
+            <div className="card"><div className="l">Переподключения за сутки</div><div className="v" style={{ fontSize: 16 }}>{s.realtime.counters.reconnecting ?? 0} · разрывов {s.realtime.counters.disconnected ?? 0} · повторных входов {s.realtime.counters.rejoin_started ?? 0}</div></div>
+            <div className="card" title="Room должен создаваться один раз на вход. Значение заметно выше 1 означает, что объект пересоздаётся (повторные входы или ошибка жизненного цикла)."><div className="l">Объектов Room на один вход</div><div className="v">{s.realtime.rooms_per_join}</div></div>
+            <div className="card"><div className="l">Запись аудио: очередь · потеряно · записано</div><div className="v" style={{ fontSize: 16 }}>{s.realtime.recording.recorder_queue ?? "—"} КБ · {s.realtime.recording.recorder_dropped ?? "—"} · {s.realtime.recording.recorder_written_mb ?? "—"} МБ</div></div>
+            <div className="card"><div className="l">Заморозки показа экрана</div><div className="v">{s.realtime.counters.screen_frozen ?? 0}</div></div>
+          </div>
+        </>
+      )}
 
       <h3>Версии компонентов реального времени</h3>
       <table className="table compact"><tbody>

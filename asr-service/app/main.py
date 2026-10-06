@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import hmac
 import logging
+import os
 import signal
 
 import uvicorn
@@ -18,7 +19,9 @@ from .inference import InferenceQueue
 from .logging_setup import configure_logging
 from .manager import SessionManager
 from .model_manager import ModelManager
+from .pipeline import recorder_stats
 from .publisher import SegmentPublisher, heartbeat_loop
+from .runtime_config import VAD_CONFIG_KEY, apply_vad, current_vad
 
 log = logging.getLogger("asr")
 DESIRED_MODEL_KEY = "asr:desired_model"  # желаемая модель из админки (пишет backend); ASR применяет её сам
@@ -38,6 +41,7 @@ async def watch_desired_model(redis: Redis, models: ModelManager, interval: floa
     Неудавшийся выбор повторно не загружается, пока выбор не изменится (иначе — цикл неудачных загрузок)."""
     while True:
         try:
+            apply_vad(await redis.get(VAD_CONFIG_KEY))
             want = await redis.get(DESIRED_MODEL_KEY)
             if want and want != models.active_id and want != models.failed_desired and models.loading_id is None:
                 await models.activate(want)
@@ -74,6 +78,7 @@ async def amain() -> None:
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
             "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(),
+            **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
             "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
 
@@ -106,11 +111,18 @@ async def amain() -> None:
         res = await models.activate(wanted)  # ошибка загрузки НЕ останавливает сервис: админ увидит причину и сможет выбрать другую модель
         if not res.get("ok"):
             log.error("Стартовая модель не загружена — сервис остаётся not-ready, выбор модели доступен в админке", extra={"error": res.get("error"), "model": wanted})
+        apply_vad(await redis.get(VAD_CONFIG_KEY))
+        threads = models.threads.get("intra") or settings.asr_cpu_threads or (os.cpu_count() or 1)
+        if threads * settings.asr_max_concurrent_inference > (os.cpu_count() or 1):
+            log.warning("Потоков больше, чем ядер: ASR_CPU_THREADS × ASR_MAX_CONCURRENT_INFERENCE превышает число CPU — параллельные распознавания "
+                        "будут мешать друг другу и растить задержку; уменьшите потоки или ASR_MAX_CONCURRENT_INFERENCE (замер: scripts/asr-bench.sh --concurrency)",
+                        extra={"threads": threads, "concurrent": settings.asr_max_concurrent_inference, "cpu_count": os.cpu_count()})
         queue.start()
         tasks.append(asyncio.create_task(heartbeat_loop(redis, snapshot), name="heartbeat"))
         tasks.append(asyncio.create_task(watch_desired_model(redis, models), name="model-watch"))
         tasks.append(asyncio.create_task(manager.run(), name="manager"))
-        log.info("ASR-сервис запущен", extra={"model": models.active_id, "ready": models.is_ready(), "device": settings.asr_device})
+        log.info("ASR-сервис запущен", extra={"cpu_count": os.cpu_count(), "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"),
+                                         "max_concurrent_inference": settings.asr_max_concurrent_inference, "model": models.active_id, "ready": models.is_ready(), "device": settings.asr_device})
         await stop.wait()
     finally:
         for t in tasks:

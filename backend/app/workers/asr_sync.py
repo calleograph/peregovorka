@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from redis.asyncio import Redis
@@ -14,11 +15,19 @@ from ..services.settings import SettingsService
 
 log = logging.getLogger("app.asr_sync")
 DESIRED_MODEL_KEY = "asr:desired_model"
+VAD_CONFIG_KEY = "asr:vad_config"
 
 
 async def publish_desired(db: AsyncSession, svc: SettingsService, redis: Redis) -> str:
     """Записать выбранную модель в Redis. Пустой выбор (модель по умолчанию из .env) ключ удаляет."""
-    model = (await svc.get(db, "asr")).active_model  # type: ignore[attr-defined]
+    cfg = await svc.get(db, "asr")
+    model = cfg.active_model  # type: ignore[attr-defined]
+    vad = {k.removeprefix("vad_"): getattr(cfg, k) for k in ("vad_threshold", "vad_end_silence_ms", "vad_min_speech_ms", "vad_pad_ms", "vad_max_segment_seconds")
+           if getattr(cfg, k, None) is not None}
+    if vad:
+        await redis.set(VAD_CONFIG_KEY, json.dumps(vad))
+    else:
+        await redis.delete(VAD_CONFIG_KEY)
     if model:
         await redis.set(DESIRED_MODEL_KEY, model)
     else:

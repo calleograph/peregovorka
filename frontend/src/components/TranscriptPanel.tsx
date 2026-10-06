@@ -8,6 +8,8 @@ interface Props {
   enabled: boolean;
   /** Транскрибация (ASR) готова к работе. Вход в комнату от неё не зависит. */
   asrReady?: boolean;
+  /** Транскрибация была готова и пропала (ASR перегружен/перезапускается). Звонок продолжается. */
+  asrLost?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   onMeetingEnded?: () => void;
@@ -28,7 +30,7 @@ function statusText(s: SocketStatus, now: number): { text: string; cls: "ok" | "
 }
 
 /** Живая транскрибация: история встречи + новые реплики по WebSocket (без перезагрузки страницы). */
-export default function TranscriptPanel({ meetingId, enabled, asrReady = true, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus }: Props) {
+export default function TranscriptPanel({ meetingId, enabled, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus }: Props) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [status, setStatus] = useState<SocketStatus>({ state: "connecting", attempt: 0 });
   const [now, setNow] = useState(Date.now());
@@ -87,7 +89,7 @@ export default function TranscriptPanel({ meetingId, enabled, asrReady = true, c
         {onToggleCollapsed && <button className="btn mini" onClick={onToggleCollapsed} title="Свернуть панель">▸</button>}
       </div>
       {!enabled && <p className="muted">В этой комнате транскрибация отключена.</p>}
-      {enabled && !asrReady && <div className="alert info" role="status">Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов.</div>}
+      {enabled && !asrReady && <div className="alert info" role="status">{asrLost ? "Транскрибация временно недоступна — звонок продолжается. Реплики вернутся, когда сервис распознавания восстановится." : "Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов."}</div>}
       <div className="transcript-list" ref={boxRef} onScroll={onScroll} aria-live="polite">
         {segments.map((s) => (
           <p key={s.uid} className="utt">
