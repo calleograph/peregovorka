@@ -133,3 +133,15 @@ def test_log_scrubbing_hides_secrets():
     out = scrub({"password": "p", "nested": {"api_key": "k", "ok": 1}, "msg": "token=abc123 password: hunter2"})
     assert out["password"] == "***" and out["nested"]["api_key"] == "***" and out["nested"]["ok"] == 1
     assert "abc123" not in out["msg"] and "hunter2" not in out["msg"]
+
+
+@pytest.mark.parametrize("uri", ["ldaps://AD1.corp.test:636", "ldaps://AD1.corp.test:636/", "ldaps://AD1.corp.test"])
+def test_ldap_uri_forms_with_and_without_trailing_slash_are_equivalent(tmp_path, uri):
+    from app.auth.directory import LdapDirectory
+    from .conftest import make_settings
+
+    ca = tmp_path / "ca.pem"
+    ca.write_text("x")
+    d = LdapDirectory(make_settings(tmp_path, ldap_uris=uri, ldap_ca_file=str(ca)))
+    servers = d._server_pool().servers
+    assert [(s.host.lower(), s.port) for s in servers] == [("ad1.corp.test", 636)]

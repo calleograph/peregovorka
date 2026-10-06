@@ -113,3 +113,7 @@ host_version_info() {
   fi
   export APP_VERSION APP_GIT_COMMIT
 }
+
+# Чистые функции (.env, пути, LDAP, RAM, сводка портов)
+# shellcheck source=envlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/envlib.sh"

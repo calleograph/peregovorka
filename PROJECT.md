@@ -45,6 +45,8 @@
 | `asr-service/app/` | провайдер GigaAM, Silero VAD, сегментатор, очередь инференса, конвейер трека (+запись PCM, флаги), LiveKit-воркер, менеджер, health |
 | `frontend/src/` | вход, комнаты, комната (LiveKit, трансляция экрана, запись, транскрипция), история и протоколы, админка (10 вкладок) |
 | `frontend/src/screenShare.ts` | профили трансляции экрана (чёткость / сбалансированный / плавность) |
+| `scripts/lib/envlib.sh`, `tests/scripts/run.sh` | чистые функции (безопасная запись .env, проверка DATA_ROOT, разбор LDAP URI, RAM, сводка портов) и 45 shell-тестов (в CI) |
+| `scripts/setup.sh` | мастер установки (вопросы с валидацией, свободные порты, секреты, самопроверка .env, preflight, план, установка по «y») |
 | `scripts/*.sh`, `deployment/` | preflight, install, deploy, rollback, backup, restore, status, logs, smoke-test, models; compose, образ LiveKit, nginx-шаблоны |
 | `docs/INSTALL_AND_UPDATE.md`, `docs/AUDIT.md` | пошаговая инструкция развёртывания/обновления; аудит интерфейса и админки |
 | `legacy/php/` | старый проект (локально, вне Git); безопасно удалять (см. §8) |
@@ -76,7 +78,7 @@ SDK, smbprotocol, httpx, GigaAM (pinned commit), silero-vad, torch, React 18 + T
 | Миграции 0001–0002 | тест сверки схемы с моделями, цепочка, откат |
 | ASR: `GigaAmProvider`, `SileroVad`, `RoomWorker` (LiveKit) | написано по исходникам библиотек, **не запускалось** (нет torch/модели/LiveKit) |
 | Frontend (вход, комнаты, админка, история) | `tsc`, 6 тестов vitest, `vite build`; **прогнан в Chrome против локального стенда** (подставной AD, без LiveKit/ASR) — см. `docs/AUDIT.md`; живая комната, трансляция экрана, запись, реплики в реальном времени **не проверены** |
-| Compose, Dockerfile, nginx-шаблоны, скрипты | YAML разобран, `bash -n`, `preflight.sh`/`install.sh --dry-run` в Git Bash; **Docker и Linux не использовались** |
+| Compose, Dockerfile, nginx-шаблоны, скрипты | первая реальная установка на Ubuntu 24.04 (shared-host) состоялась у владельца; найденные дефекты исправлены, покрыты shell-тестами (мастер, `.env`, DATA_ROOT, LDAP URI, RAM, models.sh); **чистая переустановка после исправлений не проверена** |
 
 ## 7. Известные ограничения
 
@@ -86,6 +88,8 @@ SDK, smbprotocol, httpx, GigaAM (pinned commit), silero-vad, torch, React 18 + T
 - «Один показывающий» — мягкое правило клиента (сервер не блокирует публикацию).
 - Отбрасывание сегментов при переполнении очереди ASR не восстанавливается (`dropped` в `/readyz` и «Система»).
 - Per-IP лимит входа best-effort (`TRUSTED_PROXY_HOPS`); основной барьер — лимит по логину.
+- Первая реальная установка (Ubuntu 24.04, shared-host) выявила 6 дефектов мастера/preflight/models — исправлены (HISTORY.md), повторная чистая установка на сервере ещё не выполнялась.
+- Контрольные суммы модели не проверяются (по решению владельца: файлы upstream могут меняться); проверяется только размер.
 - Предположены и не подтверждены: тег `LIVEKIT_IMAGE_TAG` и путь `/livekit-server` в образе LiveKit; VP9 для экрана зависит от браузера (SDK использует резервный кодек).
 - Выгруженные во внешнее хранилище файлы не удаляются по срокам хранения; нет контроля свободного места под записи.
 - Репозиторий создан локально (`main`, CI в `.github/workflows/ci.yml`); публикация на GitHub выполняется владельцем (docs/INSTALL_AND_UPDATE.md §1). `legacy/php/` в репозиторий не входит.

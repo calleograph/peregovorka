@@ -55,10 +55,12 @@ REQUIRED=(APP_PUBLIC_URL DATA_ROOT WEB_BIND_ADDR WEB_PORT LIVEKIT_HTTP_PORT LIVE
 for v in "${REQUIRED[@]}"; do
   if [ -z "${!v:-}" ]; then pfail "Не задана обязательная переменная $v"; fi
 done
-if grep -q 'CHANGE_ME' "$ENV_FILE" 2>/dev/null; then
-  pfail "В $ENV_FILE остались значения CHANGE_ME — замените их"
+ph="$(env_placeholders "$ENV_FILE")"
+if [ -n "$ph" ]; then
+  pfail "В $ENV_FILE остались значения-заглушки CHANGE_ME (строки: $(printf '%s' "$ph" | cut -d: -f1 | tr '
+' ' ')) — замените их"
 else
-  pass "Значения CHANGE_ME отсутствуют"
+  pass "Значений-заглушек CHANGE_ME нет"
 fi
 if [ -f "$ENV_FILE" ]; then
   perm="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo '')"
@@ -104,10 +106,13 @@ if [ "$CPUS" -ge 4 ]; then pass "CPU: $CPUS ядер"; else pwarn "CPU: $CPUS я
 mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null)"
 if [ -n "$mem_kb" ]; then
   avail_kb="$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null)"
-  mem_gb=$(( mem_kb / 1024 / 1024 ))
-  avail_gb=$(( ${avail_kb:-$mem_kb} / 1024 / 1024 ))
-  if [ "$mem_gb" -ge "${MIN_RAM_GB:-8}" ]; then pass "RAM: ${mem_gb} ГБ (доступно ~${avail_gb} ГБ)"; else pfail "RAM: ${mem_gb} ГБ < MIN_RAM_GB=${MIN_RAM_GB:-8}"; fi
-  if [ "$avail_gb" -lt 4 ]; then pwarn "Свободно RAM всего ~${avail_gb} ГБ: на общем сервере модель ASR может не поместиться рядом с другими сервисами"; fi
+  mem_h="$(awk -v k="$mem_kb" 'BEGIN{printf "%.1f", k/1048576}')"; avail_h="$(awk -v k="${avail_kb:-$mem_kb}" 'BEGIN{printf "%.1f", k/1048576}')"
+  case "$(ram_verdict "$mem_kb" "${MIN_RAM_GB:-8}")" in
+    ok)   pass "RAM: ${mem_h} ГиБ (доступно ~${avail_h} ГиБ; требование ${MIN_RAM_GB:-8} ГиБ с допуском на накладные расходы ВМ)" ;;
+    warn) pwarn "RAM: ${mem_h} ГиБ — меньше рекомендуемых ${MIN_RAM_GB:-8} ГиБ; установка возможна, но ASR на CPU может работать медленно" ;;
+    *)    pfail "RAM: ${mem_h} ГиБ — меньше 75% от требуемых ${MIN_RAM_GB:-8} ГиБ" ;;
+  esac
+  if [ "${avail_kb:-$mem_kb}" -lt 4194304 ]; then pwarn "Свободно RAM всего ~${avail_h} ГиБ: на общем сервере модель ASR может не поместиться рядом с другими сервисами"; fi
 else
   pwarn "Нет /proc/meminfo — RAM не проверена"
 fi
@@ -134,7 +139,9 @@ check_dir_parent() {
   while [ ! -e "$p" ] && [ "$p" != "/" ]; do p="$(dirname "$p")"; done
   [ -w "$p" ] || [ "$(id -u)" -eq 0 ]
 }
-if [ -n "${DATA_ROOT:-}" ]; then
+if [ -n "${DATA_ROOT:-}" ] && ! dr_msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)"; then
+  pfail "$dr_msg"
+elif [ -n "${DATA_ROOT:-}" ]; then
   if [ -d "$DATA_ROOT" ]; then pass "DATA_ROOT существует: $DATA_ROOT"
   elif check_dir_parent "$DATA_ROOT"; then pass "DATA_ROOT будет создан: $DATA_ROOT"
   else pfail "DATA_ROOT=$DATA_ROOT не существует и родитель недоступен для записи"; fi
@@ -256,8 +263,9 @@ else
   reachable=0
   for uri in "${URIS[@]}"; do
     uri="$(printf '%s' "$uri" | tr -d '[:space:]')"
-    hp="${uri#ldaps://}"; host="${hp%%:*}"; port="${hp##*:}"; [ "$port" = "$hp" ] && port=636
-    if [ -z "$host" ] || [[ "$uri" != ldaps://* ]]; then pfail "Некорректный LDAP URI: '$uri' (нужен ldaps://host[:port])"; continue; fi
+    [ -n "$uri" ] || continue
+    if ! parse_ldap_uri "$uri"; then pfail "Некорректный LDAP URI: '$uri' (нужен ldaps://host[:port])"; continue; fi
+    host="$LDAP_HOST"; port="$LDAP_PORT"
     if timeout 5 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then
       pass "TCP до $host:$port доступен"
       if command -v openssl >/dev/null 2>&1 && [ -r "${LDAP_CA_FILE:-/nonexistent}" ]; then

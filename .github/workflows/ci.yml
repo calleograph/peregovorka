@@ -42,7 +42,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: for f in scripts/*.sh scripts/lib/*.sh; do bash -n "$f"; done
+      - run: for f in scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh; do bash -n "$f"; done
+      - run: bash tests/scripts/run.sh
       - run: sudo apt-get install -y shellcheck && shellcheck -S warning scripts/*.sh scripts/lib/*.sh || true
       - name: compose config
         run: |

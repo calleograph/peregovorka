@@ -43,6 +43,7 @@ PROFILE="${PROFILE_ARG:-${INSTALL_PROFILE:-}}"
 case "$PROFILE" in shared-host|standalone) ;; *) die "Укажите --profile shared-host|standalone" ;; esac
 validate_project_name
 require_vars DATA_ROOT WEB_PORT LIVEKIT_HTTP_PORT LIVEKIT_TCP_PORT LIVEKIT_UDP_PORT
+msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)" || die "$msg"
 host_version_info
 export IMAGE_TAG="${APP_GIT_COMMIT}"
 [ "$IMAGE_TAG" = "unknown" ] && IMAGE_TAG="local"
@@ -181,4 +182,5 @@ if [ "$DRY_RUN" != "1" ]; then
   "$REPO_ROOT/scripts/preflight.sh" --env "$ENV_FILE" --profile "$PROFILE" --phase post --skip-network || true
 fi
 ok "Установка завершена."
+print_network_summary
 log "Дальше: scripts/smoke-test.sh"
