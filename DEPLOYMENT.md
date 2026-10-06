@@ -60,7 +60,7 @@
 1. **LDAPS** (636) на контроллерах домена должен быть включён с
    сертификатом, выданным доверенным CA.
 2. Экспортируйте цепочку CA в PEM (`ad-ca.pem`; корневой + промежуточные) и
-   положите на хост, например `/etc/voicemeet/ad-ca.pem`; путь — в
+   положите на хост, например `/etc/peregovorka/ad-ca.pem`; путь — в
    `LDAP_CA_FILE`. Файл монтируется в контейнер read-only. Проверка
    сертификата (цепочка и имя хоста) обязательна; обходов нет. В
    `LDAP_URIS` указывайте **DNS-имена**, совпадающие с SAN сертификата.
@@ -117,7 +117,7 @@ scripts/models.sh --from-dir /mnt/usb/gigaam   # закрытая сеть: го
 ## 7. Установка на существующий общий сервер (shared-host)
 
 ```bash
-git clone <repo-url> /var/www/projects/voicemeet && cd /var/www/projects/voicemeet
+git clone <repo-url> /var/www/projects/peregovorka && cd /var/www/projects/peregovorka
 git checkout <release-tag-or-sha>                 # воспроизводимая версия
 chmod +x scripts/*.sh                              # если права не сохранились при копировании
 cp .env.example .env && chmod 600 .env && $EDITOR .env
@@ -137,7 +137,7 @@ scripts/smoke-test.sh
 | Путь | Что | Когда |
 | --- | --- | --- |
 | `$DATA_ROOT/{postgres,redis,models/gigaam,recordings,exports,backups,state}` | каталоги данных | install |
-| `$NGINX_SITES_AVAILABLE/$NGINX_SITE_NAME` | **один** site-файл с маркером `managed-by: voicemeet:<проект>` | install, если `NGINX_MANAGE=yes` |
+| `$NGINX_SITES_AVAILABLE/$NGINX_SITE_NAME` | **один** site-файл с маркером `managed-by: peregovorka:<проект>` | install, если `NGINX_MANAGE=yes` |
 | `$NGINX_SITES_ENABLED/$NGINX_SITE_NAME` | симлинк на него | install |
 | `$DATA_ROOT/state/deploy-history.log` | журнал деплоев | deploy |
 | `$DATA_ROOT/backups/*.dump` | резервные копии | backup |
@@ -158,8 +158,8 @@ PHP-FPM, Moodle, `sites-available/projects`, системного файрвол
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git      # единственное ручное требование
-sudo git clone <repo-url> /opt/voicemeet && cd /opt/voicemeet
-sudo chown -R $USER: /opt/voicemeet && git checkout <tag>
+sudo git clone <repo-url> /opt/peregovorka && cd /opt/peregovorka
+sudo chown -R $USER: /opt/peregovorka && git checkout <tag>
 cp .env.example .env && chmod 600 .env && $EDITOR .env   # INSTALL_PROFILE=standalone
 scripts/models.sh
 scripts/install.sh --profile standalone --dry-run

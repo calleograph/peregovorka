@@ -25,10 +25,10 @@
 Рекомендуется **приватный** репозиторий: в проекте лежит документация о вашей инфраструктуре. Секреты (`.env`), старый PHP-код
 (`legacy/php/`), данные и `node_modules` в репозиторий **не попадают** (`.gitignore`).
 
-1. На github.com → **New repository** → имя, например `voicemeet`, **Private**, без README/.gitignore (репозиторий уже готов локально).
+1. На github.com → **New repository** → имя, например `peregovorka`, **Private**, без README/.gitignore (репозиторий уже готов локально).
 2. В каталоге проекта (локальный коммит уже создан):
    ```bash
-   git remote add origin git@github.com:<организация-или-логин>/voicemeet.git      # или https://github.com/.../voicemeet.git
+   git remote add origin git@github.com:<организация-или-логин>/peregovorka.git      # или https://github.com/.../peregovorka.git
    git push -u origin main
    git tag -a v0.1.0 -m "Первый релиз"
    git push origin v0.1.0
@@ -38,15 +38,15 @@
 4. **Доступ сервера на чтение** (рекомендуется deploy key):
    ```bash
    # на сервере, от пользователя, который будет делать деплой
-   ssh-keygen -t ed25519 -N "" -f ~/.ssh/voicemeet_deploy -C "voicemeet-deploy@$(hostname)"
-   cat ~/.ssh/voicemeet_deploy.pub
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/peregovorka_deploy -C "peregovorka-deploy@$(hostname)"
+   cat ~/.ssh/peregovorka_deploy.pub
    ```
    GitHub → репозиторий → **Settings → Deploy keys → Add deploy key** → вставить ключ, **без** права записи. Затем:
    ```bash
-   printf 'Host github-voicemeet\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/voicemeet_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+   printf 'Host github-peregovorka\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/peregovorka_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
    chmod 600 ~/.ssh/config
    ```
-   Адрес для клонирования: `git@github-voicemeet:<организация-или-логин>/voicemeet.git`.
+   Адрес для клонирования: `git@github-peregovorka:<организация-или-логин>/peregovorka.git`.
 
 > Релизы: версия — тег `vX.Y.Z` (+ файл `VERSION`). На сервер выкатывайте **тег или SHA**, а не «что там сейчас в main».
 
@@ -57,9 +57,9 @@
 ### 2.1 Общие шаги (оба профиля)
 
 ```bash
-# 1) код (shared-host: /var/www/projects/voicemeet; standalone: /opt/voicemeet)
-git clone git@github-voicemeet:<орг>/voicemeet.git /var/www/projects/voicemeet
-cd /var/www/projects/voicemeet
+# 1) код (shared-host: /var/www/projects/peregovorka; standalone: /opt/peregovorka)
+git clone git@github-peregovorka:<орг>/peregovorka.git /var/www/projects/peregovorka
+cd /var/www/projects/peregovorka
 git checkout v0.1.0                       # воспроизводимая версия
 
 # 2) конфигурация (секреты — только здесь, в Git не попадает)
@@ -71,9 +71,9 @@ $EDITOR .env
 
 Что обязательно заполнить в `.env` (остальное — по умолчанию из `.env.example`):
 
-- `COMPOSE_PROJECT_NAME` — **уникальное** имя экземпляра (например `voicemeet-prod`); от него зависят имена контейнеров/сетей/томов.
+- `COMPOSE_PROJECT_NAME` — **уникальное** имя экземпляра (например `peregovorka-prod`); от него зависят имена контейнеров/сетей/томов.
 - `INSTALL_PROFILE` — `shared-host` или `standalone`; `APP_PUBLIC_URL=https://meet.<домен>`; `LIVEKIT_PUBLIC_URL=wss://meet.<домен>/livekit`.
-- `DATA_ROOT` — каталог постоянных данных **вне** checkout (например `/srv/voicemeet-data`).
+- `DATA_ROOT` — каталог постоянных данных **вне** checkout (например `/srv/peregovorka-data`).
 - Порты: `WEB_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`, `NGINX_LISTEN_PORT` — свободные; `LIVEKIT_NODE_IP` — IP сервера, по которому до него доходят клиенты.
 - Ключи: `LIVEKIT_API_KEY/SECRET`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_MASTER_KEY`, `INTERNAL_API_TOKEN`. **Сохраните копию `APP_MASTER_KEY` отдельно** — без него зашифрованные настройки (пароль SMB, токены, ключ LLM) невосстановимы.
 - AD: `LDAP_URIS` (только `ldaps://` с DNS-именами из сертификата), `LDAP_BASE_DN`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_CA_FILE` (путь к PEM на хосте), `LDAP_ADMIN_GROUP_DN`.
@@ -108,7 +108,7 @@ scripts/smoke-test.sh
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git     # единственное ручное требование
-sudo git clone ... /opt/voicemeet && sudo chown -R $USER: /opt/voicemeet
+sudo git clone ... /opt/peregovorka && sudo chown -R $USER: /opt/peregovorka
 ```
 Дальше — шаги 1–7 выше. `install.sh --profile standalone` сам поставит Docker и nginx (`apt install`, без `upgrade`/`reboot`). TLS: либо внешний прокси, либо задайте `NGINX_TLS_CERT`/`NGINX_TLS_KEY`.
 
@@ -140,7 +140,7 @@ git push origin main v0.1.1
 
 **На сервере**:
 ```bash
-cd /var/www/projects/voicemeet
+cd /var/www/projects/peregovorka
 scripts/deploy.sh --ref v0.1.1 --dry-run     # что изменится (коммит, наличие миграций)
 scripts/deploy.sh --ref v0.1.1               # обновление
 scripts/smoke-test.sh                        # проверка после обновления
@@ -175,7 +175,7 @@ scripts/restore.sh $DATA_ROOT/backups/<файл>.dump    # потребует в
 scripts/backup.sh --keep 14 --with-env            # дамп БД (+копия .env с секретами — храните защищённо)
 scripts/backup.sh --with-recordings               # + архив записей и выгрузок
 ```
-Регулярный запуск — cron/systemd-таймер на сервере, например: `15 2 * * *  cd /var/www/projects/voicemeet && scripts/backup.sh --keep 14`.
+Регулярный запуск — cron/systemd-таймер на сервере, например: `15 2 * * *  cd /var/www/projects/peregovorka && scripts/backup.sh --keep 14`.
 Проверяйте раз в квартал восстановление на тестовом экземпляре.
 
 Мониторинг вручную: `scripts/status.sh`, `scripts/logs.sh backend -f`, вкладка «Система» в админке.

@@ -1,4 +1,4 @@
-# managed-by: voicemeet:@@PROJECT@@
+# managed-by: peregovorka:@@PROJECT@@
 #
 # Отдельный site-файл экземпляра "@@PROJECT@@" с TLS на этом nginx (standalone).
 # Создан scripts/install.sh. Сертификат и ключ задаются в .env и не копируются.

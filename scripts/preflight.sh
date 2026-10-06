@@ -235,7 +235,7 @@ if [ "${NGINX_MANAGE:-no}" = "yes" ]; then
       [ -d "$d" ] && pass "Каталог nginx есть: $d" || pfail "Нет каталога nginx: $d"
     done
     site="${NGINX_SITES_AVAILABLE:-}/${NGINX_SITE_NAME:-}"
-    if [ -e "$site" ] && ! grep -q "managed-by: voicemeet:${COMPOSE_PROJECT_NAME}" "$site" 2>/dev/null; then
+    if [ -e "$site" ] && ! grep -q "managed-by: peregovorka:${COMPOSE_PROJECT_NAME}" "$site" 2>/dev/null; then
       pfail "Файл $site уже существует и создан не этим проектом — выберите другой NGINX_SITE_NAME"
     else pass "Имя site-файла свободно/наше: ${NGINX_SITE_NAME:-?}"; fi
     if [ -d "${NGINX_SITES_ENABLED:-/nonexistent}" ] && [ -n "${NGINX_SERVER_NAME:-}" ]; then

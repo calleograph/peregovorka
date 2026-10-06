@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     database_url: str | None = None
     postgres_host: str = "postgres"
     postgres_port: int = 5432
-    postgres_db: str = "voicemeet"
-    postgres_user: str = "voicemeet"
+    postgres_db: str = "peregovorka"
+    postgres_user: str = "peregovorka"
     postgres_password: str = ""
 
     # --- Redis (redis_url имеет приоритет)

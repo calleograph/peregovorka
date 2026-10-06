@@ -1,4 +1,4 @@
-# managed-by: voicemeet:@@PROJECT@@
+# managed-by: peregovorka:@@PROJECT@@
 #
 # Отдельный site-файл экземпляра "@@PROJECT@@". Создан scripts/install.sh.
 # Независим от остальных site-файлов сервера (в т.ч. sites-available/projects).

@@ -113,7 +113,7 @@ if [ "${NGINX_MANAGE:-no}" = "yes" ]; then
   SITE="$NGINX_SITES_AVAILABLE/$NGINX_SITE_NAME"
   LINK="$NGINX_SITES_ENABLED/$NGINX_SITE_NAME"
   if [ -n "${NGINX_TLS_CERT:-}" ]; then TPL="$REPO_ROOT/deployment/nginx/site.tls.conf.tpl"; else TPL="$REPO_ROOT/deployment/nginx/site.http.conf.tpl"; fi
-  if [ -e "$SITE" ] && ! grep -q "managed-by: voicemeet:${COMPOSE_PROJECT_NAME}" "$SITE"; then
+  if [ -e "$SITE" ] && ! grep -q "managed-by: peregovorka:${COMPOSE_PROJECT_NAME}" "$SITE"; then
     die "$SITE существует и принадлежит не этому проекту — отказ (выберите другой NGINX_SITE_NAME)."
   fi
   PROJECT_ID="$(printf '%s' "$COMPOSE_PROJECT_NAME" | tr -c 'a-zA-Z0-9' '_')"

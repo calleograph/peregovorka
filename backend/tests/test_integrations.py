@@ -142,7 +142,7 @@ def test_local_storage_writes_and_rejects_traversal(tmp_path):
         with pytest.raises(StorageError):
             st.write_bytes(bad, b"x")
     assert "возможна" in st.test()
-    assert not list(tmp_path.glob(".voicemeet-write-test-*"))
+    assert not list(tmp_path.glob(".peregovorka-write-test-*"))
 
 
 def test_smb_unc_paths_are_built_from_share_and_base():

@@ -82,7 +82,7 @@ class LocalStorage:
         return str(full)
 
     def test(self) -> str:
-        probe = f".voicemeet-write-test-{uuid.uuid4().hex[:8]}"
+        probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"
         self.write_bytes(probe, b"ok")
         self._full(probe).unlink(missing_ok=True)
         return f"Запись в {self._root} возможна"
@@ -131,7 +131,7 @@ class SmbStorage:
         return path
 
     def test(self) -> str:
-        probe = f".voicemeet-write-test-{uuid.uuid4().hex[:8]}"
+        probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"
         self.write_bytes(probe, b"ok")
         try:
             self._session().remove(self._unc(probe))

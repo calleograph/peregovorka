@@ -94,7 +94,7 @@ def create_app(
             await engine.dispose()
 
     app = FastAPI(
-        title="VoiceMeet API", version=settings.app_version, lifespan=lifespan,
+        title="Peregovorka API", version=settings.app_version, lifespan=lifespan,
         docs_url="/api/v1/docs" if settings.docs_enabled else None,
         redoc_url=None,
         openapi_url="/api/v1/openapi.json" if settings.docs_enabled else None,
