@@ -143,7 +143,8 @@ def test_benchmark_shows_whether_concurrency_helps():
     assert p2["throughput_x"] > p1["throughput_x"] * 1.5, "независимые вызовы: два потока почти вдвое производительнее"
     s1, s2 = run_concurrent(Serializing(), pcm, 3, 1), run_concurrent(Serializing(), pcm, 3, 2)
     assert s2["throughput_x"] < s1["throughput_x"] * 1.3, "сериализованные вызовы: выигрыша нет"
-    assert s2["avg_ms"] > s1["avg_ms"] * 1.5, "а задержка одного вызова растёт"
+    # Порядок захвата замка зависит от планировщика ОС: при «нечестной» очереди (Linux) средняя задержка выходит ≈1,5×, при честной — ≈2×.
+    assert s2["avg_ms"] > s1["avg_ms"] * 1.2, "а задержка одного вызова растёт"
 
 
 def test_provider_has_no_dead_lock_and_documents_thread_safety():

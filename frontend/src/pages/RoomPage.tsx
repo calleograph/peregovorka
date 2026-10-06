@@ -581,7 +581,7 @@ export default function RoomPage() {
 
         {stage !== "ready" && !ended && <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done} />}
 
-        {sharer && <ScreenStage p={sharer} />}
+        {sharer && <ScreenStage key={sharer.identity} p={sharer} />}
         <div className={`tiles n${n} ${sharer ? "strip" : ""}`}>
           {participants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
