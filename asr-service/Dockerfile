@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 ARG GIGAAM_GIT_COMMIT

@@ -129,7 +129,7 @@ pull_base_images() {
 
 # ------------------------------------------------------------------- образы проекта
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
-svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.9.0}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
+svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-latest}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
 svc_extra() { case "$1" in
   livekit) echo "${LIVEKIT_IMAGE_TAG:-}" ;;
   asr) echo "${ASR_TORCH_INDEX_URL:-}|${GIGAAM_GIT_COMMIT:-}|${IMAGE_TAG:-}" ;;
@@ -170,9 +170,9 @@ _compose_build_one() { # _compose_build_one svc mode
   local svc="$1" mode="$2" log="$3"
   compose_args
   if [ "$mode" = "legacy" ]; then
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build "$svc" 2>&1 | tee "$log"
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"
   else
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build "$svc" 2>&1 | tee "$log"
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"
   fi
   return "${PIPESTATUS[0]}"
 }

@@ -1,10 +1,12 @@
 # Рантайм-зависимости без torch (torch ставится в Dockerfile из ASR_TORCH_INDEX_URL: CPU или CUDA).
+# Нижняя граница — проверенная версия, верхняя — следующий мажорный выпуск; сборка берёт самые новые в этих пределах.
+# livekit (Python SDK) ДОЛЖЕН подключаться по /rtc/v1 — это требует достаточно нового LiveKit Server (docs/COMPATIBILITY.md).
 numpy>=2,<3
-redis==8.1.0
-fastapi==0.142.2
-uvicorn==0.54.0
-pydantic==2.13.5
-pydantic-settings==2.15.0
-livekit==1.1.20
-livekit-api==1.2.1
-silero-vad==6.2.3
+redis>=8.1.0,<9
+fastapi>=0.142.2,<1
+uvicorn>=0.54.0,<1
+pydantic>=2.13.5,<3
+pydantic-settings>=2.15.0,<3
+livekit>=1.1.20,<2
+livekit-api>=1.2.1,<2
+silero-vad>=6.2.3,<7

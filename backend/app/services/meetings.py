@@ -23,6 +23,7 @@ from ..config import Settings
 from ..models import Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
 from . import events
+from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
     delete_livekit_room,
@@ -56,6 +57,7 @@ class MeetingService:
         self._r = redis
         self._bridge = bridge
         self.on_ended: Callable[[uuid.UUID], None] | None = None  # запуск финализации (экспорт, протокол)
+        self.settings_svc = None  # SettingsService (срок «аренды» доступа после завершения), назначается в main
 
     # ------------------------------------------------------------------ вход
     async def join(self, db: AsyncSession, room_id: uuid.UUID, su: SessionUser, password: str | None) -> JoinResult:
@@ -166,12 +168,18 @@ class MeetingService:
         if meeting.ended_at is not None:
             return False
         now = utcnow()
+        online = [p.user_id for p in meeting.participants if p.left_at is None]
         meeting.ended_at = now
         meeting.end_reason = reason
         for p in meeting.participants:
             if p.left_at is None:
                 p.left_at = now
         await db.commit()
+        if online:  # кто был в комнате в момент завершения, остаётся «на странице встречи» и может сформировать протокол
+            minutes = 120
+            if self.settings_svc is not None:
+                minutes = (await self.settings_svc.get(db, "general")).post_meeting_access_minutes
+            await grant_leases(self._r, meeting.id, online, minutes)
         await self._bridge.stop(meeting_id=str(meeting.id), room_name=meeting.livekit_room)
         await events.publish(self._r, meeting.id, {"type": "meeting_ended", "reason": reason})
         if kick:

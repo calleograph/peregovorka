@@ -62,6 +62,9 @@ class Room(Base):
     text_retention_days: Mapped[int | None] = mapped_column(Integer)   # None = бессрочно
     audio_retention_days: Mapped[int | None] = mapped_column(Integer)  # None = бессрочно
     protocol_instructions: Mapped[str | None] = mapped_column(Text)
+    # Кто видит завершённую встречу после выхода: 'admin' — только администраторы (и участники, пока они на странице встречи);
+    # 'participants' — участники встречи; явные разрешения (meeting_grants) действуют всегда.
+    history_access: Mapped[str] = mapped_column(String(20), default="admin", server_default="admin", nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -191,6 +194,11 @@ class Recording(Base):
     path: Mapped[str] = mapped_column(String(1000), nullable=False)  # относительно каталога записей
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     duration_s: Mapped[int | None] = mapped_column(Integer)
+    # local — только локальный том; pending/failed — выгрузка во внешнее хранилище не удалась (будет повтор); exported — выгружена
+    export_status: Mapped[str] = mapped_column(String(20), default="local", server_default="local", nullable=False)
+    export_location: Mapped[str | None] = mapped_column(String(1000))
+    export_error: Mapped[str | None] = mapped_column(String(500))
+    exported_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
 
 
@@ -207,5 +215,39 @@ class Protocol(Base):
     error: Mapped[str | None] = mapped_column(String(500))
     meta: Mapped[dict | None] = mapped_column(JSONType)  # модель, метрики обезличивания, путь экспорта
     created_by: Mapped[str | None] = mapped_column(String(300))
+    instruction: Mapped[str | None] = mapped_column(Text)  # инструкция, с которой сформирован текст
+    title: Mapped[str | None] = mapped_column(String(300))
+    edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    edited_by: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ProtocolTemplate(Base):
+    """Сохранённая инструкция для протокола: общая (admin) или личная."""
+
+    __tablename__ = "protocol_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), default="any", nullable=False)  # summary | protocol | any
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False)  # global | user
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class MeetingGrant(Base):
+    """Явное разрешение пользователю смотреть завершённую встречу (выдаёт администратор)."""
+
+    __tablename__ = "meeting_grants"
+    __table_args__ = (UniqueConstraint("meeting_id", "user_id", name="uq_meeting_grant"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    granted_by: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    user: Mapped[User] = relationship(lazy="joined")

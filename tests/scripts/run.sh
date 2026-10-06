@@ -22,7 +22,7 @@ roundtrip() {
   got="$(env -i PATH="$PATH" bash -c 'source "$1"; load_env "$2"; printf "%s" "$KEY"' _ "$ROOT/scripts/lib/common.sh" "$f")" || return 1
   [ "$got" = "$v" ]
 }
-t "DN с пробелами и кириллицей" roundtrip 'CN=Отдел ИТ,OU=Отдел ИТ,OU=АУП,OU=TRI-Z,DC=tri-z,DC=local'
+t "DN с пробелами и кириллицей" roundtrip 'CN=Отдел ИТ,OU=Отдел ИТ,OU=Staff,OU=CORP,DC=corp,DC=local'
 t "решётка" roundtrip 'pass#word with # hash'
 t "доллар" roundtrip 'abc$HOME$(rm -rf x)'
 t "обратный слэш" roundtrip 'C:\path\to'
@@ -34,8 +34,8 @@ t "смесь ' \" \$ отвергается" bash -c 'source "$1"; ! dotenv_quo
 t "перевод строки отвергается" bash -c 'source "$1"; ! dotenv_quote $'"'"'a\nb'"'"'' _ "$ROOT/scripts/lib/envlib.sh"
 
 # ---- 4/3. LDAP URI
-t "uri без слэша" bash -c 'source "$1"; parse_ldap_uri ldaps://AD1.tri-z.local:636 && [ "$LDAP_HOST" = AD1.tri-z.local ] && [ "$LDAP_PORT" = 636 ]' _ "$ROOT/scripts/lib/envlib.sh"
-t "uri со слэшем" bash -c 'source "$1"; parse_ldap_uri ldaps://AD1.tri-z.local:636/ && [ "$LDAP_HOST" = AD1.tri-z.local ] && [ "$LDAP_PORT" = 636 ]' _ "$ROOT/scripts/lib/envlib.sh"
+t "uri без слэша" bash -c 'source "$1"; parse_ldap_uri ldaps://AD1.corp.local:636 && [ "$LDAP_HOST" = AD1.corp.local ] && [ "$LDAP_PORT" = 636 ]' _ "$ROOT/scripts/lib/envlib.sh"
+t "uri со слэшем" bash -c 'source "$1"; parse_ldap_uri ldaps://AD1.corp.local:636/ && [ "$LDAP_HOST" = AD1.corp.local ] && [ "$LDAP_PORT" = 636 ]' _ "$ROOT/scripts/lib/envlib.sh"
 t "uri без порта" bash -c 'source "$1"; parse_ldap_uri ldaps://dc.corp.local && [ "$LDAP_PORT" = 636 ]' _ "$ROOT/scripts/lib/envlib.sh"
 t "ldap:// отвергается" bash -c 'source "$1"; ! normalize_ldap_uris ldap://dc:389' _ "$ROOT/scripts/lib/envlib.sh"
 t "нормализация списка" eq "$(normalize_ldap_uris ' ldaps://a.x:636/ , ldaps://b.x ')" "ldaps://a.x:636,ldaps://b.x:636"
@@ -48,11 +48,11 @@ t "значение CHANGE_ME обнаруживается" test -n "$(env_place
 t ".env.example: заглушки есть, а комментарий их не создаёт" test "$(env_placeholders "$ROOT/.env.example" | wc -l)" -ge 5
 
 # ---- 1. DATA_ROOT
-for bad in '\Srv11\tmp' 'smb://srv/share' '//srv/x/../y' 'relative/dir' 'C:\data' 'https://x/y' '/srv/with space' '/'; do
+for bad in '\fileserver\share' 'smb://srv/share' '//srv/x/../y' 'relative/dir' 'C:\data' 'https://x/y' '/srv/with space' '/'; do
   t "DATA_ROOT отвергает «$bad»" bash -c 'source "$1"; ! validate_local_dir "$2" DATA_ROOT >/dev/null' _ "$ROOT/scripts/lib/envlib.sh" "$bad"
 done
 t "DATA_ROOT принимает /srv/peregovorka-data" validate_local_dir /srv/peregovorka-data
-t "сообщение про SMB понятно" bash -c 'source "$1"; validate_local_dir "\\Srv11\tmp" DATA_ROOT | grep -q "SMB"' _ "$ROOT/scripts/lib/envlib.sh"
+t "сообщение про SMB понятно" bash -c 'source "$1"; validate_local_dir "\\fileserver\share" DATA_ROOT | grep -q "SMB"' _ "$ROOT/scripts/lib/envlib.sh"
 
 # ---- 5. RAM
 t "ВМ 7.8 ГиБ при требовании 8 — ок" eq "$(ram_verdict 8178893 8)" ok
@@ -63,18 +63,19 @@ t "4 ГиБ — отказ" eq "$(ram_verdict 4194304 8)" fail
 # ---- сквозной «чистый» запуск мастера (.env), включая неверные ответы
 W="$TMP/repo"; mkdir -p "$W/scripts"; cp -r "$ROOT/scripts/." "$W/scripts/"; cp "$ROOT/.env.example" "$W/"
 ANS=$(printf '%s\n' \
-  "peregovorka-test" "meet.corp.local" "192.168.10.241" \
-  '\Srv11\tmp' "smb://x/y" "/srv/peregovorka-test-data" "2" "y" \
-  "ldaps://AD1.tri-z.local:636/" "DC=tri-z,DC=local" "CN=svc ldap,OU=Служебные,DC=tri-z,DC=local" 'p@ss $w#rd"x' \
-  "/etc/peregovorka/ad-ca.pem" "CN=Отдел ИТ,OU=Отдел ИТ,OU=АУП,OU=TRI-Z,DC=tri-z,DC=local")
+  "peregovorka-test" "meet.corp.local" "192.0.2.241" \
+  '\fileserver\share' "smb://x/y" "/srv/peregovorka-test-data" "2" "y" \
+  "ldaps://AD1.corp.local:636/" "DC=corp,DC=local" "CN=svc ldap,OU=Служебные,DC=corp,DC=local" 'p@ss $w#rd"x' \
+  "/etc/peregovorka/ad-ca.pem" "CN=Отдел ИТ,OU=Отдел ИТ,OU=Staff,OU=CORP,DC=corp,DC=local")
 t "мастер --env-only завершается успешно" bash -c 'cd "$1" && printf "%s\n" "$2" | bash scripts/setup.sh --profile shared-host --env-only' _ "$W" "$ANS"
 E="$W/.env"
 t ".env создан" test -f "$E"
 t "DATA_ROOT локальный" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$DATA_ROOT"' _ "$E")" "/srv/peregovorka-test-data"
-t "LDAP_URIS без слэша" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_URIS"' _ "$E")" "ldaps://AD1.tri-z.local:636"
-t "DN администраторов читается целиком" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_ADMIN_GROUP_DN"' _ "$E")" "CN=Отдел ИТ,OU=Отдел ИТ,OU=АУП,OU=TRI-Z,DC=tri-z,DC=local"
+t "LDAP_URIS без слэша" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_URIS"' _ "$E")" "ldaps://AD1.corp.local:636"
+t "DN администраторов читается целиком" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_ADMIN_GROUP_DN"' _ "$E")" "CN=Отдел ИТ,OU=Отдел ИТ,OU=Staff,OU=CORP,DC=corp,DC=local"
 t "пароль со спецсимволами сохранён буквально" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_BIND_PASSWORD"' _ "$E")" 'p@ss $w#rd"x'
 t "после мастера заглушек нет" eq "$(env_placeholders "$E")" ""
+t "shared-host: потоки ASR заданы разумно (1..nproc), а не «все ядра»" bash -c 'set -a; . "$1"; n="$(nproc 2>/dev/null || echo 4)"; [ "$ASR_CPU_THREADS" -ge 1 ] && [ "$ASR_CPU_THREADS" -le "$n" ] && [ "$ASR_INTEROP_THREADS" -ge 1 ]' _ "$E"
 [ "$(uname -s)" = Linux ] && t "права .env 600 или строже" bash -c '[ "$(stat -c %a "$1")" -le 600 ]' _ "$E"
 t "source .env не исполняет ничего (stderr пуст)" bash -c '[ -z "$(env -i PATH="$PATH" bash -c "set -a; . \"$1\"" 2>&1)" ]' _ "$E"
 
@@ -84,13 +85,15 @@ printf 'DATA_ROOT=%s/data\nASR_MODEL_NAME=v3_e2e_rnnt\n' "$M" > "$M/env"
 t "models.sh принимает файл с любым содержимым (хеш не проверяется)" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src"' _ "$ROOT" "$M"
 t "модель на месте" test -s "$M/data/models/gigaam/v3_e2e_rnnt.ckpt"
 t "повторный запуск ничего не качает" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir /nonexistent | grep -q "уже на месте"' _ "$ROOT" "$M"
-printf 'DATA_ROOT=%s\n' '\Srv11\tmp' > "$M/bad.env"
+printf 'DATA_ROOT=%s\n' '\fileserver\share' > "$M/bad.env"
 t "models.sh отказывает при UNC в DATA_ROOT" bash -c '! bash "$1/scripts/models.sh" --env "$2/bad.env" --from-dir "$2/src"' _ "$ROOT" "$M"
 rm -rf "$M/data"; echo x > "$M/src/v3_e2e_rnnt.ckpt"
 t "слишком маленький файл сохраняется как .failed" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$M"
 
 # shellcheck source=part_docker.sh
 source "$ROOT/tests/scripts/part_docker.sh"
+# shellcheck source=part_diag.sh
+source "$ROOT/tests/scripts/part_diag.sh"
 
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

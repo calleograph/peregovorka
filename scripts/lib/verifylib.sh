@@ -51,6 +51,76 @@ _listening() { # _listening tcp|udp порт → 0 если слушается
 
 _curl_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 
+# ------------------------------------------------------------------ WebSocket / TLS / совместимость
+# ws_upgrade_code URL → HTTP-код ответа на НАСТОЯЩИЙ WebSocket Upgrade (101 = прокси и сервер его пропускают).
+# URL подаётся curl через stdin (-K -), чтобы токен из query не попал в список процессов; схема http(s) (curl делает Upgrade сам).
+ws_upgrade_code() {
+  local key; key="$(openssl rand -base64 16 2>/dev/null || echo dGhlIHNhbXBsZSBub25jZQ==)"
+  printf 'url = "%s"\n' "$1" | curl -s -o /dev/null -m "${2:-6}" -w '%{http_code}' --http1.1 -K - \
+      -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null || true
+}
+
+# ws_verdict КОД → OK|WARNING|FAIL и пояснение (в WS_NOTE)
+ws_verdict() {
+  case "$1" in
+    101) WS_NOTE="WebSocket Upgrade выполнен (101)"; echo OK ;;
+    401|403) WS_NOTE="HTTP $1: сервер достигнут, но токен отклонён — проверьте LIVEKIT_API_KEY/SECRET"; echo WARNING ;;
+    404) WS_NOTE="HTTP 404: путь /rtc/v1 не найден — LiveKit устарел (SDK уйдёт в медленный запасной путь /rtc) либо прокси не передаёт /livekit/"; echo FAIL ;;
+    400|426|200|301|302) WS_NOTE="HTTP $1 вместо 101: прокси не передаёт заголовки Upgrade/Connection (нужны proxy_http_version 1.1, Upgrade, Connection upgrade)"; echo FAIL ;;
+    000|"") WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось"; echo WARNING ;;
+    *) WS_NOTE="HTTP $1"; echo FAIL ;;
+  esac
+}
+
+# tls_check URL → TLS_STATUS (OK|WARNING|FAIL|SKIP) и TLS_NOTE. Без -k: проверяется доверие к цепочке и имя хоста; затем срок
+# и полнота цепочки (openssl). Только чтение.
+tls_check() {
+  local url="$1" host port rc out
+  TLS_STATUS=OK; TLS_NOTE=""
+  case "$url" in
+    https://*) ;;
+    http://*) TLS_STATUS=WARNING; TLS_NOTE="публичный URL не HTTPS: браузер не даст доступ к микрофону/экрану (нужен защищённый контекст)"; return 0 ;;
+    *) TLS_STATUS=SKIP; TLS_NOTE="URL не задан"; return 0 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { TLS_STATUS=SKIP; TLS_NOTE="curl не найден"; return 0; }
+  host="${url#https://}"; host="${host%%/*}"; port=443
+  case "$host" in *:*) port="${host##*:}"; host="${host%%:*}" ;; esac
+  out="$(curl -sS -o /dev/null -m 10 -w '%{ssl_verify_result}' "https://${host}:${port}/" 2>&1)"; rc=$?
+  if [ "$rc" -eq 6 ] || [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ]; then TLS_STATUS=WARNING; TLS_NOTE="не удалось подключиться к ${host}:${port} с этого сервера (curl код $rc)"; return 0; fi
+  if [ "$rc" -eq 60 ] || [ "$rc" -eq 35 ] || [ "$rc" -eq 51 ] || [ "$rc" -eq 58 ]; then
+    TLS_STATUS=FAIL; TLS_NOTE="сертификат не принят без -k (curl код $rc): цепочка не доверена/неполная, имя хоста не совпадает или истёк срок"
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    local pem; pem="$(echo | openssl s_client -connect "${host}:${port}" -servername "$host" -showcerts 2>/dev/null)"
+    local leaf; leaf="$(printf '%s\n' "$pem" | awk '/BEGIN CERTIFICATE/{f=1} f{print} /END CERTIFICATE/{exit}')"
+    if [ -n "$leaf" ]; then
+      if ! printf '%s\n' "$leaf" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then TLS_STATUS=FAIL; TLS_NOTE="${TLS_NOTE:+$TLS_NOTE; }срок действия сертификата истёк"
+      elif ! printf '%s\n' "$leaf" | openssl x509 -noout -checkend $((14*86400)) >/dev/null 2>&1; then
+        [ "$TLS_STATUS" = OK ] && TLS_STATUS=WARNING; TLS_NOTE="${TLS_NOTE:+$TLS_NOTE; }сертификат истекает менее чем через 14 дней"; fi
+      if ! printf '%s\n' "$leaf" | openssl x509 -noout -checkhost "$host" 2>/dev/null | grep -q "does match"; then
+        TLS_STATUS=FAIL; TLS_NOTE="${TLS_NOTE:+$TLS_NOTE; }сертификат не выдан для имени ${host}"; fi
+      local ncerts; ncerts="$(printf '%s\n' "$pem" | grep -c 'BEGIN CERTIFICATE')"
+      if [ "$ncerts" -le 1 ] && ! printf '%s\n' "$leaf" | openssl x509 -noout -issuer -subject 2>/dev/null | awk -F'= ' '/issuer/{i=$2} /subject/{s=$2} END{exit !(i==s)}'; then
+        [ "$TLS_STATUS" = OK ] && TLS_STATUS=WARNING; TLS_NOTE="${TLS_NOTE:+$TLS_NOTE; }сервер отдаёт только свой сертификат без промежуточных (fullchain): браузеры могут догрузить цепочку, а ASR/curl/мобильные клиенты — нет"
+      fi
+    fi
+  fi
+  [ "$TLS_STATUS" = OK ] && TLS_NOTE="цепочка доверена, имя совпадает, срок действия в порядке"
+  return 0
+}
+
+# compat_check — сравнение версий с проверенным набором (deployment/compat.env). Только информирование (WARN), не блокировка:
+# решающая проверка — реальный WebSocket на /rtc/v1. Заполняет COMPAT_NOTE; печатает OK|WARNING.
+compat_check() {
+  local f="$REPO_ROOT/deployment/compat.env" want have
+  COMPAT_NOTE=""
+  [ -r "$f" ] || { COMPAT_NOTE="deployment/compat.env не найден"; echo WARNING; return 0; }
+  want="$(grep -E '^TESTED_LIVEKIT_SERVER=' "$f" | cut -d= -f2)"; have="${LIVEKIT_IMAGE_TAG:-}"
+  if [ "$have" = "$want" ]; then COMPAT_NOTE="LiveKit Server ${have} = проверенная версия"; echo OK
+  elif [ "$have" = "latest" ] || [ -z "$have" ]; then COMPAT_NOTE="LiveKit Server: latest (проверено на ${want}); клиенты обратно совместимы с более новыми серверами, решающая проверка — проба /rtc/v1"; echo OK
+  else COMPAT_NOTE="LiveKit Server ${have} отличается от проверенной ${want}: допустимо, но если это СТАРАЯ версия (ниже проверенной), вход в комнату может замедляться (/rtc/v1 → 404). Решающая проверка — scripts/smoke-test.sh"; echo WARNING; fi
+}
+
 verify_deployment() {
   VERIFY_FAILS=0; VERIFY_WARNINGS=()
   local s st code body web_addr="${WEB_BIND_ADDR:-127.0.0.1}" lk_bind="${LIVEKIT_BIND_ADDR:-0.0.0.0}"
@@ -95,6 +165,7 @@ verify_deployment() {
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/internal/v1/smoke")"; [ "$code" = 404 ] && v_ok "Внутренний API снаружи закрыт (404)" || v_fail "/internal/ доступен снаружи (код $code) — должен быть 404"
     code="$(_curl_code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "http://${web_addr}:${WEB_PORT}/livekit/rtc")"
     case "$code" in 101|400|401|403|426) v_ok "Сигналинг LiveKit через web (/livekit/) достижим (HTTP $code)" ;; *) v_fail "Сигналинг LiveKit через web недоступен (HTTP $code) — проверьте прокси /livekit/" ;; esac
+    local cv; cv="$(compat_check)"; if [ "$cv" = OK ]; then v_ok "$COMPAT_NOTE"; else v_warn "$COMPAT_NOTE"; fi
     code="$(_curl_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$code" = 200 ] && v_ok "LiveKit HTTP healthy ($code)" || v_fail "LiveKit HTTP 127.0.0.1:${LIVEKIT_HTTP_PORT}: $code"
     if [ "${NGINX_MANAGE:-no}" = "yes" ]; then
       code="$(_curl_code -H "Host: ${NGINX_SERVER_NAME}" "http://127.0.0.1:${NGINX_LISTEN_PORT}/healthz")"

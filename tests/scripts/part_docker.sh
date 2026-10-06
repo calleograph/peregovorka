@@ -119,7 +119,7 @@ t "неизвестный этап отвергается" bash -c 'env PATH="$2
 # ---- параметры ядра: только предупреждения, с командами администратору
 PS="$TMP/procsys"; mkdir -p "$PS/vm" "$PS/net/core"
 kt() { env PROC_SYS_ROOT="$PS" bash -c 'source "$1"; o=""; w=""; ko(){ o+="$*"$'"'"'\n'"'"'; }; kw(){ w+="$*"$'"'"'\n'"'"'; }; kernel_tuning_check ko kw; eval "$2"' _ "$ROOT/scripts/lib/envlib.sh" "$1"; }
-echo 0 > "$PS/vm/overcommit_memory"; echo 425984 > "$PS/net/core/rmem_max"
+echo 0 > "$PS/vm/overcommit_memory"; echo 425984 > "$PS/net/core/rmem_max"; echo 5000000 > "$PS/net/core/wmem_max"; echo 5000 > "$PS/net/core/netdev_max_backlog"
 t "overcommit=0 → WARN с командой sysctl, не отказ" kt 'grep -q "sysctl -w vm.overcommit_memory=1" <<<"$w" && grep -q "Cannot allocate memory" <<<"$w"'
 t "rmem_max=425984 → WARN с текущим и рекомендуемым" kt 'grep -q "425984" <<<"$w" && grep -q "5000000" <<<"$w" && grep -q "net.core.rmem_max=5000000" <<<"$w"'
 t "предупреждение объясняет влияние на медиатрафик" kt 'grep -qi "потер" <<<"$w"'

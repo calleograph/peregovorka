@@ -32,6 +32,7 @@ class SessionInfo:
     room_id: str = ""
     transcribe: bool = True
     record_audio: bool = False
+    started_at: float = 0.0  # unix-время команды start от backend (для метрики asr_join_ms)
 
 
 class RoomWorker:
@@ -51,6 +52,8 @@ class RoomWorker:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._streams: dict[str, asyncio.Task] = {}  # track sid -> задача конвейера
+        self._closing: set[asyncio.Task] = set()  # отменённые, но ещё не завершённые конвейеры
+        self._joined_once = False
         self.connected = False
 
     def set_flags(self, transcribe: bool, record_audio: bool) -> None:
@@ -126,7 +129,14 @@ class RoomWorker:
                                    options=rtc.RoomOptions(auto_subscribe=False))
                 self.connected = True
                 backoff = 2.0
-                log.info("ASR-воркер вошёл в комнату", extra={"room": self.info.room_name})
+                join_ms = (time.time() - self.info.started_at) * 1000 if self.info.started_at else None
+                log.info("ASR-воркер вошёл в комнату", extra={"room": self.info.room_name,
+                                                              "asr_join_ms": round(join_ms) if join_ms is not None else None})
+                if not self._joined_once:
+                    self._joined_once = True
+                    self._publisher.expect_first_segment(self.info.meeting_id)
+                    if join_ms is not None:
+                        await self._publisher.record_timing("asr_join_ms", join_ms)
                 for p in room.remote_participants.values():  # кто уже в комнате
                     for pub in p.track_publications.values():
                         self._maybe_subscribe(rtc, pub, p)
@@ -137,10 +147,12 @@ class RoomWorker:
                 log.warning("Ошибка комнаты LiveKit, повтор", extra={"room": self.info.room_name, "error": type(exc).__name__})
             finally:
                 self.connected = False
-                for sid in list(self._streams):
-                    self._stop_stream(sid)
+                # Порядок важен для нативных (FFI) ресурсов LiveKit: сначала ДОЖИДАЕМСЯ закрытия всех аудиопотоков и
+                # конвейеров, и только потом освобождаем комнату; уже отключённую комнату повторно не отключаем.
+                await self._drain_streams()
                 try:
-                    await room.disconnect()
+                    if not disconnected.is_set() and (not hasattr(room, "isconnected") or room.isconnected()):
+                        await room.disconnect()
                 except Exception:  # noqa: BLE001
                     pass
             if self._stop.is_set():
@@ -178,3 +190,13 @@ class RoomWorker:
         task = self._streams.pop(sid, None)
         if task:
             task.cancel()
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+
+    async def _drain_streams(self) -> None:
+        """Отменить все конвейеры и дождаться их завершения (aclose аудиопотоков выполняется внутри них)."""
+        for sid in list(self._streams):
+            self._stop_stream(sid)
+        pending = list(self._closing)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)

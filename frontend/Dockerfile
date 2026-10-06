@@ -1,4 +1,6 @@
-FROM node:22-alpine AS build
+ARG NODE_VERSION=lts
+ARG NGINX_VERSION=stable
+FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -7,7 +9,7 @@ COPY public ./public
 COPY src ./src
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:${NGINX_VERSION}-alpine
 # Конфиг уже финальный: скрипт entrypoint, пытающийся переписывать default.conf (IPv6 listen), не нужен и ругается
 # на неизменяемую ФС («can not modify … read-only file system?»). Убираем именно его — права файлов и режим ФС не ослабляем.
 USER root

@@ -12,6 +12,11 @@ server {
     listen @@LISTEN_PORT@@;
     server_name @@SERVER_NAME@@;
 
+    # Реальная схема публичного URL: если внешний прокси передал X-Forwarded-Proto — сохраняем его как есть
+    # (https не подменяется на http); если нет — схема этого соединения. Без map{} в http-контексте.
+    set $xfp $http_x_forwarded_proto;
+    if ($xfp = "") { set $xfp $scheme; }
+
     client_max_body_size 20m;
 
     # Внутренние API наружу не отдаются.
@@ -26,7 +31,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-Proto $xfp;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -39,7 +44,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-Proto $xfp;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -50,7 +55,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-Proto $xfp;
         proxy_read_timeout 120s;
     }
 }

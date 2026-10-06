@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 
 from ..auth.deps import require_internal
 from ..models import Meeting, MeetingParticipant, Room, TranscriptSegment, User
+from ..services import diagnostics
 from ..services.asr_bridge import SEGMENTS_STREAM
 from ..services.livekit import (
     issue_user_token,
@@ -48,10 +49,13 @@ async def livekit_webhook(request: Request):
             else:
                 await svc.on_participant_left(db, meeting_id, user_id)
     elif event.event == "room_finished" and meeting_id:
+        # Комната LiveKit закрылась (все ушли дольше departure_timeout либо её удалили). Встречу НЕ завершаем мгновенно:
+        # обновление страницы или обрыв сети — это не конец встречи. Сверяем присутствие; завершит reaper по истечении
+        # льготного периода MEETING_END_GRACE_SECONDS, а вернувшийся участник пересоздаст комнату тем же именем.
         async with request.app.state.session_maker() as db:
             meeting = await db.get(Meeting, meeting_id)
-            if meeting is not None:
-                await request.app.state.meetings.end(db, meeting, "room_finished")
+            if meeting is not None and meeting.ended_at is None:
+                await request.app.state.meetings.reconcile(db, meeting)
     return {"ok": True}
 
 
@@ -113,6 +117,16 @@ async def smoke(request: Request):
     return {"ok": bool(ok), "steps": steps, "error": error}
 
 
+@router.get("/diag/token", dependencies=[Depends(require_internal)])
+async def diag_token(request: Request):
+    """Одноразовый короткоживущий токен скрытого тестового участника в служебной комнате diag-*: для проверки реального
+    WebSocket Upgrade со стороны хоста (scripts/smoke-test.sh). Пользовательских комнат и встреч не касается."""
+    import secrets as _secrets
+
+    room = f"diag-{_secrets.token_hex(4)}"
+    return {"room": room, "token": diagnostics._diag_token(request.app.state.settings, room)}  # noqa: SLF001
+
+
 @router.get("/diag", dependencies=[Depends(require_internal)])
 async def diag(request: Request):
     """Диагностика для smoke-test: БД, Redis, LDAP (bind сервисной учётки), LiveKit, ASR, версия сборки. Секреты не возвращаются."""
@@ -145,5 +159,9 @@ async def diag(request: Request):
         out["livekit"] = {"ok": False, "error": type(exc).__name__}
     hb = await app.state.bridge.heartbeat()
     out["asr"] = {"ok": bool(hb and hb.get("model_loaded")), "provider": (hb or {}).get("provider"), "commit": (hb or {}).get("commit")}
+    out["versions"] = {"livekit_server": s.livekit_server_version or "unknown", "livekit_python_sdk_asr": (hb or {}).get("livekit_sdk")}
+    if request.query_params.get("deep") == "1":  # реальный WebSocket Upgrade на /rtc/v1 (создаёт и сразу закрывает тестовое соединение)
+        out["livekit_ws"] = await diagnostics.livekit_checks(s)
+        out["kernel"] = diagnostics.kernel_report()
     out["ok"] = all(out[k]["ok"] for k in ("postgres", "redis", "ldap", "livekit", "asr"))
     return out

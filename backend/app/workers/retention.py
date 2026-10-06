@@ -27,6 +27,10 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
     now = utcnow()
     stats = {"segments": 0, "protocols": 0, "recordings": 0}
     async with session_maker() as db:
+        try:
+            await protocols.retry_pending_exports(db)  # повтор выгрузки записей, не дошедших до внешнего хранилища
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка повторной выгрузки записей")
         rooms = (await db.execute(select(Room))).scalars().all()
         for room in rooms:
             if room.text_retention_days is not None:
@@ -35,7 +39,7 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                                                                  Meeting.ended_at < cutoff))).scalars().all()
                 if ids:
                     r1 = await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id.in_(ids)))
-                    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind == "summary"))
+                    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol"))))
                     stats["segments"] += r1.rowcount or 0
                     stats["protocols"] += r2.rowcount or 0
             if room.audio_retention_days is not None:

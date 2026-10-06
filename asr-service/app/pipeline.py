@@ -106,6 +106,12 @@ class ParticipantPipeline:
                     for seg in self._segmenter.flush():
                         self._submit(seg)
         finally:
+            aclose = getattr(frames, "aclose", None)  # закрыть источник кадров (аудиопоток LiveKit) явно, а не сборщиком мусора
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:  # noqa: BLE001
+                    log.debug("ошибка закрытия источника кадров", exc_info=True)
             for seg in self._segmenter.flush():
                 if self._flags.transcribe:
                     self._submit(seg)

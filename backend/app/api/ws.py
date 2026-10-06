@@ -14,6 +14,7 @@ from sqlalchemy import select
 from ..auth.deps import SessionUser
 from ..models import Meeting, MeetingParticipant
 from ..services import events
+from ..services.access import can_access_meeting
 
 router = APIRouter()
 log = logging.getLogger("app.ws")
@@ -27,11 +28,7 @@ async def _can_subscribe(app, su: SessionUser, meeting_id: uuid.UUID) -> bool:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             return False
-        if su.is_admin:
-            return True
-        row = (await db.execute(select(MeetingParticipant.id).where(
-            MeetingParticipant.meeting_id == meeting_id, MeetingParticipant.user_id == su.user_id))).first()
-        return row is not None
+        return await can_access_meeting(db, app.state.redis, meeting, su)
 
 
 @router.websocket("/ws")

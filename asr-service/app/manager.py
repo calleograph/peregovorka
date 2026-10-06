@@ -28,7 +28,7 @@ def parse_session(meeting_id: str, raw: str | dict) -> SessionInfo | None:
             return None
         return SessionInfo(meeting_id=str(data.get("meeting_id") or meeting_id), room_name=room_name,
                            room_id=str(data.get("room_id", "")), transcribe=bool(data.get("transcribe", True)),
-                           record_audio=bool(data.get("record_audio", False)))
+                           record_audio=bool(data.get("record_audio", False)), started_at=float(data.get("started_at") or 0))
     except (KeyError, ValueError, TypeError):
         return None
 

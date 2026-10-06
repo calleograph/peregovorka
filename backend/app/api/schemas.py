@@ -64,6 +64,7 @@ class JoinOut(BaseModel):
     token: str = Field(repr=False)
     identity: str
     recording: bool = True
+    asr_ready: bool = False  # транскрибация готова; вход в комнату от этого НЕ зависит
     client: ClientConfig = Field(default_factory=ClientConfig)
 
 
@@ -84,6 +85,9 @@ class MeetingOut(BaseModel):
     end_reason: str | None
     transcription_enabled: bool
     participants: list[ParticipantOut]
+    segments: int = 0
+    recordings: int = 0
+    protocols: int = 0
 
 
 class SegmentOut(BaseModel):
@@ -131,6 +135,7 @@ class RoomAdminOut(BaseModel):
     text_retention_days: int | None
     audio_retention_days: int | None
     protocol_instructions: str | None
+    history_access: str = "admin"
     acl: list[AclEntryOut]
     active_meeting_id: uuid.UUID | None = None
 
@@ -149,6 +154,7 @@ class RoomCreateIn(BaseModel):
     text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
     protocol_instructions: str | None = Field(default=None, max_length=20000)
+    history_access: str = Field(default="admin", pattern="^(admin|participants)$")
     acl: list[AclEntryIn] = Field(default_factory=list)
 
     @field_validator("slug")
@@ -174,4 +180,5 @@ class RoomPatchIn(BaseModel):
     text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
     protocol_instructions: str | None = Field(default=None, max_length=20000)
+    history_access: str | None = Field(default=None, pattern="^(admin|participants)$")
     acl: list[AclEntryIn] | None = None

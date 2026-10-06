@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_token_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    # сведения о развёртывании LiveKit для диагностики (compose передаёт из .env)
+    livekit_server_version: str = ""
+    livekit_node_ip: str = ""
+    livekit_rtc_tcp_port: int = 0
+    livekit_rtc_udp_port: int = 0
 
     # --- Active Directory
     ldap_uris: str = ""
@@ -74,7 +79,7 @@ class Settings(BaseSettings):
     internal_api_token: str = ""
 
     # --- встречи и хранение
-    meeting_end_grace_seconds: int = Field(default=30, ge=0)
+    meeting_end_grace_seconds: int = Field(default=60, ge=0)
     default_text_retention_days: int | None = 365
     default_audio_retention_days: int | None = 30
     segment_consumer_block_ms: int = Field(default=2000, ge=10, le=10000)

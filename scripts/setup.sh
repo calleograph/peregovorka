@@ -49,7 +49,7 @@ ask_valid() { # ask_valid "вопрос" "по умолчанию" функци�
 v_name()  { [[ "$1" =~ ^[a-z][a-z0-9_-]{2,40}$ ]] || { echo "Только a-z, 0-9, «-», «_»; с буквы; 3–41 символ"; return 1; }
             if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${1}[-_]"; then echo "Контейнеры «$1…» уже есть на сервере — выберите другое имя"; return 1; fi; }
 v_host()  { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo "Нужно DNS-имя без схемы и слэшей (например meet.corp.local)"; return 1; }; }
-v_ip()    { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Нужен IPv4-адрес (например 192.168.10.241)"; return 1; }; }
+v_ip()    { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Нужен IPv4-адрес (например 192.0.2.10)"; return 1; }; }
 v_data()  { validate_local_dir "$1" DATA_ROOT; }
 v_hops()  { [[ "$1" =~ ^[1-9]$ ]] || { echo "Число от 1 до 9"; return 1; }; }
 v_nonempty() { [ -n "$1" ] || { echo "Обязательное поле"; return 1; }; }
@@ -91,6 +91,13 @@ if [ ! -f "$ENV" ]; then
   set_var APP_ROOT "$REPO_ROOT"; set_var DATA_ROOT "$DATA"; set_var BACKUP_DIR "$DATA/backups"; set_var TRUSTED_PROXY_HOPS "$HOPS"
   set_var WEB_PORT "$WEB"; set_var LIVEKIT_HTTP_PORT "$LKH"; set_var LIVEKIT_TCP_PORT "$LKT"; set_var LIVEKIT_UDP_PORT "$LKU"
   set_var LIVEKIT_NODE_IP "$NODEIP"
+  # Потоки ASR: на общем сервере распознавание не должно занимать все ядра хоста (по умолчанию torch берёт все).
+  # Старт: половина vCPU (не меньше 1), inter-op 1 (до 4 vCPU) или 2; точное значение подбирается по задержке — scripts/asr-bench.sh.
+  if [ "$PROFILE" = "shared-host" ]; then
+    CPUS="$(nproc 2>/dev/null || echo 4)"; ASR_T=$(( CPUS / 2 )); [ "$ASR_T" -lt 1 ] && ASR_T=1; ASR_I=1; [ "$CPUS" -ge 8 ] && ASR_I=2
+    set_var ASR_CPU_THREADS "$ASR_T"; set_var ASR_INTEROP_THREADS "$ASR_I"
+    info "ASR на общем сервере: ASR_CPU_THREADS=$ASR_T, ASR_INTEROP_THREADS=$ASR_I (по $CPUS vCPU). Уточнить по задержке: scripts/asr-bench.sh"
+  fi
   set_var LDAP_URIS "$LDAPU"; set_var LDAP_BASE_DN "$BASEDN"; set_var LDAP_BIND_DN "$BINDDN"; set_var LDAP_BIND_PASSWORD "$BINDPW"
   set_var LDAP_CA_FILE "$CA"; set_var LDAP_ADMIN_GROUP_DN "$ADMING"
   set_var POSTGRES_DB "${NAME//-/_}"; set_var POSTGRES_USER "${NAME//-/_}"

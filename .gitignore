@@ -29,3 +29,7 @@ frontend/dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Артефакты диагностики и замеров (могут содержать сведения об установке)
+/diagnostics/
+metrics-*.csv

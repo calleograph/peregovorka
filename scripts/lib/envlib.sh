@@ -102,9 +102,9 @@ print_network_summary() { # читает переменные окружения
  Внешний прокси должен: вести https://${host} → http://<IP сервера>:${NGINX_LISTEN_PORT:-?};
  передавать Upgrade/WebSocket; ставить X-Forwarded-Proto: https.
  Существующие site-файлы nginx установщик не изменяет: если нужно «вписать» новый сайт в уже
- занятый порт (например 8106), сделайте это отдельно — направьте его на 127.0.0.1:${NGINX_LISTEN_PORT:-?}.
+ занятый порт, сделайте это отдельно — направьте его на 127.0.0.1:${NGINX_LISTEN_PORT:-?}.
 
- Зачем три уровня: внешний прокси/NPM (HTTPS, внешний порт, например 8106) → host nginx :${NGINX_LISTEN_PORT:-?} (управляемый
+ Зачем три уровня: внешний прокси (HTTPS, внешний порт, который вам выделили) → host nginx :${NGINX_LISTEN_PORT:-?} (управляемый
  Peregovorka ingress: свой site-файл, WebSocket, закрытый /internal) → web 127.0.0.1:${WEB_PORT:-?} (контейнер: SPA, /api,
  /livekit). Пример для существующего site (WebSocket обязателен):
      location / {
@@ -156,20 +156,28 @@ own_nginx_site_ok() {
 # proc_sys vm.overcommit_memory → значение из /proc/sys (PROC_SYS_ROOT — для тестов). Пусто, если недоступно.
 proc_sys() { local f="${PROC_SYS_ROOT:-/proc/sys}/${1//.//}"; [ -r "$f" ] && tr -d '[:space:]' < "$f"; }
 
+# Рекомендуемые значения для WebRTC (LiveKit сам предупреждает о малом буфере приёма UDP).
+KERNEL_RECOMMENDED_RMEM=5000000
+KERNEL_RECOMMENDED_WMEM=5000000
+KERNEL_RECOMMENDED_BACKLOG=5000
+
 # kernel_tuning_check ok_fn warn_fn — WARN, не отказ: установщик/preflight sysctl НЕ меняют (на shared-host это глобальные
-# настройки хоста, их применяет администратор осознанно).
+# настройки хоста, их применяет администратор осознанно; для standalone есть отдельный scripts/tune-kernel.sh).
 kernel_tuning_check() {
-  local ok="$1" warn="$2" v want=5000000
+  local ok="$1" warn="$2" v name want
   v="$(proc_sys vm.overcommit_memory)"
   if [ -z "$v" ]; then "$warn" "vm.overcommit_memory: значение недоступно для чтения (не Linux или нет /proc/sys)"
   elif [ "$v" = "1" ]; then "$ok" "vm.overcommit_memory = 1 (рекомендация Redis выполнена)"
   else
     "$warn" "vm.overcommit_memory = $v (рекомендуется 1). Redis при фоновом сохранении (fork) может получить «Cannot allocate memory» и не сохранить данные при нехватке памяти; Redis пишет WARNING при старте. Параметр глобален для хоста — влияет на все приложения сервера. Команды администратору: sudo sysctl -w vm.overcommit_memory=1 ; постоянно: echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-peregovorka.conf (установщик это НЕ делает)."
   fi
-  v="$(proc_sys net.core.rmem_max)"
-  if [ -z "$v" ]; then "$warn" "net.core.rmem_max: значение недоступно для чтения"
-  elif [ "$v" -ge "$want" ] 2>/dev/null; then "$ok" "net.core.rmem_max = $v (рекомендация LiveKit ≥ $want выполнена)"
-  else
-    "$warn" "UDP receive buffer ниже рекомендованного: net.core.rmem_max = $v, LiveKit рекомендует $want. Под нагрузкой (много участников, видео, экран) возможны потери UDP-пакетов, треск и подвисание медиа; для пробного запуска не критично. Команды администратору: sudo sysctl -w net.core.rmem_max=$want net.core.wmem_max=$want ; постоянно: printf 'net.core.rmem_max = $want\nnet.core.wmem_max = $want\n' | sudo tee /etc/sysctl.d/99-peregovorka-udp.conf (установщик это НЕ делает)."
-  fi
+  for name in net.core.rmem_max net.core.wmem_max net.core.netdev_max_backlog; do
+    case "$name" in net.core.rmem_max) want=$KERNEL_RECOMMENDED_RMEM ;; net.core.wmem_max) want=$KERNEL_RECOMMENDED_WMEM ;; *) want=$KERNEL_RECOMMENDED_BACKLOG ;; esac
+    v="$(proc_sys "$name")"
+    if [ -z "$v" ]; then "$warn" "$name: значение недоступно для чтения"
+    elif [ "$v" -ge "$want" ] 2>/dev/null; then "$ok" "$name = $v (рекомендация ≥ $want выполнена)"
+    else
+      "$warn" "$name = $v ниже рекомендованного $want. LiveKit предупреждает о малом буфере приёма UDP; под нагрузкой (участники, видео, экран) возможны потери пакетов, треск и подвисание медиа. Параметры глобальны для хоста. Команда администратору: sudo sysctl -w $name=$want (постоянно — через scripts/tune-kernel.sh --apply с подтверждением; установщик sysctl сам НЕ меняет)."
+    fi
+  done
 }

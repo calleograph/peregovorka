@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_system, auth, health, internal, meetings, rooms, ws
+from .api import admin, admin_system, auth, client, health, internal, meetings, rooms, templates, ws
 from .auth.directory import DirectoryClient, LdapDirectory
 from .auth.service import AuthService
 from .auth.sessions import SessionStore
@@ -60,6 +60,7 @@ def create_app(
             box = None
         settings_svc = SettingsService(box)
         protocols = ProtocolService(settings, session_maker, settings_svc, transports=getattr(app.state, "test_transports", None))
+        meetings_svc.settings_svc = settings_svc
         meetings_svc.on_ended = lambda mid: protocols.spawn(protocols.finalize(mid), f"finalize-{mid}")
 
         app.state.settings = settings
@@ -122,7 +123,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, admin.router, admin_system.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, templates.router, client.router, admin.router, admin_system.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

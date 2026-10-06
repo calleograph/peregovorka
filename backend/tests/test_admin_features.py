@@ -215,10 +215,10 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
         put_settings(c, "protocol", instructions="ГЛОБАЛЬНАЯ ИНСТРУКЦИЯ")
         room, a = _two_person_meeting(c, protocol_instructions="ИНСТРУКЦИЯ КОМНАТЫ")
         login(c, "alice")
-        assert c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols/summary").status_code == 409  # встреча идёт
+        assert c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"}).status_code == 409  # встреча идёт
         c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
         _drain(c)
-        r = c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols/summary")
+        r = c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"})
         assert r.status_code == 202
         _drain(c)
         pid = r.json()["protocol_id"]
@@ -228,7 +228,7 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
         sent = json.dumps(llm_seen[0], ensure_ascii=False)
         assert "Alice A" not in sent and "Bob B" not in sent, "имена не должны уходить в LLM"
         assert "[ФИО_1]" in sent and "ГЛОБАЛЬНАЯ ИНСТРУКЦИЯ" in sent and "ИНСТРУКЦИЯ КОМНАТЫ" in sent
-        assert list((tmp_path / "out").rglob("summary.txt")), "краткий протокол выгружен рядом со стенограммой"
+        assert list((tmp_path / "out").rglob("official-protocol.md")), "краткий протокол выгружен рядом со стенограммой"
         assert len(c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols").json()) == 1
         login(c, "carol")
         assert c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols/{pid}").status_code == 404
@@ -251,7 +251,7 @@ def test_summary_fails_closed_when_anonymizer_rejects(tmp_path, directory):
         login(c, "alice")
         c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
         _drain(c)
-        pid = c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols/summary").json()["protocol_id"]
+        pid = c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"}).json()["protocol_id"]
         _drain(c)
         got = c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols/{pid}").json()
         assert got["status"] == "failed" and "verification.clean" in got["error"]
@@ -265,7 +265,7 @@ def test_summary_requires_configured_services_and_auto_generate(tmp_path, direct
         _room, a = _two_person_meeting(c)
         login(c, "alice")
         c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
-        assert c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols/summary").status_code == 409  # не настроено
+        assert c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"}).status_code == 409  # не настроено
         put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
         put_settings(c, "protocol", auto_generate=True)

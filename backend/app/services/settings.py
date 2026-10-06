@@ -30,8 +30,8 @@ class _Group(BaseModel):
     model_config = {"extra": "forbid"}
 
 
-class StorageSettings(_Group):
-    """Куда выгружаются протоколы встреч: локальный каталог или сетевой ресурс SMB."""
+class _StorageTarget(_Group):
+    """Куда писать файлы: локальный каталог (внутри смонтированного тома) или сетевой ресурс SMB."""
 
     SECRETS: ClassVar[tuple[str, ...]] = ("smb_password",)
     enabled: bool = False
@@ -43,9 +43,6 @@ class StorageSettings(_Group):
     smb_username: str = ""
     smb_domain: str = ""
     smb_password: str = ""
-    export_transcript: bool = True
-    export_summary: bool = True
-    export_audio: bool = False
 
     @field_validator("smb_server")
     @classmethod
@@ -82,6 +79,21 @@ class StorageSettings(_Group):
         if self.enabled and self.mode == "smb" and not (self.smb_server and self.smb_share):
             raise ValueError("Для SMB укажите сервер и общий ресурс")
         return self
+
+
+class StorageSettings(_StorageTarget):
+    """Хранилище ПРОТОКОЛОВ (текст)."""
+
+    export_transcript: bool = True
+    export_summary: bool = True
+
+
+class AudioStorageSettings(_StorageTarget):
+    """Хранилище ЗАПИСЕЙ аудио. Если выключено — записи остаются на локальном томе приложения.
+    При недоступности хранилища запись не теряется: остаётся локально и выгружается повторно."""
+
+    local_path: str = "/data/exports/audio"
+    keep_local_copy: bool = True
 
 
 class AnonymizerSettings(_Group):
@@ -185,12 +197,20 @@ class LlmSettings(_Group):
         return self
 
 
+DEFAULT_PROTOCOL_INSTRUCTION = (
+    "Сформировать официальный протокол совещания. Выделить тему, участников, обсуждавшиеся вопросы, принятые решения, "
+    "поручения, ответственных и сроки. Не придумывать отсутствующие сведения."
+)
+DEFAULT_SUMMARY_INSTRUCTION = (
+    "Кратко (не более 10 строк) изложить суть встречи: о чём говорили, ключевые решения и поручения. Не придумывать отсутствующие сведения."
+)
+
+
 class ProtocolSettings(_Group):
-    instructions: str = Field(
-        default="Составь краткий протокол встречи: 1) тема и участники; 2) основные обсуждённые вопросы; "
-                "3) принятые решения; 4) поручения (кто, что, срок, если названы). Не выдумывай факты.",
-        max_length=20000)
+    instructions: str = Field(default=DEFAULT_PROTOCOL_INSTRUCTION, max_length=20000)
+    summary_instructions: str = Field(default=DEFAULT_SUMMARY_INSTRUCTION, max_length=20000)
     auto_generate: bool = False
+    auto_summary: bool = False
     max_input_chars: int = Field(default=60000, ge=2000, le=1_000_000)
 
 
@@ -204,6 +224,9 @@ class ScreenSettings(_Group):
 
 class GeneralSettings(_Group):
     timezone: str = "UTC"  # для имён папок протоколов и подписей времени
+    post_meeting_access_minutes: int = Field(default=120, ge=1, le=1440)  # сколько участник, оставшийся на странице завершённой встречи, сохраняет доступ
+    default_text_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    default_audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
 
     @field_validator("timezone")
     @classmethod
@@ -217,6 +240,7 @@ class GeneralSettings(_Group):
 
 GROUPS: dict[str, type[_Group]] = {
     "storage": StorageSettings,
+    "audio_storage": AudioStorageSettings,
     "anonymizer": AnonymizerSettings,
     "llm": LlmSettings,
     "protocol": ProtocolSettings,

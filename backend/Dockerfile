@@ -1,9 +1,13 @@
-FROM python:3.12-slim
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
 
 ARG APP_VERSION=0.0.0
 ARG APP_GIT_COMMIT=unknown
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     APP_VERSION=${APP_VERSION} APP_GIT_COMMIT=${APP_GIT_COMMIT}
+
+# Шрифт с кириллицей для экспорта протоколов в PDF
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \n    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
 COPY requirements.txt .

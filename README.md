@@ -28,6 +28,7 @@ git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projec
 - Порты, AD, данные, диагностика — [DEPLOYMENT.md](DEPLOYMENT.md); аудит интерфейса — [docs/AUDIT.md](docs/AUDIT.md)
 - **Фактическое состояние проекта — [PROJECT.md](PROJECT.md)**, журнал изменений — [HISTORY.md](HISTORY.md)
 - Все переменные конфигурации — [.env.example](.env.example)
+- Версии LiveKit/SDK и политика обновлений — [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md); приёмочный тест — [docs/ACCEPTANCE_TEST.md](docs/ACCEPTANCE_TEST.md)
 - Контракт backend ⇄ ASR — [docs/ASR_CONTRACT.md](docs/ASR_CONTRACT.md); миграции и бэкапы — [docs/MIGRATIONS.md](docs/MIGRATIONS.md)
 
 ## Состав репозитория

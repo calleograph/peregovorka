@@ -16,7 +16,7 @@ from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
-              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions")
+              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access")
 
 
 def _acl_rows(entries: list[AclEntryIn]) -> list[RoomAcl]:
@@ -40,7 +40,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
         text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days,
-        protocol_instructions=room.protocol_instructions,
+        protocol_instructions=room.protocol_instructions, history_access=room.history_access,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
     )
@@ -64,7 +64,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         camera_allowed=body.camera_allowed, screen_share_allowed=body.screen_share_allowed,
         text_retention_days=body.text_retention_days if "text_retention_days" in body.model_fields_set else settings.default_text_retention_days,
         audio_retention_days=body.audio_retention_days if "audio_retention_days" in body.model_fields_set else settings.default_audio_retention_days,
-        protocol_instructions=body.protocol_instructions,
+        protocol_instructions=body.protocol_instructions, history_access=body.history_access,
     )
     room.acl = _acl_rows(body.acl)
     db.add(room)

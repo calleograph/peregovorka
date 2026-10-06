@@ -21,6 +21,15 @@ from .publisher import SegmentPublisher, heartbeat_loop
 log = logging.getLogger("asr")
 
 
+def _livekit_sdk() -> str | None:
+    try:
+        from importlib.metadata import version
+
+        return version("livekit")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def amain() -> None:
     settings = AsrSettings()
     configure_logging(settings.log_level, settings.log_format)
@@ -37,7 +46,9 @@ async def amain() -> None:
             "model_loaded": provider.is_ready(), "model_error": state["model_error"],
             "provider": provider.info.as_dict(), "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
-            "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors,
+            "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
+            "torch_threads": getattr(provider, "threads", {}).get("intra"), "torch_interop_threads": getattr(provider, "threads", {}).get("interop"),
+            "livekit_sdk": _livekit_sdk(),
             "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
 

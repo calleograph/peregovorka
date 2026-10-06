@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # deploy.sh — обычное обновление приложения ИЗ GIT. Ручное копирование каталогов не используется.
 #
-#   scripts/deploy.sh [--ref COMMIT_SHA|TAG] [--env FILE] [--no-backup] [--yes] [--dry-run]
+#   scripts/deploy.sh [--ref COMMIT_SHA|TAG] [--env FILE] [--pull] [--no-backup] [--yes] [--dry-run]
+#   --pull — обновить базовые образы (Python, Node, nginx, LiveKit latest) и зависимости до самых новых версий в допустимых
+#            пределах: пересобирает образы проекта с `build --pull` даже если исходники не менялись.
 #
 # Порядок: проверка чистоты рабочей копии → git fetch → fast-forward (или
 # checkout указанного --ref: SHA/тег для воспроизводимости) → preflight →
@@ -14,15 +16,16 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-REF=""; NO_BACKUP=0; YES=0
+REF=""; NO_BACKUP=0; YES=0; PULL_BASES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF="$2"; shift 2 ;;
     --env) ENV_FILE="$2"; shift 2 ;;
     --no-backup) NO_BACKUP=1; shift ;;
     --yes) YES=1; shift ;;
+    --pull) PULL_BASES=1; export PULL_BASES FORCE_BUILD=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done

@@ -152,11 +152,11 @@ class ProtocolService:
                         rec.status, rec.error = "failed", str(exc)[:480]
                         log.error("Выгрузка стенограммы не удалась", extra={"meeting_id": str(meeting_id), "error": str(exc)})
                     await db.commit()
-                    if dir_rel and storage_cfg.export_audio:  # type: ignore[attr-defined]
-                        await self._export_audio(db, storage, meeting_id, dir_rel)
                 proto_cfg = await self._svc.get(db, "protocol")
             if proto_cfg.auto_generate:  # type: ignore[attr-defined]
-                await self.run_summary(await self.create_summary_row(meeting_id, "auto"))
+                await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
+            if proto_cfg.auto_summary:  # type: ignore[attr-defined]
+                await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
         except Exception:  # noqa: BLE001
             log.exception("Ошибка финализации встречи", extra={"meeting_id": str(meeting_id)})
 
@@ -164,58 +164,132 @@ class ProtocolService:
         finished = await asyncio.to_thread(finalize_pcm_files, self._s.recordings_path, meeting.livekit_room, rel_dir, names)
         from .livekit import parse_user_identity
 
+        recs: list[Recording] = []
         for f in finished:
             uid = parse_user_identity(f.identity)
             user = await db.get(User, uid) if uid else None
-            db.add(Recording(meeting_id=meeting.id, room_id=meeting.room_id, user_id=user.id if user else None,
-                             participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s))
+            rec = Recording(meeting_id=meeting.id, room_id=meeting.room_id, user_id=user.id if user else None,
+                            participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s)
+            db.add(rec)
+            recs.append(rec)
         await db.commit()
+        for rec in recs:
+            await self.export_recording(db, rec)
 
-    async def _export_audio(self, db: AsyncSession, storage, meeting_id: uuid.UUID, dir_rel: str) -> None:
+    def _audio_storage(self, cfg):
+        try:
+            return build_storage(cfg, self._s.data_dir)
+        except StorageError as exc:
+            log.error("Хранилище записей недоступно", extra={"error": str(exc)})
+            return None
+
+    async def export_recording(self, db: AsyncSession, rec: Recording) -> None:
+        """Выгрузка WAV во внешнее хранилище записей. Запись НЕ теряется: при сбое остаётся на локальном томе
+        в статусе failed и выгружается повторно (retry_pending_exports)."""
+        cfg = await self._svc.get(db, "audio_storage")
+        if not cfg.enabled:  # type: ignore[attr-defined]
+            rec.export_status = "local"
+            await db.commit()
+            return
+        storage = self._audio_storage(cfg)
         from pathlib import Path
 
-        recs = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id))).scalars().all()
-        for r in recs:
-            try:
-                data = await asyncio.to_thread(Path(self._s.recordings_path, r.path).read_bytes)
-                await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/audio/{Path(r.path).name}", data)
-            except (OSError, StorageError) as exc:
-                log.error("Выгрузка аудио не удалась", extra={"recording": str(r.id), "error": str(exc)})
+        src = Path(self._s.recordings_path, rec.path)
+        try:
+            if storage is None:
+                raise StorageError("хранилище записей недоступно или настроено некорректно")
+            data = await asyncio.to_thread(src.read_bytes)
+            loc = await asyncio.to_thread(storage.write_bytes, f"audio/{rec.path}", data)
+            rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
+            if not cfg.keep_local_copy:  # type: ignore[attr-defined]
+                await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+        except (OSError, StorageError) as exc:
+            rec.export_status, rec.export_error = "failed", str(exc)[:480]
+            log.error("Выгрузка записи не удалась — файл сохранён локально, будет повтор",
+                      extra={"recording": str(rec.id), "error": str(exc)})
+        await db.commit()
 
-    # ------------------------------------------------------------------- краткий протокол
-    async def create_summary_row(self, meeting_id: uuid.UUID, actor: str) -> uuid.UUID:
+    async def retry_pending_exports(self, db: AsyncSession) -> int:
+        cfg = await self._svc.get(db, "audio_storage")
+        if not cfg.enabled:  # type: ignore[attr-defined]
+            return 0
+        recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed"))))).scalars().all()
+        n = 0
+        for rec in recs:
+            await self.export_recording(db, rec)
+            n += rec.export_status == "exported"
+        return n
+
+    async def read_recording(self, db: AsyncSession, rec: Recording) -> bytes:
+        """Содержимое WAV: локальный файл, а если его нет (keep_local_copy=false) — из внешнего хранилища."""
+        from pathlib import Path
+
+        root = Path(self._s.recordings_path).resolve()
+        full = (root / rec.path).resolve()
+        if root in full.parents and full.is_file():
+            return await asyncio.to_thread(full.read_bytes)
+        cfg = await self._svc.get(db, "audio_storage")
+        storage = self._audio_storage(cfg) if rec.export_status == "exported" else None
+        if storage is None:
+            raise StorageError("Файл записи недоступен")
+        return await asyncio.to_thread(storage.read_bytes, f"audio/{rec.path}")
+
+    async def delete_recording(self, db: AsyncSession, rec: Recording) -> None:
+        """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается."""
+        await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+        if rec.export_status == "exported":
+            cfg = await self._svc.get(db, "audio_storage")
+            storage = self._audio_storage(cfg)
+            if storage is not None:
+                try:
+                    await asyncio.to_thread(storage.delete, f"audio/{rec.path}")
+                except StorageError as exc:
+                    log.error("Не удалось удалить файл записи во внешнем хранилище", extra={"recording": str(rec.id), "error": str(exc)})
+        await db.delete(rec)
+
+    # ------------------------------------------------------- протокол и краткое резюме (LLM)
+    async def default_instruction(self, db: AsyncSession, meeting: Meeting, kind: str) -> str:
+        """Инструкция по умолчанию: общая (протокол/резюме) + дополнения конкретной переговорки."""
+        cfg = await self._svc.get(db, "protocol")
+        base = (cfg.summary_instructions if kind == "summary" else cfg.instructions).strip()  # type: ignore[attr-defined]
+        extra = (meeting.room.protocol_instructions or "").strip()
+        return base + (f"\n\nДополнительно для этой переговорки: {extra}" if extra else "")
+
+    async def create_protocol_row(self, meeting_id: uuid.UUID, kind: str, actor: str, instruction: str | None) -> uuid.UUID:
         async with self._sm() as db:
-            rec = Protocol(meeting_id=meeting_id, kind="summary", status="pending", created_by=actor)
+            meeting = await db.get(Meeting, meeting_id)
+            instr = (instruction or "").strip() or (await self.default_instruction(db, meeting, kind) if meeting else None)
+            rec = Protocol(meeting_id=meeting_id, kind=kind, status="pending", created_by=actor, instruction=instr)
             db.add(rec)
             await db.commit()
             return rec.id
 
-    def start_summary(self, protocol_id: uuid.UUID) -> None:
-        self.spawn(self.run_summary(protocol_id), f"summary-{protocol_id}")
+    def start_protocol(self, protocol_id: uuid.UUID) -> None:
+        self.spawn(self.run_protocol(protocol_id), f"protocol-{protocol_id}")
 
-    async def run_summary(self, protocol_id: uuid.UUID) -> None:
+    async def run_protocol(self, protocol_id: uuid.UUID) -> None:
         async with self._sm() as db:
             rec = await db.get(Protocol, protocol_id)
             if rec is None:
                 return
             try:
-                text, meta = await self._summarize(db, rec.meeting_id)
+                text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "")
                 rec.content, rec.status, rec.error, rec.meta = text, "ready", None, meta
                 await db.commit()
-                await self._export_summary(db, rec)
+                await self._export_generated(db, rec)
             except (AnonymizerError, LlmError) as exc:
                 rec.status, rec.error = "failed", exc.describe()
-                log.warning("Краткий протокол не создан", extra={"protocol": str(protocol_id), "code": exc.code})
+                log.warning("Протокол не создан", extra={"protocol": str(protocol_id), "code": exc.code})
                 await db.commit()
             except SettingsError as exc:
                 rec.status, rec.error = "failed", str(exc)[:480]
                 await db.commit()
             except Exception:  # noqa: BLE001
-                log.exception("Ошибка создания краткого протокола", extra={"protocol": str(protocol_id)})
+                log.exception("Ошибка создания протокола", extra={"protocol": str(protocol_id)})
                 rec.status, rec.error = "failed", "Внутренняя ошибка (см. журнал сервера)"
                 await db.commit()
 
-    async def _summarize(self, db: AsyncSession, meeting_id: uuid.UUID) -> tuple[str, dict]:
+    async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str) -> tuple[str, dict]:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             raise SettingsError("Встреча не найдена")
@@ -231,19 +305,19 @@ class ProtocolService:
         anon = AnonymizerClient(an_cfg, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type]
         clean = await anon.anonymize(text, "protocol")
 
-        # 2. LLM получает только обезличенный текст.
+        # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
         llm = LlmClient(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
-        room_instr = (meeting.room.protocol_instructions or "").strip()
-        system = SYSTEM_PROMPT + "\n\nИнструкции организации:\n" + pr_cfg.instructions.strip()  # type: ignore[attr-defined]
-        if room_instr:
-            system += "\n\nИнструкции для этой переговорки:\n" + room_instr
+        instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
+        form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
+                if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
+        system = SYSTEM_PROMPT + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
         parts = split_for_llm(clean.text, pr_cfg.max_input_chars)  # type: ignore[attr-defined]
         calls, pt, ct = 0, 0, 0
         if len(parts) == 1:
             res = await llm.complete(system, "Стенограмма встречи:\n\n" + parts[0])
             calls, pt, ct = 1, res.prompt_tokens or 0, res.completion_tokens or 0
             out = res.text
-        else:  # длинная встреча: частичные заметки → итоговый протокол
+        else:  # длинная встреча: частичные заметки → итоговый документ
             notes: list[str] = []
             for i, part in enumerate(parts, 1):
                 r = await llm.complete(SYSTEM_PROMPT + "\nСделай подробные заметки по фрагменту (факты, решения, поручения).",
@@ -262,7 +336,7 @@ class ProtocolService:
                 "anonymized_replaced": clean.replaced, "generated_at": utcnow().isoformat()}
         return out, meta
 
-    async def _export_summary(self, db: AsyncSession, rec: Protocol) -> None:
+    async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:
         cfg = await self._svc.get(db, "storage")
         storage = self._storage(cfg)
         if not storage or not cfg.export_summary or not rec.content:  # type: ignore[attr-defined]
@@ -277,14 +351,14 @@ class ProtocolService:
             dir_rel = await unique_meeting_dir(storage, meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz)))
         else:
             return
+        name = "official-protocol.md" if rec.kind == "protocol" else "summary.md"
         try:
-            loc = await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/summary.txt", (rec.content + "\n").encode("utf-8"))
+            loc = await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/{name}", (rec.content + "\n").encode("utf-8"))
             rec.meta = {**(rec.meta or {}), "dir": dir_rel, "location": loc}
             await db.commit()
         except StorageError as exc:
-            log.error("Выгрузка краткого протокола не удалась", extra={"protocol": str(rec.id), "error": str(exc)})
+            log.error("Выгрузка протокола не удалась", extra={"protocol": str(rec.id), "error": str(exc)})
 
     # ------------------------------------------------------------------------- хранение
     async def purge_recording(self, db: AsyncSession, rec: Recording) -> None:
-        await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
-        await db.delete(rec)
+        await self.delete_recording(db, rec)

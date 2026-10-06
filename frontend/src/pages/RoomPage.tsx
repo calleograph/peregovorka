@@ -1,62 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ConnectionState, Participant, Room as LkRoom, RoomEvent, Track } from "livekit-client";
+import { ConnectionState, DisconnectReason, Participant, Room as LkRoom, RoomEvent, Track } from "livekit-client";
 import { api, ApiError, leaveOnUnload, type JoinInfo } from "../api";
+import ConnectProgress from "../components/room/ConnectProgress";
+import DebugPanel from "../components/room/DebugPanel";
+import { ParticipantTile, ScreenStage, type PView } from "../components/room/Tiles";
 import DevicePanel from "../components/DevicePanel";
 import TranscriptPanel from "../components/TranscriptPanel";
-import type { LiveEvent } from "../liveSocket";
+import { JoinTimeline, RateMeter, metricsBody, reportEvent, sampleRoom, type Snapshot, type Stage } from "../diagnostics";
+import type { LiveEvent, SocketStatus } from "../liveSocket";
+import { backoffDelay } from "../liveSocket";
+import { describeMediaError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
 import { isScreenProfile, screenShareOptions } from "../screenShare";
 
-interface PView {
-  identity: string; name: string; local: boolean; mic: boolean; cam: boolean; screen: boolean; speaking: boolean; participant: Participant;
-}
+type CtlKey = "mic" | "cam" | "screen" | "rec" | "device" | "audio" | "general";
+type CtlErrors = Partial<Record<CtlKey, string>>;
 
-function VideoTile({ p, source, className = "video", onSize }: {
-  p: Participant; source: Track.Source; className?: string; onSize?: (w: number, h: number) => void;
-}) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const track = p.getTrackPublication(source)?.track;
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !track) return;
-    track.attach(el);
-    const report = () => onSize?.(el.videoWidth, el.videoHeight);
-    el.addEventListener("resize", report);
-    el.addEventListener("loadedmetadata", report);
-    return () => { el.removeEventListener("resize", report); el.removeEventListener("loadedmetadata", report); track.detach(el); };
-  }, [track, onSize]);
-  return track ? <video ref={ref} autoPlay playsInline muted={p.isLocal} className={className} /> : null;
-}
+const MAX_REJOIN = 6;
+const TW_MIN = 260, TW_MAX = 760, TW_DEFAULT = 380;
+const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
+const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 
-/** Большая «сцена» демонстрации экрана: полноэкранный режим, «вписать/заполнить», текущее разрешение. */
-function ScreenStage({ p }: { p: PView }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState("");
-  const [fill, setFill] = useState(false);
-  const onSize = useCallback((w: number, h: number) => setSize(w && h ? `${w}×${h}` : ""), []);
-  const fullscreen = () => { const el = box.current; if (!el) return; if (document.fullscreenElement) void document.exitFullscreen(); else void el.requestFullscreen?.(); };
+/** Ошибка действия — рядом с той кнопкой, которая её вызвала. */
+function Ctl({ error, onClose, children }: { error?: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className={`screen-stage ${fill ? "fill" : ""}`} ref={box} onDoubleClick={fullscreen}>
-      <VideoTile p={p.participant} source={Track.Source.ScreenShare} className="screen-video" onSize={onSize} />
-      <div className="screen-bar">
-        <span>{p.local ? "Вы показываете экран" : `Экран: ${p.name}`}{size && <span className="muted"> · {size}</span>}</span>
-        <span className="spacer" />
-        <button className="btn mini" onClick={() => setFill((f) => !f)} title="Вписать / заполнить окно">{fill ? "Вписать" : "Заполнить"}</button>
-        <button className="btn mini" onClick={fullscreen} title="Полный экран (или двойной клик)">⛶ На весь экран</button>
-      </div>
+    <div className="ctl">
+      {children}
+      {error && <div className="ctl-err" role="alert"><span>{error}</span><button className="x" onClick={onClose} aria-label="Закрыть сообщение">×</button></div>}
     </div>
   );
-}
-
-/** Русские сообщения вместо технических ошибок SDK/сети. */
-function describeConnectError(e: unknown): string {
-  if (e instanceof ApiError) return e.message || "Не удалось войти в комнату";
-  const m = String((e as Error)?.message ?? e).toLowerCase();
-  if (m.includes("signal connection") || m.includes("failed to fetch") || m.includes("websocket"))
-    return "Не удалось подключиться к серверу звонков. Проверьте сеть и адрес (нужен HTTPS); если проблема сохраняется — сообщите администратору.";
-  if (m.includes("permission") || m.includes("notallowed")) return "Браузер не дал доступ к устройствам.";
-  if (m.includes("timeout")) return "Сервер звонков не отвечает (таймаут).";
-  return "Не удалось подключиться к комнате. Повторите попытку.";
 }
 
 export default function RoomPage() {
@@ -69,12 +42,44 @@ export default function RoomPage() {
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState(false);
   const [recording, setRecording] = useState(true);
+  const [asrReady, setAsrReady] = useState(true);
   const [participants, setParticipants] = useState<PView[]>([]);
   const [state, setState] = useState<ConnectionState>(ConnectionState.Disconnected);
+  const [stage, setStage] = useState<Stage>("prepare");
+  const [, setTick] = useState(0);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [ctlErr, setCtlErr] = useState<CtlErrors>({});
+  const [withAudio, setWithAudio] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [rejoin, setRejoin] = useState<{ attempt: number } | null>(null);
+  const [socket, setSocket] = useState<SocketStatus>({ state: "connecting", attempt: 0 });
+  const [debug, setDebug] = useState(() => new URLSearchParams(location.search).get("debug") === "1" || lsGet("room.debug") === "1");
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [log, setLog] = useState<string[]>([]);
+  const [tw, setTw] = useState(() => clamp(Number(lsGet("room.tw")) || TW_DEFAULT, TW_MIN, TW_MAX));
+  const [tCollapsed, setTCollapsed] = useState(() => lsGet("room.tcollapsed") === "1");
+  const [redirectIn, setRedirectIn] = useState<number | null>(null);
+
   const roomRef = useRef<LkRoom | null>(null);
   const audioBox = useRef<HTMLDivElement>(null);
   const meetingRef = useRef<string | null>(null);
+  const infoRef = useRef<JoinInfo | null>(null);
+  const timeline = useRef(new JoinTimeline());
+  const meter = useRef(new RateMeter());
+  const pwRef = useRef<string | undefined>(undefined);
+  const userStopRef = useRef(false);
+  const screenIntendedRef = useRef(false);
+  const screenStoppedOnceRef = useRef(false);
+  const micWantedRef = useRef(false);
+  const leavingRef = useRef(false);
+  const endedRef = useRef(false);
+  const rejoinTimer = useRef<number | undefined>(undefined);
+  const joinReportedRef = useRef(false);
+
+  const dlog = useCallback((msg: string) => {
+    setLog((l) => [...l.slice(-79), `${new Date().toLocaleTimeString("ru-RU")}  ${msg}`]);
+  }, []);
+  const setErr = useCallback((k: CtlKey, msg?: string) => setCtlErr((e) => ({ ...e, [k]: msg })), []);
 
   const refresh = useCallback(() => {
     const r = roomRef.current;
@@ -86,7 +91,31 @@ export default function RoomPage() {
     })));
   }, []);
 
+  /** Ошибка действия с устройством: конкретная причина у кнопки + запись в журнал сервера. */
+  const fail = useCallback((action: MediaAction, key: CtlKey, event: string, e: unknown) => {
+    const info = describeMediaError(e, action);
+    if (!info.benign) setErr(key, info.message);
+    dlog(`${action}: ${info.reason}${info.benign ? " (отмена пользователем)" : ""} — ${String((e as Error)?.message ?? e).slice(0, 140)}`);
+    if (!info.benign) reportEvent(event, { meetingId: meetingRef.current ?? undefined, reason: info.reason, detail: String((e as Error)?.message ?? e) });
+    return info;
+  }, [dlog, setErr]);
+
+  const stopScreenBookkeeping = useCallback((reason: ScreenStopReason) => {
+    if (!screenIntendedRef.current && reason !== "user_button") return;
+    screenIntendedRef.current = false;
+    screenStoppedOnceRef.current = true;
+    userStopRef.current = false;
+    const mid = meetingRef.current ?? undefined;
+    reportEvent("screen_track_unpublished", { meetingId: mid, reason });
+    if (reason === "browser_stop") reportEvent("screen_share_ended_by_browser", { meetingId: mid, reason });
+    else reportEvent("screen_share_stopped", { meetingId: mid, reason });
+    dlog(`экран остановлен: ${reason}`);
+    if (reason !== "user_button") setErr("screen", SCREEN_STOP_TEXT[reason]);
+  }, [dlog, setErr]);
+
   const teardown = useCallback(async (notify: boolean) => {
+    leavingRef.current = true;
+    window.clearTimeout(rejoinTimer.current);
     const r = roomRef.current;
     roomRef.current = null;
     await r?.disconnect().catch(() => undefined);
@@ -96,105 +125,339 @@ export default function RoomPage() {
     setParticipants([]);
   }, []);
 
-  useEffect(() => () => { void teardown(true); }, [teardown]);
+  useEffect(() => { leavingRef.current = false; return () => { void teardown(true); }; }, [teardown]);
   useEffect(() => {
     const onHide = () => { if (meetingRef.current) leaveOnUnload(meetingRef.current); };
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
+  // секундомер этапов: обновляем экран, пока вход не завершён
+  useEffect(() => {
+    if (stage === "ready" && !busy) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 500);
+    return () => window.clearInterval(t);
+  }, [stage, busy]);
+
+  // ASR может стартовать позже входа: узнаём о готовности, не блокируя звонок
+  useEffect(() => {
+    if (!join || asrReady || !join.room.transcription_enabled) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/v1/health/ready", { credentials: "same-origin" });
+        const j = await r.json().catch(() => null);
+        if (!cancelled && j?.checks?.asr?.ok) setAsrReady(true);
+      } catch { /* повторим */ }
+    };
+    const t = window.setInterval(poll, 4000);
+    return () => { cancelled = true; window.clearInterval(t); };
+  }, [join, asrReady]);
+
+  // ------------------------------------------------------------------------------ LiveKit
+  const sendJoinReport = useCallback(() => {
+    if (joinReportedRef.current || !meetingRef.current) return;
+    joinReportedRef.current = true;
+    api.clientMetrics(metricsBody(meetingRef.current, null, timeline.current.metrics()));
+    reportEvent("join_ok", { meetingId: meetingRef.current, detail: JSON.stringify(timeline.current.metrics()) });
+  }, []);
+
+  const enableMic = useCallback(async () => {
+    const lp = roomRef.current?.localParticipant;
+    if (!lp) return;
+    const tl = timeline.current;
+    tl.mark("micStart");
+    try {
+      await lp.setMicrophoneEnabled(true);
+      tl.mark("micPublished");
+      micWantedRef.current = true;
+      setErr("mic", undefined);
+      refresh();
+    } catch (e) {
+      fail("mic", "mic", "mic_failed", e);
+      setErr("mic", `${describeMediaError(e, "mic").message} Вы остаётесь в комнате без звука.`);
+    }
+    sendJoinReport();
+  }, [fail, refresh, sendJoinReport, setErr]);
+
+  const connectLivekit = useCallback(async (info: JoinInfo, kind: "initial" | "rejoin") => {
+    const tl = timeline.current;
+    if (kind === "initial") tl.mark("connectStart");
+    setStage("server");
+    const room = new LkRoom({
+      adaptiveStream: true, dynacast: true,
+      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      publishDefaults: { screenShareEncoding: { maxBitrate: 4_000_000, maxFramerate: 15 } },
+    });
+    roomRef.current = room;
+    let connectedOnce = false; // отказ ПЕРВОГО подключения обрабатывает вызывающий код; автоматический повторный вход — только после успешного
+    room
+      .on(RoomEvent.ParticipantConnected, refresh).on(RoomEvent.ParticipantDisconnected, refresh)
+      .on(RoomEvent.TrackMuted, refresh).on(RoomEvent.TrackUnmuted, refresh)
+      .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
+      .on(RoomEvent.LocalTrackPublished, (pub) => {
+        refresh();
+        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); }
+        if (pub.source === Track.Source.ScreenShare) {
+          screenIntendedRef.current = true;
+          reportEvent("screen_track_published", { meetingId: meetingRef.current ?? undefined });
+          const ms = pub.track?.mediaStreamTrack;
+          const st = ms?.getSettings?.();
+          dlog(`экран опубликован ${st?.width ?? "?"}×${st?.height ?? "?"}@${Math.round(st?.frameRate ?? 0) || "?"} звук=${pub.track && room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio) ? "да" : "нет"}`);
+          ms?.addEventListener("ended", () => {
+            reportEvent("screen_track_ended", { meetingId: meetingRef.current ?? undefined, reason: userStopRef.current ? "user_button" : "browser_or_source_closed" });
+            dlog("трек экрана завершён (ended)");
+          }, { once: true });
+        }
+      })
+      .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+        refresh();
+        if (pub.source !== Track.Source.ScreenShare) return;
+        const connected = roomRef.current?.state === ConnectionState.Connected;
+        stopScreenBookkeeping(userStopRef.current ? "user_button" : connected ? "browser_stop" : "connection_lost");
+      })
+      .on(RoomEvent.TrackSubscribed, (track, pub) => {
+        if (track.kind === Track.Kind.Audio && audioBox.current) audioBox.current.appendChild(track.attach());
+        if (pub.source === Track.Source.ScreenShare) dlog("получен экран участника");
+        refresh();
+      })
+      .on(RoomEvent.TrackUnsubscribed, (track, pub) => {
+        track.detach().forEach((el) => el.remove());
+        if (pub.source === Track.Source.ScreenShare) dlog("экран участника больше не приходит");
+        refresh();
+      })
+      .on(RoomEvent.ActiveSpeakersChanged, refresh)
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        const blocked = !room.canPlaybackAudio;
+        setAudioBlocked(blocked);
+        if (blocked) reportEvent("autoplay_blocked", { meetingId: meetingRef.current ?? undefined });
+      })
+      .on(RoomEvent.MediaDevicesError, (e) => { fail("device", "device", "device_error", e); })
+      .on(RoomEvent.SignalConnected, () => { tl.mark("signalConnected"); setStage("media"); dlog("сигналинг LiveKit установлен"); })
+      .on(RoomEvent.ConnectionStateChanged, setState)
+      .on(RoomEvent.Reconnecting, () => { dlog("соединение с LiveKit потеряно, переподключение"); reportEvent("reconnecting", { meetingId: meetingRef.current ?? undefined }); })
+      .on(RoomEvent.Reconnected, () => {
+        dlog("соединение с LiveKit восстановлено");
+        reportEvent("reconnected", { meetingId: meetingRef.current ?? undefined });
+        if (screenIntendedRef.current && !room.localParticipant.isScreenShareEnabled) stopScreenBookkeeping("connection_lost");
+        refresh();
+      })
+      .on(RoomEvent.Disconnected, (reason) => {
+        setState(ConnectionState.Disconnected);
+        dlog(`отключено от LiveKit (причина: ${reason ?? "неизвестна"})`);
+        reportEvent("disconnected", { meetingId: meetingRef.current ?? undefined, reason: String(reason ?? "") });
+        if (roomRef.current !== room || !connectedOnce) return; // старая комната после повторного входа / подключение ещё не состоялось
+        if (screenIntendedRef.current) stopScreenBookkeeping("connection_lost");
+        if (leavingRef.current || endedRef.current || reason === DisconnectReason.CLIENT_INITIATED) return;
+        if (reason === DisconnectReason.DUPLICATE_IDENTITY) { setErr("general", describeMediaError(new Error("DUPLICATE_IDENTITY"), "connect").message); return; }
+        if (reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED) {
+          setErr("general", "Вас отключили от комнаты (встреча закрыта или участник удалён администратором).");
+          return;
+        }
+        scheduleRejoin(0);
+      });
+    await room.connect(info.livekit_url, info.token);
+    connectedOnce = true;
+    tl.mark("mediaConnected");
+    tl.mark("active");
+    setStage("ready");
+    dlog(`подключено за ${tl.metrics().participant_active_ms ?? "?"} мс`);
+    await room.startAudio().catch(() => undefined);
+    setAudioBlocked(!room.canPlaybackAudio);
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dlog, fail, refresh, setErr, stopScreenBookkeeping]);
+
+  const scheduleRejoin = useCallback((attempt: number) => {
+    window.clearTimeout(rejoinTimer.current);
+    if (attempt >= MAX_REJOIN) {
+      setRejoin(null);
+      setErr("general", "Не удалось восстановить соединение с комнатой. Проверьте сеть и нажмите «Войти снова».");
+      reportEvent("rejoin_failed", { meetingId: meetingRef.current ?? undefined, reason: "attempts_exhausted" });
+      return;
+    }
+    setRejoin({ attempt: attempt + 1 });
+    const delay = backoffDelay(attempt);
+    dlog(`повторный вход: попытка ${attempt + 1} через ${Math.round(delay / 100) / 10} с`);
+    rejoinTimer.current = window.setTimeout(async () => {
+      if (leavingRef.current || endedRef.current) return;
+      reportEvent("rejoin_started", { meetingId: meetingRef.current ?? undefined, reason: String(attempt + 1) });
+      try {
+        await roomRef.current?.disconnect().catch(() => undefined);
+        const info = await api.join(roomId, pwRef.current); // свежий токен: прежний мог устареть
+        infoRef.current = info;
+        await connectLivekit(info, "rejoin");
+        if (micWantedRef.current) void enableMic();
+        setRejoin(null);
+        setErr("general", undefined);
+        dlog("повторный вход выполнен");
+      } catch (e) {
+        const ae = e as ApiError;
+        if (ae instanceof ApiError && ae.status >= 400 && ae.status < 500 && ae.status !== 429) {
+          setRejoin(null);
+          setErr("general", `Повторный вход невозможен: ${ae.message}`);
+          reportEvent("rejoin_failed", { meetingId: meetingRef.current ?? undefined, reason: ae.code, detail: ae.message });
+          return;
+        }
+        scheduleRejoin(attempt + 1);
+      }
+    }, delay);
+  }, [connectLivekit, dlog, enableMic, roomId, setErr]);
+
   const connect = async (pw?: string) => {
     setBusy(true);
     setError("");
+    setCtlErr({});
+    const tl = timeline.current;
+    tl.reset(); joinReportedRef.current = false; leavingRef.current = false; endedRef.current = false;
+    tl.mark("click"); tl.mark("joinStart");
+    setStage("prepare");
+    let info: JoinInfo;
     try {
-      const info = await api.join(roomId, pw);
-      const room = new LkRoom({
-        adaptiveStream: true, dynacast: true,
-        audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        publishDefaults: { screenShareEncoding: { maxBitrate: 4_000_000, maxFramerate: 15 } },
-      });
-      roomRef.current = room;
-      meetingRef.current = info.meeting_id;
-      room
-        .on(RoomEvent.ParticipantConnected, refresh).on(RoomEvent.ParticipantDisconnected, refresh)
-        .on(RoomEvent.TrackMuted, refresh).on(RoomEvent.TrackUnmuted, refresh)
-        .on(RoomEvent.LocalTrackPublished, refresh).on(RoomEvent.LocalTrackUnpublished, refresh)
-        .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
-        .on(RoomEvent.TrackSubscribed, (track) => {
-          if (track.kind === Track.Kind.Audio && audioBox.current) audioBox.current.appendChild(track.attach());
-          refresh();
-        })
-        .on(RoomEvent.TrackUnsubscribed, (track) => { track.detach().forEach((el) => el.remove()); refresh(); })
-        .on(RoomEvent.ActiveSpeakersChanged, refresh)
-        .on(RoomEvent.ConnectionStateChanged, setState)
-        .on(RoomEvent.Disconnected, () => { setState(ConnectionState.Disconnected); });
-      await room.connect(info.livekit_url, info.token);
-      await room.startAudio().catch(() => undefined);
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true);
-      } catch {
-        setError("Нет доступа к микрофону. Разрешите его в браузере (нужен HTTPS) — вы остаётесь в комнате без звука.");
-      }
-      setRecording(info.recording);
-      setJoin(info);
-      setNeedPassword(false);
-      refresh();
+      info = await api.join(roomId, pw);
     } catch (e) {
-      await teardown(true); // если встреча уже зарегистрирована, а подключиться к LiveKit не вышло — снимаем себя с участников
       const ae = e as ApiError;
       if (ae.code === "room_password_required" || ae.code === "room_password_invalid") {
         setNeedPassword(true);
         setError(ae.code === "room_password_invalid" ? ae.message : "");
       } else {
-        setError(describeConnectError(e));
+        setError(e instanceof ApiError ? ae.message || "Не удалось войти в комнату" : describeMediaError(e, "connect").message);
+        reportEvent("join_failed", { reason: ae.code ?? "error", detail: ae.message });
       }
-    } finally {
       setBusy(false);
+      return;
+    }
+    tl.mark("joinEnd");
+    pwRef.current = pw;
+    infoRef.current = info;
+    meetingRef.current = info.meeting_id;
+    setRecording(info.recording);
+    setAsrReady(info.asr_ready);
+    setWithAudio(info.client.screen_share_audio);
+    setNeedPassword(false);
+    setJoin(info); // комната и канал событий открываются сразу — параллельно с подключением к LiveKit
+    setBusy(false);
+    try {
+      await connectLivekit(info, "initial");
+      void enableMic(); // микрофон не задерживает вход: запрос разрешения может занять время
+    } catch (e) {
+      const m = describeMediaError(e, "connect");
+      reportEvent("join_failed", { meetingId: info.meeting_id, reason: m.reason, detail: String((e as Error)?.message ?? e) });
+      await teardown(true);
+      setJoin(null);
+      setError(m.message);
     }
   };
 
+  // ------------------------------------------------------------------- статистика (раз в 5 с)
+  useEffect(() => {
+    if (!join || stage !== "ready") return;
+    let n = 0;
+    const t = window.setInterval(async () => {
+      const room = roomRef.current;
+      if (!room || document.visibilityState !== "visible") return;
+      const snap = await sampleRoom(room, meter.current);
+      setSnapshot(snap);
+      if (++n % 6 === 0 && meetingRef.current) api.clientMetrics(metricsBody(meetingRef.current, snap));
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [join, stage]);
+
+  // ------------------------------------------------------------------------------- действия
   const someoneElseSharing = participants.some((p) => p.screen && !p.local);
 
   const toggle = async (what: "mic" | "cam" | "screen") => {
     const lp = roomRef.current?.localParticipant;
     if (!lp || !join) return;
-    setError("");
+    setErr(what === "cam" ? "cam" : what, undefined);
     try {
-      if (what === "mic") await lp.setMicrophoneEnabled(!lp.isMicrophoneEnabled);
+      if (what === "mic") {
+        await lp.setMicrophoneEnabled(!lp.isMicrophoneEnabled);
+        micWantedRef.current = lp.isMicrophoneEnabled;
+      }
       if (what === "cam") await lp.setCameraEnabled(!lp.isCameraEnabled);
       if (what === "screen") {
         if (lp.isScreenShareEnabled) {
+          userStopRef.current = true;
           await lp.setScreenShareEnabled(false);
+          stopScreenBookkeeping("user_button");
         } else {
-          if (join.client.one_sharer_at_a_time && someoneElseSharing) { setError("Сейчас экран уже показывает другой участник."); return; }
+          if (join.client.one_sharer_at_a_time && someoneElseSharing) { setErr("screen", "Сейчас экран уже показывает другой участник."); return; }
           const profile = isScreenProfile(join.client.screen_profile) ? join.client.screen_profile : "sharp";
-          const o = screenShareOptions(profile, join.client.screen_share_audio);
+          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio);
+          userStopRef.current = false;
+          dlog(`запуск показа экрана: профиль ${profile}, звук ${o.capture.audio ? "да" : "нет"}`);
           await lp.setScreenShareEnabled(true, o.capture, o.publish);
+          reportEvent(screenStoppedOnceRef.current ? "screen_share_restarted" : "screen_share_started", { meetingId: join.meeting_id, detail: `${profile}, audio=${o.capture.audio}` });
         }
       }
     } catch (e) {
-      const name = (e as Error).name;
-      if (name !== "NotAllowedError" && name !== "AbortError") setError("Не удалось переключить устройство — проверьте разрешения браузера.");
+      if (what === "screen") { screenIntendedRef.current = false; fail("screen", "screen", "screen_share_failed", e); }
+      else if (what === "mic") fail("mic", "mic", "mic_failed", e);
+      else fail("camera", "cam", "camera_failed", e);
     }
     refresh();
   };
 
   const toggleRecording = async () => {
     if (!join) return;
+    setErr("rec", undefined);
     try { setRecording((await api.setRecording(join.meeting_id, !recording)).enabled); }
-    catch (e) { setError((e as ApiError).message); }
+    catch (e) { setErr("rec", (e as ApiError).message || "Не удалось переключить запись."); }
+  };
+
+  const enableAudio = async () => {
+    try { await roomRef.current?.startAudio(); setAudioBlocked(!(roomRef.current?.canPlaybackAudio ?? true)); setErr("audio", undefined); }
+    catch (e) { fail("playback", "audio", "device_error", e); }
   };
 
   const onLive = useCallback((e: LiveEvent) => { if (e.type === "recording_changed") setRecording(e.enabled); }, []);
   const leave = async () => { await teardown(true); navigate("/"); };
   const endForAll = async () => {
-    if (meetingRef.current) await api.endMeeting(meetingRef.current).catch((e) => setError((e as ApiError).message));
+    if (meetingRef.current) await api.endMeeting(meetingRef.current).catch((e) => setErr("general", (e as ApiError).message));
+    const mid = meetingRef.current;
+    endedRef.current = true;
     await teardown(false);
-    navigate("/");
+    if (mid) navigate(`/history/${mid}`); else navigate("/");
   };
-  const onMeetingEnded = useCallback(() => { setEnded(true); void teardown(false); }, [teardown]);
+  const onMeetingEnded = useCallback(() => {
+    endedRef.current = true;
+    setEnded(true);
+    setRedirectIn(6);
+    void teardown(false);
+  }, [teardown]);
 
-  // ------------------------------------------------------------------ вид «до входа»
+  // после завершения — к странице встречи (там формируется протокол, пока участник на ней)
+  useEffect(() => {
+    if (redirectIn === null) return;
+    if (redirectIn <= 0) { const mid = infoRef.current?.meeting_id; if (mid) navigate(`/history/${mid}`); return; }
+    const t = window.setTimeout(() => setRedirectIn((n) => (n === null ? n : n - 1)), 1000);
+    return () => window.clearTimeout(t);
+  }, [redirectIn, navigate]);
+
+  // --------------------------------------------------------------------- размер панели
+  const persistTw = (w: number) => lsSet("room.tw", String(w));
+  const onSplitDown = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = tw;
+    let last = startW;
+    const move = (ev: PointerEvent) => { last = clamp(startW + (startX - ev.clientX), TW_MIN, TW_MAX); setTw(last); };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); persistTw(last); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const onSplitKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const w = clamp(tw + (e.key === "ArrowLeft" ? 24 : -24), TW_MIN, TW_MAX);
+    setTw(w); persistTw(w);
+  };
+  const toggleCollapsed = () => setTCollapsed((c) => { lsSet("room.tcollapsed", c ? "0" : "1"); return !c; });
+  const toggleDebug = () => setDebug((d) => { lsSet("room.debug", d ? "0" : "1"); return !d; });
+
+  // ---------------------------------------------------------------------- вид «до входа»
+  const tl = timeline.current;
+  const done = { prepare: tl.metrics().join_api_ms, server: tl.metrics().signaling_connect_ms, media: tl.metrics().ice_connect_ms };
   if (!join) {
     return (
       <section className="prejoin card">
@@ -202,16 +465,18 @@ export default function RoomPage() {
         <p className="muted">Микрофон включится сразу после входа. Реплики участников записываются в протокол встречи.</p>
         {needPassword && (
           <label>Пароль комнаты
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus
+                   onKeyDown={(e) => { if (e.key === "Enter" && password && !busy) void connect(password); }} />
           </label>
         )}
         {error && <div className="alert error" role="alert">{error}</div>}
         <div className="row">
           <button className="btn primary" disabled={busy || (needPassword && !password)} onClick={() => connect(needPassword ? password : undefined)}>
-            {busy ? "Подключение…" : "Войти в комнату"}
+            {busy ? "Вход…" : "Войти в комнату"}
           </button>
           <button className="btn ghost" onClick={() => navigate("/")}>Назад</button>
         </div>
+        {busy && <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} />}
       </section>
     );
   }
@@ -219,47 +484,82 @@ export default function RoomPage() {
   const room = join.room;
   const me = participants.find((p) => p.local);
   const sharer = participants.find((p) => p.screen);
+  const connLabel = rejoin ? `Переподключение (попытка ${rejoin.attempt} из ${MAX_REJOIN})…`
+    : stage !== "ready" ? "Подключение…"
+    : state === ConnectionState.Connected ? "Подключено" : state === ConnectionState.Reconnecting ? "Переподключение…" : "Нет соединения";
+  const connOk = stage === "ready" && !rejoin && state === ConnectionState.Connected;
+  const n = Math.min(participants.length, 9);
+  const style = { "--tw": `${tCollapsed ? 44 : tw}px` } as CSSProperties;
+
   return (
-    <div className="room-layout">
-      <section className="stage">
-        <div className="row">
+    <div className={`room-wrap ${tCollapsed ? "tcollapsed" : ""}`} style={style}>
+      <section className={`stage ${room.transcription_enabled && recording && !ended ? "is-recording" : ""}`}>
+        <div className="room-head row">
           <h1>{room.name}</h1>
-          <span className="badge">{state === ConnectionState.Connected ? "Подключено" : state === ConnectionState.Reconnecting ? "Переподключение…" : "Нет соединения"}</span>
+          <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
           {room.transcription_enabled && (
-            <span className={`badge ${recording ? "rec" : ""}`}>{recording ? "● Идёт запись" : "Запись остановлена"}</span>
+            <span className={`rec-badge ${recording ? "on" : "off"}`} title={recording ? "Идёт запись и транскрибация встречи" : "Запись остановлена"}>
+              {recording ? <><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</> : "Запись остановлена"}
+            </span>
           )}
+          {room.transcription_enabled && !asrReady && <span className="badge warn">Транскрибация запускается…</span>}
+          <div className="spacer" />
+          <button className={`btn mini ${debug ? "primary" : ""}`} onClick={toggleDebug} title="Тайминги входа, статистика соединения и показа экрана">⚙ Диагностика</button>
         </div>
-        {ended && <div className="alert">Встреча завершена.</div>}
-        {error && <div className="alert error" role="alert">{error}</div>}
+
+        {ended && (
+          <div className="alert ok ended" role="status">
+            Встреча завершена.{redirectIn !== null && redirectIn > 0 ? ` Переход к протоколу через ${redirectIn} с…` : ""}
+            <button className="btn primary mini" onClick={() => navigate(`/history/${join.meeting_id}`)}>Перейти к протоколу</button>
+            {redirectIn !== null && redirectIn > 0 && <button className="btn mini" onClick={() => setRedirectIn(null)}>Остаться здесь</button>}
+          </div>
+        )}
+        {ctlErr.general && (
+          <div className="alert error" role="alert">
+            {ctlErr.general}
+            {!rejoin && !ended && <button className="btn mini" onClick={() => { setErr("general", undefined); scheduleRejoin(0); }}>Войти снова</button>}
+          </div>
+        )}
+        {rejoin && <div className="alert" role="status">Связь потеряна. Восстанавливаем подключение (попытка {rejoin.attempt} из {MAX_REJOIN}). Комната и встреча сохранены.</div>}
+        {audioBlocked && !ended && (
+          <div className="alert" role="status">Браузер заблокировал звук собеседников. <button className="btn mini primary" onClick={enableAudio}>Включить звук</button>
+            {ctlErr.audio && <span className="small"> {ctlErr.audio}</span>}</div>
+        )}
+
+        {stage !== "ready" && !ended && <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done} />}
 
         {sharer && <ScreenStage p={sharer} />}
-
-        <div className={`tiles ${sharer ? "strip" : ""}`}>
-          {participants.map((p) => (
-            <div key={p.identity} className={`tile ${p.speaking ? "speaking" : ""}`}>
-              <VideoTile p={p.participant} source={Track.Source.Camera} />
-              {!p.cam && <div className="avatar">{p.name.slice(0, 1).toUpperCase()}</div>}
-              <div className="tile-foot">
-                <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>
-                <span title={p.mic ? "Микрофон включён" : "Микрофон выключен"}>{p.mic ? "🎙" : "🔇"}</span>
-                {p.cam && <span title="Камера">📷</span>}
-                {p.screen && <span title="Показывает экран">🖥</span>}
-              </div>
-            </div>
-          ))}
+        <div className={`tiles n${n} ${sharer ? "strip" : ""}`}>
+          {participants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} />)}
+          {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 
         <div className="controls">
-          <button className={`btn ${me?.mic ? "" : "danger"}`} onClick={() => toggle("mic")} disabled={ended}>{me?.mic ? "Выключить микрофон" : "Включить микрофон"}</button>
-          {room.camera_allowed && <button className="btn" onClick={() => toggle("cam")} disabled={ended}>{me?.cam ? "Выключить камеру" : "Включить камеру"}</button>}
+          <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
+            <button className={`btn ${me?.mic || stage !== "ready" ? "" : "danger"}`} onClick={() => toggle("mic")} disabled={ended || stage !== "ready"}>{me?.mic ? "🎙 Выключить микрофон" : "🔇 Включить микрофон"}</button>
+          </Ctl>
+          {room.camera_allowed && (
+            <Ctl error={ctlErr.cam} onClose={() => setErr("cam")}>
+              <button className={`btn ${me?.cam ? "primary" : ""}`} onClick={() => toggle("cam")} disabled={ended || stage !== "ready"}>{me?.cam ? "📷 Выключить камеру" : "🚫 Включить камеру"}</button>
+            </Ctl>
+          )}
           {room.screen_share_allowed && (
-            <button className={`btn ${me?.screen ? "primary" : "accent"}`} onClick={() => toggle("screen")} disabled={ended}
-                    title="Выберите экран, окно или вкладку — трансляция начнётся сразу">
-              {me?.screen ? "■ Остановить показ" : "🖥 Показать экран"}
-            </button>
+            <Ctl error={ctlErr.screen} onClose={() => setErr("screen")}>
+              <div className="row tight">
+                <button className={`btn ${me?.screen ? "primary" : "accent"}`} onClick={() => toggle("screen")} disabled={ended || stage !== "ready"}
+                        title="Выберите экран, окно или вкладку — трансляция начнётся сразу">
+                  {me?.screen ? "■ Остановить показ" : "🖥 Показать экран"}
+                </button>
+                {join.client.screen_share_audio && !me?.screen && (
+                  <label className="check small"><input type="checkbox" checked={withAudio} onChange={(e) => setWithAudio(e.target.checked)} /> со звуком</label>
+                )}
+              </div>
+            </Ctl>
           )}
           {room.transcription_enabled && (
-            <button className="btn" onClick={toggleRecording} disabled={ended}>{recording ? "Остановить запись" : "Начать запись"}</button>
+            <Ctl error={ctlErr.rec} onClose={() => setErr("rec")}>
+              <button className="btn" onClick={toggleRecording} disabled={ended}>{recording ? "Остановить запись" : "● Начать запись"}</button>
+            </Ctl>
           )}
           <div className="spacer" />
           {!confirmEnd
@@ -269,10 +569,15 @@ export default function RoomPage() {
                 <button className="btn ghost" onClick={() => setConfirmEnd(false)}>Отмена</button></>}
           <button className="btn danger" onClick={leave}>Выйти</button>
         </div>
+        {ctlErr.device && <div className="alert error" role="alert">Устройство: {ctlErr.device} <button className="btn mini" onClick={() => setErr("device")}>Закрыть</button></div>}
         {roomRef.current && <DevicePanel room={roomRef.current} />}
+        {debug && <DebugPanel snapshot={snapshot} join={tl.metrics()} connection={`${state}${rejoin ? ` · повторный вход ${rejoin.attempt}` : ""}`} socket={socket} asrReady={asrReady} log={log} />}
         <div ref={audioBox} className="hidden-audio" aria-hidden />
       </section>
-      <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} onMeetingEnded={onMeetingEnded} onEvent={onLive} />
+      <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
+           onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
+      <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} asrReady={asrReady} collapsed={tCollapsed}
+                       onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={setSocket} />
     </div>
   );
 }

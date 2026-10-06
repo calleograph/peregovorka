@@ -7,7 +7,7 @@ import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter>
       <ErrorBoundary><App /></ErrorBoundary>
     </BrowserRouter>
   </React.StrictMode>,

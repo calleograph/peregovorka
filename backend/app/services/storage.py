@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
-from .settings import StorageSettings
+from .settings import _StorageTarget as StorageSettings
 
 log = logging.getLogger("app.storage")
 
@@ -47,6 +47,8 @@ def meeting_relpath(room_name: str, start_local: datetime) -> str:
 class StorageBackend(Protocol):
     def exists(self, rel: str) -> bool: ...
     def write_bytes(self, rel: str, data: bytes) -> str: ...
+    def read_bytes(self, rel: str) -> bytes: ...
+    def delete(self, rel: str) -> None: ...
     def test(self) -> str: ...
 
 
@@ -80,6 +82,18 @@ class LocalStorage:
         except OSError as exc:
             raise StorageError(f"Не удалось записать в {self._root}: {exc.strerror or exc}") from None
         return str(full)
+
+    def read_bytes(self, rel: str) -> bytes:
+        try:
+            return self._full(rel).read_bytes()
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать файл: {exc.strerror or exc}") from None
+
+    def delete(self, rel: str) -> None:
+        try:
+            self._full(rel).unlink(missing_ok=True)
+        except OSError as exc:
+            raise StorageError(f"Не удалось удалить файл: {exc.strerror or exc}") from None
 
     def test(self) -> str:
         probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"
@@ -129,6 +143,22 @@ class SmbStorage:
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: не удалось записать файл ({type(exc).__name__})") from None
         return path
+
+    def read_bytes(self, rel: str) -> bytes:
+        smb = self._session()
+        try:
+            with smb.open_file(self._unc(rel), mode="rb") as fh:
+                return fh.read()
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось прочитать файл ({type(exc).__name__})") from None
+
+    def delete(self, rel: str) -> None:
+        smb = self._session()
+        try:
+            if smb.path.exists(self._unc(rel)):
+                smb.remove(self._unc(rel))
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось удалить файл ({type(exc).__name__})") from None
 
     def test(self) -> str:
         probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"

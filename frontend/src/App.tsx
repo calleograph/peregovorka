@@ -46,8 +46,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<RoomsPage />} />
           <Route path="/rooms/:roomId" element={<RoomPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/history/:meetingId" element={<MeetingPage />} />
+          <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
+          <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -9,18 +9,19 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..auth.directory import DirectoryError
 from ..integrations.anonymizer import AnonymizerClient
 from ..integrations.llm import LlmClient
-from ..models import Meeting, Protocol, Recording, Room, TranscriptSegment, User
+from ..models import Meeting, MeetingGrant, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User
+from ..services import diagnostics, timings
 from ..services.audit import write_audit
 from ..services.settings import GROUPS, SettingsError
 from ..services.storage import StorageError, build_storage
-from .meetings import meeting_out
+from .meetings import meeting_counts, meeting_out
 from .schemas import MeetingOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -48,7 +49,7 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
         raise HTTPException(status_code=404, detail="Неизвестная группа настроек")
     svc = request.app.state.settings_svc
     try:
-        if group == "storage":  # ошибки каталога видны сразу, а не при первой выгрузке
+        if group in ("storage", "audio_storage"):  # ошибки каталога видны сразу, а не при первой выгрузке
             try:
                 build_storage(await svc.preview(db, group, body), request.app.state.settings.data_dir)  # type: ignore[arg-type]
             except StorageError as exc:
@@ -74,7 +75,7 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         cfg = await svc.get(db, group)
     except SettingsError as exc:
         return {"ok": False, "message": str(exc), "ms": 0}
-    if group == "storage":
+    if group in ("storage", "audio_storage"):
         try:
             backend = build_storage(cfg, app_s.data_dir)  # type: ignore[arg-type]
         except StorageError as exc:
@@ -156,7 +157,45 @@ async def admin_meetings(active: bool | None = None, limit: int = Query(50, ge=1
         stmt = stmt.where(Meeting.ended_at.is_(None))
     elif active is False:
         stmt = stmt.where(Meeting.ended_at.is_not(None))
-    return [meeting_out(m) for m in (await db.execute(stmt)).scalars().unique()]
+    meetings = list((await db.execute(stmt)).scalars().unique())
+    counts = await meeting_counts(db, [m.id for m in meetings])
+    return [meeting_out(m, counts.get(m.id)) for m in meetings]
+
+
+@router.get("/meetings/{meeting_id}/grants")
+async def list_grants(meeting_id: uuid.UUID, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Явные разрешения на просмотр завершённой встречи (помимо участников и политики комнаты)."""
+    rows = (await db.execute(select(MeetingGrant).where(MeetingGrant.meeting_id == meeting_id))).scalars().unique().all()
+    return [{"user_id": str(g.user_id), "display_name": g.user.display_name, "sam_account_name": g.user.sam_account_name,
+             "granted_by": g.granted_by, "created_at": g.created_at} for g in rows]
+
+
+@router.post("/meetings/{meeting_id}/grants", status_code=201)
+async def add_grant(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...),
+                    su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    try:
+        uid = uuid.UUID(str(body.get("user_id")))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="user_id: UUID пользователя") from None
+    user = await db.get(User, uid)
+    if user is None or await db.get(Meeting, meeting_id) is None:
+        raise HTTPException(status_code=404, detail="Пользователь или встреча не найдены")
+    exists = (await db.execute(select(MeetingGrant.id).where(MeetingGrant.meeting_id == meeting_id, MeetingGrant.user_id == uid))).first()
+    if not exists:
+        db.add(MeetingGrant(meeting_id=meeting_id, user_id=uid, granted_by=su.display_name))
+        await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.grant", target_type="meeting",
+                          target_id=str(meeting_id), ip=client_ip(request), details={"user": user.sam_account_name})
+        await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/meetings/{meeting_id}/grants/{user_id}", status_code=204)
+async def remove_grant(meeting_id: uuid.UUID, user_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin),
+                       db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(MeetingGrant).where(MeetingGrant.meeting_id == meeting_id, MeetingGrant.user_id == user_id))
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.revoke", target_type="meeting",
+                      target_id=str(meeting_id), ip=client_ip(request), details={"user_id": str(user_id)})
+    await db.commit()
 
 
 @router.post("/meetings/{meeting_id}/end", status_code=204)
@@ -178,8 +217,53 @@ async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(1
     if room_id:
         stmt = stmt.where(Recording.room_id == room_id)
     return [{"id": str(r.id), "meeting_id": str(r.meeting_id), "room": name, "identity": r.participant_identity, "path": r.path,
-             "size_bytes": r.size_bytes, "duration_s": r.duration_s, "created_at": r.created_at}
+             "size_bytes": r.size_bytes, "duration_s": r.duration_s, "created_at": r.created_at,
+             "export_status": r.export_status, "export_location": r.export_location, "export_error": r.export_error}
             for r, name in (await db.execute(stmt)).all()]
+
+
+@router.get("/diagnostics/report")
+async def diagnostics_report(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Диагностический отчёт для скачивания (JSON): версии, ядро, WebSocket, RTC, зависимости. Секреты замаскированы."""
+    rep = await diagnostics.build_report(request.app)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="diagnostics.report", target_type="system",
+                      target_id="diagnostics", ip=client_ip(request), details={"problems": len(rep.get("verdict", []))})
+    await db.commit()
+    return rep
+
+
+@router.post("/recordings/retry-exports")
+async def retry_exports(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Повторить выгрузку записей, которые не удалось сохранить во внешнее хранилище."""
+    n = await request.app.state.protocols.retry_pending_exports(db)
+    failed = (await db.execute(select(func.count()).select_from(Recording).where(Recording.export_status.in_(("pending", "failed"))))).scalar_one()
+    return {"exported": n, "still_failed": failed}
+
+
+@router.post("/retention/run")
+async def run_retention_now(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Запустить очистку по срокам хранения немедленно (иначе — раз в час)."""
+    from ..workers.retention import run_retention_once
+
+    stats = await run_retention_once(request.app.state.session_maker, request.app.state.protocols)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="retention.run", target_type="system",
+                      target_id="retention", ip=client_ip(request), details=stats)
+    await db.commit()
+    return stats
+
+
+@router.get("/client-diagnostics")
+async def client_diagnostics(request: Request, su: SessionUser = Depends(require_admin)):
+    """Последние события и метрики качества, присланные браузерами участников."""
+    import json as _json
+
+    r = request.app.state.redis
+    ev = [_json.loads(x) for x in await r.lrange("clientdiag:events", 0, 99)]
+    mt = [_json.loads(x) for x in await r.lrange("clientdiag:metrics", 0, 99)]
+    return {"events": ev, "metrics": mt}
+
+
+_host_stats = diagnostics.host_stats
 
 
 # -------------------------------------------------------------------------------- система
@@ -187,7 +271,7 @@ async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(1
 async def system_status(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     app = request.app
     s = app.state.settings
-    out: dict[str, Any] = {"version": s.app_version, "commit": s.app_git_commit, "public_url": s.app_public_url, "checks": {}}
+    out: dict[str, Any] = {"version": s.app_version, "commit": s.app_git_commit, "built_at": s.app_built_at, "public_url": s.app_public_url, "checks": {}}
 
     out["checks"]["postgres"] = {"ok": True}
     try:
@@ -201,7 +285,7 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
     except Exception as exc:  # noqa: BLE001
         out["checks"]["livekit"] = {"ok": False, "error": type(exc).__name__}
     hb = await app.state.bridge.heartbeat()
-    out["checks"]["asr"] = {"ok": bool(hb and hb.get("model_loaded")), **({k: hb.get(k) for k in ("queue_depth", "dropped", "errors", "active_meetings", "processed")} if hb else {})}
+    out["checks"]["asr"] = {"ok": bool(hb and hb.get("model_loaded")), **({k: hb.get(k) for k in ("queue_depth", "dropped", "errors", "active_meetings", "processed", "avg_infer_ms", "avg_queue_ms", "rtf", "provider", "torch_threads", "torch_interop_threads")} if hb else {})}
     try:
         await asyncio.to_thread(app.state.directory.check_service_account)
         out["checks"]["ldap"] = {"ok": True}
@@ -210,6 +294,15 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
     except Exception as exc:  # noqa: BLE001
         out["checks"]["ldap"] = {"ok": False, "error": type(exc).__name__}
 
+    out["host"] = _host_stats()
+    out["kernel"] = diagnostics.kernel_report()
+    out["timings"] = await timings.averages(app.state.redis)
+    out["versions"] = {"livekit_server": s.livekit_server_version or "unknown", "livekit_python_sdk_asr": (hb or {}).get("livekit_sdk")}
+    online = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).join(Meeting, Meeting.id == MeetingParticipant.meeting_id)
+                               .where(Meeting.ended_at.is_(None), MeetingParticipant.left_at.is_(None)))).scalar_one()
+    out["live"] = {"users_online": online}
+    out["recording_export"] = {
+        "failed": (await db.execute(select(func.count()).select_from(Recording).where(Recording.export_status.in_(("pending", "failed"))))).scalar_one()}
     out["counts"] = {
         "users": (await db.execute(select(func.count()).select_from(User))).scalar_one(),
         "rooms": (await db.execute(select(func.count()).select_from(Room))).scalar_one(),

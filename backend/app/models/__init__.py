@@ -3,8 +3,10 @@ from .entities import (
     AppSetting,
     AuditLog,
     Meeting,
+    MeetingGrant,
     MeetingParticipant,
     Protocol,
+    ProtocolTemplate,
     Recording,
     Room,
     RoomAcl,
@@ -13,6 +15,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "AppSetting", "AuditLog", "Meeting", "MeetingParticipant", "Protocol", "Recording",
+    "Base", "utcnow", "AppSetting", "AuditLog", "Meeting", "MeetingGrant", "MeetingParticipant", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "TranscriptSegment", "User",
 ]

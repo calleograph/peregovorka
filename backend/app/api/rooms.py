@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
+from ..services import timings
 from ..services.meetings import JoinError
 from ..services.rooms import list_accessible_rooms
 from .schemas import ActiveMeetingOut, ClientConfig, JoinIn, JoinOut, RoomOut
@@ -45,6 +47,7 @@ async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession =
 @router.post("/{room_id}/join", response_model=JoinOut)
 async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
                     su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    started = time.monotonic()
     try:
         result = await request.app.state.meetings.join(db, room_id, su, body.password)
     except JoinError as exc:
@@ -52,10 +55,17 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
     settings = request.app.state.settings
     screen = await request.app.state.settings_svc.get(db, "screen")
+    asr_ready = False
+    try:  # готовность ASR только сообщается клиенту; вход в комнату её не ждёт
+        hb = await request.app.state.bridge.heartbeat()
+        asr_ready = bool(hb and hb.get("model_loaded"))
+        await timings.record(request.app.state.redis, "join_backend_ms", (time.monotonic() - started) * 1000)
+    except Exception:  # noqa: BLE001
+        pass
     return JoinOut(
         meeting_id=result.meeting.id, room=await room_out(db, result.room, result.meeting, 0),
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
-        token=result.token, identity=result.identity, recording=result.meeting.transcription_enabled,
+        token=result.token, identity=result.identity, recording=result.meeting.transcription_enabled, asr_ready=asr_ready,
         client=ClientConfig(screen_profile=screen.profile, screen_share_audio=screen.share_audio,
                             one_sharer_at_a_time=screen.one_sharer_at_a_time),
     )

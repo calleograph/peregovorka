@@ -11,41 +11,63 @@ export interface Room {
 export interface ClientConfig { screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean }
 export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
-  recording: boolean; client: ClientConfig;
+  recording: boolean; asr_ready: boolean; client: ClientConfig;
 }
+export type ProtocolKind = "summary" | "protocol";
 export interface ProtocolItem {
-  id: string; meeting_id: string; kind: string; status: "pending" | "ready" | "failed"; error: string | null;
-  created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null; content?: string | null;
+  id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
+  created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
+  title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
 }
+export interface ProtocolTemplate { id: string; name: string; kind: "any" | ProtocolKind; instruction: string; scope: "global" | "user"; can_edit: boolean }
 export interface AdminUser {
   id: string; sam_account_name: string; display_name: string; email: string | null; is_active: boolean; is_admin: boolean;
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general";
+export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
+export interface TimingStat { n: number; avg: number; p95: number; max: number }
 export interface SystemStatus {
-  version: string; commit: string; public_url: string; master_key_ok: boolean; disk_free_bytes: number | null;
+  version: string; commit: string; built_at?: string; public_url: string; master_key_ok: boolean; disk_free_bytes: number | null;
   checks: Record<string, { ok: boolean; error?: string; [k: string]: unknown }>; counts: Record<string, number>;
+  host?: { cpus?: number; load1?: number; load5?: number; load15?: number; mem_total?: number; mem_available?: number };
+  kernel?: { ok: boolean; note: string; params: Record<string, { value: number | null; recommended: number; ok: boolean | null }> };
+  timings?: Record<string, TimingStat | null>;
+  versions?: { livekit_server: string; livekit_python_sdk_asr: string | null };
+  live?: { users_online: number };
+  recording_export?: { failed: number };
 }
 export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null }
-export interface RecordingRow { id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string }
+export interface RecordingRow {
+  id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
+  export_status?: string; export_location?: string | null; export_error?: string | null;
+}
+export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null }
 export interface Participant { user_id: string; display_name: string; joined_at: string; left_at: string | null; online: boolean }
 export interface Meeting {
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
+  segments: number; recordings: number; protocols: number;
 }
 export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; display_name: string; identity: string;
   started_at: string; ended_at: string; text: string; language: string | null;
 }
 export interface AclEntry { subject_type: "group" | "user"; subject_ref: string; display_name?: string | null }
+export type HistoryAccess = "admin" | "participants";
 export interface RoomAdmin {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean; camera_allowed: boolean;
   screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
-  protocol_instructions: string | null; acl: AclEntry[]; active_meeting_id: string | null;
+  protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
+}
+export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
+export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
+export interface ClientMetricRow { ts: number; user: string; [k: string]: unknown }
+export interface DiagnosticsReport {
+  generated_at: string; verdict: string[]; [k: string]: unknown;
 }
 
 export class ApiError extends Error {
@@ -61,13 +83,16 @@ export const setCsrf = (t: string) => { csrfToken = t; };
 let onUnauthorized: (() => void) | null = null;
 export const setUnauthorizedHandler = (fn: (() => void) | null) => { onUnauthorized = fn; };
 
-/** «Выход при закрытии вкладки»: keepalive-запрос переживает выгрузку страницы. */
-export function leaveOnUnload(meetingId: string): void {
+/** keepalive-запрос переживает выгрузку страницы (закрытие вкладки, переход). */
+function keepalivePost(path: string): void {
   try {
-    void fetch(`/api/v1/meetings/${meetingId}/leave`, { method: "POST", keepalive: true, credentials: "same-origin",
-      headers: { "X-CSRF-Token": csrfToken } });
+    void fetch(`/api/v1${path}`, { method: "POST", keepalive: true, credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } });
   } catch { /* страница закрывается */ }
 }
+/** «Выход при закрытии вкладки»: участник снимается с встречи. */
+export const leaveOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/leave`);
+/** Участник покинул страницу завершённой встречи: временный доступ к ней прекращается. */
+export const releaseOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/release`);
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -92,6 +117,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+export type ExportFormat = "md" | "txt" | "docx" | "pdf";
+
 export const api = {
   login: (login: string, password: string) => request<Me>("POST", "/auth/login", { login, password }),
   logout: () => request<void>("POST", "/auth/logout"),
@@ -104,11 +131,35 @@ export const api = {
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),
   transcript: (id: string, afterId = 0) =>
     request<{ meeting_id: string; segments: Segment[]; has_more: boolean }>("GET", `/meetings/${id}/transcript?after_id=${afterId}&limit=2000`),
+  transcriptExportUrl: (id: string, fmt: ExportFormat) => `/api/v1/meetings/${id}/transcript/export?format=${fmt}`,
   version: () => request<{ version: string; commit: string }>("GET", "/version"),
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
+
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
-  createSummary: (meetingId: string) => request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols/summary`),
+  defaultInstruction: (meetingId: string, kind: ProtocolKind) =>
+    request<{ kind: string; instruction: string }>("GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}`),
+  createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string) =>
+    request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction }),
+  editProtocol: (meetingId: string, id: string, body: { content?: string; title?: string }) =>
+    request<ProtocolItem>("PATCH", `/meetings/${meetingId}/protocols/${id}`, body),
+  deleteProtocol: (meetingId: string, id: string) => request<void>("DELETE", `/meetings/${meetingId}/protocols/${id}`),
+  protocolExportUrl: (meetingId: string, id: string, fmt: ExportFormat) => `/api/v1/meetings/${meetingId}/protocols/${id}/export?format=${fmt}`,
+
+  templates: () => request<ProtocolTemplate[]>("GET", "/protocol-templates"),
+  createTemplate: (body: { name: string; instruction: string; kind: string; scope: "global" | "user" }) => request<ProtocolTemplate>("POST", "/protocol-templates", body),
+  updateTemplate: (id: string, body: Partial<{ name: string; instruction: string; kind: string }>) => request<ProtocolTemplate>("PUT", `/protocol-templates/${id}`, body),
+  deleteTemplate: (id: string) => request<void>("DELETE", `/protocol-templates/${id}`),
+
+  meetingRecordings: (id: string) => request<MeetingRecording[]>("GET", `/meetings/${id}/recordings`),
+  recordingUrl: (meetingId: string, recId: string) => `/api/v1/meetings/${meetingId}/recordings/${recId}`,
+  deleteRecordings: (id: string) => request<void>("DELETE", `/meetings/${id}/recordings`),
+  deleteMeeting: (id: string) => request<void>("DELETE", `/meetings/${id}`),
+
+  // Клиентская диагностика: ошибки и метрики не должны влиять на работу, поэтому тихо игнорируются.
+  clientEvent: (body: Record<string, unknown>) => { void request<void>("POST", "/client/events", body).catch(() => undefined); },
+  clientMetrics: (body: Record<string, unknown>) => { void request<void>("POST", "/client/metrics", body).catch(() => undefined); },
+
   admin: {
     rooms: () => request<RoomAdmin[]>("GET", "/admin/rooms"),
     createRoom: (body: Record<string, unknown>) => request<RoomAdmin>("POST", "/admin/rooms", body),
@@ -122,8 +173,15 @@ export const api = {
     search: (kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/admin/directory/search?kind=${kind}&q=${encodeURIComponent(q)}`),
     meetings: (active?: boolean) => request<Meeting[]>("GET", `/admin/meetings${active === undefined ? "" : `?active=${active}`}`),
     endMeeting: (id: string) => request<void>("POST", `/admin/meetings/${id}/end`),
+    grants: (id: string) => request<Grant[]>("GET", `/admin/meetings/${id}/grants`),
+    addGrant: (id: string, userId: string) => request<{ ok: boolean }>("POST", `/admin/meetings/${id}/grants`, { user_id: userId }),
+    removeGrant: (id: string, userId: string) => request<void>("DELETE", `/admin/meetings/${id}/grants/${userId}`),
     system: () => request<SystemStatus>("GET", "/admin/system"),
     audit: (offset = 0) => request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}`),
     recordings: () => request<RecordingRow[]>("GET", "/admin/recordings"),
+    retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
+    runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
+    clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[] }>("GET", "/admin/client-diagnostics"),
+    diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
   },
 };

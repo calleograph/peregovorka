@@ -24,11 +24,13 @@ log = logging.getLogger("asr.gigaam")
 
 
 class GigaAmProvider:
-    def __init__(self, model_name: str, model_dir: str, device: str = "cpu", cpu_threads: int = 0):
+    def __init__(self, model_name: str, model_dir: str, device: str = "cpu", cpu_threads: int = 0, interop_threads: int = 0):
         self._name = model_name
         self._dir = Path(model_dir)
         self._device_name = device
         self._cpu_threads = cpu_threads
+        self._interop_threads = interop_threads
+        self.threads: dict[str, int] = {}  # фактические значения torch после применения (для /readyz и диагностики)
         self._model = None
         self._torch = None
         self._ready = False
@@ -48,8 +50,7 @@ class GigaAmProvider:
 
         if self._device_name == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("ASR_DEVICE=cuda, но CUDA недоступна в контейнере")
-        if self._cpu_threads:
-            torch.set_num_threads(self._cpu_threads)
+        self.apply_threads(torch)
         self._torch = torch
         log.info("Загрузка модели GigaAM", extra={"model": self._name, "device": self._device_name})
         self._model = gigaam.load_model(
@@ -63,6 +64,20 @@ class GigaAmProvider:
                               version=getattr(gigaam, "__version__", ""))
         self._ready = True
         log.info("Модель GigaAM загружена и готова")
+
+    def apply_threads(self, torch) -> dict[str, int]:  # noqa: ANN001
+        """Применить ASR_CPU_THREADS / ASR_INTEROP_THREADS и записать в журнал то, что реально получил torch."""
+        if self._cpu_threads:
+            torch.set_num_threads(self._cpu_threads)
+        if self._interop_threads:
+            try:
+                torch.set_num_interop_threads(self._interop_threads)
+            except RuntimeError as exc:  # inter-op пул уже создан: менять можно только до первой работы torch
+                log.warning("ASR_INTEROP_THREADS не применён", extra={"error": str(exc)[:200]})
+        self.threads = {"intra": int(torch.get_num_threads()), "interop": int(torch.get_num_interop_threads())}
+        log.info("Потоки torch", extra={"intra_threads": self.threads["intra"], "interop_threads": self.threads["interop"],
+                                        "requested_intra": self._cpu_threads, "requested_interop": self._interop_threads})
+        return self.threads
 
     def is_ready(self) -> bool:
         return self._ready

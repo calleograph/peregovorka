@@ -10,5 +10,6 @@ def build_provider(settings: AsrSettings) -> AsrProvider:
     if name == "gigaam":
         from .gigaam import GigaAmProvider
 
-        return GigaAmProvider(settings.asr_model_name, settings.asr_model_dir, settings.asr_device, settings.asr_cpu_threads)
+        return GigaAmProvider(settings.asr_model_name, settings.asr_model_dir, settings.asr_device, settings.asr_cpu_threads,
+                              settings.asr_interop_threads)
     raise ValueError(f"Неизвестный ASR_PROVIDER: {settings.asr_provider!r} (поддерживается: gigaam)")

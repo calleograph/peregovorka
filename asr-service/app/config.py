@@ -20,7 +20,8 @@ class AsrSettings(BaseSettings):
     asr_model_name: str = "v3_e2e_rnnt"
     asr_model_dir: str = "/models/gigaam"
     asr_device: str = "cpu"  # cpu | cuda
-    asr_cpu_threads: int = Field(default=0, ge=0)
+    asr_cpu_threads: int = Field(default=0, ge=0)  # intra-op потоки torch; 0 = по умолчанию библиотеки (все ядра хоста)
+    asr_interop_threads: int = Field(default=0, ge=0)  # inter-op потоки torch; 0 = по умолчанию
     asr_language: str = "ru"
 
     # очередь и параллелизм инференса (одна общая копия модели на процесс)
