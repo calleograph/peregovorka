@@ -3,8 +3,11 @@
 #
 #   scripts/models.sh [--env FILE] [--model v3_e2e_rnnt]
 #                     [--from-dir КАТАЛОГ]   # закрытая сеть: готовые файлы модели
+#                     [--gguf] [--skip-full] # дополнительно подготовить квантованную модель Q5_K_M (GGUF)
 #
-# Нужные файлы: <model>.ckpt и <model>_tokenizer.model.
+# Нужные файлы: <model>.ckpt и <model>_tokenizer.model (Full, PyTorch) и, по желанию, gigaam-v3-e2e-rnnt-Q5_K_M.gguf (GGUF).
+# Обе модели лежат в одном каталоге одновременно; какая из них активна, выбирается в админке (Интеграции → Распознавание речи).
+# GGUF: с --from-dir копируется файл из каталога; без него нужен прямой URL в GGUF_MODEL_URL (в .env или окружении).
 #  * без --from-dir: скачивание с GIGAAM_MODEL_BASE_URL (нужен доступ в интернет);
 #  * с --from-dir: копирование из заранее скачанного каталога.
 # Контрольные суммы НЕ проверяются (upstream может обновлять файлы): проверяется только, что файл скачан/скопирован
@@ -12,13 +15,15 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-MODEL=""; FROM_DIR=""
+MODEL=""; FROM_DIR=""; GGUF=0; SKIP_FULL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --from-dir) FROM_DIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --gguf) GGUF=1; shift ;;
+    --skip-full) SKIP_FULL=1; shift ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
@@ -39,21 +44,23 @@ info "Каталог моделей: $DEST"
 fsize() { stat -c '%s' "$1" 2>/dev/null || wc -c < "$1"; }
 have() { [ -f "$1" ] && [ "$(fsize "$1")" -ge "$2" ]; }
 
-if have "$CKPT" "$MIN_CKPT_BYTES" && have "$TOK" 1; then
+FULL_READY=0
+if [ "$SKIP_FULL" = 0 ] && have "$CKPT" "$MIN_CKPT_BYTES" && have "$TOK" 1; then
   ok "Модель $MODEL уже на месте ($(fsize "$CKPT") байт) — повторная загрузка не требуется."
-  exit 0
+  FULL_READY=1
 fi
 
-fetch() { # fetch FILE_NAME DEST_PATH MIN_BYTES
-  local name="$1" path="$2" min="$3" size
+fetch() { # fetch FILE_NAME DEST_PATH MIN_BYTES [URL]
+  local name="$1" path="$2" min="$3" url size
+  url="${4:-$BASE_URL/$name}"
   if [ -n "$FROM_DIR" ]; then
     [ -f "$FROM_DIR/$name" ] || die "В $FROM_DIR нет файла $name"
     info "Копирование $FROM_DIR/$name → $path"
     cp -f "$FROM_DIR/$name" "$path.part"
   else
     command -v curl >/dev/null || die "curl не найден"
-    info "Загрузка $BASE_URL/$name → $path"
-    curl -fL --retry 3 -C - -o "$path.part" "$BASE_URL/$name" \
+    info "Загрузка $url → $path"
+    curl -fL --retry 3 -C - -o "$path.part" "$url" \
       || die "Не удалось скачать $name (частично скачанное сохранено: $path.part — повторный запуск продолжит загрузку)"
   fi
   size="$(fsize "$path.part")"
@@ -65,7 +72,25 @@ fetch() { # fetch FILE_NAME DEST_PATH MIN_BYTES
   ok "$name: $size байт"
 }
 
-have "$CKPT" "$MIN_CKPT_BYTES" || { rm -f "$CKPT"; fetch "$MODEL.ckpt" "$CKPT" "$MIN_CKPT_BYTES"; }
-have "$TOK" 1 || { rm -f "$TOK"; fetch "${MODEL}_tokenizer.model" "$TOK" 1; }
-printf '%s prepared=%s size=%s\n' "$MODEL" "$(date -Is)" "$(fsize "$CKPT")" > "$DEST/$MODEL.version"
-ok "Модель $MODEL готова: $DEST"
+if [ "$SKIP_FULL" = 0 ] && [ "$FULL_READY" = 0 ]; then
+  have "$CKPT" "$MIN_CKPT_BYTES" || { rm -f "$CKPT"; fetch "$MODEL.ckpt" "$CKPT" "$MIN_CKPT_BYTES"; }
+  have "$TOK" 1 || { rm -f "$TOK"; fetch "${MODEL}_tokenizer.model" "$TOK" 1; }
+  printf '%s prepared=%s size=%s\n' "$MODEL" "$(date -Is)" "$(fsize "$CKPT")" > "$DEST/$MODEL.version"
+  ok "Модель $MODEL готова: $DEST"
+fi
+
+if [ "$GGUF" = 1 ]; then
+  GGUF_NAME="${GGUF_MODEL_FILE:-gigaam-v3-e2e-rnnt-Q5_K_M.gguf}"
+  [[ "$GGUF_NAME" =~ ^[A-Za-z0-9_.-]+\.gguf$ ]] || die "Недопустимое имя GGUF-файла: $GGUF_NAME"
+  GG="$DEST/$GGUF_NAME"
+  if have "$GG" "$MIN_CKPT_BYTES"; then
+    ok "GGUF-модель $GGUF_NAME уже на месте ($(fsize "$GG") байт)."
+  elif [ -n "$FROM_DIR" ]; then
+    fetch "$GGUF_NAME" "$GG" "$MIN_CKPT_BYTES"
+  elif [ -n "${GGUF_MODEL_URL:-}" ]; then
+    fetch "$GGUF_NAME" "$GG" "$MIN_CKPT_BYTES" "$GGUF_MODEL_URL"
+  else
+    die "Для GGUF укажите --from-dir КАТАЛОГ с файлом $GGUF_NAME либо прямой URL в GGUF_MODEL_URL. Файл можно просто положить в $DEST вручную."
+  fi
+  ok "GGUF-модель готова: $GG. Для запуска нужен runtime transcribe.cpp в образе ASR (см. DEPLOYMENT.md §6.3); выбор модели — в админке."
+fi

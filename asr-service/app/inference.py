@@ -112,14 +112,20 @@ class InferenceQueue:
                 log.info("Сегмент распознан", extra={
                     "meeting_id": job.meeting_id, "participant": job.identity, "audio_duration_ms": audio_ms,
                     "inference_ms": infer_ms, "realtime_factor": round(infer_ms / audio_ms, 3) if audio_ms else None,
-                    "queue_wait_ms": queue_ms, "total_latency_ms": total_ms, "has_text": bool(result.text.strip())})
+                    "queue_wait_ms": queue_ms, "total_latency_ms": total_ms, "has_text": bool(result.text.strip()),
+                    "model_id": getattr(getattr(self._provider, "info", None), "model_id", ""), "runtime": getattr(getattr(self._provider, "info", None), "runtime", "")})
                 if result.text.strip():
                     await job.on_result(JobResult(job, result, queue_ms, infer_ms, total_ms))
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001
-                self.errors += 1
-                log.exception("Ошибка распознавания сегмента", extra={"identity": job.identity})
+            except Exception as exc:  # noqa: BLE001
+                if type(exc).__name__ == "ModelNotReadyError":  # модель не загружена/переключается: сегмент пропускается без стека ошибок
+                    self.dropped += 1
+                    if self.dropped % 20 == 1:
+                        log.warning("Нет активной модели распознавания — сегменты пропускаются", extra={"dropped_total": self.dropped})
+                else:
+                    self.errors += 1
+                    log.exception("Ошибка распознавания сегмента", extra={"identity": job.identity})
             finally:
                 self.busy -= 1
                 self._q.task_done()

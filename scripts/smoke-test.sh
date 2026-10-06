@@ -61,7 +61,7 @@ if [ "$acode" = 200 ] && printf '%s' "$abody" | grep -q '"model_loaded": *true';
 import urllib.request
 r=urllib.request.Request('http://127.0.0.1:8090/selftest',method='POST')
 print(urllib.request.urlopen(r,timeout=120).read().decode())" 2>/dev/null || true)"
-  if printf '%s' "$ST" | grep -q '"ok": *true'; then rec "ASR" OK "модель $(printf '%s' "$abody" | grep -o '"name": *"[^"]*"' | head -1 | cut -d'"' -f4) загружена; тест-инференс $(printf '%s' "$ST" | grep -o '"ms": *[0-9]*' | grep -o '[0-9]*$') мс; потоки torch: $(printf '%s' "$abody" | grep -o '"torch_threads": *[0-9]*' | grep -o '[0-9]*$' || echo '?')"
+  if printf '%s' "$ST" | grep -q '"ok": *true'; then rec "ASR" OK "модель $(printf '%s' "$abody" | grep -o '"name": *"[^"]*"' | head -1 | cut -d'"' -f4) (runtime $(printf '%s' "$abody" | grep -o '"runtime": *"[^"]*"' | head -1 | cut -d'"' -f4), CPU) загружена; тест-инференс $(printf '%s' "$ST" | grep -o '"ms": *[0-9]*' | grep -o '[0-9]*$') мс; потоки torch: $(printf '%s' "$abody" | grep -o '"torch_threads": *[0-9]*' | grep -o '[0-9]*$' || echo '?')"
   else rec "ASR" FAIL "модель загружена, но тестовый инференс не выполнен"; fi
 else rec "ASR" WARNING "модель не загружена/не готова (HTTP $acode): звонки работают, транскрибации нет"; fi
 

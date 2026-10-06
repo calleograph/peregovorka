@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
 import { anonFields, audioStorageFields, generalFields, llmFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import RoomsAdmin from "./admin/RoomsAdmin";
@@ -37,6 +38,7 @@ const GROUPS: Group[] = [
     { id: "audio_storage", label: "Хранилище записей", render: () => (
       <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
         intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Адрес сервера и пути задаются здесь, а не в файлах установки." />) },
+    { id: "asr", label: "Распознавание речи (ASR)", render: () => <AsrModelsAdmin /> },
     { id: "anon", label: "Обезличивание", render: () => (
       <SettingsForm key="anonymizer" group="anonymizer" title="API обезличивания" fields={anonFields} testable
         intro="Внутренний сервис обезличивания (DocClean или совместимый JSON API). Любой текст проходит через него перед отправкой в языковую модель." />) },

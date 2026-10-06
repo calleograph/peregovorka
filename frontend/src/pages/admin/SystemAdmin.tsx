@@ -47,7 +47,7 @@ export default function SystemAdmin() {
   const memUsed = h.mem_total && h.mem_available !== undefined ? ((h.mem_total - h.mem_available) / h.mem_total) * 100 : undefined;
   const asr = s.checks.asr as Record<string, unknown> | undefined;
   const asrProv = (asr?.provider ?? {}) as { name?: string; device?: string };
-  const prov = asrProv.name ? `${asrProv.name} (${asrProv.device ?? "?"})` : "—";
+  const prov = asrProv.name ? `${asrProv.name} · ${(asrProv as { runtime?: string }).runtime ?? "?"} · ${(asrProv.device ?? "?").toUpperCase()}` : "—";
 
   return (
     <section>

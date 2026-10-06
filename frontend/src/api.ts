@@ -25,7 +25,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general";
+export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -69,6 +69,24 @@ export interface ClientMetricRow { ts: number; user: string; [k: string]: unknow
 export interface DiagnosticsReport {
   generated_at: string; verdict: string[]; [k: string]: unknown;
 }
+
+export type AsrModelStatus = "active" | "available" | "loading" | "missing" | "error" | "unsupported";
+export interface AsrModel {
+  id: string; title: string; runtime: string; quant: string; family: string; device: string; description: string; files: string[];
+  present: boolean; missing: string[]; size_bytes: number; status: AsrModelStatus; error: string | null; load_ms: number | null;
+  active: boolean; runtime_available: boolean;
+}
+export interface AsrModels {
+  reachable: boolean; desired: string; active_id: string | null; loading_id?: string | null; device?: string; ready?: boolean; error?: string;
+  threads?: { intra?: number; interop?: number }; test_audio_s?: number | null; models: AsrModel[];
+}
+export interface AsrTestResult {
+  ok: boolean; error?: string; skipped?: boolean; model_id: string; title: string; runtime: string; quant?: string; device?: string; audio_s?: number;
+  load_ms?: number | null; inference_ms?: number; audio_duration_ms?: number; rtf?: number; cpu_s?: number; cpu_cores_avg?: number | null;
+  ram_mb?: number | null; ram_delta_mb?: number | null; text?: string; reference?: string; wer?: number; cer?: number; repeat?: number; during_meeting?: boolean;
+  punctuation?: { ref_marks: number; hyp_marks: number; precision: number; recall: number; f1: number };
+}
+export interface AsrCompare { ok: boolean; error?: string; audio_s?: number; reference?: string; results: AsrTestResult[]; summary: string[]; note?: string }
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public retryAfter?: number) {
@@ -183,5 +201,9 @@ export const api = {
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[] }>("GET", "/admin/client-diagnostics"),
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
+    asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),
+    setAsrModel: (modelId: string) => request<{ ok: boolean; desired: string; note: string }>("PUT", "/admin/asr/active", { model_id: modelId }),
+    asrTest: (modelId?: string, force = false) => request<AsrTestResult>("POST", "/admin/asr/test", { model_id: modelId, force }),
+    asrCompare: (force = false) => request<AsrCompare>("POST", "/admin/asr/compare", { force }),
   },
 };

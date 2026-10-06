@@ -249,3 +249,7 @@ label.check input { margin-top: 3px; }
 .transcript .utt > span:last-child { grid-column: 1 / -1; }
 .room-wrap.tcollapsed { grid-template-columns: minmax(0, 1fr) 0 52px; }
 .transcript.collapsed { background: var(--soft); }
+
+/* выбор ASR-модели */
+.asr-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; margin-top: 10px; }
+.asr-model.active { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }

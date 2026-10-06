@@ -217,7 +217,8 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
         pass
     prov = (hb or {}).get("provider") or {}
     rep["asr"] = {"ready": bool(hb and hb.get("model_loaded")), "model": prov.get("name"), "device": prov.get("device"),
-                  "provider": prov.get("provider"), "version": (hb or {}).get("version"), "commit": (hb or {}).get("commit"),
+                  "provider": prov.get("provider"), "runtime": prov.get("runtime"), "model_id": prov.get("model_id"), "quant": prov.get("quant"),
+                  "loading_model": (hb or {}).get("loading_model"), "models": (hb or {}).get("models"), "version": (hb or {}).get("version"), "commit": (hb or {}).get("commit"),
                   "threads": (hb or {}).get("torch_threads"), "interop_threads": (hb or {}).get("torch_interop_threads"),
                   "avg_infer_ms": (hb or {}).get("avg_infer_ms"), "avg_queue_ms": (hb or {}).get("avg_queue_ms"),
                   "rtf": (hb or {}).get("rtf"), "queue_depth": (hb or {}).get("queue_depth"),
@@ -246,7 +247,8 @@ def verdict(rep: dict) -> list[str]:
     if lk.get("rtc_tcp", {}).get("ok") is False:
         out.append("RTC TCP-порт недоступен")
     if not rep.get("asr", {}).get("ready"):
-        out.append("ASR не готов (модель не загружена или сервис остановлен): звонок работает, транскрибации нет")
+        errs = [f"{m['title']}: {m['error']}" for m in (rep.get("asr", {}).get("models") or []) if m.get("error")]
+        out.append("ASR не готов (модель не загружена или сервис остановлен): звонок работает, транскрибации нет" + (f". Причина: {errs[0]}" if errs else ""))
     if rep.get("kernel", {}).get("ok") is False:
         out.append(rep["kernel"]["note"])
     return out

@@ -285,7 +285,7 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
     except Exception as exc:  # noqa: BLE001
         out["checks"]["livekit"] = {"ok": False, "error": type(exc).__name__}
     hb = await app.state.bridge.heartbeat()
-    out["checks"]["asr"] = {"ok": bool(hb and hb.get("model_loaded")), **({k: hb.get(k) for k in ("queue_depth", "dropped", "errors", "active_meetings", "processed", "avg_infer_ms", "avg_queue_ms", "rtf", "provider", "torch_threads", "torch_interop_threads")} if hb else {})}
+    out["checks"]["asr"] = {"ok": bool(hb and hb.get("model_loaded")), **({k: hb.get(k) for k in ("queue_depth", "dropped", "errors", "active_meetings", "processed", "avg_infer_ms", "avg_queue_ms", "rtf", "provider", "torch_threads", "torch_interop_threads", "active_model", "loading_model", "model_error")} if hb else {})}
     try:
         await asyncio.to_thread(app.state.directory.check_service_account)
         out["checks"]["ldap"] = {"ok": True}

@@ -130,6 +130,7 @@ services:
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?}
       LIVEKIT_TOKEN_TTL_SECONDS: ${LIVEKIT_TOKEN_TTL_SECONDS:-300}
       LIVEKIT_SERVER_VERSION: ${LIVEKIT_IMAGE_TAG:-unknown}
+      ASR_INTERNAL_URL: http://asr:8090
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       LIVEKIT_RTC_TCP_PORT: ${LIVEKIT_TCP_PORT:-0}
       LIVEKIT_RTC_UDP_PORT: ${LIVEKIT_UDP_PORT:-0}
@@ -193,6 +194,11 @@ services:
       ASR_MAX_CONCURRENT_INFERENCE: ${ASR_MAX_CONCURRENT_INFERENCE:-1}
       ASR_QUEUE_SIZE: ${ASR_QUEUE_SIZE:-64}
       ASR_CPU_THREADS: ${ASR_CPU_THREADS:-0}
+      # Какая модель активна, выбирается в админке (Интеграции → Распознавание речи); здесь — только запасной вариант до первого выбора.
+      ASR_MODEL_ID: ${ASR_MODEL_ID:-gigaam-v3-e2e-rnnt-full}
+      ASR_GGUF_BIN: ${ASR_GGUF_BIN:-transcribe}
+      ASR_GGUF_ARGS: ${ASR_GGUF_ARGS:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
       ASR_INTEROP_THREADS: ${ASR_INTEROP_THREADS:-0}
       ASR_LANGUAGE: ${ASR_LANGUAGE:-ru}
       ASR_VAD_THRESHOLD: ${ASR_VAD_THRESHOLD:-0.5}

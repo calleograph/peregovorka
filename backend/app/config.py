@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     livekit_token_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     # сведения о развёртывании LiveKit для диагностики (compose передаёт из .env)
     livekit_server_version: str = ""
+    asr_internal_url: str = "http://asr:8090"  # управление моделями ASR (статус, тест, сравнение) — только внутри сети проекта
     livekit_node_ip: str = ""
     livekit_rtc_tcp_port: int = 0
     livekit_rtc_udp_port: int = 0

@@ -222,6 +222,20 @@ class ScreenSettings(_Group):
     one_sharer_at_a_time: bool = False
 
 
+class AsrModelSettings(_Group):
+    """Какая модель распознавания активна. Пусто — модель по умолчанию из .env (ASR_MODEL_ID). Список моделей ведёт сам ASR (каталог)."""
+
+    active_model: str = ""
+
+    @field_validator("active_model")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", v):
+            raise ValueError("active_model: идентификатор модели из каталога (латиница, цифры, . _ -)")
+        return v
+
+
 class GeneralSettings(_Group):
     timezone: str = "UTC"  # для имён папок протоколов и подписей времени
     post_meeting_access_minutes: int = Field(default=120, ge=1, le=1440)  # сколько участник, оставшийся на странице завершённой встречи, сохраняет доступ
@@ -246,6 +260,7 @@ GROUPS: dict[str, type[_Group]] = {
     "protocol": ProtocolSettings,
     "screen": ScreenSettings,
     "general": GeneralSettings,
+    "asr": AsrModelSettings,
 }
 
 

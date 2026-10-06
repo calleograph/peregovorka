@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_system, auth, client, health, internal, meetings, rooms, templates, ws
+from .api import admin, admin_asr, admin_system, auth, client, health, internal, meetings, rooms, templates, ws
 from .auth.directory import DirectoryClient, LdapDirectory
 from .auth.service import AuthService
 from .auth.sessions import SessionStore
@@ -26,6 +26,7 @@ from .security.secretbox import SecretBox, SecretBoxError
 from .services.meetings import MeetingService
 from .services.protocols import ProtocolService
 from .services.settings import SettingsService
+from .workers.asr_sync import run_asr_sync
 from .workers.reaper import run_reaper
 from .workers.retention import run_retention
 from .workers.segment_consumer import run_consumer
@@ -80,6 +81,7 @@ def create_app(
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
             tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc), name="meeting-reaper"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
+            tasks.append(asyncio.create_task(run_asr_sync(session_maker, settings_svc, redis), name="asr-model-sync"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
         try:
             yield
@@ -123,7 +125,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, templates.router, client.router, admin.router, admin_system.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, templates.router, client.router, admin.router, admin_system.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

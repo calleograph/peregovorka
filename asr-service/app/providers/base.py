@@ -25,9 +25,13 @@ class ModelInfo:
     name: str
     device: str
     version: str = ""
+    runtime: str = ""     # pytorch | gguf | …
+    model_id: str = ""    # идентификатор из каталога моделей
+    quant: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        return {"provider": self.provider, "name": self.name, "device": self.device, "version": self.version}
+        return {"provider": self.provider, "name": self.name, "device": self.device, "version": self.version,
+                "runtime": self.runtime, "model_id": self.model_id, "quant": self.quant}
 
 
 @dataclass(frozen=True)

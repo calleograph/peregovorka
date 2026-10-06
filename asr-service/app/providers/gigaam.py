@@ -24,7 +24,8 @@ log = logging.getLogger("asr.gigaam")
 
 
 class GigaAmProvider:
-    def __init__(self, model_name: str, model_dir: str, device: str = "cpu", cpu_threads: int = 0, interop_threads: int = 0):
+    def __init__(self, model_name: str, model_dir: str, device: str = "cpu", cpu_threads: int = 0, interop_threads: int = 0,
+                 model_id: str = "", quant: str = ""):
         self._name = model_name
         self._dir = Path(model_dir)
         self._device_name = device
@@ -35,7 +36,8 @@ class GigaAmProvider:
         self._torch = None
         self._ready = False
         self._lock = threading.Lock()
-        self.info = ModelInfo(provider="gigaam", name=model_name, device=device)
+        self.model_id, self.runtime, self.quant = model_id, "pytorch", quant
+        self.info = ModelInfo(provider="gigaam", name=model_name, device=device, runtime="pytorch", model_id=model_id, quant=quant)
 
     def load(self) -> None:
         ckpt = self._dir / f"{self._name}.ckpt"
@@ -60,8 +62,8 @@ class GigaAmProvider:
         self._model.eval()
         # прогрев: заодно проверяет совместимость API на старте
         self.transcribe(np.zeros(SAMPLE_RATE, dtype=np.int16))
-        self.info = ModelInfo(provider="gigaam", name=self._name, device=self._device_name,
-                              version=getattr(gigaam, "__version__", ""))
+        self.info = ModelInfo(provider="gigaam", name=self._name, device=self._device_name, version=getattr(gigaam, "__version__", ""),
+                              runtime="pytorch", model_id=self.model_id, quant=self.quant)
         self._ready = True
         log.info("Модель GigaAM загружена и готова")
 

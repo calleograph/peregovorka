@@ -1,8 +1,11 @@
 """Конфигурация ASR-сервиса (переменные окружения из compose/.env)."""
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_GGUF_ARGS = "-m {model} -f {wav} -t {threads}"
 
 
 class AsrSettings(BaseSettings):
@@ -18,6 +21,10 @@ class AsrSettings(BaseSettings):
     # провайдер распознавания
     asr_provider: str = "gigaam"
     asr_model_name: str = "v3_e2e_rnnt"
+    asr_model_id: str = "gigaam-v3-e2e-rnnt-full"  # модель по умолчанию, пока администратор не выбрал другую (хранится в админке)
+    asr_gguf_bin: str = "transcribe"  # исполняемый файл runtime GGUF (transcribe.cpp)
+    asr_gguf_args: str = "-m {model} -f {wav} -t {threads}"  # шаблон аргументов; интерфейс transcribe.cpp не проверялся
+    internal_api_token: str = ""  # защита изменяющих эндпоинтов (активация, тест, сравнение); пусто — только для разработки
     asr_model_dir: str = "/models/gigaam"
     asr_device: str = "cpu"  # cpu | cuda
     asr_cpu_threads: int = Field(default=0, ge=0)  # intra-op потоки torch; 0 = по умолчанию библиотеки (все ядра хоста)
@@ -44,6 +51,16 @@ class AsrSettings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     recordings_dir: str = "/data/recordings"
+
+    @field_validator("asr_gguf_args", mode="before")
+    @classmethod
+    def _gguf_args(cls, v):
+        return v if v else DEFAULT_GGUF_ARGS  # пустое значение (compose передаёт пустую строку) — шаблон по умолчанию
+
+    @field_validator("asr_gguf_bin", mode="before")
+    @classmethod
+    def _gguf_bin(cls, v):
+        return v if v else "transcribe"
 
     @property
     def effective_redis_url(self) -> str:
