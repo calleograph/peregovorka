@@ -15,7 +15,7 @@ PYX
 export -f jget; export PYJ
 mkupdater() { # репозиторий с ПОДСТАВНЫМ update.sh: печатает этапы, пишет свои аргументы, код выхода берёт из файла $TMP/fake-rc
   mkorigin
-  ( cd "$TMP/seed" && cat > scripts/update.sh <<'FAKE'
+  ( cd "$TMP/seed" || exit 1; cat > scripts/update.sh <<'FAKE'
 #!/usr/bin/env bash
 echo "args: $*" >> "${FAKE_ARGS_FILE:-/dev/null}"
 echo "Обновление (подставное)"; echo "[1/3] Проверка"; echo "  \033[32mпорядок\033[0m"; sleep 1
@@ -41,7 +41,7 @@ if [ -n "$PYJ" ]; then
   t "check: remote.json корректен, без новых изменений behind=0" bash -c '"$1" check --env "$2/cl/.env" >/dev/null 2>&1 && [ "$(jget "$3/remote.json" "d[\"behind\"]")" = 0 ]' _ "$UP" "$TMP" "$CHD"
   t "check: ok=true, ветка и commit указаны, права на чтение у всех" bash -c 'jget "$1/remote.json" "d[\"ok\"]" | grep -q true && [ -n "$(jget "$1/remote.json" "d[\"current\"]")" ] && [ "$(stat -c %a "$1/remote.json" 2>/dev/null || echo 644)" = 644 ]' _ "$CHD"
   pushnew
-  ( cd "$TMP/seed" && echo '"кавычки" и \ слэш' > q.txt && git add -A && git commit -qm 'Тема с "кавычками" и \ слэшем' && git push -q origin main 2>/dev/null )
+  ( cd "$TMP/seed" || exit 1; echo '"кавычки" и \ слэш' > q.txt && git add -A && git commit -qm 'Тема с "кавычками" и \ слэшем' && git push -q origin main 2>/dev/null )
   t "check: новые commit'ы, миграции и параметры .env распознаны; кавычки в теме не ломают JSON" bash -c '"$1" check --env "$2/cl/.env" >/dev/null 2>&1 \
      && [ "$(jget "$3/remote.json" "d[\"behind\"]")" = 2 ] && [ "$(jget "$3/remote.json" "d[\"migrations_changed\"]")" = 1 ] \
      && [ "$(jget "$3/remote.json" "d[\"env_example_changed\"]")" = true ] && [ "$(jget "$3/remote.json" "d[\"ff_possible\"]")" = true ] \

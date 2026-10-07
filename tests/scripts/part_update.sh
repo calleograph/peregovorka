@@ -121,7 +121,7 @@ t "0003 известна коду после миграции (C2)" rv 0003 "$C2
 mkorigin() { # создаёт $TMP/o (bare), $TMP/seed, $TMP/cl; в seed — копия scripts/ и нужных файлов
   rm -rf "$TMP/o" "$TMP/seed" "$TMP/cl" "$TMP/upd-data"
   git init -q --bare "$TMP/o" 2>/dev/null; git clone -q "$TMP/o" "$TMP/seed" 2>/dev/null
-  ( cd "$TMP/seed" && git config user.email t@t && git config user.name t && git checkout -q -b main 2>/dev/null
+  ( cd "$TMP/seed" || exit 1; git config user.email t@t && git config user.name t && git checkout -q -b main 2>/dev/null
     mkdir -p scripts deployment/livekit deployment/nginx backend/migrations/versions asr-service frontend
     cp -r "$ROOT/scripts/." scripts/; cp "$ROOT/deployment/compat.env" deployment/; cp "$ROOT/deployment/compose.yml" deployment/
     cp "$ROOT"/deployment/nginx/* deployment/nginx/; cp "$ROOT/deployment/livekit/Dockerfile" deployment/livekit/
@@ -143,7 +143,7 @@ EOF
   chmod 600 "$TMP/cl/.env"
 }
 pushnew() { # новый commit с новыми параметрами .env.example и миграцией
-  ( cd "$TMP/seed" && printf '\nNEW_SAFE_PARAM=42\nNEW_ADMIN_PASSWORD=CHANGE_ME_x\nNEW_LISTEN_PORT=19000\n' >> .env.example
+  ( cd "$TMP/seed" || exit 1; printf '\nNEW_SAFE_PARAM=42\nNEW_ADMIN_PASSWORD=CHANGE_ME_x\nNEW_LISTEN_PORT=19000\n' >> .env.example
     printf "revision: str = '0002'\ndown_revision = '0001'\n" > backend/migrations/versions/0002_b.py
     git add -A; git commit -qm "Добавлена функция X"; git push -q origin main 2>/dev/null )
 }
@@ -209,7 +209,7 @@ t "повтор после прерывания: распознаётся пре
 
 # non-ff: история разошлась — отказ без изменений
 mkorigin; echo "локальный коммит" > "$TMP/cl/local.txt"; git -C "$TMP/cl" add local.txt; git -C "$TMP/cl" commit -qm "local"
-( cd "$TMP/seed" && echo y > other.txt && git add -A && git commit -qm "upstream" && git push -q origin main 2>/dev/null )
+( cd "$TMP/seed" || exit 1; echo y > other.txt && git add -A && git commit -qm "upstream" && git push -q origin main 2>/dev/null )
 H1="$(git -C "$TMP/cl" rev-parse HEAD)"
 OUTN="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes 2>&1)"; RCN=$?
 t "история разошлась (не fast-forward): отказ, код 1, HEAD не тронут" bash -c '[ "$1" -eq 1 ] && grep -q "не является fast-forward" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCN" "$OUTN" "$TMP/cl" "$H1"
