@@ -12,10 +12,23 @@ export interface ClientConfig {
   screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
   can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
+  /** Гость (вход по ссылке без AD): без административных функций, без показа экрана и стенограммы. */
+  is_guest?: boolean;
 }
 export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
   recording: boolean; asr_ready: boolean; client: ClientConfig;
+}
+/** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
+export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }
+export interface GuestRoomInfo { room_name: string; description: string | null; meeting_active: boolean; has_password: boolean; camera_allowed: boolean }
+export interface ChatMessage {
+  id: number; meeting_id: string; created_at: string; author_type: "user" | "guest" | "system"; author_id: string | null; author_name: string; text: string;
+}
+/** Патч draw.io (diffSync), разосланный сервером. `from` — идентификатор вкладки-автора (чтобы не применять собственную правку повторно). */
+export interface WhiteboardPatch { seq: number; patch: unknown; checksum: string | null; from: string; by: string }
+export interface WhiteboardState {
+  xml: string | null; seq: number; patches: WhiteboardPatch[]; active: boolean; used: boolean; shapes: number; updated_at: string | null; updated_by: string | null;
 }
 export type ProtocolKind = "summary" | "protocol";
 export interface ProtocolItem {
@@ -54,14 +67,18 @@ export interface RecordingRow {
   export_status?: string; export_location?: string | null; export_error?: string | null;
 }
 export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null }
-export interface Participant { user_id: string; display_name: string; joined_at: string; left_at: string | null; online: boolean }
+export interface Participant {
+  user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest"; display_name: string; joined_at: string; left_at: string | null; online: boolean;
+}
 export interface Meeting {
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
+  /** Сообщений в чате встречи; доска «использовалась», если whiteboard_shapes > 0. */
+  chat_messages?: number; whiteboard_shapes?: number; guests?: number;
 }
 export interface Segment {
-  id: number; uid: string; meeting_id: string; user_id: string | null; display_name: string; identity: string;
+  id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
   started_at: string; ended_at: string; text: string; language: string | null;
 }
 export interface AclEntry { subject_type: "group" | "user"; subject_ref: string; display_name?: string | null }
@@ -93,6 +110,7 @@ export interface RoomAdmin {
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
   mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
+  guest_access_enabled: boolean; guest_token: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
@@ -151,6 +169,12 @@ export class ApiError extends Error {
 let csrfToken = "";
 export const setCsrf = (t: string) => { csrfToken = t; };
 
+// Сессия гостя: токен хранится только в памяти вкладки и отправляется заголовком (в cookie не кладётся — иначе вход гостем
+// затёр бы сессию AD в том же браузере).
+let guestToken = "";
+export const setGuestToken = (t: string) => { guestToken = t; };
+export const hasGuestToken = () => guestToken !== "";
+
 // Сессия истекла/прекращена админом: App переключает на экран входа вместо «молчаливых» ошибок.
 let onUnauthorized: (() => void) | null = null;
 export const setUnauthorizedHandler = (fn: (() => void) | null) => { onUnauthorized = fn; };
@@ -158,18 +182,19 @@ export const setUnauthorizedHandler = (fn: (() => void) | null) => { onUnauthori
 /** keepalive-запрос переживает выгрузку страницы (закрытие вкладки, переход). */
 function keepalivePost(path: string): void {
   try {
-    void fetch(`/api/v1${path}`, { method: "POST", keepalive: true, credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } });
+    void fetch(`/api/v1${path}`, { method: "POST", keepalive: true, credentials: "same-origin", headers: guestToken ? { "X-Guest-Token": guestToken } : { "X-CSRF-Token": csrfToken } });
   } catch { /* страница закрывается */ }
 }
 /** «Выход при закрытии вкладки»: участник снимается с встречи. */
-export const leaveOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/leave`);
+export const leaveOnUnload = (meetingId: string): void => keepalivePost(guestToken ? "/guest/session/leave" : `/meetings/${meetingId}/leave`);
 /** Участник покинул страницу завершённой встречи: временный доступ к ней прекращается. */
 export const releaseOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/release`);
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  if (guestToken) headers["X-Guest-Token"] = guestToken;
+  else if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
   let res: Response;
   try {
     res = await fetch(`/api/v1${path}`, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
@@ -221,6 +246,16 @@ export const api = {
     request<{ meeting_id: string; segments: Segment[]; has_more: boolean }>("GET", `/meetings/${id}/transcript?after_id=${afterId}&limit=2000`),
   transcriptExportUrl: (id: string, fmt: ExportFormat) => `/api/v1/meetings/${id}/transcript/export?format=${fmt}`,
   version: () => request<{ version: string; commit: string }>("GET", "/version"),
+  chat: (id: string, q: { beforeId?: number; afterId?: number; limit?: number } = {}) =>
+    request<{ messages: ChatMessage[]; has_more: boolean }>("GET", `/meetings/${id}/chat?limit=${q.limit ?? 100}${q.beforeId ? `&before_id=${q.beforeId}` : ""}${q.afterId ? `&after_id=${q.afterId}` : ""}`),
+  sendChat: (id: string, text: string) => request<ChatMessage>("POST", `/meetings/${id}/chat`, { text }),
+  chatTextUrl: (id: string) => `/api/v1/meetings/${id}/chat.txt`,
+  whiteboard: (id: string) => request<WhiteboardState>("GET", `/meetings/${id}/whiteboard`),
+  whiteboardPatch: (id: string, body: { patch: unknown; checksum?: string | null; client_id: string }) =>
+    request<{ seq: number }>("POST", `/meetings/${id}/whiteboard/patch`, body),
+  whiteboardSave: (id: string, xml: string, seq: number) =>
+    request<{ saved: boolean; seq: number; shapes: number; used: boolean }>("PUT", `/meetings/${id}/whiteboard`, { xml, seq }),
+  whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
@@ -245,11 +280,21 @@ export const api = {
   deleteMeeting: (id: string) => request<void>("DELETE", `/meetings/${id}`),
 
   // Клиентская диагностика: ошибки и метрики не должны влиять на работу, поэтому тихо игнорируются.
-  clientEvent: (body: Record<string, unknown>) => { void request<void>("POST", "/client/events", body).catch(() => undefined); },
-  clientMetrics: (body: Record<string, unknown>) => { void request<void>("POST", "/client/metrics", body).catch(() => undefined); },
+  // Гость в диагностику не пишет (эндпоинты для сотрудников; 401 означал бы «сессия гостя истекла»).
+  clientEvent: (body: Record<string, unknown>) => { if (!guestToken) void request<void>("POST", "/client/events", body).catch(() => undefined); },
+  clientMetrics: (body: Record<string, unknown>) => { if (!guestToken) void request<void>("POST", "/client/metrics", body).catch(() => undefined); },
+
+  guest: {
+    room: (token: string) => request<GuestRoomInfo>("GET", `/guest/room/${encodeURIComponent(token)}`),
+    join: (token: string, displayName: string, password?: string) =>
+      request<GuestJoinInfo>("POST", `/guest/room/${encodeURIComponent(token)}/join`, { display_name: displayName, password: password || null }),
+    rejoin: () => request<GuestJoinInfo>("POST", "/guest/session/rejoin"),
+    leave: () => request<void>("POST", "/guest/session/leave"),
+  },
 
   admin: {
     rooms: () => request<RoomAdmin[]>("GET", "/admin/rooms"),
+    guestLink: (id: string, action: "rotate" | "revoke") => request<RoomAdmin>("POST", `/admin/rooms/${id}/guest-link/${action}`),
     createRoom: (body: Record<string, unknown>) => request<RoomAdmin>("POST", "/admin/rooms", body),
     patchRoom: (id: string, body: Record<string, unknown>) => request<RoomAdmin>("PATCH", `/admin/rooms/${id}`, body),
     deleteRoom: (id: string) => request<void>("DELETE", `/admin/rooms/${id}`),

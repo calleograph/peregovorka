@@ -9,7 +9,7 @@ from datetime import timedelta
 import httpx
 from sqlalchemy import select
 
-from app.models import AppSetting, AuditLog, Meeting, Protocol, Recording, Room, TranscriptSegment, utcnow
+from app.models import AppSetting, AuditLog, Meeting, MeetingChatMessage, Protocol, Recording, Room, TranscriptSegment, utcnow
 from app.workers.retention import run_retention_once
 
 from .conftest import login, make_room, make_settings, put_settings, running_app
@@ -62,7 +62,7 @@ def test_screen_profile_reaches_clients_on_join(client):
     login(client, "alice")
     body = client.post(f"/api/v1/rooms/{room['id']}/join", json={}).json()
     assert body["client"] == {"screen_profile": "motion", "screen_share_audio": True, "one_sharer_at_a_time": False,
-                              "can_moderate": False, "mute_on_join": False, "welcome_message": None}
+                              "can_moderate": False, "is_guest": False, "mute_on_join": False, "welcome_message": None}
 
 
 # --------------------------------------------------------------------------- пользователи
@@ -320,6 +320,7 @@ def test_retention_removes_expired_text_and_audio_but_keeps_the_rest(client):
                 db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=m.room_id, participant_identity="u-x",
                                          started_at=old, ended_at=old, text="старое"))
                 db.add(Protocol(meeting_id=m.id, kind="summary", status="ready", content="итог"))
+                db.add(MeetingChatMessage(meeting_id=m.id, author_name="Alice", text="старый чат"))
                 f = Path(rec_dir) / tag / "a.wav"
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_bytes(b"RIFF")
@@ -331,7 +332,7 @@ def test_retention_removes_expired_text_and_audio_but_keeps_the_rest(client):
 
     ids = client.portal.call(_seed)
     stats = client.portal.call(lambda: run_retention_once(app.state.session_maker, app.state.protocols))
-    assert stats == {"segments": 1, "protocols": 1, "recordings": 1}
+    assert stats == {"segments": 1, "protocols": 1, "recordings": 1, "chat": 1, "whiteboards": 0}
 
     async def _left():
         async with app.state.session_maker() as db:
@@ -344,7 +345,7 @@ def test_retention_removes_expired_text_and_audio_but_keeps_the_rest(client):
     assert segs == [ids["keep"]] and set(meets) == set(ids.values()) and recs == ["keep/a.wav"]
     import os
     assert os.path.exists(os.path.join(rec_dir, "keep", "a.wav")) and not os.path.exists(os.path.join(rec_dir, "expire", "a.wav"))
-    assert client.portal.call(lambda: run_retention_once(app.state.session_maker, app.state.protocols)) == {"segments": 0, "protocols": 0, "recordings": 0}
+    assert client.portal.call(lambda: run_retention_once(app.state.session_maker, app.state.protocols)) == {"segments": 0, "protocols": 0, "recordings": 0, "chat": 0, "whiteboards": 0}
     assert Room  # импорт используется в сидировании
 
 

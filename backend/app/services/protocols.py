@@ -20,9 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
-from ..models import Meeting, Protocol, Recording, TranscriptSegment, User, utcnow
+from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
+from .materials import SOURCES_PROMPT, build_materials, chat_messages, render_chat
 from .recordings import delete_recording_file, finalize_pcm_files
+from .segments import author_name
 from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, build_storage, meeting_relpath, unique_meeting_dir
 
@@ -33,6 +35,7 @@ SYSTEM_PROMPT = (
     "В стенограмме персональные и конфиденциальные данные заменены метками (например, [ФИО_1]) — "
     "сохраняй метки как есть и не пытайся их раскрыть. Ответ — только текст протокола."
 )
+SYSTEM_PROMPT_WITH_SOURCES = SYSTEM_PROMPT + " " + SOURCES_PROMPT
 
 
 def format_clock(dt: datetime, tz: ZoneInfo) -> str:
@@ -110,9 +113,12 @@ class ProtocolService:
         latest: dict[uuid.UUID, str] = {}
         for p in sorted(meeting.participants, key=lambda p: p.joined_at):
             latest.setdefault(p.user_id, p.user.display_name)
+        guests = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id)
+                                   .order_by(GuestParticipant.joined_at))).scalars().all()
+        names = list(latest.values()) + [f"{g.display_name} (гость)" for g in guests]
         return render_transcript(
-            meeting.room.name, meeting.started_at, meeting.ended_at, list(latest.values()),
-            [(r.started_at, r.user.display_name if r.user else "Неизвестный участник", r.text) for r in rows], tz)
+            meeting.room.name, meeting.started_at, meeting.ended_at, names,
+            [(r.started_at, author_name(r) or "Неизвестный участник", r.text) for r in rows], tz)
 
     def _storage(self, cfg):
         try:
@@ -135,6 +141,8 @@ class ProtocolService:
                 tz = await self._tz(db)
                 storage_cfg = await self._svc.get(db, "storage")
                 names = {p.user.livekit_identity: p.user.display_name for p in meeting.participants}
+                for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))).scalars():
+                    names[g.livekit_identity] = f"{g.display_name} (гость)"
                 rel = meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz))
                 room_slug = meeting.room.slug
 
@@ -153,6 +161,7 @@ class ProtocolService:
                         dir_rel = await unique_meeting_dir(storage, rel)
                         loc = await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/protocol.txt", text.encode("utf-8"))
                         rec.status, rec.meta = "ready", {"dir": dir_rel, "location": loc}
+                        await self._export_collab(db, storage, meeting, dir_rel, tz)
                     except StorageError as exc:
                         rec.status, rec.error = "failed", str(exc)[:480]
                         log.error("Выгрузка стенограммы не удалась", extra={"meeting_id": str(meeting_id), "error": str(exc)})
@@ -164,6 +173,19 @@ class ProtocolService:
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
         except Exception:  # noqa: BLE001
             log.exception("Ошибка финализации встречи", extra={"meeting_id": str(meeting_id)})
+
+    async def _export_collab(self, db: AsyncSession, storage, meeting: Meeting, dir_rel: str, tz: ZoneInfo) -> None:
+        """Чат (chat.txt) и схема доски (whiteboard.drawio — её можно открыть и продолжить редактировать) рядом со стенограммой.
+        Сбой этого шага не отменяет остальную финализацию."""
+        try:
+            msgs = await chat_messages(db, meeting.id)
+            if msgs:
+                await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/chat.txt", render_chat(msgs, tz).encode("utf-8"))
+            board = await db.get(MeetingWhiteboard, meeting.id)
+            if board is not None and board.xml and board.shapes > 0:
+                await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/whiteboard.drawio", board.xml.encode("utf-8"))
+        except StorageError as exc:
+            log.error("Выгрузка чата/схемы не удалась", extra={"meeting_id": str(meeting.id), "error": str(exc)})
 
     async def _register_recordings(self, db: AsyncSession, meeting: Meeting, room_slug: str, rel_dir: str, names: dict[str, str]) -> None:
         finished = await asyncio.to_thread(finalize_pcm_files, self._s.recordings_path, meeting.livekit_room, rel_dir, names)
@@ -331,9 +353,11 @@ class ProtocolService:
         llm_cfg = llm_res.settings
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
-        text = await self.transcript_text(db, meeting, tz)
-        if not any(line.startswith("[") for line in text.splitlines()):
-            raise SettingsError("В стенограмме нет реплик — протокол не создаётся")
+        transcript = await self.transcript_text(db, meeting, tz)
+        materials = await build_materials(db, meeting, tz, transcript)
+        if not materials.usable:
+            raise SettingsError("В стенограмме нет реплик, а чат и доска пусты — протокол не создаётся")
+        text = materials.text
 
         # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
@@ -351,11 +375,12 @@ class ProtocolService:
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
         form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
                 if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
-        system = SYSTEM_PROMPT + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
+        system = (SYSTEM_PROMPT_WITH_SOURCES if (materials.chat_messages or materials.whiteboard_shapes) else SYSTEM_PROMPT) \
+            + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
         parts = split_for_llm(clean.text, pr_cfg.max_input_chars)  # type: ignore[attr-defined]
         calls, pt, ct = 0, 0, 0
         if len(parts) == 1:
-            res = await llm.complete(system, "Стенограмма встречи:\n\n" + parts[0])
+            res = await llm.complete(system, ("Материалы встречи:\n\n" if text is not transcript else "Стенограмма встречи:\n\n") + parts[0])
             calls, pt, ct = 1, res.prompt_tokens or 0, res.completion_tokens or 0
             out = res.text
         else:  # длинная встреча: частичные заметки → итоговый документ
@@ -375,7 +400,8 @@ class ProtocolService:
         meta = {"model": llm_cfg.model, "llm_type": llm_cfg.type, "llm_calls": calls,  # type: ignore[attr-defined]
                 "prompt_tokens": pt, "completion_tokens": ct, "anonymized_chunks": clean.chunks,
                 "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name,
-                "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat()}
+                "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
+                "sources": materials.meta()}
         return out, meta
 
     async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:

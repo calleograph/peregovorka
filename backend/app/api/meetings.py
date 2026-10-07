@@ -9,7 +9,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
-from ..models import Meeting, MeetingGrant, MeetingParticipant, Protocol, Recording, TranscriptSegment
+from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording,
+                      TranscriptSegment)
 from ..services.access import can_access_meeting, release_lease
 from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_pdf
@@ -27,18 +28,21 @@ CONTENT_TYPES = {
 }
 
 
-def meeting_out(m: Meeting, counts: dict | None = None) -> MeetingOut:
+def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestParticipant] | None = None) -> MeetingOut:
     # один человек мог заходить несколько раз — показываем по последнему входу
     latest: dict[uuid.UUID, MeetingParticipant] = {}
     for p in sorted(m.participants, key=lambda p: p.joined_at):
         latest[p.user_id] = p
     c = counts or {}
+    guests = [ParticipantOut(guest_id=g.id, participant_type="guest", display_name=f"{g.display_name} (гость)", joined_at=g.joined_at,
+                             left_at=g.left_at, online=g.left_at is None) for g in guests or []]
     return MeetingOut(
         id=m.id, room_id=m.room_id, room_name=m.room.name, started_at=m.started_at, ended_at=m.ended_at,
         end_reason=m.end_reason, transcription_enabled=m.transcription_enabled,
         participants=[ParticipantOut(user_id=p.user_id, display_name=p.user.display_name, joined_at=p.joined_at,
-                                     left_at=p.left_at, online=p.left_at is None) for p in latest.values()],
+                                     left_at=p.left_at, online=p.left_at is None) for p in latest.values()] + guests,
         segments=c.get("segments", 0), recordings=c.get("recordings", 0), protocols=c.get("protocols", 0),
+        chat_messages=c.get("chat_messages", 0), whiteboard_shapes=c.get("whiteboard_shapes", 0), guests=len(guests),
     )
 
 
@@ -47,12 +51,22 @@ async def meeting_counts(db: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UU
     if not ids:
         return out
     for key, model, extra in (("segments", TranscriptSegment, None), ("recordings", Recording, None),
-                              ("protocols", Protocol, Protocol.kind.in_(KINDS))):
+                              ("protocols", Protocol, Protocol.kind.in_(KINDS)), ("chat_messages", MeetingChatMessage, None)):
         stmt = select(model.meeting_id, func.count()).where(model.meeting_id.in_(ids)).group_by(model.meeting_id)
         if extra is not None:
             stmt = stmt.where(extra)
         for mid, n in (await db.execute(stmt)).all():
             out[mid][key] = n
+    for mid, shapes in (await db.execute(select(MeetingWhiteboard.meeting_id, MeetingWhiteboard.shapes).where(MeetingWhiteboard.meeting_id.in_(ids)))).all():
+        out[mid]["whiteboard_shapes"] = shapes
+    return out
+
+
+async def meeting_guests(db: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, list[GuestParticipant]]:
+    out: dict[uuid.UUID, list[GuestParticipant]] = {i: [] for i in ids}
+    if ids:
+        for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id.in_(ids)).order_by(GuestParticipant.joined_at))).scalars():
+            out[g.meeting_id].append(g)
     return out
 
 
@@ -79,14 +93,15 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
         cand = (await db.execute(stmt.where(Meeting.id.in_(mine) | Meeting.id.in_(granted)).limit(400))).scalars().unique().all()
         allowed = [m for m in cand if await can_access_meeting(db, request.app.state.redis, m, su)]
         meetings = allowed[offset:offset + limit]
-    counts = await meeting_counts(db, [m.id for m in meetings])
-    return [meeting_out(m, counts.get(m.id)) for m in meetings]
+    ids = [m.id for m in meetings]
+    counts, guests = await meeting_counts(db, ids), await meeting_guests(db, ids)
+    return [meeting_out(m, counts.get(m.id), guests.get(m.id)) for m in meetings]
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)
 async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
-    return meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id))
+    return meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
 
 
 @router.post("/{meeting_id}/leave", status_code=204)
@@ -357,6 +372,9 @@ async def delete_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUse
     await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id))
     await db.execute(delete(Protocol).where(Protocol.meeting_id == meeting_id))
     await db.execute(delete(MeetingGrant).where(MeetingGrant.meeting_id == meeting_id))
+    await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id == meeting_id))
+    await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id == meeting_id))
+    await db.execute(delete(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.delete", target_type="meeting",
                       target_id=str(meeting_id), ip=client_ip(request),
                       details={"room": meeting.room.slug, "started_at": meeting.started_at.isoformat(), "recordings": len(recs)})

@@ -39,7 +39,7 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
               <td>{fmt(m.started_at)}</td>
               <td>{m.ended_at ? duration(m.started_at, m.ended_at) : <span className="badge rec">идёт</span>}</td>
               <td>{m.participants.map((p) => p.display_name).join(", ")}</td>
-              <td className="small muted">реплик: {m.segments} · документов: {m.protocols}{isAdmin ? ` · записей: ${m.recordings}` : ""}</td>
+              <td className="small muted">реплик: {m.segments} · документов: {m.protocols}{isAdmin ? ` · записей: ${m.recordings}` : ""}{m.chat_messages ? ` · чат: ${m.chat_messages}` : ""}{m.whiteboard_shapes ? " · доска" : ""}</td>
               <td className="actions">
                 <Link className="btn mini" to={`/history/${m.id}`}>Открыть</Link>{" "}
                 <Menu label="Скачать" className="btn mini" title="Стенограмма встречи">

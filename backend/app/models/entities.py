@@ -72,6 +72,9 @@ class Room(Base):
     anonymizer_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     # Участники входят с выключенным микрофоном (удобно для больших встреч); текст приветствия показывается при входе.
     mute_on_join: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Гостевой доступ по ссылке (без AD): включается отдельно; ссылку можно отозвать (перевыпустить токен) без удаления комнаты.
+    guest_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    guest_token: Mapped[str | None] = mapped_column(String(64), unique=True)
     welcome_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -164,6 +167,7 @@ class TranscriptSegment(Base):
     meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False)
     room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    guest_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("guest_participants.id", ondelete="SET NULL"), index=True)
     participant_identity: Mapped[str] = mapped_column(String(80), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     ended_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
@@ -174,6 +178,58 @@ class TranscriptSegment(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     user: Mapped[User | None] = relationship(lazy="joined")
+    guest: Mapped["GuestParticipant | None"] = relationship(lazy="joined")
+
+
+class GuestParticipant(Base):
+    """Гость встречи (вход по ссылке без AD). Это отдельный тип участника, а НЕ фиктивный пользователь AD: у него нет прав и учётной записи."""
+
+    __tablename__ = "guest_participants"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    participant_type: Mapped[str] = mapped_column(String(10), default="guest", server_default="guest", nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    client: Mapped[str | None] = mapped_column(String(160))
+    joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    left_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+    @property
+    def livekit_identity(self) -> str:
+        return f"g-{self.id.hex}"
+
+
+class MeetingChatMessage(Base):
+    """Сообщение чата встречи. Привязано к конкретной встрече (в одной комнате встреч много), хранится вместе с материалами встречи."""
+
+    __tablename__ = "meeting_chat_messages"
+    __table_args__ = (Index("ix_chat_meeting_id", "meeting_id", "id"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    author_type: Mapped[str] = mapped_column(String(10), default="user", nullable=False)  # user | guest | system
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    guest_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("guest_participants.id", ondelete="SET NULL"))
+    author_name: Mapped[str] = mapped_column(String(300), nullable=False)  # имя на момент отправки
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class MeetingWhiteboard(Base):
+    """Общая доска встречи: схема в формате draw.io (XML) — её можно открыть и продолжить редактировать; одна на встречу."""
+
+    __tablename__ = "meeting_whiteboards"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True)
+    xml: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # номер последнего учтённого в снимке патча
+    shapes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)    # блоков и связей (для списка встреч и протокола)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(300))
 
 
 class AuditLog(Base):

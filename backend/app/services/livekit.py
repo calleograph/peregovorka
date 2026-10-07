@@ -17,6 +17,7 @@ from ..config import Settings
 log = logging.getLogger("app.livekit")
 
 IDENTITY_PREFIX = "u-"
+GUEST_IDENTITY_PREFIX = "g-"
 SERVICE_IDENTITY_PREFIX = "asr-"
 
 
@@ -24,12 +25,26 @@ def user_identity(user_id: uuid.UUID) -> str:
     return f"{IDENTITY_PREFIX}{user_id.hex}"
 
 
+def guest_identity(guest_id: uuid.UUID) -> str:
+    return f"{GUEST_IDENTITY_PREFIX}{guest_id.hex}"
+
+
 def parse_user_identity(identity: str) -> uuid.UUID | None:
-    """u-<32 hex> → UUID пользователя; всё остальное (в т.ч. asr-*) → None."""
+    """u-<32 hex> → UUID пользователя; всё остальное (в т.ч. g-*, asr-*) → None."""
     if not identity.startswith(IDENTITY_PREFIX):
         return None
     try:
         return uuid.UUID(hex=identity[len(IDENTITY_PREFIX):])
+    except ValueError:
+        return None
+
+
+def parse_guest_identity(identity: str) -> uuid.UUID | None:
+    """g-<32 hex> → UUID гостя; всё остальное → None."""
+    if not identity.startswith(GUEST_IDENTITY_PREFIX):
+        return None
+    try:
+        return uuid.UUID(hex=identity[len(GUEST_IDENTITY_PREFIX):])
     except ValueError:
         return None
 
@@ -58,6 +73,19 @@ def publish_sources(*, camera: bool, screen_share: bool) -> list[str]:
 
 def issue_user_token(settings: Settings, *, user_id: uuid.UUID, display_name: str, livekit_room: str,
                      camera_allowed: bool, screen_share_allowed: bool) -> str:
+    return _issue_token(settings, identity=user_identity(user_id), display_name=display_name, livekit_room=livekit_room,
+                        camera_allowed=camera_allowed, screen_share_allowed=screen_share_allowed)
+
+
+def issue_guest_token(settings: Settings, *, guest_id: uuid.UUID, display_name: str, livekit_room: str,
+                      camera_allowed: bool) -> str:
+    """Токен гостя: те же права публикации, но без демонстрации экрана (гость — минимальные права)."""
+    return _issue_token(settings, identity=guest_identity(guest_id), display_name=f"{display_name} (гость)",
+                        livekit_room=livekit_room, camera_allowed=camera_allowed, screen_share_allowed=False)
+
+
+def _issue_token(settings: Settings, *, identity: str, display_name: str, livekit_room: str,
+                 camera_allowed: bool, screen_share_allowed: bool) -> str:
     if not settings.livekit_api_key or not settings.livekit_api_secret:
         raise RuntimeError("LIVEKIT_API_KEY/LIVEKIT_API_SECRET не заданы")
     grants = lkapi.VideoGrants(
@@ -72,7 +100,7 @@ def issue_user_token(settings: Settings, *, user_id: uuid.UUID, display_name: st
     )
     return (
         lkapi.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
-        .with_identity(user_identity(user_id))
+        .with_identity(identity)
         .with_name(display_name)
         .with_ttl(datetime.timedelta(seconds=settings.livekit_token_ttl_seconds))
         .with_grants(grants)
@@ -91,6 +119,15 @@ async def delete_livekit_room(settings: Settings, room_name: str) -> None:
             await lk.room.delete_room(lkapi.DeleteRoomRequest(room=room_name))
     except Exception as exc:  # noqa: BLE001
         log.warning("Не удалось закрыть комнату LiveKit", extra={"room": room_name, "error": type(exc).__name__})
+
+
+async def remove_participant(settings: Settings, room_name: str, identity: str) -> None:
+    """Отключить одного участника от комнаты LiveKit (например, гостя после отзыва ссылки). Ошибки не критичны."""
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            await lk.room.remove_participant(lkapi.RoomParticipantIdentity(room=room_name, identity=identity))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось отключить участника", extra={"room": room_name, "error": type(exc).__name__})
 
 
 async def list_present_identities(settings: Settings, room_name: str) -> set[str] | None:

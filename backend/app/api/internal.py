@@ -19,6 +19,7 @@ from ..services.asr_bridge import SEGMENTS_STREAM
 from ..services.livekit import (
     issue_user_token,
     meeting_room_name,
+    parse_guest_identity,
     parse_meeting_room_name,
     parse_user_identity,
     user_identity,
@@ -41,10 +42,16 @@ async def livekit_webhook(request: Request):
 
     meeting_id = parse_meeting_room_name(event.room.name) if event.room and event.room.name else None
     user_id = parse_user_identity(event.participant.identity) if event.participant and event.participant.identity else None
-    if event.event in ("participant_joined", "participant_left") and meeting_id and user_id:
+    guest_id = parse_guest_identity(event.participant.identity) if event.participant and event.participant.identity else None
+    if event.event in ("participant_joined", "participant_left") and meeting_id and (user_id or guest_id):
         svc = request.app.state.meetings
         async with request.app.state.session_maker() as db:
-            if event.event == "participant_joined":
+            if guest_id:
+                if event.event == "participant_joined":
+                    await svc.on_guest_joined(db, meeting_id, guest_id)
+                else:
+                    await svc.on_guest_left(db, meeting_id, guest_id)
+            elif event.event == "participant_joined":
                 await svc.on_participant_joined(db, meeting_id, user_id)
             else:
                 await svc.on_participant_left(db, meeting_id, user_id)

@@ -20,21 +20,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser
 from ..config import Settings
-from ..models import Meeting, MeetingParticipant, Room, User, utcnow
+from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
 from . import events
 from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
     delete_livekit_room,
+    guest_identity,
+    issue_guest_token,
     issue_user_token,
     list_present_identities,
     meeting_room_name,
+    remove_participant,
     user_identity,
 )
 from .rooms import RoomNotFound, get_accessible_room
 
 log = logging.getLogger("app.meetings")
+
+GUEST_REVOKE_TTL = 24 * 3600
 
 
 class JoinError(Exception):
@@ -49,6 +54,7 @@ class JoinResult:
     room: Room
     token: str
     identity: str
+    guest: GuestParticipant | None = None
 
 
 class MeetingService:
@@ -93,6 +99,7 @@ class MeetingService:
                 MeetingParticipant.left_at.is_(None),
                 MeetingParticipant.user_id != su.user_id,
             ))).scalar_one()
+        present += await self._open_guests(db, meeting.id)
         if present >= room.max_participants:
             raise JoinError("room_full", "В комнате нет свободных мест.", 409)
 
@@ -115,6 +122,90 @@ class MeetingService:
                                  livekit_room=meeting.livekit_room, camera_allowed=room.camera_allowed,
                                  screen_share_allowed=room.screen_share_allowed)
         return JoinResult(meeting, room, token, user_identity(su.user_id))
+
+    # ------------------------------------------------------------ гость
+    @staticmethod
+    async def _open_guests(db: AsyncSession, meeting_id: uuid.UUID) -> int:
+        return (await db.execute(select(func.count()).select_from(GuestParticipant).where(
+            GuestParticipant.meeting_id == meeting_id, GuestParticipant.left_at.is_(None)))).scalar_one()
+
+    async def join_guest(self, db: AsyncSession, room: Room, display_name: str, *, ip: str | None, client: str | None) -> JoinResult:
+        """Вход гостя по гостевой ссылке. Гость НЕ начинает встречу: она должна быть уже активна (иначе незнакомый человек
+        запускал бы запись и ASR в пустой комнате). Права минимальные: без демонстрации экрана и без управления."""
+        meeting = await self._active_meeting(db, room.id)
+        if meeting is None:
+            raise JoinError("meeting_not_active", "Встреча ещё не началась. Дождитесь, пока её откроет сотрудник.", 409)
+        users = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(
+            MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
+        if users + await self._open_guests(db, meeting.id) >= room.max_participants:
+            raise JoinError("room_full", "В комнате нет свободных мест.", 409)
+        guest = GuestParticipant(meeting_id=meeting.id, room_id=room.id, display_name=display_name, ip=ip, client=client)
+        guest.id = uuid.uuid4()
+        db.add(guest)
+        meeting.empty_since = None
+        await db.commit()
+        await events.publish(self._r, meeting.id, {"type": "participant_joined", "guest_id": str(guest.id),
+                                                   "display_name": f"{display_name} (гость)", "participant_type": "guest"})
+        return self._guest_result(meeting, room, guest)
+
+    def _guest_result(self, meeting: Meeting, room: Room, guest: GuestParticipant) -> JoinResult:
+        token = issue_guest_token(self._s, guest_id=guest.id, display_name=guest.display_name,
+                                  livekit_room=meeting.livekit_room, camera_allowed=room.camera_allowed)
+        return JoinResult(meeting, room, token, guest_identity(guest.id), guest)
+
+    async def rejoin_guest(self, db: AsyncSession, guest: GuestParticipant) -> JoinResult:
+        """Повторная выдача токена гостю с действующей сессией (обновление страницы, обрыв сети)."""
+        meeting = await db.get(Meeting, guest.meeting_id)
+        if meeting is None or meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        if guest.left_at is not None:
+            guest.left_at = None
+            guest.connected_at = None
+            guest.joined_at = utcnow()
+        meeting.empty_since = None
+        await db.commit()
+        return self._guest_result(meeting, meeting.room, guest)
+
+    async def leave_guest(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
+        guest = await db.get(GuestParticipant, guest_id)
+        if guest is None or guest.meeting_id != meeting_id:
+            return
+        if guest.left_at is None:
+            guest.left_at = utcnow()
+            await db.commit()
+            await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "guest"})
+        await self._update_emptiness(db, meeting_id)
+
+    async def kick_guests(self, db: AsyncSession, room_id: uuid.UUID) -> int:
+        """Гостевая ссылка отозвана / гостевой доступ выключен: гости активной встречи комнаты отключаются, сотрудники остаются."""
+        meeting = await self._active_meeting(db, room_id)
+        if meeting is None:
+            return 0
+        guests = (await db.execute(select(GuestParticipant).where(
+            GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None)))).scalars().all()
+        now = utcnow()
+        for g in guests:
+            g.left_at = now
+            await self._r.set(f"guest:revoked:{g.id}", "1", ex=GUEST_REVOKE_TTL)
+        await db.commit()
+        for g in guests:
+            await remove_participant(self._s, meeting.livekit_room, guest_identity(g.id))
+            await events.publish(self._r, meeting.id, {"type": "participant_left", "guest_id": str(g.id), "participant_type": "guest"})
+        if guests:
+            await self._update_emptiness(db, meeting.id)
+        return len(guests)
+
+    async def on_guest_joined(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
+        meeting = await db.get(Meeting, meeting_id)
+        guest = await db.get(GuestParticipant, guest_id)
+        if meeting is None or meeting.ended_at is not None or guest is None or guest.meeting_id != meeting_id:
+            return
+        guest.connected_at = guest.connected_at or utcnow()
+        meeting.empty_since = None
+        await db.commit()
+
+    async def on_guest_left(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
+        await self.leave_guest(db, meeting_id, guest_id)
 
     async def _check_room_password(self, room: Room, su: SessionUser, password: str | None) -> None:
         key = f"roompw:fail:{room.id}:{su.user_id}"
@@ -157,6 +248,7 @@ class MeetingService:
             return
         open_count = (await db.execute(select(func.count()).select_from(MeetingParticipant).where(
             MeetingParticipant.meeting_id == meeting_id, MeetingParticipant.left_at.is_(None)))).scalar_one()
+        open_count += await self._open_guests(db, meeting_id)
         if open_count == 0 and meeting.empty_since is None:
             meeting.empty_since = utcnow()
         elif open_count > 0:
@@ -174,6 +266,9 @@ class MeetingService:
         for p in meeting.participants:
             if p.left_at is None:
                 p.left_at = now
+        for g in (await db.execute(select(GuestParticipant).where(
+                GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None)))).scalars().all():
+            g.left_at = now
         await db.commit()
         if online:  # кто был в комнате в момент завершения, остаётся «на странице встречи» и может сформировать протокол
             minutes = 120
@@ -225,6 +320,12 @@ class MeetingService:
                     p.connected_at = p.connected_at or now
                 elif p.connected_at is not None or now - p.joined_at > connect_deadline:
                     p.left_at = now  # был и пропал, либо так и не подключился
+            for g in (await db.execute(select(GuestParticipant).where(
+                    GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None)))).scalars().all():
+                if guest_identity(g.id) in present:
+                    g.connected_at = g.connected_at or now
+                elif g.connected_at is not None or now - g.joined_at > connect_deadline:
+                    g.left_at = now
             await db.commit()
             await self._update_emptiness(db, meeting.id)
             await db.refresh(meeting)

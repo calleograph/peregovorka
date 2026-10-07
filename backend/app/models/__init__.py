@@ -4,9 +4,12 @@ from .entities import (
     AppSetting,
     AuditLog,
     EventLog,
+    GuestParticipant,
     Meeting,
+    MeetingChatMessage,
     MeetingGrant,
     MeetingParticipant,
+    MeetingWhiteboard,
     Protocol,
     ProtocolTemplate,
     Recording,
@@ -18,6 +21,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "ApiProfile", "AppSetting", "AuditLog", "EventLog", "Meeting", "MeetingGrant", "MeetingParticipant", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "ApiProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "TranscriptSegment", "User",
 ]

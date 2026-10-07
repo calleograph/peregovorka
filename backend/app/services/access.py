@@ -35,6 +35,14 @@ async def release_lease(redis: Redis, meeting_id: uuid.UUID, user_id: uuid.UUID)
     await redis.delete(lease_key(meeting_id, user_id))
 
 
+async def can_access_meeting_actor(db: AsyncSession, redis: Redis, meeting: Meeting, actor) -> bool:
+    """Доступ «актора» (сотрудника или гостя). Гость — только к ИДУЩЕЙ встрече, с которой связана его сессия;
+    история завершённых встреч ему недоступна."""
+    if actor.is_guest:
+        return meeting.ended_at is None and str(meeting.id) == actor.guest.meeting_id
+    return await can_access_meeting(db, redis, meeting, actor.user)
+
+
 async def can_access_meeting(db: AsyncSession, redis: Redis, meeting: Meeting, su: SessionUser) -> bool:
     if su.is_admin:
         return True

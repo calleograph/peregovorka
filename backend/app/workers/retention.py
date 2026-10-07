@@ -1,6 +1,6 @@
 """Фоновая очистка просроченных данных. Сроки текста и аудио раздельные, задаются в комнате.
 
- * текст: реплики и протоколы (стенограмма/краткий) встречи, завершённой раньше срока; сама встреча
+ * текст: реплики, сообщения чата, доска (схема) и протоколы (стенограмма/краткий) встречи, завершённой раньше срока; сама встреча
    (метаданные: комната, время, участники) остаётся в истории;
  * аудио: файлы записей и строки recordings старше срока (по дате создания записи);
  * срок 0 = удалить после обработки (встреча завершена не менее RETENTION_GRACE назад — успеть выгрузить);
@@ -16,7 +16,7 @@ from datetime import timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import Meeting, Protocol, Recording, Room, TranscriptSegment, utcnow
+from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
 from ..services.protocols import ProtocolService
 
 log = logging.getLogger("app.retention")
@@ -25,7 +25,7 @@ RETENTION_GRACE = timedelta(minutes=15)
 
 async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService) -> dict[str, int]:
     now = utcnow()
-    stats = {"segments": 0, "protocols": 0, "recordings": 0}
+    stats = {"segments": 0, "protocols": 0, "recordings": 0, "chat": 0, "whiteboards": 0}
     async with session_maker() as db:
         try:
             await protocols.retry_pending_exports(db)  # повтор выгрузки записей, не дошедших до внешнего хранилища
@@ -42,6 +42,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                     r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol"))))
                     stats["segments"] += r1.rowcount or 0
                     stats["protocols"] += r2.rowcount or 0
+                    stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
+                    stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
             if room.audio_retention_days is not None:
                 cutoff = now - (RETENTION_GRACE if room.audio_retention_days == 0 else timedelta(days=room.audio_retention_days))
                 recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, Recording.created_at < cutoff))).scalars().all()

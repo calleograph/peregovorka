@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,7 +18,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
               "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
-              "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "welcome_message")
+              "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "welcome_message",
+              "guest_access_enabled")
+
+
+def new_guest_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
 def _acl_rows(entries: list[AclEntryIn]) -> list[RoomAcl]:
@@ -56,6 +62,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
+        guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
@@ -83,6 +90,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
         mute_on_join=body.mute_on_join, welcome_message=body.welcome_message,
+        guest_access_enabled=body.guest_access_enabled, guest_token=new_guest_token() if body.guest_access_enabled else None,
     )
     room.acl = _acl_rows(body.acl)
     room.moderators = _mod_rows(body.moderators)
@@ -121,6 +129,12 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
             changed[name] = {"from": str(getattr(room, name)) if isinstance(getattr(room, name), uuid.UUID) else getattr(room, name),
                              "to": str(fields[name]) if isinstance(fields[name], uuid.UUID) else fields[name]}
             setattr(room, name, fields[name])
+    if "guest_access_enabled" in changed:
+        if room.guest_access_enabled and not room.guest_token:
+            room.guest_token = new_guest_token()  # ссылка выпускается при первом включении; повторное включение возвращает прежнюю
+        if not room.guest_access_enabled:
+            await db.flush()
+            changed["guests_disconnected"] = await request.app.state.meetings.kick_guests(db, room.id)
     if "password" in fields:
         pw = fields["password"]
         room.password_hash = hash_room_password(pw) if pw else None
@@ -137,6 +151,29 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
         changed["moderators"] = [{"type": m.subject_type, "ref": m.subject_ref} for m in room.moderators]
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.update", target_type="room",
                       target_id=str(room.id), ip=client_ip(request), details=changed)
+    await db.commit()
+    await db.refresh(room)
+    return await _out(db, room)
+
+
+@router.post("/rooms/{room_id}/guest-link/{action}", response_model=RoomAdminOut)
+async def guest_link_action(room_id: uuid.UUID, action: str, request: Request, su: SessionUser = Depends(require_admin),
+                            db: AsyncSession = Depends(get_db)):
+    """`rotate` — выпустить новую гостевую ссылку (старая перестаёт работать); `revoke` — отозвать ссылку совсем (гостевой доступ выключается).
+    В обоих случаях гости идущей встречи отключаются, сотрудники остаются."""
+    if action not in ("rotate", "revoke"):
+        raise HTTPException(status_code=404, detail="Неизвестное действие")
+    room = await db.get(Room, room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+    if action == "rotate":
+        room.guest_token, room.guest_access_enabled = new_guest_token(), True
+    else:
+        room.guest_token, room.guest_access_enabled = None, False
+    await db.flush()
+    kicked = await request.app.state.meetings.kick_guests(db, room.id)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=f"room.guest_link.{action}", target_type="room",
+                      target_id=str(room.id), ip=client_ip(request), details={"room": room.slug, "guests_disconnected": kicked})
     await db.commit()
     await db.refresh(room)
     return await _out(db, room)

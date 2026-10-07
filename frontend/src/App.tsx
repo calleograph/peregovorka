@@ -1,6 +1,8 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, setCsrf, setUnauthorizedHandler, type Me } from "./api";
+import { useActiveMeeting } from "./activeMeeting";
+import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
 import LoginPage from "./pages/LoginPage";
 import MeetingPage from "./pages/MeetingPage";
@@ -10,10 +12,17 @@ import RoomsPage from "./pages/RoomsPage";
 const RoomPage = lazy(() => import("./pages/RoomPage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 
-export default function App() {
+/** Раздел верхней панели. Пока в этой вкладке идёт встреча, раздел открывается в НОВОЙ вкладке: уход со страницы комнаты оборвал бы звонок. */
+function NavItem({ to, end, newTab, children }: { to: string; end?: boolean; newTab: boolean; children: ReactNode }) {
+  if (newTab) return <a href={to} target="_blank" rel="noopener" className="nav-newtab" title="Откроется в новой вкладке — текущая встреча не прервётся">{children}<span aria-hidden> ↗</span></a>;
+  return <NavLink to={to} end={end}>{children}</NavLink>;
+}
+
+function StaffApp() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined — ещё проверяем сессию
   const [version, setVersion] = useState("");
   const navigate = useNavigate();
+  const inMeeting = useActiveMeeting() !== null;
 
   useEffect(() => {
     api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }).catch(() => setMe(null));
@@ -31,21 +40,23 @@ export default function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <Link to="/" className="brand">Переговорка</Link>
+        {inMeeting
+          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке">Переговорка ↗</a>
+          : <Link to="/" className="brand">Переговорка</Link>}
         <nav>
-          <NavLink to="/" end>Комнаты</NavLink>
-          <NavLink to="/history">История</NavLink>
-          {me.user.is_admin && <NavLink to="/admin">Администрирование</NavLink>}
+          <NavItem to="/" end newTab={inMeeting}>Комнаты</NavItem>
+          <NavItem to="/history" newTab={inMeeting}>История</NavItem>
+          {me.user.is_admin && <NavItem to="/admin" newTab={inMeeting}>Администрирование</NavItem>}
         </nav>
         <div className="spacer" />
         <span className="muted">{me.user.display_name}</span>
-        <button className="btn ghost" onClick={logout}>Выйти</button>
+        <button className="btn ghost" onClick={logout} disabled={inMeeting} title={inMeeting ? "Сначала выйдите из комнаты: выход из системы прервёт встречу" : undefined}>Выйти</button>
       </header>
       <main>
         <Suspense fallback={<div className="muted">Загрузка…</div>}>
         <Routes>
           <Route path="/" element={<RoomsPage />} />
-          <Route path="/rooms/:roomId" element={<RoomPage />} />
+          <Route path="/rooms/:roomId" element={<RoomPage selfName={me.user.display_name} />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />
@@ -55,4 +66,24 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+/** Гостевая оболочка: без входа в систему, без разделов и истории — только страница гостя. */
+function GuestApp() {
+  return (
+    <div className="shell guest-shell">
+      <header className="topbar"><span className="brand">Переговорка</span><span className="muted">Гостевой доступ</span></header>
+      <main>
+        <Routes>
+          <Route path="/guest/:token" element={<GuestPage />} />
+          <Route path="*" element={<section className="prejoin card"><h1>Страница не найдена</h1><p className="muted">Проверьте гостевую ссылку.</p></section>} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
+  const { pathname } = useLocation();
+  return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;
 }

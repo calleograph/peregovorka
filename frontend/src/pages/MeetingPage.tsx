@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, releaseOnUnload, type ApiError, type ExportFormat, type Meeting, type MeetingRecording, type ProtocolItem, type ProtocolKind, type Segment } from "../api";
+import BoardViewer from "../board/BoardViewer";
+import ChatPanel from "../components/ChatPanel";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
 import ProtocolDialog from "../components/ProtocolDialog";
@@ -37,7 +39,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
-  const [tab, setTab] = useState<"docs" | "transcript" | "audio">("docs");
+  const [tab, setTab] = useState<"docs" | "transcript" | "chat" | "board" | "audio">("docs");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const timer = useRef<number | undefined>(undefined);
@@ -99,20 +101,23 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   if (error && !meeting) return <div className="alert error">{error}</div>;
   if (!meeting) return <div className="muted">Загрузка…</div>;
   const finished = !!meeting.ended_at;
-  const canMake = finished && segments.length > 0;
+  const chatCount = meeting.chat_messages ?? 0;
+  const boardUsed = (meeting.whiteboard_shapes ?? 0) > 0;
+  const canMake = finished && (segments.length > 0 || chatCount > 0 || boardUsed); // протокол строится по речи, чату и схеме вместе
 
   return (
     <section>
       <p><Link to="/history">← К истории</Link></p>
       <div className="row"><h1 style={{ margin: 0 }}>{meeting.room_name}</h1>{!finished && <span className="badge rec">идёт</span>}</div>
-      <p className="muted">{fmt(meeting.started_at)} — {meeting.ended_at ? `${fmt(meeting.ended_at)} (${duration(meeting.started_at, meeting.ended_at)})` : "идёт"} · Участвовали: {meeting.participants.map((p) => p.display_name).join(", ") || "—"}</p>
+      <p className="muted">{fmt(meeting.started_at)} — {meeting.ended_at ? `${fmt(meeting.ended_at)} (${duration(meeting.started_at, meeting.ended_at)})` : "идёт"} · Участвовали: {meeting.participants.map((p) => p.display_name).join(", ") || "—"}
+        {(chatCount > 0 || boardUsed) && <> · Материалы: {chatCount > 0 && `чат (${chatCount})`}{chatCount > 0 && boardUsed && ", "}{boardUsed && "общая доска (схема)"}</>}</p>
       {error && <div className="alert error" role="alert">{error}</div>}
       {notice && <div className="alert ok" role="status">{notice}</div>}
       {finished && <div className="alert info small">Пока эта страница открыта, вы можете формировать протоколы. После выхода со страницы доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
 
       <div className="row" style={{ margin: "10px 0" }}>
         <button className="btn primary" disabled={!canMake} onClick={() => setDialog({ kind: "protocol" })}
-                title={!finished ? "Протокол формируется после завершения встречи" : !segments.length ? "В стенограмме нет реплик" : "Окно с инструкцией для модели"}>Сформировать протокол</button>
+                title={!finished ? "Протокол формируется после завершения встречи" : !canMake ? "Нет ни реплик, ни чата, ни схемы" : "Окно с инструкцией для модели. Материалы: стенограмма, чат и схема с доски"}>Сформировать протокол</button>
         <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button>
         <Menu label="Скачать стенограмму">
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
@@ -124,6 +129,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "docs"} className={`tab ${tab === "docs" ? "active" : ""}`} onClick={() => setTab("docs")}>Протоколы и резюме{protocols.length ? ` (${protocols.length})` : ""}</button>
         <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Стенограмма ({segments.length})</button>
+        {chatCount > 0 && <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Чат ({chatCount})</button>}
+        {boardUsed && <button role="tab" aria-selected={tab === "board"} className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>Доска</button>}
         {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Записи ({recordings.length})</button>}
       </div>
 
@@ -153,6 +160,16 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           {segments.map((s) => <p key={s.uid} className="utt"><span className="time">{formatTime(s.started_at)}</span><strong>{s.display_name}</strong><span>{s.text}</span></p>)}
         </div>
       )}
+
+      {tab === "chat" && (
+        <div className="card chat-history" style={{ maxWidth: 1000 }}>
+          <div className="row"><a className="btn mini" href={api.chatTextUrl(meetingId)} download>Скачать чат (.txt)</a>
+            <span className="muted small">Чат — отдельный источник для протокола: ссылки, адреса, имена серверов и номера задач передаются модели дословно.</span></div>
+          <ChatPanel meetingId={meetingId} readOnly visible />
+        </div>
+      )}
+
+      {tab === "board" && <BoardViewer meetingId={meetingId} fileBase={fileBase(meeting.room_name, meeting.started_at) + "_схема"} />}
 
       {tab === "audio" && isAdmin && (
         <div className="card">

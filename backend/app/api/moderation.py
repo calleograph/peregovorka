@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting
 from ..services.audit import write_audit
-from ..services.livekit import mute_microphones, parse_user_identity, user_identity
+from ..services.livekit import mute_microphones, parse_guest_identity, parse_user_identity, user_identity
 from ..services.rooms import is_moderator
 
 router = APIRouter(prefix="/meetings", tags=["moderation"])
@@ -46,7 +46,7 @@ async def mute_one(meeting_id: uuid.UUID, request: Request, body: dict[str, Any]
     """Выключить микрофон у одного участника (identity из списка участников комнаты)."""
     meeting = await _meeting_for_moderator(request, db, meeting_id, su)
     identity = body.get("identity")
-    uid = parse_user_identity(identity) if isinstance(identity, str) else None
+    uid = (parse_user_identity(identity) or parse_guest_identity(identity)) if isinstance(identity, str) else None
     if uid is None:
         raise HTTPException(status_code=422, detail="identity: идентификатор участника")
     done = await mute_microphones(request.app.state.settings, meeting.livekit_room, only={identity})

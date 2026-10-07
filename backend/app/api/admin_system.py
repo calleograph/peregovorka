@@ -22,7 +22,7 @@ from ..services import diagnostics, timings
 from ..services.audit import write_audit
 from ..services.settings import GROUPS, SettingsError
 from ..services.storage import StorageError, build_storage
-from .meetings import meeting_counts, meeting_out
+from .meetings import meeting_counts, meeting_guests, meeting_out
 from .schemas import MeetingOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -156,8 +156,8 @@ async def admin_meetings(active: bool | None = None, limit: int = Query(50, ge=1
     elif active is False:
         stmt = stmt.where(Meeting.ended_at.is_not(None))
     meetings = list((await db.execute(stmt)).scalars().unique())
-    counts = await meeting_counts(db, [m.id for m in meetings])
-    return [meeting_out(m, counts.get(m.id)) for m in meetings]
+    counts, guests = await meeting_counts(db, [m.id for m in meetings]), await meeting_guests(db, [m.id for m in meetings])
+    return [meeting_out(m, counts.get(m.id), guests.get(m.id)) for m in meetings]
 
 
 @router.get("/meetings/{meeting_id}/grants")

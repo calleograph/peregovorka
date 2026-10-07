@@ -1,11 +1,27 @@
-import type { Segment } from "./api";
+import type { ChatMessage, Segment, WhiteboardPatch } from "./api";
 
 export type LiveEvent =
   | { type: "segment"; segment: Segment }
-  | { type: "participant_joined"; user_id: string; display_name: string }
-  | { type: "participant_left"; user_id: string }
+  | { type: "participant_joined"; user_id?: string; guest_id?: string; participant_type?: string; display_name: string }
+  | { type: "participant_left"; user_id?: string; guest_id?: string; participant_type?: string }
   | { type: "meeting_ended"; reason: string }
-  | { type: "recording_changed"; enabled: boolean };
+  | { type: "recording_changed"; enabled: boolean }
+  | { type: "chat_message"; message: ChatMessage }
+  | ({ type: "whiteboard_patch" } & WhiteboardPatch)
+  | { type: "whiteboard_saved"; seq: number; shapes: number; by: string };
+
+const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "chat_message", "whiteboard_patch", "whiteboard_saved"]);
+
+/** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */
+export class LiveBus {
+  private subs = new Set<(e: LiveEvent) => void>();
+  private resyncs = new Set<() => void>();
+  on(fn: (e: LiveEvent) => void): () => void { this.subs.add(fn); return () => { this.subs.delete(fn); }; }
+  /** Вызывается после каждого (пере)подключения сокета: подписчик догружает пропущенное. */
+  onResync(fn: () => void): () => void { this.resyncs.add(fn); return () => { this.resyncs.delete(fn); }; }
+  resync(): void { for (const fn of [...this.resyncs]) { try { fn(); } catch { /* ignore */ } } }
+  emit(e: LiveEvent): void { for (const fn of [...this.subs]) { try { fn(e); } catch { /* подписчик не должен ломать остальных */ } } }
+}
 
 /** Состояние соединения с сервером событий: понятно пользователю и видно в панели диагностики. */
 export interface SocketStatus {
@@ -43,6 +59,8 @@ export class LiveSocket {
     private onEvent: (e: LiveEvent) => void,
     private onStatus: (s: SocketStatus) => void,
     private onSubscribed: () => void = () => undefined,
+    /** Гость подтверждает себя токеном сессии первым сообщением (браузерный WebSocket не позволяет задать заголовок). */
+    private guestToken: string | null = null,
   ) {}
 
   start(): void {
@@ -72,17 +90,20 @@ export class LiveSocket {
   private open(): void {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     this.onStatus({ state: this.attempt === 0 && !this.everOpened ? "connecting" : "reconnecting", attempt: this.attempt });
-    const ws = new WebSocket(`${proto}://${location.host}/api/v1/ws`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/v1/ws${this.guestToken ? "?guest=1" : ""}`);
     this.ws = ws;
+    const subscribe = () => ws.send(JSON.stringify({ type: "subscribe", meeting_id: this.meetingId }));
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "subscribe", meeting_id: this.meetingId }));
+      if (this.guestToken) ws.send(JSON.stringify({ type: "auth", guest_token: this.guestToken })); else subscribe();
       window.clearInterval(this.pinger);
       this.pinger = window.setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}'); }, PING_MS);
     };
     ws.onmessage = (m) => {
       try {
         const data = JSON.parse(m.data as string);
-        if (data.type === "subscribed") {
+        if (data.type === "authed") {
+          subscribe();
+        } else if (data.type === "subscribed") {
           this.everOpened = true; this.attempt = 0;
           this.onStatus({ state: "online", attempt: 0 });
           this.onSubscribed();
@@ -90,7 +111,7 @@ export class LiveSocket {
           this.closed = true;
           this.onStatus({ state: "denied", attempt: 0, message: "Нет доступа к событиям этой встречи." });
           ws.close();
-        } else if (data.type === "segment" || data.type === "participant_joined" || data.type === "participant_left" || data.type === "meeting_ended" || data.type === "recording_changed") {
+        } else if (EVENT_TYPES.has(data.type)) {
           this.onEvent(data as LiveEvent);
         }
       } catch { /* игнорируем мусор */ }

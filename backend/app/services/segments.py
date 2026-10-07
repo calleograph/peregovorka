@@ -12,9 +12,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Meeting, MeetingParticipant, TranscriptSegment, User
+from ..models import GuestParticipant, Meeting, MeetingParticipant, TranscriptSegment, User
 from . import events
-from .livekit import SERVICE_IDENTITY_PREFIX, parse_meeting_room_name, parse_user_identity
+from .livekit import SERVICE_IDENTITY_PREFIX, parse_guest_identity, parse_meeting_room_name, parse_user_identity
 
 log = logging.getLogger("app.segments")
 
@@ -25,13 +25,23 @@ class IngestResult(str, Enum):
     REJECTED = "rejected"
 
 
+def author_name(seg: TranscriptSegment) -> str | None:
+    """Имя автора реплики: сотрудник — как в AD, гость — с пометкой «(гость)»."""
+    if seg.user:
+        return seg.user.display_name
+    if seg.guest:
+        return f"{seg.guest.display_name} (гость)"
+    return None
+
+
 def segment_to_dict(seg: TranscriptSegment, display_name: str | None = None) -> dict:
-    name = display_name if display_name is not None else (seg.user.display_name if seg.user else None)
+    name = display_name if display_name is not None else author_name(seg)
     return {
         "id": seg.id,
         "uid": str(seg.segment_uid),
         "meeting_id": str(seg.meeting_id),
         "user_id": str(seg.user_id) if seg.user_id else None,
+        "guest_id": str(seg.guest_id) if seg.guest_id else None,
         "display_name": name or "Неизвестный участник",
         "identity": seg.participant_identity,
         "started_at": seg.started_at.isoformat(),
@@ -89,6 +99,15 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
         else:
             log.warning("Identity не из состава встречи", extra={"meeting_id": str(meeting_id)})
 
+    # Гость определяется так же строго: только g-<uuid> из состава ЭТОЙ встречи.
+    guest: GuestParticipant | None = None
+    guest_id = parse_guest_identity(identity)
+    if guest_id is not None:
+        guest = await db.get(GuestParticipant, guest_id)
+        if guest is None or guest.meeting_id != meeting_id:
+            guest = None
+            log.warning("Гостевая identity не из состава встречи", extra={"meeting_id": str(meeting_id)})
+
     def _json(name: str):
         try:
             return json.loads(fields[name]) if fields.get(name) else None
@@ -98,7 +117,7 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
     metrics = {k: fields[k] for k in ("duration_ms", "infer_ms", "queue_ms") if k in fields}
     seg = TranscriptSegment(
         segment_uid=uid, meeting_id=meeting_id, room_id=meeting.room_id, user_id=user.id if user else None,
-        participant_identity=identity[:80], started_at=started, ended_at=ended, text=text,
+        guest_id=guest.id if guest else None, participant_identity=identity[:80], started_at=started, ended_at=ended, text=text,
         language=(fields.get("language") or None), model=_json("model"), metrics=metrics or None,
     )
     db.add(seg)
@@ -108,5 +127,5 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
         await db.rollback()
         return IngestResult.DUPLICATE
     await db.refresh(seg)
-    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else None)})
+    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (f"{guest.display_name} (гость)" if guest else None))})
     return IngestResult.STORED

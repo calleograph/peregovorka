@@ -57,6 +57,7 @@ class ClientConfig(BaseModel):
     screen_share_audio: bool = False
     one_sharer_at_a_time: bool = False
     can_moderate: bool = False      # руководитель комнаты / администратор: может выключать микрофоны участников
+    is_guest: bool = False          # гость: без административных функций, без демонстрации экрана
     mute_on_join: bool = False      # участники входят с выключенным микрофоном
     welcome_message: str | None = None
 
@@ -74,7 +75,9 @@ class JoinOut(BaseModel):
 
 
 class ParticipantOut(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None = None
+    guest_id: uuid.UUID | None = None
+    participant_type: str = "user"   # user | guest
     display_name: str
     joined_at: datetime
     left_at: datetime | None
@@ -93,6 +96,9 @@ class MeetingOut(BaseModel):
     segments: int = 0
     recordings: int = 0
     protocols: int = 0
+    chat_messages: int = 0
+    whiteboard_shapes: int = 0       # 0 — доска не использовалась
+    guests: int = 0
 
 
 class SegmentOut(BaseModel):
@@ -100,6 +106,7 @@ class SegmentOut(BaseModel):
     uid: uuid.UUID
     meeting_id: uuid.UUID
     user_id: uuid.UUID | None
+    guest_id: uuid.UUID | None = None
     display_name: str
     identity: str
     started_at: datetime
@@ -146,6 +153,8 @@ class RoomAdminOut(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
     welcome_message: str | None = None
+    guest_access_enabled: bool = False
+    guest_token: str | None = None     # секрет гостевой ссылки (виден только администраторам); None — ссылка не выпущена/отозвана
     acl: list[AclEntryOut]
     moderators: list[AclEntryOut] = Field(default_factory=list)
     active_meeting_id: uuid.UUID | None = None
@@ -171,6 +180,7 @@ class RoomCreateIn(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
     welcome_message: str | None = Field(default=None, max_length=2000)
+    guest_access_enabled: bool = False
     acl: list[AclEntryIn] = Field(default_factory=list)
     moderators: list[AclEntryIn] = Field(default_factory=list)
 
@@ -203,5 +213,6 @@ class RoomPatchIn(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
+    guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None

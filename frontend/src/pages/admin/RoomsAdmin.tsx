@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { copyText } from "../../util";
 import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile, type DirHit, type HistoryAccess, type RoomAdmin } from "../../api";
 
 interface Form {
@@ -7,6 +8,7 @@ interface Form {
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; acl: AclEntry[]; moderators: AclEntry[]; history_access: HistoryAccess;
   anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; welcome_message: string;
+  guest_access_enabled: boolean; guest_token: string | null;
 }
 
 const empty: Form = {
@@ -14,6 +16,7 @@ const empty: Form = {
   transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
   text_retention_days: "", audio_retention_days: "", protocol_instructions: "", acl: [], moderators: [], history_access: "admin",
   anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "", mute_on_join: false, welcome_message: "",
+  guest_access_enabled: false, guest_token: null,
 };
 
 const days = (v: string) => (v.trim() === "" ? null : Number(v));
@@ -26,7 +29,8 @@ function toForm(r: RoomAdmin): Form {
     text_retention_days: r.text_retention_days?.toString() ?? "", audio_retention_days: r.audio_retention_days?.toString() ?? "",
     protocol_instructions: r.protocol_instructions ?? "", acl: r.acl, moderators: r.moderators ?? [], history_access: r.history_access ?? "admin",
     anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "",
-    mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "" };
+    mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "",
+    guest_access_enabled: r.guest_access_enabled ?? false, guest_token: r.guest_token ?? null };
 }
 
 type TabId = "main" | "access" | "features" | "ai" | "storage";
@@ -46,6 +50,36 @@ function Chips({ items, onRemove, empty: emptyText }: { items: AclEntry[]; onRem
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Гостевая ссылка комнаты: копирование, перевыпуск (старая перестаёт работать) и отзыв (гости отключаются). Действия применяются сразу. */
+function GuestLink({ form, onChange }: { form: Form; onChange: (r: RoomAdmin) => void }) {
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const url = form.guest_token ? `${window.location.origin}/guest/${form.guest_token}` : "";
+  const act = async (action: "rotate" | "revoke") => {
+    const q = action === "rotate"
+      ? "Выпустить новую гостевую ссылку? Прежняя перестанет работать, гости, которые сейчас на встрече, будут отключены."
+      : "Отозвать гостевую ссылку? Гостевой доступ будет выключен, гости, которые сейчас на встрече, будут отключены.";
+    if (!form.id || !window.confirm(q)) return;
+    setBusy(true); setMsg("");
+    try { onChange(await api.admin.guestLink(form.id, action)); setMsg(action === "rotate" ? "Новая ссылка выпущена." : "Ссылка отозвана."); }
+    catch (e) { setMsg((e as ApiError).message); }
+    setBusy(false);
+  };
+  if (!form.id) return <p className="muted small">Ссылка появится после сохранения комнаты.</p>;
+  if (!form.guest_access_enabled || !url) return <p className="muted small">Гостевой доступ выключен — по ссылке войти нельзя. Включите и сохраните — ссылка появится здесь.</p>;
+  return (
+    <div className="guest-link">
+      <div className="row tight"><input readOnly value={url} onFocus={(e) => e.currentTarget.select()} aria-label="Гостевая ссылка" />
+        <button type="button" className="btn mini" onClick={async () => setMsg((await copyText(url)) ? "Ссылка скопирована." : "Не удалось скопировать — выделите ссылку вручную.")}>Копировать</button></div>
+      <div className="row tight">
+        <button type="button" className="btn mini" disabled={busy} onClick={() => void act("rotate")}>Выпустить новую ссылку</button>
+        <button type="button" className="btn mini danger" disabled={busy} onClick={() => void act("revoke")}>Отозвать ссылку</button>
+        {msg && <span className="muted small" role="status">{msg}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -81,6 +115,7 @@ export default function RoomsAdmin() {
       acl: form.acl, moderators: form.moderators, history_access: form.history_access,
       anonymize_mode: form.anonymize_mode, llm_profile_id: form.llm_profile_id || null, anonymizer_profile_id: form.anonymizer_profile_id || null,
       mute_on_join: form.mute_on_join, welcome_message: form.welcome_message.trim() || null,
+      guest_access_enabled: form.guest_access_enabled,
     };
     try {
       if (form.id) {
@@ -214,6 +249,11 @@ export default function RoomsAdmin() {
                 </div>
                 <span className="help">Транскрибация формирует стенограмму; запись аудио сохраняет звук участников (хранение — в разделе «Хранилище записей»).</span>
               </fieldset>
+              <fieldset className="group"><legend>Гостевой доступ</legend>
+                <label className="check"><input type="checkbox" checked={form.guest_access_enabled} onChange={(e) => set("guest_access_enabled", e.target.checked)} />
+                  <span className="check-body">Разрешить гостевой доступ<span className="help">Выключено — войти могут только сотрудники из AD. Включено — по специальной ссылке можно войти без учётной записи: гость вводит имя, проверяет оборудование и попадает в уже идущую встречу как «Имя (гость)». Права гостя минимальны: без администрирования, истории, стенограммы и показа экрана. Выключение отключает гостей, но ссылка сохраняется.</span></span></label>
+                <GuestLink form={form} onChange={(r) => setForm((f) => (f ? { ...f, guest_access_enabled: r.guest_access_enabled, guest_token: r.guest_token } : f))} />
+              </fieldset>
               <fieldset className="group"><legend>Порядок на встрече</legend>
                 <label className="check"><input type="checkbox" checked={form.mute_on_join} onChange={(e) => set("mute_on_join", e.target.checked)} />
                   <span className="check-body">Микрофон при входе выключен<span className="help">Участники заходят без звука и включают микрофон сами. Удобно для больших встреч и собраний: нет шума при подключении. Руководитель может выключить звук у всех одной кнопкой.</span></span></label>
@@ -279,7 +319,7 @@ export default function RoomsAdmin() {
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>
-              <td className="small">{[r.has_password && "пароль", r.transcription_enabled && "текст", r.record_audio && "аудио", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука",
+              <td className="small">{[r.has_password && "пароль", r.transcription_enabled && "текст", r.record_audio && "аудио", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
                 r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
               <td className="actions"><button className="btn ghost" onClick={() => open(toForm(r))}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>
