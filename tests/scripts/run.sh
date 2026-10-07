@@ -8,7 +8,7 @@ source "$ROOT/scripts/lib/envlib.sh"
 PASS=0; FAIL=0
 t() { # t "описание" команда...
   local d="$1"; shift
-  if "$@" >/dev/null 2>&1; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $d"; fi
+  if "$@" >/dev/null 2>&1; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $d"; [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=shell-тест не пройден::$d"; fi
 }
 eq() { [ "$1" = "$2" ]; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

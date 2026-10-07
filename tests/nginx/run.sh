@@ -7,7 +7,15 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMG="${1:-}"
 NET="pgci-net-$$"; WEB="pgci-web-$$"; PASS=0; FAIL=0
-t() { local d="$1"; shift; if "$@" >/dev/null 2>&1; then PASS=$((PASS+1)); echo "PASS: $d"; else FAIL=$((FAIL+1)); echo "FAIL: $d"; fi; }
+t() { # t "описание" команда… — при провале печатает вывод команды (в CI — ещё и как аннотация, видимую без открытия журнала)
+  local d="$1" out; shift
+  if out="$("$@" 2>&1)"; then PASS=$((PASS+1)); echo "PASS: $d"
+  else FAIL=$((FAIL+1)); echo "FAIL: $d"; printf '%s
+' "$out" | head -20 | sed 's/^/    /'
+    [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=web-image: $d::$(printf '%s' "$out" | head -c 600 | tr '
+' ' ')"
+  fi
+}
 cleanup() { docker rm -f "$WEB" "pgci-backend-$$" "pgci-livekit-$$" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
 trap cleanup EXIT
 
@@ -21,7 +29,9 @@ for s in backend:8000 livekit:7880; do
   docker run -d --rm --name "pgci-$n-$$" --network "$NET" --network-alias "$n" -v "$ROOT/tests/nginx/stub.py:/stub.py:ro" python:3.12-alpine python /stub.py "$p" >/dev/null || exit 1
 done
 docker run -d --rm --name "$WEB" --network "$NET" -p 127.0.0.1:18199:8080 "$IMG" >/dev/null || exit 1
-for _ in $(seq 1 30); do curl -fs http://127.0.0.1:18199/healthz >/dev/null 2>&1 && break; sleep 1; done
+for _ in $(seq 1 45); do curl -fs http://127.0.0.1:18199/healthz >/dev/null 2>&1 && break; sleep 1; done
+# заглушки backend/livekit тоже должны успеть подняться: ждём ответа ЧЕРЕЗ прокси, а не только самого nginx
+for _ in $(seq 1 45); do curl -fs http://127.0.0.1:18199/api/v1/health/live >/dev/null 2>&1 && curl -fs http://127.0.0.1:18199/livekit/ >/dev/null 2>&1 && break; sleep 1; done
 
 U=http://127.0.0.1:18199
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
@@ -38,4 +48,13 @@ t "/drawio/: CSP и CORS для песочницы" bash -c "curl -sI $U/drawio/
 t "приложение разрешает только свои фреймы (frame-src 'self')" bash -c "curl -sI $U/ | grep -i '^content-security-policy:' | grep -q \"frame-src 'self'\""
 t "ошибок «cycle»/«emerg» в журнале nginx нет" bash -c "! docker logs $WEB 2>&1 | grep -Eqi 'cycle while|\[emerg\]'"
 echo "nginx/web: пройдено $PASS, провалено $FAIL"
+if [ "$FAIL" -gt 0 ]; then
+  LOGS="$(docker logs "$WEB" 2>&1 | tail -25)"
+  echo "--- журнал nginx (web) ---"; echo "$LOGS"
+  [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=web-image: журнал nginx::$(printf '%s' "$LOGS" | tail -c 700 | tr '
+' ' ')"
+  echo "--- ответы ---"
+  for p in /healthz /api/v1/health/live /livekit/ /drawio/index.html; do printf '%s -> ' "$p"; curl -s -o /dev/null -w '%{http_code}
+' -H 'X-Forwarded-Proto: https' "$U$p"; done
+fi
 [ "$FAIL" -eq 0 ]
