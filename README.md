@@ -8,6 +8,7 @@
 протоколы по инструкции, журнал для диагностики и обновление в один клик. Никаких облаков для звонков и распознавания — всё работает на вашем сервере.
 
 [![CI](https://github.com/leonheard/peregovorka/actions/workflows/ci.yml/badge.svg)](https://github.com/leonheard/peregovorka/actions)
+[![Версия](https://img.shields.io/github/v/release/leonheard/peregovorka?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/leonheard/peregovorka/releases)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![LiveKit](https://img.shields.io/badge/LiveKit-v1.13.7-1F2937)
@@ -15,9 +16,9 @@
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-LDAPS-0078D4)
 ![ASR](https://img.shields.io/badge/ASR-GigaAM%20v3-2E7D32)
 
-<img src="docs/img/room-mock.png" alt="Комната: показ экрана с масштабированием, плитки участников, круглые кнопки управления" width="900">
+<img src="docs/img/room.png" alt="Комната: общая доска со схемой, чат с гостем, плитки участников, круглые кнопки управления" width="900">
 
-<sub>Комната: показ экрана (колесо мыши — масштаб), плитки участников, круглые кнопки управления. Макет интерфейса, отрисованный боевыми стилями.</sub>
+<sub>Комната: общая доска (draw.io) со схемой, чат с гостем, плитки участников, круглые кнопки управления. Доска и чат — настоящие компоненты, плитки — макет (стенд без LiveKit).</sub>
 
 </div>
 
@@ -136,26 +137,11 @@
 
 ## Интерфейс
 
-Снимки сделаны на тестовом стенде с вымышленными данными (подставной каталог, без LiveKit).
+Снимки сделаны на тестовом стенде с вымышленными данными (подставной каталог, без LiveKit); комната выше — там же.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/img/admin-journal.png" alt="Журнал событий"><br><sub><b>Журнал событий:</b> размер и срок хранения, фильтры, флажки, выгрузка</sub></td>
-<td width="50%"><img src="docs/img/admin-journal-dark.png" alt="Журнал событий, тёмная тема"><br><sub><b>Тёмная тема</b> включается по настройкам системы</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/img/admin-updates.png" alt="Обновления и версии"><br><sub><b>Обновления и версии:</b> установленная и опубликованная редакции, новые изменения, ход обновления, таблица версий</sub></td>
-<td width="50%"><img src="docs/img/admin-updates-running.png" alt="Ход обновления"><br><sub><b>Окно хода обновления:</b> этапы и построчный вывод</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/img/admin-room-form.png" alt="Форма комнаты"><br><sub><b>Форма комнаты на вкладках:</b> доступ и руководители</sub></td>
-<td width="50%"><img src="docs/img/admin-llm.png" alt="Профили языковой модели"><br><sub><b>Несколько API:</b> основной и дополнительные профили, выбор «по умолчанию»</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/img/rooms.png" alt="Список комнат"><br><sub><b>Список комнат</b></sub></td>
-<td width="50%"><img src="docs/img/admin-system.png" alt="Состояние системы"><br><sub><b>Состояние системы:</b> сервисы, ресурсы, журнал, версии</sub></td>
-</tr>
-</table>
+<img src="docs/img/admin-updates.png" alt="Администрирование: Обновления и версии" width="900">
+
+<sub><b>Администрирование → Обновления и версии:</b> установленная и опубликованная версия с commit, что нового в версии (из CHANGELOG), обновление одной кнопкой.</sub>
 
 ## Как это устроено
 
@@ -327,6 +313,8 @@ scripts/smoke-test.sh
 
 ## Версии и совместимость
 
+**Версия проекта** — простая схема `0.1.0 → 0.1.1 → …`, единственный источник — файл [`VERSION`](VERSION). Она же — в интерфейсе вместе с commit (`0.1.4 · 6123022`), в образах, на странице «Обновления и версии» и в релизах GitHub. Что менялось от версии к версии — в [CHANGELOG.md](CHANGELOG.md); как выпустить версию — [docs/VERSIONING.md](docs/VERSIONING.md) (`./scripts/release.sh patch`).
+
 Проверенный набор: **LiveKit Server v1.13.7**, `livekit-client` 2.22.3 (браузер), Python SDK `livekit` 1.1.20 и `livekit-api` 1.2.1. Старый сервер LiveKit опасен: клиенты пробуют путь `/rtc/v1`,
 и при ответе 404 вход замедляется на секунды. Поэтому версия **закреплена**, `latest` в production не используется, а `smoke-test.sh` проверяет `/rtc/v1` реальным WebSocket Upgrade.
 Остальные зависимости заданы диапазонами. Актуальные версии в интернете и статус каждого компонента — в разделе «Обновления и версии»; подробности — [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
@@ -347,6 +335,8 @@ scripts/smoke-test.sh
 | [HISTORY.md](HISTORY.md) | журнал изменений |
 | [.env.example](.env.example) | все переменные конфигурации с пояснениями |
 | [docs/JOURNAL_AND_SECURITY.md](docs/JOURNAL_AND_SECURITY.md) | журнал событий, API-профили, обезличивание по желанию, защита входа |
+| [CHANGELOG.md](CHANGELOG.md) | что нового от версии к версии (только заметное) |
+| [docs/VERSIONING.md](docs/VERSIONING.md) | схема версий, единый источник, выпуск версии и релиза |
 | [docs/COLLABORATION.md](docs/COLLABORATION.md) | общая доска (draw.io), чат, гостевой доступ, навигация во время встречи |
 | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) | версии LiveKit и SDK, политика обновлений |
 | [docs/ACCEPTANCE_TEST.md](docs/ACCEPTANCE_TEST.md) | приёмочный тест |

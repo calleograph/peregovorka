@@ -1,0 +1,29 @@
+name: Release
+# Публикует релиз GitHub при пуше тега vX.Y.Z. Описание — раздел этой версии из CHANGELOG.md; версия берётся из VERSION (тег обязан совпадать).
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Тег, VERSION и CHANGELOG согласованы
+        run: |
+          test "${GITHUB_REF_NAME}" = "v$(tr -d '[:space:]' < VERSION)"
+          ./scripts/release.sh check
+      - name: Описание релиза из CHANGELOG
+        run: ./scripts/release.sh notes > release-notes.md && test -s release-notes.md
+      - name: Создать или обновить релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --title "Peregovorka ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" --title "Peregovorka ${GITHUB_REF_NAME#v}" --notes-file release-notes.md --verify-tag
+          fi

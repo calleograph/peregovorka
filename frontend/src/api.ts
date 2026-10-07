@@ -145,7 +145,7 @@ export interface UpdaterState {
 export interface RemoteCommit { sha: string; date: string; subject: string }
 export interface RemoteInfo {
   checked_at: number; age_s?: number; ok: boolean; error: string; branch: string; current: string; remote: string; behind: number; ahead: number;
-  ff_possible: boolean; local_changes: number; migrations_changed: number; env_example_changed: boolean; commits: RemoteCommit[];
+  ff_possible: boolean; local_changes: number; current_version?: string; remote_version?: string; changelog?: string; migrations_changed: number; env_example_changed: boolean; commits: RemoteCommit[];
 }
 export interface UpdatesOverview {
   installed: { version: string; commit: string; built_at: string }; updater: UpdaterState; remote: RemoteInfo | null; active_meetings: number;

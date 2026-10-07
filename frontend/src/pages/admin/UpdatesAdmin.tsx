@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ApiError, type UpdatesOverview } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
-import { downloadText, fmt } from "../../util";
+import { Markdown } from "../../components/Markdown";
+import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
 
 const MAX_LOG = 600_000;
@@ -83,9 +84,9 @@ export default function UpdatesAdmin() {
 
       <div className="card upd-project">
         <div className="upd-versions">
-          <div><div className="l">Установлено на сервере</div><div className="v small-v">{ov ? `${ov.installed.version} · ${ov.installed.commit.slice(0, 12)}` : "—"}</div>
+          <div><div className="l">Установлено на сервере</div><div className="v small-v">{ov ? versionLabel(ov.installed.version, ov.installed.commit) : "—"}</div>
             <div className="l">{unknownBuild ? <span className="badge warn" title="Образ собран без данных Git — вероятно, вручную командой docker compose build">собран вне штатного обновления</span> : ov?.installed.built_at && ov.installed.built_at !== "unknown" ? `сборка ${ov.installed.built_at}` : ""}</div></div>
-          <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? rem.remote : "—"}</div>
+          <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? (rem.remote_version ? versionLabel(rem.remote_version, rem.remote) : shortCommit(rem.remote)) : "—"}</div>
             <div className="l">{rem ? `проверено ${ago(rem.age_s)}` : "проверка ещё не выполнялась"}</div></div>
           <div><div className="l">Исполнитель обновлений</div>
             <div className="v small-v">{u?.available ? <span className="badge ok">работает</span> : <span className="badge warn">не запущен</span>}</div>
@@ -109,11 +110,13 @@ export default function UpdatesAdmin() {
           </div>
         )}
         {rem && !rem.ok && <div className="alert error">Не удалось проверить GitHub: {rem.error || "нет данных"}. Возможно, у сервера нет выхода в интернет — тогда обновляйте на сервере командой <code>./scripts/update.sh --env ...</code> из заранее полученного репозитория.</div>}
-        {rem?.ok && behind === 0 && <div className="alert ok">Установлена актуальная редакция проекта.</div>}
+        {rem?.ok && behind === 0 && <div className="alert ok">Установлена актуальная редакция проекта{ov ? ` (версия ${ov.installed.version})` : ""}.</div>}
         {rem?.ok && behind > 0 && (
           <div className="upd-available">
-            <div className="alert info"><b>Доступно обновление: {behind} {behind === 1 ? "изменение" : behind < 5 ? "изменения" : "изменений"}.</b>
-              <ul className="commits">{rem.commits.slice(0, 12).map((c) => <li key={c.sha}><code>{c.sha}</code> <span className="muted small">{c.date}</span> {c.subject}</li>)}{behind > 12 && <li className="muted">…и ещё {behind - 12}</li>}</ul></div>
+            <div className="alert info"><b>Доступно обновление{rem.remote_version && ov && rem.remote_version !== ov.installed.version ? `: версия ${ov.installed.version} → ${rem.remote_version}` : ""}</b>
+              {rem.changelog && <div className="changelog"><b>Что нового</b><Markdown source={rem.changelog} /></div>}
+              <details className="muted small"><summary>Технический список: {behind} {behind === 1 ? "изменение" : behind < 5 ? "изменения" : "изменений"} в репозитории</summary>
+              <ul className="commits">{rem.commits.slice(0, 12).map((c) => <li key={c.sha}><code>{c.sha}</code> <span className="muted small">{c.date}</span> {c.subject}</li>)}{behind > 12 && <li className="muted">…и ещё {behind - 12}</li>}</ul></details></div>
             <div className="row chips-info">
               {rem.migrations_changed > 0 && <span className="badge warn" title="Будет создана резервная копия базы, миграции применятся автоматически">изменения схемы БД: {rem.migrations_changed}</span>}
               {rem.env_example_changed && <span className="badge" title="Новые безопасные параметры дописываются в .env автоматически; остальные показываются списком">есть новые параметры .env</span>}

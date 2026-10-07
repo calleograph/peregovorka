@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, setCsrf, setUnauthorizedHandler, type Me } from "./api";
+import { versionLabel } from "./util";
 import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
@@ -26,7 +27,7 @@ function StaffApp() {
 
   useEffect(() => {
     api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }).catch(() => setMe(null));
-    api.version().then((v) => setVersion(`${v.version} · ${v.commit.slice(0, 8)}`)).catch(() => undefined);
+    api.version().then((v) => setVersion(versionLabel(v.version, v.commit))).catch(() => undefined);
   }, []);
 
   useEffect(() => { setUnauthorizedHandler(() => { setCsrf(""); setMe(null); }); return () => setUnauthorizedHandler(null); }, []);

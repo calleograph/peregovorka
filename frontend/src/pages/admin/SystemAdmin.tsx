@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { version as lkClientVersion } from "livekit-client";
 import { api, type ApiError, type JournalStats, type SystemStatus } from "../../api";
-import { bytes, downloadText } from "../../util";
+import { bytes, downloadText, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
@@ -82,7 +82,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
               {onOpen && <button className="btn mini" onClick={() => onOpen("journal")}>Открыть</button>}
               {onOpen && <button className="btn mini" onClick={() => onOpen("journal_settings")}>Хранение и очистка</button>}</div></div>
         )}
-        <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{s.version} · {s.commit.slice(0, 8)}</div><div className="l">{s.built_at ?? ""}</div></div>
+        <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{versionLabel(s.version, s.commit)}</div><div className="l">{s.built_at ?? ""}</div></div>
       </div>
 
       <h3>Сервисы</h3>

@@ -74,6 +74,16 @@ do_check() {
   local_changes="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
   mig="$(git -C "$REPO_ROOT" diff --name-only "HEAD..$remote" -- backend/migrations/versions 2>/dev/null | wc -l | tr -d ' ')"
   if git -C "$REPO_ROOT" diff --quiet "HEAD..$remote" -- .env.example 2>/dev/null; then envchg=false; else envchg=true; fi
+  # версии и «что изменилось»: VERSION у установленной и у опубликованной редакции, разделы CHANGELOG новее установленной
+  local cur_ver rem_ver chg="" chg_esc="" cltmp=""
+  cur_ver="$(git -C "$REPO_ROOT" show HEAD:VERSION 2>/dev/null | tr -d '[:space:]')"
+  rem_ver="$(git -C "$REPO_ROOT" show "$remote:VERSION" 2>/dev/null | tr -d '[:space:]')"
+  cltmp="$(mktemp)"
+  if ver_valid "$cur_ver" && git -C "$REPO_ROOT" show "$remote:CHANGELOG.md" > "$cltmp" 2>/dev/null; then
+    chg="$(changelog_since "$cltmp" "$cur_ver" | head -c 6000)"
+  fi
+  rm -f "$cltmp"
+  chg_esc="$(jesc "$chg" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')"
   commits=""
   while IFS=$'\t' read -r sha day subj; do
     [ -n "$sha" ] || continue
@@ -81,8 +91,8 @@ do_check() {
     first=0
     commits+="{\"sha\":\"$(jesc "$sha")\",\"date\":\"$(jesc "$day")\",\"subject\":\"$(jesc "$subj")\"}"
   done < <(git -C "$REPO_ROOT" log -n 30 --pretty='%h%x09%ad%x09%s' --date=short "HEAD..$remote" 2>/dev/null)
-  printf '{"checked_at":%s,"ok":%s,"error":"%s","branch":"%s","current":"%s","remote":"%s","behind":%s,"ahead":%s,"ff_possible":%s,"local_changes":%s,"migrations_changed":%s,"env_example_changed":%s,"commits":[%s]}\n' \
-    "$(date +%s)" "$ok" "$(jesc "$err")" "$(jesc "$up")" "${cur:0:12}" "${remote:0:12}" "$behind" "$ahead" "$ff" "$local_changes" "$mig" "$envchg" "$commits" | atomic_write "$CH/remote.json"
+  printf '{"checked_at":%s,"ok":%s,"error":"%s","branch":"%s","current":"%s","remote":"%s","behind":%s,"ahead":%s,"ff_possible":%s,"local_changes":%s,"migrations_changed":%s,"env_example_changed":%s,"current_version":"%s","remote_version":"%s","changelog":"%s","commits":[%s]}\n' \
+    "$(date +%s)" "$ok" "$(jesc "$err")" "$(jesc "$up")" "${cur:0:12}" "${remote:0:12}" "$behind" "$ahead" "$ff" "$local_changes" "$mig" "$envchg" "$(jesc "$cur_ver")" "$(jesc "$rem_ver")" "$chg_esc" "$commits" | atomic_write "$CH/remote.json"
   STATE="$prev_state"; [ "$STATE" = "checking" ] && STATE="idle"; write_status
   [ "$ok" = true ]
 }

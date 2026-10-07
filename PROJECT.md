@@ -60,6 +60,12 @@ md/txt/docx/pdf; шаблоны инструкций (общие — админ,
 Таблица «Версии компонентов» (также на панели «Состояние системы»): установлено · проверено с проектом · актуально в интернете (GitHub/PyPI/npm, кэш 6 ч; без интернета — «нет данных») · статус · что делать;
 закреплённые компоненты отдельно не обновляются. Запрос от веб-интерфейса проверяется исполнителем (формат, возраст, разрешённые флаги). **Не проверено на реальном сервере** (подставной `update.sh`, подставной стенд интерфейса).
 
+**Версионирование** (`VERSION`, `CHANGELOG.md`, `scripts/release.sh`, `scripts/lib/versionlib.sh`, `.github/workflows/{ci,release}.yml`, `docs/VERSIONING.md`): схема `0.1.0 → 0.1.1 → …`, единственный источник — файл `VERSION`. Образы собираются с ним (`host_version_info`),
+commit — из git (устойчиво к «dubious ownership» и отсутствию команды `git`); `update.sh`/`rebuild.sh` не собирают образ с commit «unknown». В интерфейсе — «версия · commit (7 символов)»; окно «Обновления и версии» показывает версию и commit установленной и
+опубликованной редакции и разделы CHANGELOG новее установленной (`remote.json`: `current_version`, `remote_version`, `changelog`); итог `update.sh` — «Version: A → B», `verify.sh` сверяет версию образов с `VERSION`. `release.sh patch|minor|X.Y.Z` переносит «Unreleased» в раздел версии, пишет `VERSION` и `frontend/package*.json`,
+делает commit «Релиз X.Y.Z» и аннотированный тег `vX.Y.Z`; push тега запускает workflow «Release» (GitHub Release с описанием из CHANGELOG); CI проверяет согласованность (`release.sh check`). Теги и релизы — с `0.1.4` (0.1.0–0.1.3 описаны ретроспективно).
+Главная страница (README): не более двух снимков интерфейса (комната, админка), без сообщений об ошибках; актуализируется при каждом выпуске.
+
 **Общая доска, чат, гостевой доступ** (`api/collab.py`, `api/guest.py`, `auth/guests.py`, `services/{whiteboard,materials}.py`, таблицы `guest_participants`, `meeting_chat_messages`, `meeting_whiteboards`, поля комнаты
 `guest_access_enabled`/`guest_token`, `transcript_segments.guest_id`, миграция 0006; подробно — `docs/COLLABORATION.md`). Доска — draw.io v32.3.0 (Apache-2.0), стадия `drawio` в `frontend/Dockerfile` (клон тега с повторами,
 `frontend/drawio/prune.sh`), раздаётся nginx на `/drawio/` (свой CSP и CORS `*`, `frame-src 'self'` у приложения), встроена iframe'ом с sandbox без `allow-same-origin`; синхронизация — патчи `diffSync` с номером `seq` (Redis INCR),

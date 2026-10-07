@@ -102,15 +102,14 @@ port_owned_by_project() {
     --format '{{.Ports}}' 2>/dev/null | grep -Eq "(:|^)${port}->|:${port}->"
 }
 
+# Версия сборки: VERSION (единственный источник) + commit из git + время сборки. Передаётся образам как APP_VERSION/APP_GIT_COMMIT/APP_BUILT_AT.
+# commit «unknown» возникает только вне git-репозитория; update.sh/rebuild.sh в этом случае останавливаются, а не собирают образ без commit.
 host_version_info() {
   APP_VERSION_FILE="$REPO_ROOT/VERSION"
-  [ -f "$APP_VERSION_FILE" ] && APP_VERSION="$(tr -d '[:space:]' < "$APP_VERSION_FILE")" || APP_VERSION="0.0.0"
-  if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    APP_GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null | cut -c1-12)"
-    [ -n "$APP_GIT_COMMIT" ] || APP_GIT_COMMIT="unknown"
-  else
-    APP_GIT_COMMIT="unknown"
-  fi
+  APP_VERSION="$(version_file_read "$APP_VERSION_FILE")"
+  ver_valid "$APP_VERSION" || APP_VERSION="0.0.0"
+  APP_GIT_COMMIT="$(git_head_commit "$REPO_ROOT")"
+  [ -n "$APP_GIT_COMMIT" ] || APP_GIT_COMMIT="unknown"
   APP_BUILT_AT="${APP_BUILT_AT_OVERRIDE:-${APP_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}}"
   export APP_VERSION APP_GIT_COMMIT APP_BUILT_AT
 }
@@ -118,6 +117,8 @@ host_version_info() {
 # Чистые функции (.env, пути, LDAP, RAM, сводка портов)
 # shellcheck source=envlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/envlib.sh"
+# shellcheck source=versionlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/versionlib.sh"
 
 # shellcheck source=dockerlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/dockerlib.sh"

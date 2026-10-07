@@ -530,3 +530,4 @@ pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 .guest-link input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; }
 .nav-newtab { opacity: .92; }
 .board-hint { margin: 0; }
+.changelog { margin: 6px 0 10px; } .changelog .md h2 { font-size: 15px; margin: 8px 0 2px; } .changelog .md ul { margin: 2px 0 6px; padding-left: 20px; }

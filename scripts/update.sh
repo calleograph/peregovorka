@@ -264,6 +264,9 @@ summary() { # vf smoke warnings
   log; log "===================================================="
   if [ "$1" -eq 0 ] && [ "$2" != FAIL ]; then ok "Peregovorka update completed"; else fail "Peregovorka update finished WITH ERRORS"; fi
   log
+  local oldv newv
+  oldv="$(git -C "$REPO_ROOT" show "${OLD:-HEAD}:VERSION" 2>/dev/null | tr -d '[:space:]')"; newv="$(version_file_read "$REPO_ROOT/VERSION")"
+  if [ -n "$oldv" ] && [ "$oldv" != "$newv" ]; then printf 'Version:         %s → %s\n' "$oldv" "$newv"; else printf 'Version:         %s\n' "${newv:-?}"; fi
   printf 'Previous commit: %s\nCurrent commit:  %s\n\n' "${OLD12:-?}" "${TARGET:0:12}"
   alembic_verify exec >/dev/null 2>&1
   [ "${ALEMBIC_CUR:-}" = "${ALEMBIC_HEAD:-x}" ] && printf 'Database:   %s (head)\n' "$ALEMBIC_CUR" || printf 'Database:   %s (head: %s) — НЕСООТВЕТСТВИЕ\n' "${ALEMBIC_CUR:-?}" "${ALEMBIC_HEAD:-?}"

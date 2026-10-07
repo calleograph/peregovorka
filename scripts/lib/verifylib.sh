@@ -168,19 +168,21 @@ compat_check() {
 # Несовпадение или commit=unknown → предупреждение (образ собран вручную или не из этого commit): scripts/rebuild.sh.
 check_build_versions() {
   local head b a w
-  head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null | cut -c1-12)"
+  head="$(git_head_commit "$REPO_ROOT")"
   [ -n "$head" ] || { v_warn "git HEAD не определён — сравнение версий образов пропущено"; return 0; }
   read -r _ b <<<"$(svc_http backend http://127.0.0.1:8000/api/v1/version)"
   read -r _ a <<<"$(svc_http asr http://127.0.0.1:8090/readyz)"
   w="$(dc exec -T web wget -qO- http://127.0.0.1:8080/version.json 2>/dev/null || true)"
-  local name val
+  local name val raw want ver; want="$(version_file_read "$REPO_ROOT/VERSION")"
   for name in backend asr web; do
-    case "$name" in backend) val="$b" ;; asr) val="$a" ;; web) val="$w" ;; esac
-    val="$(printf '%s' "$val" | grep -o '"commit": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    case "$name" in backend) raw="$b" ;; asr) raw="$a" ;; web) raw="$w" ;; esac
+    val="$(printf '%s' "$raw" | grep -o '"commit": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    ver="$(printf '%s' "$raw" | grep -o '"version": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    if [ -n "$ver" ] && [ -n "$want" ] && [ "$ver" != "$want" ]; then v_warn "Образ $name показывает версию $ver, а в VERSION $want — пересоберите: scripts/rebuild.sh"; fi
     if [ -z "$val" ]; then v_warn "Версия образа $name не определена (старый образ без version.json/commit?) — пересоберите: scripts/rebuild.sh"
     elif [ "$val" = unknown ]; then v_warn "Образ $name: commit=unknown (собран без данных Git, например вручную командой docker compose build) — пересоберите: scripts/rebuild.sh"
     elif [ "$val" != "$head" ]; then v_warn "Образ $name собран из commit $val, а git HEAD = $head — пересоберите: scripts/rebuild.sh"
-    else v_ok "Образ $name: commit $val = git HEAD"; fi
+    else v_ok "Образ $name: версия ${ver:-?} · commit ${val:0:7} = git HEAD"; fi
   done
 }
 

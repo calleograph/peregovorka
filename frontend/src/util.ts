@@ -43,3 +43,12 @@ export function fileBase(name: string, iso: string): string {
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return `${name.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 60)}_${stamp}`;
 }
+
+/** Короткий commit для показа (как `git log --oneline`). */
+export const shortCommit = (c: string | null | undefined): string => (c && c !== "unknown" ? c.slice(0, 7) : "");
+
+/** «0.1.4 · 6123022» — версия проекта и commit сборки (commit неизвестен — только версия). */
+export const versionLabel = (version: string, commit?: string | null): string => {
+  const c = shortCommit(commit);
+  return c ? `${version} · ${c}` : version;
+};
