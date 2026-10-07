@@ -91,10 +91,10 @@ async def client_event(request: Request, body: dict[str, Any] = Body(...), su: S
         raise HTTPException(status_code=422, detail="Неизвестное событие")
     # Защита журнала и Redis от заливки: не более EVENTS_PER_MINUTE событий в минуту от одного пользователя (лишние отбрасываются).
     r0 = request.app.state.redis
-    bucket = f"client:evrate:{su.user_id}:{int(time.time() // 60)}"
+    bucket = f"client:evrate:{su.user_id}"
     n = await r0.incr(bucket)
     if n == 1:
-        await r0.expire(bucket, 120)
+        await r0.expire(bucket, 60)  # окно в минуту отсчитывается от первого события (не от границы часа — так счёт предсказуем)
     if n > EVENTS_PER_MINUTE:
         raise HTTPException(status_code=429, detail="Слишком много событий диагностики", headers={"Retry-After": "30"})
     item = {"ts": time.time(), "event": ev, "user": su.sam_account_name, "meeting_id": _str(body.get("meeting_id"), 40),
