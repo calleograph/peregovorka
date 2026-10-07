@@ -70,6 +70,9 @@ export default function RoomPage() {
   const [instance, setInstance] = useState("");
   const [micPrefs, setMicPrefs] = useState<MicPrefs>(() => loadMicPrefs());
   const [micFail, setMicFail] = useState<"busy" | "denied" | "other" | null>(null);
+  const [notice, setNotice] = useState<{ kind: "info" | "ok" | "warn"; text: string } | null>(null);
+  const [welcome, setWelcome] = useState<string | null>(null);
+  const lastMicToggle = useRef(0);
   const [connectTry, setConnectTry] = useState<{ attempt: number; max: number } | null>(null);
 
   const roomRef = useRef<LkRoom | null>(null);
@@ -250,7 +253,14 @@ export default function RoomPage() {
     let connectedOnce = false; // отказ ПЕРВОГО подключения обрабатывает вызывающий код; автоматический повторный вход — только после успешного
     room
       .on(RoomEvent.ParticipantConnected, refresh).on(RoomEvent.ParticipantDisconnected, refresh)
-      .on(RoomEvent.TrackMuted, refresh).on(RoomEvent.TrackUnmuted, refresh)
+      .on(RoomEvent.TrackMuted, (pub, who) => {
+        refresh();
+        // микрофон выключили не мы сами (кнопкой) — значит, руководитель комнаты
+        if (who.isLocal && pub.source === Track.Source.Microphone && Date.now() - lastMicToggle.current > 2500) {
+          setNotice({ kind: "warn", text: "Руководитель выключил ваш микрофон. Когда будете готовы говорить, нажмите «Микрофон»." });
+          reportEvent("muted_by_moderator", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name });
+        }
+      }).on(RoomEvent.TrackUnmuted, refresh)
       .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, (pub) => {
         refresh();
@@ -399,12 +409,15 @@ export default function RoomPage() {
     setAsrLost(false);
     setWithAudio(info.client.screen_share_audio);
     setNeedPassword(false);
+    setWelcome(info.client.welcome_message ?? null);
+    setNotice(info.client.mute_on_join ? { kind: "info", text: "В этой переговорке микрофон по умолчанию выключен. Чтобы говорить, нажмите «Микрофон»." } : null);
     setJoin(info); // комната и канал событий открываются сразу — параллельно с подключением к LiveKit
     setBusy(false);
     // Критический путь — Room.connect. Всё независимое идёт рядом: микрофон (getUserMedia, включая запрос разрешения) начинается
     // немедленно и не ждёт подключения; канал событий (WebSocket) открывает TranscriptPanel при появлении комнаты.
     tl.mark("gumStart");
-    prepMicRef.current = createLocalAudioTrack(captureOptions(loadMicPrefs())).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
+    // «микрофон по умолчанию выключен» (настройка переговорки): звук не запрашиваем и не включаем — пользователь включит сам
+    if (!info.client.mute_on_join) prepMicRef.current = createLocalAudioTrack(captureOptions(loadMicPrefs())).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
     void collectAll().then((data) => reportEvent("join_attempt", { meetingId: info.meeting_id, room: info.room.name, data }));
     try {
       // Первое подключение переживает кратковременные сбои сети/ICE: до MAX_CONNECT_TRIES попыток с нарастающей паузой и свежим токеном
@@ -426,7 +439,7 @@ export default function RoomPage() {
         }
       }
       setConnectTry(null);
-      void enableMic();
+      if (!info.client.mute_on_join) void enableMic();
     } catch (e) {
       const m = describeMediaError(e, "connect");
       setConnectTry(null);
@@ -460,6 +473,7 @@ export default function RoomPage() {
   const toggle = async (what: "mic" | "cam" | "screen") => {
     const lp = roomRef.current?.localParticipant;
     if (!lp || !join) return;
+    if (what === "mic") { lastMicToggle.current = Date.now(); setNotice(null); }
     setErr(what === "cam" ? "cam" : what, undefined);
     try {
       if (what === "mic") {
@@ -503,6 +517,15 @@ export default function RoomPage() {
     catch (e) { fail("mic", "mic", "mic_failed", e); }
   }, [fail, setErr]);
   const toggleNoise = () => applyMicPrefs({ ...micPrefs, noiseSuppression: !micPrefs.noiseSuppression }, micPrefs.noiseSuppression ? "noise_off" : "noise_on");
+
+  /** Руководитель: выключить микрофоны у всех или у одного участника. */
+  const moderate = async (who?: PView) => {
+    if (!join) return;
+    try {
+      const r = who ? await api.muteOne(join.meeting_id, who.identity) : await api.muteAll(join.meeting_id);
+      setNotice({ kind: "ok", text: who ? (r.muted ? `Микрофон выключен: ${who.name}.` : `У участника ${who.name} микрофон уже выключен.`) : (r.muted ? `Микрофоны выключены у участников: ${r.muted}.` : "Ни у кого не было включённого микрофона.") });
+    } catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось выключить микрофоны." }); }
+  };
 
   const toggleRecording = async () => {
     if (!join) return;
@@ -640,10 +663,12 @@ export default function RoomPage() {
 
         {sharer && <ScreenStage key={sharer.identity} p={sharer} />}
         <div className={`tiles n${n} ${sharer ? "strip" : ""}`}>
-          {participants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} />)}
+          {participants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} onMute={join.client.can_moderate ? moderate : undefined} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 
+        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
+        {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
         {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
         <div className="controls rbar">
           <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
@@ -681,6 +706,12 @@ export default function RoomPage() {
             <Ctl error={ctlErr.rec} onClose={() => setErr("rec")}>
               <RoundButton icon={recording ? "recordStop" : "record"} label={recording ? "Остановить запись" : "Начать запись"} tone={recording ? "rec" : "neutral"} pressed={recording}
                            disabled={ended} onClick={toggleRecording} />
+            </Ctl>
+          )}
+          {join.client.can_moderate && (
+            <Ctl onClose={() => undefined}>
+              <RoundButton icon="micOff" label="Выключить у всех" tone="neutral" title="Выключить микрофоны у всех участников (у вас — нет). Каждый сможет включить свой снова"
+                           disabled={ended || stage !== "ready"} onClick={() => void moderate()} />
             </Ctl>
           )}
           <div className="spacer" />

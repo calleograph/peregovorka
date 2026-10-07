@@ -12,11 +12,12 @@ from .entities import (
     Recording,
     Room,
     RoomAcl,
+    RoomModerator,
     TranscriptSegment,
     User,
 )
 
 __all__ = [
     "Base", "utcnow", "ApiProfile", "AppSetting", "AuditLog", "EventLog", "Meeting", "MeetingGrant", "MeetingParticipant", "Protocol", "ProtocolTemplate", "Recording",
-    "Room", "RoomAcl", "TranscriptSegment", "User",
+    "Room", "RoomAcl", "RoomModerator", "TranscriptSegment", "User",
 ]

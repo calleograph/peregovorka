@@ -8,7 +8,11 @@ export interface Room {
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
 }
-export interface ClientConfig { screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean }
+export interface ClientConfig {
+  screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
+  /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
+  can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
+}
 export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
   recording: boolean; asr_ready: boolean; client: ClientConfig;
@@ -88,6 +92,7 @@ export interface RoomAdmin {
   screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
+  mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
@@ -184,6 +189,9 @@ export const api = {
   rooms: () => request<Room[]>("GET", "/rooms"),
   join: (roomId: string, password?: string) => request<JoinInfo>("POST", `/rooms/${roomId}/join`, { password: password || null }),
   leave: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/leave`),
+  /** Руководитель комнаты: выключить микрофоны у всех участников (кроме себя) или у одного. */
+  muteAll: (meetingId: string) => request<{ muted: number }>("POST", `/meetings/${meetingId}/moderation/mute-all`),
+  muteOne: (meetingId: string, identity: string) => request<{ muted: number }>("POST", `/meetings/${meetingId}/moderation/mute`, { identity }),
   endMeeting: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/end`),
   meetings: (roomId?: string, offset = 0) => request<Meeting[]>("GET", `/meetings?limit=30&offset=${offset}${roomId ? `&room_id=${roomId}` : ""}`),
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),

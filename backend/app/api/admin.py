@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
-from ..models import AuditLog, Meeting, Room, RoomAcl
+from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
 from ..services.audit import write_audit
 from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
               "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
-              "anonymize_mode", "llm_profile_id", "anonymizer_profile_id")
+              "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "welcome_message")
 
 
 def _acl_rows(entries: list[AclEntryIn]) -> list[RoomAcl]:
@@ -33,6 +33,18 @@ def _acl_rows(entries: list[AclEntryIn]) -> list[RoomAcl]:
     return rows
 
 
+def _mod_rows(entries: list[AclEntryIn]) -> list[RoomModerator]:
+    seen: set[tuple[str, str]] = set()
+    rows = []
+    for e in entries:
+        ref = e.subject_ref.strip().lower()
+        if (e.subject_type, ref) in seen:
+            continue
+        seen.add((e.subject_type, ref))
+        rows.append(RoomModerator(subject_type=e.subject_type, subject_ref=ref, display_name=e.display_name))
+    return rows
+
+
 async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
     active = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).scalar_one_or_none()
     return RoomAdminOut(
@@ -43,6 +55,8 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days,
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
+        mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
+        moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
     )
@@ -68,8 +82,10 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         audio_retention_days=body.audio_retention_days if "audio_retention_days" in body.model_fields_set else settings.default_audio_retention_days,
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
+        mute_on_join=body.mute_on_join, welcome_message=body.welcome_message,
     )
     room.acl = _acl_rows(body.acl)
+    room.moderators = _mod_rows(body.moderators)
     db.add(room)
     try:
         await db.flush()
@@ -114,6 +130,11 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
         await db.flush()
         room.acl.extend(_acl_rows(body.acl))
         changed["acl"] = [{"type": a.subject_type, "ref": a.subject_ref} for a in room.acl]
+    if body.moderators is not None:
+        room.moderators.clear()
+        await db.flush()
+        room.moderators.extend(_mod_rows(body.moderators))
+        changed["moderators"] = [{"type": m.subject_type, "ref": m.subject_ref} for m in room.moderators]
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.update", target_type="room",
                       target_id=str(room.id), ip=client_ip(request), details=changed)
     await db.commit()

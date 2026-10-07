@@ -27,13 +27,17 @@ log = logging.getLogger("asr")
 DESIRED_MODEL_KEY = "asr:desired_model"  # желаемая модель из админки (пишет backend); ASR применяет её сам
 
 
-def _livekit_sdk() -> str | None:
+def _pkg_version(name: str) -> str | None:
     try:
         from importlib.metadata import version
 
-        return version("livekit")
+        return version(name)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _livekit_sdk() -> str | None:
+    return _pkg_version("livekit")
 
 
 async def watch_desired_model(redis: Redis, models: ModelManager, interval: float = 5.0) -> None:
@@ -77,7 +81,7 @@ async def amain() -> None:
             "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
-            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(),
+            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"),
             **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
             "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }

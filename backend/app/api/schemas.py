@@ -13,13 +13,7 @@ class LoginIn(BaseModel):
     login: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=512, repr=False)
 
-    @field_validator("password")
-    @classmethod
-    def _no_control_chars(cls, v: str) -> str:
-        # управляющие символы (в т. ч. NUL) в пароле не бывают нормальными и опасны для LDAP-клиента
-        if any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
-            raise ValueError("Недопустимые символы в пароле")
-        return v
+    # Пароль не фильтруется по символам: допустим любой набор (в LDAP он передаётся как значение bind, а не как часть фильтра).
 
 
 class UserOut(BaseModel):
@@ -62,6 +56,9 @@ class ClientConfig(BaseModel):
     screen_profile: str = "sharp"
     screen_share_audio: bool = False
     one_sharer_at_a_time: bool = False
+    can_moderate: bool = False      # руководитель комнаты / администратор: может выключать микрофоны участников
+    mute_on_join: bool = False      # участники входят с выключенным микрофоном
+    welcome_message: str | None = None
 
 
 class JoinOut(BaseModel):
@@ -147,7 +144,10 @@ class RoomAdminOut(BaseModel):
     anonymize_mode: str = "inherit"
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
+    mute_on_join: bool = False
+    welcome_message: str | None = None
     acl: list[AclEntryOut]
+    moderators: list[AclEntryOut] = Field(default_factory=list)
     active_meeting_id: uuid.UUID | None = None
 
 
@@ -169,7 +169,10 @@ class RoomCreateIn(BaseModel):
     anonymize_mode: str = Field(default="inherit", pattern="^(inherit|on|off)$")
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
+    mute_on_join: bool = False
+    welcome_message: str | None = Field(default=None, max_length=2000)
     acl: list[AclEntryIn] = Field(default_factory=list)
+    moderators: list[AclEntryIn] = Field(default_factory=list)
 
     @field_validator("slug")
     @classmethod
@@ -198,4 +201,7 @@ class RoomPatchIn(BaseModel):
     anonymize_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
+    mute_on_join: bool | None = None
+    welcome_message: str | None = Field(default=None, max_length=2000)
     acl: list[AclEntryIn] | None = None
+    moderators: list[AclEntryIn] | None = None

@@ -10,3 +10,5 @@ pydantic-settings>=2.15.0,<3
 livekit==1.1.20  # проверенная версия (deployment/compat.env)
 livekit-api==1.2.1  # проверенная версия (deployment/compat.env)
 silero-vad>=6.2.3,<7
+# Runtime GGUF-моделей (Q5_K_M): Python-привязки transcribe.cpp с готовыми колёсами (Linux x86_64/arm64, Windows, macOS); модель резидентна в памяти.
+transcribe-cpp>=0.3.1,<0.4

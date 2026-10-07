@@ -14,9 +14,23 @@ class RoomNotFound(Exception):
     pass
 
 
+def _matches(entries, su: SessionUser) -> bool:
+    for entry in entries:
+        if entry.subject_type == "group" and entry.subject_ref.lower() in su.groups:
+            return True
+        if entry.subject_type == "user" and entry.subject_ref.lower() == su.ad_guid.lower():
+            return True
+    return False
+
+
+def is_moderator(room: Room, su: SessionUser) -> bool:
+    """Администратор сервера — руководитель любой комнаты; остальные — по списку руководителей комнаты (группа AD или пользователь)."""
+    return su.is_admin or _matches(room.moderators, su)
+
+
 def acl_allows(room: Room, su: SessionUser) -> bool:
-    """Пустой ACL = доступ только администраторам. Админ видит все включённые комнаты."""
-    if su.is_admin:
+    """Пустой ACL = доступ только администраторам. Админ видит все включённые комнаты. Руководителю комнаты вход разрешён всегда."""
+    if su.is_admin or _matches(room.moderators, su):
         return True
     for entry in room.acl:
         if entry.subject_type == "group" and entry.subject_ref.lower() in su.groups:

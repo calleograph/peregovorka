@@ -161,6 +161,8 @@ services:
       - ${LDAP_CA_FILE:?}:/run/secrets/ldap-ca.pem:ro
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
+      # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления
+      - ${DATA_ROOT}/updater:/data/updater
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=4).status == 200 else 1)"]
       interval: 15s

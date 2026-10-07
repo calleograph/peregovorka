@@ -109,3 +109,33 @@ async def list_present_identities(settings: Settings, room_name: str) -> set[str
             return set()
         log.warning("LiveKit недоступен при сверке участников", extra={"error": type(exc).__name__})
         return None
+
+
+async def mute_microphones(settings: Settings, room_name: str, *, only: set[str] | None = None, exclude: set[str] | None = None) -> list[str] | None:
+    """Выключает (mute) микрофонные дорожки участников на стороне сервера LiveKit.
+
+    only — только эти идентичности (иначе все); exclude — кроме них (например, сам руководитель). Служебные участники (ASR) не затрагиваются.
+    Возвращает идентичности, у которых микрофон был включён и теперь выключен; None — LiveKit недоступен.
+    Участник может включить микрофон сам: это «выключить звук», а не запрет.
+    """
+    from livekit.protocol import models as lkmodels  # noqa: PLC0415
+
+    exclude = exclude or set()
+    done: list[str] = []
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
+            for p in resp.participants:
+                if p.identity.startswith(SERVICE_IDENTITY_PREFIX) or p.identity in exclude or (only is not None and p.identity not in only):
+                    continue
+                hit = False
+                for t in p.tracks:
+                    if t.source == lkmodels.TrackSource.MICROPHONE and not t.muted:
+                        await lk.room.mute_published_track(lkapi.MuteRoomTrackRequest(room=room_name, identity=p.identity, track_sid=t.sid, muted=True))
+                        hit = True
+                if hit:
+                    done.append(p.identity)
+        return done
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось выключить микрофоны", extra={"room": room_name, "error": type(exc).__name__})
+        return None

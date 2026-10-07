@@ -193,14 +193,15 @@ async def test_compare_skips_missing_models_and_is_blocked_during_meetings(tmp_p
 
 
 # ---------------------------------------------------------------------------------- runtime GGUF
-def test_gguf_runtime_reports_clear_error_when_binary_or_file_is_missing(tmp_path):
+def test_gguf_runtime_reports_clear_error_when_binary_or_file_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "transcribe_cpp", None)  # привязки недоступны (в окружении разработчика они могут быть установлены)
     spec = default_catalog()[1]
     s = AsrSettings(asr_model_dir=str(tmp_path), asr_gguf_bin="definitely-not-installed-transcribe")
     p = build_for_spec(spec, s)
     with pytest.raises(ModelNotPreparedError, match="не найден"):
         p.load()  # нет файла модели
     (tmp_path / spec.files[0]).write_bytes(b"gguf")
-    with pytest.raises(RuntimeUnavailableError, match="transcribe.cpp"):
+    with pytest.raises(RuntimeUnavailableError, match="transcribe"):
         p.load()  # файл есть, движка нет
 
 

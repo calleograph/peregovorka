@@ -96,6 +96,8 @@ source "$ROOT/tests/scripts/part_docker.sh"
 source "$ROOT/tests/scripts/part_diag.sh"
 # shellcheck source=part_update.sh
 source "$ROOT/tests/scripts/part_update.sh"
+# shellcheck source=part_updater.sh
+source "$ROOT/tests/scripts/part_updater.sh"
 
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

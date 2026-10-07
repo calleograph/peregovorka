@@ -49,7 +49,7 @@ def default_catalog(model_name: str = "v3_e2e_rnnt") -> list[ModelSpec]:
         ModelSpec(
             id=Q5_ID, title="GigaAM v3 e2e RNNT — Q5_K_M", runtime="gguf", quant="Q5_K_M",
             files=("gigaam-v3-e2e-rnnt-Q5_K_M.gguf",),
-            description="Компактная квантованная модель (GGUF, transcribe.cpp) для снижения нагрузки на CPU и ускорения распознавания.",
+            description="Компактная квантованная модель (GGUF, движок transcribe.cpp встроен в образ ASR) для снижения нагрузки на CPU и ускорения распознавания.",
         ),
     ]
 

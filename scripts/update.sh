@@ -208,6 +208,8 @@ phase2() {
     [ -n "$BK" ] && upd_state_set db_backup "$BK"
   fi
 
+  upd_ensure_updater_dir
+
   step "Сборка образов (retry сети, fallback BuildKit → legacy, commit ${APP_GIT_COMMIT} в образах)"
   info "Сборка ASR (torch, pip install gigaam с GitHub) может занимать 15+ минут — это не зависание; каждую минуту печатается прогресс."
   [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }

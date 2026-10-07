@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Participant, Track } from "livekit-client";
+import { Icon } from "../Icons";
 import { IDENTITY, clampView, panBy, percent, wheelFactor, zoomAt, type Size, type View } from "../../screenZoom";
 
 export interface PView {
@@ -28,12 +29,17 @@ function State({ on, onText, offText, kind }: { on: boolean; onText: string; off
   return <span className={`state ${kind} ${on ? "on" : "off"}`} title={on ? onText : offText}><span aria-hidden>{kind === "mic" ? (on ? "🎙" : "🔇") : on ? "📷" : "🚫"}</span> {on ? onText : offText}</span>;
 }
 
-export function ParticipantTile({ p, compact }: { p: PView; compact?: boolean }) {
+export function ParticipantTile({ p, compact, onMute }: { p: PView; compact?: boolean; onMute?: (p: PView) => void }) {
   const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
   return (
     <div className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""}`} title={p.name}>
       <VideoTile p={p.participant} source={Track.Source.Camera} />
       {!p.cam && <div className="avatar" aria-hidden>{initials}</div>}
+      {onMute && !p.local && p.mic && (
+        <button type="button" className="tile-mute" onClick={(e) => { e.stopPropagation(); onMute(p); }} title={`Выключить микрофон: ${p.name}`} aria-label={`Выключить микрофон участнику ${p.name}`}>
+          <Icon name="micOff" size={16} /> <span>Выключить звук</span>
+        </button>
+      )}
       <div className="tile-foot">
         <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>
         <State kind="mic" on={p.mic} onText="микрофон" offText="без звука" />

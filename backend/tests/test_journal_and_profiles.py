@@ -444,11 +444,14 @@ def test_password_typed_into_login_field_is_not_stored_in_journal(client):
     assert "ecret Pass" not in dump and "некорректный формат логина" in dump
 
 
-def test_control_characters_in_password_are_rejected_before_ldap(client, directory):
-    calls = directory.calls
-    assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "ab\x00cd"}).status_code == 422
-    assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "ab\ncd"}).status_code == 422
-    assert directory.calls == calls
+def test_password_is_not_filtered_by_characters(client, directory):
+    """Любые символы в пароле допустимы (звёздочка, слэши, скобки, кавычки): пароль уходит в AD как значение, а не как часть фильтра."""
+    for i, pw in enumerate(["p*ss", "back\slash", "a)(b", "q'\"x", "100%_$", "ключ #1 ёЁ", "a" * 200]):
+        directory.add(f"pwuser{i}", pw)
+        r = client.post("/api/v1/auth/login", json={"login": f"pwuser{i}", "password": pw})
+        assert r.status_code == 200, (pw, r.text)
+        client.cookies.clear()
+    assert client.post("/api/v1/auth/login", json={"login": "pwuser0", "password": "wrong*"}).status_code == 401
 
 
 def test_api_responses_are_not_cacheable(client):

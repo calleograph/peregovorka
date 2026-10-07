@@ -22,8 +22,8 @@ class AsrSettings(BaseSettings):
     asr_provider: str = "gigaam"
     asr_model_name: str = "v3_e2e_rnnt"
     asr_model_id: str = "gigaam-v3-e2e-rnnt-full"  # модель по умолчанию, пока администратор не выбрал другую (хранится в админке)
-    asr_gguf_bin: str = "transcribe"  # исполняемый файл runtime GGUF (transcribe.cpp)
-    asr_gguf_args: str = "-m {model} -f {wav} -t {threads}"  # шаблон аргументов; интерфейс transcribe.cpp не проверялся
+    asr_gguf_bin: str = "transcribe"  # ЗАПАСНОЙ вариант: внешний исполняемый файл, если Python-привязки transcribe-cpp недоступны (обычно не нужен)
+    asr_gguf_args: str = "-m {model} -f {wav} -t {threads}"  # шаблон аргументов запасного варианта
     internal_api_token: str = ""  # защита изменяющих эндпоинтов (активация, тест, сравнение); пусто — только для разработки
     asr_model_dir: str = "/models/gigaam"
     asr_device: str = "cpu"  # cpu | cuda

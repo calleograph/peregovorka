@@ -70,10 +70,14 @@ class Room(Base):
     # Какой API использовать: пусто — общий по умолчанию. Ссылка мягкая (без FK): удалённый профиль = «по умолчанию».
     llm_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     anonymizer_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    # Участники входят с выключенным микрофоном (удобно для больших встреч); текст приветствия показывается при входе.
+    mute_on_join: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    welcome_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     acl: Mapped[list["RoomAcl"]] = relationship(back_populates="room", cascade="all, delete-orphan", lazy="selectin")
+    moderators: Mapped[list["RoomModerator"]] = relationship(back_populates="room", cascade="all, delete-orphan", lazy="selectin")
 
 
 class RoomAcl(Base):
@@ -89,6 +93,21 @@ class RoomAcl(Base):
     display_name: Mapped[str | None] = mapped_column(String(300))
 
     room: Mapped[Room] = relationship(back_populates="acl")
+
+
+class RoomModerator(Base):
+    """Руководитель (модератор) комнаты: AD-группа или пользователь. Может выключать микрофоны участников; вход в комнату ему разрешён всегда."""
+
+    __tablename__ = "room_moderators"
+    __table_args__ = (UniqueConstraint("room_id", "subject_type", "subject_ref", name="uq_room_moderator_subject"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(10), nullable=False)  # 'group' | 'user'
+    subject_ref: Mapped[str] = mapped_column(String(512), nullable=False)  # group DN (lower) | ad_guid (lower)
+    display_name: Mapped[str | None] = mapped_column(String(300))
+
+    room: Mapped[Room] = relationship(back_populates="moderators")
 
 
 class Meeting(Base):

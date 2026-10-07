@@ -67,6 +67,7 @@ class Journal:
         self._cfg_at = 0.0
         self._ext_flushed_at = time.monotonic()
         self._wake = asyncio.Event()
+        self._flush_lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self.dropped = 0
         self.written = 0
@@ -106,7 +107,11 @@ class Journal:
 
     # ------------------------------------------------------------------------- запись
     async def flush(self) -> int:
-        """Записать накопленное (БД — сразу, внешнее хранилище — по расписанию или при force)."""
+        """Записать накопленное (БД — сразу, внешнее хранилище — по расписанию). Вызовы выполняются по одному: ожидающий видит результат предыдущего."""
+        async with self._flush_lock:
+            return await self._flush_locked()
+
+    async def _flush_locked(self) -> int:
         cfg = await self.config()
         batch: list[dict] = []
         while self._q and len(batch) < 2000:

@@ -12,7 +12,7 @@ from ..models import Meeting, MeetingParticipant, Room
 from ..services import timings
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
-from ..services.rooms import list_accessible_rooms
+from ..services.rooms import is_moderator, list_accessible_rooms
 from .schemas import ActiveMeetingOut, ClientConfig, JoinIn, JoinOut, RoomOut
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
@@ -73,5 +73,6 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
         token=result.token, identity=result.identity, recording=result.meeting.transcription_enabled, asr_ready=asr_ready,
         client=ClientConfig(screen_profile=screen.profile, screen_share_audio=screen.share_audio,
-                            one_sharer_at_a_time=screen.one_sharer_at_a_time),
+                            one_sharer_at_a_time=screen.one_sharer_at_a_time, can_moderate=is_moderator(result.room, su),
+                            mute_on_join=result.room.mute_on_join, welcome_message=result.room.welcome_message or None),
     )

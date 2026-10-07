@@ -1,0 +1,91 @@
+# shellcheck shell=bash
+# Подключается из run.sh после part_update.sh: исполнитель обновлений из веб-интерфейса (scripts/updater.sh). Используются: ROOT, TMP, t, mkorigin, pushnew
+PYJ="$(command -v python3 || command -v python || command -v py || true)"
+jget() { # jget ФАЙЛ ВЫРАЖЕНИЕ — значение поля из JSON (через python); пусто, если файл/поле некорректны
+  "$PYJ" - "$1" "$2" <<'PYX' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+v = eval(sys.argv[2], {"d": d})
+print(v if not isinstance(v, bool) else str(v).lower())
+PYX
+}
+
+export -f jget; export PYJ
+mkupdater() { # репозиторий с ПОДСТАВНЫМ update.sh: печатает этапы, пишет свои аргументы, код выхода берёт из файла $TMP/fake-rc
+  mkorigin
+  ( cd "$TMP/seed" && cat > scripts/update.sh <<'FAKE'
+#!/usr/bin/env bash
+echo "args: $*" >> "${FAKE_ARGS_FILE:-/dev/null}"
+echo "Обновление (подставное)"; echo "[1/3] Проверка"; echo "  \033[32mпорядок\033[0m"; sleep 1
+echo "[2/3] Сборка образов"; sleep 1; echo "[3/3] Запуск"
+exit "$(cat "${FAKE_RC_FILE:-/dev/null}" 2>/dev/null || echo 0)"
+FAKE
+    chmod +x scripts/update.sh; git add -A; git commit -qm "подставной update.sh"; git push -q origin main 2>/dev/null )
+  git -C "$TMP/cl" pull -q --ff-only 2>/dev/null
+  rm -rf "$TMP/upd-data"; mkdir -p "$TMP/upd-data"
+  UP="$TMP/cl/scripts/updater.sh"; CHD="$TMP/upd-data/updater"
+  export FAKE_ARGS_FILE="$TMP/fake-args" FAKE_RC_FILE="$TMP/fake-rc"; : > "$FAKE_ARGS_FILE"; echo 0 > "$FAKE_RC_FILE"
+}
+mkreq() { # mkreq ID ДЕЙСТВИЕ FORCE PULL ВОЗРАСТ_С [BY]
+  printf 'id=%s\naction=%s\nforce_build=%s\npull=%s\nby=%s\nat=%s\n' "$1" "$2" "$3" "$4" "${6:-admin}" "$(( $(date +%s) - $5 ))" > "$CHD/request.txt"
+}
+waitfor() { # waitfor СЕК команда... — ждать, пока команда не вернёт 0
+  local n="$1" i; shift
+  for ((i = 0; i < n * 5; i++)); do "$@" >/dev/null 2>&1 && return 0; sleep 0.2; done; return 1
+}
+
+if [ -n "$PYJ" ]; then
+  mkupdater
+  t "check: remote.json корректен, без новых изменений behind=0" bash -c '"$1" check --env "$2/cl/.env" >/dev/null 2>&1 && [ "$(jget "$3/remote.json" "d[\"behind\"]")" = 0 ]' _ "$UP" "$TMP" "$CHD"
+  t "check: ok=true, ветка и commit указаны, права на чтение у всех" bash -c 'jget "$1/remote.json" "d[\"ok\"]" | grep -q true && [ -n "$(jget "$1/remote.json" "d[\"current\"]")" ] && [ "$(stat -c %a "$1/remote.json" 2>/dev/null || echo 644)" = 644 ]' _ "$CHD"
+  pushnew
+  ( cd "$TMP/seed" && echo '"кавычки" и \ слэш' > q.txt && git add -A && git commit -qm 'Тема с "кавычками" и \ слэшем' && git push -q origin main 2>/dev/null )
+  t "check: новые commit'ы, миграции и параметры .env распознаны; кавычки в теме не ломают JSON" bash -c '"$1" check --env "$2/cl/.env" >/dev/null 2>&1 \
+     && [ "$(jget "$3/remote.json" "d[\"behind\"]")" = 2 ] && [ "$(jget "$3/remote.json" "d[\"migrations_changed\"]")" = 1 ] \
+     && [ "$(jget "$3/remote.json" "d[\"env_example_changed\"]")" = true ] && [ "$(jget "$3/remote.json" "d[\"ff_possible\"]")" = true ] \
+     && jget "$3/remote.json" "d[\"commits\"][0][\"subject\"]" | grep -q "кавычками"' _ "$UP" "$TMP" "$CHD"
+  t "check: нет сети/репозитория — ok=false и понятная ошибка, а не падение" bash -c 'git -C "$1/cl" remote set-url origin /нет/такого; "$2" check --env "$1/cl/.env" >/dev/null 2>&1; [ "$(jget "$3/remote.json" "d[\"ok\"]")" = false ] && [ -n "$(jget "$3/remote.json" "d[\"error\"]")" ]; r=$?; git -C "$1/cl" remote set-url origin "$1/o"; exit $r' _ "$TMP" "$UP" "$CHD"
+  t "print-unit: служба названа по проекту, запуск через updater.sh run, от текущего пользователя" bash -c '"$1" print-unit --env "$2/cl/.env" | grep -q "ExecStart=.*updater.sh run" && "$1" print-unit --env "$2/cl/.env" | grep -q "pg-upd"' _ "$UP" "$TMP"
+  t "install без подтверждения в не-терминале отказывает и ничего не ставит" bash -c '! "$1" install --env "$2/cl/.env" </dev/null >/dev/null 2>&1' _ "$UP" "$TMP"
+  t "status без запущенного исполнителя — ненулевой код" bash -c 'rm -f "$1/status.json"; ! "$2" status --env "$3/cl/.env" >/dev/null 2>&1' _ "$CHD" "$UP" "$TMP"
+
+  # ---- рабочий цикл: запрос из «веб-интерфейса» → update.sh --yes
+  "$UP" run --env "$TMP/cl/.env" --interval 1 > "$TMP/updater.out" 2>&1 &
+  UPPID=$!
+  t "run: пульс появился (status.json, state=idle), каталог обмена доступен всем" waitfor 15 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = idle ]' _ "$CHD"
+  t "run: второй экземпляр для того же проекта не стартует" bash -c 'command -v flock >/dev/null || exit 0; ! timeout 10 "$1" run --env "$2/cl/.env" --interval 1 >/dev/null 2>&1' _ "$UP" "$TMP"
+  mkreq aaaaaaaaaaaaaaaa update 1 0 5 ivanov
+  t "update: запрос выполнен, update.sh получил --yes и --force-build, request.txt удалён" waitfor 30 bash -c '[ "$(jget "$1/status.json" "d[\"result\"]")" = ok ] && grep -q -- "--yes" "$2" && grep -q -- "--force-build" "$2" && [ ! -f "$1/request.txt" ]' _ "$CHD" "$FAKE_ARGS_FILE"
+  t "update: журнал содержит этапы без управляющих последовательностей, шапку и итог" bash -c 'grep -q "^\[2/3\] Сборка образов" "$1/update.log" && grep -q "Обновление завершено.*успешно" "$1/update.log" && ! grep -q $'"'"'\x1b'"'"' "$1/update.log" && grep -q "запросил: ivanov" "$1/update.log"' _ "$CHD"
+  t "update: статус — этап 3/3, код 0, кто запросил" bash -c '[ "$(jget "$1/status.json" "d[\"step_no\"]")" = 3 ] && [ "$(jget "$1/status.json" "d[\"exit_code\"]")" = 0 ] && [ "$(jget "$1/status.json" "d[\"by\"]")" = ivanov ]' _ "$CHD"
+  t "update: после обновления remote.json пересчитан автоматически" bash -c '[ "$(jget "$1/remote.json" "d[\"checked_at\"]")" -ge "$(jget "$1/status.json" "d[\"finished_at\"]")" ] || [ "$(jget "$1/remote.json" "d[\"ok\"]")" = false ]' _ "$CHD"
+
+  echo 7 > "$FAKE_RC_FILE"; : > "$FAKE_ARGS_FILE"
+  mkreq bbbbbbbbbbbbbbbb update 0 1 5 petrov
+  t "ошибка update.sh: result=failed и код выхода передан в статус, исполнитель продолжает работать" waitfor 30 bash -c '[ "$(jget "$1/status.json" "d[\"result\"]")" = failed ] && [ "$(jget "$1/status.json" "d[\"exit_code\"]")" = 7 ] && grep -q -- "--pull" "$2" && ! grep -q -- "--force-build" "$2"' _ "$CHD" "$FAKE_ARGS_FILE"
+  t "после сбоя исполнитель жив (процесс и пульс)" bash -c 'kill -0 "$1" && [ "$(jget "$2/status.json" "d[\"state\"]")" = idle ]' _ "$UPPID" "$CHD"
+
+  : > "$FAKE_ARGS_FILE"; echo 0 > "$FAKE_RC_FILE"
+  mkreq cccccccccccccccc update 0 0 4000      # старше 10 минут
+  sleep 3
+  t "устаревший запрос не выполняется и удаляется" bash -c '[ ! -s "$1" ] && [ ! -f "$2/request.txt" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  mkreq "x;rm -rf /" update 0 0 5
+  sleep 3
+  t "запрос с некорректным id отклоняется" bash -c '[ ! -s "$1" ] && [ ! -f "$2/request.txt" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  mkreq dddddddddddddddd "update; id" 0 0 5
+  sleep 3
+  t "запрос с неизвестным действием не запускает ничего" bash -c '[ ! -s "$1" ]' _ "$FAKE_ARGS_FILE"
+  mkreq eeeeeeeeeeeeeeee update "1 --rm" "--x" 5 'a b;c'
+  sleep 4
+  t "флаги вне списка отбрасываются: update.sh получил только --yes/--env" bash -c 'grep -q -- "--yes" "$1" && ! grep -q -- "--rm\|--x\|;" "$1"' _ "$FAKE_ARGS_FILE"
+  mkreq ffffffffffffffff check 0 0 5
+  t "check по запросу обновляет remote.json, update.sh не запускается" bash -c 'sleep 3; n0=$(wc -l < "$1"); [ ! -f "$2/request.txt" ] && [ "$(jget "$2/remote.json" "d[\"checked_at\"]")" -ge "$(( $(date +%s) - 10 ))" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  t "status: исполнитель работает, ненулевой код при остановленном" bash -c '"$1" status --env "$2/cl/.env" >/dev/null 2>&1' _ "$UP" "$TMP"
+  kill "$UPPID" 2>/dev/null; wait "$UPPID" 2>/dev/null
+  t "остановка по сигналу: state=stopped" bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
+else
+  echo "(пропущено: нет python для проверки JSON исполнителя обновлений)"
+fi
+
+t "updater.sh и update.sh не выполняют ничего произвольного из запроса (нет eval/source request)" bash -c '! grep -nE "eval |source .*request|bash -c .*\\$\\(req" "$1/scripts/updater.sh" | grep -v "^[0-9]*:[[:space:]]*#"' _ "$ROOT"
+t "каталог обмена создаётся до запуска контейнеров (update.sh и install.sh)" bash -c 'grep -q "upd_ensure_updater_dir" "$1/scripts/update.sh" && grep -q "updater" "$1/scripts/install.sh" && grep -q "/data/updater" "$1/deployment/compose.yml"' _ "$ROOT"

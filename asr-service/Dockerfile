@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_RETRIES=
 
 # git нужен только на время сборки (установка GigaAM из зафиксированного коммита).
 RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libgomp1 git ca-certificates \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libgomp1 libstdc++6 git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # torch (CPU или CUDA — по индексу) ставится отдельно: общий для GigaAM и Silero VAD.

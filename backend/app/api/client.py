@@ -27,7 +27,7 @@ EVENTS = {
     # диагностика оборудования, сети и входа (попадает в журнал событий)
     "join_attempt", "ice_failed", "ice_slow", "connect_retry", "connect_failed", "network_info", "device_inventory",
     "mic_busy", "mic_permission_denied", "mic_released", "join_without_mic", "camera_busy", "noise_suppression_changed",
-    "audio_output_error", "page_hidden_long", "ice_stats",
+    "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator",
 }
 # категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
 META: dict[str, tuple[str, str]] = {
@@ -40,7 +40,7 @@ META: dict[str, tuple[str, str]] = {
     "camera_failed": ("device", "warn"), "publish_failed": ("device", "error"), "mic_busy": ("device", "warn"),
     "mic_permission_denied": ("device", "warn"), "camera_busy": ("device", "warn"), "device_inventory": ("device", "info"),
     "mic_released": ("device", "info"), "join_without_mic": ("device", "info"), "noise_suppression_changed": ("device", "info"),
-    "audio_output_error": ("device", "warn"), "autoplay_blocked": ("device", "warn"),
+    "audio_output_error": ("device", "warn"), "autoplay_blocked": ("device", "warn"), "muted_by_moderator": ("room", "info"),
     "screen_share_started": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
     "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
     "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"),

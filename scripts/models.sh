@@ -89,8 +89,11 @@ if [ "$GGUF" = 1 ]; then
     fetch "$GGUF_NAME" "$GG" "$MIN_CKPT_BYTES"
   elif [ -n "${GGUF_MODEL_URL:-}" ]; then
     fetch "$GGUF_NAME" "$GG" "$MIN_CKPT_BYTES" "$GGUF_MODEL_URL"
+  elif [ "$GGUF_NAME" = "gigaam-v3-e2e-rnnt-Q5_K_M.gguf" ]; then
+    # Публичный репозиторий квантованных моделей transcribe.cpp; хеш не проверяется (файлы могут обновляться)
+    fetch "$GGUF_NAME" "$GG" "$MIN_CKPT_BYTES" "https://huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf/resolve/main/$GGUF_NAME"
   else
     die "Для GGUF укажите --from-dir КАТАЛОГ с файлом $GGUF_NAME либо прямой URL в GGUF_MODEL_URL. Файл можно просто положить в $DEST вручную."
   fi
-  ok "GGUF-модель готова: $GG. Для запуска нужен runtime transcribe.cpp в образе ASR (см. DEPLOYMENT.md §6.3); выбор модели — в админке."
+  ok "GGUF-модель готова: $GG. Движок transcribe.cpp встроен в образ ASR (пакет transcribe-cpp); выбор модели — в админке."
 fi

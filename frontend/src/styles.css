@@ -441,3 +441,20 @@ label.inline select, label.inline input { width: auto; min-width: 120px; }
 .detail-grid .wide { grid-column: 1 / -1; }
 .profiles { margin-top: 18px; }
 @media (max-width: 860px) { .detail-grid { grid-template-columns: 1fr; } .bulkbar { top: calc(env(safe-area-inset-top, 0px) + 96px); } }
+
+/* форма комнаты: вкладки, списки людей, подсказки; кнопка «выключить звук» на плитке участника */
+.room-form .tabs { margin: 10px 0 16px; }
+.room-form [role="tabpanel"] { display: flex; flex-direction: column; gap: 4px; }
+.cols.two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.room-form h4 { margin: 0 0 4px; font-size: 14px; }
+.form-actions { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+.chips-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-list li { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px; max-width: 100%; }
+.chip-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.chip-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; width: 22px; height: 22px; border-radius: 50%; line-height: 1; }
+.chip-x:hover { background: var(--danger-bg); color: var(--danger-text); }
+.tile-mute { position: absolute; top: 8px; right: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(5, 7, 11, .72); border: 1px solid rgba(255, 255, 255, .25); border-radius: 999px; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; backdrop-filter: blur(4px); }
+.tile:hover .tile-mute, .tile:focus-within .tile-mute { opacity: 1; }
+.tile-mute:hover { background: var(--danger); border-color: var(--danger); }
+@media (hover: none) { .tile-mute { opacity: 1; } }
+.alert.welcome { border-left-width: 4px; }
