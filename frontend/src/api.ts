@@ -120,6 +120,28 @@ export interface AsrTestResult {
 }
 export interface AsrCompare { ok: boolean; error?: string; audio_s?: number; reference?: string; results: AsrTestResult[]; summary: string[]; note?: string }
 
+export interface UpdaterState {
+  available: boolean; heartbeat_age_s: number | null; state: string | null; request_id?: string; step_no?: number; step_total?: number; step_name?: string;
+  started_at?: number; finished_at?: number; exit_code?: number | null; result?: string; request_pending?: boolean; project?: string; by?: string;
+}
+export interface RemoteCommit { sha: string; date: string; subject: string }
+export interface RemoteInfo {
+  checked_at: number; age_s?: number; ok: boolean; error: string; branch: string; current: string; remote: string; behind: number; ahead: number;
+  ff_possible: boolean; local_changes: number; migrations_changed: number; env_example_changed: boolean; commits: RemoteCommit[];
+}
+export interface UpdatesOverview {
+  installed: { version: string; commit: string; built_at: string }; updater: UpdaterState; remote: RemoteInfo | null; active_meetings: number;
+  can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
+}
+export interface UpdateLog {
+  offset: number; size: number; text: string; reset: boolean; state: string | null; step_no: number | null; step_total: number | null; step_name: string | null;
+  exit_code: number | null; result: string | null; finished_at: number | null; available: boolean;
+}
+export interface ComponentRow {
+  key: string; title: string; installed: string | null; tested: string | null; latest: string | null; status: "ok" | "newer" | "ahead" | "unknown"; pinned: boolean; note: string;
+}
+export interface ComponentsInfo { rows: ComponentRow[]; internet: boolean; fetched_at: number | null; tested: Record<string, string>; project_latest: string | null }
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public retryAfter?: number) {
     super(message);
@@ -253,6 +275,12 @@ export const api = {
     journalDelete: (body: { ids: number[] } | ({ all_matching: true } & JournalQuery)) => request<{ deleted: number }>("POST", "/admin/journal/delete", body),
     journalPurge: () => request<{ db: number; external_days: number }>("POST", "/admin/journal/purge-now"),
     journalExportUrl: (range: "24h" | "7d" | "30d" | "all") => `/api/v1/admin/journal/export?range=${range}`,
+
+    updates: () => request<UpdatesOverview>("GET", "/admin/updates"),
+    updatesCheck: () => request<{ request_id: string }>("POST", "/admin/updates/check"),
+    updatesRun: (body: { confirm: true; force_build: boolean; pull: boolean }) => request<{ request_id: string }>("POST", "/admin/updates/run", body),
+    updatesLog: (offset: number) => request<UpdateLog>("GET", `/admin/updates/log?offset=${offset}`),
+    updateComponents: (refresh = false) => request<ComponentsInfo>("GET", `/admin/updates/components${refresh ? "?refresh=true" : ""}`),
 
     profiles: (kind: ProfileKind) => request<ApiProfile[]>("GET", `/admin/api-profiles?kind=${kind}`),
     createProfile: (body: { kind: ProfileKind; name: string; config: Record<string, unknown>; secret?: string; make_default?: boolean }) => request<ApiProfile>("POST", "/admin/api-profiles", body),

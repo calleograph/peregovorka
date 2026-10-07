@@ -4,6 +4,7 @@ import ClientDiagAdmin from "./admin/ClientDiagAdmin";
 import { anonFields, audioStorageFields, generalFields, journalFields, llmFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
+import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import SystemAdmin from "./admin/SystemAdmin";
@@ -18,6 +19,7 @@ const GROUPS: Group[] = [
   { title: "Обзор", pages: [
     { id: "system", label: "Состояние системы", render: (go) => <SystemAdmin onOpen={go} /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
+    { id: "updates", label: "Обновления и версии", render: () => <UpdatesAdmin /> },
   ] },
   { title: "Журналы", pages: [
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },

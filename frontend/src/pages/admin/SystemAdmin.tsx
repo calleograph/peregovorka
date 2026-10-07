@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { version as lkClientVersion } from "livekit-client";
 import { api, type ApiError, type JournalStats, type SystemStatus } from "../../api";
 import { bytes, downloadText } from "../../util";
+import ComponentsTable from "./ComponentsTable";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
   join_backend_ms: ["Обработка входа на сервере", "Время работы backend над запросом «Войти» (БД и выдача пропуска) без сети и прокси."],
@@ -124,12 +125,8 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
         </>
       )}
 
-      <h3>Версии компонентов реального времени</h3>
-      <table className="table compact"><tbody>
-        <tr><td>LiveKit Server</td><td>{s.versions?.livekit_server ?? "—"}</td></tr>
-        <tr><td>livekit-client (браузер)</td><td>{lkClientVersion}</td></tr>
-        <tr><td>livekit (Python SDK, ASR)</td><td>{s.versions?.livekit_python_sdk_asr ?? "—"}</td></tr>
-      </tbody></table>
+      <ComponentsTable compact />
+      <div className="row">{onOpen && <button className="btn mini" onClick={() => onOpen("updates")}>Обновления и подробности →</button>}</div>
       <p className="muted small">Совместимость проверяется на практике: в отчёте и в scripts/smoke-test.sh есть проба WebSocket на /rtc/v1 (ответ 404 означает устаревший сервер и медленный вход).</p>
 
       {s.kernel && (

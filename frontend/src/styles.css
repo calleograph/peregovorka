@@ -458,3 +458,19 @@ label.inline select, label.inline input { width: auto; min-width: 120px; }
 .tile-mute:hover { background: var(--danger); border-color: var(--danger); }
 @media (hover: none) { .tile-mute { opacity: 1; } }
 .alert.welcome { border-left-width: 4px; }
+
+/* обновления: окно хода обновления, сведения о версиях */
+.updates .card { margin-top: 14px; }
+.upd-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 8px; }
+.upd-versions .l { color: var(--muted); font-size: 12.5px; } .upd-versions .small-v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.6; }
+.commits { margin: 8px 0 0; padding-left: 18px; } .commits li { margin: 2px 0; }
+.chips-info { gap: 8px; margin: 8px 0; }
+pre.cmd { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 12px; margin: 8px 0; overflow-x: auto; font-size: 13px; }
+.upd-term { display: flex; flex-direction: column; gap: 10px; }
+.upd-progress .bar { height: 8px; border-radius: 4px; } .upd-progress .bar > i { transition: width .6s ease; background: var(--accent); }
+pre.term {
+  background: #070a10; color: #d7e0ee; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 12px 14px; margin: 0;
+  height: min(60vh, 520px); min-height: 220px; overflow: auto; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
+}
+pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.components .table td code { font-size: 12.5px; }

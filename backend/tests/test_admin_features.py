@@ -61,7 +61,8 @@ def test_screen_profile_reaches_clients_on_join(client):
     room = make_room(client)
     login(client, "alice")
     body = client.post(f"/api/v1/rooms/{room['id']}/join", json={}).json()
-    assert body["client"] == {"screen_profile": "motion", "screen_share_audio": True, "one_sharer_at_a_time": False}
+    assert body["client"] == {"screen_profile": "motion", "screen_share_audio": True, "one_sharer_at_a_time": False,
+                              "can_moderate": False, "mute_on_join": False, "welcome_message": None}
 
 
 # --------------------------------------------------------------------------- пользователи

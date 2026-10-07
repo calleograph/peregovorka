@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # Подключается из run.sh после part_update.sh: исполнитель обновлений из веб-интерфейса (scripts/updater.sh). Используются: ROOT, TMP, t, mkorigin, pushnew
-PYJ="$(command -v python3 || command -v python || command -v py || true)"
+export PYTHONIOENCODING=utf-8
+PYJ=""
+for _c in python3 python py; do command -v "$_c" >/dev/null 2>&1 && "$_c" -c "import json" >/dev/null 2>&1 && { PYJ="$_c"; break; }; done  # заглушки Windows Store не подходят
 jget() { # jget ФАЙЛ ВЫРАЖЕНИЕ — значение поля из JSON (через python); пусто, если файл/поле некорректны
   "$PYJ" - "$1" "$2" <<'PYX' 2>/dev/null
 import json, sys
@@ -58,31 +60,29 @@ if [ -n "$PYJ" ]; then
   t "update: запрос выполнен, update.sh получил --yes и --force-build, request.txt удалён" waitfor 30 bash -c '[ "$(jget "$1/status.json" "d[\"result\"]")" = ok ] && grep -q -- "--yes" "$2" && grep -q -- "--force-build" "$2" && [ ! -f "$1/request.txt" ]' _ "$CHD" "$FAKE_ARGS_FILE"
   t "update: журнал содержит этапы без управляющих последовательностей, шапку и итог" bash -c 'grep -q "^\[2/3\] Сборка образов" "$1/update.log" && grep -q "Обновление завершено.*успешно" "$1/update.log" && ! grep -q $'"'"'\x1b'"'"' "$1/update.log" && grep -q "запросил: ivanov" "$1/update.log"' _ "$CHD"
   t "update: статус — этап 3/3, код 0, кто запросил" bash -c '[ "$(jget "$1/status.json" "d[\"step_no\"]")" = 3 ] && [ "$(jget "$1/status.json" "d[\"exit_code\"]")" = 0 ] && [ "$(jget "$1/status.json" "d[\"by\"]")" = ivanov ]' _ "$CHD"
-  t "update: после обновления remote.json пересчитан автоматически" bash -c '[ "$(jget "$1/remote.json" "d[\"checked_at\"]")" -ge "$(jget "$1/status.json" "d[\"finished_at\"]")" ] || [ "$(jget "$1/remote.json" "d[\"ok\"]")" = false ]' _ "$CHD"
+  t "update: после обновления remote.json пересчитан автоматически" waitfor 15 bash -c '[ "$(jget "$1/remote.json" "d[\"checked_at\"]")" -ge "$(jget "$1/status.json" "d[\"finished_at\"]")" ] || [ "$(jget "$1/remote.json" "d[\"ok\"]")" = false ]' _ "$CHD"
 
   echo 7 > "$FAKE_RC_FILE"; : > "$FAKE_ARGS_FILE"
   mkreq bbbbbbbbbbbbbbbb update 0 1 5 petrov
   t "ошибка update.sh: result=failed и код выхода передан в статус, исполнитель продолжает работать" waitfor 30 bash -c '[ "$(jget "$1/status.json" "d[\"result\"]")" = failed ] && [ "$(jget "$1/status.json" "d[\"exit_code\"]")" = 7 ] && grep -q -- "--pull" "$2" && ! grep -q -- "--force-build" "$2"' _ "$CHD" "$FAKE_ARGS_FILE"
-  t "после сбоя исполнитель жив (процесс и пульс)" bash -c 'kill -0 "$1" && [ "$(jget "$2/status.json" "d[\"state\"]")" = idle ]' _ "$UPPID" "$CHD"
+  t "после сбоя исполнитель жив: процесс работает и возвращается в состояние idle" waitfor 15 bash -c 'kill -0 "$1" && [ "$(jget "$2/status.json" "d[\"state\"]")" = idle ]' _ "$UPPID" "$CHD"
 
   : > "$FAKE_ARGS_FILE"; echo 0 > "$FAKE_RC_FILE"
   mkreq cccccccccccccccc update 0 0 4000      # старше 10 минут
-  sleep 3
-  t "устаревший запрос не выполняется и удаляется" bash -c '[ ! -s "$1" ] && [ ! -f "$2/request.txt" ]' _ "$FAKE_ARGS_FILE" "$CHD"
-  mkreq "x;rm -rf /" update 0 0 5
-  sleep 3
-  t "запрос с некорректным id отклоняется" bash -c '[ ! -s "$1" ] && [ ! -f "$2/request.txt" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  t "устаревший запрос не выполняется и удаляется" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  mkreq "x;touch /tmp/pwned" update 0 0 5
+  t "запрос с некорректным id отклоняется" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD"
   mkreq dddddddddddddddd "update; id" 0 0 5
-  sleep 3
-  t "запрос с неизвестным действием не запускает ничего" bash -c '[ ! -s "$1" ]' _ "$FAKE_ARGS_FILE"
+  t "запрос с неизвестным действием не запускает ничего" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD"
   mkreq eeeeeeeeeeeeeeee update "1 --rm" "--x" 5 'a b;c'
-  sleep 4
-  t "флаги вне списка отбрасываются: update.sh получил только --yes/--env" bash -c 'grep -q -- "--yes" "$1" && ! grep -q -- "--rm\|--x\|;" "$1"' _ "$FAKE_ARGS_FILE"
+  t "флаги вне списка отбрасываются: update.sh получил только --yes/--env" waitfor 30 bash -c 'grep -q -- "--yes" "$1" && ! grep -q -- "--rm\|--x\|;" "$1"' _ "$FAKE_ARGS_FILE"
+  waitfor 30 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = idle ]' _ "$CHD"   # дождаться окончания предыдущего обновления
+  : > "$FAKE_ARGS_FILE"; T0="$(date +%s)"
   mkreq ffffffffffffffff check 0 0 5
-  t "check по запросу обновляет remote.json, update.sh не запускается" bash -c 'sleep 3; n0=$(wc -l < "$1"); [ ! -f "$2/request.txt" ] && [ "$(jget "$2/remote.json" "d[\"checked_at\"]")" -ge "$(( $(date +%s) - 10 ))" ]' _ "$FAKE_ARGS_FILE" "$CHD"
+  t "check по запросу обновляет remote.json, update.sh не запускается" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ "$(jget "$2/remote.json" "d[\"checked_at\"]")" -ge "$3" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD" "$T0"
   t "status: исполнитель работает, ненулевой код при остановленном" bash -c '"$1" status --env "$2/cl/.env" >/dev/null 2>&1' _ "$UP" "$TMP"
   kill "$UPPID" 2>/dev/null; wait "$UPPID" 2>/dev/null
-  t "остановка по сигналу: state=stopped" bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
+  t "остановка по сигналу: state=stopped" waitfor 10 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
 else
   echo "(пропущено: нет python для проверки JSON исполнителя обновлений)"
 fi

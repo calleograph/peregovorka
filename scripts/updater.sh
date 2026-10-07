@@ -104,6 +104,9 @@ do_update() { # do_update FORCE PULL
         fi
       done
   rc="${PIPESTATUS[0]}"
+  # цикл разбора вывода выполнялся в подоболочке: последний этап берём из журнала
+  line="$(grep -E '^\[[0-9]+/[0-9]+\][[:space:]]' "$LOG" 2>/dev/null | tail -1)"
+  if [[ "$line" =~ ^\[([0-9]+)/([0-9]+)\][[:space:]]+(.*)$ ]]; then STEP_NO="${BASH_REMATCH[1]}"; STEP_TOTAL="${BASH_REMATCH[2]}"; STEP_NAME="${BASH_REMATCH[3]}"; fi
   FINISHED="$(date +%s)"; EXIT_CODE="$rc"; STATE="idle"
   if [ "$rc" -eq 0 ]; then RESULT="ok"; else RESULT="failed"; fi
   printf '=== Обновление завершено %s: %s (код %s) ===\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$([ "$rc" -eq 0 ] && echo 'успешно' || echo 'С ОШИБКОЙ')" "$rc" >> "$LOG"
