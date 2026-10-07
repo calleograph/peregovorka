@@ -91,8 +91,9 @@ async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 
 @router.post("/{meeting_id}/leave", status_code=204)
 async def leave_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    await get_meeting_for_user(request, db, meeting_id, su)
+    m = await get_meeting_for_user(request, db, meeting_id, su)
     await request.app.state.meetings.leave(db, meeting_id, su.user_id)
+    request.app.state.journal.emit("room", "leave", user=su.sam_account_name, room=m.room.name, meeting_id=str(meeting_id), ip=client_ip(request))
 
 
 @router.post("/{meeting_id}/release", status_code=204)
@@ -203,7 +204,8 @@ async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str
                               su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Инструкция по умолчанию для окна «Сформировать протокол» (общая + дополнения переговорки)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
-    return {"kind": kind, "instruction": await request.app.state.protocols.default_instruction(db, meeting, kind)}
+    ps = request.app.state.protocols
+    return {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "plan": await ps.plan(db, meeting)}
 
 
 @router.post("/{meeting_id}/protocols", status_code=202)
@@ -220,10 +222,12 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
         raise HTTPException(status_code=422, detail="instruction: строка до 20000 символов")
     if meeting.ended_at is None:
         raise HTTPException(status_code=409, detail="Протокол формируется после завершения встречи")
-    svc = request.app.state.settings_svc
-    if not (await svc.get(db, "anonymizer")).enabled or not (await svc.get(db, "llm")).enabled:  # type: ignore[attr-defined]
-        raise HTTPException(status_code=409, detail="Обезличивание и LLM не настроены администратором")
     ps = request.app.state.protocols
+    plan = await ps.plan(db, meeting)
+    if not plan["llm_ready"]:
+        raise HTTPException(status_code=409, detail="Языковая модель (LLM) не настроена администратором")
+    if not plan["anonymizer_ready"]:
+        raise HTTPException(status_code=409, detail="Для этой переговорки включено обезличивание, но сервис обезличивания не настроен")
     pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction)
     ps.start_protocol(pid)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.create",

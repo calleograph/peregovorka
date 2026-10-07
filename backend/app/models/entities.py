@@ -65,6 +65,11 @@ class Room(Base):
     # Кто видит завершённую встречу после выхода: 'admin' — только администраторы (и участники, пока они на странице встречи);
     # 'participants' — участники встречи; явные разрешения (meeting_grants) действуют всегда.
     history_access: Mapped[str] = mapped_column(String(20), default="admin", server_default="admin", nullable=False)
+    # Обезличивание текста перед LLM для этой комнаты: inherit — как в общих настройках, on — всегда, off — выключено (текст идёт в LLM как есть).
+    anonymize_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
+    # Какой API использовать: пусто — общий по умолчанию. Ссылка мягкая (без FK): удалённый профиль = «по умолчанию».
+    llm_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    anonymizer_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -251,3 +256,42 @@ class MeetingGrant(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     user: Mapped[User] = relationship(lazy="joined")
+
+
+class ApiProfile(Base):
+    """Именованный API внешнего сервиса: языковой модели (kind=llm) или обезличивания (kind=anonymizer). Несколько на тип;
+    один — по умолчанию, комната может выбрать свой. Секрет (токен/ключ) хранится зашифрованным."""
+
+    __tablename__ = "api_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)  # поля настроек без секрета
+    secret_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("kind", "name", name="uq_api_profile_name"),)
+
+
+class EventLog(Base):
+    """Журнал событий для диагностики: входы, подключения, ошибки устройств, сеть, действия. Хранится N дней (по умолчанию 30),
+    очищается автоматически; опционально дублируется во внешнее хранилище. Содержимое разговоров и секреты сюда не попадают."""
+
+    __tablename__ = "event_log"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    level: Mapped[str] = mapped_column(String(8), index=True, default="info", nullable=False)  # debug|info|warn|error
+    category: Mapped[str] = mapped_column(String(24), index=True, nullable=False)  # auth|room|client|device|network|admin|llm|storage|asr|system
+    event: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    user_name: Mapped[str | None] = mapped_column(String(300), index=True)
+    room: Mapped[str | None] = mapped_column(String(200), index=True)
+    meeting_id: Mapped[str | None] = mapped_column(String(40))
+    ip: Mapped[str | None] = mapped_column(String(64))
+    client: Mapped[str | None] = mapped_column(String(160))   # «Chrome 130 · Windows 11» — браузер и ОС
+    message: Mapped[str | None] = mapped_column(String(600))
+    data: Mapped[dict | None] = mapped_column(JSONType)
+    request_id: Mapped[str | None] = mapped_column(String(64))

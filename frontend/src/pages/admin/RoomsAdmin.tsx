@@ -1,17 +1,19 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type AclEntry, type ApiError, type DirHit, type HistoryAccess, type RoomAdmin } from "../../api";
+import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile, type DirHit, type HistoryAccess, type RoomAdmin } from "../../api";
 
 interface Form {
   id?: string; slug: string; name: string; description: string; is_enabled: boolean; max_participants: number;
   password: string; clearPassword: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; aclText: string; history_access: HistoryAccess;
+  anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string;
 }
 
 const empty: Form = {
   slug: "", name: "", description: "", is_enabled: true, max_participants: 20, password: "", clearPassword: false,
   transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
   text_retention_days: "", audio_retention_days: "", protocol_instructions: "", aclText: "", history_access: "admin",
+  anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "",
 };
 
 // ACL в форме: по строке на запись — «group: <DN группы AD>» или «user: <objectGUID>».
@@ -27,7 +29,8 @@ function toForm(r: RoomAdmin): Form {
     max_participants: r.max_participants, password: "", clearPassword: false, transcription_enabled: r.transcription_enabled,
     record_audio: r.record_audio, camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
     text_retention_days: r.text_retention_days?.toString() ?? "", audio_retention_days: r.audio_retention_days?.toString() ?? "",
-    protocol_instructions: r.protocol_instructions ?? "", aclText: aclToText(r.acl), history_access: r.history_access ?? "admin" };
+    protocol_instructions: r.protocol_instructions ?? "", aclText: aclToText(r.acl), history_access: r.history_access ?? "admin",
+    anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "" };
 }
 
 export default function RoomsAdmin() {
@@ -35,6 +38,13 @@ export default function RoomsAdmin() {
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [llmProfiles, setLlmProfiles] = useState<ApiProfile[]>([]);
+  const [anonProfiles, setAnonProfiles] = useState<ApiProfile[]>([]);
+  useEffect(() => {
+    if (!form) return;
+    void api.admin.profiles("llm").then(setLlmProfiles).catch(() => undefined);
+    void api.admin.profiles("anonymizer").then(setAnonProfiles).catch(() => undefined);
+  }, [form === null]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(() => api.admin.rooms().then(setRooms).catch((e) => setError(e.message)), []);
   useEffect(() => { void load(); }, [load]);
@@ -49,6 +59,7 @@ export default function RoomsAdmin() {
       screen_share_allowed: form.screen_share_allowed, text_retention_days: days(form.text_retention_days),
       audio_retention_days: days(form.audio_retention_days), protocol_instructions: form.protocol_instructions || null,
       acl: parseAcl(form.aclText), history_access: form.history_access,
+      anonymize_mode: form.anonymize_mode, llm_profile_id: form.llm_profile_id || null, anonymizer_profile_id: form.anonymizer_profile_id || null,
     };
     try {
       if (form.id) {
@@ -127,6 +138,29 @@ export default function RoomsAdmin() {
               </select>
               <span className="help">По умолчанию обычный участник после ухода со страницы встречи больше не видит стенограмму и протоколы. Вариант «участники» оставляет им доступ через «Историю». Отдельным людям доступ можно выдать на странице встречи (Администрирование → Доступ к встрече).</span></label>
           </fieldset>
+          <fieldset className="group"><legend>Нейросети: протоколы, резюме и обезличивание</legend>
+            <label>Обезличивание текста перед отправкой в языковую модель
+              <select value={form.anonymize_mode} onChange={(e) => set("anonymize_mode", e.target.value as AnonymizeMode)}>
+                <option value="inherit">Как в общих настройках (раздел «Обезличивание»)</option>
+                <option value="on">Всегда обезличивать (если сервис недоступен — протокол не создаётся)</option>
+                <option value="off">Не обезличивать — текст уходит в языковую модель как есть</option>
+              </select>
+              <span className="help">Выключение не мешает формированию протоколов и резюме: они создаются как обычно, но в модель уходит исходная стенограмма (с именами и данными участников). Выключайте, если языковая модель — внутренняя или данные в этой комнате не конфиденциальны.</span></label>
+            <div className="cols">
+              <label>Языковая модель (LLM) для этой комнаты
+                <select value={form.llm_profile_id} onChange={(e) => set("llm_profile_id", e.target.value)}>
+                  <option value="">По умолчанию (общая)</option>
+                  {llmProfiles.filter((p) => !p.virtual).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <span className="help">Профили и выбор «по умолчанию» — в разделе «Языковая модель (LLM)». Пусто — используется общая.</span></label>
+              <label>Сервис обезличивания для этой комнаты
+                <select value={form.anonymizer_profile_id} onChange={(e) => set("anonymizer_profile_id", e.target.value)} disabled={form.anonymize_mode === "off"}>
+                  <option value="">По умолчанию (общий)</option>
+                  {anonProfiles.filter((p) => !p.virtual).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <span className="help">Профили — в разделе «Обезличивание».</span></label>
+            </div>
+          </fieldset>
           <fieldset className="group"><legend>Сроки хранения</legend>
             <div className="cols">
               <label>Хранить текст <span className="muted small">(дней)</span><input type="number" min={0} value={form.text_retention_days} onChange={(e) => set("text_retention_days", e.target.value)} placeholder="бессрочно" />
@@ -167,7 +201,8 @@ export default function RoomsAdmin() {
               <td>{r.name}</td><td><code>{r.slug}</code></td>
               <td>{r.is_enabled ? "включена" : "отключена"}{r.active_meeting_id && <span className="badge"> идёт встреча</span>}<div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td>{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
-              <td className="small">{[r.has_password && "пароль", r.transcription_enabled && "текст", r.record_audio && "аудио", r.camera_allowed && "камера", r.screen_share_allowed && "экран"].filter(Boolean).join(", ")}</td>
+              <td className="small">{[r.has_password && "пароль", r.transcription_enabled && "текст", r.record_audio && "аудио", r.camera_allowed && "камера", r.screen_share_allowed && "экран",
+                r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
               <td className="actions"><button className="btn ghost" onClick={() => setForm(toForm(r))}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>
           ))}

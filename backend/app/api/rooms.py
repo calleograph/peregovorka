@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.deps import SessionUser, get_db, require_user
+from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
 from ..services import timings
+from ..services.journal import parse_client
 from ..services.meetings import JoinError
 from ..services.rooms import list_accessible_rooms
 from .schemas import ActiveMeetingOut, ClientConfig, JoinIn, JoinOut, RoomOut
@@ -51,6 +52,8 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
     try:
         result = await request.app.state.meetings.join(db, room_id, su, body.password)
     except JoinError as exc:
+        request.app.state.journal.emit("room", "join_denied", level="warn", user=su.sam_account_name, ip=client_ip(request),
+                                       client=parse_client(request.headers.get("user-agent")), message=exc.message, data={"code": exc.code})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
     settings = request.app.state.settings
@@ -62,6 +65,9 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
         await timings.record(request.app.state.redis, "join_backend_ms", (time.monotonic() - started) * 1000)
     except Exception:  # noqa: BLE001
         pass
+    request.app.state.journal.emit("room", "join", user=su.sam_account_name, room=result.room.name, meeting_id=str(result.meeting.id),
+                                   ip=client_ip(request), client=parse_client(request.headers.get("user-agent")),
+                                   data={"api_ms": int((time.monotonic() - started) * 1000), "asr_ready": asr_ready})
     return JoinOut(
         meeting_id=result.meeting.id, room=await room_out(db, result.room, result.meeting, 0),
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,

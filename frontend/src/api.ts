@@ -25,7 +25,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr";
+export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -62,11 +62,32 @@ export interface Segment {
 }
 export interface AclEntry { subject_type: "group" | "user"; subject_ref: string; display_name?: string | null }
 export type HistoryAccess = "admin" | "participants";
+/** inherit — как в общих настройках; on — всегда обезличивать; off — не обезличивать (текст идёт в LLM как есть). */
+export type AnonymizeMode = "inherit" | "on" | "off";
+export interface ProtocolPlan { llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean }
+
+export interface JournalRow {
+  id: number; at: string; level: "debug" | "info" | "warn" | "error"; category: string; event: string; user: string | null; room: string | null;
+  meeting_id: string | null; ip: string | null; client: string | null; message: string | null; data: Record<string, unknown> | null; request_id?: string | null;
+}
+export type JournalOp = "eq" | "ne" | "contains" | "not_contains" | "starts" | "gte";
+export interface JournalFilter { field: string; op: JournalOp; value: string | string[] }
+export interface JournalQuery { filters: JournalFilter[]; q?: string; range?: string; since?: string; until?: string }
+export interface JournalPage { items: JournalRow[]; next_cursor: number | null }
+export interface JournalFacets { levels: string[]; categories: string[]; events: string[]; users: string[]; rooms: string[]; clients: string[] }
+export interface JournalStats {
+  total: number; last_24h: number; errors_24h: number; warns_24h: number; by_category_24h: Record<string, number>; oldest: string | null;
+  size_bytes: number; avg_bytes_per_event: number; audit: { total: number; size_bytes: number | null }; retention_days: number; keep_local: boolean;
+  external: { enabled: boolean; mode: string; ok: boolean | null; at: string | null; error: string | null; files: number }; queue_dropped: number; written_since_start: number;
+}
+export type ProfileKind = "llm" | "anonymizer";
+export interface ApiProfile { id: string; kind: ProfileKind; name: string; config: Record<string, unknown>; secret_set: boolean; is_default: boolean; virtual: boolean }
 export interface RoomAdmin {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean; camera_allowed: boolean;
   screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
+  anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
@@ -143,6 +164,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export type ExportFormat = "md" | "txt" | "docx" | "pdf";
 
+/** Параметры запроса журнала (фильтры — JSON-строкой; пустые поля не передаются). */
+export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  const filters = qy.filters.filter((f) => (Array.isArray(f.value) ? f.value.length > 0 : String(f.value).trim() !== ""));
+  if (filters.length) p.set("filters", JSON.stringify(filters));
+  if (qy.q?.trim()) p.set("q", qy.q.trim());
+  if (qy.range) p.set("range", qy.range);
+  if (qy.since) p.set("since", qy.since);
+  if (qy.until) p.set("until", qy.until);
+  if (beforeId) p.set("before_id", String(beforeId));
+  return p.toString();
+}
+
 export const api = {
   login: (login: string, password: string) => request<Me>("POST", "/auth/login", { login, password }),
   logout: () => request<void>("POST", "/auth/logout"),
@@ -151,7 +185,7 @@ export const api = {
   join: (roomId: string, password?: string) => request<JoinInfo>("POST", `/rooms/${roomId}/join`, { password: password || null }),
   leave: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/leave`),
   endMeeting: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/end`),
-  meetings: (roomId?: string) => request<Meeting[]>("GET", `/meetings${roomId ? `?room_id=${roomId}` : ""}`),
+  meetings: (roomId?: string, offset = 0) => request<Meeting[]>("GET", `/meetings?limit=30&offset=${offset}${roomId ? `&room_id=${roomId}` : ""}`),
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),
   transcript: (id: string, afterId = 0) =>
     request<{ meeting_id: string; segments: Segment[]; has_more: boolean }>("GET", `/meetings/${id}/transcript?after_id=${afterId}&limit=2000`),
@@ -162,7 +196,7 @@ export const api = {
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
   defaultInstruction: (meetingId: string, kind: ProtocolKind) =>
-    request<{ kind: string; instruction: string }>("GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}`),
+    request<{ kind: string; instruction: string; plan?: ProtocolPlan }>("GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}`),
   createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string) =>
     request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction }),
   editProtocol: (meetingId: string, id: string, body: { content?: string; title?: string }) =>
@@ -192,17 +226,32 @@ export const api = {
     settings: (g: SettingsGroup) => request<SettingsValues>("GET", `/admin/settings/${g}`),
     saveSettings: (g: SettingsGroup, body: SettingsValues) => request<SettingsValues>("PUT", `/admin/settings/${g}`, body),
     testSettings: (g: SettingsGroup) => request<TestResult>("POST", `/admin/settings/${g}/test`),
-    users: (q = "") => request<AdminUser[]>("GET", `/admin/users?q=${encodeURIComponent(q)}`),
+    users: (q = "", offset = 0) => request<AdminUser[]>("GET", `/admin/users?q=${encodeURIComponent(q)}&limit=100&offset=${offset}`),
     setUserActive: (id: string, is_active: boolean) => request<{ id: string; is_active: boolean }>("PATCH", `/admin/users/${id}`, { is_active }),
     search: (kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/admin/directory/search?kind=${kind}&q=${encodeURIComponent(q)}`),
-    meetings: (active?: boolean) => request<Meeting[]>("GET", `/admin/meetings${active === undefined ? "" : `?active=${active}`}`),
+    meetings: (active?: boolean, offset = 0) => request<Meeting[]>("GET", `/admin/meetings?limit=50&offset=${offset}${active === undefined ? "" : `&active=${active}`}`),
     endMeeting: (id: string) => request<void>("POST", `/admin/meetings/${id}/end`),
     grants: (id: string) => request<Grant[]>("GET", `/admin/meetings/${id}/grants`),
     addGrant: (id: string, userId: string) => request<{ ok: boolean }>("POST", `/admin/meetings/${id}/grants`, { user_id: userId }),
     removeGrant: (id: string, userId: string) => request<void>("DELETE", `/admin/meetings/${id}/grants/${userId}`),
     system: () => request<SystemStatus>("GET", "/admin/system"),
-    audit: (offset = 0) => request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}`),
-    recordings: () => request<RecordingRow[]>("GET", "/admin/recordings"),
+    audit: (offset = 0, f: { q?: string; actor?: string; action?: string } = {}) =>
+      request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}&q=${encodeURIComponent(f.q ?? "")}&actor=${encodeURIComponent(f.actor ?? "")}&action=${encodeURIComponent(f.action ?? "")}`),
+    recordings: (offset = 0) => request<RecordingRow[]>("GET", `/admin/recordings?limit=100&offset=${offset}`),
+
+    journal: (qy: JournalQuery, beforeId?: number, limit = 100) => request<JournalPage>("GET", `/admin/journal?${journalParams(qy, beforeId, limit)}`),
+    journalFacets: () => request<JournalFacets>("GET", "/admin/journal/facets"),
+    journalStats: () => request<JournalStats>("GET", "/admin/journal/stats"),
+    journalDelete: (body: { ids: number[] } | ({ all_matching: true } & JournalQuery)) => request<{ deleted: number }>("POST", "/admin/journal/delete", body),
+    journalPurge: () => request<{ db: number; external_days: number }>("POST", "/admin/journal/purge-now"),
+    journalExportUrl: (range: "24h" | "7d" | "30d" | "all") => `/api/v1/admin/journal/export?range=${range}`,
+
+    profiles: (kind: ProfileKind) => request<ApiProfile[]>("GET", `/admin/api-profiles?kind=${kind}`),
+    createProfile: (body: { kind: ProfileKind; name: string; config: Record<string, unknown>; secret?: string; make_default?: boolean }) => request<ApiProfile>("POST", "/admin/api-profiles", body),
+    updateProfile: (id: string, body: { name?: string; config?: Record<string, unknown>; secret?: string | null }) => request<ApiProfile>("PATCH", `/admin/api-profiles/${id}`, body),
+    deleteProfile: (id: string) => request<void>("DELETE", `/admin/api-profiles/${id}`),
+    setDefaultProfile: (kind: ProfileKind, profileId: string) => request<{ ok: boolean }>("PUT", "/admin/api-profiles/default", { kind, profile_id: profileId }),
+    testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[] }>("GET", "/admin/client-diagnostics"),

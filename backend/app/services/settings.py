@@ -197,6 +197,18 @@ class LlmSettings(_Group):
         return self
 
 
+class JournalSettings(_StorageTarget):
+    """Журнал событий (входы, подключения, ошибки устройств и сети, действия). Хранится `retention_days` дней и очищается автоматически.
+    `enabled` + `mode`/путь — ДУБЛИРОВАНИЕ во внешнее хранилище (каталог или SMB): так журнал не занимает место на сервере.
+    `keep_local=False` — в базе сервера события не хранятся вовсе (смотреть можно только во внешних файлах); оба выключены — журнал не ведётся."""
+
+    local_path: str = "/data/exports/logs"
+    retention_days: int = Field(default=30, ge=1, le=3650)
+    keep_local: bool = True
+    min_level: Literal["debug", "info", "warn", "error"] = "info"
+    external_flush_seconds: int = Field(default=60, ge=5, le=3600)
+
+
 DEFAULT_PROTOCOL_INSTRUCTION = (
     "Сформировать официальный протокол совещания. Выделить тему, участников, обсуждавшиеся вопросы, принятые решения, "
     "поручения, ответственных и сроки. Не придумывать отсутствующие сведения."
@@ -267,12 +279,17 @@ GROUPS: dict[str, type[_Group]] = {
     "screen": ScreenSettings,
     "general": GeneralSettings,
     "asr": AsrModelSettings,
+    "journal": JournalSettings,
 }
 
 
 class SettingsService:
     def __init__(self, secretbox: SecretBox | None):
         self._box = secretbox
+
+    @property
+    def box(self) -> SecretBox | None:
+        return self._box
 
     # ----------------------------------------------------------------- низкий уровень
     async def _rows(self, db: AsyncSession, group: str) -> dict[str, AppSetting]:

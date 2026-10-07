@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type ExportFormat, type Meeting } from "../api";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
+import { ListFooter, useInfinite } from "../useInfinite";
 import { duration, fmt } from "../util";
 
 export { fmt } from "../util";
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
 
 export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) {
-  const [items, setItems] = useState<Meeting[] | null>(null);
-  const [error, setError] = useState("");
   const [q, setQ] = useState("");
-  const load = useCallback(() => api.meetings().then(setItems).catch((e) => setError(e.message)), []);
-  useEffect(() => { void load(); }, [load]);
+  // «бесконечная лента»: следующие встречи подгружаются при прокрутке; поиск работает по уже загруженным (лента догружается, пока список виден)
+  const list = useInfinite<Meeting>(async (offset) => { const r = await api.meetings(undefined, offset); return { rows: r, more: r.length >= 30 }; }, []);
+  const items = list.items;
+  const load = list.reload;
 
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return (items ?? []).filter((m) => !s || m.room_name.toLowerCase().includes(s) || m.participants.some((p) => p.display_name.toLowerCase().includes(s)));
+    return items.filter((m) => !s || m.room_name.toLowerCase().includes(s) || m.participants.some((p) => p.display_name.toLowerCase().includes(s)));
   }, [items, q]);
 
-  if (error) return <div className="alert error">{error}</div>;
-  if (!items) return <div className="muted">Загрузка…</div>;
   return (
     <section>
       <div className="row"><h1 style={{ margin: 0 }}>История встреч</h1><div className="spacer" />
@@ -29,8 +28,9 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
       {isAdmin
         ? <p className="muted">Как администратор вы видите все встречи.</p>
         : <p className="muted">Здесь — встречи, к которым у вас есть доступ: завершённая встреча доступна, пока открыта её страница, а также если так настроено для комнаты или выдано администратором.</p>}
-      {shown.length === 0 && <p className="muted">{items.length ? "Ничего не найдено." : "Пока нет доступных встреч."}</p>}
-      <table className="table">
+      {list.error && <div className="alert error">{list.error}</div>}
+      {shown.length === 0 && list.done && <p className="muted">{items.length ? "Ничего не найдено." : "Пока нет доступных встреч."}</p>}
+      <div className="table-scroll"><table className="table">
         <thead><tr><th>Комната</th><th>Начало</th><th>Длительность</th><th>Участники</th><th>Материалы</th><th /></tr></thead>
         <tbody>
           {shown.map((m) => (
@@ -50,7 +50,8 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
+      <ListFooter loading={list.loading} done={list.done} error="" sentinel={list.sentinel} count={items.length} empty="" />
     </section>
   );
 }

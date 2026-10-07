@@ -33,11 +33,12 @@ def test_wrong_password_is_generic_and_unknown_user_looks_the_same(client):
 
 
 def test_throttle_stops_calls_to_ad_before_lockout_threshold(client, directory):
-    for _ in range(3):  # LOGIN_MAX_FAILURES_PER_USER по умолчанию = 3
+    for _ in range(20):  # LOGIN_MAX_FAILURES_PER_USER по умолчанию = 20
         assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "bad"}).status_code == 401
     calls_before = directory.calls
     r = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"})  # даже верный пароль
     assert r.status_code == 429 and "Retry-After" in r.headers
+    assert 0 < int(r.headers["Retry-After"]) <= 300, "блокировка входа — 5 минут"
     assert directory.calls == calls_before, "при блокировке в AD обращаться нельзя"
 
 
@@ -145,3 +146,4 @@ def test_ldap_uri_forms_with_and_without_trailing_slash_are_equivalent(tmp_path,
     d = LdapDirectory(make_settings(tmp_path, ldap_uris=uri, ldap_ca_file=str(ca)))
     servers = d._server_pool().servers
     assert [(s.host.lower(), s.port) for s in servers] == [("ad1.corp.test", 636)]
+

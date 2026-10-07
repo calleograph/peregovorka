@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,8 @@ from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
-              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access")
+              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
+              "anonymize_mode", "llm_profile_id", "anonymizer_profile_id")
 
 
 def _acl_rows(entries: list[AclEntryIn]) -> list[RoomAcl]:
@@ -41,6 +42,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
         text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days,
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
+        anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
     )
@@ -65,6 +67,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         text_retention_days=body.text_retention_days if "text_retention_days" in body.model_fields_set else settings.default_text_retention_days,
         audio_retention_days=body.audio_retention_days if "audio_retention_days" in body.model_fields_set else settings.default_audio_retention_days,
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,
+        anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
     )
     room.acl = _acl_rows(body.acl)
     db.add(room)
@@ -99,7 +102,8 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
     changed: dict = {}
     for name in _PATCHABLE:
         if name in fields and getattr(room, name) != fields[name]:
-            changed[name] = {"from": getattr(room, name), "to": fields[name]}
+            changed[name] = {"from": str(getattr(room, name)) if isinstance(getattr(room, name), uuid.UUID) else getattr(room, name),
+                             "to": str(fields[name]) if isinstance(fields[name], uuid.UUID) else fields[name]}
             setattr(room, name, fields[name])
     if "password" in fields:
         pw = fields["password"]
@@ -133,8 +137,22 @@ async def delete_room(room_id: uuid.UUID, request: Request, su: SessionUser = De
 
 
 @router.get("/audit")
-async def audit_log(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+async def audit_log(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), q: str = Query("", max_length=100),
+                    actor: str = Query("", max_length=100), action: str = Query("", max_length=80),
                     su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    rows = (await db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit).offset(offset))).scalars().all()
+    """Журнал аудита: от новых к старым; фильтры по исполнителю, действию и тексту (в имени, действии, объекте, IP)."""
+    stmt = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
+
+    def like(col, v):
+        esc = v.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return func.lower(col).like(f"%{esc}%", escape="\\")
+    if actor.strip():
+        stmt = stmt.where(like(AuditLog.actor_name, actor.strip()))
+    if action.strip():
+        stmt = stmt.where(like(AuditLog.action, action.strip()))
+    if q.strip():
+        stmt = stmt.where(or_(like(AuditLog.actor_name, q.strip()), like(AuditLog.action, q.strip()), like(AuditLog.target_id, q.strip()),
+                              like(func.coalesce(AuditLog.ip, ""), q.strip())))
+    rows = (await db.execute(stmt)).scalars().all()
     return [{"id": r.id, "at": r.at, "actor": r.actor_name, "action": r.action, "target_type": r.target_type,
              "target_id": r.target_id, "details": r.details, "request_id": r.request_id, "ip": r.ip} for r in rows]

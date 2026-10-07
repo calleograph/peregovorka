@@ -10,7 +10,8 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ..auth.deps import SessionUser, require_user
+from ..auth.deps import SessionUser, client_ip, require_user
+from ..services.journal import parse_client
 from ..services import timings
 
 router = APIRouter(prefix="/client", tags=["client"])
@@ -23,11 +24,32 @@ EVENTS = {
     "screen_track_published", "screen_track_unpublished", "screen_track_ended", "screen_share_restarted",
     "backend_ws_connected", "backend_ws_reconnecting", "rejoin_started", "rejoin_failed",
     "room_lifecycle", "screen_lifecycle", "screen_frozen",
+    # диагностика оборудования, сети и входа (попадает в журнал событий)
+    "join_attempt", "ice_failed", "ice_slow", "connect_retry", "connect_failed", "network_info", "device_inventory",
+    "mic_busy", "mic_permission_denied", "mic_released", "join_without_mic", "camera_busy", "noise_suppression_changed",
+    "audio_output_error", "page_hidden_long", "ice_stats",
+}
+# категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
+META: dict[str, tuple[str, str]] = {
+    "join_ok": ("room", "info"), "join_attempt": ("room", "info"), "join_failed": ("room", "error"),
+    "disconnected": ("network", "warn"), "reconnecting": ("network", "warn"), "reconnected": ("network", "info"),
+    "rejoin_started": ("network", "warn"), "rejoin_failed": ("network", "error"), "connect_retry": ("network", "warn"),
+    "connect_failed": ("network", "error"), "ice_failed": ("network", "error"), "ice_slow": ("network", "warn"),
+    "network_info": ("network", "info"), "ice_stats": ("network", "info"), "backend_ws_connected": ("network", "info"),
+    "backend_ws_reconnecting": ("network", "warn"), "device_error": ("device", "warn"), "mic_failed": ("device", "warn"),
+    "camera_failed": ("device", "warn"), "publish_failed": ("device", "error"), "mic_busy": ("device", "warn"),
+    "mic_permission_denied": ("device", "warn"), "camera_busy": ("device", "warn"), "device_inventory": ("device", "info"),
+    "mic_released": ("device", "info"), "join_without_mic": ("device", "info"), "noise_suppression_changed": ("device", "info"),
+    "audio_output_error": ("device", "warn"), "autoplay_blocked": ("device", "warn"),
+    "screen_share_started": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
+    "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
+    "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"),
 }
 LIFECYCLE = {"room_lifecycle", "screen_lifecycle"}
 COUNTERS_KEY, LIFECYCLE_KEY = "counters:realtime", "clientdiag:lifecycle"
 COUNTED = {"reconnecting", "reconnected", "disconnected", "rejoin_started", "rejoin_failed", "screen_frozen", "screen_share_failed", "screen_share_ended_by_browser", "join_failed"}
 EVENTS_KEY, METRICS_KEY = "clientdiag:events", "clientdiag:metrics"
+EVENTS_PER_MINUTE = 240
 
 
 def _num(v: Any, lo: float = 0, hi: float = 1e9) -> float | None:
@@ -36,6 +58,19 @@ def _num(v: Any, lo: float = 0, hi: float = 1e9) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if lo <= f <= hi else None
+
+
+def _data(v: Any) -> dict | None:
+    """Небольшой словарь с примитивными значениями (параметры оборудования/сети): без вложенности, не более 24 ключей."""
+    if not isinstance(v, dict):
+        return None
+    out: dict[str, Any] = {}
+    for k, val in list(v.items())[:24]:
+        if isinstance(val, (str, int, float, bool)) or val is None:
+            out[str(k)[:40]] = val[:200] if isinstance(val, str) else val
+        elif isinstance(val, list):
+            out[str(k)[:40]] = [str(x)[:80] for x in val[:12]]
+    return out or None
 
 
 def _str(v: Any, n: int) -> str | None:
@@ -54,9 +89,23 @@ async def client_event(request: Request, body: dict[str, Any] = Body(...), su: S
     ev = body.get("event")
     if ev not in EVENTS:
         raise HTTPException(status_code=422, detail="Неизвестное событие")
+    # Защита журнала и Redis от заливки: не более EVENTS_PER_MINUTE событий в минуту от одного пользователя (лишние отбрасываются).
+    r0 = request.app.state.redis
+    bucket = f"client:evrate:{su.user_id}:{int(time.time() // 60)}"
+    n = await r0.incr(bucket)
+    if n == 1:
+        await r0.expire(bucket, 120)
+    if n > EVENTS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Слишком много событий диагностики", headers={"Retry-After": "30"})
     item = {"ts": time.time(), "event": ev, "user": su.sam_account_name, "meeting_id": _str(body.get("meeting_id"), 40),
             "reason": _str(body.get("reason"), 80), "detail": _str(body.get("detail"), 300)}
     log.info("client_event", extra={k: v for k, v in item.items() if k != "ts"})
+    category, level = META.get(ev, ("client", "info"))
+    journal = getattr(request.app.state, "journal", None)
+    if journal is not None:
+        journal.emit(category, ev, level=level, user=su.sam_account_name, room=_str(body.get("room"), 200), meeting_id=item["meeting_id"],
+                     ip=client_ip(request), client=parse_client(request.headers.get("user-agent")),
+                     message=" · ".join(x for x in (item["reason"], item["detail"]) if x) or None, data=_data(body.get("data")))
     r = request.app.state.redis
     field = None
     if ev in COUNTED:

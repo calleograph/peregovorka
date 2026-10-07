@@ -1,8 +1,10 @@
 """Протоколы встреч: стенограмма, выгрузка в хранилище, краткий протокол через LLM.
 
-Порядок для краткого протокола (fail closed): стенограмма → API обезличивания → LLM.
-Если обезличивание не настроено/недоступно/не подтвердило verification.clean — в LLM ничего не уходит,
-протокол получает статус failed с понятной причиной.
+Порядок: стенограмма → (обезличивание, если оно включено для этой комнаты) → LLM.
+Обезличивание ВЫКЛЮЧЕНО в общих настройках или в комнате (`anonymize_mode=off`) — текст уходит в LLM как есть, это не ошибка и ничему не мешает;
+факт отражается в метаданных протокола (`anonymized=false`) и в журнале. Если оно ВКЛЮЧЕНО (`inherit` + включено глобально, либо `on`), то работает
+fail closed: не настроено/недоступно/не подтвердило verification.clean — в LLM ничего не уходит, протокол получает статус failed с понятной причиной.
+API (LLM и обезличивания) выбирается по профилю комнаты или общему профилю по умолчанию (services/api_profiles.py).
 """
 from __future__ import annotations
 
@@ -16,9 +18,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import Settings
-from ..integrations.anonymizer import AnonymizerClient, AnonymizerError
+from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
 from ..models import Meeting, Protocol, Recording, TranscriptSegment, User, utcnow
+from .api_profiles import ProfileService
 from .recordings import delete_recording_file, finalize_pcm_files
 from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, build_storage, meeting_relpath, unique_meeting_dir
@@ -72,6 +75,8 @@ class ProtocolService:
         self._sm = session_maker
         self._svc = svc
         self._transports = transports or {}
+        self.profiles = ProfileService(svc)
+        self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self._tasks: set[asyncio.Task] = set()
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
@@ -207,6 +212,9 @@ class ProtocolService:
             rec.export_status, rec.export_error = "failed", str(exc)[:480]
             log.error("Выгрузка записи не удалась — файл сохранён локально, будет повтор",
                       extra={"recording": str(rec.id), "error": str(exc)})
+            if self.journal is not None:
+                self.journal.emit("storage", "recording_export_failed", level="error", meeting_id=str(rec.meeting_id),
+                                  message=str(exc)[:300], data={"recording": str(rec.id), "size_bytes": rec.size_bytes})
         await db.commit()
 
     async def retry_pending_exports(self, db: AsyncSession) -> int:
@@ -272,38 +280,71 @@ class ProtocolService:
             rec = await db.get(Protocol, protocol_id)
             if rec is None:
                 return
+            started = datetime.now(timezone.utc)
             try:
                 text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "")
                 rec.content, rec.status, rec.error, rec.meta = text, "ready", None, meta
                 await db.commit()
+                self._emit("llm", "protocol_ready", rec, started, data={k: meta.get(k) for k in (
+                    "model", "llm_profile", "anonymizer_profile", "anonymized", "llm_calls", "prompt_tokens", "completion_tokens")})
                 await self._export_generated(db, rec)
             except (AnonymizerError, LlmError) as exc:
                 rec.status, rec.error = "failed", exc.describe()
                 log.warning("Протокол не создан", extra={"protocol": str(protocol_id), "code": exc.code})
                 await db.commit()
+                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": exc.code, "stage": "anonymizer" if isinstance(exc, AnonymizerError) else "llm"})
             except SettingsError as exc:
                 rec.status, rec.error = "failed", str(exc)[:480]
                 await db.commit()
+                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "settings"})
             except Exception:  # noqa: BLE001
                 log.exception("Ошибка создания протокола", extra={"protocol": str(protocol_id)})
                 rec.status, rec.error = "failed", "Внутренняя ошибка (см. журнал сервера)"
                 await db.commit()
+                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "internal"})
+
+    async def plan(self, db: AsyncSession, meeting: Meeting) -> dict:
+        """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
+        room = meeting.room
+        llm = await self.profiles.resolve(db, "llm", room)
+        mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
+        an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
+        anonymize = mode == "on" or (mode == "inherit" and an is not None and bool(an.settings.enabled))
+        return {"llm_ready": bool(llm.settings.enabled), "llm_profile": llm.name, "anonymize": anonymize,
+                "anonymizer_profile": an.name if (anonymize and an) else None,
+                "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled)}
+
+    def _emit(self, category: str, event: str, rec: Protocol, started: datetime, *, level: str = "info", message: str | None = None,
+              data: dict | None = None) -> None:
+        if self.journal is None:
+            return
+        ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        self.journal.emit(category, event, level=level, meeting_id=str(rec.meeting_id), message=message or f"{rec.kind}: {ms} мс",
+                          data={"kind": rec.kind, "duration_ms": ms, "created_by": rec.created_by, **(data or {})})
 
     async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str) -> tuple[str, dict]:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             raise SettingsError("Встреча не найдена")
-        an_cfg = await self._svc.get(db, "anonymizer")
-        llm_cfg = await self._svc.get(db, "llm")
+        room = meeting.room
+        llm_res = await self.profiles.resolve(db, "llm", room)
+        llm_cfg = llm_res.settings
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
         text = await self.transcript_text(db, meeting, tz)
         if not any(line.startswith("[") for line in text.splitlines()):
             raise SettingsError("В стенограмме нет реплик — протокол не создаётся")
 
-        # 1. Обезличивание — обязательно; сбой = отказ (fail closed).
-        anon = AnonymizerClient(an_cfg, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type]
-        clean = await anon.anonymize(text, "protocol")
+        # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.
+        mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
+        an_res = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
+        do_anonymize = mode == "on" or (mode == "inherit" and an_res is not None and bool(an_res.settings.enabled))
+        if do_anonymize:
+            anon = AnonymizerClient(an_res.settings, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type, union-attr]
+            clean = await anon.anonymize(text, "protocol")
+        else:
+            clean = Anonymized(text, 0, None, 0)
+            log.info("Обезличивание выключено — текст передаётся в LLM как есть", extra={"meeting_id": str(meeting_id), "room_mode": mode})
 
         # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
         llm = LlmClient(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
@@ -333,7 +374,8 @@ class ProtocolService:
             out = r.text
         meta = {"model": llm_cfg.model, "llm_type": llm_cfg.type, "llm_calls": calls,  # type: ignore[attr-defined]
                 "prompt_tokens": pt, "completion_tokens": ct, "anonymized_chunks": clean.chunks,
-                "anonymized_replaced": clean.replaced, "generated_at": utcnow().isoformat()}
+                "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name,
+                "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat()}
         return out, meta
 
     async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:

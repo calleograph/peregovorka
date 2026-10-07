@@ -114,7 +114,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
           <pre className="proto" style={{ marginTop: 6 }}>{item.instruction}</pre>
         </details>
       )}
-      <p className="muted small">Текст составлен по обезличенной стенограмме: метки вида [ФИО_1] — заменённые данные.</p>
+      <p className="muted small">Если при создании было включено обезличивание, текст составлен по обезличенной стенограмме: метки вида [ФИО_1] — заменённые данные.</p>
       {confirmDelete && <DeleteProtocol meetingId={meetingId} id={item.id} onDeleted={onDeleted} onClose={() => setConfirmDelete(false)} />}
     </div>
   );

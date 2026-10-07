@@ -70,10 +70,10 @@ class Settings(BaseSettings):
     cookie_name: str = "vm_session"
     session_idle_timeout_seconds: int = Field(default=28800, ge=60)
     session_absolute_timeout_seconds: int = Field(default=86400, ge=60)
-    login_max_failures_per_user: int = Field(default=3, ge=1)
-    login_max_failures_per_ip: int = Field(default=20, ge=1)
+    login_max_failures_per_user: int = Field(default=20, ge=1)   # неверных вводов на логин до блокировки входа (в нашей системе, не в AD)
+    login_max_failures_per_ip: int = Field(default=60, ge=1)
     login_failure_window_seconds: int = Field(default=900, ge=10)
-    login_lockout_seconds: int = Field(default=900, ge=10)
+    login_lockout_seconds: int = Field(default=300, ge=10)
 
     # --- секреты приложения
     app_master_key: str = ""

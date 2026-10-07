@@ -49,6 +49,8 @@ class StorageBackend(Protocol):
     def write_bytes(self, rel: str, data: bytes) -> str: ...
     def read_bytes(self, rel: str) -> bytes: ...
     def delete(self, rel: str) -> None: ...
+    def list_dir(self, rel: str) -> list[str]: ...
+    def delete_dir(self, rel: str) -> None: ...
     def test(self) -> str: ...
 
 
@@ -94,6 +96,23 @@ class LocalStorage:
             self._full(rel).unlink(missing_ok=True)
         except OSError as exc:
             raise StorageError(f"Не удалось удалить файл: {exc.strerror or exc}") from None
+
+    def list_dir(self, rel: str) -> list[str]:
+        full = self._full(rel)
+        try:
+            return sorted(p.name for p in full.iterdir()) if full.is_dir() else []
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать каталог: {exc.strerror or exc}") from None
+
+    def delete_dir(self, rel: str) -> None:
+        import shutil  # noqa: PLC0415
+
+        try:
+            shutil.rmtree(self._full(rel), ignore_errors=False)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise StorageError(f"Не удалось удалить каталог: {exc.strerror or exc}") from None
 
     def test(self) -> str:
         probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"
@@ -159,6 +178,30 @@ class SmbStorage:
                 smb.remove(self._unc(rel))
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: не удалось удалить файл ({type(exc).__name__})") from None
+
+    def list_dir(self, rel: str) -> list[str]:
+        smb = self._session()
+        try:
+            path = self._unc(rel)
+            return sorted(smb.listdir(path)) if smb.path.isdir(path) else []
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось прочитать каталог ({type(exc).__name__})") from None
+
+    def delete_dir(self, rel: str) -> None:
+        smb = self._session()
+
+        def rm(path: str) -> None:
+            for name in smb.listdir(path):
+                child = path + "\\" + name
+                rm(child) if smb.path.isdir(child) else smb.remove(child)
+            smb.rmdir(path)
+
+        try:
+            path = self._unc(rel)
+            if smb.path.isdir(path):
+                rm(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось удалить каталог ({type(exc).__name__})") from None
 
     def test(self) -> str:
         probe = f".peregovorka-write-test-{uuid.uuid4().hex[:8]}"

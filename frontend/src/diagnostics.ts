@@ -84,8 +84,9 @@ export const newInstanceId = (): string => {
 export type RoomPhase = "ROOM_CREATE" | "CONNECT_START" | "SIGNALING_CONNECTED" | "ICE_CONNECTED" | "CONNECT_OK" | "RECONNECTING" | "RECONNECTED" | "DISCONNECTED" | "ROOM_DISPOSE";
 export type ScreenPhase = "SCREEN_CREATE" | "SCREEN_PUBLISH_START" | "SCREEN_PUBLISH_OK" | "SCREEN_TRACK_ENDED" | "SCREEN_UNPUBLISH" | "SCREEN_ERROR";
 
-export function reportEvent(event: string, fields: { meetingId?: string; reason?: string; detail?: string } = {}): void {
-  api.clientEvent({ event, meeting_id: fields.meetingId, reason: fields.reason, detail: fields.detail?.slice(0, 280) });
+export interface EventFields { meetingId?: string; reason?: string; detail?: string; room?: string; data?: Record<string, unknown> }
+export function reportEvent(event: string, fields: EventFields = {}): void {
+  api.clientEvent({ event, meeting_id: fields.meetingId, reason: fields.reason, detail: fields.detail?.slice(0, 280), room: fields.room, data: fields.data });
 }
 export const reportRoomPhase = (phase: RoomPhase, instance: string, meetingId?: string, extra = ""): void =>
   reportEvent("room_lifecycle", { meetingId, reason: phase, detail: `instance=${instance}${extra ? ` ${extra}` : ""}` });

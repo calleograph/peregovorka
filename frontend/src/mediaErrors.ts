@@ -19,6 +19,22 @@ function lower(e: unknown): string {
   return String((e as { message?: unknown })?.message ?? e ?? "").toLowerCase();
 }
 
+/** Устройство занято другой программой (в т. ч. в «монопольном» режиме Windows) или недоступно для запуска. */
+export function isDeviceBusyError(e: unknown): boolean {
+  const name = String((e as { name?: unknown })?.name ?? "");
+  return name === "NotReadableError" || name === "TrackStartError" || /could not start (audio|video) source|device in use|in use by another/i.test(lower(e));
+}
+
+/** Не удалось установить медиасоединение (ICE/PeerConnection): сеть, закрытые порты, VPN/прокси, антивирус. */
+export function isIceError(e: unknown): boolean {
+  return /pc connection|ice (connection|failed)|peerconnection|ice_failed/.test(lower(e));
+}
+
+/** Сбой подключения, после которого есть смысл повторить попытку автоматически (сеть/таймаут/ICE), а не показывать ошибку сразу. */
+export function isTransientConnectError(e: unknown): boolean {
+  return isIceError(e) || /timeout|timed out|signal connection|websocket|failed to fetch|network/.test(lower(e));
+}
+
 export function describeMediaError(e: unknown, action: MediaAction, opts: { secureContext?: boolean } = {}): ErrorInfo {
   const name = String((e as { name?: unknown })?.name ?? "Error");
   const msg = lower(e);
@@ -30,6 +46,9 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
   // ошибки публикации/подключения LiveKit определяем по тексту (классы SDK не всегда доступны по имени)
   if (msg.includes("permission") && (msg.includes("publish") || msg.includes("can_publish") || msg.includes("not allowed to"))) {
     return { reason: "PublishNotAllowed", message: "Сервер не разрешил вам публиковать этот источник (ограничено настройками комнаты или ролью)." };
+  }
+  if (isIceError(e)) {
+    return { reason: "IceFailed", message: "Не удалось установить медиасоединение со звонковым сервером (ICE). Обычно это закрытые порты UDP/TCP, VPN или прокси, строгий файрвол или антивирус. Нажмите «Войти в комнату» ещё раз; если повторяется — сообщите администратору (сведения о вашей сети уже записаны в журнал)." };
   }
   if (msg.includes("timeout") || msg.includes("timed out")) {
     return { reason: "Timeout", message: action === "connect" ? "Сервер звонков не отвечает (таймаут). Проверьте сеть и повторите." : "Сервер звонков не подтвердил публикацию вовремя (таймаут сети). Повторите попытку." };
@@ -56,7 +75,9 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
     case "TrackStartError":
       return { reason: name, message: action === "screen"
         ? "Система не позволила захватить экран (источник занят другой программой или запрещён ОС; на macOS разрешите браузеру «Запись экрана»)."
-        : `Устройство занято другой программой или недоступно (${action === "camera" ? "камера" : "микрофон"}). Закройте программы, которые его используют, и повторите.` };
+        : action === "camera"
+          ? "Камера занята другой программой или недоступна. Закройте программы, которые её используют (другие конференции, видеозапись), и повторите."
+          : "Микрофон занят другой программой или недоступен. Закройте программы, которые его используют (другие конференции, запись звука), или выберите другое устройство в списке «Устройства». В Windows микрофон может быть захвачен в «монопольном режиме»: Параметры звука → Устройство ввода → Свойства → Дополнительно → снимите «Разрешить приложениям использовать устройство в монопольном режиме». Вы можете остаться в комнате без микрофона и включить его позже." };
     case "OverconstrainedError":
     case "ConstraintNotSatisfiedError":
       return { reason: name, message: "Выбранное устройство не поддерживает нужные параметры. Выберите другое устройство в списке «Устройства»." };

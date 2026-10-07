@@ -13,6 +13,14 @@ class LoginIn(BaseModel):
     login: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=512, repr=False)
 
+    @field_validator("password")
+    @classmethod
+    def _no_control_chars(cls, v: str) -> str:
+        # управляющие символы (в т. ч. NUL) в пароле не бывают нормальными и опасны для LDAP-клиента
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
+            raise ValueError("Недопустимые символы в пароле")
+        return v
+
 
 class UserOut(BaseModel):
     id: uuid.UUID
@@ -136,6 +144,9 @@ class RoomAdminOut(BaseModel):
     audio_retention_days: int | None
     protocol_instructions: str | None
     history_access: str = "admin"
+    anonymize_mode: str = "inherit"
+    llm_profile_id: uuid.UUID | None = None
+    anonymizer_profile_id: uuid.UUID | None = None
     acl: list[AclEntryOut]
     active_meeting_id: uuid.UUID | None = None
 
@@ -155,6 +166,9 @@ class RoomCreateIn(BaseModel):
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     history_access: str = Field(default="admin", pattern="^(admin|participants)$")
+    anonymize_mode: str = Field(default="inherit", pattern="^(inherit|on|off)$")
+    llm_profile_id: uuid.UUID | None = None
+    anonymizer_profile_id: uuid.UUID | None = None
     acl: list[AclEntryIn] = Field(default_factory=list)
 
     @field_validator("slug")
@@ -181,4 +195,7 @@ class RoomPatchIn(BaseModel):
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     history_access: str | None = Field(default=None, pattern="^(admin|participants)$")
+    anonymize_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")
+    llm_profile_id: uuid.UUID | None = None
+    anonymizer_profile_id: uuid.UUID | None = None
     acl: list[AclEntryIn] | None = None

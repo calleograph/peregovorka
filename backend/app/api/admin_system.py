@@ -50,7 +50,7 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
         raise HTTPException(status_code=404, detail="Неизвестная группа настроек")
     svc = request.app.state.settings_svc
     try:
-        if group in ("storage", "audio_storage"):  # ошибки каталога видны сразу, а не при первой выгрузке
+        if group in ("storage", "audio_storage", "journal"):  # ошибки каталога видны сразу, а не при первой выгрузке
             try:
                 build_storage(await svc.preview(db, group, body), request.app.state.settings.data_dir)  # type: ignore[arg-type]
             except StorageError as exc:
@@ -76,7 +76,7 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         cfg = await svc.get(db, group)
     except SettingsError as exc:
         return {"ok": False, "message": str(exc), "ms": 0}
-    if group in ("storage", "audio_storage"):
+    if group in ("storage", "audio_storage", "journal"):
         try:
             backend = build_storage(cfg, app_s.data_dir)  # type: ignore[arg-type]
         except StorageError as exc:
@@ -94,9 +94,6 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         ok, msg, ms = await AnonymizerClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     if group == "llm":
-        an = await svc.get(db, "anonymizer")
-        if not an.enabled:  # type: ignore[attr-defined]
-            return {"ok": False, "message": "Сначала настройте и включите обезличивание: к LLM данные уходят только через него.", "ms": 0}
         ok, msg, ms = await LlmClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     raise HTTPException(status_code=404, detail="Для этой группы проверки нет")
@@ -212,9 +209,10 @@ async def admin_end_meeting(meeting_id: uuid.UUID, request: Request, su: Session
 
 
 @router.get("/recordings")
-async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(100, ge=1, le=500),
+async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
                           su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    stmt = select(Recording, Room.name).join(Room, Room.id == Recording.room_id).order_by(Recording.created_at.desc()).limit(limit)
+    stmt = (select(Recording, Room.name).join(Room, Room.id == Recording.room_id).order_by(Recording.created_at.desc(), Recording.id)
+            .limit(limit).offset(offset))
     if room_id:
         stmt = stmt.where(Recording.room_id == room_id)
     return [{"id": str(r.id), "meeting_id": str(r.meeting_id), "room": name, "identity": r.participant_identity, "path": r.path,

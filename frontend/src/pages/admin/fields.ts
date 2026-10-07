@@ -50,7 +50,7 @@ export const audioStorageFields: Field[] = [
 
 export const anonFields: Field[] = [
   { section: "Сервис обезличивания", name: "enabled", label: "Обезличивание включено", type: "bool",
-    help: "Без него документы не формируются: в языковую модель уходит только обезличенный текст (если сервис недоступен — отправки нет вообще)." },
+    help: "Включено: в языковую модель уходит только обезличенный текст, а если сервис недоступен — протокол не создаётся (данные не отправляются). Выключено: протоколы и резюме создаются как обычно, но текст уходит в модель без обезличивания. Отдельной переговорке можно задать своё (в её настройках)." },
   { section: "Сервис обезличивания", name: "profile", label: "Тип API", type: "select", options: [["docclean", "DocClean (api_text)"], ["generic", "Произвольный JSON API"]] },
   { section: "Сервис обезличивания", name: "base_url", label: "Адрес сервиса (Base URL)", type: "text", placeholder: "https://anon.corp.local",
     help: "Только https (http — лишь при явном разрешении ниже).", example: "https://anon.corp.local:8443" },
@@ -131,4 +131,28 @@ export const vadFields: Field[] = [
     help: "Длинная непрерывная речь режется на части не длиннее этого значения (GigaAM — не более 25 с). Меньше — ниже задержка на длинной речи, но возможны разрывы фраз.", example: "12" },
   { section: "Деление речи на реплики (VAD)", name: "vad_threshold", label: "Порог вероятности речи", type: "number", nullable: true, min: 0.05, max: 0.95, step: 0.05,
     help: "Выше — строже (меньше ложных срабатываний на шум, но тихая речь может теряться); ниже — чувствительнее.", example: "0.5" },
+];
+
+/** Журнал событий: срок хранения, место хранения (в базе сервера и/или во внешнем хранилище), минимальный уровень. */
+export const journalFields: Field[] = [
+  { section: "Срок хранения", name: "retention_days", label: "Хранить записи журнала", unit: "дней", type: "number", min: 1, max: 3650,
+    help: "Записи старше этого срока удаляются автоматически (проверка раз в час), свежие остаются. Это же правило действует для внешнего хранилища (удаляются каталоги старых дней).", example: "30" },
+  { section: "Что и где хранить", name: "keep_local", label: "Хранить журнал в базе сервера (его можно смотреть и фильтровать в админке)", type: "bool",
+    help: "Выключите, если не хотите занимать место на сервере: тогда события пишутся только во внешнее хранилище (ниже), а в админке видны лишь прежние записи. Если выключены оба варианта, журнал не ведётся." },
+  { section: "Что и где хранить", name: "min_level", label: "Какие события записывать", type: "select",
+    options: [["debug", "Все, включая отладочные (много записей)"], ["info", "Сведения, предупреждения и ошибки (рекомендуется)"], ["warn", "Только предупреждения и ошибки"], ["error", "Только ошибки"]],
+    help: "Меньше событий — меньше места. Для разбора проблем с подключением нужны «сведения» и выше." },
+  { section: "Внешнее хранилище журнала", name: "enabled", label: "Дублировать журнал во внешнее хранилище", type: "bool",
+    help: "События пакетами записываются файлами NDJSON по дням: журнал/ГГГГ-ММ-ДД/ЧЧММСС-xxxx.ndjson. Так сервер не засоряется, а история хранится на отдельном диске или сетевом ресурсе." },
+  { section: "Внешнее хранилище журнала", name: "mode", label: "Тип хранилища", type: "select", showIf: (v) => !!v.enabled, options: [["local", "Каталог (внешний диск, примонтированный в контейнер)"], ["smb", "Сетевой ресурс SMB (общая папка Windows/NAS)"]] },
+  { section: "Внешнее хранилище журнала", name: "local_path", label: "Каталог внутри контейнера", type: "text", showIf: (v) => !!v.enabled && v.mode === "local", placeholder: "/data/exports/logs",
+    help: "Абсолютный путь внутри контейнера приложения (он лежит в DATA_ROOT на сервере; чтобы писать на другой диск, примонтируйте его в DATA_ROOT).", example: "/data/exports/logs" },
+  { section: "Внешнее хранилище журнала", name: "smb_server", label: "Сервер (имя или IP)", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "files.corp.local", example: "files.corp.local" },
+  { section: "Внешнее хранилище журнала", name: "smb_share", label: "Общий ресурс (имя шары)", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "logs", example: "peregovorka-logs" },
+  { section: "Внешнее хранилище журнала", name: "smb_base_path", label: "Подкаталог на ресурсе", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "peregovorka", example: "peregovorka" },
+  { section: "Внешнее хранилище журнала", name: "smb_domain", label: "Домен учётной записи", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "CORP" },
+  { section: "Внешнее хранилище журнала", name: "smb_username", label: "Учётная запись с правом записи", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "svc-peregovorka" },
+  { section: "Внешнее хранилище журнала", name: "smb_password", label: "Пароль учётной записи", type: "secret", showIf: (v) => !!v.enabled && v.mode === "smb", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
+  { section: "Внешнее хранилище журнала", name: "external_flush_seconds", label: "Как часто выгружать накопленное", unit: "с", type: "number", min: 5, max: 3600, showIf: (v) => !!v.enabled,
+    help: "Чаще — свежее журнал во внешнем хранилище, но больше мелких файлов.", example: "60" },
 ];

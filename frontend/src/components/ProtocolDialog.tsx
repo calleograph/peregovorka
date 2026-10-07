@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type ApiError, type ProtocolKind, type ProtocolTemplate } from "../api";
+import { api, type ApiError, type ProtocolKind, type ProtocolPlan, type ProtocolTemplate } from "../api";
 import { Modal } from "./Dialogs";
 
 interface Props {
@@ -27,6 +27,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
+  const [plan, setPlan] = useState<ProtocolPlan | null>(null);
 
   const loadTemplates = useCallback(() => api.templates().then(setTemplates).catch(() => undefined), []);
   useEffect(() => { void loadTemplates(); }, [loadTemplates]);
@@ -37,6 +38,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
     api.defaultInstruction(meetingId, kind).then((r) => {
       if (cancelled) return;
       setDefaultText(r.instruction);
+      setPlan(r.plan ?? null);
       setInstruction((cur) => (initialInstruction !== undefined && kind === kind0 ? cur || initialInstruction : r.instruction));
     }).catch((e) => { if (!cancelled) setErr((e as ApiError).message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -77,7 +79,10 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
       <label>Инструкция для модели
         <textarea rows={9} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} maxLength={20000}
                   placeholder="Опишите, какой документ нужно получить" />
-        <span className="help">Эту инструкцию вы подтверждаете перед отправкой. Стенограмма сначала обезличивается (ФИО, контакты и т. п. заменяются метками), затем вместе с инструкцией уходит в языковую модель. Ничего, кроме инструкции и обезличенного текста, не отправляется.</span>
+        <span className="help">Эту инструкцию вы подтверждаете перед отправкой. {plan && !plan.anonymize
+          ? "Обезличивание для этой переговорки выключено: стенограмма (с именами и данными участников) вместе с инструкцией уходит в языковую модель как есть. Ничего, кроме инструкции и стенограммы, не отправляется."
+          : "Стенограмма сначала обезличивается (ФИО, контакты и т. п. заменяются метками), затем вместе с инструкцией уходит в языковую модель. Ничего, кроме инструкции и обезличенного текста, не отправляется."}
+          {plan?.llm_profile ? ` Модель: ${plan.llm_profile}.` : ""}</span>
         <span className="example">Пример: <code>Составь протокол: тема, участники, решения, поручения (кто, что, срок). Ничего не выдумывай.</code></span>
       </label>
       <div className="row">

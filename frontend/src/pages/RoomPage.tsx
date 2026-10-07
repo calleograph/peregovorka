@@ -5,19 +5,24 @@ import { api, ApiError, leaveOnUnload, type JoinInfo } from "../api";
 import ConnectProgress from "../components/room/ConnectProgress";
 import DebugPanel from "../components/room/DebugPanel";
 import { ParticipantTile, ScreenStage, type PView } from "../components/room/Tiles";
+import RoundButton from "../components/room/RoundButton";
 import DevicePanel from "../components/DevicePanel";
 import TranscriptPanel from "../components/TranscriptPanel";
 import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
-import { MIC_CAPTURE, buildRoomOptions } from "../roomOptions";
+import { buildRoomOptions } from "../roomOptions";
+import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../micPrefs";
+import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { backoffDelay } from "../liveSocket";
-import { describeMediaError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
+import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
 import { isScreenProfile, screenShareOptions } from "../screenShare";
 
 type CtlKey = "mic" | "cam" | "screen" | "rec" | "device" | "audio" | "general";
 type CtlErrors = Partial<Record<CtlKey, string>>;
 
 const MAX_REJOIN = 6;
+const MAX_CONNECT_TRIES = 3;   // первое подключение: до 3 попыток при сетевых/ICE-сбоях
+const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 const TW_MIN = 260, TW_MAX = 760, TW_DEFAULT = 380;
 const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
@@ -63,6 +68,9 @@ export default function RoomPage() {
   const [asrLost, setAsrLost] = useState(false);
   const [roomsCreated, setRoomsCreated] = useState(0);
   const [instance, setInstance] = useState("");
+  const [micPrefs, setMicPrefs] = useState<MicPrefs>(() => loadMicPrefs());
+  const [micFail, setMicFail] = useState<"busy" | "denied" | "other" | null>(null);
+  const [connectTry, setConnectTry] = useState<{ attempt: number; max: number } | null>(null);
 
   const roomRef = useRef<LkRoom | null>(null);
   const audioBox = useRef<HTMLDivElement>(null);
@@ -184,7 +192,14 @@ export default function RoomPage() {
     if (joinReportedRef.current || !meetingRef.current) return;
     joinReportedRef.current = true;
     api.clientMetrics(metricsBody(meetingRef.current, null, timeline.current.metrics()));
-    reportEvent("join_ok", { meetingId: meetingRef.current, detail: JSON.stringify(timeline.current.metrics()) });
+    const m = timeline.current.metrics();
+    reportEvent("join_ok", { meetingId: meetingRef.current, room: infoRef.current?.room.name, detail: JSON.stringify(m) });
+    // Долгая установка медиасоединения у отдельного клиента — частая жалоба: сразу записываем сеть и оборудование этого клиента
+    const slow = (m.ice_connect_ms ?? 0) > 4000 || (m.total_join_ms ?? 0) > 8000;
+    void collectAll().then((data) => {
+      reportEvent(slow ? "ice_slow" : "network_info", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name,
+        reason: slow ? `ice=${m.ice_connect_ms ?? "?"}мс всего=${m.total_join_ms ?? "?"}мс` : undefined, data: { ...data, ice_connect_ms: m.ice_connect_ms ?? null, signaling_ms: m.signaling_connect_ms ?? null, total_join_ms: m.total_join_ms ?? null } });
+    });
   }, []);
 
   const enableMic = useCallback(async () => {
@@ -200,20 +215,27 @@ export default function RoomPage() {
         if (track instanceof Error) throw track;
         await lp.publishTrack(track, { source: Track.Source.Microphone, name: "microphone" });
       } else {
-        await lp.setMicrophoneEnabled(true, MIC_CAPTURE);
+        await lp.setMicrophoneEnabled(true, captureOptions(loadMicPrefs()));
       }
       tl.mark("micPublished");
       micWantedRef.current = true;
       setErr("mic", undefined);
+      setMicFail(null);
       refresh();
     } catch (e) {
-      fail("mic", "mic", "mic_failed", e);
-      setErr("mic", `${describeMediaError(e, "mic").message} Вы остаётесь в комнате без звука.`);
+      const info = fail("mic", "mic", "mic_failed", e);
+      const kind = isDeviceBusyError(e) ? "busy" : info.reason === "NotAllowedError" || info.reason === "PermissionDeniedError" ? "denied" : "other";
+      setMicFail(kind);
+      setErr("mic", `${info.message} Вы остаётесь в комнате без микрофона — его можно включить позже кнопкой «Микрофон».`);
+      // сведения для разбора: сколько микрофонов видит браузер, их названия и состояние разрешений
+      void collectAll().then((data) => reportEvent(kind === "busy" ? "mic_busy" : kind === "denied" ? "mic_permission_denied" : "mic_failed", {
+        meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: info.reason, detail: String((e as Error)?.message ?? e), data }));
+      reportEvent("join_without_mic", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: kind });
     }
     sendJoinReport();
   }, [fail, refresh, sendJoinReport, setErr]);
 
-  const connectLivekit = useCallback(async (info: JoinInfo, kind: "initial" | "rejoin") => {
+  const connectLivekit = useCallback(async (info: JoinInfo, kind: "initial" | "rejoin" | "retry") => {
     const tl = timeline.current;
     setStage("server");
     const room = new LkRoom(buildRoomOptions());
@@ -222,7 +244,7 @@ export default function RoomPage() {
     setRoomsCreated((n) => n + 1);
     roomRef.current = room;
     tl.mark("roomCreated");
-    phase("ROOM_CREATE", kind === "rejoin" ? "reason=rejoin" : "reason=initial");
+    phase("ROOM_CREATE", `reason=${kind}`);
     if (kind === "initial") tl.mark("connectStart");
     phase("CONNECT_START");
     let connectedOnce = false; // отказ ПЕРВОГО подключения обрабатывает вызывающий код; автоматический повторный вход — только после успешного
@@ -382,13 +404,35 @@ export default function RoomPage() {
     // Критический путь — Room.connect. Всё независимое идёт рядом: микрофон (getUserMedia, включая запрос разрешения) начинается
     // немедленно и не ждёт подключения; канал событий (WebSocket) открывает TranscriptPanel при появлении комнаты.
     tl.mark("gumStart");
-    prepMicRef.current = createLocalAudioTrack(MIC_CAPTURE).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
+    prepMicRef.current = createLocalAudioTrack(captureOptions(loadMicPrefs())).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
+    void collectAll().then((data) => reportEvent("join_attempt", { meetingId: info.meeting_id, room: info.room.name, data }));
     try {
-      await connectLivekit(info, "initial");
+      // Первое подключение переживает кратковременные сбои сети/ICE: до MAX_CONNECT_TRIES попыток с нарастающей паузой и свежим токеном
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await connectLivekit(info, attempt === 1 ? "initial" : "retry");
+          break;
+        } catch (e) {
+          const m = describeMediaError(e, "connect");
+          if (attempt >= MAX_CONNECT_TRIES || !isTransientConnectError(e) || leavingRef.current) throw e;
+          reportEvent("connect_retry", { meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e), data: { attempt } });
+          dlog(`подключение не удалось (${m.reason}), попытка ${attempt + 1} из ${MAX_CONNECT_TRIES}`);
+          setConnectTry({ attempt: attempt + 1, max: MAX_CONNECT_TRIES });
+          const failed = roomRef.current;
+          roomRef.current = null;
+          await failed?.disconnect().catch(() => undefined);
+          await sleep(1200 * attempt);
+          try { info = await api.join(roomId, pw); infoRef.current = info; meetingRef.current = info.meeting_id; } catch { /* прежний токен ещё может подойти */ }
+        }
+      }
+      setConnectTry(null);
       void enableMic();
     } catch (e) {
       const m = describeMediaError(e, "connect");
-      reportEvent("join_failed", { meetingId: info.meeting_id, reason: m.reason, detail: String((e as Error)?.message ?? e) });
+      setConnectTry(null);
+      reportEvent("join_failed", { meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e) });
+      void collectAll().then((data) => reportEvent(m.reason === "IceFailed" ? "ice_failed" : "connect_failed", {
+        meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e), data: { ...data, attempts: MAX_CONNECT_TRIES } }));
       await teardown(true);
       setJoin(null);
       setError(m.message);
@@ -446,6 +490,19 @@ export default function RoomPage() {
     }
     refresh();
   };
+
+  /** Применяет настройки микрофона: сохраняет в браузере и «на лету» перезапускает захват (без повторного входа в комнату). */
+  const applyMicPrefs = useCallback(async (next: MicPrefs, changed: string) => {
+    setMicPrefs(next);
+    saveMicPrefs(next);
+    reportEvent("noise_suppression_changed", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: changed, data: { ...next } });
+    const pub = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Microphone);
+    const track = pub?.audioTrack as LocalAudioTrack | undefined;
+    if (!track) return;
+    try { await track.restartTrack(captureOptions(next)); setErr("mic", undefined); }
+    catch (e) { fail("mic", "mic", "mic_failed", e); }
+  }, [fail, setErr]);
+  const toggleNoise = () => applyMicPrefs({ ...micPrefs, noiseSuppression: !micPrefs.noiseSuppression }, micPrefs.noiseSuppression ? "noise_off" : "noise_on");
 
   const toggleRecording = async () => {
     if (!join) return;
@@ -587,43 +644,55 @@ export default function RoomPage() {
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 
-        <div className="controls">
+        {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
+        <div className="controls rbar">
           <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
-            <button className={`btn ${me?.mic || stage !== "ready" ? "" : "danger"}`} onClick={() => toggle("mic")} disabled={ended || stage !== "ready"}>{me?.mic ? "🎙 Выключить микрофон" : "🔇 Включить микрофон"}</button>
+            <RoundButton icon={me?.mic ? "mic" : "micOff"} label={me?.mic ? "Микрофон" : "Микрофон выкл."} tone={me?.mic ? "on" : "off"} pressed={!!me?.mic} pulse={!!me?.mic && !!me?.speaking}
+                         title={me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready"} onClick={() => { setMicFail(null); void toggle("mic"); }} />
+            {micFail && !ended && (
+              <div className="row tight small">
+                <button className="btn mini primary" onClick={() => { setErr("mic", undefined); setMicFail(null); void enableMic(); }}>Повторить</button>
+                {micFail === "busy" && <span className="muted">Устройство занято — закройте другую программу или выберите другой микрофон ниже.</span>}
+              </div>
+            )}
           </Ctl>
           {room.camera_allowed && (
             <Ctl error={ctlErr.cam} onClose={() => setErr("cam")}>
-              <button className={`btn ${me?.cam ? "primary" : ""}`} onClick={() => toggle("cam")} disabled={ended || stage !== "ready"}>{me?.cam ? "📷 Выключить камеру" : "🚫 Включить камеру"}</button>
+              <RoundButton icon={me?.cam ? "video" : "videoOff"} label={me?.cam ? "Камера" : "Камера выкл."} tone={me?.cam ? "on" : "off"} pressed={!!me?.cam}
+                           title={me?.cam ? "Выключить камеру" : "Включить камеру"} disabled={ended || stage !== "ready"} onClick={() => toggle("cam")} />
             </Ctl>
           )}
+          <Ctl onClose={() => undefined}>
+            <RoundButton icon={micPrefs.noiseSuppression ? "noise" : "noiseOff"} label="Шумоподавление" tone={micPrefs.noiseSuppression ? "on" : "neutral"} pressed={micPrefs.noiseSuppression}
+                         title={micPrefs.noiseSuppression ? "Шумоподавление включено — нажмите, чтобы выключить" : "Шумоподавление выключено — нажмите, чтобы включить"}
+                         disabled={ended || stage !== "ready"} onClick={toggleNoise} />
+          </Ctl>
           {room.screen_share_allowed && (
             <Ctl error={ctlErr.screen} onClose={() => setErr("screen")}>
-              <div className="row tight">
-                <button className={`btn ${me?.screen ? "primary" : "accent"}`} onClick={() => toggle("screen")} disabled={ended || stage !== "ready"}
-                        title="Выберите экран, окно или вкладку — трансляция начнётся сразу">
-                  {me?.screen ? "■ Остановить показ" : "🖥 Показать экран"}
-                </button>
+              <RoundButton icon={me?.screen ? "screenStop" : "screen"} label={me?.screen ? "Остановить показ" : "Показать экран"} tone={me?.screen ? "live" : "neutral"} pressed={!!me?.screen}
+                           title="Выберите экран, окно или вкладку — трансляция начнётся сразу" disabled={ended || stage !== "ready"} onClick={() => toggle("screen")}>
                 {join.client.screen_share_audio && !me?.screen && (
                   <label className="check small"><input type="checkbox" checked={withAudio} onChange={(e) => setWithAudio(e.target.checked)} /> со звуком</label>
                 )}
-              </div>
+              </RoundButton>
             </Ctl>
           )}
           {room.transcription_enabled && (
             <Ctl error={ctlErr.rec} onClose={() => setErr("rec")}>
-              <button className="btn" onClick={toggleRecording} disabled={ended}>{recording ? "Остановить запись" : "● Начать запись"}</button>
+              <RoundButton icon={recording ? "recordStop" : "record"} label={recording ? "Остановить запись" : "Начать запись"} tone={recording ? "rec" : "neutral"} pressed={recording}
+                           disabled={ended} onClick={toggleRecording} />
             </Ctl>
           )}
           <div className="spacer" />
           {!confirmEnd
-            ? <button className="btn ghost" onClick={() => setConfirmEnd(true)} disabled={ended}>Завершить для всех</button>
-            : <><span className="muted small">Завершить встречу для всех?</span>
-                <button className="btn danger" onClick={endForAll}>Да, завершить</button>
-                <button className="btn ghost" onClick={() => setConfirmEnd(false)}>Отмена</button></>}
-          <button className="btn danger" onClick={leave}>Выйти</button>
+            ? <RoundButton icon="power" label="Завершить для всех" tone="neutral" title="Завершить встречу для всех участников" disabled={ended} onClick={() => setConfirmEnd(true)} />
+            : <div className="confirm-end"><span className="muted small">Завершить встречу для всех?</span>
+                <div className="row tight"><button className="btn danger" onClick={endForAll}>Да, завершить</button>
+                <button className="btn ghost" onClick={() => setConfirmEnd(false)}>Отмена</button></div></div>}
+          <RoundButton icon="hangup" label="Выйти" tone="danger" title="Выйти из комнаты (встреча продолжится у остальных)" onClick={leave} />
         </div>
         {ctlErr.device && <div className="alert error" role="alert">Устройство: {ctlErr.device} <button className="btn mini" onClick={() => setErr("device")}>Закрыть</button></div>}
-        {roomRef.current && <DevicePanel room={roomRef.current} />}
+        {roomRef.current && <DevicePanel room={roomRef.current} prefs={micPrefs} onPrefs={applyMicPrefs} />}
         {debug && <DebugPanel snapshot={snapshot} join={tl.metrics()} connection={`${state}${rejoin ? ` · повторный вход ${rejoin.attempt}` : ""}`} socket={socket} asrReady={asrReady} log={log} instance={instance} roomsCreated={roomsCreated} />}
         <div ref={audioBox} className="hidden-audio" aria-hidden />
       </section>

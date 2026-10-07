@@ -58,7 +58,10 @@ class DirectoryClient(Protocol):
         ...
 
 
-_LOGIN_FORBIDDEN = re.compile(r'[\s"/\\\[\]:;|=,+*?<>\x00()]')
+# Белый список: буквы любых алфавитов, цифры, «_», «.», «-». Всё остальное (пробелы, кавычки, скобки, «*», «\» внутри, управляющие и
+# невидимые символы Unicode) в логине недопустимо — это закрывает попытки инъекции в LDAP-фильтр и «грязные» записи в журналах.
+_LOGIN_PART = re.compile(r"^\w[\w.\-]{0,63}$")
+_UPN_DOMAIN = re.compile(r"^\w[\w.\-]{0,252}$")
 
 
 def parse_login(raw: str) -> tuple[str, bool]:
@@ -69,10 +72,14 @@ def parse_login(raw: str) -> tuple[str, bool]:
     """
     login = (raw or "").strip()
     if "\\" in login:
-        login = login.split("\\", 1)[1]
+        domain, login = login.split("\\", 1)
+        if not _LOGIN_PART.match(domain):
+            raise DirectoryError("invalid_credentials", "недопустимый формат логина")
     is_upn = "@" in login
-    check = login.split("@", 1)[0] if is_upn else login
-    if not login or len(login) > 256 or _LOGIN_FORBIDDEN.search(check) or login.count("@") > 1:
+    if login.count("@") > 1:
+        raise DirectoryError("invalid_credentials", "недопустимый формат логина")
+    name, _, dom = login.partition("@")
+    if len(login) > 256 or not _LOGIN_PART.match(name) or (is_upn and not _UPN_DOMAIN.match(dom)):
         raise DirectoryError("invalid_credentials", "недопустимый формат логина")
     return login, is_upn
 

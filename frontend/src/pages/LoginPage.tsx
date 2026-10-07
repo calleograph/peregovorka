@@ -1,11 +1,13 @@
 import { FormEvent, useState } from "react";
 import { api, ApiError, type Me } from "../api";
+import { isValidLogin, LOGIN_HINT } from "../loginRules";
 
 export default function LoginPage({ onLogin, version }: { onLogin: (m: Me) => void; version: string }) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const valid = isValidLogin(login);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -28,14 +30,15 @@ export default function LoginPage({ onLogin, version }: { onLogin: (m: Me) => vo
         <h1>Вход в переговорку</h1>
         <p className="muted">Используйте доменную учётную запись.</p>
         <label>Логин
-          <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" autoFocus required
-                 placeholder="ivanov  или  ivanov@corp.local" />
+          <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" autoFocus required maxLength={256}
+                 autoCapitalize="none" spellCheck={false} aria-invalid={login !== "" && !valid} placeholder="ivanov  или  ivanov@corp.local" />
+          {login !== "" && !valid && <span className="field-err" role="alert">{LOGIN_HINT}</span>}
         </label>
         <label>Пароль
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required maxLength={512} />
         </label>
         {error && <div className="alert error" role="alert">{error}</div>}
-        <button className="btn primary" disabled={busy || !login || !password}>{busy ? "Проверка…" : "Войти"}</button>
+        <button className="btn primary" disabled={busy || !valid || !password}>{busy ? "Проверка…" : "Войти"}</button>
         {version && <div className="muted small">Версия {version}</div>}
       </form>
     </div>

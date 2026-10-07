@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { version as lkClientVersion } from "livekit-client";
-import { api, type ApiError, type SystemStatus } from "../../api";
+import { api, type ApiError, type JournalStats, type SystemStatus } from "../../api";
 import { bytes, downloadText } from "../../util";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
@@ -26,14 +26,16 @@ function Bar({ value, warn = 70, bad = 90 }: { value: number; warn?: number; bad
 const ms = (v?: number | null) => (v === undefined || v === null ? "—" : `${v} мс`);
 
 /** Состояние системы: ресурсы, сервисы, ASR, комнаты и пользователи, хранилища, версии, времена входа; скачивание диагностического отчёта. */
-export default function SystemAdmin() {
+export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => void } = {}) {
   const [s, setS] = useState<SystemStatus | null>(null);
   const [err, setErr] = useState("");
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [problems, setProblems] = useState<string[] | null>(null);
   const [busy, setBusy] = useState("");
+  const [js, setJs] = useState<JournalStats | null>(null);
   const load = useCallback(() => api.admin.system().then((x) => { setS(x); setErr(""); }).catch((e) => setErr((e as ApiError).message)), []);
   useEffect(() => { void load(); const t = window.setInterval(load, 15000); return () => window.clearInterval(t); }, [load]);
+  useEffect(() => { const f = () => api.admin.journalStats().then(setJs).catch(() => undefined); void f(); const t = window.setInterval(f, 30000); return () => window.clearInterval(t); }, []);
 
   const run = async (what: string, fn: () => Promise<void>) => { setBusy(what); setNote(null); try { await fn(); } catch (e) { setNote({ ok: false, text: (e as ApiError).message }); } finally { setBusy(""); } };
   const report = () => run("report", async () => {
@@ -72,6 +74,13 @@ export default function SystemAdmin() {
         <div className="card"><div className="l">Нагрузка CPU (load1 / {h.cpus ?? "?"} ядер)</div><div className="v">{cpuPct !== undefined ? `${Math.round(cpuPct)} %` : "—"}</div>{cpuPct !== undefined && <Bar value={cpuPct} />}</div>
         <div className="card"><div className="l">Память занята</div><div className="v">{memUsed !== undefined ? `${Math.round(memUsed)} %` : "—"}</div>{memUsed !== undefined && <><Bar value={memUsed} warn={80} bad={92} /><div className="l">свободно {bytes(h.mem_available)} из {bytes(h.mem_total)}</div></>}</div>
         <div className="card"><div className="l">Свободно на диске данных</div><div className="v">{bytes(s.disk_free_bytes)}</div></div>
+        {js && (
+          <div className="card"><div className="l">Журнал событий</div><div className="v">{bytes(js.size_bytes)}</div>
+            <div className="l">{js.total.toLocaleString("ru-RU")} записей · хранится {js.retention_days} дн. · ошибок за сутки: {js.errors_24h}</div>
+            <div className="row tight" style={{ marginTop: 6 }}>
+              {onOpen && <button className="btn mini" onClick={() => onOpen("journal")}>Открыть</button>}
+              {onOpen && <button className="btn mini" onClick={() => onOpen("journal_settings")}>Хранение и очистка</button>}</div></div>
+        )}
         <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{s.version} · {s.commit.slice(0, 8)}</div><div className="l">{s.built_at ?? ""}</div></div>
       </div>
 

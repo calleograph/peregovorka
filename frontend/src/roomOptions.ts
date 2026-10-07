@@ -1,4 +1,5 @@
 import { ScreenSharePresets, VideoPresets, type AudioCaptureOptions, type RoomOptions } from "livekit-client";
+import { captureOptions, loadMicPrefs, type MicPrefs } from "./micPrefs";
 
 /** Захват микрофона: подавление эха/шума и автоусиление — для речи; то же самое используется при предварительном getUserMedia. */
 export const MIC_CAPTURE: AudioCaptureOptions = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
@@ -10,11 +11,11 @@ export const MIC_CAPTURE: AudioCaptureOptions = { echoCancellation: true, noiseS
  *    (screenShare.ts: sharp/balanced/motion). Для сравнения: Jitsi по умолчанию берёт для экрана 5 к/с («выше FPS — хуже разрешение»).
  *  - adaptiveStream/dynacast: получатели запрашивают слой по размеру окна, отправитель не кодирует слои, которых никто не смотрит.
  */
-export function buildRoomOptions(): RoomOptions {
+export function buildRoomOptions(prefs: MicPrefs = loadMicPrefs()): RoomOptions {
   return {
     adaptiveStream: true,
     dynacast: true,
-    audioCaptureDefaults: MIC_CAPTURE,
+    audioCaptureDefaults: captureOptions(prefs),
     videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
     publishDefaults: {
       videoCodec: "vp8",
@@ -24,6 +25,7 @@ export function buildRoomOptions(): RoomOptions {
       screenShareEncoding: { maxBitrate: 3_000_000, maxFramerate: 15 },
       screenShareSimulcastLayers: [ScreenSharePresets.h720fps5],
       dtx: true,
+      stopMicTrackOnMute: prefs.releaseOnMute,  // «не держать микрофон»: выключили — устройство свободно для других программ
     },
   };
 }
