@@ -9,9 +9,10 @@ while [ $# -gt 0 ]; do case "$1" in --env) ENV_FILE="$2"; shift 2 ;; *) die "Н�
 load_env "$ENV_FILE"; validate_project_name
 log "== Проверка экземпляра ${COMPOSE_PROJECT_NAME} =="
 if verify_deployment; then
+  print_verify_stages
   log
   [ "${#VERIFY_WARNINGS[@]}" -gt 0 ] && warn "Предупреждений: ${#VERIFY_WARNINGS[@]} (см. выше)"
   ok "Peregovorka deployment verified"
   exit 0
 fi
-log; fail "Проверка НЕ пройдена: ошибок ${VERIFY_FAILS}"; exit 1
+print_verify_stages; log; fail "Проверка НЕ пройдена: ошибок ${VERIFY_FAILS}"; exit 1

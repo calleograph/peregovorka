@@ -55,6 +55,24 @@ class Channel:
         return {**st, "available": bool(ts) and age is not None and age <= HEARTBEAT_MAX_AGE, "heartbeat_age_s": None if age is None else int(age),
                 "request_pending": (self.dir / "request.txt").exists()}
 
+    def history(self, limit: int = 15) -> list[dict]:
+        """Попытки обновления (history.ndjson пишет update.sh при ЛЮБОМ запуске — из терминала и из веб-интерфейса), новые первыми."""
+        out: list[dict] = []
+        try:
+            lines = (self.dir / "history.ndjson").read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return out
+        for ln in reversed(lines):
+            try:
+                d = json.loads(ln)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("result") in ("ok", "failed"):
+                out.append({k: d.get(k) for k in ("at", "started", "result", "stage", "from_version", "to_version", "from_commit", "to_commit", "source", "by")})
+            if len(out) >= limit:
+                break
+        return out
+
     def remote(self) -> dict | None:
         r = self._json("remote.json")
         if r and r.get("checked_at"):

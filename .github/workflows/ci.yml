@@ -69,3 +69,10 @@ jobs:
           if [ -n "$last" ] && [ "$last" = "v$(tr -d '[:space:]' < VERSION)" ] && [ "$(git rev-list --count "$last..HEAD")" -gt 0 ]; then
             echo "::notice::После тега $last есть новые коммиты без новой версии. Перед выпуском: ./scripts/release.sh patch"
           fi
+
+  web-image:
+    # Настоящая сборка образа web (стадия draw.io, SPA, nginx) и проверка на живом nginx: nginx -t и запросы «как через внешний прокси» (X-Forwarded-Proto: https).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/nginx/run.sh

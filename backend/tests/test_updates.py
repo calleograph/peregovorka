@@ -239,3 +239,41 @@ def test_tested_versions_match_deployment_compat_env():
     assert env["TESTED_LIVEKIT_CLIENT_JS"].strip() == upd.TESTED["livekit_client_js"]
     assert env["TESTED_LIVEKIT_PYTHON_SDK"].strip() == upd.TESTED["livekit_python_sdk"]
     assert env["TESTED_LIVEKIT_API_PYTHON"].strip() == upd.TESTED["livekit_api_python"]
+
+
+def hist(d: Path, *rows):
+    (d / "history.ndjson").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+
+
+def test_history_separates_installed_last_success_and_attempts(client):
+    d = chan(client)
+    # старая неудачная попытка из веб-интерфейса, затем успешное обновление из терминала
+    heartbeat(d, state="idle", result="failed", exit_code=1, finished_at=1000, step_no=5, step_name="Сборка образов")
+    hist(d, {"at": 1000, "started": 900, "result": "failed", "stage": "Сборка образов", "from_version": "0.1.3", "to_version": "0.1.4", "from_commit": "b93967a", "to_commit": "99defd0", "source": "web", "by": "root"},
+         {"at": 2000, "started": 1900, "result": "ok", "stage": "", "from_version": "0.1.3", "to_version": "0.1.4", "from_commit": "b93967a", "to_commit": "99defd0", "source": "cli", "by": ""},
+         {"at": 1, "started": 0, "result": "weird"})
+    login(client, "root")
+    o = client.get(U).json()
+    assert [h["result"] for h in o["history"]] == ["ok", "failed"], "новые первыми, мусорные записи игнорируются"
+    assert o["last_success"]["source"] == "cli" and o["last_success"]["to_version"] == "0.1.4"
+    assert o["updater"]["stale"] is True, "неудачная попытка старше успешного обновления не должна выглядеть текущей"
+
+
+def test_failed_attempt_is_not_stale_without_later_success_and_running_is_never_stale(client):
+    d = chan(client)
+    heartbeat(d, state="idle", result="failed", exit_code=1, finished_at=3000)
+    hist(d, {"at": 3000, "started": 2900, "result": "failed", "stage": "Миграции", "source": "web"})
+    login(client, "root")
+    o = client.get(U).json()
+    assert o["updater"]["stale"] is False and o["last_success"] is None
+    heartbeat(d, state="updating", finished_at=0)
+    hist(d, {"at": 5000, "started": 4000, "result": "ok", "source": "cli"})
+    assert client.get(U).json()["updater"]["stale"] is False
+
+
+def test_no_history_file_is_fine(client):
+    d = chan(client)
+    heartbeat(d)
+    login(client, "root")
+    o = client.get(U).json()
+    assert o["history"] == [] and o["last_success"] is None

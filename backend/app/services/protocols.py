@@ -30,6 +30,10 @@ from .storage import StorageError, WEEKDAYS_RU, build_storage, meeting_relpath, 
 
 log = logging.getLogger("app.protocols")
 
+
+class NothingToProcess(SettingsError):
+    """В встрече нет ни реплик, ни чата, ни схемы: это штатный случай (пустая встреча), а не сбой — в журнал ошибкой не пишется."""
+
 SYSTEM_PROMPT = (
     "Ты — секретарь совещания. Пиши по-русски, строго по тексту стенограммы, ничего не выдумывай. "
     "В стенограмме персональные и конфиденциальные данные заменены метками (например, [ФИО_1]) — "
@@ -120,6 +124,20 @@ class ProtocolService:
             meeting.room.name, meeting.started_at, meeting.ended_at, names,
             [(r.started_at, author_name(r) or "Неизвестный участник", r.text) for r in rows], tz)
 
+    async def has_materials(self, meeting_id: uuid.UUID) -> bool:
+        """Есть ли что обрабатывать: реплики, сообщения чата или схема на доске."""
+        from sqlalchemy import func  # noqa: PLC0415
+
+        from ..models import MeetingChatMessage  # noqa: PLC0415
+
+        async with self._sm() as db:
+            if (await db.execute(select(func.count()).select_from(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id))).scalar_one():
+                return True
+            if (await db.execute(select(func.count()).select_from(MeetingChatMessage).where(MeetingChatMessage.meeting_id == meeting_id))).scalar_one():
+                return True
+            board = await db.get(MeetingWhiteboard, meeting_id)
+            return bool(board and board.shapes > 0)
+
     def _storage(self, cfg):
         try:
             return build_storage(cfg, self._s.data_dir)
@@ -167,6 +185,11 @@ class ProtocolService:
                         log.error("Выгрузка стенограммы не удалась", extra={"meeting_id": str(meeting_id), "error": str(exc)})
                     await db.commit()
                 proto_cfg = await self._svc.get(db, "protocol")
+            if (proto_cfg.auto_generate or proto_cfg.auto_summary) and not await self.has_materials(meeting_id):  # type: ignore[attr-defined]
+                # пустая встреча: автоматический протокол не создаётся и ошибок в журнале не плодит
+                if self.journal is not None:
+                    self.journal.emit("llm", "protocol_skipped", meeting_id=str(meeting_id), message="Автоматический протокол не создан: в встрече нет реплик, чата и схемы")
+                return
             if proto_cfg.auto_generate:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
             if proto_cfg.auto_summary:  # type: ignore[attr-defined]
@@ -318,7 +341,10 @@ class ProtocolService:
             except SettingsError as exc:
                 rec.status, rec.error = "failed", str(exc)[:480]
                 await db.commit()
-                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "settings"})
+                if isinstance(exc, NothingToProcess):  # штатное отсутствие данных — не ошибка
+                    self._emit("llm", "protocol_skipped", rec, started, level="info", message=rec.error, data={"stage": "empty"})
+                else:
+                    self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "settings"})
             except Exception:  # noqa: BLE001
                 log.exception("Ошибка создания протокола", extra={"protocol": str(protocol_id)})
                 rec.status, rec.error = "failed", "Внутренняя ошибка (см. журнал сервера)"
@@ -356,7 +382,7 @@ class ProtocolService:
         transcript = await self.transcript_text(db, meeting, tz)
         materials = await build_materials(db, meeting, tz, transcript)
         if not materials.usable:
-            raise SettingsError("В стенограмме нет реплик, а чат и доска пусты — протокол не создаётся")
+            raise NothingToProcess("В стенограмме нет реплик, а чат и доска пусты — протокол не создаётся")
         text = materials.text
 
         # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.

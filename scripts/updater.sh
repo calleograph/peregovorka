@@ -105,7 +105,7 @@ do_update() { # do_update FORCE PULL
   STATE="updating"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_NAME="запуск"; write_status
   : > "$LOG"; chmod 644 "$LOG"
   printf '=== Обновление запущено %s (запросил: %s) ===\n$ scripts/update.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" "${args[*]}" >> "$LOG"
-  (cd "$REPO_ROOT" && "$REPO_ROOT/scripts/update.sh" "${args[@]}" 2>&1) \
+  (cd "$REPO_ROOT" && UPDATE_SOURCE=web UPDATE_BY="$BY" "$REPO_ROOT/scripts/update.sh" "${args[@]}" 2>&1) \
     | sed -u -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r$//' \
     | while IFS= read -r line; do
         printf '%s\n' "$line" >> "$LOG"

@@ -243,6 +243,8 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
         raise HTTPException(status_code=409, detail="Языковая модель (LLM) не настроена администратором")
     if not plan["anonymizer_ready"]:
         raise HTTPException(status_code=409, detail="Для этой переговорки включено обезличивание, но сервис обезличивания не настроен")
+    if not await ps.has_materials(meeting_id):
+        raise HTTPException(status_code=409, detail="В встрече нет реплик, чата и схемы — формировать протокол не из чего")
     pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction)
     ps.start_protocol(pid)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.create",

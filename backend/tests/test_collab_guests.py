@@ -410,9 +410,9 @@ def test_protocol_possible_from_chat_alone_and_chat_is_deleted_with_meeting(tmp_
         mid = a["meeting_id"]
         login(c, "alice")
         c.post(f"/api/v1/meetings/{mid}/end")
-        assert c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"}).status_code == 202
-        _drain(c)
-        assert c.get(f"/api/v1/meetings/{mid}/protocols").json()[0]["status"] == "failed"  # ни речи, ни чата
+        r0 = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"})
+        assert r0.status_code == 409 and "не из чего" in r0.json()["detail"]  # ни речи, ни чата, ни схемы — протокол не создаётся и ошибок не плодит
+        assert c.get(f"/api/v1/meetings/{mid}/protocols").json() == []
         room2 = make_room(c)
         b = _join(c, "alice", room2["id"])
         login(c, "alice")
@@ -466,3 +466,24 @@ def test_meeting_without_chat_and_board_exports_only_the_transcript(tmp_path, di
         _drain(c)
         assert len(list((tmp_path / "out").rglob("protocol.txt"))) == 1
         assert not list((tmp_path / "out").rglob("chat.txt")) and not list((tmp_path / "out").rglob("whiteboard.drawio"))
+
+
+def test_empty_meeting_does_not_create_auto_protocols_or_error_events(tmp_path, directory):
+    from .test_admin_features import anon_ok
+
+    def llm(req: httpx.Request) -> httpx.Response:
+        raise AssertionError("в LLM для пустой встречи ничего отправляться не должно")
+
+    with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon_ok), "llm": httpx.MockTransport(llm)}) as c:
+        configure(c)
+        put_settings(c, "protocol", auto_generate=True, auto_summary=True)
+        room = make_room(c)
+        a = _join(c, "alice", room["id"])
+        login(c, "alice")
+        c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
+        _drain(c)
+        assert c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols").json() == []
+        c.portal.call(c.app_obj.state.journal.flush)
+        login(c, "root")
+        rows = c.get("/api/v1/admin/journal", params={"filters": json.dumps([{"field": "event", "op": "starts", "value": "protocol_"}])}).json()["items"]
+        assert [r["event"] for r in rows] == ["protocol_skipped"] and rows[0]["level"] == "info"

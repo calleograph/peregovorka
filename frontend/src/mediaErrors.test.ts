@@ -42,3 +42,25 @@ describe("причины ошибок вместо общего «Не удал�
     expect(r.message).toContain("boom");
   });
 });
+
+describe("подключение: сброс соединения и этапы", () => {
+  it("ERR_CONNECTION_RESET объясняется как сетевая проблема (VPN/MTU/прокси/файрвол), а не ошибка приложения", () => {
+    const i = describeMediaError(new Error("WebSocket connection to 'wss://m.test/livekit/rtc' failed: ERR_CONNECTION_RESET"), "connect");
+    expect(i.reason).toBe("ConnectionReset");
+    expect(i.message).toMatch(/сброшено на сетевом уровне/);
+    expect(i.message).toMatch(/VPN/);
+    expect(i.message).toMatch(/MTU/);
+    expect(i.message).toMatch(/прокси/);
+  });
+  it("таймаут различает сигнальное соединение и ICE", () => {
+    const sig = describeMediaError(new Error("timeout"), "connect", { stage: "server" });
+    const ice = describeMediaError(new Error("timeout"), "connect", { stage: "media" });
+    expect(sig.reason).toBe("Timeout");
+    expect(ice.reason).toBe("IceTimeout");
+    expect(sig.message).toMatch(/сигнальное соединение/i);
+    expect(ice.message).toMatch(/ICE/);
+  });
+  it("сбой WebSocket называется сигнальным соединением", () => {
+    expect(describeMediaError(new Error("websocket closed"), "connect").message).toMatch(/сигнальное соединение \(WebSocket\)/);
+  });
+});

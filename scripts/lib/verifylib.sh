@@ -25,7 +25,19 @@ alembic_verify() {
 }
 
 # --------------------------------------------------------------------- итоговая проверка
-VERIFY_FAILS=0; VERIFY_WARNINGS=()
+VERIFY_FAILS=0; VERIFY_WARNINGS=(); VERIFY_STAGES=(); _STAGE_F0=0
+# Этапы проверки с отдельным итогом PASS/FAIL: _stage_begin; …проверки…; _stage_end "Название"
+_stage_begin() { _STAGE_F0=$VERIFY_FAILS; }
+_stage_end() { VERIFY_STAGES+=("$1|$([ "$VERIFY_FAILS" -eq "$_STAGE_F0" ] && echo PASS || echo FAIL)"); }
+print_verify_stages() {
+  local e
+  [ "${#VERIFY_STAGES[@]}" -gt 0 ] || return 0
+  printf '
+Проверки по этапам:
+'
+  for e in "${VERIFY_STAGES[@]}"; do printf '  %-5s %s
+' "${e##*|}" "${e%|*}"; done
+}
 v_ok()   { ok "$*"; }
 v_warn() { warn "$*"; VERIFY_WARNINGS+=("$*"); }
 v_fail() { fail "$*"; VERIFY_FAILS=$((VERIFY_FAILS+1)); }
@@ -187,11 +199,12 @@ check_build_versions() {
 }
 
 verify_deployment() {
-  VERIFY_FAILS=0; VERIFY_WARNINGS=()
+  VERIFY_FAILS=0; VERIFY_WARNINGS=(); VERIFY_STAGES=()
   local s st code body web_addr="${WEB_BIND_ADDR:-127.0.0.1}" lk_bind="${LIVEKIT_BIND_ADDR:-0.0.0.0}"
   [ "$web_addr" = "0.0.0.0" ] && web_addr="127.0.0.1"
 
   log "-- контейнеры и Docker healthcheck --"
+  _stage_begin
   for s in postgres redis backend asr livekit web; do
     st="$(_svc_state "$s")"
     case "$st" in
@@ -200,6 +213,15 @@ verify_deployment() {
     esac
   done
 
+  _stage_end "Контейнеры (healthcheck всех сервисов)"
+
+  log "-- конфигурация web nginx --"
+  _stage_begin
+  if st="$(dc exec -T web nginx -t 2>&1)"; then v_ok "web nginx: конфигурация корректна (nginx -t)"
+  else v_fail "web nginx: nginx -t не прошёл: $(printf '%s' "$st" | tr '
+' ' ' | cut -c1-250)"; fi
+  _stage_end "Конфигурация nginx (nginx -t)"
+
   log "-- данные и миграции --"
   if dc exec -T postgres pg_isready -U "${POSTGRES_USER:-}" -d "${POSTGRES_DB:-}" >/dev/null 2>&1; then v_ok "PostgreSQL принимает подключения"; else v_fail "PostgreSQL не отвечает на pg_isready"; fi
   if dc exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; then v_ok "Redis отвечает PONG"; else v_fail "Redis не отвечает"; fi
@@ -207,12 +229,14 @@ verify_deployment() {
   else v_fail "Alembic: текущая ревизия «${ALEMBIC_CUR:-?}», head «${ALEMBIC_HEAD:-?}» — миграции не применены/не подтверждены"; fi
 
   log "-- backend, ASR, версия --"
+  _stage_begin
   read -r code body <<<"$(svc_http backend http://127.0.0.1:8000/api/v1/health/ready)"
   case "$body" in
     *'"status":"ready"'*) v_ok "Backend ready (PostgreSQL, Redis, LiveKit, ASR доступны)" ;;
     *'"status":"degraded"'*) v_warn "Backend degraded: ASR недоступен (транскрибация не работает): $(printf '%s' "$body" | cut -c1-200)" ;;
     *) v_fail "Backend не ready (HTTP $code): $(printf '%s' "$body" | cut -c1-200)" ;;
   esac
+  _stage_end "API /api/v1/health/ready"
   read -r code body <<<"$(svc_http backend http://127.0.0.1:8000/api/v1/version)"
   if [ "$code" = 200 ]; then
     v_ok "Версия backend: $(printf '%s' "$body" | grep -o '"version":"[^"]*"' | cut -d'"' -f4) commit=$(printf '%s' "$body" | grep -o '"commit":"[^"]*"' | cut -d'"' -f4) built_at=$(printf '%s' "$body" | grep -o '"built_at":"[^"]*"' | cut -d'"' -f4)"
@@ -228,10 +252,18 @@ verify_deployment() {
   log "-- HTTP-цепочка --"
   if command -v curl >/dev/null 2>&1; then
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/")"; [ "$code" = 200 ] && v_ok "Internal HTTP (web ${web_addr}:${WEB_PORT}): $code" || v_fail "Web ${web_addr}:${WEB_PORT} вернул $code"
+    _stage_begin
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/api/v1/health/live")"; [ "$code" = 200 ] && v_ok "Backend через web (/api/v1/health/live): $code" || v_fail "Backend через web: $code"
+    # Запрос ТАК, как его присылает внешний прокси: со схемой https и цепочкой адресов. Ошибка в обработке X-Forwarded-* (например, цикл переменной
+    # $xfp в map) проявляется только при непустом заголовке и пустым запросом без него не ловится.
+    code="$(_curl_code -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-For: 203.0.113.7, 10.0.0.1' "http://${web_addr}:${WEB_PORT}/api/v1/health/live")"
+    [ "$code" = 200 ] && v_ok "Backend через web со схемой https и X-Forwarded-For: $code" || v_fail "Backend через web при X-Forwarded-Proto: https вернул $code (ошибка обработки заголовков прокси в frontend/nginx.conf?)"
+    _stage_end "Прокси web → backend (как через внешний proxy, https)"
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/internal/v1/smoke")"; [ "$code" = 404 ] && v_ok "Внутренний API снаружи закрыт (404)" || v_fail "/internal/ доступен снаружи (код $code) — должен быть 404"
-    code="$(_curl_code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "http://${web_addr}:${WEB_PORT}/livekit/rtc")"
+    _stage_begin
+    code="$(_curl_code -H 'X-Forwarded-Proto: https' -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "http://${web_addr}:${WEB_PORT}/livekit/rtc")"
     case "$code" in 101|400|401|403|426) v_ok "Сигналинг LiveKit через web (/livekit/) достижим (HTTP $code)" ;; *) v_fail "Сигналинг LiveKit через web недоступен (HTTP $code) — проверьте прокси /livekit/" ;; esac
+    _stage_end "Сигналинг LiveKit (WebSocket через web)"
     compat_check; if [ "$COMPAT_STATUS" = OK ]; then v_ok "$COMPAT_NOTE"; else v_warn "$COMPAT_NOTE"; fi
     code="$(_curl_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$code" = 200 ] && v_ok "LiveKit HTTP healthy ($code)" || v_fail "LiveKit HTTP 127.0.0.1:${LIVEKIT_HTTP_PORT}: $code"
     if [ "${NGINX_MANAGE:-no}" = "yes" ]; then

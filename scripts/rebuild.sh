@@ -40,6 +40,8 @@ export IMAGE_TAG="$APP_GIT_COMMIT"
 info "Сборка: ${SVCS[*]} · версия ${APP_VERSION} · commit ${APP_GIT_COMMIT} · $APP_BUILT_AT"
 build_images "${SVCS[@]}" || die "Сборка не удалась (сообщение stage=build выше; лог — $DATA_ROOT/state/build-*.log). Работающие контейнеры не тронуты."
 
+case " ${SVCS[*]} " in *" web "*) check_web_image_config || die "Конфигурация nginx в новом образе web некорректна — работающие контейнеры не тронуты" ;; esac
+
 if [ "$NO_RESTART" -eq 1 ]; then
   ok "Образы собраны с commit ${APP_GIT_COMMIT}. Контейнеры не перезапускались (--no-restart): примените вручную: docker compose ... up -d --no-build ${SVCS[*]}"
   exit 0
@@ -47,4 +49,8 @@ fi
 info "Пересоздание: ${SVCS[*]} (--no-build)"
 dc up -d --no-build "${SVCS[@]}" || die "Не удалось запустить сервисы после сборки"
 upd_wait_healthy "$WAIT" || die "Сервисы не стали healthy за ${WAIT} с (docker compose ps / scripts/diag.sh)"
-ok "Готово: ${SVCS[*]} пересобраны и запущены с commit ${APP_GIT_COMMIT}. Проверка: ./scripts/verify.sh"
+ok "Готово: ${SVCS[*]} пересобраны и запущены с commit ${APP_GIT_COMMIT}."
+log "== Автоматическая проверка после пересборки =="
+verify_deployment; VF=$?
+print_verify_stages
+[ "$VF" -eq 0 ] && ok "Verify: PASS" || { fail "Verify: FAIL (ошибок: $VF) — scripts/diag.sh"; exit 1; }

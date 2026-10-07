@@ -102,6 +102,8 @@ source "$ROOT/tests/scripts/part_updater.sh"
 source "$ROOT/tests/scripts/part_fixes.sh"
 # shellcheck source=part_version.sh
 source "$ROOT/tests/scripts/part_version.sh"
+# shellcheck source=part_nginx.sh
+source "$ROOT/tests/scripts/part_nginx.sh"
 
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

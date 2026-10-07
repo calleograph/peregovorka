@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
     data_dir: str = "/data"
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
+    # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
+    trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"
 
     # --- PostgreSQL (database_url имеет приоритет — удобно для тестов)
     database_url: str | None = None

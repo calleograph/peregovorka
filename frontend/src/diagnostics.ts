@@ -6,6 +6,7 @@
 import type { Room as LkRoom } from "livekit-client";
 import { Track } from "livekit-client";
 import { api } from "./api";
+import { redactSecrets } from "./lkDiag";
 import { FreezeDetector, RateMeter, parseInbound, parseOutbound, parsePath, type MediaStats, type PathStats } from "./rtcStats";
 
 export { FreezeDetector, RateMeter } from "./rtcStats";
@@ -15,9 +16,9 @@ export type { MediaStats, PathStats } from "./rtcStats";
 export type Stage = "prepare" | "server" | "media" | "ready";
 export const STAGE_LABEL: Record<Stage, string> = {
   prepare: "Подготовка встречи",
-  server: "Подключение к серверу звонков",
-  media: "Установка медиасоединения",
-  ready: "Подключено",
+  server: "Сигнал: соединение WebSocket с сервером звонков",
+  media: "ICE: путь для звука и видео",
+  ready: "Медиа: подключено",
 };
 export const STAGES: Stage[] = ["prepare", "server", "media", "ready"];
 /** После скольких секунд этап считается «затянувшимся» и пользователю показывается пояснение. */
@@ -86,7 +87,19 @@ export type ScreenPhase = "SCREEN_CREATE" | "SCREEN_PUBLISH_START" | "SCREEN_PUB
 
 export interface EventFields { meetingId?: string; reason?: string; detail?: string; room?: string; data?: Record<string, unknown> }
 export function reportEvent(event: string, fields: EventFields = {}): void {
-  api.clientEvent({ event, meeting_id: fields.meetingId, reason: fields.reason, detail: fields.detail?.slice(0, 280), room: fields.room, data: fields.data });
+  // токены доступа и join_request из текстов ошибок удаляются до отправки на сервер
+  api.clientEvent({ event, meeting_id: fields.meetingId, reason: fields.reason && redactSecrets(fields.reason, 200), detail: fields.detail && redactSecrets(fields.detail, 280), room: fields.room, data: scrub(fields.data) });
+}
+/** Строковые значения данных события проходят через redactSecrets (на случай URL с токеном в тексте). */
+function scrub(data?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!data) return data;
+  const walk = (v: unknown, depth = 0): unknown => {
+    if (typeof v === "string") return redactSecrets(v, 300);
+    if (depth > 4 || v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.slice(0, 40).map((x) => walk(x, depth + 1));
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x, depth + 1)]));
+  };
+  return walk(data) as Record<string, unknown>;
 }
 export const reportRoomPhase = (phase: RoomPhase, instance: string, meetingId?: string, extra = ""): void =>
   reportEvent("room_lifecycle", { meetingId, reason: phase, detail: `instance=${instance}${extra ? ` ${extra}` : ""}` });

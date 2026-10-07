@@ -242,3 +242,15 @@ require_images() {
   for s in "${BUILD_SERVICES[@]}"; do image_exists "$s" || { fail "Нет образа $(svc_image "$s") — выполните этап сборки (scripts/install.sh --from build)"; miss=1; }; done
   [ "$miss" -eq 0 ]
 }
+
+# check_web_image_config — `nginx -t` в только что СОБРАННОМ образе web, до того как он заменит работающий контейнер.
+# Синтаксическая ошибка конфигурации останавливает обновление, а прежняя версия продолжает работать. (Ошибки времени выполнения вроде
+# «cycle while evaluating variable» `nginx -t` не видит — их ловит verify_deployment запросом через прокси со схемой https.)
+check_web_image_config() {
+  local img out
+  img="$(svc_image web)"
+  image_exists web || return 0
+  if out="$(docker run --rm --entrypoint nginx "$img" -t 2>&1)"; then ok "web nginx: конфигурация образа корректна (nginx -t)"; return 0; fi
+  fail "web nginx: nginx -t в образе $img не прошёл:"; printf '%s\n' "$out" | sed 's/^/    /' >&2
+  return 1
+}

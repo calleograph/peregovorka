@@ -32,6 +32,11 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
     ch = channel(request)
     st = ch.status()
     remote = ch.remote()
+    history = ch.history()
+    last_ok = next((h for h in history if h["result"] == "ok"), None)
+    # Результат последнего запуска из веб-интерфейса (status.json) больше не «текущий», если после него было успешное обновление (например, из терминала)
+    fin = st.get("finished_at") or 0
+    st["stale"] = bool(fin and st.get("state") != "updating" and last_ok and (last_ok.get("at") or 0) >= fin and st.get("result") != "ok")
     active = (await db.execute(select(func.count()).select_from(Meeting).where(Meeting.ended_at.is_(None)))).scalar_one()
     running = st.get("state") == "updating"
     reasons = []
@@ -44,8 +49,8 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
     return {
         "installed": {"version": s.app_version, "commit": s.app_git_commit, "built_at": s.app_built_at},
         "updater": {k: st.get(k) for k in ("available", "heartbeat_age_s", "state", "request_id", "step_no", "step_total", "step_name", "started_at",
-                                           "finished_at", "exit_code", "result", "request_pending", "project", "by")},
-        "remote": remote, "active_meetings": active,
+                                           "finished_at", "exit_code", "result", "request_pending", "project", "by", "stale")},
+        "remote": remote, "active_meetings": active, "history": history, "last_success": last_ok,
         "can_update": not reasons, "reasons": reasons,
         "up_to_date": bool(remote and remote.get("ok") and int(remote.get("behind", 0)) == 0),
         "commands": {"install": "./scripts/updater.sh install", "foreground": "./scripts/updater.sh run", "manual": "./scripts/update.sh"},

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ApiError, type UpdatesOverview } from "../../api";
+import { api, type ApiError, type UpdateAttempt, type UpdatesOverview } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
 import { Markdown } from "../../components/Markdown";
 import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
@@ -28,6 +28,7 @@ export default function UpdatesAdmin() {
   const [pull, setPull] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState("");
+  const [ranHere, setRanHere] = useState(false);   // обновление запускали из этого окна: показываем его ход и после завершения
   const [follow, setFollow] = useState(true);
   const offset = useRef(0);
   const term = useRef<HTMLPreElement>(null);
@@ -63,6 +64,7 @@ export default function UpdatesAdmin() {
   const start = async () => {
     await api.admin.updatesRun({ confirm: true, force_build: force, pull });
     watchUntil.current = Date.now() + 60000;
+    setRanHere(true);
     offset.current = 0; setLog(""); setFollow(true);
     await loadOverview();
   };
@@ -85,6 +87,7 @@ export default function UpdatesAdmin() {
       <div className="card upd-project">
         <div className="upd-versions">
           <div><div className="l">Установлено на сервере</div><div className="v small-v">{ov ? versionLabel(ov.installed.version, ov.installed.commit) : "—"}</div>
+            {ov?.last_success && <div className="l">последнее успешное обновление: {fmt(new Date(ov.last_success.at * 1000).toISOString())} · {attemptRoute(ov.last_success)} · {ov.last_success.source === "web" ? "из веб-интерфейса" : "из терминала"}</div>}
             <div className="l">{unknownBuild ? <span className="badge warn" title="Образ собран без данных Git — вероятно, вручную командой docker compose build">собран вне штатного обновления</span> : ov?.installed.built_at && ov.installed.built_at !== "unknown" ? `сборка ${ov.installed.built_at}` : ""}</div></div>
           <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? (rem.remote_version ? versionLabel(rem.remote_version, rem.remote) : shortCommit(rem.remote)) : "—"}</div>
             <div className="l">{rem ? `проверено ${ago(rem.age_s)}` : "проверка ещё не выполнялась"}</div></div>
@@ -151,7 +154,7 @@ export default function UpdatesAdmin() {
         </div>
       </div>
 
-      {(log || running || u?.result) && (
+      {(running || ranHere) && (
         <div className="card upd-term">
           <div className="row">
             <h3 style={{ margin: 0 }}>Ход обновления</h3>
@@ -177,6 +180,30 @@ export default function UpdatesAdmin() {
         </div>
       )}
 
+      <div className="card upd-history">
+        <h3 style={{ margin: "0 0 6px" }}>История попыток обновления</h3>
+        {!ov?.history.length && <p className="muted small">Попыток пока нет (учитываются обновления через <code>scripts/update.sh</code> — и из терминала, и из этого раздела).</p>}
+        {!!ov?.history.length && (
+          <div className="table-scroll"><table className="table">
+            <thead><tr><th>Когда</th><th>Версия</th><th>Откуда</th><th>Результат</th></tr></thead>
+            <tbody>{ov.history.map((h, i) => {
+              const superseded = h.result === "failed" && ov.history.slice(0, i).some((n) => n.result === "ok");
+              return (
+                <tr key={`${h.at}-${i}`} className={superseded ? "muted" : undefined}>
+                  <td>{fmt(new Date(h.at * 1000).toISOString())}</td>
+                  <td>{attemptRoute(h)}</td>
+                  <td>{h.source === "web" ? `веб-интерфейс${h.by ? ` (${h.by})` : ""}` : "терминал"}</td>
+                  <td>{h.result === "ok" ? <span className="badge ok">успешно</span> : <><span className="badge warn">ошибка</span> <span className="small">{h.stage}</span>{superseded && <span className="small"> · устранено последующим успешным обновлением</span>}</>}</td>
+                </tr>);
+            })}</tbody>
+          </table></div>
+        )}
+        {!running && !ranHere && log && (
+          <details className="small"><summary>Журнал последнего запуска из веб-интерфейса{u?.finished_at ? ` (${fmt(new Date(u.finished_at * 1000).toISOString())}${u.stale ? ", устарел — позднее обновление прошло успешно" : ""})` : ""}</summary>
+            <pre className="term" tabIndex={0}>{log}</pre></details>
+        )}
+      </div>
+
       <div className="card"><ComponentsTable /></div>
 
       {confirm && (
@@ -194,3 +221,9 @@ export default function UpdatesAdmin() {
   );
 }
 
+/** «0.1.3 · b93967a → 0.1.4 · 99defd0» — откуда и куда шла попытка (версия может быть неизвестна у очень старых записей). */
+function attemptRoute(h: UpdateAttempt): string {
+  const a = [h.from_version, h.from_commit && h.from_commit.slice(0, 7)].filter(Boolean).join(" · ");
+  const b = [h.to_version, h.to_commit && h.to_commit.slice(0, 7)].filter(Boolean).join(" · ");
+  return a && b && a !== b ? `${a} → ${b}` : b || a || "—";
+}

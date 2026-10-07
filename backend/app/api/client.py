@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -27,7 +28,7 @@ EVENTS = {
     # диагностика оборудования, сети и входа (попадает в журнал событий)
     "join_attempt", "ice_failed", "ice_slow", "connect_retry", "connect_failed", "network_info", "device_inventory",
     "mic_busy", "mic_permission_denied", "mic_released", "join_without_mic", "camera_busy", "noise_suppression_changed",
-    "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator",
+    "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator", "livekit_connection",
 }
 # категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
 META: dict[str, tuple[str, str]] = {
@@ -35,7 +36,7 @@ META: dict[str, tuple[str, str]] = {
     "disconnected": ("network", "warn"), "reconnecting": ("network", "warn"), "reconnected": ("network", "info"),
     "rejoin_started": ("network", "warn"), "rejoin_failed": ("network", "error"), "connect_retry": ("network", "warn"),
     "connect_failed": ("network", "error"), "ice_failed": ("network", "error"), "ice_slow": ("network", "warn"),
-    "network_info": ("network", "info"), "ice_stats": ("network", "info"), "backend_ws_connected": ("network", "info"),
+    "network_info": ("network", "info"), "livekit_connection": ("network", "info"), "ice_stats": ("network", "info"), "backend_ws_connected": ("network", "info"),
     "backend_ws_reconnecting": ("network", "warn"), "device_error": ("device", "warn"), "mic_failed": ("device", "warn"),
     "camera_failed": ("device", "warn"), "publish_failed": ("device", "error"), "mic_busy": ("device", "warn"),
     "mic_permission_denied": ("device", "warn"), "camera_busy": ("device", "warn"), "device_inventory": ("device", "info"),
@@ -50,6 +51,17 @@ COUNTERS_KEY, LIFECYCLE_KEY = "counters:realtime", "clientdiag:lifecycle"
 COUNTED = {"reconnecting", "reconnected", "disconnected", "rejoin_started", "rejoin_failed", "screen_frozen", "screen_share_failed", "screen_share_ended_by_browser", "join_failed"}
 EVENTS_KEY, METRICS_KEY = "clientdiag:events", "clientdiag:metrics"
 EVENTS_PER_MINUTE = 240
+
+
+_SECRET_RE = re.compile(r"(access_token|token|join_request|authorization|auth)=[^&\s\"'<>]*", re.I)
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
+
+
+def scrub(text: str) -> str:
+    """Вторая линия защиты: токены доступа и join_request из URL, JWT и Bearer в текстах диагностики не сохраняются, даже если клиент их прислал."""
+    t = _SECRET_RE.sub(lambda m: m.group(0).split("=", 1)[0] + "=<скрыто>", text)
+    t = _JWT_RE.sub("<jwt скрыт>", t)
+    return re.sub(r"Bearer\s+\S+", "Bearer <скрыто>", t, flags=re.I)
 
 
 def _num(v: Any, lo: float = 0, hi: float = 1e9) -> float | None:
@@ -67,14 +79,14 @@ def _data(v: Any) -> dict | None:
     out: dict[str, Any] = {}
     for k, val in list(v.items())[:24]:
         if isinstance(val, (str, int, float, bool)) or val is None:
-            out[str(k)[:40]] = val[:200] if isinstance(val, str) else val
+            out[str(k)[:40]] = scrub(val)[:200] if isinstance(val, str) else val
         elif isinstance(val, list):
-            out[str(k)[:40]] = [str(x)[:80] for x in val[:12]]
+            out[str(k)[:40]] = [scrub(str(x))[:80] for x in val[:12]]
     return out or None
 
 
 def _str(v: Any, n: int) -> str | None:
-    return str(v)[:n] if isinstance(v, (str, int, float)) and str(v) else None
+    return scrub(str(v))[:n] if isinstance(v, (str, int, float)) and str(v) else None
 
 
 async def _push(request: Request, key: str, item: dict, keep: int = 200) -> None:

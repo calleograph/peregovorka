@@ -46,11 +46,11 @@ while [ $# -gt 0 ]; do
 done
 export DRY_RUN
 
-STEP=0; STEPS=16; CUR_STAGE="init"
+STEP=0; STEPS=16; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
   fail "$*"
-  [ "$DRY_RUN" = "1" ] || upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null
+  [ "$DRY_RUN" = "1" ] || { upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null; upd_history_append failed "$CUR_STAGE"; }
   warn "Обновление остановлено на этапе «${CUR_STAGE}». Данные, .env и модели не затронуты. Устраните причину и повторите ./scripts/update.sh — он продолжит (сборка и миграции идемпотентны)."
   exit 1
 }
@@ -216,6 +216,7 @@ phase2() {
   [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }
   build_images || stop_update "Сборка образов не удалась (код и контейнеры не тронуты; лог: $DATA_ROOT/state/build-*.log). Уже собранные сервисы повторно не собираются."
   require_images || stop_update "Не хватает образов проекта"
+  check_web_image_config || stop_update "Конфигурация nginx в новом образе web некорректна — прежняя версия продолжает работать (исправьте frontend/nginx.conf и повторите)"
 
   step "Миграции базы данных (Alembic)"
   dc up -d --no-build postgres redis >/dev/null || stop_update "Не удалось запустить PostgreSQL/Redis"
@@ -239,7 +240,7 @@ phase2() {
   VF=0; WARN_N=0
   log "== Проверка экземпляра ${COMPOSE_PROJECT_NAME} =="
   verify_deployment; VF=$?
-  WARN_N=${#VERIFY_WARNINGS[@]}
+  WARN_N=${#VERIFY_WARNINGS[@]}; VSTAGES="$(print_verify_stages)"
   [ "$VF" -eq 0 ] && ok "Verify: PASS" || fail "Verify: FAIL (ошибок: $VF)"
 
   SM="skipped"; SMRC=0
@@ -253,8 +254,8 @@ phase2() {
 
   summary "$VF" "$SM" "$WARN_N"
   rm -f "$(upd_marker_file)"
-  if [ "$VF" -eq 0 ] && [ "$SMRC" -eq 0 ]; then upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; exit 0; fi
-  upd_state_set result "verify_or_smoke_failed"
+  if [ "$VF" -eq 0 ] && [ "$SMRC" -eq 0 ]; then upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok; exit 0; fi
+  upd_state_set result "verify_or_smoke_failed"; upd_history_append failed "проверка после обновления (verify/smoke)"
   exit 1
 }
 
@@ -293,6 +294,7 @@ for m in d['models']:
       printf '%s: %s\n' "$(printf '%s' "$title" | sed 's/.*— //')" "$stt"
     done <<<"$asrline"
   fi
+  [ -n "${VSTAGES:-}" ] && printf '%s\n' "$VSTAGES"
   printf '\nVerify: %s\nSmoke:  %s\n\nWarnings: %s\n' "$([ "$1" -eq 0 ] && echo PASS || echo FAIL)" "$2" "$3"
   [ "$3" -gt 0 ] && echo "Run ./scripts/diag.sh for details."
   [ "$1" -ne 0 ] || [ "$2" = FAIL ] && echo "Откат кода: ./scripts/rollback.sh  (откат кода ≠ откат БД: docs/INSTALL_AND_UPDATE.md, раздел «Rollback»)"

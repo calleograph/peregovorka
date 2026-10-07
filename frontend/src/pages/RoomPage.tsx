@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ConnectionState, DisconnectReason, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, type LocalAudioTrack } from "livekit-client";
+import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack } from "livekit-client";
+import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
 import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type JoinInfo } from "../api";
 import Whiteboard from "../board/Whiteboard";
 import ConnectProgress from "../components/room/ConnectProgress";
@@ -23,6 +24,9 @@ import { isScreenProfile, screenShareOptions } from "../screenShare";
 
 type CtlKey = "mic" | "cam" | "screen" | "rec" | "device" | "audio" | "general";
 type CtlErrors = Partial<Record<CtlKey, string>>;
+
+// Библиотека звонков на уровне info пишет в консоль адрес подключения целиком (с токеном доступа и большим join_request) — оставляем только предупреждения.
+setLogLevel(LogLevel.warn);
 
 const MAX_REJOIN = 6;
 const MAX_CONNECT_TRIES = 3;   // первое подключение: до 3 попыток при сетевых/ICE-сбоях
@@ -110,9 +114,10 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
   const prepMicRef = useRef<Promise<LocalAudioTrack | Error> | null>(null);
   const freezeRef = useRef(new FreezeDetector(3));
   const asrWasReadyRef = useRef(false);
+  const signalReachedRef = useRef(false);   // в текущей попытке сигнальное соединение (WebSocket) установилось — значит, дальше этап ICE
 
   const dlog = useCallback((msg: string) => {
-    setLog((l) => [...l.slice(-79), `${new Date().toLocaleTimeString("ru-RU")}  ${msg}`]);
+    setLog((l) => [...l.slice(-79), `${new Date().toLocaleTimeString("ru-RU")}  ${redactSecrets(msg, 300)}`]);
   }, []);
   const setErr = useCallback((k: CtlKey, msg?: string) => setCtlErr((e) => ({ ...e, [k]: msg })), []);
   /** Жизненный цикл Room: каждая фаза — в журнал комнаты и на сервер с идентификатором объекта (видно, создан ли НОВЫЙ Room). */
@@ -223,6 +228,14 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     joinReportedRef.current = true;
     api.clientMetrics(metricsBody(meetingRef.current, null, timeline.current.metrics()));
     const m = timeline.current.metrics();
+    const lkUrl = infoRef.current?.livekit_url ?? "";
+    // реальные параметры соединения (без токенов): адрес, время сигнала и ICE, выбранный транспорт, состояние ICE, пара кандидатов
+    window.setTimeout(() => {
+      const room = roomRef.current;
+      if (!room) return;
+      void describeConnection(room).then((c) => reportEvent("livekit_connection", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name,
+        reason: c.transport ? `${c.transport} ${c.ice_state ?? ""}`.trim() : undefined, data: { livekit_url: safeUrl(lkUrl), signal_ms: m.signaling_connect_ms ?? null, ice_ms: m.ice_connect_ms ?? null, ...c } }));
+    }, 1500);
     reportEvent("join_ok", { meetingId: meetingRef.current, room: infoRef.current?.room.name, detail: JSON.stringify(m) });
     // Долгая установка медиасоединения у отдельного клиента — частая жалоба: сразу записываем сеть и оборудование этого клиента
     const slow = (m.ice_connect_ms ?? 0) > 4000 || (m.total_join_ms ?? 0) > 8000;
@@ -268,6 +281,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
   const connectLivekit = useCallback(async (info: JoinInfo, kind: "initial" | "rejoin" | "retry") => {
     const tl = timeline.current;
     setStage("server");
+    signalReachedRef.current = false;
     const room = new LkRoom(buildRoomOptions());
     instanceRef.current = newInstanceId();
     setInstance(instanceRef.current);
@@ -330,7 +344,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         if (blocked) reportEvent("autoplay_blocked", { meetingId: meetingRef.current ?? undefined });
       })
       .on(RoomEvent.MediaDevicesError, (e) => { fail("device", "device", "device_error", e); })
-      .on(RoomEvent.SignalConnected, () => { tl.mark("signalConnected"); setStage("media"); phase("SIGNALING_CONNECTED"); })
+      .on(RoomEvent.SignalConnected, () => { signalReachedRef.current = true; tl.mark("signalConnected"); setStage("media"); phase("SIGNALING_CONNECTED"); })
       .on(RoomEvent.ConnectionStateChanged, setState)
       .on(RoomEvent.Reconnecting, () => { phase("RECONNECTING"); reportEvent("reconnecting", { meetingId: meetingRef.current ?? undefined }); })
       .on(RoomEvent.Reconnected, () => {
@@ -455,10 +469,11 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
           await connectLivekit(info, attempt === 1 ? "initial" : "retry");
           break;
         } catch (e) {
-          const m = describeMediaError(e, "connect");
+          const stage: FailStage = failStage(e, signalReachedRef.current ? "media" : "server");
+          const m = describeMediaError(e, "connect", { stage: signalReachedRef.current ? "media" : "server" });
           if (attempt >= MAX_CONNECT_TRIES || !isTransientConnectError(e) || leavingRef.current) throw e;
-          reportEvent("connect_retry", { meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e), data: { attempt } });
-          dlog(`подключение не удалось (${m.reason}), попытка ${attempt + 1} из ${MAX_CONNECT_TRIES}`);
+          reportEvent("connect_retry", { meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e), data: { attempt, fail_stage: stage, livekit_url: safeUrl(info.livekit_url) } });
+          dlog(`подключение не удалось на этапе «${stage === "ice" ? "ICE" : "сигнал/WebSocket"}» (${m.reason}), попытка ${attempt + 1} из ${MAX_CONNECT_TRIES}`);
           setConnectTry({ attempt: attempt + 1, max: MAX_CONNECT_TRIES });
           const failed = roomRef.current;
           roomRef.current = null;
@@ -473,14 +488,22 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
       if (lk && pre?.speakerId) void lk.switchActiveDevice("audiooutput", pre.speakerId).catch(() => undefined);
       if (lk && pre?.camOn && info.room.camera_allowed) void lk.localParticipant.setCameraEnabled(true, pre.camId ? { deviceId: pre.camId } : undefined).then(refresh).catch((e) => fail("camera", "cam", "camera_failed", e));
     } catch (e) {
-      const m = describeMediaError(e, "connect");
+      const reached = signalReachedRef.current;
+      const m = describeMediaError(e, "connect", { stage: reached ? "media" : "server" });
+      const stage: FailStage = failStage(e, reached ? "media" : "server");
       setConnectTry(null);
       reportEvent("join_failed", { meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e) });
+      // проверяем сигнальный сервер отдельным HTTPS-запросом: отличает «сеть режет соединение» от «сервер звонков не запущен/прокси сломан»
+      const probe: SignalProbe | null = stage === "signal" ? await probeSignal(info.livekit_url) : null;
+      const tm = timeline.current.metrics();
       void collectAll().then((data) => reportEvent(m.reason === "IceFailed" ? "ice_failed" : "connect_failed", {
-        meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e), data: { ...data, attempts: MAX_CONNECT_TRIES } }));
+        meetingId: info.meeting_id, room: info.room.name, reason: m.reason, detail: String((e as Error)?.message ?? e),
+        // свои поля — первыми: сервер принимает не более 24 ключей, а данные клиента многочисленны
+        data: { fail_stage: stage, livekit_url: safeUrl(info.livekit_url), signal_ms: tm.signaling_connect_ms ?? null, attempts: MAX_CONNECT_TRIES,
+          probe_ok: probe?.ok ?? null, probe_status: probe?.status ?? null, probe_ms: probe?.ms ?? null, probe_error: probe?.error ?? null, ...data } }));
       await teardown(true);
       setJoin(null);
-      setError(m.message);
+      setError(probe ? `${m.message} Проверка: ${describeProbe(probe)}.` : m.message);
     }
   };
 

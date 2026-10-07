@@ -32,10 +32,17 @@ export function isIceError(e: unknown): boolean {
 
 /** Сбой подключения, после которого есть смысл повторить попытку автоматически (сеть/таймаут/ICE), а не показывать ошибку сразу. */
 export function isTransientConnectError(e: unknown): boolean {
-  return isIceError(e) || /timeout|timed out|signal connection|websocket|failed to fetch|network/.test(lower(e));
+  return isIceError(e) || /timeout|timed out|signal connection|websocket|failed to fetch|network|connection.reset|econnreset/.test(lower(e));
 }
 
-export function describeMediaError(e: unknown, action: MediaAction, opts: { secureContext?: boolean } = {}): ErrorInfo {
+/** Соединение сброшено на сетевом уровне (ERR_CONNECTION_RESET / ECONNRESET): граница сети, а не ошибка приложения. */
+export function isConnectionReset(e: unknown): boolean {
+  return /err_connection_reset|connection reset|econnreset|connection_reset/.test(lower(e));
+}
+
+const NET_CAUSES = "VPN (в том числе слишком большой MTU туннеля — при проблемах попробуйте MTU 1250–1400), прокси, файрвол или антивирус";
+
+export function describeMediaError(e: unknown, action: MediaAction, opts: { secureContext?: boolean; stage?: "server" | "media" } = {}): ErrorInfo {
   const name = String((e as { name?: unknown })?.name ?? "Error");
   const msg = lower(e);
   const secure = opts.secureContext ?? (typeof window === "undefined" ? true : window.isSecureContext);
@@ -47,14 +54,19 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
   if (msg.includes("permission") && (msg.includes("publish") || msg.includes("can_publish") || msg.includes("not allowed to"))) {
     return { reason: "PublishNotAllowed", message: "Сервер не разрешил вам публиковать этот источник (ограничено настройками комнаты или ролью)." };
   }
+  if (action === "connect" && isConnectionReset(e)) {
+    return { reason: "ConnectionReset", message: `Соединение с сервером звонков сброшено на сетевом уровне (ERR_CONNECTION_RESET) — это не ошибка приложения. Возможные причины: ${NET_CAUSES} между вами и сервером. Попробуйте другую сеть или отключите VPN; администратору — проверьте MTU VPN и передачу WebSocket на прокси (сведения о вашем соединении записаны в журнал).` };
+  }
   if (isIceError(e)) {
     return { reason: "IceFailed", message: "Не удалось установить медиасоединение со звонковым сервером (ICE). Обычно это закрытые порты UDP/TCP, VPN или прокси, строгий файрвол или антивирус. Нажмите «Войти в комнату» ещё раз; если повторяется — сообщите администратору (сведения о вашей сети уже записаны в журнал)." };
   }
   if (msg.includes("timeout") || msg.includes("timed out")) {
-    return { reason: "Timeout", message: action === "connect" ? "Сервер звонков не отвечает (таймаут). Проверьте сеть и повторите." : "Сервер звонков не подтвердил публикацию вовремя (таймаут сети). Повторите попытку." };
+    return { reason: opts.stage === "media" ? "IceTimeout" : "Timeout", message: action === "connect"
+      ? (opts.stage === "media" ? "Сигнальное соединение установлено, но путь для звука и видео (ICE) не согласовался вовремя: вероятно, закрыты порты медиа UDP/TCP либо мешает " + NET_CAUSES + "."
+        : "Сервер звонков не отвечает на сигнальное соединение (таймаут). Проверьте сеть, VPN/прокси и повторите.") : "Сервер звонков не подтвердил публикацию вовремя (таймаут сети). Повторите попытку." };
   }
   if (msg.includes("signal connection") || msg.includes("websocket") || msg.includes("failed to fetch")) {
-    return { reason: "SignalFailed", message: "Нет соединения с сервером звонков. Проверьте сеть, VPN/прокси и адрес сервера; если проблема не уходит — сообщите администратору (возможно, не проходят WebSocket-соединения)." };
+    return { reason: "SignalFailed", message: `Не удалось установить сигнальное соединение (WebSocket) с сервером звонков. Проверьте сеть и адрес сервера. Возможные причины: ${NET_CAUSES}, либо прокси не передаёт WebSocket. Если не уходит — сообщите администратору.` };
   }
   if (msg.includes("duplicate_identity") || msg.includes("duplicate identity")) {
     return { reason: "DuplicateIdentity", message: "Вы вошли в эту комнату с другого устройства или вкладки — это соединение закрыто." };

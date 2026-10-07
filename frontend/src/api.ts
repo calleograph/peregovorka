@@ -141,6 +141,11 @@ export interface AsrCompare { ok: boolean; error?: string; audio_s?: number; ref
 export interface UpdaterState {
   available: boolean; heartbeat_age_s: number | null; state: string | null; request_id?: string; step_no?: number; step_total?: number; step_name?: string;
   started_at?: number; finished_at?: number; exit_code?: number | null; result?: string; request_pending?: boolean; project?: string; by?: string;
+  /** Результат прежнего запуска из веб-интерфейса, после которого уже было успешное обновление: текущим не считается. */
+  stale?: boolean;
+}
+export interface UpdateAttempt {
+  at: number; started: number; result: "ok" | "failed"; stage: string; from_version: string; to_version: string; from_commit: string; to_commit: string; source: "cli" | "web"; by: string;
 }
 export interface RemoteCommit { sha: string; date: string; subject: string }
 export interface RemoteInfo {
@@ -150,6 +155,7 @@ export interface RemoteInfo {
 export interface UpdatesOverview {
   installed: { version: string; commit: string; built_at: string }; updater: UpdaterState; remote: RemoteInfo | null; active_meetings: number;
   can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
+  history: UpdateAttempt[]; last_success: UpdateAttempt | null;
 }
 export interface UpdateLog {
   offset: number; size: number; text: string; reset: boolean; state: string | null; step_no: number | null; step_total: number | null; step_name: string | null;

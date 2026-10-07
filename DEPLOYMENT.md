@@ -313,6 +313,7 @@ scripts/asr-bench.sh --wav речь.wav --threads 2,4   # выбор поток�
 | --- | --- |
 | Не входит доменная учётка | `logs.sh backend` (коды `invalid_credentials`/`account_locked`/`tls_error`), `preflight.sh` (проверка сертификата LDAPS) |
 | Вход в комнату занимает 5+ секунд | `smoke-test.sh`: «LiveKit /rtc/v1: маршрут» должен быть OK (404 = устаревший LiveKit, `docs/COMPATIBILITY.md`), «WebSocket /rtc» — 101; админка → «Время входа»: какой этап длинный |
+| Страница открывается, а вход в комнату обрывается `ERR_CONNECTION_RESET` / «Соединение сброшено на сетевом уровне» (особенно у участников через VPN) | не ошибка приложения: проверьте **MTU VPN-адаптера** (при слишком большом пакеты теряются на пути; помогало `MTU=1250`; Windows: `netsh interface ipv4 set subinterface "<адаптер>" mtu=1250 store=persistent`), WebSocket на прокси и файрвол. Сообщение в интерфейсе называет этап (сигнал/WebSocket или ICE) и результат HTTPS-проверки сервера звонков; в журнале события — `livekit_connection`, `connect_failed` |
 | Нет звука / «подключение» зависает | доступность `LIVEKIT_UDP_PORT/udp` и `LIVEKIT_TCP_PORT/tcp` с клиента; `LIVEKIT_NODE_IP`; WebSocket на reverse proxy (3.1); `logs.sh livekit` |
 | Показ экрана прерывается | «Диагностика клиентов» (причина), «⚙ Диагностика» в комнате (FPS, потери, ограничение качества), параметры ядра (5.1) |
 | Нет микрофона в браузере | страница открыта не по HTTPS |
