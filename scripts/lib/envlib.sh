@@ -45,6 +45,27 @@ validate_local_dir() {
   return 0
 }
 
+# Проверка путей из .env, которыми скрипты пишут на диск: DATA_ROOT и BACKUP_DIR — только ЛОКАЛЬНЫЙ абсолютный Linux-путь
+# (не UNC \\сервер\папка, не smb://, не относительный). Раньше «\\Srv11\tmp/backups» воспринимался как обычный путь, и каталог с таким именем
+# создавался внутри репозитория. Резервные копии на сетевой ресурс — отдельным копированием после локального pg_dump (BACKUP_COPY_DIR).
+# Ошибки — в stdout (по строке), код 1. BACKUP_DIR внутри каталога репозитория тоже недопустим (дампы не должны попадать в git-каталог).
+validate_env_paths() {
+  local bad=0 msg
+  if [ -n "${DATA_ROOT:-}" ]; then msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)" || { printf '%s\n' "$msg"; bad=1; }; fi
+  if [ -n "${BACKUP_DIR:-}" ]; then
+    if msg="$(validate_local_dir "$BACKUP_DIR" BACKUP_DIR)"; then
+      case "$BACKUP_DIR/" in
+        "${REPO_ROOT:-/nonexistent-repo-root}"/*) printf '%s\n' "BACKUP_DIR ($BACKUP_DIR) находится внутри каталога репозитория — дампы не должны лежать в git-каталоге. Укажите путь вне репозитория, например $DATA_ROOT/backups."; bad=1 ;;
+      esac
+    else
+      printf '%s\n' "$msg"; bad=1
+      case "$BACKUP_DIR" in *'\'*|*://*) printf '%s\n' "Резервные копии на сетевой ресурс: сначала локальный дамп в BACKUP_DIR, затем копирование на примонтированный ресурс — задайте его локальную точку монтирования в BACKUP_COPY_DIR." ;; esac
+    fi
+  fi
+  if [ -n "${BACKUP_COPY_DIR:-}" ]; then msg="$(validate_local_dir "$BACKUP_COPY_DIR" BACKUP_COPY_DIR)" || { printf '%s\n' "$msg"; bad=1; }; fi
+  return "$bad"
+}
+
 # ------------------------------------------------------------------------- LDAP
 # «ldaps://host[:port][/…]» → LDAP_HOST, LDAP_PORT (636 по умолчанию). Завершающий «/» и путь игнорируются.
 parse_ldap_uri() {

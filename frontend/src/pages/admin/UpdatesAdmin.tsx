@@ -67,6 +67,7 @@ export default function UpdatesAdmin() {
   };
 
   const u = ov?.updater, rem = ov?.remote;
+  const unknownBuild = !!ov && (!ov.installed.commit || ov.installed.commit === "unknown");
   const pct = u?.step_total ? Math.min(100, Math.round(((u.step_no ?? 0) / u.step_total) * 100)) : 0;
   const finishedOk = u?.state === "idle" && u?.result === "ok", finishedBad = u?.state === "idle" && u?.result === "failed";
   const behind = rem?.behind ?? 0;
@@ -83,7 +84,7 @@ export default function UpdatesAdmin() {
       <div className="card upd-project">
         <div className="upd-versions">
           <div><div className="l">Установлено на сервере</div><div className="v small-v">{ov ? `${ov.installed.version} · ${ov.installed.commit.slice(0, 12)}` : "—"}</div>
-            <div className="l">{ov?.installed.built_at && ov.installed.built_at !== "unknown" ? `сборка ${ov.installed.built_at}` : ""}</div></div>
+            <div className="l">{unknownBuild ? <span className="badge warn" title="Образ собран без данных Git — вероятно, вручную командой docker compose build">собран вне штатного обновления</span> : ov?.installed.built_at && ov.installed.built_at !== "unknown" ? `сборка ${ov.installed.built_at}` : ""}</div></div>
           <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? rem.remote : "—"}</div>
             <div className="l">{rem ? `проверено ${ago(rem.age_s)}` : "проверка ещё не выполнялась"}</div></div>
           <div><div className="l">Исполнитель обновлений</div>
@@ -91,11 +92,20 @@ export default function UpdatesAdmin() {
             <div className="l">{u?.heartbeat_age_s != null ? `пульс ${ago(u.heartbeat_age_s)}` : "нет данных"}</div></div>
         </div>
 
+        {unknownBuild && (
+          <div className="alert error unknown-build" role="alert">
+            <b>Установленный образ собран вне штатного обновления</b> (commit «unknown»): обычно это следствие ручной команды <code>docker compose build</code>, которая не передаёт версию и commit.
+            Работа системы это не нарушает, но проверка версий и отладка затруднены. <b>Рекомендация:</b> выполните обновление с опцией «Полная пересборка всех образов» (или на сервере <code>./scripts/rebuild.sh</code>).
+            <div className="row" style={{ marginTop: 6 }}>{!force && <button className="btn mini primary" onClick={() => setForce(true)}>Отметить полную пересборку</button>}{force && <span className="badge ok">полная пересборка отмечена</span>}</div>
+          </div>
+        )}
         {!u?.available && ov && (
-          <div className="alert info">
-            <b>Кнопка обновления станет доступна после запуска исполнителя на сервере</b> — один раз, под тем пользователем, который обычно выполняет <code>./scripts/update.sh</code>:
-            <pre className="cmd">cd каталог_проекта{"\n"}./scripts/updater.sh install        # установить как службу systemd (спросит подтверждение, нужен sudo){"\n"}./scripts/updater.sh run            # или запустить вручную в этом терминале</pre>
-            Пока он не запущен, обновляйте командой <code>./scripts/update.sh</code> на сервере — результат тот же. Исполнитель выполняет только штатный <code>update.sh</code>; произвольные команды из веб-интерфейса выполнить нельзя.
+          <div className="alert error updater-missing" role="alert">
+            <b>Кнопка «Обновить проект» пока недоступна: веб-обновление заработает только после однократной установки службы обновлений на сервере.</b>
+            Это нужно сделать один раз — под тем пользователем, который обычно выполняет <code>./scripts/update.sh</code>:
+            <pre className="cmd">cd каталог_проекта{"\n"}./scripts/updater.sh install        # установить службу systemd (покажет файл службы и спросит подтверждение; нужен sudo){"\n"}./scripts/updater.sh status         # проверить: «Исполнитель работает»</pre>
+            Без systemd службу можно запустить вручную: <code>./scripts/updater.sh run</code> (в терминале, tmux или nohup). Пока служба не установлена, обновляйте командой <code>./scripts/update.sh</code> на сервере — результат тот же.
+            Служба выполняет только штатный <code>update.sh</code> (сборка идёт тем же путём, с автоматическим переходом BuildKit → legacy); произвольные команды из веб-интерфейса выполнить нельзя.
           </div>
         )}
         {rem && !rem.ok && <div className="alert error">Не удалось проверить GitHub: {rem.error || "нет данных"}. Возможно, у сервера нет выхода в интернет — тогда обновляйте на сервере командой <code>./scripts/update.sh --env ...</code> из заранее полученного репозитория.</div>}
@@ -114,9 +124,16 @@ export default function UpdatesAdmin() {
           </div>
         )}
 
-        <fieldset className="group"><legend>Параметры</legend>
-          <label className="check"><input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> <span className="check-body">Пересобрать образы заново<span className="help">Нужно, если образы собирались вручную или есть сомнения в их содержимом. Дольше (десятки минут из-за ASR).</span></span></label>
-          <label className="check"><input type="checkbox" checked={pull} onChange={(e) => setPull(e.target.checked)} /> <span className="check-body">Обновить базовые образы (PostgreSQL, Redis)<span className="help">Только обновления безопасности в пределах закреплённой мажорной версии.</span></span></label>
+        <fieldset className="group"><legend>Дополнительные параметры (необязательно)</legend>
+          <p className="opts-lead"><b>Для обычного обновления оставьте обе опции выключенными.</b> Проект обновится сам: пересоберутся только те образы, у которых изменился код.</p>
+          <label className="check"><input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            <span className="check-body">Полная пересборка всех образов (обычно не требуется)
+              <span className="help">Включайте после ручной сборки образов, если у установленного образа «commit unknown» или он помечен «собран вне штатного обновления», при проблемах с кэшем сборки или сомнениях в содержимом образов.
+                Занимает намного дольше — десятки минут из-за ASR (PyTorch и GigaAM).</span></span></label>
+          <label className="check"><input type="checkbox" checked={pull} onChange={(e) => setPull(e.target.checked)} />
+            <span className="check-body">Обновить базовые образы PostgreSQL/Redis (необязательно)
+              <span className="help">Это не обновление самого проекта и не обязательная часть каждого обновления: подтягиваются свежие сборки образов PostgreSQL и Redis (исправления безопасности) в пределах закреплённой мажорной версии.
+                Обновление проекта работает и без этого.</span></span></label>
         </fieldset>
         <div className="alert">
           <b>Что произойдёт.</b> Сервис перезапустится на время от 1–2 минут (дольше при пересборке): <b>идущие звонки прервутся</b>, участники переподключатся сами. Поэтому обновляйтесь вне встреч.

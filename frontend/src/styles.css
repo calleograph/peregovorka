@@ -474,3 +474,6 @@ pre.term {
 }
 pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .components .table td code { font-size: 12.5px; }
+
+.opts-lead { margin: 2px 0 10px; } .updater-missing { border-left-width: 4px; } .updater-missing pre.cmd, .unknown-build pre.cmd { background: var(--surface); }
+.unknown-build { border-left-width: 4px; }

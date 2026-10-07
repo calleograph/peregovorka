@@ -58,6 +58,7 @@ stop_update() { # stop_update сообщение — остановка с по�
 # --------------------------------------------------------------------------------------------- фаза 1
 phase1() {
   load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
+  if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — обновление не начато, ничего не изменено."; fi
   step "Определение проекта и текущей версии"
   command -v git >/dev/null || die "git не найден"
   git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO_ROOT не является git-репозиторием"

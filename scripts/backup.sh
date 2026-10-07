@@ -24,6 +24,7 @@ while [ $# -gt 0 ]; do
 done
 load_env "$ENV_FILE"; validate_project_name
 require_vars DATA_ROOT POSTGRES_DB POSTGRES_USER
+if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — резервная копия не создана (ничего не записано на диск)."; fi
 DEST="${BACKUP_DIR:-$DATA_ROOT/backups}"
 mkdir -p "$DEST"; chmod 700 "$DEST" 2>/dev/null || true
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -38,6 +39,12 @@ fi
 [ -s "$OUT.part" ] || { rm -f "$OUT.part"; die "Дамп пустой"; }
 mv "$OUT.part" "$OUT"
 ok "Дамп БД: $OUT ($(du -h "$OUT" | cut -f1))"
+
+# Необязательная копия на другой локальный путь (обычно — примонтированный сетевой ресурс). Сбой копирования не отменяет резервную копию.
+if [ -n "${BACKUP_COPY_DIR:-}" ]; then
+  if mkdir -p "$BACKUP_COPY_DIR" 2>/dev/null && cp -f "$OUT" "$BACKUP_COPY_DIR/" 2>/dev/null; then ok "Копия дампа: $BACKUP_COPY_DIR/$(basename "$OUT")"
+  else warn "Не удалось скопировать дамп в BACKUP_COPY_DIR=$BACKUP_COPY_DIR (смонтирован ли ресурс? права?). Локальная копия сохранена: $OUT"; fi
+fi
 
 if [ "$WITH_ENV" -eq 1 ]; then
   cp "$ENV_FILE" "$DEST/${COMPOSE_PROJECT_NAME}-env-${TS}${LABEL}.env"; chmod 600 "$DEST/${COMPOSE_PROJECT_NAME}-env-${TS}${LABEL}.env"

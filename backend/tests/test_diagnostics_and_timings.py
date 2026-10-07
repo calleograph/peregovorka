@@ -69,6 +69,52 @@ async def test_ws_handshake_distinguishes_101_404_and_unreachable():
     assert gone["ok"] is False and gone["error"]
 
 
+async def test_rtc_v1_without_join_request_is_a_route_check_not_a_proxy_problem():
+    """LiveKit 1.13: /rtc/v1 без join_request → 400 «join_request is required» (маршрут есть), а /rtc с токеном → 101."""
+    from websockets.asyncio.server import serve
+
+    async def handler(ws):
+        await asyncio.sleep(0.05)
+
+    def livekit_like(conn, request):
+        if request.path.startswith("/rtc/v1"):
+            return conn.respond(400, "join_request is required\n")
+        return None
+
+    async with serve(handler, "127.0.0.1", 0, process_request=livekit_like) as server:
+        port = server.sockets[0].getsockname()[1]
+        raw = await diagnostics.ws_handshake(f"ws://127.0.0.1:{port}/rtc/v1?access_token=T")
+        route = diagnostics.rtc_v1_route(raw)
+        ws = await diagnostics.ws_handshake(f"ws://127.0.0.1:{port}/rtc?access_token=T")
+    assert raw["ok"] is False and raw["status"] == 400 and "join_request" in raw["body"], "сырой ответ сохраняется"
+    assert route["ok"] is True and route["route_exists"] is True and "существует" in route["hint"]
+    assert ws["ok"] is True and ws["status"] == 101
+    assert "прокси" not in raw["hint"].lower(), "по одному ответу 400 нельзя обвинять прокси"
+    # другие ответы /rtc/v1 не маскируются
+    assert diagnostics.rtc_v1_route({"ok": False, "status": 404, "body": ""})["ok"] is False
+    assert diagnostics.rtc_v1_route({"ok": False, "status": 400, "body": "bad token"})["ok"] is False
+
+
+def _lk(**kw):
+    ok = {"ok": True, "status": 101}
+    bad = {"ok": False, "status": 400, "hint": "HTTP 400: boom", "body": "boom"}
+    base = {"rtc_v1_internal": ok, "rtc_ws_internal": ok, "rtc_v1_public": ok, "rtc_ws_public": ok}
+    base.update({k: (bad if v == "bad" else ok) for k, v in kw.items()})
+    return {"checks": {"livekit": base}, "asr": {"ready": True}, "kernel": {"ok": True}}
+
+
+def test_verdict_tells_livekit_failures_from_proxy_failures():
+    assert diagnostics.verdict(_lk()) == []
+    only_proxy = diagnostics.verdict(_lk(rtc_ws_public="bad"))
+    assert len(only_proxy) == 1 and "проблема в прокси" in only_proxy[0] and "напрямую LiveKit отвечает 101" in only_proxy[0]
+    both = diagnostics.verdict(_lk(rtc_ws_public="bad", rtc_ws_internal="bad"))
+    assert any("ответ самого LiveKit" in v and "прокси здесь ни при чём" in v for v in both)
+    assert any("искать в LiveKit, а не в прокси" in v for v in both), "тот же сбой напрямую — прокси не виноват"
+    assert not any("проблема в прокси" in v for v in both)
+    route_proxy = diagnostics.verdict(_lk(rtc_v1_public="bad"))
+    assert len(route_proxy) == 1 and "проблема в прокси или в пути /livekit/" in route_proxy[0]
+
+
 # ------------------------------------------------------------------------------ отчёт для админа
 def test_report_is_admin_only_complete_and_has_no_secrets(tmp_path, directory):
     s = make_settings(tmp_path, livekit_public_url="", livekit_server_version="v1.13.7")

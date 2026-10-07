@@ -70,11 +70,11 @@
 **Caddy, Traefik** — WebSocket проходит автоматически; **панели вида Nginx Proxy Manager** — включить «Websockets Support» для хоста.
 
 **Как проверить, что WebSocket действительно проходит:** `scripts/smoke-test.sh` выполняет *настоящий* Upgrade с тестовым токеном
-(строки «LiveKit WebSocket (через web)» и «(публичный URL)»; код `101` — норма). Вручную:
+(строки «LiveKit WebSocket /rtc (напрямую / через web / публичный URL)»; код `101` — норма; отдельно проверяется, что маршрут `/rtc/v1` существует: без параметров SDK LiveKit отвечает на него `400 join_request is required`, и это нормально, а `404` — признак устаревшего LiveKit). Вручную:
 
 ```bash
 curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
-     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://<имя>/livekit/rtc/v1'   # ожидаем HTTP/1.1 101 или 401 (нет токена), но не 404/400
+     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://<имя>/livekit/rtc?access_token=<токен>'   # ожидаем HTTP/1.1 101 (без токена — 401); /rtc/v1 без join_request даёт 400 — это норма, не ошибка прокси
 ```
 
 **Чек-лист администратора reverse proxy:** ☐ WebSocket включён для `/livekit/` и `/api/v1/ws` ☐ `X-Forwarded-Proto: https` доходит
@@ -172,7 +172,7 @@ scripts/models.sh --from-dir /mnt/usb/gigaam   # закрытая сеть: го
 **Runtime GGUF.** Движок transcribe.cpp входит в образ ASR как Python-пакет `transcribe-cpp` (готовые колёса для Linux x86_64/arm64): модель загружается один раз
 и остаётся в памяти, для параллельных распознаваний создаётся пул сессий по числу `ASR_MAX_CONCURRENT_INFERENCE`. Проверено на реальной модели `gigaam-v3-e2e-rnnt-Q5_K_M.gguf`
 (тестовая запись 19,5 с: WER 4,5 %, RTF ≈ 0,24 на старом 4-ядерном i5 при 4 потоках). Если в образе пакета нет (образ собран до этого изменения), модель показывает
-«Runtime недоступен» с указанием пересобрать образ: `./scripts/update.sh --force-build`. Внешний бинарник (`ASR_GGUF_BIN`, `ASR_GGUF_ARGS`) остался запасным вариантом и обычно не нужен.
+«Runtime недоступен» с указанием пересобрать образ: `./scripts/rebuild.sh asr` (или `./scripts/update.sh --force-build`). Внешний бинарник (`ASR_GGUF_BIN`, `ASR_GGUF_ARGS`) остался запасным вариантом и обычно не нужен.
 Файл модели: `scripts/models.sh --gguf --skip-full` (скачивает с публичного репозитория `handy-computer/gigaam-v3-e2e-rnnt-gguf`; хеш не проверяется; для закрытой сети — `--from-dir`).
 
 ### 6.1 Потоки CPU для ASR
@@ -312,7 +312,7 @@ scripts/asr-bench.sh --wav речь.wav --threads 2,4   # выбор поток�
 | Симптом | Куда смотреть |
 | --- | --- |
 | Не входит доменная учётка | `logs.sh backend` (коды `invalid_credentials`/`account_locked`/`tls_error`), `preflight.sh` (проверка сертификата LDAPS) |
-| Вход в комнату занимает 5+ секунд | `smoke-test.sh`: «LiveKit /rtc/v1» должен быть 101 (404 = устаревший LiveKit, `docs/COMPATIBILITY.md`); админка → «Время входа»: какой этап длинный |
+| Вход в комнату занимает 5+ секунд | `smoke-test.sh`: «LiveKit /rtc/v1: маршрут» должен быть OK (404 = устаревший LiveKit, `docs/COMPATIBILITY.md`), «WebSocket /rtc» — 101; админка → «Время входа»: какой этап длинный |
 | Нет звука / «подключение» зависает | доступность `LIVEKIT_UDP_PORT/udp` и `LIVEKIT_TCP_PORT/tcp` с клиента; `LIVEKIT_NODE_IP`; WebSocket на reverse proxy (3.1); `logs.sh livekit` |
 | Показ экрана прерывается | «Диагностика клиентов» (причина), «⚙ Диагностика» в комнате (FPS, потери, ограничение качества), параметры ядра (5.1) |
 | Нет микрофона в браузере | страница открыта не по HTTPS |

@@ -7,8 +7,8 @@
 
 ## Подготовка
 
-1. `scripts/smoke-test.sh` — все строки OK (допустимы WARNING с объяснением). Особое внимание: «LiveKit /rtc/v1» = 101,
-   «LiveKit WebSocket (публичный URL)» = OK, «Параметры ядра» без WARNING.
+1. `scripts/smoke-test.sh` — все строки OK (допустимы WARNING с объяснением). Особое внимание: «LiveKit /rtc/v1: маршрут» = OK (400 «join_request is required» — норма),
+   «LiveKit WebSocket /rtc (публичный URL)» = OK (101), «Параметры ядра» без WARNING.
 2. `scripts/asr-bench.sh --wav <реальная речь 5–15 с> --threads 2,4` → выбрать `ASR_CPU_THREADS` **по задержке (RTF)**, а не по
    загрузке CPU; при малой разнице брать меньшее число потоков.
 3. Участники: 3 пользователя на разных компьютерах (с разными сетями, если возможно), админ.

@@ -163,6 +163,11 @@ elif [ -n "${DATA_ROOT:-}" ]; then
   free_gb=$(( $(df -Pk "$probe" | awk 'NR==2 {print $4}') / 1024 / 1024 ))
   if [ "$free_gb" -ge "${MIN_FREE_DISK_GB:-30}" ]; then pass "Свободно на диске DATA_ROOT: ${free_gb} ГБ"; else pfail "Свободно ${free_gb} ГБ < MIN_FREE_DISK_GB=${MIN_FREE_DISK_GB:-30}"; fi
 fi
+if [ -n "${BACKUP_DIR:-}${BACKUP_COPY_DIR:-}" ]; then
+  # BACKUP_DIR/BACKUP_COPY_DIR — только локальные абсолютные пути (UNC и smb:// отвергаются), BACKUP_DIR — вне репозитория
+  if bk_msg="$(DATA_ROOT="${DATA_ROOT:-}" REPO_ROOT="$REPO_ROOT" validate_env_paths)"; then pass "BACKUP_DIR: ${BACKUP_DIR:-по умолчанию в DATA_ROOT}"
+  else pfail "$bk_msg"; fi
+fi
 if [ -n "${LDAP_CA_FILE:-}" ]; then
   if [ -r "$LDAP_CA_FILE" ]; then pass "CA-файл AD найден: $LDAP_CA_FILE"; else pfail "CA-файл AD не найден/не читается: $LDAP_CA_FILE"; fi
 fi

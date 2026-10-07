@@ -120,14 +120,27 @@ async def ws_handshake(url: str, *, timeout: float = 6.0) -> dict:
             status = getattr(getattr(ws, "response", None), "status_code", 101)
         return {"ok": status == 101, "status": status, "ms": int((time.monotonic() - started) * 1000)}
     except Exception as exc:  # noqa: BLE001
-        status = getattr(getattr(exc, "response", None), "status_code", None)
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None)
+        raw = getattr(resp, "body", b"") or b""
+        body = (raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)).strip()[:200]
+        # Подсказка нейтральная: по одному ответу нельзя сказать, виноват прокси или сам LiveKit — это решает сравнение «напрямую / через адрес» (verdict).
         hint = ""
         if status == 404:
-            hint = "404: сервер не поддерживает этот путь (устаревший LiveKit?)"
-        elif status in (400, 426):
-            hint = f"{status}: прокси не передал WebSocket Upgrade"
-        return {"ok": False, "status": status, "error": type(exc).__name__, "hint": hint,
+            hint = "404: путь не найден на этом сервере (для /rtc/v1 это признак устаревшего LiveKit)"
+        elif status:
+            hint = f"HTTP {status}" + (f": {body}" if body else "")
+        return {"ok": False, "status": status, "error": type(exc).__name__, "hint": hint, "body": body,
                 "ms": int((time.monotonic() - started) * 1000)}
+
+
+def rtc_v1_route(res: dict) -> dict:
+    """Проверка существования маршрута /rtc/v1. Настоящий SDK передаёт параметр join_request; без него LiveKit отвечает
+    400 «join_request is required» — это ПОДТВЕРЖДАЕТ, что маршрут есть (устаревший сервер ответил бы 404). Любой другой ответ — как есть."""
+    if res.get("status") == 400 and "join_request" in (res.get("body") or "").lower():
+        return {**res, "ok": True, "route_exists": True,
+                "hint": "маршрут /rtc/v1 существует (LiveKit ответил 400 «join_request is required» — так он отвечает на запрос без параметров SDK)"}
+    return res
 
 
 async def livekit_checks(settings: Settings) -> dict:
@@ -139,11 +152,14 @@ async def livekit_checks(settings: Settings) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"error": f"не удалось выдать тестовый токен: {type(exc).__name__}"}
     q = f"?access_token={tok}&auto_subscribe=0&sdk=python&protocol=15&version=diag"
-    out["rtc_v1_internal"] = await ws_handshake(ws_url(settings.livekit_http_url, "/rtc/v1" + q))
+    # 1) маршрут /rtc/v1 (не 404 — иначе SDK уходит в медленный запасной путь); 2) настоящий WebSocket Upgrade на /rtc с тем же токеном (101)
+    out["rtc_v1_internal"] = rtc_v1_route(await ws_handshake(ws_url(settings.livekit_http_url, "/rtc/v1" + q)))
+    out["rtc_ws_internal"] = await ws_handshake(ws_url(settings.livekit_http_url, "/rtc" + q))
     if settings.livekit_public_url:
         pub = settings.livekit_public_url.rstrip("/")
-        out["rtc_v1_public"] = await ws_handshake(ws_url(pub, "/rtc/v1" + q))
-        out["rtc_v1_public"]["url"] = pub
+        out["rtc_v1_public"] = rtc_v1_route(await ws_handshake(ws_url(pub, "/rtc/v1" + q)))
+        out["rtc_ws_public"] = await ws_handshake(ws_url(pub, "/rtc" + q))
+        out["rtc_v1_public"]["url"] = out["rtc_ws_public"]["url"] = pub
     tcp = {"configured": bool(settings.livekit_rtc_tcp_port), "port": settings.livekit_rtc_tcp_port or None,
            "node_ip": settings.livekit_node_ip or None}
     if tcp["configured"] and settings.livekit_node_ip:
@@ -240,10 +256,21 @@ def verdict(rep: dict) -> list[str]:
         if c.get(name, {}).get("ok") is False:
             out.append(f"{name}: недоступен ({c[name].get('error', '')})")
     lk = c.get("livekit", {})
-    for key, label in (("rtc_v1_internal", "WebSocket LiveKit напрямую"), ("rtc_v1_public", "WebSocket LiveKit через публичный адрес")):
-        r = lk.get(key)
-        if r and not r.get("ok"):
-            out.append(f"{label}: не прошёл ({r.get('hint') or r.get('error') or r.get('status')})")
+    def why(r: dict) -> str:
+        return str(r.get("hint") or r.get("error") or r.get("status"))
+
+    d_route, p_route, d_ws, p_ws = lk.get("rtc_v1_internal"), lk.get("rtc_v1_public"), lk.get("rtc_ws_internal"), lk.get("rtc_ws_public")
+    if d_route and not d_route.get("ok"):
+        out.append(f"LiveKit напрямую: маршрут /rtc/v1 недоступен ({why(d_route)}) — это ответ самого LiveKit, прокси здесь ни при чём")
+    if d_ws and not d_ws.get("ok"):
+        out.append(f"LiveKit напрямую: WebSocket на /rtc не установлен ({why(d_ws)}) — это ответ самого LiveKit (токен, ключи, версия), прокси здесь ни при чём")
+    # Через публичный адрес виноват прокси только если напрямую тот же запрос проходит
+    if p_route and not p_route.get("ok"):
+        out.append("Через публичный адрес маршрут /rtc/v1 недоступен (" + why(p_route) + ")"
+                   + (": напрямую LiveKit его отдаёт — проблема в прокси или в пути /livekit/" if d_route and d_route.get("ok") else ": напрямую тоже не работает — искать в LiveKit"))
+    if p_ws and not p_ws.get("ok"):
+        out.append("Через публичный адрес WebSocket на /rtc не установлен (" + why(p_ws) + ")"
+                   + (": напрямую LiveKit отвечает 101 — проблема в прокси (нужны proxy_http_version 1.1, Upgrade, Connection upgrade)" if d_ws and d_ws.get("ok") else ": напрямую тоже не работает — искать в LiveKit, а не в прокси"))
     if lk.get("rtc_tcp", {}).get("ok") is False:
         out.append("RTC TCP-порт недоступен")
     if not rep.get("asr", {}).get("ready"):

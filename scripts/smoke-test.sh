@@ -3,8 +3,9 @@
 #   scripts/smoke-test.sh [--env FILE] [--login ЛОГИН] [--no-public]
 #
 # Проверяется: Frontend; Backend; PostgreSQL; Redis; LDAP/LDAPS (bind сервисной учётки); ASR (процесс, модель, тестовый
-# инференс на 1 с тишины); LiveKit HTTP; LiveKit /rtc/v1 — НАСТОЯЩИЙ WebSocket Upgrade (101) напрямую, через web и через
-# публичный адрес (404 = устаревший LiveKit, SDK уйдёт в медленный запасной путь; 400/426 = прокси не передаёт Upgrade);
+# инференс на 1 с тишины); LiveKit HTTP; LiveKit: (а) маршрут /rtc/v1 существует (без параметров SDK LiveKit отвечает 400 «join_request is required» —
+# это норма; 404 = устаревший LiveKit, SDK уйдёт в медленный запасной путь) и (б) НАСТОЯЩИЙ WebSocket Upgrade на /rtc (101) — напрямую, через web и через
+# публичный адрес. Ответ прокси сравнивается с прямым: прокси виноват, только если напрямую 101, а через него нет;
 # RTC TCP (подключение); RTC UDP (статус «configured»: наличие слушающего порта; доступность с клиентов проверить нельзя);
 # параметры ядра (UDP-буферы); TLS публичного URL (без -k: доверие к цепочке, имя хоста, срок, полнота цепочки);
 # тестовая комната (внутренняя сессия без реального пользователя).
@@ -70,14 +71,23 @@ c="$(http_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$c" = 200 ] && rec
 LKV="$(dc exec -T livekit livekit-server --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 compat_check; [ -n "$LKV" ] && COMPAT_NOTE="$COMPAT_NOTE; фактически запущен ${LKV}"
 rec "Версия LiveKit" "$COMPAT_STATUS" "$COMPAT_NOTE"
-# 1) изнутри: backend → LiveKit (реальный WebSocket Upgrade на /rtc/v1)
-IN_STATUS="$(printf '%s' "$DIAG" | grep -o '"rtc_v1_internal": *{[^}]*}' | grep -o '"status": *[0-9]*' | grep -o '[0-9]*$')"
-case "${IN_STATUS:-}" in
-  101) rec "LiveKit /rtc/v1 (напрямую)" OK "WebSocket Upgrade 101 — без 404 и запасного пути /rtc" ;;
-  404) rec "LiveKit /rtc/v1 (напрямую)" FAIL "404: LiveKit Server устарел и не знает /rtc/v1 — SDK тратит секунды на запасной путь; обновите LIVEKIT_IMAGE_TAG (см. docs/COMPATIBILITY.md)" ;;
-  "") rec "LiveKit /rtc/v1 (напрямую)" FAIL "WebSocket не установлен (нет ответа)" ;;
-  *) rec "LiveKit /rtc/v1 (напрямую)" FAIL "HTTP ${IN_STATUS} вместо 101" ;;
-esac
+# 1) изнутри: backend → LiveKit. Два разных вопроса: (а) существует ли маршрут /rtc/v1 (иначе SDK уходит в медленный запасной путь /rtc) —
+#    без параметров SDK LiveKit отвечает 400 «join_request is required», это и значит «маршрут есть»; (б) проходит ли настоящий WebSocket Upgrade на /rtc (101).
+jobj() { printf '%s' "$DIAG" | grep -o "\"$1\": *{[^}]*}" | head -1; }
+jfield() { printf '%s' "$1" | grep -oE "\"$2\": *[a-z0-9]+" | head -1 | sed -E 's/.*: *//'; }
+V1_IN="$(jobj rtc_v1_internal)"; WS_IN="$(jobj rtc_ws_internal)"
+DIRECT_WS_CODE=""
+if [ -n "$V1_IN" ]; then
+  if [ "$(jfield "$V1_IN" ok)" = true ]; then rec "LiveKit /rtc/v1: маршрут (напрямую)" OK "маршрут существует (ответ $(jfield "$V1_IN" status): без 404 и запасного пути /rtc)"
+  elif [ "$(jfield "$V1_IN" status)" = 404 ]; then rec "LiveKit /rtc/v1: маршрут (напрямую)" FAIL "404: LiveKit Server устарел и не знает /rtc/v1 — SDK тратит секунды на запасной путь; обновите LIVEKIT_IMAGE_TAG (см. docs/COMPATIBILITY.md)"
+  else st1="$(jfield "$V1_IN" status)"; [ "$st1" = null ] && st1="нет ответа"
+    rec "LiveKit /rtc/v1: маршрут (напрямую)" FAIL "ответ: ${st1} — это результат прямой проверки самого LiveKit (без прокси)"; fi
+else rec "LiveKit /rtc/v1: маршрут (напрямую)" FAIL "нет ответа от LiveKit (backend не смог подключиться)"; fi
+if [ -n "$WS_IN" ]; then
+  DIRECT_WS_CODE="$(jfield "$WS_IN" status)"; [ -n "$DIRECT_WS_CODE" ] && [ "$DIRECT_WS_CODE" != null ] || DIRECT_WS_CODE=000
+  if [ "$(jfield "$WS_IN" ok)" = true ]; then rec "LiveKit WebSocket /rtc (напрямую)" OK "WebSocket Upgrade выполнен (101)"
+  else ws_verdict "$DIRECT_WS_CODE" direct; rec "LiveKit WebSocket /rtc (напрямую)" "$WS_STATUS" "$WS_NOTE"; fi
+else rec "LiveKit WebSocket /rtc (напрямую)" WARNING "backend не вернул результат прямой проверки (старая версия backend?)"; fi
 # 2) с хоста: через web-контейнер и через публичный адрес — тем же способом, каким ходит браузер
 TOKEN="$(bexec "
 import os,json,urllib.request
@@ -85,14 +95,15 @@ r=urllib.request.Request('http://127.0.0.1:8000/internal/v1/diag/token',headers=
 print(json.load(urllib.request.urlopen(r,timeout=15))['token'])" | tr -d '\r\n')"
 if [ -n "$TOKEN" ]; then
   Q="?access_token=${TOKEN}&auto_subscribe=0&sdk=js&protocol=15&version=smoke"
-  code="$(ws_upgrade_code "${BASE}/livekit/rtc/v1${Q}")"; ws_verdict "$code"
-  rec "LiveKit WebSocket (через web)" "$WS_STATUS" "$WS_NOTE"
+  # через web-контейнер: маршрут /rtc/v1 и настоящий Upgrade на /rtc (простая проверка WebSocket: /rtc → 101; /rtc/v1 без join_request даёт 400 — это норма)
+  ws_upgrade_probe "${BASE}/livekit/rtc/v1${Q}"; ws_route_verdict "$WS_CODE" proxy; rec "LiveKit /rtc/v1: маршрут (через web)" "$WS_STATUS" "$WS_NOTE"
+  ws_upgrade_probe "${BASE}/livekit/rtc${Q}"; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (через web)" "$WS_STATUS" "$WS_NOTE"
   PUB="${LIVEKIT_PUBLIC_URL:-}"
-  if [ "$NO_PUBLIC" = 1 ] || [ -z "$PUB" ]; then rec "LiveKit WebSocket (публичный URL)" SKIP "не проверялся"
+  if [ "$NO_PUBLIC" = 1 ] || [ -z "$PUB" ]; then rec "LiveKit WebSocket /rtc (публичный URL)" SKIP "не проверялся"
   else
     purl="$(printf '%s' "$PUB" | sed -e 's#^wss://#https://#' -e 's#^ws://#http://#')"
-    code="$(ws_upgrade_code "${purl%/}/rtc/v1${Q}" 8)"; ws_verdict "$code"
-    rec "LiveKit WebSocket (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
+    ws_upgrade_probe "${purl%/}/rtc/v1${Q}" 8; ws_route_verdict "$WS_CODE" proxy; rec "LiveKit /rtc/v1: маршрут (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
+    ws_upgrade_probe "${purl%/}/rtc${Q}" 8; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
   fi
 else rec "LiveKit WebSocket" WARNING "не удалось получить тестовый токен у backend"; fi
 TOKEN=""

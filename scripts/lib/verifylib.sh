@@ -56,23 +56,52 @@ _listening() { # _listening tcp|udp порт → 0 если слушается
 _curl_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 
 # ------------------------------------------------------------------ WebSocket / TLS / совместимость
-# ws_upgrade_code URL → HTTP-код ответа на НАСТОЯЩИЙ WebSocket Upgrade (101 = прокси и сервер его пропускают).
-# URL подаётся curl через stdin (-K -), чтобы токен из query не попал в список процессов; схема http(s) (curl делает Upgrade сам).
-ws_upgrade_code() {
-  local key; key="$(openssl rand -base64 16 2>/dev/null || echo dGhlIHNhbXBsZSBub25jZQ==)"
-  printf 'url = "%s"\n' "$1" | curl -s -o /dev/null -m "${2:-6}" -w '%{http_code}' --http1.1 -K - \
-      -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null || true
+# ws_upgrade_probe URL [ТАЙМАУТ] → WS_CODE (HTTP-код ответа на НАСТОЯЩИЙ WebSocket Upgrade; 101 = сервер и прокси его пропускают) и WS_BODY
+# (первые 200 байт тела ответа без переводов строк). Вызывать НАПРЯМУЮ. URL подаётся curl через stdin (-K -), чтобы токен из query
+# не попал в список процессов; схема http(s) (curl делает Upgrade сам).
+ws_upgrade_probe() {
+  local key bf; key="$(openssl rand -base64 16 2>/dev/null || echo dGhlIHNhbXBsZSBub25jZQ==)"
+  bf="$(mktemp 2>/dev/null || echo "/tmp/ws-body.$$")"
+  WS_CODE="$(printf 'url = "%s"\n' "$1" | curl -s -o "$bf" -m "${2:-6}" -w '%{http_code}' --http1.1 -K - \
+      -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null || true)"
+  WS_BODY="$(head -c 200 "$bf" 2>/dev/null | tr -d '\r\n\000')"; rm -f "$bf"
+  return 0
 }
+ws_upgrade_code() { ws_upgrade_probe "$@"; printf '%s' "$WS_CODE"; }
 
-# ws_verdict КОД → WS_STATUS (OK|WARNING|FAIL) и WS_NOTE. Вызывать НАПРЯМУЮ (не через $(...)).
+# ws_verdict КОД [direct|proxy] → WS_STATUS (OK|WARNING|FAIL) и WS_NOTE для WebSocket Upgrade на /rtc. Вызывать НАПРЯМУЮ (не через $(...)).
+# Второй аргумент говорит, чей это ответ: «direct» — самого LiveKit (без прокси), «proxy» — через web/публичный адрес. Для proxy при известном
+# результате прямого запроса (DIRECT_WS_CODE) вывод сравнивает: виноват прокси только если напрямую проходит (101), а через прокси нет.
 ws_verdict() {
+  local where="${2:-}" body="${WS_BODY:+ («${WS_BODY}»)}"
   WS_STATUS=FAIL; WS_NOTE="HTTP ${1:-?}"
   case "${1:-}" in
     101) WS_STATUS=OK; WS_NOTE="WebSocket Upgrade выполнен (101)" ;;
     401|403) WS_STATUS=WARNING; WS_NOTE="HTTP $1: сервер достигнут, но токен отклонён — проверьте LIVEKIT_API_KEY/SECRET" ;;
-    404) WS_NOTE="HTTP 404: путь /rtc/v1 не найден — LiveKit устарел (SDK уйдёт в медленный запасной путь /rtc) либо прокси не передаёт /livekit/" ;;
-    400|426|200|301|302) WS_NOTE="HTTP $1 вместо 101: прокси не передаёт заголовки Upgrade/Connection (нужны proxy_http_version 1.1, Upgrade, Connection upgrade)" ;;
+    404) WS_NOTE="HTTP 404: путь не найден${body} — для /rtc/v1 это LiveKit устаревшей версии (SDK уйдёт в медленный запасной путь /rtc), для проксированного адреса — прокси не передаёт /livekit/" ;;
+    400|426|200|301|302)
+      case "$where" in
+        direct) WS_NOTE="HTTP $1 вместо 101${body}: это ответ самого LiveKit при обращении напрямую (без прокси) — искать в токене/ключах/версии LiveKit, а не в прокси" ;;
+        proxy)
+          if [ "${DIRECT_WS_CODE:-}" = 101 ]; then WS_NOTE="HTTP $1 вместо 101${body}, а напрямую LiveKit отвечает 101 — проблема в прокси (нужны proxy_http_version 1.1, Upgrade, Connection upgrade, путь /livekit/)"
+          elif [ -n "${DIRECT_WS_CODE:-}" ]; then WS_NOTE="HTTP $1 вместо 101${body}; напрямую LiveKit тоже не даёт 101 (HTTP ${DIRECT_WS_CODE}) — это ответ самого LiveKit, прокси ни при чём"
+          else WS_NOTE="HTTP $1 вместо 101${body}: результат прямого запроса неизвестен, поэтому нельзя сказать, виноват ли прокси (проверьте Upgrade/Connection на прокси и ответ LiveKit напрямую)"; fi ;;
+        *) WS_NOTE="HTTP $1 вместо 101${body}: ответ LiveKit или прокси — сравните с запросом напрямую (scripts/smoke-test.sh это делает)" ;;
+      esac ;;
     000|"") WS_STATUS=WARNING; WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось" ;;
+  esac
+  return 0
+}
+
+# ws_route_verdict КОД [direct|proxy] → проверка СУЩЕСТВОВАНИЯ маршрута /rtc/v1 (запрос без join_request, который передаёт только настоящий SDK).
+# LiveKit 1.13 отвечает на него 400 «join_request is required» — это значит «маршрут есть»; устаревший сервер ответил бы 404 (SDK тратил бы секунды на /rtc).
+ws_route_verdict() {
+  local body="${WS_BODY:+ («${WS_BODY}»)}"
+  case "${1:-}" in
+    101) WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (101)" ;;
+    400) if printf '%s' "${WS_BODY:-}" | grep -qi 'join_request'; then WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (LiveKit ответил 400 «join_request is required» — так он отвечает на запрос без параметров SDK)"
+         else WS_STATUS=FAIL; WS_NOTE="HTTP 400${body} на /rtc/v1 — ответ без признака LiveKit; сравните с запросом напрямую"; fi ;;
+    *) ws_verdict "${1:-}" "${2:-}" ;;
   esac
   return 0
 }
@@ -80,7 +109,7 @@ ws_verdict() {
 # tls_check URL → TLS_STATUS (OK|WARNING|FAIL|SKIP) и TLS_NOTE. Без -k: проверяется доверие к цепочке и имя хоста; затем срок
 # и полнота цепочки (openssl). Только чтение.
 tls_check() {
-  local url="$1" host port rc out
+  local url="$1" host port rc out vr
   TLS_STATUS=OK; TLS_NOTE=""
   case "$url" in
     https://*) ;;
@@ -91,9 +120,16 @@ tls_check() {
   host="${url#https://}"; host="${host%%/*}"; port=443
   case "$host" in *:*) port="${host##*:}"; host="${host%%:*}" ;; esac
   out="$(curl -sS -o /dev/null -m 10 -w '%{ssl_verify_result}' "https://${host}:${port}/" 2>&1)"; rc=$?
+  vr="$(printf '%s' "$out" | grep -oE '[0-9]+$' | tail -1)"
   if [ "$rc" -eq 6 ] || [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ]; then TLS_STATUS=WARNING; TLS_NOTE="не удалось подключиться к ${host}:${port} с этого сервера (curl код $rc)"; return 0; fi
   if [ "$rc" -eq 60 ] || [ "$rc" -eq 35 ] || [ "$rc" -eq 51 ] || [ "$rc" -eq 58 ]; then
-    TLS_STATUS=FAIL; TLS_NOTE="сертификат не принят без -k (curl код $rc): цепочка не доверена/неполная, имя хоста не совпадает или истёк срок"
+    case "$vr" in
+      10) TLS_STATUS=FAIL; TLS_NOTE="сертификат не принят: истёк срок действия (curl код $rc) — браузеры тоже его отвергнут" ;;
+      62) TLS_STATUS=FAIL; TLS_NOTE="сертификат не принят: имя хоста ${host} не совпадает с сертификатом (curl код $rc) — браузеры тоже его отвергнут" ;;
+      *) # цепочка не доверена САМИМ СЕРВЕРОМ (нет корневого/промежуточного сертификата в его хранилище или неполная цепочка): это не значит, что она плоха для браузеров
+         TLS_STATUS=WARNING
+         TLS_NOTE="этот сервер не доверяет цепочке сертификата (curl код $rc, проверка $vr): нет корневого/промежуточного сертификата в системном хранилище сервера или сервер отдаёт неполную цепочку. Если адрес открывается в браузере без предупреждений — это допустимо; для ASR/curl/мобильных клиентов может понадобиться fullchain" ;;
+    esac
   fi
   if command -v openssl >/dev/null 2>&1; then
     local pem; pem="$(echo | openssl s_client -connect "${host}:${port}" -servername "$host" -showcerts 2>/dev/null)"
@@ -129,7 +165,7 @@ compat_check() {
 }
 
 # check_build_versions — сравнивает git HEAD с commit, «запечённым» в образах backend/asr/web (build ARG → ENV/version.json).
-# Несовпадение или commit=unknown → предупреждение (образ собран вручную или не из этого commit): scripts/update.sh --force-build.
+# Несовпадение или commit=unknown → предупреждение (образ собран вручную или не из этого commit): scripts/rebuild.sh.
 check_build_versions() {
   local head b a w
   head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null | cut -c1-12)"
@@ -141,9 +177,9 @@ check_build_versions() {
   for name in backend asr web; do
     case "$name" in backend) val="$b" ;; asr) val="$a" ;; web) val="$w" ;; esac
     val="$(printf '%s' "$val" | grep -o '"commit": *"[^"]*"' | head -1 | cut -d'"' -f4)"
-    if [ -z "$val" ]; then v_warn "Версия образа $name не определена (старый образ без version.json/commit?) — пересоберите: scripts/update.sh --force-build"
-    elif [ "$val" = unknown ]; then v_warn "Образ $name: commit=unknown (собран без данных Git, например вручную командой docker compose build) — пересоберите: scripts/update.sh --force-build"
-    elif [ "$val" != "$head" ]; then v_warn "Образ $name собран из commit $val, а git HEAD = $head — пересоберите: scripts/update.sh --force-build"
+    if [ -z "$val" ]; then v_warn "Версия образа $name не определена (старый образ без version.json/commit?) — пересоберите: scripts/rebuild.sh"
+    elif [ "$val" = unknown ]; then v_warn "Образ $name: commit=unknown (собран без данных Git, например вручную командой docker compose build) — пересоберите: scripts/rebuild.sh"
+    elif [ "$val" != "$head" ]; then v_warn "Образ $name собран из commit $val, а git HEAD = $head — пересоберите: scripts/rebuild.sh"
     else v_ok "Образ $name: commit $val = git HEAD"; fi
   done
 }

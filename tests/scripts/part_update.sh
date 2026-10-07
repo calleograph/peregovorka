@@ -228,7 +228,7 @@ cbv() { # cbv backend_commit asr_commit web_commit → вывод предупр
 }
 export -f cbv
 t "версии образов = git HEAD → OK по всем трём" bash -c 'out="$(cbv HEAD HEAD HEAD)"; [ "$(grep -c "^OK" <<<"$out")" -eq 3 ] && ! grep -q WARN <<<"$out"'
-t "commit=unknown (ручная сборка) → предупреждение с командой пересборки" bash -c 'out="$(cbv unknown HEAD HEAD)"; grep -q "WARN Образ backend: commit=unknown" <<<"$out" && grep -q "update.sh --force-build" <<<"$out"'
+t "commit=unknown (ручная сборка) → предупреждение с командой пересборки" bash -c 'out="$(cbv unknown HEAD HEAD)"; grep -q "WARN Образ backend: commit=unknown" <<<"$out" && grep -q "rebuild.sh" <<<"$out"'
 t "commit отличается от HEAD → предупреждение" bash -c 'out="$(cbv HEAD abc123 HEAD)"; grep -q "WARN Образ asr собран из commit abc123" <<<"$out"'
 
 # ---- права на запуск (./scripts/update.sh должен запускаться без bash)
