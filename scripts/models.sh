@@ -22,7 +22,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-MODEL=""; FROM_DIR=""; GGUF=0; SKIP_FULL=0; LLM=0; LLM_ONLY=0; SOFT=0; FORCE=0; CHECK=0
+MODEL=""; FROM_DIR=""; GGUF=0; SKIP_FULL=0; LLM=0; LLM_ONLY=0; LLM17=0; SOFT=0; FORCE=0; CHECK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
@@ -32,6 +32,7 @@ while [ $# -gt 0 ]; do
     --skip-full) SKIP_FULL=1; shift ;;
     --llm) LLM=1; shift ;;
     --llm-only) LLM=1; LLM_ONLY=1; shift ;;
+    --llm17-only) LLM17=1; shift ;;       # Qwen3 1.7B (необязательная модель): скачать и проверить, остальное не трогать
     --soft) SOFT=1; shift ;;
     --force) FORCE=1; shift ;;
     --check) CHECK=1; shift ;;
@@ -42,6 +43,12 @@ done
 sanitize_project_env; load_env "$ENV_FILE"
 require_vars DATA_ROOT
 msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)" || die "$msg"
+# ---- Qwen3 1.7B (необязательная локальная модель)
+if [ "$LLM17" = 1 ]; then
+  if [ "$CHECK" = 1 ]; then st="$(llm17_model_state)"; log "Qwen3 1.7B ($LLM17_FILE): $(llm_state_text "$st")"; [ "$st" = ok ]; exit $?; fi
+  if [ "$FORCE" = 1 ]; then llm17_model_fetch --force ${FROM_DIR:+--from-dir "$FROM_DIR"}; else llm17_model_fetch ${FROM_DIR:+--from-dir "$FROM_DIR"}; fi
+  exit $?
+fi
 # ---- локальная LLM (отдельно от моделей распознавания речи)
 if [ "$LLM" = 1 ]; then
   if [ "$CHECK" = 1 ]; then

@@ -165,6 +165,7 @@ scripts/smoke-test.sh
 - Docker должен быть уже установлен — иначе установка остановится (это намеренно).
 - Установщик создаёт **только**: каталоги в `DATA_ROOT`, **один** новый site-файл nginx `NGINX_SITE_NAME` + симлинк, проект docker-compose. Перед включением выполняется `nginx -t`; при ошибке свои изменения откатываются и nginx **не перезагружается**. `sites-available/projects`, Apache, PHP-FPM, Moodle, файрвол не затрагиваются.
 - Внешний reverse proxy должен направлять `meet.<домен>` на `NGINX_LISTEN_PORT` сервера, передавать `X-Forwarded-Proto: https` и пропускать WebSocket (`Upgrade`) для `/api/v1/ws` и `/livekit/`.
+- **Qwen3 1.7B** (необязательная локальная модель, отдельный контейнер `llm-local-17b`, ~2,5 ГБ памяти) в обычную установку не входит: `sudo scripts/llm.sh enable-17b`, состояние `scripts/llm.sh status`, файл заранее — `scripts/models.sh --llm17-only`. Подробности — [LOCAL_LLM.md](LOCAL_LLM.md).
 - **SIP-телефония** (необязательна, выключена по умолчанию) использует отдельные порты SIP signalling (`SIP_SIGNALING_PORT`, 5060) и RTP (`SIP_RTP_START`–`SIP_RTP_END`) только для вашей АТС; установщик их не открывает и файрвол не меняет. Включение, порты и правила — [SIP.md](SIP.md).
 - **Откройте для клиентов** (напрямую, без HTTP-прокси) `LIVEKIT_TCP_PORT/tcp` и `LIVEKIT_UDP_PORT/udp` сервера. Файрвол сервера установщик не меняет.
 

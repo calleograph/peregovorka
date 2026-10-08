@@ -99,3 +99,23 @@ t "repair llm_model: описание без команд Linux, ID в бело�
 
 # ---- память llama-server: без кэша промптов (иначе RSS растёт до 4–5 ГБ при лимите контейнера 3 ГБ и контейнер убивает OOM)
 t "llm: compose — llama-server запускается с --cache-ram 0" bash -c 'b="$(awk "/^  llm-local:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; tr -d "\n" <<<"$b" | grep -Eq "\"--cache-ram\" +- \"0\""' _ "$ROOT"
+
+# ---- Qwen3 1.7B: необязательная модель в отдельном контейнере
+Q17="$TMP/llm17"; mkdir -p "$Q17/data/models/llm"
+printf 'GGUF-17b-%s' "$(head -c 2000 /dev/zero | tr '\0' 'y')" > "$Q17/src.gguf"
+Q17_SIZE="$(wc -c < "$Q17/src.gguf")"; Q17_SHA="$(sha256sum "$Q17/src.gguf" | cut -d' ' -f1)"
+printf 'COMPOSE_PROJECT_NAME=pg-q17-test\nDATA_ROOT=%s\n' "$Q17/data" > "$Q17/env"
+t "llm17: манифест — Qwen3 1.7B Q4_K_M, размер 1 282 439 584, SHA-256 задан" bash -c 'source "$1/scripts/lib/llmlib.sh"; [ "$LLM17_FILE" = Qwen3-1.7B-Q4_K_M.gguf ] && [ "$LLM17_BYTES" = 1282439584 ] && [ "${#LLM17_SHA256}" = 64 ] && [[ "$LLM17_URL" == https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf ]]' _ "$ROOT"
+t "llm17: по умолчанию выключена (в обычную установку не входит)" bash -c '! { source "$1/scripts/lib/llmlib.sh"; llm17_enabled; }' _ "$ROOT"
+t "llm17: файла нет → missing" eq "$(env -i PATH="$PATH" ENV_FILE="$Q17/env" bash -c 'source "$1/scripts/lib/common.sh"; load_env "$ENV_FILE"; llm17_model_state' _ "$ROOT")" missing
+t "llm17: состояние 1.7B не влияет на основную модель (подмена LLM_MODEL_* только в подоболочке)" bash -c 'out="$(env -i PATH="$PATH" ENV_FILE="$2" bash -c "source \"$1/scripts/lib/common.sh\"; load_env \"\$ENV_FILE\"; llm17_model_state >/dev/null; llm_file_name")"; [ "$out" = Qwen3-0.6B-Q4_K_M.gguf ]' _ "$ROOT" "$Q17/env"
+printf 'data' > "$Q17/data/models/llm/Qwen3-1.7B-Q4_K_M.gguf"
+t "llm17: неверный размер → bad_size" eq "$(env -i PATH="$PATH" ENV_FILE="$Q17/env" bash -c 'source "$1/scripts/lib/common.sh"; load_env "$ENV_FILE"; llm17_model_state' _ "$ROOT")" bad_size
+rm -f "$Q17/data/models/llm/Qwen3-1.7B-Q4_K_M.gguf"
+t "llm17: compose — llm-local-17b только по профилю llm17, без опубликованных портов и host-сети" bash -c 'b="$(awk "/^  llm-local-17b:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; grep -q "profiles: \[\"llm17\"\]" <<<"$b" && ! grep -Eq "^    ports:|network_mode: *host|privileged" <<<"$b" && grep -q "llm_internal" <<<"$b"' _ "$ROOT"
+t "llm17: compose — без кэша промптов (--cache-ram 0) и с лимитом памяти" bash -c 'b="$(awk "/^  llm-local-17b:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; tr -d "\n" <<<"$b" | grep -Eq "\"--cache-ram\" +- \"0\"" && grep -q "mem_limit" <<<"$b"' _ "$ROOT"
+t "llm17: выключенная модель не добавляет профиль llm17 в compose_args" bash -c 'out="$(env -i PATH="$PATH" HOME="$TMP" ENV_FILE="$2" bash -c "source \"$1/scripts/lib/common.sh\"; load_env \"\$ENV_FILE\"; compose_args 2>/dev/null; echo \"\${COMPOSE_ARGS[*]}\"")"; grep -q compose <<<"$out" && ! grep -q -- "--profile llm17" <<<"$out"' _ "$ROOT" "$Q17/env"
+t "llm.sh status при выключенной модели объясняет, как включить" bash -c 'out="$(env -i PATH="$PATH" HOME="$TMP" bash "$1/scripts/llm.sh" status --env "$2" 2>&1)"; grep -q "выключена" <<<"$out" && grep -q "enable-17b" <<<"$out"' _ "$ROOT" "$Q17/env"
+t "llm.sh enable-17b без root не меняет .env" bash -c '[ "$(id -u)" -eq 0 ] && exit 0; cp "$2" "$3"; ! env -i PATH="$PATH" HOME="$TMP" bash "$1/scripts/llm.sh" enable-17b --env "$3" --yes >/dev/null 2>&1 && ! grep -q "LLM_17B_ENABLED=yes" "$3"' _ "$ROOT" "$Q17/env" "$Q17/env.copy"
+t "llm17: исправления llm17_enable / llm17_disable разрешены помощнику" bash -c 'source "$1/scripts/lib/repairlib.sh"; printf "%s\n" "${REPAIR_IDS[@]}" | grep -qx llm17_enable && printf "%s\n" "${REPAIR_IDS[@]}" | grep -qx llm17_disable' _ "$ROOT"
+t ".env.example: Qwen3 1.7B выключена по умолчанию" bash -c 'grep -q "^LLM_17B_ENABLED=no" "$1/.env.example"' _ "$ROOT"

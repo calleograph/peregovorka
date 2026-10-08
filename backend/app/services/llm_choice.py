@@ -102,7 +102,9 @@ async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessio
     if mode == "local":
         m = local.model(choice.get("local_model"))
         fs = await asyncio.to_thread(local.file_state, m)
-        if fs["state"] == "ok":
+        if not local.model_enabled(m):
+            problem = f"Локальная модель {m.title} не включена на сервере"
+        elif fs["state"] == "ok":
             picked = LlmChoice(sys_cfg.model_copy(update={"provider": "local", "enabled": True, "local_model": choice.get("local_model") or m.id}), m.title, source, True)
         else:
             problem = f"Локальная модель {m.title} не загружена или повреждена"
@@ -139,7 +141,7 @@ async def llm_options(profiles: ProfileService, local: LocalLlm, db: AsyncSessio
     locals_: list[dict] = []
     for mid, m in LOCAL_MODELS.items():
         fs = await asyncio.to_thread(local.file_state, local.model(mid))
-        locals_.append({"id": mid, "title": m.title, "light": m.light, "installed": fs["state"] == "ok"})
+        locals_.append({"id": mid, "title": m.title, "light": m.light, "installed": fs["state"] == "ok" and local.model_enabled(local.model(mid)), "optional": m.optional})
     ext = []
     for p in await profiles.list(db, "llm"):
         cfg = p["config"]

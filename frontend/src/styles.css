@@ -695,3 +695,4 @@ table.recipients td { padding: 5px 8px; vertical-align: top; } table.recipients 
 ul.help { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 details.group > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
 details.group { margin: 8px 0; }
+.table-wrap { overflow-x: auto; }

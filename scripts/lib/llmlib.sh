@@ -131,6 +131,34 @@ llm_local_active() {
   return 0
 }
 
+# ---- Qwen3 1.7B Q4_K_M — необязательная модель в отдельном контейнере `llm-local-17b` (compose profile `llm17`).
+# Не входит в обычную установку: администратор включает её командой `sudo scripts/llm.sh enable-17b` (или кнопкой в админке). Файл — рядом с основной моделью
+# (${DATA_ROOT}/models/llm), проверяется по размеру и SHA-256 тем же кодом, что и основная (подмена LLM_MODEL_* в подоболочке).
+LLM17_FILE="Qwen3-1.7B-Q4_K_M.gguf"
+LLM17_URL="https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf"
+LLM17_BYTES=1282439584
+LLM17_SHA256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
+LLM17_ALIAS="qwen3-1.7b-q4_k_m"
+
+llm17_enabled() { [ "${LLM_17B_ENABLED:-no}" = "yes" ]; }
+_llm17() { ( export LLM_MODEL_FILE="$LLM17_FILE" LLM_MODEL_URL="$LLM17_URL" LLM_MODEL_BYTES="$LLM17_BYTES" LLM_MODEL_SHA256="$LLM17_SHA256"; "$@" ); }
+llm17_model_state() { _llm17 llm_model_state; }
+llm17_model_fetch() { _llm17 llm_model_fetch "$@"; }
+
+_LLM17_ACTIVE=""
+llm17_refresh() { _LLM17_ACTIVE=""; }
+llm17_active() {   # контейнер llm-local-17b нужно запускать: включён в .env, файл валиден, образ runtime есть
+  if [ -n "$_LLM17_ACTIVE" ]; then [ "$_LLM17_ACTIVE" = 1 ]; return; fi
+  _LLM17_ACTIVE=0
+  llm17_enabled || return 1
+  [ -n "${DATA_ROOT:-}" ] || return 1
+  [ "$(llm17_model_state)" = ok ] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  docker image inspect "$(llm_image)" >/dev/null 2>&1 || return 1
+  _LLM17_ACTIVE=1
+  return 0
+}
+
 # Подготовка при установке/обновлении: файл модели + образ runtime. Мягкий режим (soft): любая неудача — явное сообщение, но не отказ,
 # чтобы отсутствие интернета не мешало остальной установке. Код 0 всегда в режиме soft.
 llm_prepare() { # llm_prepare [soft]

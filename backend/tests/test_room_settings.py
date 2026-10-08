@@ -27,13 +27,13 @@ def ext_profile(c, name="Сильная внешняя", model="big-model"):
     return r.json()["id"]
 
 
-def app_(tmp_path, directory, rt, ext_seen=None):
+def app_(tmp_path, directory, rt, ext_seen=None, **over):
     def external(req: httpx.Request) -> httpx.Response:
         if ext_seen is not None:
             ext_seen.append(json.loads(req.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "**Резюме** от внешней модели"}}]})
 
-    return running_app(make_settings(tmp_path, **model_env(tmp_path)), directory,
+    return running_app(make_settings(tmp_path, **model_env(tmp_path), **over), directory,
                        transports={"local_llm": httpx.MockTransport(rt), "llm": httpx.MockTransport(external), "anonymizer": httpx.MockTransport(anon_ok)})
 
 
@@ -57,7 +57,7 @@ def test_room_exposes_llm_options_and_effective_model(tmp_path, directory):
         got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
         assert got["llm"]["mode"] == "inherit" and got["llm_effective"]["source"] == "system"
         opts = got["llm_options"]
-        assert opts["system"]["provider"] == "local" and [m["id"] for m in opts["local"]] == ["qwen3-0.6b-q4_k_m"] and opts["local"][0]["installed"] is True
+        assert opts["system"]["provider"] == "local" and [m["id"] for m in opts["local"]] == ["qwen3-0.6b-q4_k_m", "qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True and opts["local"][1]["installed"] is False
         assert pid in [p["id"] for p in opts["profiles"]] and "SECRET" not in json.dumps(got)
         assert opts["on_missing"] == "system"
 
@@ -332,3 +332,85 @@ def test_unavailable_selected_model_falls_back_to_system_model_not_external_defa
         login(c, "carol")
         p = plan(c, mid)
         assert p["llm_ready"] is False and "удалён" in (p["llm_reason"] or "")
+
+
+# ------------------------------------------------------------------------------------------------ Qwen3 1.7B: необязательная модель в отдельном контейнере
+def _with_17b(monkeypatch, tmp_path):
+    """Подставной файл 1.7B с верными для него размером и хешем (настоящий весит 1,3 ГБ)."""
+    import hashlib
+
+    content = b"GGUF-1.7B" + bytes(range(200)) * 10
+    (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf").write_bytes(content)
+    monkeypatch.setitem(ll.LOCAL_MODELS, ll.QWEN3_17B.id, replace(ll.QWEN3_17B, size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest()))
+
+
+def test_17b_is_listed_but_off_by_default_and_not_selectable_as_installed(tmp_path, directory, monkeypatch):
+    with app_(tmp_path, directory, Runtime()) as c:
+        _with_17b(monkeypatch, tmp_path)
+        put_settings(c, "llm", provider="local")
+        login(c, "root")
+        st = c.get("/api/v1/admin/llm/local").json()
+        models = {m["id"]: m for m in st["models"]}
+        assert set(models) == {"qwen3-0.6b-q4_k_m", "qwen3-1.7b-q4_k_m"}
+        assert models["qwen3-0.6b-q4_k_m"]["optional"] is False and models["qwen3-0.6b-q4_k_m"]["enabled_on_server"] is True
+        m17 = models["qwen3-1.7b-q4_k_m"]
+        assert m17["optional"] is True and m17["enabled_on_server"] is False and m17["file_state"] == "ok" and m17["ready"] is False
+        assert "не включена" in m17["runtime"]["detail"]
+        room = make_room(c, moderators=LEADERS)
+        login(c, "carol")
+        opts = c.get(f"/api/v1/rooms/{room['id']}/manage").json()["llm_options"]["local"]
+        by = {m["id"]: m for m in opts}
+        assert by["qwen3-0.6b-q4_k_m"]["installed"] is True and by["qwen3-1.7b-q4_k_m"]["installed"] is False, "файл есть, но модель на сервере не включена — выбирать её нельзя"
+
+
+def test_17b_uses_its_own_container_and_falls_back_when_not_enabled(tmp_path, directory, monkeypatch):
+    rt06, rt17 = Runtime(reply="Резюме от лёгкой"), Runtime(reply="Резюме от сильной")
+
+    def router(req: httpx.Request) -> httpx.Response:
+        return (rt17 if req.url.host == "llm-local-17b" else rt06)(req)
+
+    def build(enabled: str):
+        return running_app(make_settings(tmp_path, **model_env(tmp_path), local_llm_17b_enabled=enabled), directory,
+                           transports={"local_llm": httpx.MockTransport(router), "anonymizer": httpx.MockTransport(anon_ok)})
+
+    # выключена на сервере: комната, которая её выбрала, получает запасной вариант (системная 0.6B) с понятной пометкой
+    with build("no") as c:
+        _with_17b(monkeypatch, tmp_path)
+        put_settings(c, "llm", provider="local")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
+        assert out["llm_effective"]["name"].startswith("Qwen3 0.6B") and "не включена на сервере" in (out["llm_effective"]["note"] or "")
+        end_by_alice(c, mid)
+        login(c, "carol")
+        generate(c, mid)
+        assert rt06.seen and not rt17.seen
+    # включена: запросы идут в контейнер llm-local-17b
+    rt06.seen.clear()
+    with build("yes") as c:
+        _with_17b(monkeypatch, tmp_path)
+        put_settings(c, "llm", provider="local")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
+        assert out["llm_effective"]["name"].startswith("Qwen3 1.7B") and out["llm_effective"]["source"] == "room"
+        end_by_alice(c, mid)
+        login(c, "carol")
+        generate(c, mid)
+        assert rt17.seen and not rt06.seen
+        assert rt17.hosts and set(rt17.hosts) == {"llm-local-17b:8080/v1/chat/completions"}
+        assert rt17.seen[-1]["model"] == "qwen3-1.7b-q4_k_m"
+        # системная по умолчанию остаётся 0.6B: комната без выбора её не получает
+        room2, mid2 = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        assert c.get(f"/api/v1/rooms/{room2['id']}/manage").json()["llm_effective"]["name"].startswith("Qwen3 0.6B")
+
+
+def test_17b_url_and_registry_entry():
+    m = ll.LOCAL_MODELS["qwen3-1.7b-q4_k_m"]
+    assert m.optional and m.service == "llm-local-17b:8080" and m.size_bytes == 1_282_439_584 and len(m.sha256) == 64 and m.file.endswith(".gguf")
+    assert ll.DEFAULT_LOCAL_MODEL == "qwen3-0.6b-q4_k_m", "системной по умолчанию остаётся лёгкая модель"
+    from app.config import Settings
+
+    local = ll.LocalLlm(Settings())
+    assert local.url_for(m) == "http://llm-local-17b:8080" and local.url_for(ll.QWEN3_06B).endswith("llm-local:8080")

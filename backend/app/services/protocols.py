@@ -477,7 +477,10 @@ class ProtocolService:
         lm = self.local_llm.limits(llm.settings)
         if lm is not None and llm.available:
             fs = await asyncio.to_thread(self.local_llm.file_state, lm)
-            if fs["state"] != "ok":
+            if not self.local_llm.model_enabled(lm):
+                out["llm_ready"] = False
+                out["warnings"].append(f"Локальная модель {lm.title} не включена на сервере. Администратор включает её в разделе «Языковая модель (LLM)».")
+            elif fs["state"] != "ok":
                 out["llm_ready"] = False
                 out["warnings"].append("Локальная языковая модель не загружена или повреждена. Администратор может скачать её в разделе «Языковая модель (LLM)».")
             else:

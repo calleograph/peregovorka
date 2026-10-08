@@ -285,6 +285,12 @@ export interface LocalLlmStatus {
   file: { file: string; size_bytes: number | null; expected_bytes: number; sha256_state: "ok" | "mismatch" | "unchecked" | "skipped"; state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash" };
   runtime: { reachable: boolean; ready: boolean; detail: string };
   catalog: { id: string; title: string; runtime: string; light: boolean; source: string }[];
+  /** Все локальные модели реестра: файл, включена ли на сервере (необязательные включаются отдельно), отвечает ли контейнер. */
+  models?: LocalModelInfo[];
+}
+export interface LocalModelInfo {
+  id: string; title: string; light: boolean; optional: boolean; enabled_on_server: boolean; size_bytes: number; note: string;
+  file_state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash"; ready: boolean; runtime: { reachable: boolean; ready: boolean; detail: string };
 }
 export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string }
 export interface RepairsInfo {

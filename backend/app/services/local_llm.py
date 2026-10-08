@@ -45,6 +45,8 @@ class LocalModel:
     tasks: tuple[str, ...] = field(default=("краткое резюме", "решения", "задачи и ответственные", "короткий протокол"))
     source: str = ""
     note: str = ""
+    optional: bool = False     # необязательная модель: свой контейнер и свой флаг включения на сервере (не входит в обычную установку)
+    service: str = ""          # host:port отдельного контейнера этой модели во внутренней сети; пусто — основной контейнер llm-local (LOCAL_LLM_URL)
 
 
 QWEN3_06B = LocalModel(
@@ -53,9 +55,18 @@ QWEN3_06B = LocalModel(
     max_input_chars=12_000, warn_input_chars=15_000, max_output_tokens=1200,
     source="huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF (Qwen_Qwen3-0.6B-Q4_K_M.gguf)", note=LIGHT_NOTE)
 
+MID_NOTE = ("Qwen3 1.7B — следующая по силе локальная модель: заметно лучше держит структуру и содержание, чем 0.6B, но втрое медленнее на CPU и занимает около 2,5 ГБ памяти. "
+            "Работает в отдельном контейнере llm-local-17b, который включается администратором (scripts/llm.sh enable-17b). Это всё ещё небольшая модель: результат нужно проверять.")
+
+QWEN3_17B = LocalModel(
+    id="qwen3-1.7b-q4_k_m", title="Qwen3 1.7B Q4_K_M", runtime="llama.cpp (GGUF, CPU)", file="Qwen3-1.7B-Q4_K_M.gguf", optional=True,
+    size_bytes=1_282_439_584, sha256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb", context_tokens=8192, light=True,
+    max_input_chars=12_000, warn_input_chars=30_000, max_output_tokens=1500, service="llm-local-17b:8080",
+    source="huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF (Qwen_Qwen3-1.7B-Q4_K_M.gguf)", note=MID_NOTE)
+
 # Реестр локальных моделей. Новая модель (Gemma 3 4B и др.) добавляется записью сюда + файл .gguf в каталоге моделей и параметры LLM_MODEL_* в .env:
 # API, протоколы и интерфейс от этого не зависят.
-LOCAL_MODELS: dict[str, LocalModel] = {QWEN3_06B.id: QWEN3_06B}
+LOCAL_MODELS: dict[str, LocalModel] = {QWEN3_06B.id: QWEN3_06B, QWEN3_17B.id: QWEN3_17B}
 DEFAULT_LOCAL_MODEL = QWEN3_06B.id
 
 
@@ -69,6 +80,15 @@ class LocalLlm:
     @property
     def url(self) -> str:
         return self._s.local_llm_url.rstrip("/")
+
+    def url_for(self, m: LocalModel) -> str:
+        """Внутренний адрес runtime этой модели: у моделей с собственным контейнером (1.7B) — он, иначе основной llm-local."""
+        return f"http://{m.service}".rstrip("/") if m.service else self.url
+
+    def model_enabled(self, m: LocalModel) -> bool:
+        """Включена ли модель на сервере: основная — установкой (LLM_LOCAL_ENABLED), необязательная — отдельным флагом (LLM_17B_ENABLED)."""
+        flag = self._s.local_llm_17b_enabled if m.optional else self._s.local_llm_enabled
+        return str(flag).strip().lower() in ("yes", "true", "1", "on")
 
     def enabled(self) -> bool:
         return str(self._s.local_llm_enabled).strip().lower() in ("yes", "true", "1", "on")
@@ -124,23 +144,36 @@ class LocalLlm:
         return info
 
     # ------------------------------------------------------------------ runtime
-    async def runtime(self) -> dict:
+    async def runtime(self, m: LocalModel | None = None) -> dict:
         """Отвечает ли llama.cpp во внутренней сети (короткий запрос /health)."""
+        base = self.url_for(m) if m is not None else self.url
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=2.0), transport=self._transport) as c:
-                r = await c.get(f"{self.url}/health")
+                r = await c.get(f"{base}/health")
             if r.status_code == 200:
                 return {"reachable": True, "ready": True, "detail": "модель загружена, сервер готов"}
             if r.status_code == 503:
                 return {"reachable": True, "ready": False, "detail": "модель загружается в память"}
             return {"reachable": True, "ready": False, "detail": f"ответ HTTP {r.status_code}"}
         except httpx.HTTPError as exc:
-            return {"reachable": False, "ready": False, "detail": f"контейнер llm-local недоступен ({type(exc).__name__})"}
+            return {"reachable": False, "ready": False, "detail": f"контейнер {(m.service.split(':')[0] if m is not None and m.service else 'llm-local')} недоступен ({type(exc).__name__})"}
+
+    async def models_overview(self) -> list[dict]:
+        """Все модели реестра: файл, включена ли на сервере, отвечает ли runtime — для раздела «Языковая модель» (без путей и секретов)."""
+        async def one(mid: str, m: LocalModel) -> dict:
+            mm = self.model(mid)
+            fs = await asyncio.to_thread(self.file_state, mm)
+            on = self.model_enabled(mm)
+            rt = await self.runtime(mm) if (on and fs["state"] == "ok") else {"reachable": False, "ready": False, "detail": "не запущена" if on else "не включена на сервере"}
+            return {"id": mm.id, "title": mm.title, "light": mm.light, "optional": mm.optional, "enabled_on_server": on, "size_bytes": mm.size_bytes,
+                    "file_state": fs["state"], "runtime": rt, "ready": on and fs["state"] == "ok" and rt["ready"], "note": mm.note}
+
+        return list(await asyncio.gather(*[one(k, v) for k, v in LOCAL_MODELS.items()]))
 
     async def status(self, cfg: LlmSettings) -> dict:
         m = self.model(cfg.local_model)
         fs = await asyncio.to_thread(self.file_state, m)
-        rt = await self.runtime() if fs["state"] == "ok" else {"reachable": False, "ready": False, "detail": "модель не загружена"}
+        rt = await self.runtime(m) if fs["state"] == "ok" else {"reachable": False, "ready": False, "detail": "модель не загружена"}
         provider = cfg.effective_provider
         return {
             "enabled_by_install": self.enabled(), "provider": provider,
@@ -150,6 +183,7 @@ class LocalLlm:
             "ready": fs["state"] == "ok" and rt["ready"],
             "endpoint": "внутренний (контейнер llm-local, OpenAI-совместимый /v1), наружу не опубликован; сеть без выхода в интернет",
             "available_models": [{"id": k, "title": v.title, "light": v.light} for k, v in LOCAL_MODELS.items()],
+            "models": await self.models_overview(),
         }
 
     # ----------------------------------------------------- настройка → вызов
@@ -162,7 +196,7 @@ class LocalLlm:
             return cfg.model_copy(update={"enabled": True}) if cfg.provider == "external" else cfg, False
         m = self.model(cfg.local_model)
         return cfg.model_copy(update={
-            "enabled": True, "type": "openai_compatible", "base_url": f"{self.url}/v1", "model": m.id, "api_key": "",
+            "enabled": True, "type": "openai_compatible", "base_url": f"{self.url_for(m)}/v1", "model": m.id, "api_key": "",
             "max_tokens": min(cfg.max_tokens, m.max_output_tokens), "temperature": min(cfg.temperature, 0.3),
             "timeout": max(cfg.timeout, 600), "use_corporate_ca": False, "allow_http": True, "routing_provider": ""}), True
 

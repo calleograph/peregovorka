@@ -104,6 +104,8 @@ compose_args() {
   # локальная LLM (контейнер llm-local) — отдельный профиль compose: включается, только если модель на месте, проверена и образ runtime скачан;
   # без интернета при установке остальные сервисы работают как обычно
   if declare -F llm_local_active >/dev/null 2>&1 && llm_local_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile llm "${COMPOSE_ARGS[@]:1}"); fi
+  # Qwen3 1.7B (необязательный контейнер llm-local-17b): только если включена (LLM_17B_ENABLED=yes), файл проверен и образ runtime скачан
+  if declare -F llm17_active >/dev/null 2>&1 && llm17_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile llm17 "${COMPOSE_ARGS[@]:1}"); fi
   # SIP-телефония (контейнер livekit-sip): только если включена (SIP_ENABLED=yes) и образ скачан
   if declare -F sip_active >/dev/null 2>&1 && sip_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile sip "${COMPOSE_ARGS[@]:1}"); fi
 }

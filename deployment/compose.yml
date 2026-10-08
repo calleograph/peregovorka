@@ -177,6 +177,7 @@ services:
       LOCAL_LLM_MODEL_ALIAS: ${LLM_MODEL_ALIAS:-qwen3-0.6b-q4_k_m}
       LOCAL_LLM_MODEL_BYTES: ${LLM_MODEL_BYTES:-484220320}
       LOCAL_LLM_MODEL_SHA256: ${LLM_MODEL_SHA256:-9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14}
+      LOCAL_LLM_17B_ENABLED: ${LLM_17B_ENABLED:-no}
     networks:
       - default
       - llm_internal
@@ -315,6 +316,38 @@ services:
     networks:
       - llm_internal
     mem_limit: ${LLM_LOCAL_MEM:-3g}
+    stop_grace_period: 10s
+    logging: *default-logging
+
+  # Qwen3 1.7B Q4_K_M — необязательная более сильная локальная модель (отдельный контейнер, свой профиль `llm17`). По умолчанию НЕ запускается и память не занимает;
+  # включается администратором (scripts/llm.sh enable-17b). Те же внутренняя сеть и флаги, что у llm-local; под модель и контекст 8192 нужно около 2,5 ГБ.
+  llm-local-17b:
+    profiles: ["llm17"]
+    image: ${LLM_LOCAL_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b11371}
+    restart: unless-stopped
+    command:
+      - "-m"
+      - "/models/${LLM_17B_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
+      - "--alias"
+      - "qwen3-1.7b-q4_k_m"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-c"
+      - "${LLM_17B_CTX:-8192}"
+      - "-t"
+      - "${LLM_17B_THREADS:-2}"
+      - "--parallel"
+      - "1"
+      - "--jinja"
+      - "--cache-ram"
+      - "0"
+    volumes:
+      - ${DATA_ROOT}/models/llm:/models:ro
+    networks:
+      - llm_internal
+    mem_limit: ${LLM_17B_MEM:-3500m}
     stop_grace_period: 10s
     logging: *default-logging
 

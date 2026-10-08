@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     local_llm_model_alias: str = "qwen3-0.6b-q4_k_m"
     local_llm_model_bytes: int = 484_220_320
     local_llm_model_sha256: str = "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
+    local_llm_17b_enabled: str = "no"          # Qwen3 1.7B — отдельный необязательный контейнер llm-local-17b (scripts/llm.sh enable-17b)
     # --- SIP-телефония (контейнер livekit-sip, профиль compose `sip`; по умолчанию выключена и порты не открыты)
     sip_enabled: str = "no"
     sip_signaling_port: int = 5060
