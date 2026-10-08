@@ -46,8 +46,7 @@ jobs:
         run: |
           rc=0
           for f in scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh; do
-            if ! out="$(bash -n "$f" 2>&1)"; then echo "::error file=$f,title=синтаксис bash::${out//$'
-'/ | }"; rc=1; fi
+            if ! out="$(bash -n "$f" 2>&1)"; then echo "::error file=$f,title=синтаксис bash::${out//$'\n'/ | }"; rc=1; fi
           done
           exit $rc
       - run: bash tests/scripts/run.sh
@@ -113,8 +112,7 @@ jobs:
       - name: План установки (dry-run) на чистой системе
         run: |
           export PEREGOVORKA_TEST_NO_ROOT_CHECK=1
-          fail() { echo "::error title=dry-run::$(tail -n 12 /tmp/dry.out | tr '
-' '|' | cut -c1-900)"; exit 1; }
+          fail() { echo "::error title=dry-run::$(tail -n 12 /tmp/dry.out | tr '\n' '|' | cut -c1-900)"; exit 1; }
           ENV_FILE=/tmp/clean.env bash scripts/setup.sh --auto --env-only --host 192.0.2.10 --https-port 8443 --data /tmp/pg-data --skip-models > /tmp/dry.out 2>&1 || fail
           ENV_FILE=/tmp/clean.env bash scripts/install.sh --profile standalone --dry-run --skip-preflight --skip-models > /tmp/dry.out 2>&1 || fail
           cat /tmp/dry.out
