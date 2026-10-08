@@ -35,6 +35,7 @@ class _StorageTarget(_Group):
 
     SECRETS: ClassVar[tuple[str, ...]] = ("smb_password",)
     enabled: bool = False
+    profile_id: str = ""            # профиль хранилища (services/filestore.py); пусто — старый вариант: адрес ниже, прямо в этой группе
     mode: Literal["local", "smb"] = "local"
     local_path: str = "/data/exports"
     smb_server: str = ""
@@ -74,9 +75,17 @@ class _StorageTarget(_Group):
             raise ValueError("local_path: абсолютный путь без «..»")
         return v.rstrip("/\\") or v
 
+    @field_validator("profile_id")
+    @classmethod
+    def _profile(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.fullmatch(r"[0-9a-fA-F-]{32,36}", v):
+            raise ValueError("profile_id: идентификатор хранилища")
+        return v.lower()
+
     @model_validator(mode="after")
     def _smb_required(self):
-        if self.enabled and self.mode == "smb" and not (self.smb_server and self.smb_share):
+        if self.enabled and not self.profile_id and self.mode == "smb" and not (self.smb_server and self.smb_share):
             raise ValueError("Для SMB укажите сервер и общий ресурс")
         return self
 
@@ -94,6 +103,44 @@ class AudioStorageSettings(_StorageTarget):
 
     local_path: str = "/data/exports/audio"
     keep_local_copy: bool = True
+
+
+FORBIDDEN_EXTENSIONS = frozenset({"exe", "bat", "cmd", "com", "scr", "msi", "dll", "ps1", "vbs", "js", "jar", "sh", "html", "htm", "svg", "xhtml", "php", "lnk"})
+DEFAULT_ATTACHMENT_TYPES = "png,jpg,jpeg,gif,webp,pdf,txt,md,csv,docx,xlsx,pptx,odt,ods,odp,zip,drawio"
+
+
+class ChatFilesSettings(_Group):
+    """Вложения чата. Файлы лежат в выбранном хранилище (подпапка Chat/files) или, если оно не выбрано, на локальном диске приложения;
+    в базе — только метаданные. Исполняемые и «активные» типы (exe, js, html, svg …) запрещены всегда."""
+
+    enabled: bool = True
+    profile_id: str = ""
+    max_size_mb: int = Field(default=25, ge=1, le=100)
+    max_files_per_message: int = Field(default=5, ge=1, le=20)
+    allowed_extensions: str = DEFAULT_ATTACHMENT_TYPES   # через запятую, без точек
+
+    @field_validator("profile_id")
+    @classmethod
+    def _profile(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.fullmatch(r"[0-9a-fA-F-]{32,36}", v):
+            raise ValueError("profile_id: идентификатор хранилища")
+        return v.lower()
+
+    @field_validator("allowed_extensions")
+    @classmethod
+    def _ext(cls, v: str) -> str:
+        items = [e.strip().lower().lstrip(".") for e in re.split(r"[,\s;]+", v or "") if e.strip()]
+        for e in items:
+            if not re.fullmatch(r"[a-z0-9]{1,10}", e):
+                raise ValueError(f"allowed_extensions: «{e}» — расширение латиницей и цифрами")
+        bad = sorted(set(items) & FORBIDDEN_EXTENSIONS)
+        if bad:
+            raise ValueError("Эти типы запрещены по соображениям безопасности: " + ", ".join(bad))
+        return ",".join(dict.fromkeys(items))
+
+    def extensions(self) -> set[str]:
+        return {e for e in self.allowed_extensions.split(",") if e}
 
 
 class AnonymizerSettings(_Group):
@@ -273,6 +320,7 @@ class GeneralSettings(_Group):
 GROUPS: dict[str, type[_Group]] = {
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,
+    "chat_files": ChatFilesSettings,
     "anonymizer": AnonymizerSettings,
     "llm": LlmSettings,
     "protocol": ProtocolSettings,

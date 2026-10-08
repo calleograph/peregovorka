@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard
+from ..models import ChatAttachment, Meeting, MeetingChatMessage, MeetingWhiteboard
 from . import whiteboard as wb
 
 TRANSCRIPT_HEADER = "=== СТЕНОГРАММА (устная речь участников, распознана автоматически; возможны неточности) ==="
@@ -28,13 +28,20 @@ SOURCES_PROMPT = (
 )
 
 
-def render_chat(messages: list[MeetingChatMessage], tz) -> str:
-    """Чат как текст: [ЧЧ:ММ:СС] Автор: сообщение; продолжение многострочного сообщения — с отступом."""
+def _size(n: int) -> str:
+    return f"{n / 1024 / 1024:.1f} МБ" if n >= 1024 * 1024 else f"{max(1, round(n / 1024))} КБ"
+
+
+def render_chat(messages: list[MeetingChatMessage], tz, files: dict[int, list[ChatAttachment]] | None = None) -> str:
+    """Чат как текст: [ЧЧ:ММ:СС] Автор: сообщение; продолжение многострочного сообщения — с отступом; вложения — строками «[файл: имя, размер]»
+    (содержимое файлов в текст и в LLM не попадает — только названия)."""
     lines: list[str] = []
     for m in messages:
         first, *rest = m.text.split("\n")
         lines.append(f"[{m.created_at.astimezone(tz):%H:%M:%S}] {m.author_name}: {first}")
         lines.extend("    " + r for r in rest)
+        for a in (files or {}).get(m.id, []):
+            lines.append(f"    [{'картинка' if a.kind == 'image' else 'файл'}: {a.name}, {_size(a.size)}]")
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -51,6 +58,16 @@ class Materials:
 
     def meta(self) -> dict:
         return {"transcript": self.has_speech, "chat_messages": self.chat_messages, "whiteboard_shapes": self.whiteboard_shapes}
+
+
+async def chat_files_map(db: AsyncSession, messages: list[MeetingChatMessage]) -> dict[int, list[ChatAttachment]]:
+    out: dict[int, list[ChatAttachment]] = {}
+    ids = [m.id for m in messages]
+    if ids:
+        rows = (await db.execute(select(ChatAttachment).where(ChatAttachment.message_id.in_(ids)).order_by(ChatAttachment.created_at))).scalars().all()
+        for a in rows:
+            out.setdefault(a.message_id, []).append(a)  # type: ignore[arg-type]
+    return out
 
 
 async def chat_messages(db: AsyncSession, meeting_id) -> list[MeetingChatMessage]:
@@ -77,7 +94,7 @@ async def build_materials(db: AsyncSession, meeting: Meeting, tz: ZoneInfo, tran
         return Materials(transcript, has_speech, 0, 0)  # обычная встреча без чата и доски: текст ровно как раньше
     parts = [f"{TRANSCRIPT_HEADER}\n{transcript.rstrip()}"]
     if chat:
-        parts.append(f"{CHAT_HEADER}\n{render_chat(chat, tz).rstrip()}")
+        parts.append(f"{CHAT_HEADER}\n{render_chat(chat, tz, await chat_files_map(db, chat)).rstrip()}")
     if shapes and board_text:
         parts.append(f"{BOARD_HEADER}\n{board_text.rstrip()}")
     return Materials("\n\n".join(parts) + "\n", has_speech, len(chat), shapes)

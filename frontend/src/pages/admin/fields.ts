@@ -5,29 +5,38 @@ import type { Field } from "./SettingsForm";
  * развёртыванию). Поля сгруппированы по смыслу (section), чтобы при заполнении не путаться.
  */
 
-const isSmb = (v: Record<string, unknown>) => v.mode === "smb";
-const isLocal = (v: Record<string, unknown>) => v.mode === "local";
+// Прежний способ (адрес прямо в разделе) остаётся для уже настроенных установок и показывается, пока хранилище не выбрано; новые выбирают его из раздела «Хранилища».
+const legacy = (v: Record<string, unknown>) => !v.profile_id && !!v.enabled;
+const isSmb = (v: Record<string, unknown>) => legacy(v) && v.mode === "smb";
+const isLocal = (v: Record<string, unknown>) => legacy(v) && v.mode === "local";
+
+/** Выбор хранилища: варианты подставляет SettingsForm из раздела «Хранилища». */
+export const profileField = (section: string, help: string): Field => ({
+  section, name: "profile_id", label: "Хранилище", type: "select", options: [["", "Не выбрано"]], help });
 
 /** Общие поля «куда писать»: локальный каталог или сетевой ресурс SMB. Используется и для протоколов, и для записей. */
 const targetFields = (kind: "protocols" | "audio"): Field[] => [
-  { section: "Где хранить", name: "mode", label: "Тип хранилища", type: "select", options: [["local", "Локальный каталог на сервере"], ["smb", "Сетевой ресурс SMB (общая папка Windows/NAS)"]],
+  profileField("Где хранить", kind === "audio"
+    ? "Выберите хранилище, созданное в разделе «Хранилища»: записи лягут в его подпапку Audio/. Адрес и пароль здесь вводить не нужно."
+    : "Выберите хранилище из раздела «Хранилища»: стенограммы лягут в Transcripts/, протоколы и резюме — в Protocols/, переписка — в Chat/, схемы доски — в Boards/."),
+  { section: "Прежний способ: свой адрес в этом разделе", name: "mode", label: "Тип хранилища", type: "select", showIf: legacy, options: [["local", "Локальный каталог на сервере"], ["smb", "Сетевой ресурс SMB (общая папка Windows/NAS)"]],
     help: kind === "audio"
       ? "Записи — большие файлы. Локальный каталог — это том приложения внутри сервера; для длительного хранения используйте SMB-ресурс."
       : "Куда складываются готовые документы встреч. Приложение подключается к SMB само, монтировать ресурс в систему не нужно." },
-  { section: "Где хранить", name: "local_path", label: "Каталог внутри контейнера", type: "text", showIf: isLocal,
+  { section: "Прежний способ: свой адрес в этом разделе", name: "local_path", label: "Каталог внутри контейнера", type: "text", showIf: isLocal,
     placeholder: kind === "audio" ? "/data/exports/audio" : "/data/exports",
     help: "Абсолютный путь внутри контейнера приложения (он лежит в разделе DATA_ROOT на сервере). Не путь Windows и не адрес сети.",
     example: kind === "audio" ? "/data/exports/audio" : "/data/exports" },
-  { section: "Сетевой ресурс SMB", name: "smb_server", label: "Сервер (имя или IP)", type: "text", showIf: isSmb, placeholder: "files.corp.local",
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_server", label: "Сервер (имя или IP)", type: "text", showIf: isSmb, placeholder: "files.corp.local",
     help: "Только имя хоста или IP — без схемы (smb://) и без слэшей.", example: "files.corp.local или 192.0.2.20" },
-  { section: "Сетевой ресурс SMB", name: "smb_share", label: "Общий ресурс (имя шары)", type: "text", showIf: isSmb, placeholder: kind === "audio" ? "meetings-audio" : "meetings",
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_share", label: "Общий ресурс (имя шары)", type: "text", showIf: isSmb, placeholder: kind === "audio" ? "meetings-audio" : "meetings",
     help: "Имя общей папки на сервере, без слэшей.", example: kind === "audio" ? "meetings-audio" : "meetings" },
-  { section: "Сетевой ресурс SMB", name: "smb_base_path", label: "Подкаталог на ресурсе", type: "text", showIf: isSmb, placeholder: kind === "audio" ? "peregovorka/audio" : "peregovorka",
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_base_path", label: "Подкаталог на ресурсе", type: "text", showIf: isSmb, placeholder: kind === "audio" ? "peregovorka/audio" : "peregovorka",
     help: "Необязательно. Внутри него создаётся структура «комната / дата и день недели / время начала». Без «..».", example: kind === "audio" ? "peregovorka/audio" : "peregovorka/protocols" },
-  { section: "Сетевой ресурс SMB", name: "smb_domain", label: "Домен учётной записи", type: "text", showIf: isSmb, placeholder: "CORP", help: "Необязательно (NetBIOS-имя домена).", example: "CORP" },
-  { section: "Сетевой ресурс SMB", name: "smb_username", label: "Учётная запись с правом записи", type: "text", showIf: isSmb, placeholder: "svc-peregovorka",
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_domain", label: "Домен учётной записи", type: "text", showIf: isSmb, placeholder: "CORP", help: "Необязательно (NetBIOS-имя домена).", example: "CORP" },
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_username", label: "Учётная запись с правом записи", type: "text", showIf: isSmb, placeholder: "svc-peregovorka",
     help: "Сервисная учётная запись, у которой есть право создавать и записывать файлы на ресурсе.", example: "svc-peregovorka" },
-  { section: "Сетевой ресурс SMB", name: "smb_password", label: "Пароль учётной записи", type: "secret", showIf: isSmb,
+  { section: "Прежний способ: свой адрес в этом разделе", name: "smb_password", label: "Пароль учётной записи", type: "secret", showIf: isSmb,
     help: "Хранится в зашифрованном виде и после сохранения не показывается. Пустое поле — оставить прежний пароль." },
 ];
 
@@ -46,6 +55,19 @@ export const audioStorageFields: Field[] = [
   ...targetFields("audio"),
   { section: "Локальная копия", name: "keep_local_copy", label: "Оставлять локальную копию после успешной выгрузки", type: "bool",
     help: "Включено — файл остаётся и на сервере (быстрее скачивать, но занимает диск; удалится по сроку хранения). Выключено — после выгрузки локальный файл удаляется." },
+];
+
+/** Вложения чата: файлы лежат в выбранном хранилище (подпапка Chat/files) или, если оно не выбрано, на локальном диске сервера приложения. */
+export const chatFilesFields: Field[] = [
+  { section: "Вложения", name: "enabled", label: "Разрешить вложения в чате", type: "bool",
+    help: "Участники могут прикреплять файлы кнопкой, перетаскиванием и вставкой скриншота (Ctrl+V). В базе хранятся только сведения о файле, сам файл — в хранилище." },
+  profileField("Где хранить", "Выберите хранилище из раздела «Хранилища» — файлы лягут в подпапку Chat/files/ (в том числе на SMB). Не выбрано — файлы остаются на локальном диске сервера приложения. Если хранилище недоступно, пользователь увидит понятную ошибку, а событие попадёт в журнал: файл не теряется молча."),
+  { section: "Ограничения", name: "max_size_mb", label: "Максимальный размер одного файла", unit: "МБ", type: "number", min: 1, max: 100,
+    help: "Больше загрузить нельзя. Предел 100 МБ задан веб-сервером (nginx).", example: "25" },
+  { section: "Ограничения", name: "max_files_per_message", label: "Файлов в одном сообщении", type: "number", min: 1, max: 20, example: "5" },
+  { section: "Ограничения", name: "allowed_extensions", label: "Разрешённые типы файлов (расширения через запятую)", type: "text",
+    help: "Тип проверяется и по содержимому: картинка под видом документа не пройдёт. Исполняемые и «активные» типы (exe, bat, js, html, svg и т. п.) запрещены всегда.",
+    example: "png, jpg, gif, webp, pdf, txt, docx, xlsx, pptx, zip" },
 ];
 
 export const anonFields: Field[] = [
@@ -144,15 +166,16 @@ export const journalFields: Field[] = [
     help: "Меньше событий — меньше места. Для разбора проблем с подключением нужны «сведения» и выше." },
   { section: "Внешнее хранилище журнала", name: "enabled", label: "Дублировать журнал во внешнее хранилище", type: "bool",
     help: "События пакетами записываются файлами NDJSON по дням: журнал/ГГГГ-ММ-ДД/ЧЧММСС-xxxx.ndjson. Так сервер не засоряется, а история хранится на отдельном диске или сетевом ресурсе." },
-  { section: "Внешнее хранилище журнала", name: "mode", label: "Тип хранилища", type: "select", showIf: (v) => !!v.enabled, options: [["local", "Каталог (внешний диск, примонтированный в контейнер)"], ["smb", "Сетевой ресурс SMB (общая папка Windows/NAS)"]] },
-  { section: "Внешнее хранилище журнала", name: "local_path", label: "Каталог внутри контейнера", type: "text", showIf: (v) => !!v.enabled && v.mode === "local", placeholder: "/data/exports/logs",
+  { ...profileField("Внешнее хранилище журнала", "Журнал лягут в подпапку Logs/ выбранного хранилища (раздел «Хранилища»)."), showIf: (v) => !!v.enabled },
+  { section: "Внешнее хранилище журнала", name: "mode", label: "Тип хранилища (прежний способ)", type: "select", showIf: (v) => !!v.enabled && !v.profile_id, options: [["local", "Каталог (внешний диск, примонтированный в контейнер)"], ["smb", "Сетевой ресурс SMB (общая папка Windows/NAS)"]] },
+  { section: "Внешнее хранилище журнала", name: "local_path", label: "Каталог внутри контейнера", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "local", placeholder: "/data/exports/logs",
     help: "Абсолютный путь внутри контейнера приложения (он лежит в DATA_ROOT на сервере; чтобы писать на другой диск, примонтируйте его в DATA_ROOT).", example: "/data/exports/logs" },
-  { section: "Внешнее хранилище журнала", name: "smb_server", label: "Сервер (имя или IP)", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "files.corp.local", example: "files.corp.local" },
-  { section: "Внешнее хранилище журнала", name: "smb_share", label: "Общий ресурс (имя шары)", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "logs", example: "peregovorka-logs" },
-  { section: "Внешнее хранилище журнала", name: "smb_base_path", label: "Подкаталог на ресурсе", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "peregovorka", example: "peregovorka" },
-  { section: "Внешнее хранилище журнала", name: "smb_domain", label: "Домен учётной записи", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "CORP" },
-  { section: "Внешнее хранилище журнала", name: "smb_username", label: "Учётная запись с правом записи", type: "text", showIf: (v) => !!v.enabled && v.mode === "smb", placeholder: "svc-peregovorka" },
-  { section: "Внешнее хранилище журнала", name: "smb_password", label: "Пароль учётной записи", type: "secret", showIf: (v) => !!v.enabled && v.mode === "smb", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
+  { section: "Внешнее хранилище журнала", name: "smb_server", label: "Сервер (имя или IP)", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", placeholder: "files.corp.local", example: "files.corp.local" },
+  { section: "Внешнее хранилище журнала", name: "smb_share", label: "Общий ресурс (имя шары)", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", placeholder: "logs", example: "peregovorka-logs" },
+  { section: "Внешнее хранилище журнала", name: "smb_base_path", label: "Подкаталог на ресурсе", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", placeholder: "peregovorka", example: "peregovorka" },
+  { section: "Внешнее хранилище журнала", name: "smb_domain", label: "Домен учётной записи", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", placeholder: "CORP" },
+  { section: "Внешнее хранилище журнала", name: "smb_username", label: "Учётная запись с правом записи", type: "text", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", placeholder: "svc-peregovorka" },
+  { section: "Внешнее хранилище журнала", name: "smb_password", label: "Пароль учётной записи", type: "secret", showIf: (v) => !!v.enabled && !v.profile_id && v.mode === "smb", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
   { section: "Внешнее хранилище журнала", name: "external_flush_seconds", label: "Как часто выгружать накопленное", unit: "с", type: "number", min: 5, max: 3600, showIf: (v) => !!v.enabled,
     help: "Чаще — свежее журнал во внешнем хранилище, но больше мелких файлов.", example: "60" },
 ];

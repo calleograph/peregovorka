@@ -45,6 +45,9 @@ class RoomOut(BaseModel):
     record_audio: bool
     camera_allowed: bool
     screen_share_allowed: bool
+    board_allowed: bool = True
+    room_type: str = "regular"
+    auto_record: bool = False
     active_meeting: ActiveMeetingOut | None = None
 
 
@@ -60,6 +63,14 @@ class ClientConfig(BaseModel):
     is_guest: bool = False          # гость: без административных функций, без демонстрации экрана
     mute_on_join: bool = False      # участники входят с выключенным микрофоном
     welcome_message: str | None = None
+    can_manage: bool = False        # руководитель комнаты или администратор: «Настройки комнаты», участники встречи, слово, запись
+    can_control: bool = False       # может переключать запись и транскрибацию (руководитель; в комнате без руководителей — любой участник)
+    presentation: bool = False      # презентационная комната: участники — слушатели, пока им не «дали слово»
+    sources: list[str] = Field(default_factory=lambda: ["microphone", "camera", "screen_share", "screen_share_audio"])  # что можно публиковать сейчас
+    floor: bool = False             # вам дано слово
+    can_edit_board: bool = True     # можно ли править общую доску
+    recording_allowed: bool = False  # комната допускает запись аудио (кнопка «Начать запись»)
+    attachments: bool = True        # вложения в чат включены
 
 
 class JoinOut(BaseModel):
@@ -69,7 +80,8 @@ class JoinOut(BaseModel):
     livekit_room: str
     token: str = Field(repr=False)
     identity: str
-    recording: bool = True
+    recording: bool = False  # идёт запись аудио
+    transcription: bool = True  # идёт транскрибация
     asr_ready: bool = False  # транскрибация готова; вход в комнату от этого НЕ зависит
     client: ClientConfig = Field(default_factory=ClientConfig)
 
@@ -153,6 +165,9 @@ class RoomAdminOut(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
     welcome_message: str | None = None
+    room_type: str = "regular"
+    auto_record: bool = False
+    board_allowed: bool = True
     guest_access_enabled: bool = False
     guest_token: str | None = None     # секрет гостевой ссылки (виден только администраторам); None — ссылка не выпущена/отозвана
     acl: list[AclEntryOut]
@@ -180,6 +195,9 @@ class RoomCreateIn(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
     welcome_message: str | None = Field(default=None, max_length=2000)
+    room_type: str = Field(default="regular", pattern="^(regular|presentation)$")
+    auto_record: bool = False
+    board_allowed: bool = True
     guest_access_enabled: bool = False
     acl: list[AclEntryIn] = Field(default_factory=list)
     moderators: list[AclEntryIn] = Field(default_factory=list)
@@ -213,6 +231,9 @@ class RoomPatchIn(BaseModel):
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
+    room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
+    auto_record: bool | None = None
+    board_allowed: bool | None = None
     guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None

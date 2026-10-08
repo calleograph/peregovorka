@@ -38,6 +38,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 ids = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_not(None),
                                                                  Meeting.ended_at < cutoff))).scalars().all()
                 if ids:
+                    if protocols.chat_files is not None:
+                        await protocols.chat_files.delete_for_meetings(db, list(ids))   # файлы вложений уходят вместе с перепиской
                     r1 = await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id.in_(ids)))
                     r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol"))))
                     stats["segments"] += r1.rowcount or 0
@@ -50,6 +52,10 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 for rec in recs:
                     await protocols.purge_recording(db, rec)
                     stats["recordings"] += 1
+        if protocols.chat_files is not None:
+            orphans = await protocols.chat_files.purge_orphans(db)   # загружены, но не отправлены
+            if orphans:
+                stats["attachments_orphaned"] = orphans
         await db.commit()
     if any(stats.values()):
         log.info("Очистка по срокам хранения", extra=stats)

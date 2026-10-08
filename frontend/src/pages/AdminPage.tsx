@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from "react";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, generalFields, journalFields, llmFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import SettingsForm from "./admin/SettingsForm";
+import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
@@ -43,12 +44,16 @@ const GROUPS: Group[] = [
     { id: "templates", label: "Общие шаблоны", render: () => <TemplatesAdmin /> },
   ] },
   { title: "Интеграции", pages: [
+    { id: "storages", label: "Хранилища (серверы файлов)", render: (go) => <StoragesAdmin onOpen={go} /> },
     { id: "storage", label: "Хранилище протоколов", render: () => (
-      <SettingsForm key="storage" group="storage" title="Хранилище протоколов" fields={storageFields} testable
-        intro="Куда складываются стенограммы и готовые протоколы. Для SMB укажите сервисную учётную запись с правом записи — приложение подключается само, монтирование не требуется." />) },
+      <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
+        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Хранилища» — подпапки создаются автоматически." />) },
     { id: "audio_storage", label: "Хранилище записей", render: () => (
       <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
-        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Адрес сервера и пути задаются здесь, а не в файлах установки." />) },
+        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Хранилища»." />) },
+    { id: "chat_files", label: "Вложения чата", render: () => (
+      <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
+        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
     { id: "asr", label: "Распознавание речи (ASR)", render: () => <AsrModelsAdmin /> },
     { id: "anon", label: "Обезличивание", render: () => (
       <>

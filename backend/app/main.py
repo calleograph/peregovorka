@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_asr, admin_journal, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, rooms, templates, ws
+from .api import admin, admin_asr, admin_journal, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient, LdapDirectory
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -25,6 +25,7 @@ from .logging_setup import configure_logging, request_id_var
 from .services.api_profiles import ProfileService
 from .services.asr_bridge import AsrBridge
 from .services.audit import set_journal_sink
+from .services.chat_files import ChatFilesService
 from .services.journal import Journal, run_journal_retention
 from .security.secretbox import SecretBox, SecretBoxError
 from .services.meetings import MeetingService
@@ -83,6 +84,9 @@ def create_app(
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc
         app.state.protocols = protocols
+        app.state.files = protocols.files
+        protocols.chat_files = ChatFilesService(protocols.files, settings_svc, journal)
+        app.state.chat_files = protocols.chat_files
         app.state.journal = journal
         app.state.profiles = profiles
         app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings), sessions)
@@ -143,7 +147,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, admin.router, admin_system.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_system.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

@@ -22,7 +22,8 @@ from ..security.passwords import verify_room_password
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
 from .rooms import room_out
-from .schemas import ClientConfig, JoinOut
+from .clientcfg import build_client_config
+from .schemas import JoinOut
 
 router = APIRouter(prefix="/guest", tags=["guest"])
 
@@ -97,10 +98,8 @@ def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str
     settings = request.app.state.settings
     return GuestJoinOut(
         meeting_id=result.meeting.id, room=room_dto, livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
-        token=result.token, identity=result.identity, recording=result.meeting.transcription_enabled, asr_ready=asr_ready,
-        client=ClientConfig(screen_profile=screen.profile, screen_share_audio=False, one_sharer_at_a_time=screen.one_sharer_at_a_time,
-                            can_moderate=False, is_guest=True, mute_on_join=result.room.mute_on_join,
-                            welcome_message=result.room.welcome_message or None),
+        token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
+        asr_ready=asr_ready, client=build_client_config(result.room, screen, result, guest=True),
         guest_token=guest_token, guest_id=str(result.guest.id), display_name=display_name)
 
 

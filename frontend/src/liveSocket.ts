@@ -6,11 +6,13 @@ export type LiveEvent =
   | { type: "participant_left"; user_id?: string; guest_id?: string; participant_type?: string }
   | { type: "meeting_ended"; reason: string }
   | { type: "recording_changed"; enabled: boolean }
+  | { type: "transcription_changed"; enabled: boolean }
+  | { type: "floor_changed"; identity: string; granted: boolean; by?: string }
   | { type: "chat_message"; message: ChatMessage }
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
   | { type: "whiteboard_saved"; seq: number; shapes: number; by: string };
 
-const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "chat_message", "whiteboard_patch", "whiteboard_saved"]);
+const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "whiteboard_patch", "whiteboard_saved"]);
 
 /** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */
 export class LiveBus {

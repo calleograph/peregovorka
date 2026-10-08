@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Participant, Track } from "livekit-client";
 import { Icon } from "../Icons";
 import { IDENTITY, clampView, panBy, percent, wheelFactor, zoomAt, type Size, type View } from "../../screenZoom";
 
 export interface PView {
   identity: string; name: string; local: boolean; mic: boolean; cam: boolean; screen: boolean; speaking: boolean; participant: Participant;
+  /** Участнику дано слово (презентационная комната) / участник — руководитель комнаты. */
+  floor?: boolean; leader?: boolean;
+}
+
+/** Действия руководителя над участником; нет обработчика — нет и пункта меню. */
+export interface TileActions {
+  presentation: boolean;
+  onMute?: (p: PView) => void;
+  onFloor?: (p: PView, granted: boolean) => void;
+  onKick?: (p: PView) => void;
 }
 
 export function VideoTile({ p, source, className = "video", onSize }: {
@@ -29,16 +40,65 @@ function State({ on, onText, offText, kind }: { on: boolean; onText: string; off
   return <span className={`state ${kind} ${on ? "on" : "off"}`} title={on ? onText : offText}><span aria-hidden>{kind === "mic" ? (on ? "🎙" : "🔇") : on ? "📷" : "🚫"}</span> {on ? onText : offText}</span>;
 }
 
-export function ParticipantTile({ p, compact, onMute }: { p: PView; compact?: boolean; onMute?: (p: PView) => void }) {
+/** Меню действий над участником (⋯ на плитке или клик по плитке): дать/забрать слово, выключить микрофон, удалить из встречи. */
+function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions; pos: { top: number; right: number }; onClose: () => void }) {
+  const [confirmKick, setConfirmKick] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [onClose]);
+  const run = (fn: () => void) => () => { fn(); onClose(); };
+  return createPortal(
+    <div className="tile-menu" role="menu" ref={ref} style={{ top: pos.top, right: pos.right }} onClick={(e) => e.stopPropagation()}>
+      <div className="tile-menu-head" title={p.name}>{p.name}</div>
+      {actions.presentation && actions.onFloor && !p.leader && (
+        p.floor
+          ? <button type="button" role="menuitem" onClick={run(() => actions.onFloor!(p, false))}><Icon name="hand" size={16} /> Забрать слово</button>
+          : <button type="button" role="menuitem" onClick={run(() => actions.onFloor!(p, true))}><Icon name="hand" size={16} /> Дать слово</button>
+      )}
+      {actions.onMute && <button type="button" role="menuitem" disabled={!p.mic} onClick={run(() => actions.onMute!(p))}><Icon name="micOff" size={16} /> {p.mic ? "Выключить микрофон" : "Микрофон уже выключен"}</button>}
+      {actions.onKick && !p.leader && (confirmKick
+        ? <button type="button" role="menuitem" className="danger" onClick={run(() => actions.onKick!(p))}><Icon name="userx" size={16} /> Точно удалить?</button>
+        : <button type="button" role="menuitem" className="danger" onClick={() => setConfirmKick(true)}><Icon name="userx" size={16} /> Удалить из встречи</button>)}
+    </div>,
+    document.body,
+  );
+}
+
+export function ParticipantTile({ p, compact, actions }: { p: PView; compact?: boolean; actions?: TileActions }) {
   const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
+  const [menu, setMenu] = useState<{ top: number; right: number } | null>(null);
+  const tileRef = useRef<HTMLDivElement>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  // меню выводится поверх страницы (плитка обрезает содержимое), у правого верхнего угла плитки
+  const toggleMenu = () => setMenu((m) => {
+    if (m) return null;
+    const r = tileRef.current?.getBoundingClientRect();
+    if (!r) return null;
+    return { top: Math.max(8, Math.min(r.top + 40, window.innerHeight - 170)), right: Math.max(8, window.innerWidth - r.right + 8) };
+  });
+  const manageable = !!actions && !p.local && !!(actions.onMute || actions.onKick || (actions.presentation && actions.onFloor));
   return (
-    <div className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""}`} title={p.name}>
+    <div ref={tileRef} className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""} ${p.floor ? "has-floor" : ""} ${manageable ? "manageable" : ""}`} title={p.name}
+         onClick={manageable ? toggleMenu : undefined}>
       <VideoTile p={p.participant} source={Track.Source.Camera} />
       {!p.cam && <div className="avatar" aria-hidden>{initials}</div>}
-      {onMute && !p.local && p.mic && (
-        <button type="button" className="tile-mute" onClick={(e) => { e.stopPropagation(); onMute(p); }} title={`Выключить микрофон: ${p.name}`} aria-label={`Выключить микрофон участнику ${p.name}`}>
-          <Icon name="micOff" size={16} /> <span>Выключить звук</span>
-        </button>
+      {(p.floor || p.leader) && (
+        <span className={`tile-role ${p.floor ? "floor" : "leader"}`} title={p.floor ? "Участнику дано слово" : "Руководитель комнаты"}>
+          {p.floor ? <><Icon name="hand" size={14} /> Слово</> : "Руководитель"}
+        </span>
+      )}
+      {manageable && actions && (
+        <>
+          <button type="button" className="tile-more" onClick={(e) => { e.stopPropagation(); toggleMenu(); }} title={`Действия: ${p.name}`} aria-label={`Действия с участником ${p.name}`} aria-haspopup="menu" aria-expanded={!!menu}>
+            <Icon name="more" size={18} />
+          </button>
+          {menu && <TileMenu p={p} actions={actions} pos={menu} onClose={closeMenu} />}
+        </>
       )}
       <div className="tile-foot">
         <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>

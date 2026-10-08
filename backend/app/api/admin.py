@@ -19,7 +19,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
               "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
               "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "welcome_message",
-              "guest_access_enabled")
+              "guest_access_enabled", "room_type", "auto_record", "board_allowed")
 
 
 def new_guest_token() -> str:
@@ -63,6 +63,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
+        room_type=room.room_type, auto_record=room.auto_record, board_allowed=room.board_allowed,
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
@@ -91,7 +92,10 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
         mute_on_join=body.mute_on_join, welcome_message=body.welcome_message,
         guest_access_enabled=body.guest_access_enabled, guest_token=new_guest_token() if body.guest_access_enabled else None,
+        room_type=body.room_type, auto_record=body.auto_record, board_allowed=body.board_allowed,
     )
+    if room.auto_record:
+        room.record_audio = True  # автоматическая запись предполагает, что запись аудио разрешена
     room.acl = _acl_rows(body.acl)
     room.moderators = _mod_rows(body.moderators)
     db.add(room)
@@ -129,6 +133,9 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
             changed[name] = {"from": str(getattr(room, name)) if isinstance(getattr(room, name), uuid.UUID) else getattr(room, name),
                              "to": str(fields[name]) if isinstance(fields[name], uuid.UUID) else fields[name]}
             setattr(room, name, fields[name])
+    if room.auto_record and not room.record_audio:
+        room.record_audio = True   # автоматическая запись предполагает, что запись аудио разрешена
+        changed["record_audio"] = {"from": False, "to": True}
     if "guest_access_enabled" in changed:
         if room.guest_access_enabled and not room.guest_token:
             room.guest_token = new_guest_token()  # ссылка выпускается при первом включении; повторное включение возвращает прежнюю

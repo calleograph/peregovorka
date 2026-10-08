@@ -13,7 +13,7 @@ server {
     ssl_session_timeout 1d;
     ssl_session_cache shared:vm_@@PROJECT_ID@@_ssl:5m;
 
-    client_max_body_size 20m;
+    client_max_body_size 100m;
 
     location /internal/ { return 404; }
 

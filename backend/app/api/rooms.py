@@ -12,8 +12,9 @@ from ..models import Meeting, MeetingParticipant, Room
 from ..services import timings
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
-from ..services.rooms import is_moderator, list_accessible_rooms
-from .schemas import ActiveMeetingOut, ClientConfig, JoinIn, JoinOut, RoomOut
+from ..services.rooms import list_accessible_rooms
+from .clientcfg import build_client_config
+from .schemas import ActiveMeetingOut, JoinIn, JoinOut, RoomOut
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -24,6 +25,7 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
+        board_allowed=room.board_allowed, room_type=room.room_type, auto_record=room.auto_record,
         active_meeting=ActiveMeetingOut(id=active.id, started_at=active.started_at, participants=participants) if active else None,
     )
 
@@ -71,8 +73,6 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
     return JoinOut(
         meeting_id=result.meeting.id, room=await room_out(db, result.room, result.meeting, 0),
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
-        token=result.token, identity=result.identity, recording=result.meeting.transcription_enabled, asr_ready=asr_ready,
-        client=ClientConfig(screen_profile=screen.profile, screen_share_audio=screen.share_audio,
-                            one_sharer_at_a_time=screen.one_sharer_at_a_time, can_moderate=is_moderator(result.room, su),
-                            mute_on_join=result.room.mute_on_join, welcome_message=result.room.welcome_message or None),
+        token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
+        asr_ready=asr_ready, client=build_client_config(result.room, screen, result, su=su),
     )

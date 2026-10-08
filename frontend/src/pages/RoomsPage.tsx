@@ -33,8 +33,10 @@ export default function RoomsPage() {
               <span>макс. {r.max_participants}</span>
             </div>
             <div className="row small">
+              {r.room_type === "presentation" && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
               {r.transcription_enabled && <span className="badge">Транскрибация</span>}
-              {r.record_audio && <span className="badge warn">Запись аудио</span>}
+              {r.auto_record ? <span className="badge warn" title="Запись звука начинается вместе со встречей">Запись автоматически</span>
+                : r.record_audio && <span className="badge warn" title="Руководитель может включить запись звука">Запись аудио</span>}
             </div>
           </Link>
         ))}

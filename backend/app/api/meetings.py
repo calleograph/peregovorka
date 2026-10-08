@@ -12,6 +12,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_u
 from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording,
                       TranscriptSegment)
 from ..services.access import can_access_meeting, release_lease
+from ..services import roles
 from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_pdf
 from ..services.meetings import JoinError
@@ -180,8 +181,11 @@ async def transcript_export(meeting_id: uuid.UUID, request: Request, format: str
 @router.post("/{meeting_id}/recording")
 async def toggle_recording(meeting_id: uuid.UUID, request: Request, body: dict = Body(...),
                            su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """Кнопки «начать запись» / «завершить запись» внутри встречи (транскрибация и, если включена в комнате, аудио)."""
+    """«Начать запись» / «Остановить запись» — запись АУДИО встречи (транскрибация переключается отдельно: /transcription). Руководитель комнаты;
+    в комнате без руководителей — любой участник."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not roles.can_control_meeting(meeting.room, su):
+        raise HTTPException(status_code=403, detail="Записью управляют руководители комнаты")
     enabled = body.get("enabled")
     if not isinstance(enabled, bool):
         raise HTTPException(status_code=422, detail="Ожидается enabled: true|false")
@@ -374,6 +378,7 @@ async def delete_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUse
     await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id))
     await db.execute(delete(Protocol).where(Protocol.meeting_id == meeting_id))
     await db.execute(delete(MeetingGrant).where(MeetingGrant.meeting_id == meeting_id))
+    await request.app.state.chat_files.delete_for_meetings(db, [meeting_id])
     await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id == meeting_id))
     await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id == meeting_id))
     await db.execute(delete(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))

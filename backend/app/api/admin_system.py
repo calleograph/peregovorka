@@ -50,9 +50,13 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
         raise HTTPException(status_code=404, detail="Неизвестная группа настроек")
     svc = request.app.state.settings_svc
     try:
-        if group in ("storage", "audio_storage", "journal"):  # ошибки каталога видны сразу, а не при первой выгрузке
+        if group in ("storage", "audio_storage", "journal", "chat_files"):  # ошибки каталога видны сразу, а не при первой выгрузке
+            new = await svc.preview(db, group, body)
             try:
-                build_storage(await svc.preview(db, group, body), request.app.state.settings.data_dir)  # type: ignore[arg-type]
+                if getattr(new, "profile_id", ""):
+                    await request.app.state.files.row(db, new.profile_id)   # type: ignore[attr-defined]
+                elif group != "chat_files":
+                    build_storage(new, request.app.state.settings.data_dir)  # type: ignore[arg-type]
             except StorageError as exc:
                 raise SettingsError(str(exc)) from None
         changed = await svc.update(db, group, body, actor=su.display_name)
@@ -76,9 +80,15 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         cfg = await svc.get(db, group)
     except SettingsError as exc:
         return {"ok": False, "message": str(exc), "ms": 0}
-    if group in ("storage", "audio_storage", "journal"):
+    if group in ("storage", "audio_storage", "journal", "chat_files"):
+        files = request.app.state.files
         try:
-            backend = build_storage(cfg, app_s.data_dir)  # type: ignore[arg-type]
+            if group == "chat_files":
+                backend = (await files.chat_backend(db))[0]
+            elif getattr(cfg, "profile_id", ""):
+                backend = await files.backend(db, group, "") if cfg.enabled else None   # type: ignore[attr-defined]
+            else:
+                backend = build_storage(cfg, app_s.data_dir)  # type: ignore[arg-type]
         except StorageError as exc:
             return {"ok": False, "message": str(exc), "ms": 0}
         if backend is None:
@@ -335,3 +345,63 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
         out["disk_free_bytes"] = None
     out["master_key_ok"] = app.state.settings_svc._box is not None  # noqa: SLF001 — только флаг для UI
     return out
+
+
+# ------------------------------------------------------------------------ хранилища (профили)
+@router.get("/storages")
+async def storages_list(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Хранилища создаются один раз; функции (записи, протоколы, вложения чата, журнал) лишь выбирают одно из них."""
+    from ..services.filestore import FOLDERS  # noqa: PLC0415
+
+    return {"items": await request.app.state.files.list(db), "folders": list(FOLDERS)}
+
+
+@router.post("/storages", status_code=201)
+async def storages_create(request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    try:
+        out = await request.app.state.files.create(db, str(body.get("name", "")), str(body.get("kind", "")), body.get("config") or {}, str(body.get("secret") or ""))
+    except (SettingsError, StorageError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="storage.create", target_type="storage", target_id=out["id"],
+                      ip=client_ip(request), details={"name": out["name"], "kind": out["kind"], "address": out["address"]})
+    await db.commit()
+    return out
+
+
+@router.patch("/storages/{profile_id}")
+async def storages_update(profile_id: str, request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin),
+                          db: AsyncSession = Depends(get_db)):
+    try:
+        out = await request.app.state.files.update(db, profile_id, body)
+    except (SettingsError, StorageError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="storage.update", target_type="storage", target_id=profile_id,
+                      ip=client_ip(request), details={"name": out["name"], "changed": sorted(k for k in body if k in ("name", "config", "secret")),
+                                                       "secret_changed": body.get("secret") is not None})
+    await db.commit()
+    return out
+
+
+@router.delete("/storages/{profile_id}", status_code=204)
+async def storages_delete(profile_id: str, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    try:
+        await request.app.state.files.delete(db, profile_id)
+    except SettingsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="storage.delete", target_type="storage", target_id=profile_id,
+                      ip=client_ip(request))
+    await db.commit()
+
+
+@router.post("/storages/{profile_id}/test")
+async def storages_test(profile_id: str, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Пробная запись и создание подпапок (Audio, Transcripts, Protocols, Chat, Boards, Logs)."""
+    started = asyncio.get_running_loop().time()
+    try:
+        msg, ok = await request.app.state.files.test_profile(db, profile_id), True
+    except (SettingsError, StorageError) as exc:
+        msg, ok = str(exc), False
+    ms = int((asyncio.get_running_loop().time() - started) * 1000)
+    request.app.state.journal.emit("storage", "storage_test", level="info" if ok else "warn", user=su.display_name, ip=client_ip(request),
+                                   message=("OK: " if ok else "Ошибка: ") + msg[:200], data={"profile": profile_id, "ok": ok, "ms": ms})
+    return {"ok": ok, "message": msg, "ms": ms}

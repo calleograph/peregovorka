@@ -22,7 +22,7 @@ from ..auth.deps import SessionUser
 from ..config import Settings
 from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
-from . import events
+from . import events, roles
 from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
@@ -32,7 +32,10 @@ from .livekit import (
     issue_user_token,
     list_present_identities,
     meeting_room_name,
+    parse_guest_identity,
+    parse_user_identity,
     remove_participant,
+    set_publish_permission,
     user_identity,
 )
 from .rooms import RoomNotFound, get_accessible_room
@@ -40,6 +43,8 @@ from .rooms import RoomNotFound, get_accessible_room
 log = logging.getLogger("app.meetings")
 
 GUEST_REVOKE_TTL = 24 * 3600
+STATE_TTL = 3 * 24 * 3600      # состояние встречи в Redis (слово, привилегированные); сбрасывается и при завершении встречи
+KICK_BLOCK_SECONDS = 600       # удалённый руководителем сотрудник не может сразу вернуться
 
 
 class JoinError(Exception):
@@ -55,6 +60,9 @@ class JoinResult:
     token: str
     identity: str
     guest: GuestParticipant | None = None
+    sources: list[str] | None = None   # что участник может публиковать сейчас (пусто — слушатель)
+    privileged: bool = False           # руководитель комнаты или администратор
+    floor: bool = False                # ему дано слово (презентационная комната)
 
 
 class MeetingService:
@@ -75,11 +83,14 @@ class MeetingService:
         if room.password_hash:
             await self._check_room_password(room, su, password)
 
+        if await self._r.exists(self._kick_key(room.id, su.user_id)):
+            raise JoinError("removed_from_meeting", "Руководитель встречи удалил вас из комнаты. Попробуйте войти позже.", 403)
         meeting = await self._active_meeting(db, room.id)
         created = False
         if meeting is None:
+            # Транскрибация идёт с первой секунды (если комната её допускает); запись аудио — сразу только при «автоматической записи»
             meeting = Meeting(room_id=room.id, livekit_room="pending", started_by_user_id=su.user_id,
-                              transcription_enabled=room.transcription_enabled, record_audio=room.record_audio)
+                              transcription_enabled=room.transcription_enabled, record_audio=bool(room.record_audio and room.auto_record))
             meeting.id = uuid.uuid4()
             meeting.livekit_room = meeting_room_name(meeting.id)
             db.add(meeting)
@@ -118,10 +129,15 @@ class MeetingService:
         await events.publish(self._r, meeting.id, {"type": "participant_joined", "user_id": str(su.user_id),
                                                    "display_name": su.display_name})
 
-        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name,
-                                 livekit_room=meeting.livekit_room, camera_allowed=room.camera_allowed,
-                                 screen_share_allowed=room.screen_share_allowed)
-        return JoinResult(meeting, room, token, user_identity(su.user_id))
+        identity = user_identity(su.user_id)
+        privileged = roles.can_manage_room(room, su)
+        floor = await self.floor_has(meeting.id, identity)
+        sources = roles.publish_sources(room, su, has_floor=floor)
+        if privileged:
+            await self._r.sadd(self._priv_key(meeting.id), identity)
+            await self._r.expire(self._priv_key(meeting.id), STATE_TTL)
+        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name, livekit_room=meeting.livekit_room, sources=sources)
+        return JoinResult(meeting, room, token, identity, sources=sources, privileged=privileged, floor=floor)
 
     # ------------------------------------------------------------ гость
     @staticmethod
@@ -148,10 +164,10 @@ class MeetingService:
                                                    "display_name": f"{display_name} (гость)", "participant_type": "guest"})
         return self._guest_result(meeting, room, guest)
 
-    def _guest_result(self, meeting: Meeting, room: Room, guest: GuestParticipant) -> JoinResult:
-        token = issue_guest_token(self._s, guest_id=guest.id, display_name=guest.display_name,
-                                  livekit_room=meeting.livekit_room, camera_allowed=room.camera_allowed)
-        return JoinResult(meeting, room, token, guest_identity(guest.id), guest)
+    def _guest_result(self, meeting: Meeting, room: Room, guest: GuestParticipant, *, floor: bool = False) -> JoinResult:
+        sources = roles.publish_sources(room, None, guest=True, has_floor=floor)
+        token = issue_guest_token(self._s, guest_id=guest.id, display_name=guest.display_name, livekit_room=meeting.livekit_room, sources=sources)
+        return JoinResult(meeting, room, token, guest_identity(guest.id), guest, sources=sources, floor=floor)
 
     async def rejoin_guest(self, db: AsyncSession, guest: GuestParticipant) -> JoinResult:
         """Повторная выдача токена гостю с действующей сессией (обновление страницы, обрыв сети)."""
@@ -164,7 +180,7 @@ class MeetingService:
             guest.joined_at = utcnow()
         meeting.empty_since = None
         await db.commit()
-        return self._guest_result(meeting, meeting.room, guest)
+        return self._guest_result(meeting, meeting.room, guest, floor=await self.floor_has(meeting.id, guest_identity(guest.id)))
 
     async def leave_guest(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
         guest = await db.get(GuestParticipant, guest_id)
@@ -276,6 +292,7 @@ class MeetingService:
                 minutes = (await self.settings_svc.get(db, "general")).post_meeting_access_minutes
             await grant_leases(self._r, meeting.id, online, minutes)
         await self._bridge.stop(meeting_id=str(meeting.id), room_name=meeting.livekit_room)
+        await self._clear_state(meeting.id)   # «слово» и список руководителей — состояние встречи, после неё сбрасывается
         await events.publish(self._r, meeting.id, {"type": "meeting_ended", "reason": reason})
         if kick:
             await delete_livekit_room(self._s, meeting.livekit_room)
@@ -343,22 +360,126 @@ class MeetingService:
                 await db.rollback()
         return len(active)
 
-    # ----------------------------------------------------- запись (транскрибация + аудио)
-    async def set_recording(self, db: AsyncSession, meeting: Meeting, enabled: bool) -> bool:
-        """Начать/остановить запись внутри идущей встречи (кнопки «начать/завершить запись»).
+    # ----------------------------------------------------- состояние встречи в Redis: слово и привилегированные
+    @staticmethod
+    def _floor_key(meeting_id: uuid.UUID | str) -> str:
+        return f"floor:{meeting_id}"
 
-        Включить можно только если комната допускает транскрибацию. Состояние видно всем участникам.
-        """
+    @staticmethod
+    def _priv_key(meeting_id: uuid.UUID | str) -> str:
+        return f"priv:{meeting_id}"
+
+    @staticmethod
+    def _kick_key(room_id: uuid.UUID | str, user_id: uuid.UUID | str) -> str:
+        return f"kicked:{room_id}:{user_id}"
+
+    async def floor_has(self, meeting_id: uuid.UUID, identity: str) -> bool:
+        return bool(await self._r.sismember(self._floor_key(meeting_id), identity))
+
+    async def floor_list(self, meeting_id: uuid.UUID) -> list[str]:
+        return sorted(await self._r.smembers(self._floor_key(meeting_id)))
+
+    async def is_privileged(self, meeting_id: uuid.UUID, identity: str) -> bool:
+        return bool(await self._r.sismember(self._priv_key(meeting_id), identity))
+
+    async def _clear_state(self, meeting_id: uuid.UUID) -> None:
+        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id))
+
+    async def _member_check(self, db: AsyncSession, meeting: Meeting, identity: str) -> tuple[str, uuid.UUID]:
+        """Идентичность должна принадлежать участнику ЭТОЙ встречи (человек или гость); иначе — отказ (чужие/выдуманные identity не принимаются)."""
+        uid = parse_user_identity(identity)
+        if uid is not None:
+            row = (await db.execute(select(MeetingParticipant.id).where(
+                MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == uid, MeetingParticipant.left_at.is_(None)))).first()
+            if row:
+                return "user", uid
+        gid = parse_guest_identity(identity)
+        if gid is not None:
+            g = await db.get(GuestParticipant, gid)
+            if g is not None and g.meeting_id == meeting.id and g.left_at is None:
+                return "guest", gid
+        raise JoinError("participant_not_found", "Участник не найден среди присутствующих на встрече.", 404)
+
+    async def set_floor(self, db: AsyncSession, meeting: Meeting, identity: str, granted: bool, *, by: str) -> bool:
+        """«Дать слово» / «Забрать слово»: временное право участника публиковать звук, видео и экран и править доску в рамках ТЕКУЩЕЙ встречи.
+        Работает в презентационной комнате; руководители и администраторы всегда имеют полные права, их слово не меняется."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        if not roles.is_presentation(meeting.room):
+            raise JoinError("not_presentation", "Слово даётся только в презентационной комнате (в обычной все могут говорить по правам комнаты).", 409)
+        kind, _ = await self._member_check(db, meeting, identity)
+        if await self.is_privileged(meeting.id, identity):
+            raise JoinError("already_privileged", "У руководителя комнаты права уже полные — слово ему не требуется.", 409)
+        had = await self.floor_has(meeting.id, identity)
+        if had == granted:
+            return granted
+        sources = roles.publish_sources(meeting.room, None, guest=(kind == "guest"), has_floor=granted)
+        # сначала меняем права на сервере звонков: если он недоступен — состояние не меняется и руководитель получает понятную ошибку
+        if not await set_publish_permission(self._s, meeting.livekit_room, identity, sources):
+            raise JoinError("livekit_unavailable", "Сервер звонков недоступен — право не изменено. Повторите.", 503)
+        if granted:
+            await self._r.sadd(self._floor_key(meeting.id), identity)
+            await self._r.expire(self._floor_key(meeting.id), STATE_TTL)
+        else:
+            await self._r.srem(self._floor_key(meeting.id), identity)
+        await events.publish(self._r, meeting.id, {"type": "floor_changed", "identity": identity, "granted": granted, "by": by})
+        log.info("Слово изменено", extra={"meeting_id": str(meeting.id), "granted": granted})
+        return granted
+
+    async def kick_participant(self, db: AsyncSession, meeting: Meeting, identity: str) -> str:
+        """Удалить участника из идущей встречи (руководитель). Сотрудник не может вернуться ~10 минут; гость отключается насовсем."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        kind, ref = await self._member_check(db, meeting, identity)
+        if await self.is_privileged(meeting.id, identity):
+            raise JoinError("privileged", "Руководителя комнаты удалить нельзя.", 409)
+        if kind == "guest":
+            g = await db.get(GuestParticipant, ref)
+            await self._r.set(f"guest:revoked:{ref}", "1", ex=GUEST_REVOKE_TTL)
+            if g is not None:
+                g.left_at = utcnow()
+                await db.commit()
+        else:
+            await self._r.set(self._kick_key(meeting.room_id, ref), "1", ex=KICK_BLOCK_SECONDS)
+            await self._close_participant(db, meeting.id, ref)
+        await remove_participant(self._s, meeting.livekit_room, identity)
+        await self._r.srem(self._floor_key(meeting.id), identity)
+        await events.publish(self._r, meeting.id, {"type": "participant_left", "identity": identity, "removed": True,
+                                                   **({"guest_id": str(ref), "participant_type": "guest"} if kind == "guest" else {"user_id": str(ref)})})
+        await self._update_emptiness(db, meeting.id)
+        return kind
+
+    # ----------------------------------------------- транскрибация и запись аудио (раздельно)
+    async def _push_flags(self, meeting: Meeting) -> None:
+        await self._bridge.configure(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(meeting.room_id),
+                                     transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio)
+
+    async def set_transcription(self, db: AsyncSession, meeting: Meeting, enabled: bool) -> bool:
+        """«Остановить / возобновить транскрибацию». Звонок и запись аудио не затрагиваются."""
         if meeting.ended_at is not None:
             raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
         if enabled and not meeting.room.transcription_enabled:
-            raise JoinError("recording_forbidden", "В этой комнате запись отключена администратором.", 409)
+            raise JoinError("transcription_forbidden", "В этой комнате транскрибация отключена администратором.", 409)
         if meeting.transcription_enabled == enabled:
             return enabled
         meeting.transcription_enabled = enabled
         await db.commit()
-        await self._bridge.configure(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(meeting.room_id),
-                                     transcribe=enabled, record_audio=meeting.room.record_audio and enabled)
+        await self._push_flags(meeting)
+        await events.publish(self._r, meeting.id, {"type": "transcription_changed", "enabled": enabled})
+        log.info("Транскрибация переключена", extra={"meeting_id": str(meeting.id), "enabled": enabled})
+        return enabled
+
+    async def set_recording(self, db: AsyncSession, meeting: Meeting, enabled: bool) -> bool:
+        """«Начать / остановить запись» — запись АУДИО встречи (стенограмма от неё не зависит). Включить можно, если комната допускает запись аудио."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        if enabled and not meeting.room.record_audio:
+            raise JoinError("recording_forbidden", "В этой комнате запись аудио не разрешена (включается в настройках комнаты).", 409)
+        if meeting.record_audio == enabled:
+            return enabled
+        meeting.record_audio = enabled
+        await db.commit()
+        await self._push_flags(meeting)
         await events.publish(self._r, meeting.id, {"type": "recording_changed", "enabled": enabled})
-        log.info("Запись переключена", extra={"meeting_id": str(meeting.id), "enabled": enabled})
+        log.info("Запись аудио переключена", extra={"meeting_id": str(meeting.id), "enabled": enabled})
         return enabled

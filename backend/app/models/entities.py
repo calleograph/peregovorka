@@ -75,6 +75,13 @@ class Room(Base):
     # Гостевой доступ по ссылке (без AD): включается отдельно; ссылку можно отозвать (перевыпустить токен) без удаления комнаты.
     guest_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     guest_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+    # Тип комнаты: regular — обычная (все публикуют звук/видео по правам комнаты); presentation — участники входят слушателями, публиковать
+    # (микрофон, камера, экран) и править доску могут руководители и те, кому руководитель «дал слово» на время встречи.
+    room_type: Mapped[str] = mapped_column(String(16), default="regular", server_default="regular", nullable=False)
+    # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
+    auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
+    board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     welcome_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -216,6 +223,41 @@ class MeetingChatMessage(Base):
     guest_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("guest_participants.id", ondelete="SET NULL"))
     author_name: Mapped[str] = mapped_column(String(300), nullable=False)  # имя на момент отправки
     text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ChatAttachment(Base):
+    """Вложение чата: в базе — только метаданные, сам файл лежит в файловом хранилище (профиль хранилища или локальный диск приложения).
+    До отправки сообщения (`message_id` пуст) вложение «ожидает» и удаляется, если сообщение так и не отправлено."""
+
+    __tablename__ = "meeting_chat_attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_chat_messages.id", ondelete="CASCADE"), index=True)
+    uploader_type: Mapped[str] = mapped_column(String(10), nullable=False)       # user | guest
+    uploader_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)               # очищенное имя для показа и скачивания
+    mime: Mapped[str] = mapped_column(String(120), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)                 # image | file
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)        # путь внутри хранилища (формирует сервер, не клиент)
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                   # профиль хранилища на момент загрузки (None — локальный диск)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+
+
+class StorageProfile(Base):
+    """Профиль файлового хранилища: создаётся администратором один раз (локальный каталог или SMB-ресурс с учётной записью), а функции
+    (записи, протоколы, стенограммы, вложения чата, доски) лишь выбирают профиль. Пароль хранится зашифрованным."""
+
+    __tablename__ = "storage_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)                 # local | smb
+    config: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)  # local_path | smb_server, smb_share, smb_base_path, smb_username, smb_domain
+    secret_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class MeetingWhiteboard(Base):

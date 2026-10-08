@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import FieldsEditor from "./FieldsEditor";
-import { api, type ApiError, type SettingsGroup, type SettingsValues, type TestResult } from "../../api";
+import { api, type ApiError, type SettingsGroup, type SettingsValues, type StorageProfile, type TestResult } from "../../api";
 
 export interface Field {
   name: string;
@@ -43,6 +43,12 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
   const [test, setTest] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [profiles, setProfiles] = useState<StorageProfile[]>([]);
+  const wantsProfiles = fields.some((f) => f.name === "profile_id");
+  useEffect(() => { if (wantsProfiles) void api.admin.storages().then((r) => setProfiles(r.items)).catch(() => undefined); }, [wantsProfiles]);
+  const shown = wantsProfiles ? fields.map((f) => f.name !== "profile_id" ? f : { ...f, options: [["", profiles.length ? "Не выбрано" : "Не выбрано (хранилищ пока нет — создайте в разделе «Хранилища»)"] as [string, string],
+    ...profiles.map((p) => [p.id, `${p.name} — ${p.address.length > 48 ? `${p.address.slice(0, 45)}…` : p.address}`] as [string, string])] }) : fields;
+
   const load = useCallback(() => api.admin.settings(group).then((v) => { setValues(v); setSecrets({}); }).catch((e) => setMsg({ ok: false, text: e.message })), [group]);
   useEffect(() => { setValues(null); setMsg(null); setTest(null); void load(); }, [load]);
 
@@ -72,7 +78,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
     <form className="card form" onSubmit={save}>
       <h2>{title}</h2>
       {intro && <p className="muted">{intro}</p>}
-      <FieldsEditor fields={fields} values={values} onChange={set} secrets={secrets} onSecret={(n, v) => setSecrets((x) => ({ ...x, [n]: v }))} />
+      <FieldsEditor fields={shown} values={values} onChange={set} secrets={secrets} onSecret={(n, v) => setSecrets((x) => ({ ...x, [n]: v }))} />
       {note && <p className="muted small">{note}</p>}
       <div className="row">
         <button className="btn primary" disabled={busy}>Сохранить</button>

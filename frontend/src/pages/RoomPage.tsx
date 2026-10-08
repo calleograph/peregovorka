@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
@@ -6,7 +6,8 @@ import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type JoinInfo } from 
 import Whiteboard from "../board/Whiteboard";
 import ConnectProgress from "../components/room/ConnectProgress";
 import DebugPanel from "../components/room/DebugPanel";
-import { ParticipantTile, ScreenStage, type PView } from "../components/room/Tiles";
+import { ParticipantTile, ScreenStage, type PView, type TileActions } from "../components/room/Tiles";
+import { Icon } from "../components/Icons";
 import RoundButton from "../components/room/RoundButton";
 import DevicePanel from "../components/DevicePanel";
 import TranscriptPanel from "../components/TranscriptPanel";
@@ -22,12 +23,16 @@ import { takePreJoin } from "../prejoin";
 import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
 import { isScreenProfile, screenShareOptions } from "../screenShare";
 
-type CtlKey = "mic" | "cam" | "screen" | "rec" | "device" | "audio" | "general";
+// диалог настроек нужен только руководителю — грузится по требованию (вместе с общим для администрирования выбором доступа)
+const RoomManageDialog = lazy(() => import("../components/RoomManageDialog"));
+
+type CtlKey = "mic" | "cam" | "screen" | "rec" | "tr" | "device" | "audio" | "general";
 type CtlErrors = Partial<Record<CtlKey, string>>;
 
 // Библиотека звонков на уровне info пишет в консоль адрес подключения целиком (с токеном доступа и большим join_request) — оставляем только предупреждения.
 setLogLevel(LogLevel.warn);
 
+const ALL_SOURCES = ["microphone", "camera", "screen_share", "screen_share_audio"];
 const MAX_REJOIN = 6;
 const MAX_CONNECT_TRIES = 3;   // первое подключение: до 3 попыток при сетевых/ICE-сбоях
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
@@ -67,7 +72,13 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState(false);
-  const [recording, setRecording] = useState(true);
+  const [recording, setRecording] = useState(false);          // идёт запись аудио
+  const [transcribing, setTranscribing] = useState(true);     // идёт транскрибация (по умолчанию всегда)
+  const [sources, setSources] = useState<string[]>(ALL_SOURCES);   // что разрешено публиковать (сервер выдаёт в токене)
+  const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
+  const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
+  const [canBoard, setCanBoard] = useState(true);
+  const [manageOpen, setManageOpen] = useState(false);
   const [asrReady, setAsrReady] = useState(true);
   const [participants, setParticipants] = useState<PView[]>([]);
   const [state, setState] = useState<ConnectionState>(ConnectionState.Disconnected);
@@ -362,7 +373,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         if (leavingRef.current || endedRef.current || reason === DisconnectReason.CLIENT_INITIATED) return;
         if (reason === DisconnectReason.DUPLICATE_IDENTITY) { setErr("general", describeMediaError(new Error("DUPLICATE_IDENTITY"), "connect").message); return; }
         if (reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED) {
-          setErr("general", "Вас отключили от комнаты (встреча закрыта или участник удалён администратором).");
+          setErr("general", "Вас отключили от комнаты: встреча закрыта или вас удалил руководитель.");
           return;
         }
         scheduleRejoin(0);
@@ -380,6 +391,18 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dlog, fail, phase, refresh, screenPhase, setErr, stopScreenBookkeeping]);
+
+  /** Права на публикацию и доску приходят вместе с токеном; после повторного входа применяются заново (слово сохраняется на сервере). */
+  const applyClient = useCallback((info: JoinInfo) => {
+    setSources(info.client.sources ?? ALL_SOURCES);
+    setCanBoard(info.client.can_edit_board ?? true);
+    setTranscribing(info.transcription ?? true);
+    setRecording(info.recording);
+  }, []);
+
+  const loadFloor = useCallback((mid: string) => {
+    api.floor(mid).then((f) => { setFloorIds(new Set(f.floor)); setLeaderIds(new Set(f.leaders)); }).catch(() => undefined);
+  }, []);
 
   const scheduleRejoin = useCallback((attempt: number) => {
     window.clearTimeout(rejoinTimer.current);
@@ -399,6 +422,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         await roomRef.current?.disconnect().catch(() => undefined);
         const info = await fetchJoin(pwRef.current); // свежий токен: прежний мог устареть
         infoRef.current = info;
+        applyClient(info);
         await connectLivekit(info, "rejoin");
         if (micWantedRef.current) void enableMic();
         setRejoin(null);
@@ -415,7 +439,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         scheduleRejoin(attempt + 1);
       }
     }, delay);
-  }, [connectLivekit, dlog, enableMic, fetchJoin, setErr]);
+  }, [applyClient, connectLivekit, dlog, enableMic, fetchJoin, setErr]);
 
   const connect = async (pw?: string) => {
     setBusy(true);
@@ -444,14 +468,18 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     pwRef.current = pw;
     infoRef.current = info;
     meetingRef.current = info.meeting_id;
-    setRecording(info.recording);
+    applyClient(info);
+    setFloorIds(new Set()); setLeaderIds(new Set());
+    loadFloor(info.meeting_id);
     setAsrReady(info.asr_ready);
     asrWasReadyRef.current = info.asr_ready;
     setAsrLost(false);
     setWithAudio(info.client.screen_share_audio);
     setNeedPassword(false);
     setWelcome(info.client.welcome_message ?? null);
-    setNotice(info.client.mute_on_join ? { kind: "info", text: "В этой переговорке микрофон по умолчанию выключен. Чтобы говорить, нажмите «Микрофон»." } : null);
+    setNotice(info.client.presentation && !(info.client.sources ?? []).length
+      ? { kind: "info", text: "Это презентационная комната: вы слушаете. Микрофон, камера и показ экрана появятся, когда руководитель даст вам слово." }
+      : info.client.mute_on_join ? { kind: "info", text: "В этой переговорке микрофон по умолчанию выключен. Чтобы говорить, нажмите «Микрофон»." } : null);
     setJoin(info); // комната и канал событий открываются сразу — параллельно с подключением к LiveKit
     setActiveMeeting(info.meeting_id); // верхняя панель с этого момента открывает разделы в новых вкладках
     const pre = takePreJoin(); // устройства, выбранные на проверке оборудования (гость)
@@ -460,7 +488,8 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     // немедленно и не ждёт подключения; канал событий (WebSocket) открывает TranscriptPanel при появлении комнаты.
     tl.mark("gumStart");
     // «микрофон по умолчанию выключен» (настройка переговорки): звук не запрашиваем и не включаем — пользователь включит сам
-    if (!info.client.mute_on_join) prepMicRef.current = createLocalAudioTrack({ ...captureOptions(loadMicPrefs()), ...(pre?.micId ? { deviceId: pre.micId } : {}) }).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
+    const mayPublishMic = (info.client.sources ?? ALL_SOURCES).includes("microphone");
+    if (!info.client.mute_on_join && mayPublishMic) prepMicRef.current = createLocalAudioTrack({ ...captureOptions(loadMicPrefs()), ...(pre?.micId ? { deviceId: pre.micId } : {}) }).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
     void collectAll().then((data) => reportEvent("join_attempt", { meetingId: info.meeting_id, room: info.room.name, data }));
     try {
       // Первое подключение переживает кратковременные сбои сети/ICE: до MAX_CONNECT_TRIES попыток с нарастающей паузой и свежим токеном
@@ -483,10 +512,10 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         }
       }
       setConnectTry(null);
-      if (!info.client.mute_on_join) void enableMic();
+      if (!info.client.mute_on_join && mayPublishMic) void enableMic();
       const lk = roomRef.current;
       if (lk && pre?.speakerId) void lk.switchActiveDevice("audiooutput", pre.speakerId).catch(() => undefined);
-      if (lk && pre?.camOn && info.room.camera_allowed) void lk.localParticipant.setCameraEnabled(true, pre.camId ? { deviceId: pre.camId } : undefined).then(refresh).catch((e) => fail("camera", "cam", "camera_failed", e));
+      if (lk && pre?.camOn && info.room.camera_allowed && (info.client.sources ?? ALL_SOURCES).includes("camera")) void lk.localParticipant.setCameraEnabled(true, pre.camId ? { deviceId: pre.camId } : undefined).then(refresh).catch((e) => fail("camera", "cam", "camera_failed", e));
     } catch (e) {
       const reached = signalReachedRef.current;
       const m = describeMediaError(e, "connect", { stage: reached ? "media" : "server" });
@@ -605,6 +634,54 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     catch (e) { setErr("rec", (e as ApiError).message || "Не удалось переключить запись."); }
   };
 
+  /** «Остановить / возобновить транскрибацию»: звонок и запись звука не затрагиваются. */
+  const toggleTranscription = async () => {
+    if (!join) return;
+    setErr("tr", undefined);
+    try { setTranscribing((await api.setTranscription(join.meeting_id, !transcribing)).enabled); }
+    catch (e) { setErr("tr", (e as ApiError).message || "Не удалось переключить транскрибацию."); }
+  };
+
+  /** «Дать слово» / «Забрать слово». */
+  const giveFloor = async (who: PView, granted: boolean) => {
+    if (!join) return;
+    try {
+      await api.setFloor(join.meeting_id, who.identity, granted);
+      setFloorIds((cur) => { const n = new Set(cur); if (granted) n.add(who.identity); else n.delete(who.identity); return n; });
+      setNotice({ kind: "ok", text: granted ? `Слово дано: ${who.name}.` : `Слово забрано: ${who.name}.` });
+    } catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось изменить право слова." }); }
+  };
+  const removeParticipant = async (who: PView) => {
+    if (!join) return;
+    try { await api.kick(join.meeting_id, who.identity); setNotice({ kind: "ok", text: `${who.name} удалён из встречи.` }); }
+    catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось удалить участника." }); }
+  };
+
+  /** Слово дали или забрали у НАС: права обновляются сразу (сервер уже изменил разрешения в звонке), забранное — выключаем. */
+  const onMyFloor = useCallback((granted: boolean) => {
+    const info = infoRef.current;
+    if (!info || info.client.can_manage) return;
+    const r = info.room;
+    if (granted) {
+      const src = ["microphone"];
+      if (r.camera_allowed) src.push("camera");
+      if (r.screen_share_allowed && !guestRef.current) src.push("screen_share", "screen_share_audio");
+      setSources(src);
+      setCanBoard(r.board_allowed ?? true);
+      setNotice({ kind: "ok", text: "Вам дали слово: можно включить микрофон" + (r.camera_allowed ? ", камеру" : "") + (r.screen_share_allowed && !guestRef.current ? " и показ экрана" : "") + "." });
+    } else {
+      setSources([]);
+      setCanBoard(false);
+      const lp = roomRef.current?.localParticipant;
+      if (lp) {   // новые публикации сервер уже запретил; активные выключаем сами, не дожидаясь отзыва
+        userStopRef.current = true;
+        void Promise.allSettled([lp.setMicrophoneEnabled(false), lp.setCameraEnabled(false), lp.setScreenShareEnabled(false)]).then(refresh);
+      }
+      micWantedRef.current = false;
+      setNotice({ kind: "info", text: "Руководитель забрал слово: микрофон, камера и показ экрана выключены." });
+    }
+  }, [refresh]);
+
   const enableAudio = async () => {
     try { await roomRef.current?.startAudio(); setAudioBlocked(!(roomRef.current?.canPlaybackAudio ?? true)); setErr("audio", undefined); }
     catch (e) { fail("playback", "audio", "device_error", e); }
@@ -615,7 +692,21 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     if (st.state === "connecting") timeline.current.mark("wsStart");
     if (st.state === "online") timeline.current.mark("wsOpen");
   }, []);
-  const onLive = useCallback((e: LiveEvent) => { if (e.type === "recording_changed") setRecording(e.enabled); }, []);
+  const onLive = useCallback((e: LiveEvent) => {
+    if (e.type === "recording_changed") setRecording(e.enabled);
+    else if (e.type === "transcription_changed") setTranscribing(e.enabled);
+    else if (e.type === "participant_joined") { if (meetingRef.current) loadFloor(meetingRef.current); }
+    else if (e.type === "floor_changed") {
+      setFloorIds((cur) => { const n = new Set(cur); if (e.granted) n.add(e.identity); else n.delete(e.identity); return n; });
+      if (e.identity === infoRef.current?.identity) onMyFloor(e.granted);
+    }
+  }, [loadFloor, onMyFloor]);
+
+  // после переподключения канала событий состояние слова могло измениться — читаем заново
+  useEffect(() => {
+    if (!join) return;
+    return bus.onResync(() => { if (meetingRef.current) loadFloor(meetingRef.current); });
+  }, [bus, join, loadFloor]);
   const leave = async () => { await teardown(true); if (guest) guest.onLeft("left"); else navigate("/"); };
   const endForAll = async () => {
     if (meetingRef.current) await api.endMeeting(meetingRef.current).catch((e) => setErr("general", (e as ApiError).message));
@@ -697,6 +788,18 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
   }
 
   const room = join.room;
+  const isLeader = !!join.client.can_manage && !guest;
+  const presentation = !!join.client.presentation;
+  const canMic = sources.includes("microphone");
+  const canCam = sources.includes("camera");
+  const canScreen = sources.includes("screen_share") && !guest;
+  const showCam = room.camera_allowed || canCam;
+  const showScreen = !guest && (room.screen_share_allowed || canScreen);
+  const myFloor = floorIds.has(join.identity);
+  const listenerHint = "В презентационной комнате вы слушаете. Когда руководитель даст слово, кнопка станет доступна";
+  const viewParticipants: PView[] = participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity) }));
+  const tileActions: TileActions | undefined = join.client.can_moderate || isLeader
+    ? { presentation, onMute: moderate, onFloor: isLeader ? giveFloor : undefined, onKick: isLeader ? removeParticipant : undefined } : undefined;
   const me = participants.find((p) => p.local);
   const sharer = participants.find((p) => p.screen);
   const connLabel = rejoin ? `Переподключение (попытка ${rejoin.attempt} из ${MAX_REJOIN})…`
@@ -708,19 +811,23 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
 
   return (
     <div className={`room-wrap ${tCollapsed ? "tcollapsed" : ""}`} style={style}>
-      <section className={`stage ${room.transcription_enabled && recording && !ended ? "is-recording" : ""}`}>
+      <section className={`stage ${recording && !ended ? "is-recording" : ""}`}>
         <div className="room-head row">
           <h1>{room.name}</h1>
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
+          {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
+          {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
+          {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</span>}
           {room.transcription_enabled && (
-            <span className={`rec-badge ${recording ? "on" : "off"}`} title={recording ? "Идёт запись и транскрибация встречи" : "Запись остановлена"}>
-              {recording ? <><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</> : "Запись остановлена"}
+            <span className={`rec-badge ${transcribing ? "tr" : "off"}`} title={transcribing ? "Реплики участников записываются в стенограмму" : "Транскрибация приостановлена руководителем: звонок и запись звука продолжаются"}>
+              {transcribing ? "Транскрибация идёт" : "Транскрибация остановлена"}
             </span>
           )}
           {room.transcription_enabled && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
           <div className="spacer" />
-          <button className={`btn mini ${debug ? "primary" : ""}`} onClick={toggleDebug} title="Тайминги входа, статистика соединения и показа экрана">⚙ Диагностика</button>
+          {isLeader && <button className="btn mini" onClick={() => setManageOpen(true)} title="Название, режим комнаты, запись, доступ, руководители и гостевая ссылка"><Icon name="gear" size={15} /> Настройки комнаты</button>}
+          <button className={`btn mini ${debug ? "primary" : ""}`} onClick={toggleDebug} title="Тайминги входа, статистика соединения и показа экрана"><Icon name="sliders" size={15} /> Диагностика</button>
         </div>
 
         {ended && (
@@ -748,11 +855,11 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
 
         {sharer && <ScreenStage key={sharer.identity} p={sharer} />}
         {boardMounted && !ended && (
-          <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardOpen} fileBase={fileBaseName(room.name, new Date().toISOString())}
+          <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardOpen} readOnly={!canBoard} fileBase={fileBaseName(room.name, new Date().toISOString())}
                       onClose={() => setBoardOpen(false)} onRemoteChange={(by) => setBoardNews(by || "участник")} />
         )}
         <div className={`tiles n${n} ${sharer || boardOpen ? "strip" : ""}`}>
-          {participants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} onMute={join.client.can_moderate ? moderate : undefined} />)}
+          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 
@@ -761,8 +868,8 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
         {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
         <div className="controls rbar">
           <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
-            <RoundButton icon={me?.mic ? "mic" : "micOff"} label={me?.mic ? "Микрофон" : "Микрофон выкл."} tone={me?.mic ? "on" : "off"} pressed={!!me?.mic} pulse={!!me?.mic && !!me?.speaking}
-                         title={me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready"} onClick={() => { setMicFail(null); void toggle("mic"); }} />
+            <RoundButton icon={me?.mic ? "mic" : "micOff"} label={!canMic ? "Слушаете" : me?.mic ? "Микрофон" : "Микрофон выкл."} tone={me?.mic ? "on" : "off"} pressed={!!me?.mic} pulse={!!me?.mic && !!me?.speaking}
+                         title={!canMic ? listenerHint : me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready" || !canMic} onClick={() => { setMicFail(null); void toggle("mic"); }} />
             {micFail && !ended && (
               <div className="row tight small">
                 <button className="btn mini primary" onClick={() => { setErr("mic", undefined); setMicFail(null); void enableMic(); }}>Повторить</button>
@@ -770,21 +877,23 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
               </div>
             )}
           </Ctl>
-          {room.camera_allowed && (
+          {showCam && (
             <Ctl error={ctlErr.cam} onClose={() => setErr("cam")}>
               <RoundButton icon={me?.cam ? "video" : "videoOff"} label={me?.cam ? "Камера" : "Камера выкл."} tone={me?.cam ? "on" : "off"} pressed={!!me?.cam}
-                           title={me?.cam ? "Выключить камеру" : "Включить камеру"} disabled={ended || stage !== "ready"} onClick={() => toggle("cam")} />
+                           title={!canCam ? listenerHint : me?.cam ? "Выключить камеру" : "Включить камеру"} disabled={ended || stage !== "ready" || !canCam} onClick={() => toggle("cam")} />
             </Ctl>
           )}
-          <Ctl onClose={() => undefined}>
-            <RoundButton icon={micPrefs.noiseSuppression ? "noise" : "noiseOff"} label="Шумоподавление" tone={micPrefs.noiseSuppression ? "on" : "neutral"} pressed={micPrefs.noiseSuppression}
-                         title={micPrefs.noiseSuppression ? "Шумоподавление включено — нажмите, чтобы выключить" : "Шумоподавление выключено — нажмите, чтобы включить"}
-                         disabled={ended || stage !== "ready"} onClick={toggleNoise} />
-          </Ctl>
-          {room.screen_share_allowed && !guest && (
+          {canMic && (
+            <Ctl onClose={() => undefined}>
+              <RoundButton icon={micPrefs.noiseSuppression ? "noise" : "noiseOff"} label="Шумоподавление" tone={micPrefs.noiseSuppression ? "on" : "neutral"} pressed={micPrefs.noiseSuppression}
+                           title={micPrefs.noiseSuppression ? "Шумоподавление включено — нажмите, чтобы выключить" : "Шумоподавление выключено — нажмите, чтобы включить"}
+                           disabled={ended || stage !== "ready"} onClick={toggleNoise} />
+            </Ctl>
+          )}
+          {showScreen && (
             <Ctl error={ctlErr.screen} onClose={() => setErr("screen")}>
               <RoundButton icon={me?.screen ? "screenStop" : "screen"} label={me?.screen ? "Остановить показ" : "Показать экран"} tone={me?.screen ? "live" : "neutral"} pressed={!!me?.screen}
-                           title="Выберите экран, окно или вкладку — трансляция начнётся сразу" disabled={ended || stage !== "ready"} onClick={() => toggle("screen")}>
+                           title={!canScreen ? listenerHint : "Выберите экран, окно или вкладку — трансляция начнётся сразу"} disabled={ended || stage !== "ready" || !canScreen} onClick={() => toggle("screen")}>
                 {join.client.screen_share_audio && !me?.screen && (
                   <label className="check small"><input type="checkbox" checked={withAudio} onChange={(e) => setWithAudio(e.target.checked)} /> со звуком</label>
                 )}
@@ -793,16 +902,22 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
           )}
           <Ctl onClose={() => undefined}>
             <RoundButton icon="board" label={boardNews && !boardOpen ? "Доска · обновлена" : "Доска"} tone={boardOpen ? "on" : "neutral"} pressed={boardOpen} disabled={ended}
-                         title="Общая доска для схем: рисуют все участники, схема сохраняется со встречей"
+                         title={canBoard ? "Общая доска для схем: рисуют участники, схема сохраняется со встречей" : "Общая доска: вы можете смотреть. Править — руководитель или тот, кому дали слово"}
                          onClick={() => { setBoardMounted(true); setBoardOpen((o) => !o); setBoardNews(null); }} />
           </Ctl>
           <Ctl onClose={() => undefined}>
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); }} />
           </Ctl>
-          {room.transcription_enabled && !guest && (
+          {room.transcription_enabled && join.client.can_control && !guest && (
+            <Ctl error={ctlErr.tr} onClose={() => setErr("tr")}>
+              <RoundButton icon={transcribing ? "transcriptOff" : "transcript"} label={transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию"} tone={transcribing ? "neutral" : "off"} pressed={!transcribing}
+                           title={transcribing ? "Приостановить стенограмму. Звонок и запись звука продолжатся" : "Продолжить стенограмму"} disabled={ended} onClick={() => void toggleTranscription()} />
+            </Ctl>
+          )}
+          {join.client.recording_allowed && join.client.can_control && !guest && (
             <Ctl error={ctlErr.rec} onClose={() => setErr("rec")}>
               <RoundButton icon={recording ? "recordStop" : "record"} label={recording ? "Остановить запись" : "Начать запись"} tone={recording ? "rec" : "neutral"} pressed={recording}
-                           disabled={ended} onClick={toggleRecording} />
+                           title={recording ? "Остановить запись звука встречи (транскрибация не меняется)" : "Начать запись звука встречи"} disabled={ended} onClick={toggleRecording} />
             </Ctl>
           )}
           {join.client.can_moderate && (
@@ -826,7 +941,8 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
       </section>
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
-      <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
+      {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
+      <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} paused={!transcribing} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />
     </div>

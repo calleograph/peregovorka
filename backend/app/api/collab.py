@@ -15,16 +15,18 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import get_db
 from ..auth.guests import Actor, require_actor
-from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard, utcnow
-from ..services import events, whiteboard as wb
-from ..services.materials import render_chat
+from ..models import ChatAttachment, Meeting, MeetingChatMessage, MeetingWhiteboard, utcnow
+from ..services import events, roles, whiteboard as wb
+from ..services.livekit import guest_identity, user_identity
+from ..services.materials import chat_files_map, render_chat
 from ..services.access import can_access_meeting_actor
+from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out
 
 router = APIRouter(prefix="/meetings", tags=["collab"])
 
@@ -59,9 +61,20 @@ async def _rate(request: Request, kind: str, actor: Actor, meeting_id: uuid.UUID
 
 
 # ------------------------------------------------------------------------------------------------ чат
-def chat_out(m: MeetingChatMessage) -> dict:
+def chat_out(m: MeetingChatMessage, atts: list[ChatAttachment] | None = None) -> dict:
     return {"id": m.id, "meeting_id": str(m.meeting_id), "created_at": m.created_at.isoformat(), "author_type": m.author_type,
-            "author_id": str(m.user_id or m.guest_id) if (m.user_id or m.guest_id) else None, "author_name": m.author_name, "text": m.text}
+            "author_id": str(m.user_id or m.guest_id) if (m.user_id or m.guest_id) else None, "author_name": m.author_name, "text": m.text,
+            "attachments": [attachment_out(a) for a in (atts or [])]}
+
+
+async def attachments_by_message(db: AsyncSession, message_ids: list[int]) -> dict[int, list[ChatAttachment]]:
+    out: dict[int, list[ChatAttachment]] = {}
+    if message_ids:
+        rows = (await db.execute(select(ChatAttachment).where(ChatAttachment.message_id.in_(message_ids))
+                                 .order_by(ChatAttachment.created_at, ChatAttachment.id))).scalars().all()
+        for a in rows:
+            out.setdefault(a.message_id, []).append(a)  # type: ignore[arg-type]
+    return out
 
 
 def clean_chat_text(raw: Any) -> str:
@@ -91,22 +104,47 @@ async def chat_list(meeting_id: uuid.UUID, request: Request, after_id: int = Que
         rows = list((await db.execute(stmt.order_by(MeetingChatMessage.id.desc()).limit(limit + 1))).scalars().all())
         has_more = len(rows) > limit
         rows = list(reversed(rows[:limit]))
-    return {"messages": [chat_out(m) for m in rows], "has_more": has_more}
+    atts = await attachments_by_message(db, [m.id for m in rows])
+    return {"messages": [chat_out(m, atts.get(m.id)) for m in rows], "has_more": has_more}
 
 
 @router.post("/{meeting_id}/chat", status_code=201)
 async def chat_post(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor),
                     db: AsyncSession = Depends(get_db)):
     await _meeting_for_actor(request, db, meeting_id, actor, write=True)
-    text = clean_chat_text(body.get("text"))
+    raw_ids = body.get("attachments") or []
+    if not isinstance(raw_ids, list) or not all(isinstance(i, str) for i in raw_ids):
+        raise HTTPException(status_code=422, detail="attachments: список идентификаторов вложений")
+    cfg = await request.app.state.chat_files.settings(db)
+    if len(raw_ids) > cfg.max_files_per_message:
+        raise HTTPException(status_code=422, detail=f"В одном сообщении не больше {cfg.max_files_per_message} файлов")
+    if raw_ids:   # сообщение из одних файлов: текст необязателен
+        text = _CTRL.sub("", str(body.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")).strip()
+        if len(text) > CHAT_MAX_CHARS:
+            raise HTTPException(status_code=422, detail=f"Сообщение длиннее {CHAT_MAX_CHARS} символов")
+    else:
+        text = clean_chat_text(body.get("text"))
+    atts: list[ChatAttachment] = []
+    for raw in dict.fromkeys(raw_ids):
+        try:
+            att = await db.get(ChatAttachment, uuid.UUID(raw))
+        except ValueError:
+            att = None
+        # прикрепить можно только своё, загруженное в ЭТУ встречу и ещё не отправленное вложение
+        if att is None or att.meeting_id != meeting_id or att.message_id is not None or att.uploader_id != actor.id:
+            raise HTTPException(status_code=422, detail="Вложение не найдено или уже отправлено")
+        atts.append(att)
     await _rate(request, "chat", actor, meeting_id, CHAT_RATE)
     msg = MeetingChatMessage(meeting_id=meeting_id, author_type="guest" if actor.is_guest else "user",
                              user_id=None if actor.is_guest else actor.id, guest_id=actor.id if actor.is_guest else None,
                              author_name=actor.label, text=text)
     db.add(msg)
+    await db.flush()
+    for a in atts:
+        a.message_id = msg.id
     await db.commit()
     await db.refresh(msg)
-    out = chat_out(msg)
+    out = chat_out(msg, atts)
     await events.publish(request.app.state.redis, meeting_id, {"type": "chat_message", "message": out})
     return out
 
@@ -117,11 +155,101 @@ async def chat_txt(meeting_id: uuid.UUID, request: Request, actor: Actor = Depen
     rows = (await db.execute(select(MeetingChatMessage).where(MeetingChatMessage.meeting_id == meeting_id)
                              .order_by(MeetingChatMessage.id))).scalars().all()
     tz = await request.app.state.protocols._tz(db)  # noqa: SLF001
-    return PlainTextResponse(render_chat(list(rows), tz), headers={
+    return PlainTextResponse(render_chat(list(rows), tz, await chat_files_map(db, list(rows))), headers={
         "Content-Disposition": f'attachment; filename="chat-{str(meeting_id)[:8]}.txt"', "Cache-Control": "no-store"})
 
 
+# ------------------------------------------------------------------------------------- вложения чата
+FILE_RATE = (10, 60)            # загрузок / секунд на одного участника
+
+
+async def _read_limited(request: Request, limit: int) -> bytes:
+    """Тело запроса не больше limit байт: лишнее отбрасывается сразу, а не после того, как всё лежит в памяти."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+    return bytes(buf)
+
+
+@router.post("/{meeting_id}/chat/attachments", status_code=201)
+async def chat_attachment_upload(meeting_id: uuid.UUID, request: Request, name: str = Query("", max_length=300), actor: Actor = Depends(require_actor),
+                                 db: AsyncSession = Depends(get_db)):
+    """Загрузка файла для сообщения: тело запроса — сами байты, имя — в параметре `name`. Вложение «ожидает» отправки сообщения."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    svc = request.app.state.chat_files
+    cfg = await svc.settings(db)
+    if not cfg.enabled:
+        raise HTTPException(status_code=403, detail="Вложения в чат отключены администратором")
+    await _rate(request, "chatfile", actor, meeting_id, FILE_RATE)
+    data = await _read_limited(request, cfg.max_size_mb * 1024 * 1024)
+    try:
+        att = await svc.store(db, meeting, uploader_type="guest" if actor.is_guest else "user", uploader_id=actor.id, raw_name=name, data=data)
+    except AttachmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    return attachment_out(att)
+
+
+async def _attachment_for_actor(request: Request, db: AsyncSession, meeting_id: uuid.UUID, attachment_id: uuid.UUID, actor: Actor) -> ChatAttachment:
+    await _meeting_for_actor(request, db, meeting_id, actor)
+    att = await db.get(ChatAttachment, attachment_id)
+    if att is None or att.meeting_id != meeting_id:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    if att.message_id is None and att.uploader_id != actor.id:    # ещё не отправленное вложение видит только загрузивший
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return att
+
+
+@router.get("/{meeting_id}/chat/attachments/{attachment_id}")
+async def chat_attachment_get(meeting_id: uuid.UUID, attachment_id: uuid.UUID, request: Request, download: bool = Query(False),
+                              actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """Картинки (png/jpeg/gif/webp, проверенные по содержимому) открываются в браузере; всё остальное — только скачиванием."""
+    att = await _attachment_for_actor(request, db, meeting_id, attachment_id, actor)
+    try:
+        data = await request.app.state.chat_files.read(db, att)
+    except AttachmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    inline = att.kind == "image" and att.mime in INLINE_IMAGES.values() and not download
+    from urllib.parse import quote  # noqa: PLC0415
+
+    disposition = ("inline" if inline else "attachment") + "; filename*=UTF-8''" + quote(att.name, safe="")
+    return Response(data, media_type=att.mime if inline else "application/octet-stream", headers={
+        "Content-Disposition": disposition, "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+@router.delete("/{meeting_id}/chat/attachments/{attachment_id}", status_code=204)
+async def chat_attachment_delete(meeting_id: uuid.UUID, attachment_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor),
+                                 db: AsyncSession = Depends(get_db)):
+    """Убрать ещё не отправленное вложение (превью в поле ввода). Отправленные файлы живут вместе с перепиской и удаляются по срокам хранения."""
+    att = await _attachment_for_actor(request, db, meeting_id, attachment_id, actor)
+    if att.message_id is not None:
+        raise HTTPException(status_code=409, detail="Файл уже отправлен в чат")
+    if att.uploader_id != actor.id:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    await request.app.state.chat_files.remove_files(db, [att])
+    await db.delete(att)
+    await db.commit()
+
+
 # ----------------------------------------------------------------------------------------------- доска
+async def _can_edit_board(request: Request, meeting: Meeting, actor: Actor) -> bool:
+    """Правка доски: руководитель/администратор всегда; остальные — по политике комнаты, а в презентационной комнате ещё и со «словом»."""
+    ident = guest_identity(actor.id) if actor.is_guest else user_identity(actor.id)
+    floor = await request.app.state.meetings.floor_has(meeting.id, ident)
+    return roles.can_edit_board(meeting.room, actor.user, guest=actor.is_guest, has_floor=floor)
+
+
+async def _require_board_edit(request: Request, meeting: Meeting, actor: Actor) -> None:
+    if not await _can_edit_board(request, meeting, actor):
+        raise HTTPException(status_code=403, detail="Править доску может руководитель комнаты или тот, кому дали слово" if roles.is_presentation(meeting.room)
+                            else "Правка общей доски в этой комнате отключена руководителем")
+
+
 def _seq_key(meeting_id: uuid.UUID) -> str:
     return f"wb:{meeting_id}:seq"
 
@@ -148,14 +276,16 @@ async def board_get(meeting_id: uuid.UUID, request: Request, actor: Actor = Depe
             if p["seq"] > base:
                 patches.append(p)
         patches.sort(key=lambda p: p["seq"])
-    return {"xml": row.xml if row else None, "seq": base, "patches": patches, "active": meeting.ended_at is None, **board_meta(row)}
+    return {"xml": row.xml if row else None, "seq": base, "patches": patches, "active": meeting.ended_at is None,
+            "can_edit": meeting.ended_at is None and await _can_edit_board(request, meeting, actor), **board_meta(row)}
 
 
 @router.post("/{meeting_id}/whiteboard/patch")
 async def board_patch(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor),
                       db: AsyncSession = Depends(get_db)):
     """Правка схемы (diffSync-патч draw.io). Backend присваивает номер и рассылает всем подписанным на встречу."""
-    await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    await _require_board_edit(request, meeting, actor)
     try:
         patch = wb.validate_patch(body.get("patch"))
     except wb.WhiteboardError as exc:
@@ -182,7 +312,8 @@ async def board_patch(meeting_id: uuid.UUID, request: Request, body: dict[str, A
 async def board_save(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor),
                      db: AsyncSession = Depends(get_db)):
     """Снимок схемы (полный XML draw.io), `seq` — номер последнего патча, учтённого в этом снимке. Старее сохранённого не принимается."""
-    await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    await _require_board_edit(request, meeting, actor)
     xml, seq = body.get("xml"), body.get("seq")
     if not isinstance(seq, int) or seq < 0:
         raise HTTPException(status_code=422, detail="seq: целое число")

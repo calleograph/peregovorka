@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..logging_setup import request_id_var, scrub
 from ..models import EventLog, utcnow
 from .settings import JournalSettings, SettingsError, SettingsService
+from .filestore import LOGS, FileStore
 from .storage import StorageError, build_storage
 
 log = logging.getLogger("app.journal")
@@ -61,6 +62,7 @@ class Journal:
         self._sm = session_maker
         self._svc = svc
         self._data_dir = data_dir
+        self._files = FileStore(svc, data_dir)
         self._q: deque[dict] = deque(maxlen=max_queue)
         self._ext: list[dict] = []
         self._cfg: JournalSettings | None = None
@@ -131,6 +133,13 @@ class Journal:
             await self.flush_external()
         return len(wanted)
 
+    async def _storage(self, cfg):
+        """Хранилище журнала: профиль (подпапка Logs/) или прежняя раскладка."""
+        if getattr(cfg, "profile_id", ""):
+            async with self._sm() as db:
+                return await self._files.backend(db, "journal", LOGS)
+        return build_storage(cfg, self._data_dir)  # type: ignore[arg-type]
+
     async def flush_external(self) -> None:
         """Пакетом выгружает накопленные события во внешнее хранилище файлом journal/ГГГГ-ММ-ДД/ЧЧММСС-xxxx.ndjson."""
         cfg = await self.config()
@@ -142,7 +151,7 @@ class Journal:
             return
         items, self._ext = self._ext, []
         try:
-            storage = build_storage(cfg, self._data_dir)  # type: ignore[arg-type]
+            storage = await self._storage(cfg)
             if storage is None:
                 return
             now = datetime.now(timezone.utc)
@@ -206,7 +215,7 @@ class Journal:
             await db.commit()
         if cfg.enabled:
             try:
-                storage = build_storage(cfg, self._data_dir)  # type: ignore[arg-type]
+                storage = await self._storage(cfg)
                 if storage is not None:
                     day_cut = cutoff.strftime("%Y-%m-%d")
                     for name in await asyncio.to_thread(storage.list_dir, EXT_DIR):

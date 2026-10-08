@@ -61,8 +61,8 @@ def test_screen_profile_reaches_clients_on_join(client):
     room = make_room(client)
     login(client, "alice")
     body = client.post(f"/api/v1/rooms/{room['id']}/join", json={}).json()
-    assert body["client"] == {"screen_profile": "motion", "screen_share_audio": True, "one_sharer_at_a_time": False,
-                              "can_moderate": False, "is_guest": False, "mute_on_join": False, "welcome_message": None}
+    assert {k: body["client"][k] for k in ("screen_profile", "screen_share_audio", "one_sharer_at_a_time", "can_moderate", "is_guest", "mute_on_join", "welcome_message")} == {
+        "screen_profile": "motion", "screen_share_audio": True, "one_sharer_at_a_time": False, "can_moderate": False, "is_guest": False, "mute_on_join": False, "welcome_message": None}
 
 
 # --------------------------------------------------------------------------- пользователи
@@ -114,33 +114,46 @@ def test_system_status_for_admin(client):
 
 
 # --------------------------------------------------------------------------------- запись
-def test_recording_pause_resume_commands_asr_and_notifies(client):
-    room = make_room(client)
+def test_transcription_and_audio_recording_are_toggled_separately_and_tell_asr(client):
+    room = make_room(client, record_audio=True)
     a = _join(client, "alice", room["id"])
     app = client.app_obj
     login(client, "alice")
+    mid = a["meeting_id"]
+    assert a["transcription"] is True and a["recording"] is False  # транскрибация идёт с начала; аудио пишется только вручную или по «автозаписи»
+
+    def asr():
+        return json.loads(client.portal.call(lambda: app.state.redis.hget("asr:sessions", mid)))
+
     with client.websocket_connect("/api/v1/ws") as ws:
-        ws.send_json({"type": "subscribe", "meeting_id": a["meeting_id"]})
+        ws.send_json({"type": "subscribe", "meeting_id": mid})
         assert ws.receive_json()["type"] == "subscribed"
-        assert client.post(f"/api/v1/meetings/{a['meeting_id']}/recording", json={"enabled": False}).json() == {"enabled": False}
-        evt = ws.receive_json()
-        assert evt == {"type": "recording_changed", "enabled": False}
-    stream = client.portal.call(lambda: app.state.redis.xrange("asr:control"))
-    cfg = [m for _, m in stream if m["type"] == "config"]
-    assert cfg and json.loads(cfg[-1]["payload"])["transcribe"] is False
-    session = json.loads(client.portal.call(lambda: app.state.redis.hget("asr:sessions", a["meeting_id"])))
-    assert session["transcribe"] is False
-    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/recording", json={"enabled": True}).json() == {"enabled": True}
+        assert client.post(f"/api/v1/meetings/{mid}/transcription", json={"enabled": False}).json() == {"enabled": False}
+        assert ws.receive_json() == {"type": "transcription_changed", "enabled": False}
+        assert asr()["transcribe"] is False and asr()["record_audio"] is False        # запись аудио транскрибацией не включается
+        assert client.post(f"/api/v1/meetings/{mid}/recording", json={"enabled": True}).json() == {"enabled": True}
+        assert ws.receive_json() == {"type": "recording_changed", "enabled": True}
+        assert asr()["transcribe"] is False and asr()["record_audio"] is True          # и останов транскрибации не выключает запись
+        client.post(f"/api/v1/meetings/{mid}/transcription", json={"enabled": True})
+        assert asr()["transcribe"] is True and asr()["record_audio"] is True
     login(client, "carol")
-    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/recording", json={"enabled": False}).status_code == 404
-    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/recording", json={"enabled": "yes"}).status_code in (404, 422)
+    assert client.post(f"/api/v1/meetings/{mid}/recording", json={"enabled": False}).status_code == 404
+    assert client.post(f"/api/v1/meetings/{mid}/transcription", json={"enabled": False}).status_code in (403, 404)
+    login(client, "alice")
+    assert client.post(f"/api/v1/meetings/{mid}/recording", json={"enabled": "yes"}).status_code in (404, 422)
+    assert client.post(f"/api/v1/meetings/{mid}/transcription", json={"enabled": "yes"}).status_code == 422
 
 
-def test_recording_cannot_be_enabled_in_room_without_transcription(client):
-    room = make_room(client, transcription_enabled=False)
+def test_audio_recording_cannot_be_enabled_when_room_forbids_it_and_transcription_when_room_disables_it(client):
+    room = make_room(client, record_audio=False)
     a = _join(client, "alice", room["id"])
     r = client.post(f"/api/v1/meetings/{a['meeting_id']}/recording", json={"enabled": True})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "recording_forbidden"
+    room2 = make_room(client, transcription_enabled=False)
+    b = _join(client, "alice", room2["id"])
+    assert b["transcription"] is False
+    r = client.post(f"/api/v1/meetings/{b['meeting_id']}/transcription", json={"enabled": True})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "transcription_forbidden"
 
 
 # ------------------------------------------------------------------- экспорт и протоколы

@@ -7,6 +7,7 @@ export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
+  board_allowed?: boolean; room_type?: "regular" | "presentation"; auto_record?: boolean;
 }
 export interface ClientConfig {
   screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
@@ -14,17 +15,35 @@ export interface ClientConfig {
   can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
   /** Гость (вход по ссылке без AD): без административных функций, без показа экрана и стенограммы. */
   is_guest?: boolean;
+  /** Руководитель комнаты или администратор: «Настройки комнаты», участники встречи, слово. */
+  can_manage?: boolean;
+  /** Может переключать запись и транскрибацию. */
+  can_control?: boolean;
+  /** Презентационная комната: участники — слушатели, пока им не «дали слово». */
+  presentation?: boolean;
+  /** Что можно публиковать сейчас: microphone | camera | screen_share | screen_share_audio. */
+  sources?: string[];
+  /** Вам дано слово. */
+  floor?: boolean;
+  can_edit_board?: boolean;
+  /** Комната допускает запись аудио (кнопка «Начать запись»). */
+  recording_allowed?: boolean;
+  /** Вложения в чат включены. */
+  attachments?: boolean;
 }
 export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
-  recording: boolean; asr_ready: boolean; client: ClientConfig;
+  recording: boolean; transcription?: boolean; asr_ready: boolean; client: ClientConfig;
 }
 /** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
 export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }
 export interface GuestRoomInfo { room_name: string; description: string | null; meeting_active: boolean; has_password: boolean; camera_allowed: boolean }
+export interface ChatAttachment { id: string; name: string; mime: string; size: number; kind: "image" | "file" }
 export interface ChatMessage {
   id: number; meeting_id: string; created_at: string; author_type: "user" | "guest" | "system"; author_id: string | null; author_name: string; text: string;
+  attachments?: ChatAttachment[];
 }
+export interface FloorState { presentation: boolean; floor: string[]; leaders: string[] }
 /** Патч draw.io (diffSync), разосланный сервером. `from` — идентификатор вкладки-автора (чтобы не применять собственную правку повторно). */
 export interface WhiteboardPatch { seq: number; patch: unknown; checksum: string | null; from: string; by: string }
 export interface WhiteboardState {
@@ -42,7 +61,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "storage" | "audio_storage" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
+export type SettingsGroup = "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -101,6 +120,17 @@ export interface JournalStats {
   size_bytes: number; avg_bytes_per_event: number; audit: { total: number; size_bytes: number | null }; retention_days: number; keep_local: boolean;
   external: { enabled: boolean; mode: string; ok: boolean | null; at: string | null; error: string | null; files: number }; queue_dropped: number; written_since_start: number;
 }
+export type RoomType = "regular" | "presentation";
+export interface StorageProfile {
+  id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
+}
+/** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
+export interface RoomManage {
+  id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
+  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; room_type: RoomType; auto_record: boolean; record_audio: boolean;
+  transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
+  acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
+}
 export type ProfileKind = "llm" | "anonymizer";
 export interface ApiProfile { id: string; kind: ProfileKind; name: string; config: Record<string, unknown>; secret_set: boolean; is_default: boolean; virtual: boolean }
 export interface RoomAdmin {
@@ -111,6 +141,7 @@ export interface RoomAdmin {
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
   mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
+  room_type: RoomType; auto_record: boolean; board_allowed: boolean;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
@@ -220,6 +251,45 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+function errorFrom(res: Response, data: { detail?: unknown } | null): ApiError {
+  const d = data?.detail as { code?: string; message?: string } | string | undefined;
+  const code = typeof d === "object" && d ? d.code ?? "error" : "error";
+  const message = typeof d === "object" && d ? d.message : typeof d === "string" ? d : `Ошибка ${res.status}`;
+  return new ApiError(res.status, code, message ?? `Ошибка ${res.status}`, Number(res.headers.get("Retry-After")) || undefined);
+}
+
+function authHeaders(method: string): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (guestToken) h["X-Guest-Token"] = guestToken;
+  else if (method !== "GET" && csrfToken) h["X-CSRF-Token"] = csrfToken;
+  return h;
+}
+
+/** Загрузка файла «как есть» (тело запроса — байты). Ошибки сервера (тип, размер, хранилище) приходят понятным текстом. */
+async function uploadBytes<T>(path: string, file: File): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { method: "POST", headers: { ...authHeaders("POST"), "Content-Type": "application/octet-stream", Accept: "application/json" }, credentials: "same-origin", body: file });
+  } catch {
+    throw new ApiError(0, "network", "Нет связи с сервером");
+  }
+  const data = await res.json().catch(() => null);
+  if (res.status === 413) throw new ApiError(413, "too_large", typeof data?.detail === "string" ? data.detail : "Файл слишком большой");
+  if (!res.ok) throw errorFrom(res, data);
+  return data as T;
+}
+
+async function fetchBlob(path: string): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { headers: authHeaders("GET"), credentials: "same-origin" });
+  } catch {
+    throw new ApiError(0, "network", "Нет связи с сервером");
+  }
+  if (!res.ok) throw errorFrom(res, await res.json().catch(() => null));
+  return res.blob();
+}
+
 export type ExportFormat = "md" | "txt" | "docx" | "pdf";
 
 /** Параметры запроса журнала (фильтры — JSON-строкой; пустые поля не передаются). */
@@ -254,7 +324,12 @@ export const api = {
   version: () => request<{ version: string; commit: string }>("GET", "/version"),
   chat: (id: string, q: { beforeId?: number; afterId?: number; limit?: number } = {}) =>
     request<{ messages: ChatMessage[]; has_more: boolean }>("GET", `/meetings/${id}/chat?limit=${q.limit ?? 100}${q.beforeId ? `&before_id=${q.beforeId}` : ""}${q.afterId ? `&after_id=${q.afterId}` : ""}`),
-  sendChat: (id: string, text: string) => request<ChatMessage>("POST", `/meetings/${id}/chat`, { text }),
+  sendChat: (id: string, text: string, attachments: string[] = []) => request<ChatMessage>("POST", `/meetings/${id}/chat`, attachments.length ? { text, attachments } : { text }),
+  /** Загрузка файла для сообщения: тело — сами байты, имя — в параметре (сервер очищает его и выбирает путь сам). */
+  uploadAttachment: (id: string, file: File) => uploadBytes<ChatAttachment>(`/meetings/${id}/chat/attachments?name=${encodeURIComponent(file.name || "file")}`, file),
+  discardAttachment: (id: string, attId: string) => request<void>("DELETE", `/meetings/${id}/chat/attachments/${attId}`),
+  /** Файл вложения как Blob (с заголовками сессии — работает и для гостя; картинки показываются через object URL). */
+  attachmentBlob: (id: string, attId: string, download = false) => fetchBlob(`/meetings/${id}/chat/attachments/${attId}${download ? "?download=true" : ""}`),
   chatTextUrl: (id: string) => `/api/v1/meetings/${id}/chat.txt`,
   whiteboard: (id: string) => request<WhiteboardState>("GET", `/meetings/${id}/whiteboard`),
   whiteboardPatch: (id: string, body: { patch: unknown; checksum?: string | null; client_id: string }) =>
@@ -263,6 +338,20 @@ export const api = {
     request<{ saved: boolean; seq: number; shapes: number; used: boolean }>("PUT", `/meetings/${id}/whiteboard`, { xml, seq }),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
+  /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
+  setTranscription: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/transcription`, { enabled }),
+  floor: (meetingId: string) => request<FloorState>("GET", `/meetings/${meetingId}/floor`),
+  /** «Дать слово» / «Забрать слово»: временное право до конца встречи. */
+  setFloor: (meetingId: string, identity: string, granted: boolean) => request<{ identity: string; granted: boolean }>("POST", `/meetings/${meetingId}/moderation/floor`, { identity, granted }),
+  kick: (meetingId: string, identity: string) => request<{ identity: string; removed: boolean }>("POST", `/meetings/${meetingId}/moderation/kick`, { identity }),
+
+  /** «Настройки комнаты» для руководителя. */
+  manage: {
+    get: (roomId: string) => request<RoomManage>("GET", `/rooms/${roomId}/manage`),
+    patch: (roomId: string, body: Record<string, unknown>) => request<RoomManage>("PATCH", `/rooms/${roomId}/manage`, body),
+    guestLink: (roomId: string, action: "rotate" | "revoke") => request<RoomManage>("POST", `/rooms/${roomId}/manage/guest-link/${action}`),
+    search: (roomId: string, kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/rooms/${roomId}/manage/directory?kind=${kind}&q=${encodeURIComponent(q)}`),
+  },
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
@@ -339,6 +428,11 @@ export const api = {
     deleteProfile: (id: string) => request<void>("DELETE", `/admin/api-profiles/${id}`),
     setDefaultProfile: (kind: ProfileKind, profileId: string) => request<{ ok: boolean }>("PUT", "/admin/api-profiles/default", { kind, profile_id: profileId }),
     testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
+    storages: () => request<{ items: StorageProfile[]; folders: string[] }>("GET", "/admin/storages"),
+    createStorage: (body: { name: string; kind: "local" | "smb"; config: Record<string, string>; secret?: string }) => request<StorageProfile>("POST", "/admin/storages", body),
+    updateStorage: (id: string, body: { name?: string; config?: Record<string, string>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
+    deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
+    testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[] }>("GET", "/admin/client-diagnostics"),

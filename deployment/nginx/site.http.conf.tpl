@@ -17,7 +17,7 @@ server {
     set $xfp $http_x_forwarded_proto;
     if ($xfp = "") { set $xfp $scheme; }
 
-    client_max_body_size 20m;
+    client_max_body_size 100m;
 
     # Внутренние API наружу не отдаются.
     location /internal/ { return 404; }

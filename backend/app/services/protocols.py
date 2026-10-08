@@ -22,11 +22,12 @@ from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerEr
 from ..integrations.llm import LlmClient, LlmError
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
-from .materials import SOURCES_PROMPT, build_materials, chat_messages, render_chat
+from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
+from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_messages, render_chat
 from .recordings import delete_recording_file, finalize_pcm_files
 from .segments import author_name
 from .settings import SettingsError, SettingsService
-from .storage import StorageError, WEEKDAYS_RU, build_storage, meeting_relpath, unique_meeting_dir
+from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
 log = logging.getLogger("app.protocols")
 
@@ -83,6 +84,8 @@ class ProtocolService:
         self._svc = svc
         self._transports = transports or {}
         self.profiles = ProfileService(svc)
+        self.files = FileStore(svc, settings.data_dir)
+        self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self._tasks: set[asyncio.Task] = set()
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
@@ -138,11 +141,14 @@ class ProtocolService:
             board = await db.get(MeetingWhiteboard, meeting_id)
             return bool(board and board.shapes > 0)
 
-    def _storage(self, cfg):
+    async def _open(self, db: AsyncSession, group: str, folder: str, *, legacy_prefix: str = ""):
+        """Хранилище функции (профиль → подпапка) или None, если выгрузка выключена/недоступна; недоступность пишется в лог и журнал."""
         try:
-            return build_storage(cfg, self._s.data_dir)
+            return await self.files.backend(db, group, folder, legacy_prefix=legacy_prefix)
         except StorageError as exc:
-            log.error("Хранилище недоступно", extra={"error": str(exc)})
+            log.error("Хранилище недоступно", extra={"error": str(exc), "folder": folder})
+            if self.journal is not None:
+                self.journal.emit("storage", "storage_unavailable", level="error", message=str(exc)[:300], data={"folder": folder})
             return None
 
     def _ca(self) -> str | None:
@@ -164,11 +170,11 @@ class ProtocolService:
                 rel = meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz))
                 room_slug = meeting.room.slug
 
-                if meeting.record_audio:
+                if meeting.record_audio or meeting.room.record_audio:  # запись могли включать и выключать во встрече — файлы собираем, если комната её допускает
                     await asyncio.sleep(self.flush_delay)
                     await self._register_recordings(db, meeting, room_slug, rel, names)
 
-                storage = self._storage(storage_cfg)
+                storage = await self._open(db, "storage", TRANSCRIPTS)
                 dir_rel = None
                 if storage and storage_cfg.export_transcript:  # type: ignore[attr-defined]
                     text = await self.transcript_text(db, meeting, tz)
@@ -179,7 +185,7 @@ class ProtocolService:
                         dir_rel = await unique_meeting_dir(storage, rel)
                         loc = await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/protocol.txt", text.encode("utf-8"))
                         rec.status, rec.meta = "ready", {"dir": dir_rel, "location": loc}
-                        await self._export_collab(db, storage, meeting, dir_rel, tz)
+                        await self._export_collab(db, meeting, dir_rel, tz)
                     except StorageError as exc:
                         rec.status, rec.error = "failed", str(exc)[:480]
                         log.error("Выгрузка стенограммы не удалась", extra={"meeting_id": str(meeting_id), "error": str(exc)})
@@ -197,16 +203,18 @@ class ProtocolService:
         except Exception:  # noqa: BLE001
             log.exception("Ошибка финализации встречи", extra={"meeting_id": str(meeting_id)})
 
-    async def _export_collab(self, db: AsyncSession, storage, meeting: Meeting, dir_rel: str, tz: ZoneInfo) -> None:
+    async def _export_collab(self, db: AsyncSession, meeting: Meeting, dir_rel: str, tz: ZoneInfo) -> None:
         """Чат (chat.txt) и схема доски (whiteboard.drawio — её можно открыть и продолжить редактировать) рядом со стенограммой.
         Сбой этого шага не отменяет остальную финализацию."""
         try:
             msgs = await chat_messages(db, meeting.id)
-            if msgs:
-                await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/chat.txt", render_chat(msgs, tz).encode("utf-8"))
+            chat = await self._open(db, "storage", CHAT)
+            if msgs and chat is not None:
+                await asyncio.to_thread(chat.write_bytes, f"{dir_rel}/chat.txt", render_chat(msgs, tz, await chat_files_map(db, msgs)).encode("utf-8"))
             board = await db.get(MeetingWhiteboard, meeting.id)
-            if board is not None and board.xml and board.shapes > 0:
-                await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/whiteboard.drawio", board.xml.encode("utf-8"))
+            boards = await self._open(db, "storage", BOARDS) if board is not None and board.xml and board.shapes > 0 else None
+            if boards is not None and board is not None:
+                await asyncio.to_thread(boards.write_bytes, f"{dir_rel}/whiteboard.drawio", board.xml.encode("utf-8"))
         except StorageError as exc:
             log.error("Выгрузка чата/схемы не удалась", extra={"meeting_id": str(meeting.id), "error": str(exc)})
 
@@ -226,9 +234,10 @@ class ProtocolService:
         for rec in recs:
             await self.export_recording(db, rec)
 
-    def _audio_storage(self, cfg):
+    async def _audio_storage(self, db: AsyncSession):
+        """Записи аудио: профиль → Audio/…; старые настройки → audio/… (как раньше)."""
         try:
-            return build_storage(cfg, self._s.data_dir)
+            return await self.files.backend(db, "audio_storage", AUDIO, legacy_prefix="audio")
         except StorageError as exc:
             log.error("Хранилище записей недоступно", extra={"error": str(exc)})
             return None
@@ -241,7 +250,7 @@ class ProtocolService:
             rec.export_status = "local"
             await db.commit()
             return
-        storage = self._audio_storage(cfg)
+        storage = await self._audio_storage(db)
         from pathlib import Path
 
         src = Path(self._s.recordings_path, rec.path)
@@ -249,7 +258,7 @@ class ProtocolService:
             if storage is None:
                 raise StorageError("хранилище записей недоступно или настроено некорректно")
             data = await asyncio.to_thread(src.read_bytes)
-            loc = await asyncio.to_thread(storage.write_bytes, f"audio/{rec.path}", data)
+            loc = await asyncio.to_thread(storage.write_bytes, rec.path, data)
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
             if not cfg.keep_local_copy:  # type: ignore[attr-defined]
                 await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
@@ -282,20 +291,19 @@ class ProtocolService:
         if root in full.parents and full.is_file():
             return await asyncio.to_thread(full.read_bytes)
         cfg = await self._svc.get(db, "audio_storage")
-        storage = self._audio_storage(cfg) if rec.export_status == "exported" else None
+        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
         if storage is None:
             raise StorageError("Файл записи недоступен")
-        return await asyncio.to_thread(storage.read_bytes, f"audio/{rec.path}")
+        return await asyncio.to_thread(storage.read_bytes, rec.path)
 
     async def delete_recording(self, db: AsyncSession, rec: Recording) -> None:
         """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается."""
         await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
         if rec.export_status == "exported":
-            cfg = await self._svc.get(db, "audio_storage")
-            storage = self._audio_storage(cfg)
+            storage = await self._audio_storage(db)
             if storage is not None:
                 try:
-                    await asyncio.to_thread(storage.delete, f"audio/{rec.path}")
+                    await asyncio.to_thread(storage.delete, rec.path)
                 except StorageError as exc:
                     log.error("Не удалось удалить файл записи во внешнем хранилище", extra={"recording": str(rec.id), "error": str(exc)})
         await db.delete(rec)
@@ -432,8 +440,10 @@ class ProtocolService:
 
     async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:
         cfg = await self._svc.get(db, "storage")
-        storage = self._storage(cfg)
-        if not storage or not cfg.export_summary or not rec.content:  # type: ignore[attr-defined]
+        if not cfg.export_summary or not rec.content:  # type: ignore[attr-defined]
+            return
+        storage = await self._open(db, "storage", PROTOCOLS)
+        if not storage:
             return
         prev = (await db.execute(select(Protocol).where(Protocol.meeting_id == rec.meeting_id, Protocol.kind == "transcript",
                                                          Protocol.status == "ready").order_by(Protocol.created_at.desc()))).scalars().first()

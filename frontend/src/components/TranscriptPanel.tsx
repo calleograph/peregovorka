@@ -3,10 +3,15 @@ import { api, type Segment } from "../api";
 import { LiveBus, LiveSocket, type LiveEvent, type SocketStatus } from "../liveSocket";
 import { formatTime, mergeSegment, mergeSegments } from "../transcript";
 import ChatPanel from "./ChatPanel";
+import { Icon } from "./Icons";
 
 interface Props {
   meetingId: string;
   enabled: boolean;
+  /** Транскрибация приостановлена руководителем (звонок и запись звука продолжаются). */
+  paused?: boolean;
+  /** Вложения в чат разрешены. */
+  canAttach?: boolean;
   /** Транскрибация (ASR) готова к работе. Вход в комнату от неё не зависит. */
   asrReady?: boolean;
   /** Транскрибация была готова и пропала (ASR перегружен/перезапускается). Звонок продолжается. */
@@ -40,7 +45,7 @@ function statusText(s: SocketStatus, now: number): { text: string; cls: "ok" | "
 }
 
 /** Живая транскрибация: история встречи + новые реплики по WebSocket (без перезагрузки страницы). */
-export default function TranscriptPanel({ meetingId, enabled, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal }: Props) {
+export default function TranscriptPanel({ meetingId, enabled, paused = false, canAttach = true, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal }: Props) {
   const guest = !!guestToken;
   const [tab, setTab] = useState<Tab>(guest ? "chat" : "transcript");
   const [unread, setUnread] = useState(0);
@@ -94,11 +99,14 @@ export default function TranscriptPanel({ meetingId, enabled, asrReady = true, a
   const st = statusText(status, now);
   if (collapsed) {
     return (
-      <aside className="transcript collapsed card" aria-label="Транскрипция (свёрнута)">
-        <button className="btn mini" onClick={onToggleCollapsed} title="Развернуть транскрипцию">◂</button>
-        <span className="rail-label">{guest ? "Чат" : "Транскрипция и чат"}{unread ? ` · новых: ${unread}` : segments.length && !guest ? ` · ${segments.length}` : ""}</span>
-        {unread > 0 && <span className="unread-dot" aria-label={`Непрочитанных сообщений: ${unread}`}>{unread}</span>}
-        <span className={`dot ${st.cls}`} title={st.text} />
+      <aside className="transcript collapsed card" aria-label={guest ? "Чат (свёрнут)" : "Транскрипция и чат (свёрнуты)"}>
+        {/* вся полоса — одна большая кнопка «развернуть»: раньше крошечная стрелка была почти незаметна */}
+        <button type="button" className="rail-btn" onClick={onToggleCollapsed} title={guest ? "Развернуть чат" : "Развернуть транскрипцию и чат"} aria-label={guest ? "Развернуть чат" : "Развернуть транскрипцию и чат"}>
+          <span className="rail-chevron" aria-hidden><Icon name="chevronL" size={20} /></span>
+          {unread > 0 && <span className="unread-dot" aria-label={`Непрочитанных сообщений: ${unread}`}>{unread}</span>}
+          <span className="rail-label">{guest ? "Чат" : "Транскрипция и чат"}{!guest && segments.length ? ` · ${segments.length}` : ""}</span>
+          <span className={`dot ${st.cls}`} title={st.text} />
+        </button>
       </aside>
     );
   }
@@ -113,13 +121,14 @@ export default function TranscriptPanel({ meetingId, enabled, asrReady = true, a
         </div>
         <span className={`dot ${st.cls}`} title={st.text} />
         <div className="spacer" />
-        {onToggleCollapsed && <button className="btn mini" onClick={onToggleCollapsed} title="Свернуть панель">▸</button>}
+        {onToggleCollapsed && <button type="button" className="icon-btn" onClick={onToggleCollapsed} title="Свернуть панель" aria-label="Свернуть панель"><Icon name="chevronR" size={18} /></button>}
       </div>
       {st.cls !== "ok" && <div className="muted small">{st.text}</div>}
-      <ChatPanel meetingId={meetingId} bus={bus} visible={tab === "chat"} selfName={selfName} onUnread={setUnread} />
+      <ChatPanel meetingId={meetingId} bus={bus} visible={tab === "chat"} selfName={selfName} onUnread={setUnread} canAttach={canAttach} />
       {tab === "transcript" && !guest && <>
       {!enabled && <p className="muted">В этой комнате транскрибация отключена.</p>}
-      {enabled && !asrReady && <div className="alert info" role="status">{asrLost ? "Транскрибация временно недоступна — звонок продолжается. Реплики вернутся, когда сервис распознавания восстановится." : "Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов."}</div>}
+      {enabled && paused && <div className="alert info" role="status">Транскрибация приостановлена руководителем. Звонок и запись звука продолжаются; реплики за это время в стенограмму не попадут.</div>}
+      {enabled && !paused && !asrReady && <div className="alert info" role="status">{asrLost ? "Транскрибация временно недоступна — звонок продолжается. Реплики вернутся, когда сервис распознавания восстановится." : "Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов."}</div>}
       <div className="transcript-list" ref={boxRef} onScroll={onScroll} aria-live="polite">
         {segments.map((s) => (
           <p key={s.uid} className="utt">
@@ -128,7 +137,7 @@ export default function TranscriptPanel({ meetingId, enabled, asrReady = true, a
             <span>{s.text}</span>
           </p>
         ))}
-        {enabled && asrReady && segments.length === 0 && <p className="muted">Реплики появятся здесь по мере разговора.</p>}
+        {enabled && asrReady && !paused && segments.length === 0 && <p className="muted">Реплики появятся здесь по мере разговора.</p>}
       </div>
       </>}
     </aside>
