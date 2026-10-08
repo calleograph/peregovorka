@@ -378,7 +378,7 @@ async def profiles_test(profile_id: str, request: Request, kind: str = Query(pat
     if kind == "anonymizer":
         ok, msg, ms = await AnonymizerClient(res.settings, ca_file=ca, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
     else:
-        ok, msg, ms = await LlmClient(res.settings, ca_file=ca, transport=tr.get("llm")).test()  # type: ignore[arg-type]
+        ok, msg, ms = await request.app.state.local_llm.client(res.settings, ca_file=ca, transport=tr.get("llm")).test()  # type: ignore[arg-type]
     request.app.state.journal.emit("llm", "api_profile_test", level="info" if ok else "warn", user=su.display_name, ip=client_ip(request),
                                    message=f"{kind} «{res.name}»: {'OK' if ok else msg}", data={"kind": kind, "profile": res.name, "ok": ok, "ms": ms})
     return {"ok": ok, "message": msg, "ms": ms}

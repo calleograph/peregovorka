@@ -14,6 +14,7 @@ import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
+import LocalLlmPanel from "./admin/LocalLlmPanel";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
 
@@ -72,8 +73,9 @@ const GROUPS: Group[] = [
       </>) },
     { id: "llm", label: "Языковая модель (LLM)", render: () => (
       <>
-        <SettingsForm key="llm" group="llm" title="Языковая модель: основной API" fields={llmFields} testable
-          intro="Модель формирует протоколы, решения и поручения. Если обезличивание включено, данные отправляются только после него; если выключено (в общих настройках или в переговорке) — в исходном виде." />
+        <LocalLlmPanel />
+        <SettingsForm key="llm" group="llm" title="Языковая модель: режим и внешний API" fields={llmFields} testable
+          intro="Выберите, чем формировать протоколы и резюме: встроенной локальной моделью, внешней LLM или ничем. Для внешней модели действует обезличивание: если оно включено, данные отправляются только после него; если выключено (в общих настройках или в переговорке) — в исходном виде. Локальная модель данные наружу не отправляет, поэтому обезличивание для неё по умолчанию не применяется (в настройках переговорки его можно включить принудительно)." />
         <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmFields} />
       </>) },
   ] },

@@ -257,6 +257,9 @@ verify_deployment() {
 
   check_build_versions
 
+  log "-- локальная LLM (Qwen3 0.6B) --"
+  verify_local_llm
+
   log "-- HTTP-цепочка --"
   if command -v curl >/dev/null 2>&1; then
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/")"; [ "$code" = 200 ] && v_ok "Internal HTTP (web ${web_addr}:${WEB_PORT}): $code" || v_fail "Web ${web_addr}:${WEB_PORT} вернул $code"
@@ -305,4 +308,30 @@ writable_probe() {
     dc exec -T "$svc" sh -c 'f="$1/.write-probe.$$"; : > "$f" && rm -f "$f"' _ "$d" >/dev/null 2>&1 || printf '%s:%s
 ' "$svc" "$d"
   done
+}
+
+# Локальная LLM — необязательная возможность: любые проблемы здесь — предупреждения (не отказ), чтобы отсутствие интернета при установке не ломало остальное.
+verify_local_llm() {
+  local st cid net code
+  if ! llm_local_enabled; then v_ok "Локальная LLM отключена (LLM_LOCAL_ENABLED=no)"; return 0; fi
+  st="$(llm_model_state)"
+  if [ "$st" != ok ]; then
+    v_warn "Локальная LLM: $(llm_state_text "$st"). Загрузить: Администрирование → Языковая модель (LLM) → «Скачать модель» или sudo scripts/models.sh --llm-only (нужен интернет). Остальная система работает."
+    return 0
+  fi
+  v_ok "Локальная LLM: файл $(llm_file_name) на месте, размер и SHA-256 проверены"
+  cid="$(dc ps -q llm-local 2>/dev/null | head -1)"
+  if [ -z "$cid" ]; then v_warn "Контейнер llm-local не запущен (образ $(llm_image) не скачан или запуск отключён). Повторите scripts/update.sh при наличии интернета."; return 0; fi
+  if [ "$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null)" != running ]; then v_warn "Контейнер llm-local не работает — scripts/logs.sh llm-local"; return 0; fi
+  code="$(dc exec -T backend python -c "
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://llm-local:8080/health', timeout=6).status)
+except Exception as e:
+    print(type(e).__name__)" 2>/dev/null | tr -d '\r\n')"
+  if [ "$code" = 200 ]; then v_ok "llama.cpp отвечает (модель загружена)"; else v_warn "llama.cpp не готов (${code:-нет ответа}); сразу после запуска модель загружается до минуты — повторите проверку"; fi
+  net="$(docker network inspect "${COMPOSE_PROJECT_NAME}_llm_internal" -f '{{.Internal}}' 2>/dev/null)"
+  if [ "$net" = true ]; then v_ok "Сеть локальной LLM внутренняя (internal): выхода наружу нет, данные не покидают сервер"
+  else v_warn "Сеть ${COMPOSE_PROJECT_NAME}_llm_internal не внутренняя или не найдена — проверьте compose.yml"; fi
+  return 0
 }

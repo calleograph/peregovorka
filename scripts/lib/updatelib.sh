@@ -224,7 +224,7 @@ upd_ensure_data_dirs() {
       chown -R 10001:10001 "$p" 2>/dev/null || sudo -n chown -R 10001:10001 "$p" 2>/dev/null         || { warn "Не удалось назначить владельца $p (uid 10001): запустите обновление от root (sudo ./scripts/update.sh) либо нажмите «Исправить автоматически» в браузере"; rc=1; }
     fi
   done
-  for d in models/gigaam state backups; do [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || sudo -n mkdir -p "$DATA_ROOT/$d" 2>/dev/null || true; done
+  for d in models/gigaam models/llm state backups; do [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || sudo -n mkdir -p "$DATA_ROOT/$d" 2>/dev/null || true; done
   upd_ensure_updater_dir
   return "$rc"
 }

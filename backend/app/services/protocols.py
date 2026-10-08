@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
+from .local_llm import LocalLlm
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
 from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
@@ -40,6 +41,9 @@ SYSTEM_PROMPT = (
     "В стенограмме персональные и конфиденциальные данные заменены метками (например, [ФИО_1]) — "
     "сохраняй метки как есть и не пытайся их раскрыть. Ответ — только текст протокола."
 )
+# Дополнение для облегчённой локальной модели: простые, проверяемые формулировки, без домыслов
+LOCAL_HINT = ("\n\nПиши коротко и только по тексту встречи: решения, задачи, ответственные, сроки. Не выдумывай факты, имена и даты; если сведений нет — так и напиши. "
+              "Отвечай по-русски.")
 SYSTEM_PROMPT_WITH_SOURCES = SYSTEM_PROMPT + " " + SOURCES_PROMPT
 
 
@@ -84,6 +88,7 @@ class ProtocolService:
         self._svc = svc
         self._transports = transports or {}
         self.profiles = ProfileService(svc)
+        self.local_llm = LocalLlm(settings, transport=self._transports.get("local_llm"))   # встроенная локальная модель (Qwen3 0.6B)
         self.files = FileStore(svc, settings.data_dir)
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
@@ -366,12 +371,28 @@ class ProtocolService:
         """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
         room = meeting.room
         llm = await self.profiles.resolve(db, "llm", room)
+        eff, is_local = self.local_llm.effective(llm.settings)       # type: ignore[arg-type]
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
         an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
-        anonymize = mode == "on" or (mode == "inherit" and an is not None and bool(an.settings.enabled))
-        return {"llm_ready": bool(llm.settings.enabled), "llm_profile": llm.name, "anonymize": anonymize,
-                "anonymizer_profile": an.name if (anonymize and an) else None,
-                "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled)}
+        # Локальная модель данные наружу не отправляет — обезличивание по умолчанию не нужно (только если включено явно для комнаты)
+        anonymize = mode == "on" or (mode == "inherit" and not is_local and an is not None and bool(an.settings.enabled))
+        out = {"llm_ready": bool(eff.enabled), "llm_profile": llm.name, "anonymize": anonymize,
+               "anonymizer_profile": an.name if (anonymize and an) else None,
+               "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled),
+               "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None}
+        lm = self.local_llm.limits(llm.settings)                      # type: ignore[arg-type]
+        if lm is not None:
+            fs = await asyncio.to_thread(self.local_llm.file_state, lm)
+            if fs["state"] != "ok":
+                out["llm_ready"] = False
+                out["warnings"].append("Локальная языковая модель не загружена или повреждена. Администратор может скачать её в разделе «Языковая модель (LLM)».")
+            else:
+                chars = len(await self.transcript_text(db, meeting, await self._tz(db)))
+                out["input_chars"] = chars
+                if lm.light and chars > lm.warn_input_chars:
+                    out["warnings"].append(f"Стенограмма длинная ({chars:,} знаков)".replace(",", " ") + f". Локальная модель {lm.title} — облегчённая: на длинных встречах качество может быть "
+                                           "ниже, чем у более крупных моделей. Результат стоит проверить; для важных встреч лучше использовать внешнюю модель.")
+        return out
 
     def _emit(self, category: str, event: str, rec: Protocol, started: datetime, *, level: str = "info", message: str | None = None,
               data: dict | None = None) -> None:
@@ -388,6 +409,8 @@ class ProtocolService:
         room = meeting.room
         llm_res = await self.profiles.resolve(db, "llm", room)
         llm_cfg = llm_res.settings
+        eff_cfg, is_local = self.local_llm.effective(llm_cfg)           # type: ignore[arg-type]
+        lm = self.local_llm.limits(llm_cfg)                            # type: ignore[arg-type]
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
         transcript = await self.transcript_text(db, meeting, tz)
@@ -399,7 +422,8 @@ class ProtocolService:
         # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
         an_res = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
-        do_anonymize = mode == "on" or (mode == "inherit" and an_res is not None and bool(an_res.settings.enabled))
+        # локальная модель не отправляет данные наружу: «наследуемое» обезличивание для неё не применяется (явное «включено» для комнаты — остаётся)
+        do_anonymize = mode == "on" or (mode == "inherit" and not is_local and an_res is not None and bool(an_res.settings.enabled))
         if do_anonymize:
             anon = AnonymizerClient(an_res.settings, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type, union-attr]
             clean = await anon.anonymize(text, "protocol")
@@ -408,13 +432,19 @@ class ProtocolService:
             log.info("Обезличивание выключено — текст передаётся в LLM как есть", extra={"meeting_id": str(meeting_id), "room_mode": mode})
 
         # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
-        llm = LlmClient(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
+        llm = self.local_llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
         form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
                 if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
         system = (SYSTEM_PROMPT_WITH_SOURCES if (materials.chat_messages or materials.whiteboard_shapes) else SYSTEM_PROMPT) \
             + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
-        parts = split_for_llm(clean.text, pr_cfg.max_input_chars)  # type: ignore[attr-defined]
+        limit = min(pr_cfg.max_input_chars, lm.max_input_chars) if lm else pr_cfg.max_input_chars   # type: ignore[attr-defined]
+        warnings: list[str] = []
+        if lm is not None:
+            system += LOCAL_HINT
+            if lm.light and len(clean.text) > lm.warn_input_chars:
+                warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
+        parts = split_for_llm(clean.text, limit)
         calls, pt, ct = 0, 0, 0
         if len(parts) == 1:
             res = await llm.complete(system, ("Материалы встречи:\n\n" if text is not transcript else "Стенограмма встречи:\n\n") + parts[0])
@@ -434,7 +464,7 @@ class ProtocolService:
             pt += r.prompt_tokens or 0
             ct += r.completion_tokens or 0
             out = r.text
-        meta = {"model": llm_cfg.model, "llm_type": llm_cfg.type, "llm_calls": calls,  # type: ignore[attr-defined]
+        meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "llm_calls": calls,  # type: ignore[attr-defined]
                 "prompt_tokens": pt, "completion_tokens": ct, "anonymized_chunks": clean.chunks,
                 "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name,
                 "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),

@@ -213,6 +213,10 @@ smoke_state() { # smoke_state "Имя проверки" … — итоговый
   done
   printf '%s' "${st:-?}"
 }
+llm_banner_state() { # итог по локальной LLM для финального блока: не загружена — это не ошибка установки
+  local st; st="$(smoke_state "Локальная LLM")"
+  case "$st" in OK) echo OK ;; SKIP) echo "отключена" ;; WARNING) echo "НЕ ЗАГРУЖЕНА / не готова — остальное работает (см. выше; позже: Администрирование → Языковая модель)" ;; *) echo "$st" ;; esac
+}
 if "$REPO_ROOT/scripts/updater.sh" install --env "$ENV" --yes >/dev/null 2>&1; then UPD_NOTE="OK"; else UPD_NOTE="не установлен (ставится позже: sudo ./scripts/updater.sh install --yes)"; fi
 BOOT_OK=1
 log; log "================================================================"
@@ -221,6 +225,7 @@ log "================================================================"
 printf '  %-34s %s\n' "Сервисы (Docker)" "$(smoke_state "Backend" "Frontend")" \
   "База данных" "$(smoke_state "PostgreSQL" "Redis" "Миграции (Alembic)")" \
   "Распознавание речи (ASR)" "$(smoke_state "ASR")" \
+  "Локальная LLM (Qwen3 0.6B)" "$(llm_banner_state)" \
   "Звонки (LiveKit)" "$(smoke_state "LiveKit HTTP" "RTC TCP" "RTC UDP")" \
   "Веб-интерфейс" "$(smoke_state "Frontend" "Тестовая комната")" \
   "Помощник обновлений в браузере" "$UPD_NOTE"

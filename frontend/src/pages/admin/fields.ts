@@ -97,19 +97,22 @@ export const anonFields: Field[] = [
   { section: "Безопасность соединения", name: "allow_http", label: "Разрешить небезопасный http://", type: "bool", help: "Только для изолированных тестов: данные пойдут без шифрования." },
 ];
 
+const external = (v: { provider?: unknown }) => v.provider === "external";
 export const llmFields: Field[] = [
-  { section: "Модель", name: "enabled", label: "Языковая модель (LLM) включена", type: "bool", help: "Формирует протоколы и резюме по обезличенной стенограмме." },
-  { section: "Модель", name: "type", label: "Тип API", type: "select", options: [["openai_compatible", "OpenAI-совместимый (шлюзы, локальные сервера)"], ["openai", "OpenAI"], ["anthropic", "Anthropic"]] },
-  { section: "Модель", name: "base_url", label: "Адрес API (Base URL)", type: "text", placeholder: "https://llm.corp.local/v1",
+  { section: "Режим", name: "provider", label: "Какая языковая модель формирует протоколы и резюме", type: "select",
+    options: [["local", "Локальная: Qwen3 0.6B Q4_K_M (встроенная, данные не покидают сервер)"], ["external", "Внешняя LLM (по API ниже)"], ["off", "Отключено"]],
+    help: "Цепочка: распознавание речи (GigaAM) → стенограмма → языковая модель → протокол или резюме. Локальная модель работает на этом сервере без выхода в интернет и подходит для простых задач: краткое резюме, решения, задачи, ответственные, короткий протокол. Для длинных и сложных встреч надёжнее внешняя модель." },
+  { section: "Модель", name: "type", label: "Тип API", type: "select", showIf: external, options: [["openai_compatible", "OpenAI-совместимый (шлюзы, локальные сервера)"], ["openai", "OpenAI"], ["anthropic", "Anthropic"]] },
+  { section: "Модель", name: "base_url", label: "Адрес API (Base URL)", type: "text", showIf: external, placeholder: "https://llm.corp.local/v1",
     help: "Для OpenAI и Anthropic можно оставить пустым. Для совместимых API обязателен.", example: "https://llm.corp.local/v1 или https://api.polza.ai/api/v1" },
-  { section: "Модель", name: "model", label: "Идентификатор модели", type: "text", placeholder: "gpt-4o-mini", help: "Название модели у выбранного провайдера.", example: "gpt-4o-mini, claude-sonnet-5-5" },
-  { section: "Модель", name: "api_key", label: "Ключ API", type: "secret", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
-  { section: "Модель", name: "routing_provider", label: "Фиксировать провайдера маршрута (для шлюзов)", type: "text", showIf: (v) => v.type === "openai_compatible", help: "Необязательно: имя провайдера, через которого шлюз должен направлять запросы.", example: "azure" },
+  { section: "Модель", name: "model", label: "Идентификатор модели", type: "text", showIf: external, placeholder: "gpt-4o-mini", help: "Название модели у выбранного провайдера.", example: "gpt-4o-mini, claude-sonnet-5-5" },
+  { section: "Модель", name: "api_key", label: "Ключ API", type: "secret", showIf: external, help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
+  { section: "Модель", name: "routing_provider", label: "Фиксировать провайдера маршрута (для шлюзов)", type: "text", showIf: (v) => external(v) && v.type === "openai_compatible", help: "Необязательно: имя провайдера, через которого шлюз должен направлять запросы.", example: "azure" },
   { section: "Параметры генерации", name: "max_tokens", label: "Максимальная длина ответа", unit: "токенов", type: "number", min: 64, max: 64000, help: "Ограничивает размер протокола.", example: "4000" },
   { section: "Параметры генерации", name: "temperature", label: "Температура (креативность)", type: "number", min: 0, max: 2, step: 0.1, help: "Для протоколов лучше низкая: меньше выдумок.", example: "0.2" },
   { section: "Параметры генерации", name: "timeout", label: "Таймаут ответа", unit: "с", type: "number", min: 5, max: 1800, help: "Длинная встреча обрабатывается дольше.", example: "180" },
-  { section: "Безопасность соединения", name: "use_corporate_ca", label: "Проверять сертификат по корпоративному удостоверяющему центру", type: "bool" },
-  { section: "Безопасность соединения", name: "allow_http", label: "Разрешить небезопасный http://", type: "bool", help: "Только для изолированных тестов." },
+  { section: "Безопасность соединения", name: "use_corporate_ca", label: "Проверять сертификат по корпоративному удостоверяющему центру", type: "bool", showIf: external },
+  { section: "Безопасность соединения", name: "allow_http", label: "Разрешить небезопасный http://", type: "bool", showIf: external, help: "Только для изолированных тестов." },
 ];
 
 export const protocolFields: Field[] = [

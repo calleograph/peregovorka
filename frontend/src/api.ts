@@ -106,7 +106,11 @@ export interface AclEntry { subject_type: "group" | "user"; subject_ref: string;
 export type HistoryAccess = "admin" | "participants";
 /** inherit — как в общих настройках; on — всегда обезличивать; off — не обезличивать (текст идёт в LLM как есть). */
 export type AnonymizeMode = "inherit" | "on" | "off";
-export interface ProtocolPlan { llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean }
+export interface ProtocolPlan {
+  llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean;
+  /** Локальная встроенная модель: данные не покидают сервер. warnings — например, длинная стенограмма для облегчённой модели. */
+  llm_local?: boolean; llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
+}
 
 export interface JournalRow {
   id: number; at: string; level: "debug" | "info" | "warn" | "error"; category: string; event: string; user: string | null; room: string | null;
@@ -233,6 +237,13 @@ export interface UpdateOutcome {
 }
 /** Помощник обновлений на сервере (служба от root). problem: not_installed — не запущен; no_privileges — запущен без прав (служба прежней версии). */
 export interface HelperInfo { available: boolean; privileged: boolean; uid: number | null; problem: null | "not_installed" | "no_privileges" }
+export interface LocalLlmStatus {
+  enabled_by_install: boolean; provider: "local" | "external" | "off"; ready: boolean; endpoint: string;
+  model: { id: string; title: string; runtime: string; light: boolean; context_tokens: number; tasks: string[]; note: string; source: string; warn_input_chars: number };
+  file: { file: string; size_bytes: number | null; expected_bytes: number; sha256_state: "ok" | "mismatch" | "unchecked" | "skipped"; state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash" };
+  runtime: { reachable: boolean; ready: boolean; detail: string };
+  catalog: { id: string; title: string; runtime: string; light: boolean; source: string }[];
+}
 export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string }
 export interface RepairsInfo {
   items: RepairItem[]; checked_at: number | null; age_s?: number | null; helper: HelperInfo; busy: boolean;
@@ -502,6 +513,8 @@ export const api = {
     testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
     ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean; legacy: LegacyLdap; boot_errors: Record<string, string> }>("GET", "/admin/ldap-profiles"),
     ldapLegacyImport: () => request<{ profiles: string[]; ca_added: number; groups_added: number }>("POST", "/admin/ldap-legacy/import"),
+    localLlm: () => request<LocalLlmStatus>("GET", "/admin/llm/local"),
+    localLlmTest: () => request<{ ok: boolean; message: string; ms: number }>("POST", "/admin/llm/local/test"),
     repairs: () => request<RepairsInfo>("GET", "/admin/updates/repairs"),
     repairsScan: () => request<{ request_id: string }>("POST", "/admin/updates/repairs/scan"),
     repairFix: (id: string) => request<{ request_id?: string; done?: boolean }>("POST", `/admin/updates/repairs/${encodeURIComponent(id)}/fix`),

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, admin_journal, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
+from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, admin_journal, admin_llm, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -96,6 +96,7 @@ def create_app(
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc
         app.state.protocols = protocols
+        app.state.local_llm = protocols.local_llm
         app.state.files = protocols.files
         protocols.chat_files = ChatFilesService(protocols.files, settings_svc, journal)
         app.state.chat_files = protocols.chat_files
@@ -199,7 +200,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, admin_system.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, admin_system.router, admin_llm.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

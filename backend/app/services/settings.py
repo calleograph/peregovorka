@@ -29,6 +29,10 @@ class _Group(BaseModel):
     SECRETS: ClassVar[tuple[str, ...]] = ()
     model_config = {"extra": "forbid"}
 
+    @classmethod
+    def merge_hint(cls, merged: dict, patch: dict) -> None:
+        """Поправка слияния «текущие значения + patch» до проверки (для групп с выводимыми полями). По умолчанию ничего не делает."""
+
 
 class _StorageTarget(_Group):
     """Куда писать файлы: локальный каталог (внутри смонтированного тома) или сетевой ресурс SMB."""
@@ -213,6 +217,10 @@ class LlmSettings(_Group):
 
     SECRETS: ClassVar[tuple[str, ...]] = ("api_key",)
     enabled: bool = False
+    # Режим: local — встроенная локальная модель (Qwen3 0.6B, данные не покидают сервер); external — внешняя/внутренняя API-модель по полям ниже;
+    # off — выключена. None (настройки до 0.5.0): external, если включена (enabled), иначе off.
+    provider: Literal["local", "external", "off"] | None = None
+    local_model: str = "qwen3-0.6b-q4_k_m"
     type: Literal["openai", "anthropic", "openai_compatible"] = "openai_compatible"
     base_url: str = ""
     model: str = ""
@@ -232,9 +240,25 @@ class LlmSettings(_Group):
             raise ValueError("base_url: http(s)://хост[:порт][/путь]")
         return v.rstrip("/")
 
+    @classmethod
+    def merge_hint(cls, merged: dict, patch: dict) -> None:
+        # клиент прежней версии меняет только флаг «включена» — режим выводится из него заново, а не берётся из ранее выведенного значения
+        if "enabled" in patch and "provider" not in patch:
+            merged["provider"] = None
+
+    @property
+    def effective_provider(self) -> str:
+        return self.provider or ("external" if self.enabled else "off")
+
     @model_validator(mode="after")
     def _check(self):
-        if self.enabled:
+        # режим — единственный источник правды; флаг enabled выводится из него (старые настройки без режима: включена → внешняя, иначе выключена)
+        if self.provider is None:
+            self.provider = "external" if self.enabled else "off"
+        self.enabled = self.provider != "off"
+        if self.provider in ("local", "off"):
+            return self                      # внешние поля не обязательны
+        if self.enabled or self.provider == "external":
             if not self.model:
                 raise ValueError("Укажите модель")
             if self.type == "openai_compatible" and not self.base_url:
@@ -481,6 +505,7 @@ class SettingsService:
             if k in model.SECRETS and v is None:
                 continue  # None = «не менять»
             merged[k] = v
+        model.merge_hint(merged, patch)
         try:
             return model(**merged)
         except ValueError as exc:

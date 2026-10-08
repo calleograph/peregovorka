@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # сведения о развёртывании LiveKit для диагностики (compose передаёт из .env)
     livekit_server_version: str = ""
     asr_internal_url: str = "http://asr:8090"  # управление моделями ASR (статус, тест, сравнение) — только внутри сети проекта
+    # --- локальная языковая модель (контейнер llm-local, llama.cpp; compose передаёт значения из .env). Модель хранится вне образа.
+    local_llm_url: str = "http://llm-local:8080"
+    local_llm_models_dir: str = "/models/llm"
+    local_llm_enabled: str = "yes"
+    local_llm_model_file: str = "Qwen3-0.6B-Q4_K_M.gguf"
+    local_llm_model_alias: str = "qwen3-0.6b-q4_k_m"
+    local_llm_model_bytes: int = 484_220_320
+    local_llm_model_sha256: str = "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
     livekit_node_ip: str = ""
     livekit_rtc_tcp_port: int = 0
     livekit_rtc_udp_port: int = 0

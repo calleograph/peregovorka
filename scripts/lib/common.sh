@@ -101,6 +101,9 @@ compose_args() {
   COMPOSE_ARGS=(compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$REPO_ROOT/deployment"
                 --env-file "$ENV_FILE" -f "$COMPOSE_FILE_MAIN")
   if [ "${ASR_DEVICE:-cpu}" = "cuda" ]; then COMPOSE_ARGS+=(-f "$COMPOSE_FILE_GPU"); fi
+  # локальная LLM (контейнер llm-local) — отдельный профиль compose: включается, только если модель на месте, проверена и образ runtime скачан;
+  # без интернета при установке остальные сервисы работают как обычно
+  if declare -F llm_local_active >/dev/null 2>&1 && llm_local_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile llm "${COMPOSE_ARGS[@]:1}"); fi
 }
 
 dc() { compose_args; docker "${COMPOSE_ARGS[@]}" "$@"; }
@@ -163,3 +166,5 @@ source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/prereqlib.sh"
 # shellcheck source=repairlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"
+# shellcheck source=llmlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"

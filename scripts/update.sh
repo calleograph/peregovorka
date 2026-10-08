@@ -200,6 +200,9 @@ phase2() {
     "$REPO_ROOT/scripts/models.sh" --env "$ENV_FILE" || stop_update "Модель не подготовлена (scripts/models.sh); при закрытой сети: --from-dir"
     upd_models_check
   fi
+  # Локальная LLM (Qwen3 0.6B): модель лежит вне образов (DATA_ROOT/models/llm) — существующий валидный файл не скачивается; повреждённый скачивается заново.
+  # Без интернета — явное предупреждение, обновление продолжается.
+  if [ "$SKIP_MODELS" -eq 0 ]; then llm_prepare soft; llm_local_refresh; else info "Локальная LLM: пропущено (--skip-models)"; fi
 
   step "Резервная копия БД"
   if [ "$NO_BACKUP" -eq 1 ]; then warn "Backup БД отключён (--no-backup) — на вашу ответственность"

@@ -10,7 +10,7 @@ SVC=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
-    postgres|redis|livekit|backend|asr|web) SVC+=("$1"); shift ;;
+    postgres|redis|livekit|backend|asr|web|llm-local) SVC+=("$1"); shift ;;
     *) die "Неизвестный сервис/аргумент: $1" ;;
   esac
 done

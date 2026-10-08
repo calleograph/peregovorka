@@ -11,7 +11,7 @@
 if [ -n "${_VM_REPAIRLIB_LOADED:-}" ]; then return 0; fi
 _VM_REPAIRLIB_LOADED=1
 
-REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing image_commit migrations reverify)
+REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing image_commit migrations reverify llm_model)
 BACKEND_UID=10001
 
 repair_id_valid() { local i; for i in "${REPAIR_IDS[@]}"; do [ "$i" = "$1" ] && return 0; done; return 1; }
@@ -26,6 +26,7 @@ repair_text() {
     prereq_missing) echo "На сервере не хватает нужных программ|${REPAIR_DETAIL:-Не установлены программы, нужные Peregovorka.} Без них обновление и сборка могут не работать.|Установить недостающее из официальных репозиториев" ;;
     image_commit) echo "Версия работающих компонентов не определена|${REPAIR_DETAIL:-Компоненты собраны без сведений о версии.} Непонятно, какой именно код работает.|Пересобрать компоненты и перезапустить" ;;
     migrations) echo "База данных не обновлена до текущей версии|${REPAIR_DETAIL:-Структура базы данных отстаёт от программы.} Часть функций может не работать.|Применить обновление структуры базы (с резервной копией)" ;;
+    llm_model) echo "Локальная языковая модель не готова|${REPAIR_DETAIL:-Модель Qwen3 0.6B не загружена или повреждена.} Краткие протоколы и резюме на локальной модели не будут работать (внешняя LLM и остальная система — работают).|Скачать модель заново (с проверкой размера и контрольной суммы) и запустить её контейнер" ;;
     reverify) echo "Нужна повторная проверка работоспособности|${REPAIR_DETAIL:-После последнего изменения полная проверка не выполнялась.} Состояние системы неизвестно.|Запустить полную проверку" ;;
   esac
 }
@@ -116,6 +117,17 @@ repair_detect_migrations() {
   [ -n "${ALEMBIC_CUR:-}" ] || [ -n "${ALEMBIC_HEAD:-}" ] || return 1       # не удалось определить — это не «нужна миграция»
   REPAIR_DETAIL="База данных на версии «${ALEMBIC_CUR:-?}», программа ожидает «${ALEMBIC_HEAD:-?}»."
   return 0
+}
+
+repair_detect_llm_model() {
+  llm_local_enabled || return 1
+  [ -n "${DATA_ROOT:-}" ] || return 1
+  local st; st="$(llm_model_state)"
+  if [ "$st" != ok ]; then REPAIR_DETAIL="Файл модели: $(llm_state_text "$st")."; return 0; fi
+  command -v docker >/dev/null 2>&1 || return 1
+  if ! docker image inspect "$(llm_image)" >/dev/null 2>&1; then REPAIR_DETAIL="Модель на месте, но программа запуска (llama.cpp) не скачана."; return 0; fi
+  if repair_docker_up && [ -z "$(dc ps -q llm-local 2>/dev/null | head -1)" ]; then REPAIR_DETAIL="Модель на месте, но её контейнер не запущен."; return 0; fi
+  return 1
 }
 
 repair_verify_file() { echo "${DATA_ROOT}/state/last-verify.state"; }
@@ -211,6 +223,29 @@ repair_apply_migrations() {
   alembic_verify run >/dev/null 2>&1 || { fail "После миграции ревизия БД не совпала с ожидаемой"; return 1; }
   dc up -d --no-build backend >/dev/null 2>&1 || true
   ok "База данных обновлена до версии ${ALEMBIC_CUR}"
+}
+
+repair_apply_llm_model() {
+  local st; st="$(llm_model_state)"
+  case "$st" in bad_size|bad_hash) llm_model_fetch --force || return 1 ;; *) llm_model_fetch || return 1 ;; esac
+  if ! docker image inspect "$(llm_image)" >/dev/null 2>&1; then
+    info "Загрузка образа llama.cpp: $(llm_image)"
+    docker pull "$(llm_image)" || { fail "Не удалось скачать образ $(llm_image) (нет доступа к ghcr.io?)"; return 1; }
+  fi
+  llm_local_refresh
+  llm_local_active || { fail "Локальная LLM не может быть запущена (модель или образ не готовы)"; return 1; }
+  dc up -d --no-build llm-local || return 1
+  local i
+  for i in $(seq 1 30); do
+    [ "$(dc exec -T backend python -c "
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://llm-local:8080/health', timeout=4).status)
+except Exception:
+    print(0)" 2>/dev/null | tr -d ' ')" = 200 ] && { ok "Локальная LLM запущена и отвечает"; return 0; }
+    sleep 3
+  done
+  fail "Контейнер запущен, но llama.cpp не ответил за 90 с (scripts/logs.sh llm-local)"; return 1
 }
 
 repair_apply_reverify() {

@@ -104,7 +104,7 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         ok, msg, ms = await AnonymizerClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     if group == "llm":
-        ok, msg, ms = await LlmClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
+        ok, msg, ms = await request.app.state.local_llm.client(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     raise HTTPException(status_code=404, detail="Для этой группы проверки нет")
 

@@ -175,6 +175,26 @@ async def livekit_checks(settings: Settings) -> dict:
     return out
 
 
+async def _local_llm_check(app) -> dict:
+    """Локальная языковая модель: файл (размер, SHA-256) и runtime. «Не загружена» — не сбой системы (ok=True, configured=False): она необязательна;
+    сбоем (ok=False) это считается, только если администратор выбрал режим «Локальная», а модель не готова."""
+    try:
+        local = app.state.local_llm
+        if not local.enabled():
+            return {"ok": True, "configured": False, "state": "disabled", "note": "отключена установкой (LLM_LOCAL_ENABLED=no)"}
+        async with app.state.session_maker() as db:
+            cfg = await app.state.settings_svc.get(db, "llm")
+        st = await local.status(cfg)
+        selected = st["provider"] == "local"
+        out = {"ok": bool(st["ready"]) or not selected, "configured": st["file"]["state"] == "ok", "state": st["file"]["state"], "selected": selected,
+               "size_bytes": st["file"]["size_bytes"], "sha256": st["file"]["sha256_state"], "runtime_ready": st["runtime"]["ready"], "model": st["model"]["title"]}
+        if not out["ok"]:
+            out["error"] = "модель выбрана в настройках, но не готова: " + (st["runtime"]["detail"] if st["file"]["state"] == "ok" else st["file"]["state"])
+        return out
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": True, "configured": False, "error": type(exc).__name__}
+
+
 # ------------------------------------------------------------------------------------ отчёт
 async def build_report(app, db_ok: bool | None = None) -> dict:
     """Полный диагностический отчёт. Секреты маскируются перед возвратом."""
@@ -211,6 +231,7 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
             c["ldap"] = {"ok": False, "error": "legacy_not_loaded", "boot_errors": dict(getattr(app.state, "boot_errors", {}) or {})}
         else:
             c["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
+    c["llm_local"] = await _local_llm_check(app)
     try:
         async with httpx.AsyncClient(timeout=3.0) as cl:
             c["livekit_http"] = {"ok": (await cl.get(s.livekit_http_url + "/")).status_code == 200}
@@ -258,7 +279,7 @@ def verdict(rep: dict) -> list[str]:
     """Короткий список проблем простым языком (пусто — замечаний нет)."""
     out: list[str] = []
     c = rep.get("checks", {})
-    for name in ("postgres", "redis", "ldap", "livekit_http"):
+    for name in ("postgres", "redis", "ldap", "llm_local", "livekit_http"):
         if c.get(name, {}).get("ok") is False:
             out.append(f"{name}: недоступен ({c[name].get('error', '')})")
     lk = c.get("livekit", {})

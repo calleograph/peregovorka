@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -46,6 +47,18 @@ class LlmError(Exception):
         return f"Ошибка LLM: {c}."
 
 
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def strip_thinking(text: str) -> str:
+    """Убирает «размышления» моделей вида Qwen3/DeepSeek (<think>…</think>), в том числе оборванный незакрытый блок."""
+    text = _THINK.sub("", text or "")
+    i = text.lower().find("<think>")
+    if i != -1:
+        text = text[:i]
+    return text.replace("</think>", "").strip()
+
+
 @dataclass
 class LlmResult:
     text: str
@@ -55,8 +68,9 @@ class LlmResult:
 
 
 class LlmClient:
-    def __init__(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None, local: bool = False):
         self._c = cfg
+        self.local = local          # встроенная локальная модель (Qwen3): отключаем «размышления» и чистим служебные блоки из ответа
         self._verify: str | bool = ca_file if (cfg.use_corporate_ca and ca_file) else True
         self._transport = transport
 
@@ -79,6 +93,10 @@ class LlmClient:
                 else {"content-type": "application/json"}
             body = {"model": c.model, "max_tokens": c.max_tokens, "temperature": c.temperature,
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+            if self.local:
+                # Qwen3 по умолчанию «думает» вслух (блок <think>) — для резюме это лишние минуты на CPU: выключаем и мягкой командой /no_think в запросе
+                body["chat_template_kwargs"] = {"enable_thinking": False}
+                body["messages"][0]["content"] = system + "\n/no_think"
             if c.type == "openai_compatible" and c.routing_provider:
                 body["provider"] = {"only": [c.routing_provider]}
         try:
@@ -105,6 +123,7 @@ class LlmClient:
                 pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise LlmError("invalid_response") from None
+        text = strip_thinking(text)
         if not text.strip():
             raise LlmError("empty")
         dur = int((time.monotonic() - started) * 1000)

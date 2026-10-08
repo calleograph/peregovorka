@@ -4,6 +4,13 @@
 #   scripts/models.sh [--env FILE] [--model v3_e2e_rnnt]
 #                     [--from-dir КАТАЛОГ]   # закрытая сеть: готовые файлы модели
 #                     [--gguf] [--skip-full] # дополнительно подготовить квантованную модель Q5_K_M (GGUF)
+#                     [--llm]                # дополнительно подготовить локальную языковую модель (Qwen3 0.6B Q4_K_M) — см. ниже
+#                     [--llm-only]           # только локальная LLM (ASR-модели не трогать)
+#                     [--soft]               # (с --llm/--llm-only) нет интернета/сбой — предупредить и завершиться с кодом 0
+#                     [--force]              # (с --llm/--llm-only) удалить файл LLM и скачать заново (повреждение)
+#                     [--check]              # (с --llm-only) только проверить файл LLM: код 0 — на месте и валиден
+#
+# Локальная LLM (scripts/lib/llmlib.sh): ${DATA_ROOT}/models/llm/<файл>.gguf, проверка размера и SHA-256, докачка, существующий валидный файл не качается.
 #
 # Нужные файлы: <model>.ckpt и <model>_tokenizer.model (Full, PyTorch) и, по желанию, gigaam-v3-e2e-rnnt-Q5_K_M.gguf (GGUF).
 # Обе модели лежат в одном каталоге одновременно; какая из них активна, выбирается в админке (Интеграции → Распознавание речи).
@@ -15,7 +22,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-MODEL=""; FROM_DIR=""; GGUF=0; SKIP_FULL=0
+MODEL=""; FROM_DIR=""; GGUF=0; SKIP_FULL=0; LLM=0; LLM_ONLY=0; SOFT=0; FORCE=0; CHECK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
@@ -23,13 +30,31 @@ while [ $# -gt 0 ]; do
     --from-dir) FROM_DIR="$2"; shift 2 ;;
     --gguf) GGUF=1; shift ;;
     --skip-full) SKIP_FULL=1; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --llm) LLM=1; shift ;;
+    --llm-only) LLM=1; LLM_ONLY=1; shift ;;
+    --soft) SOFT=1; shift ;;
+    --force) FORCE=1; shift ;;
+    --check) CHECK=1; shift ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
 sanitize_project_env; load_env "$ENV_FILE"
 require_vars DATA_ROOT
 msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)" || die "$msg"
+# ---- локальная LLM (отдельно от моделей распознавания речи)
+if [ "$LLM" = 1 ]; then
+  if [ "$CHECK" = 1 ]; then
+    st="$(llm_model_state)"; log "Локальная LLM ($(llm_file_name)): $(llm_state_text "$st")"; [ "$st" = ok ]; exit $?
+  fi
+  rc=0
+  if [ "$SOFT" = 1 ]; then llm_prepare soft || rc=$?
+  elif [ "$FORCE" = 1 ]; then llm_model_fetch --force ${FROM_DIR:+--from-dir "$FROM_DIR"} || rc=$?
+  else llm_model_fetch ${FROM_DIR:+--from-dir "$FROM_DIR"} || rc=$?; fi
+  [ "$LLM_ONLY" = 1 ] && exit "$rc"
+  [ "$rc" -eq 0 ] || [ "$SOFT" = 1 ] || exit "$rc"
+fi
+
 MODEL="${MODEL:-${ASR_MODEL_NAME:-v3_e2e_rnnt}}"
 [[ "$MODEL" =~ ^[A-Za-z0-9_]+$ ]] || die "Недопустимое имя модели: $MODEL"
 BASE_URL="${GIGAAM_MODEL_BASE_URL:-https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM}"

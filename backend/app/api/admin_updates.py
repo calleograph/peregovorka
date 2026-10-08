@@ -221,7 +221,8 @@ async def repairs_fix(repair_id: str, request: Request, su: SessionUser = Depend
         raise HTTPException(status_code=409, detail="Сейчас уже выполняется обновление или исправление")
     rep = ch.repairs() or {}
     boot_ca = bool((getattr(request.app.state, "boot_errors", {}) or {}).get("ca")) and repair_id == "data_dirs"
-    if repair_id not in {i.get("id") for i in rep.get("items", [])} and not boot_ca:
+    # «Скачать модель» локальной LLM доступна всегда (идемпотентно: валидный файл не скачивается), остальные исправления — только найденные последней проверкой
+    if repair_id not in {i.get("id") for i in rep.get("items", [])} and not boot_ca and repair_id != "llm_model":
         raise HTTPException(status_code=409, detail="Эта проблема сейчас не обнаружена — обновите проверку")
     try:
         rid = ch.request("repair", by=su.sam_account_name, repair=repair_id)

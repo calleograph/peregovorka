@@ -76,10 +76,13 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
           ))}
         </span>
       </div>
+      {plan?.warnings?.map((w) => <div key={w} className="alert info" role="status">⚠ {w}</div>)}
       <label>Инструкция для модели
         <textarea rows={9} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} maxLength={20000}
                   placeholder="Опишите, какой документ нужно получить" />
-        <span className="help">Эту инструкцию вы подтверждаете перед отправкой. {plan && !plan.anonymize
+        <span className="help">Эту инструкцию вы подтверждаете перед отправкой. {plan?.llm_local
+          ? "Текст обрабатывается встроенной локальной моделью на этом сервере и никуда не отправляется."
+          : plan && !plan.anonymize
           ? "Обезличивание для этой переговорки выключено: стенограмма (с именами и данными участников) вместе с инструкцией уходит в языковую модель как есть. Ничего, кроме инструкции и стенограммы, не отправляется."
           : "Стенограмма сначала обезличивается (ФИО, контакты и т. п. заменяются метками), затем вместе с инструкцией уходит в языковую модель. Ничего, кроме инструкции и обезличенного текста, не отправляется."}
           {plan?.llm_profile ? ` Модель: ${plan.llm_profile}.` : ""}</span>
