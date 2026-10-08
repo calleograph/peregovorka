@@ -64,6 +64,36 @@ class SmtpConfig:
     ca_file: str = ""
 
 
+def server_text(raw, cfg: SmtpConfig | None = None, limit: int = 300) -> str:
+    """Безопасно декодированный текст ответа SMTP-сервера (smtp_error / response): например, «5.7.60 SMTP; Client does not have permissions to send as this sender».
+    Именно он объясняет отказ — одного кода 550 недостаточно. Управляющие символы убираются, пробелы сворачиваются, длина ограничена; пароль подключения
+    (на случай, если сервер повторил его в ответе) вырезается. Тело и вложения письма сюда не попадают никогда."""
+    if raw is None:
+        return ""
+    if isinstance(raw, (bytes, bytearray)):
+        for enc in ("utf-8", "cp1251"):
+            try:
+                text = bytes(raw).decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = bytes(raw).decode("latin-1", "replace")
+    else:
+        text = str(raw)
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if cfg is not None and len(cfg.password) >= 4:
+        text = text.replace(cfg.password, "***")
+    return text[:limit]
+
+
+def _with_reply(base: str, code, raw, cfg: SmtpConfig) -> str:
+    reply = server_text(raw, cfg)
+    # ответ сервера обычно уже начинается с расширенного кода («5.7.60 …»); код SMTP показываем перед ним
+    return f"{base} Ответ сервера: {code} {reply}." if reply else f"{base} (код {code})."
+
+
 def classify(exc: Exception, cfg: SmtpConfig) -> MailError:
     """Понятная причина по типу исключения smtplib/ssl/socket. Секреты в сообщение не попадают."""
     if isinstance(exc, MailError):
@@ -78,18 +108,22 @@ def classify(exc: Exception, cfg: SmtpConfig) -> MailError:
     if isinstance(exc, ssl.SSLError):
         return MailError("tls", f"не удалось установить защищённое соединение ({type(exc).__name__}). Проверьте режим защиты и порт: SSL/TLS — обычно 465, STARTTLS — 587 или 25.")
     if isinstance(exc, smtplib.SMTPAuthenticationError):
-        return MailError("auth", f"сервер отклонил логин или пароль (код {exc.smtp_code}).")
+        return MailError("auth", _with_reply("сервер отклонил логин или пароль.", exc.smtp_code, exc.smtp_error, cfg))
     if isinstance(exc, smtplib.SMTPNotSupportedError):
         return MailError("tls" if "starttls" in str(exc).lower() else "auth", f"сервер не поддерживает требуемую возможность: {str(exc)[:120]}.")
     if isinstance(exc, smtplib.SMTPSenderRefused):
-        return MailError("sender_rejected", f"адрес отправителя отклонён сервером (код {exc.smtp_code}). Разрешите этому узлу отправку от {cfg.from_address}.", exc.smtp_code < 500)
+        return MailError("sender_rejected", _with_reply(f"адрес отправителя отклонён сервером. Разрешите этому узлу отправку от {cfg.from_address}.", exc.smtp_code, exc.smtp_error, cfg), exc.smtp_code < 500)
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
         codes = sorted({v[0] for v in exc.recipients.values()})
-        return MailError("recipient_rejected", f"адрес получателя отклонён сервером (код {codes[0] if codes else '?'}). Проверьте адрес и правила relay.", bool(codes) and max(codes) < 500)
+        replies = list(dict.fromkeys(server_text(v[1], cfg, 200) for v in exc.recipients.values() if len(v) > 1 and v[1]))   # адреса получателей в сообщение не включаем
+        text = _with_reply("адрес получателя отклонён сервером. Проверьте адрес и правила relay.", codes[0] if codes else "?", replies[0] if replies else None, cfg)
+        if len(replies) > 1:
+            text += " Другие ответы: " + "; ".join(replies[1:3]) + "."
+        return MailError("recipient_rejected", text, bool(codes) and max(codes) < 500)
     if isinstance(exc, smtplib.SMTPDataError):
-        return MailError("data", f"сервер не принял письмо (код {exc.smtp_code}).", exc.smtp_code < 500)
+        return MailError("data", _with_reply("сервер не принял письмо.", exc.smtp_code, exc.smtp_error, cfg), exc.smtp_code < 500)
     if isinstance(exc, smtplib.SMTPResponseException):
-        return MailError("smtp", f"ответ сервера {exc.smtp_code}.", exc.smtp_code < 500)
+        return MailError("smtp", _with_reply("сервер вернул ошибку.", exc.smtp_code, exc.smtp_error, cfg), exc.smtp_code < 500)
     if isinstance(exc, (smtplib.SMTPServerDisconnected, ConnectionError)):
         return MailError("connect", "сервер закрыл соединение. Проверьте режим защиты (SSL/TLS и STARTTLS путают чаще всего) и порт.", True)
     if isinstance(exc, (TimeoutError, socket.timeout)):

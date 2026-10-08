@@ -362,3 +362,47 @@ def test_group_leaders_expand_to_member_emails_and_missing_email_is_visible(clie
     emails = {r["email"] for r in pv["recipients"] if r["email"]}
     assert "carol@corp.test" in emails
     assert any(r["problem"] == "no_email" and r["name"] for r in pv["recipients"])      # нет адреса — виден в интерфейсе, не молчаливая ошибка
+
+
+# ---------------------------------------------------------------------------------- текст ответа сервера в диагностике
+def _cfg(**over):
+    base = dict(host="smtp.example.local", port=587, security="starttls", auth_type="login", username="svc", password="Mail-Pass-7q", from_address="noreply@example.local")
+    base.update(over)
+    return mailmod.SmtpConfig(**base)
+
+
+def test_server_reply_text_is_shown_for_all_smtp_response_errors():
+    reply = b"5.7.60 SMTP; Client does not have permissions to send as this sender"
+    cfg = _cfg()
+    cases = [
+        smtplib.SMTPSenderRefused(550, reply, "noreply@example.local"),
+        smtplib.SMTPDataError(550, reply),
+        smtplib.SMTPRecipientsRefused({"user1@example.local": (550, reply)}),
+        smtplib.SMTPResponseException(550, reply),
+        smtplib.SMTPAuthenticationError(535, b"5.7.3 Authentication unsuccessful"),
+    ]
+    for exc in cases:
+        err = mailmod.classify(exc, cfg)
+        assert "Client does not have permissions to send as this sender" in err.message or "Authentication unsuccessful" in err.message, err.message
+        assert "550" in err.message or "535" in err.message
+    assert "550 5.7.60 SMTP; Client does not have permissions" in mailmod.classify(cases[0], cfg).short()
+
+
+def test_server_reply_is_decoded_cleaned_and_never_leaks_secrets():
+    cfg = _cfg()
+    assert mailmod.server_text("Ошибка сервера".encode("cp1251"), cfg) == "Ошибка сервера"                 # не UTF-8 — декодируется запасной кодировкой
+    assert mailmod.server_text(b"line1\r\nline2\x00\x07  \tend", cfg) == "line1 line2 end"                  # управляющие символы и переводы строк убраны
+    assert len(mailmod.server_text(b"x" * 5000, cfg)) == 300
+    assert "Mail-Pass-7q" not in mailmod.server_text(b"5.7.8 bad password Mail-Pass-7q", cfg)              # пароль, повторённый сервером, вырезается
+    assert mailmod.server_text(None, cfg) == "" and mailmod.server_text(b"\xff\xfe\xfd", cfg)
+    # адреса получателей и тело письма в сообщение не попадают
+    err = mailmod.classify(smtplib.SMTPRecipientsRefused({"user1@example.local": (550, b"5.1.1 mailbox unavailable")}), cfg)
+    assert "user1@example.local" not in err.message and "mailbox unavailable" in err.message
+
+
+def test_transient_flag_and_empty_reply_still_work():
+    cfg = _cfg()
+    e = mailmod.classify(smtplib.SMTPDataError(451, b"4.3.0 try again later"), cfg)
+    assert e.transient is True and "try again later" in e.message
+    e = mailmod.classify(smtplib.SMTPResponseException(554, b""), cfg)
+    assert e.transient is False and "554" in e.message
