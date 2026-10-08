@@ -44,8 +44,9 @@ repair_detect_data_dirs() {
   for d in updater state; do [ -d "$base/$d" ] || bad+=("$d: нет каталога"); done
   [ -d "$base/updater" ] && [ "$(_repair_dir_mode "$base/updater")" != 1777 ] && bad+=("updater: неверный режим")
   # главный признак — может ли ПРОЦЕСС сервиса (uid 10001) записать в каталог; владелец на хосте этого не гарантирует (ACL, режим, read-only mount)
-  local w; w="$( { writable_probe backend "${WRITABLE_BACKEND_DIRS[@]}"; writable_probe asr "${WRITABLE_ASR_DIRS[@]}"; } 2>/dev/null | tr '
-' ' ')"
+  local w=""
+  if repair_docker_up; then w="$( { writable_probe backend "${WRITABLE_BACKEND_DIRS[@]}"; writable_probe asr "${WRITABLE_ASR_DIRS[@]}"; } 2>/dev/null | tr '
+' ' ')"; fi
   [ -n "${w// /}" ] && bad+=("запись невозможна: ${w% }")
   [ "${#bad[@]}" -eq 0 ] && return 1
   REPAIR_DETAIL="$(IFS=,; echo "${bad[*]}")"
@@ -91,8 +92,14 @@ repair_detect_prereq_missing() {
   return 0
 }
 
-repair_detect_image_commit() {
+# Запущены ли контейнеры проекта: один быстрый запрос вместо десятков `docker compose …` (на сервере без контейнеров — мгновенный выход из проверок).
+repair_docker_up() {
   command -v docker >/dev/null 2>&1 || return 1
+  [ -n "$(timeout 8 docker ps -q --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-}" 2>/dev/null | head -1)" ]
+}
+
+repair_detect_image_commit() {
+  repair_docker_up || return 1
   local s cid raw
   for s in backend asr web; do
     cid="$(dc ps -q "$s" 2>/dev/null | head -1)"; [ -n "$cid" ] || continue
@@ -103,7 +110,7 @@ repair_detect_image_commit() {
 }
 
 repair_detect_migrations() {
-  command -v docker >/dev/null 2>&1 || return 1
+  repair_docker_up || return 1
   [ -n "$(dc ps -q backend 2>/dev/null | head -1)" ] || return 1
   alembic_verify exec >/dev/null 2>&1 && return 1
   [ -n "${ALEMBIC_CUR:-}" ] || [ -n "${ALEMBIC_HEAD:-}" ] || return 1       # не удалось определить — это не «нужна миграция»

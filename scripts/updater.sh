@@ -161,7 +161,9 @@ do_update() { # do_update FORCE PULL
 
 # ------------------------------------------------------------------------------------------------ «Исправить автоматически»
 do_scan() { # обнаружить известные проблемы → repairs.json (читает веб-интерфейс)
-  ( fresh_env; repair_scan; repair_json ) 2>/dev/null | atomic_write "$CH/repairs.json"
+  # в фоне + wait: сигнал остановки обрабатывается сразу, а не после окончания долгой проверки
+  ( ( fresh_env; repair_scan; repair_json ) 2>/dev/null | atomic_write "$CH/repairs.json" ) &
+  wait $! 2>/dev/null
 }
 
 do_repair() { # do_repair ID — одно исправление из белого списка; проверка ID ещё раз здесь, а не только в веб-интерфейсе
