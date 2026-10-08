@@ -211,6 +211,8 @@ def _protocol_dict(p: Protocol, with_content: bool = False) -> dict:
     d = {"id": str(p.id), "meeting_id": str(p.meeting_id), "kind": p.kind, "status": p.status, "error": p.error,
          "created_by": p.created_by, "created_at": p.created_at, "updated_at": p.updated_at, "title": p.title,
          "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"),
+         # предупреждения конвейера (обрезка ответа по лимиту, упрощённая инструкция, длинная стенограмма) — их видно рядом с документом
+         "warnings": (p.meta or {}).get("warnings") or [], "truncated": bool((p.meta or {}).get("truncated")),
          # ссылка на выгруженный файл отдаётся, только пока файл есть (по сверке с хранилищем); сам текст всегда в базе
          "location": (p.meta or {}).get("location") if p.file_state != "missing" else None, "file_state": p.file_state,
          "export_files": (p.meta or {}).get("export_files")}

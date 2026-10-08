@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -21,14 +22,14 @@ from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
 from .llm_choice import resolve_llm
-from .local_llm import LocalLlm
+from .local_llm import LocalLlm, LocalModel
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
 from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
 from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_messages, render_chat
 from .recordings import delete_recording_file, finalize_pcm_files
 from .segments import author_name
-from .settings import SettingsError, SettingsService
+from .settings import DEFAULT_PROTOCOL_INSTRUCTION, DEFAULT_SUMMARY_INSTRUCTION, SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
 log = logging.getLogger("app.protocols")
@@ -37,15 +38,41 @@ log = logging.getLogger("app.protocols")
 class NothingToProcess(SettingsError):
     """В встрече нет ни реплик, ни чата, ни схемы: это штатный случай (пустая встреча), а не сбой — в журнал ошибкой не пишется."""
 
-SYSTEM_PROMPT = (
-    "Ты — секретарь совещания. Пиши по-русски, строго по тексту стенограммы, ничего не выдумывай. "
-    "В стенограмме персональные и конфиденциальные данные заменены метками (например, [ФИО_1]) — "
-    "сохраняй метки как есть и не пытайся их раскрыть. Ответ — только текст протокола."
-)
-# Дополнение для облегчённой локальной модели: простые, проверяемые формулировки, без домыслов
-LOCAL_HINT = ("\n\nПиши коротко и только по тексту встречи: решения, задачи, ответственные, сроки. Не выдумывай факты, имена и даты; если сведений нет — так и напиши. "
-              "Отвечай по-русски.")
-SYSTEM_PROMPT_WITH_SOURCES = SYSTEM_PROMPT + " " + SOURCES_PROMPT
+_BASE_PROMPT = "Ты — секретарь совещания. Пиши по-русски, строго по тексту стенограммы, ничего не выдумывай."
+_ANON_HINT = ("В стенограмме персональные и конфиденциальные данные заменены метками (например, [ФИО_1]) — "
+              "сохраняй метки как есть и не пытайся их раскрыть.")
+
+
+def system_prompt(anonymized: bool = True, sources: bool = False) -> str:
+    """Общая часть системного промпта. Пример метки [ФИО_1] даётся ТОЛЬКО когда текст действительно обезличен: иначе небольшие модели
+    подражают примеру и выдают [ФИО_1] вместо реальных имён (проверено на Qwen3 0.6B)."""
+    return _BASE_PROMPT + ((" " + _ANON_HINT) if anonymized else "") + " Ответ — только текст протокола." + ((" " + SOURCES_PROMPT) if sources else "")
+
+
+SYSTEM_PROMPT = system_prompt(True)            # прежнее имя (для совместимости)
+SYSTEM_PROMPT_WITH_SOURCES = system_prompt(True, True)
+
+# Промежуточный шаг для длинных встреч. Должен ИЗВЛЕКАТЬ, а не переписывать: прежнее «сделай подробные заметки (факты, решения, поручения)» небольшие модели
+# выполняли дословным пересказом стенограммы и упирались в лимит длины (проверено на Qwen3 0.6B — вся середина встречи терялась).
+NOTES_PROMPT = ("Ты — секретарь совещания. Из фрагмента стенограммы выпиши КРАТКИЙ список: (1) принятые решения; (2) задачи: кто ответственный, что сделать, срок "
+                "(если срок не назван — «не указан»); (3) открытые вопросы; (4) важные значения: даты, числа, адреса, версии. Каждый пункт — одна короткая строка своими словами. "
+                "НЕ копируй реплики из стенограммы. Ничего не выдумывай. Если пунктов нет — напиши «нет».")
+NOTES_ANON_HINT = " Метки вроде [ФИО_1] сохраняй как есть."
+NOTES_MAX_TOKENS = 600     # хороший список короткий; если модель вместо списка начинает переписывать текст, это видно по обрезке и не тратит минуты на CPU
+
+# Короткие промпты для облегчённой локальной модели: подробный шаблон (нумерованная структура, таблицы) она возвращает пустым каркасом без содержания.
+LOCAL_PROTOCOL_PROMPT = ("Ты — секретарь совещания. По стенограмме составь протокол на русском языке. Используй только то, что сказано в стенограмме, ничего не выдумывай. "
+                         "Если сведений нет, пиши «не указано». Разделы: Обсуждение (по темам), Решения, Задачи (кто, что, срок), Открытые вопросы.")
+LOCAL_SUMMARY_PROMPT = ("Ты — секретарь совещания. Кратко (не более 8 строк) изложи по стенограмме: о чём говорили, какие решения приняты, кто что делает и к какому сроку. "
+                        "Только то, что сказано в стенограмме, ничего не выдумывай; если сведений нет — не пиши об этом.")
+LOCAL_SOURCES_HINT = " Кроме стенограммы могут быть чат и схема доски: URL, IP-адреса и имена серверов из чата переноси дословно."
+LOCAL_INSTRUCTION_LIMIT = 400       # более длинную (подробный шаблон) инструкцию локальная модель не получает — пользователю показывается предупреждение
+LOCAL_INSTRUCTION_IGNORED = ("Подробная инструкция не применена: облегчённая локальная модель получила упрощённую. Для протокола по сложному шаблону "
+                             "(таблицы, строгая структура) выберите более сильную внешнюю модель.")
+TRUNCATED_LOCAL = ("Локальная модель не смогла полностью обработать стенограмму: ответ оборвался по лимиту длины{where}. "
+                   "Результат может быть неполным — проверьте его или сформируйте документ более сильной (внешней) моделью.")
+TRUNCATED_EXTERNAL = ("Ответ языковой модели оборван по лимиту длины{where}: результат неполный. "
+                      "Увеличьте «Максимальную длину ответа» в настройках языковой модели или сократите материалы.")
 
 
 def format_clock(dt: datetime, tz: ZoneInfo) -> str:
@@ -79,6 +106,71 @@ def split_for_llm(text: str, limit: int) -> list[str]:
     if cur:
         parts.append("".join(cur))
     return parts
+
+
+@dataclass
+class PipelineResult:
+    text: str = ""
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    parts: int = 1
+    truncated: bool = False
+    notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, str | None]:
+    """Системный промпт для облегчённой локальной модели + предупреждение, если пользовательская инструкция не поместилась."""
+    base = LOCAL_SUMMARY_PROMPT if kind == "summary" else LOCAL_PROTOCOL_PROMPT
+    ins = (instruction or "").strip()
+    warn = None
+    if ins and ins not in {DEFAULT_PROTOCOL_INSTRUCTION.strip(), DEFAULT_SUMMARY_INSTRUCTION.strip()}:
+        if len(ins) <= LOCAL_INSTRUCTION_LIMIT:
+            base += "\nПожелания к документу: " + ins
+        else:
+            warn = LOCAL_INSTRUCTION_IGNORED
+    return base + (LOCAL_SOURCES_HINT if has_sources else ""), warn
+
+
+async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
+                           has_sources: bool = False, mixed: bool = False) -> PipelineResult:
+    """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
+    res = PipelineResult()
+    if local is not None:
+        system, warn = local_system(kind, instruction, has_sources)
+        if warn:
+            res.warnings.append(warn)
+    else:
+        form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
+                if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
+        system = system_prompt(anonymized, has_sources) + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
+    msg = TRUNCATED_LOCAL if local is not None else TRUNCATED_EXTERNAL
+
+    def account(r, where: str = "") -> None:
+        res.calls += 1
+        res.prompt_tokens += r.prompt_tokens or 0
+        res.completion_tokens += r.completion_tokens or 0
+        if r.truncated:
+            res.truncated = True
+            res.warnings.append(msg.format(where=where))
+
+    parts = split_for_llm(text, limit)
+    res.parts = len(parts)
+    if len(parts) == 1:
+        r = await llm.complete(system, ("Материалы встречи:\n\n" if mixed else "Стенограмма встречи:\n\n") + parts[0])
+        account(r)
+        res.text = r.text
+        return res
+    notes_system = NOTES_PROMPT + (NOTES_ANON_HINT if anonymized else "")
+    for i, part in enumerate(parts, 1):    # длинная встреча: краткое извлечение по фрагментам → итоговый документ
+        r = await llm.complete(notes_system, f"Фрагмент {i} из {len(parts)}:\n\n{part}", max_tokens=NOTES_MAX_TOKENS)
+        res.notes.append(r.text)
+        account(r, f" (часть {i} из {len(parts)})")
+    r = await llm.complete(system, "Заметки по фрагментам встречи:\n\n" + "\n\n---\n\n".join(res.notes))
+    account(r, " (итоговый документ)")
+    res.text = r.text
+    return res
 
 
 class ProtocolService:
@@ -438,38 +530,17 @@ class ProtocolService:
         # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
         llm = self.local_llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
-        form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
-                if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
-        system = (SYSTEM_PROMPT_WITH_SOURCES if (materials.chat_messages or materials.whiteboard_shapes) else SYSTEM_PROMPT) \
-            + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
         limit = min(pr_cfg.max_input_chars, lm.max_input_chars) if lm else pr_cfg.max_input_chars   # type: ignore[attr-defined]
         warnings: list[str] = []
-        if lm is not None:
-            system += LOCAL_HINT
-            if lm.light and len(clean.text) > lm.warn_input_chars:
-                warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
-        parts = split_for_llm(clean.text, limit)
-        calls, pt, ct = 0, 0, 0
-        if len(parts) == 1:
-            res = await llm.complete(system, ("Материалы встречи:\n\n" if text is not transcript else "Стенограмма встречи:\n\n") + parts[0])
-            calls, pt, ct = 1, res.prompt_tokens or 0, res.completion_tokens or 0
-            out = res.text
-        else:  # длинная встреча: частичные заметки → итоговый документ
-            notes: list[str] = []
-            for i, part in enumerate(parts, 1):
-                r = await llm.complete(SYSTEM_PROMPT + "\nСделай подробные заметки по фрагменту (факты, решения, поручения).",
-                                       f"Фрагмент {i} из {len(parts)}:\n\n{part}")
-                notes.append(r.text)
-                calls += 1
-                pt += r.prompt_tokens or 0
-                ct += r.completion_tokens or 0
-            r = await llm.complete(system, "Заметки по фрагментам встречи:\n\n" + "\n\n---\n\n".join(notes))
-            calls += 1
-            pt += r.prompt_tokens or 0
-            ct += r.completion_tokens or 0
-            out = r.text
-        meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "llm_calls": calls,  # type: ignore[attr-defined]
-                "prompt_tokens": pt, "completion_tokens": ct, "anonymized_chunks": clean.chunks,
+        if lm is not None and lm.light and len(clean.text) > lm.warn_input_chars:
+            warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
+        pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
+                                      has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript)
+        warnings += pipe.warnings
+        out = pipe.text
+        meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
+                "llm_calls": pipe.calls, "parts": pipe.parts,
+                "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens, "anonymized_chunks": clean.chunks,
                 "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
                 "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
                 "sources": materials.meta()}

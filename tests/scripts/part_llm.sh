@@ -96,3 +96,6 @@ t "diag.sh и smoke-test.sh: проверяют локальную LLM" bash -c 
 t "verify_local_llm: нет модели → предупреждение с инструкцией, не отказ" bash -c 'out="$(env -i PATH="$1/bin:$PATH" ENV_FILE="$2" bash -c "source \"$3/scripts/lib/common.sh\"; load_env \"\$ENV_FILE\"; rm -f \"$4\"; v_ok(){ echo OK \$*; }; v_warn(){ echo WARN \$*; }; verify_local_llm; echo rc=\$?")"; grep -q "WARN Локальная LLM: не загружена" <<<"$out" && grep -q "rc=0" <<<"$out"' _ "$LL" "$LL/env" "$ROOT" "$FILE"
 cp "$LL/src/Qwen3-0.6B-Q4_K_M.gguf" "$FILE"
 t "repair llm_model: описание без команд Linux, ID в белом списке" bash -c 'source "$1/scripts/lib/repairlib.sh"; repair_id_valid llm_model && t="$(repair_text llm_model)" && [ "$(tr -cd "|" <<<"$t" | wc -c)" -ge 2 ] && ! grep -qE "sudo|chown|docker compose" <<<"$t"' _ "$ROOT"
+
+# ---- память llama-server: без кэша промптов (иначе RSS растёт до 4–5 ГБ при лимите контейнера 3 ГБ и контейнер убивает OOM)
+t "llm: compose — llama-server запускается с --cache-ram 0" bash -c 'b="$(awk "/^  llm-local:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; tr -d "\n" <<<"$b" | grep -Eq "\"--cache-ram\" +- \"0\""' _ "$ROOT"

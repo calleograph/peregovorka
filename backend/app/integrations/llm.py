@@ -66,6 +66,8 @@ class LlmResult:
     prompt_tokens: int | None
     completion_tokens: int | None
     duration_ms: int
+    # Ответ оборван по лимиту длины (finish_reason=length / stop_reason=max_tokens): текст неполный, вызывающий код обязан сообщить об этом пользователю
+    truncated: bool = False
 
 
 class LlmClient:
@@ -78,21 +80,22 @@ class LlmClient:
     def _base(self) -> str:
         return (self._c.base_url or _DEFAULT_BASE.get(self._c.type, "")).rstrip("/")
 
-    async def complete(self, system: str, user: str) -> LlmResult:
+    async def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> LlmResult:
         c = self._c
+        limit = min(c.max_tokens, max_tokens) if max_tokens else c.max_tokens
         if not c.enabled or not c.model:
             raise LlmError("not_configured")
         started = time.monotonic()
         if c.type == "anthropic":
             url = f"{self._base()}/messages"
             headers = {"x-api-key": c.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-            body = {"model": c.model, "max_tokens": c.max_tokens, "temperature": c.temperature, "system": system,
+            body = {"model": c.model, "max_tokens": limit, "temperature": c.temperature, "system": system,
                     "messages": [{"role": "user", "content": user}]}
         else:
             url = f"{self._base()}/chat/completions"
             headers = {"Authorization": f"Bearer {c.api_key}", "content-type": "application/json"} if c.api_key \
                 else {"content-type": "application/json"}
-            body = {"model": c.model, "max_tokens": c.max_tokens, "temperature": c.temperature,
+            body = {"model": c.model, "max_tokens": limit, "temperature": c.temperature,
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
             if self.local:
                 # Qwen3 по умолчанию «думает» вслух (блок <think>) — для резюме это лишние минуты на CPU: выключаем и мягкой командой /no_think в запросе
@@ -118,10 +121,12 @@ class LlmClient:
                 text = "".join(b.get("text", "") for b in data["content"] if b.get("type") == "text")
                 usage = data.get("usage") or {}
                 pt, ct = usage.get("input_tokens"), usage.get("output_tokens")
+                truncated = data.get("stop_reason") == "max_tokens"
             else:
                 text = data["choices"][0]["message"]["content"] or ""
                 usage = data.get("usage") or {}
                 pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
+                truncated = data["choices"][0].get("finish_reason") == "length"
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise LlmError("invalid_response") from None
         text = strip_thinking(text)
@@ -129,7 +134,9 @@ class LlmClient:
             raise LlmError("empty")
         dur = int((time.monotonic() - started) * 1000)
         log.info("LLM ответила", extra={"model": c.model, "prompt_tokens": pt, "completion_tokens": ct, "duration_ms": dur})
-        return LlmResult(text.strip(), pt, ct, dur)
+        if truncated:
+            log.warning("Ответ LLM оборван по лимиту длины", extra={"model": c.model, "completion_tokens": ct, "max_tokens": limit})
+        return LlmResult(text.strip(), pt, ct, dur, truncated)
 
     async def test(self) -> tuple[bool, str, int]:
         started = time.monotonic()

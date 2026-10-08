@@ -54,6 +54,8 @@ export interface ProtocolItem {
   id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
   created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
   title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
+  /** Предупреждения при формировании: например, локальная модель не смогла полностью обработать стенограмму (truncated). */
+  warnings?: string[]; truncated?: boolean;
   /** Выгруженный файл удалён из хранилища (по сверке): ссылки `location` нет; сам текст остаётся в системе. */
   file_state?: "ok" | "missing";
 }

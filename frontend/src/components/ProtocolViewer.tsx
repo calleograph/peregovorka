@@ -72,6 +72,9 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         {item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}
       </p>
 
+      {item.warnings?.map((w) => (
+        <div key={w} className={`alert ${item.truncated ? "error" : "info"}`} role="status">⚠ {w}</div>))}
+
       <div className="row" style={{ margin: "8px 0" }}>
         <span className="row tight" style={{ gap: 0 }}>
           <button className="btn" onClick={() => copy("plain")} title="Копировать как обычный текст — для писем и документов">Скопировать</button>
