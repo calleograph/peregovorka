@@ -41,3 +41,6 @@ t "sip.sh: неизвестная команда — ошибка" bash -c '! en
 t "sip: verify_sip при выключенной телефонии — «пропущено» и без сбоя" bash -c 'out="$(env -i PATH="$PATH" HOME="$TMP" ENV_FILE="$2" bash -c "source \"$1/scripts/lib/common.sh\"; source \"$1/scripts/lib/verifylib.sh\"; load_env \"\$ENV_FILE\"; verify_sip; echo FAILS=\${VERIFY_FAILS:-0}" 2>&1)"; grep -q "пропущено" <<<"$out" && grep -q "FAILS=0" <<<"$out"' _ "$ROOT" "$SP/env"
 t "sip: точка обновления — sip_enable и sip_disable разрешены помощнику" bash -c 'source "$1/scripts/lib/repairlib.sh"; printf "%s\n" "${REPAIR_IDS[@]}" | grep -qx sip_enable && printf "%s\n" "${REPAIR_IDS[@]}" | grep -qx sip_disable' _ "$ROOT"
 t ".env.example: SIP выключен по умолчанию, порты описаны" bash -c 'grep -q "^SIP_ENABLED=no" "$1/.env.example" && grep -q "^SIP_SIGNALING_PORT=5060" "$1/.env.example" && grep -q "^SIP_RTP_START=20000" "$1/.env.example"' _ "$ROOT"
+
+# ---- защита от CRLF: один такой файл ломает `bash -n` и загрузку библиотек на Linux
+t "скрипты не содержат символов возврата каретки (CRLF)" bash -c '! grep -lP "\r" "$1"/scripts/*.sh "$1"/scripts/lib/*.sh "$1"/tests/scripts/*.sh "$1"/install.sh 2>/dev/null' _ "$ROOT"
