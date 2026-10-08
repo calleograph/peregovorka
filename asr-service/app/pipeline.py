@@ -45,7 +45,7 @@ class Flags:
 def is_user_microphone_track(kind, source, identity: str, *, audio_kind, mic_source) -> bool:
     """Распознаём ТОЛЬКО микрофон пользовательской identity. Экранное аудио, видео и
     служебные участники (asr-*) в распознавание не попадают."""
-    return kind == audio_kind and source == mic_source and identity.startswith(USER_PREFIX) \
+    return kind == audio_kind and source == mic_source and identity.startswith((USER_PREFIX, *PHONE_PREFIXES)) \
         and not identity.startswith(SERVICE_PREFIX)
 
 
