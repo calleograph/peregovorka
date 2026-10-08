@@ -29,7 +29,7 @@ from .storage import StorageError, build_storage
 log = logging.getLogger("app.journal")
 
 LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
-CATEGORIES = ("auth", "room", "client", "device", "network", "admin", "llm", "storage", "asr", "system")
+CATEGORIES = ("auth", "room", "client", "device", "network", "admin", "llm", "storage", "asr", "system", "mail")
 EXT_DIR = "journal"
 _MAX_MSG, _MAX_DATA = 600, 4000
 

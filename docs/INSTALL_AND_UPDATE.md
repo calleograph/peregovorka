@@ -20,7 +20,28 @@
 
 ---
 
-## 0.1 Установка одной командой (рекомендуется)
+## 0.0 Самый простой путь: `install.sh` (рекомендуется для нового сервера)
+
+```bash
+wget -O install.sh https://raw.githubusercontent.com/leonheard/peregovorka/main/install.sh
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Корневой `install.sh` сам проверяет сервер, ставит недостающее (git, curl, openssl, Docker, nginx), скачивает проект с GitHub в `/opt/peregovorka` (последний релиз; `--ref main` — свежая разработка), вызывает `scripts/setup.sh --auto`
+(профиль standalone, `.env` с секретами без вопросов, самоподписанный сертификат HTTPS, **без LDAP в `.env`**), собирает и запускает сервисы, создаёт локального администратора (`scripts/bootstrap-admin.sh`) и в конце печатает заметный блок
+«ПЕРВИЧНЫЙ ВХОД В PEREGOVORKA» (адрес, логин, случайный пароль — **только в терминал**, без записи в файлы и журналы). Повторный запуск безопасен: прерванная установка продолжается, готовая — не затрагивается (скрипт подскажет команду обновления).
+Параметры: `--host`, `--https-port`, `--dir`, `--data`, `--ref`, `--skip-models`, `--yes` (см. `./install.sh --help`).
+
+**Дальше всё — в браузере** ([ADMIN_SETUP.md](ADMIN_SETUP.md)): вход, смена первичного пароля, мастер (LDAPS → CA → группы администраторов → хранилище → почта → проверка).
+
+**Потеряли пароль?** `sudo /opt/peregovorka/scripts/admin-reset.sh` — официальный механизм: новый случайный пароль (при входе его нужно заменить), завершение старых сеансов, снятие блокировки входа, запись в аудит; LDAP и ручная правка БД не нужны (`--create` создаст администратора, если его нет; `--username` — другой логин).
+
+**Обновление:** `cd /opt/peregovorka && sudo ./scripts/update.sh` либо кнопка в «Администрирование → Обновления и версии».
+
+Ручной путь (ниже) нужен для профиля shared-host — сервера, где уже работают другие сайты и nginx/Docker нельзя трогать.
+
+## 0.1 Установка мастером (shared-host и ручная настройка)
 
 ```bash
 git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projects/peregovorka   && cd /var/www/projects/peregovorka && scripts/setup.sh --profile shared-host

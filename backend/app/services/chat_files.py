@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import ChatAttachment, Meeting, utcnow
 from .filestore import FileStore
 from .settings import ChatFilesSettings
-from .storage import StorageError
+from .reconcile import mark_missing
+from .storage import StorageError, StorageNotFound
 
 log = logging.getLogger("app.chat_files")
 
@@ -143,9 +144,14 @@ class ChatFilesService:
         return att
 
     async def read(self, db: AsyncSession, att: ChatAttachment) -> bytes:
+        if att.file_state == "missing":
+            raise AttachmentError("Файл удалён из хранилища и больше недоступен.", 410)
         try:
             backend = await self._files.chat_backend_for(db, att.profile_id)
             return await asyncio.to_thread(backend.read_bytes, att.storage_key)
+        except StorageNotFound:
+            await mark_missing(db, att, self.journal, "вложение чата")
+            raise AttachmentError("Файл не найден в хранилище — вероятно, его удалили вне приложения. Он больше не будет предлагаться.", 410) from None
         except StorageError as exc:
             self._fail("chat_file_read_failed", exc, att.meeting_id, {"attachment": str(att.id)})
             raise AttachmentError("Файл сейчас недоступен: хранилище не отвечает.", 503) from None
@@ -182,7 +188,7 @@ class ChatFilesService:
 
 
 def attachment_out(a: ChatAttachment) -> dict:
-    return {"id": str(a.id), "name": a.name, "mime": a.mime, "size": a.size, "kind": a.kind}
+    return {"id": str(a.id), "name": a.name, "mime": a.mime, "size": a.size, "kind": a.kind, "missing": a.file_state == "missing"}
 
 
 def safe_key(key: str) -> bool:

@@ -134,14 +134,15 @@ services:
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       LIVEKIT_RTC_TCP_PORT: ${LIVEKIT_TCP_PORT:-0}
       LIVEKIT_RTC_UDP_PORT: ${LIVEKIT_UDP_PORT:-0}
-      LDAP_URIS: ${LDAP_URIS:?}
-      LDAP_BASE_DN: ${LDAP_BASE_DN:?}
-      LDAP_BIND_DN: ${LDAP_BIND_DN:?}
-      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:?}
+      # LDAP_* необязательны: каталог подключается в веб-интерфейсе (Администрирование → LDAP и доступ); эти значения — прежний способ
+      LDAP_URIS: ${LDAP_URIS:-}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
       LDAP_CA_FILE: /run/secrets/ldap-ca.pem
       LDAP_LOGIN_ATTRIBUTE: ${LDAP_LOGIN_ATTRIBUTE:-sAMAccountName}
       LDAP_DISPLAY_NAME_ATTRIBUTE: ${LDAP_DISPLAY_NAME_ATTRIBUTE:-displayName}
-      LDAP_ADMIN_GROUP_DN: ${LDAP_ADMIN_GROUP_DN:?}
+      LDAP_ADMIN_GROUP_DN: ${LDAP_ADMIN_GROUP_DN:-}
       LDAP_ACCESS_GROUP_DN: ${LDAP_ACCESS_GROUP_DN:-}
       LDAP_TIMEOUT_SECONDS: ${LDAP_TIMEOUT_SECONDS:-5}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
@@ -159,7 +160,10 @@ services:
       DATA_DIR: /data
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
     volumes:
-      - ${LDAP_CA_FILE:?}:/run/secrets/ldap-ca.pem:ro
+      # прежний CA-файл (если задан); пусто — /dev/null: CA загружаются в веб-интерфейсе и лежат в /data/ca
+      - ${LDAP_CA_FILE:-/dev/null}:/run/secrets/ldap-ca.pem:ro
+      - ${DATA_ROOT}/ca:/data/ca
+      - ${DATA_ROOT}/chat-files:/data/chat-files
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления

@@ -28,6 +28,8 @@ class SessionData:
     csrf: str
     created_at: float
     last_seen: float
+    local: bool = False            # локальный (аварийный) администратор
+    must_change: bool = False      # нужно сменить первичный/сброшенный пароль
 
 
 def _key(session_id: str) -> str:
@@ -40,13 +42,36 @@ class SessionStore:
         self._s = settings
 
     async def create(self, *, user_id: str, ad_guid: str, sam: str, display_name: str,
-                     is_admin: bool, groups: list[str]) -> tuple[str, SessionData]:
+                     is_admin: bool, groups: list[str], local: bool = False, must_change: bool = False) -> tuple[str, SessionData]:
         sid = secrets.token_urlsafe(32)
         now = time.time()
         data = SessionData(user_id, ad_guid, sam, display_name, is_admin, groups,
-                           secrets.token_urlsafe(24), now, now)
+                           secrets.token_urlsafe(24), now, now, local=local, must_change=must_change)
         await self._r.set(_key(sid), json.dumps(asdict(data), ensure_ascii=False), ex=self._s.session_idle_timeout_seconds)
+        if local:   # индекс сессий локального администратора: сброс пароля завершает их все
+            await self._r.sadd(f"usess:{user_id}", _key(sid))
+            await self._r.expire(f"usess:{user_id}", self._s.session_absolute_timeout_seconds)
         return sid, data
+
+    async def update(self, session_id: str, **changes) -> None:
+        raw = await self._r.get(_key(session_id))
+        if raw is None:
+            return
+        d = json.loads(raw)
+        d.update(changes)
+        ttl = await self._r.ttl(_key(session_id))
+        await self._r.set(_key(session_id), json.dumps(d, ensure_ascii=False), ex=ttl if ttl and ttl > 0 else self._s.session_idle_timeout_seconds)
+
+    async def destroy_user(self, user_id: str, *, keep: str | None = None) -> int:
+        """Завершает все сессии локального пользователя (кроме `keep`)."""
+        keys = await self._r.smembers(f"usess:{user_id}")
+        keep_key = _key(keep) if keep else None
+        n = 0
+        for k in keys:
+            if k != keep_key:
+                n += await self._r.delete(k)
+                await self._r.srem(f"usess:{user_id}", k)
+        return n
 
     async def get(self, session_id: str | None, *, touch: bool = True) -> SessionData | None:
         if not session_id or len(session_id) > 200:

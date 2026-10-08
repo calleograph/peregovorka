@@ -4,6 +4,7 @@ from .entities import (
     ChatAttachment,
     AppSetting,
     AuditLog,
+    CaCertificate,
     EventLog,
     GuestParticipant,
     Meeting,
@@ -14,8 +15,12 @@ from .entities import (
     Protocol,
     ProtocolTemplate,
     Recording,
+    LdapProfile,
+    MailMessage,
+    MailProfile,
     Room,
     StorageProfile,
+    StorageSyncRun,
     RoomAcl,
     RoomModerator,
     TranscriptSegment,
@@ -23,6 +28,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "ApiProfile", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "CaCertificate", "LdapProfile", "MailMessage", "MailProfile", "StorageSyncRun", "ApiProfile", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "TranscriptSegment", "User",
 ]

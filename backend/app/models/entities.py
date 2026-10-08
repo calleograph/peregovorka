@@ -35,6 +35,11 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # ad — доменный пользователь (пароль не хранится); local — локальный (аварийный) администратор, независимый от LDAP
+    auth_source: Mapped[str] = mapped_column(String(8), default="ad", server_default="ad", nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(Text)            # только для local (argon2id)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -82,6 +87,8 @@ class Room(Base):
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # доставка материалов встречи по почте (настраивает руководитель): {enabled, materials[], recipients{leaders,participants,users[],emails[]}}
+    mail_delivery: Mapped[dict | None] = mapped_column(JSONType)
     welcome_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -242,6 +249,8 @@ class ChatAttachment(Base):
     kind: Mapped[str] = mapped_column(String(8), nullable=False)                 # image | file
     storage_key: Mapped[str] = mapped_column(String(500), nullable=False)        # путь внутри хранилища (формирует сервер, не клиент)
     profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                   # профиль хранилища на момент загрузки (None — локальный диск)
+    file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)   # ok | missing
+    file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
 
 
@@ -321,6 +330,9 @@ class Recording(Base):
     export_location: Mapped[str | None] = mapped_column(String(1000))
     export_error: Mapped[str | None] = mapped_column(String(500))
     exported_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # ok — файл есть (по последней сверке); missing — удалён из хранилища/с диска вне приложения: ссылка не отдаётся
+    file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
+    file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
 
 
@@ -341,6 +353,9 @@ class Protocol(Base):
     title: Mapped[str | None] = mapped_column(String(300))
     edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     edited_by: Mapped[str | None] = mapped_column(String(300))
+    # состояние ВЫГРУЖЕННОГО файла (сам текст — в базе): ok | missing — файл удалён из хранилища
+    file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
+    file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -412,3 +427,117 @@ class EventLog(Base):
     message: Mapped[str | None] = mapped_column(String(600))
     data: Mapped[dict | None] = mapped_column(JSONType)
     request_id: Mapped[str | None] = mapped_column(String(64))
+
+
+class LdapProfile(Base):
+    """Подключение к каталогу (LDAPS), настраиваемое из веб-интерфейса. Пароль сервисной учётной записи — зашифрован."""
+
+    __tablename__ = "ldap_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    host: Mapped[str] = mapped_column(String(253), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, default=636, nullable=False)
+    protocol: Mapped[str] = mapped_column(String(10), default="ldaps", server_default="ldaps", nullable=False)   # ldaps | starttls
+    base_dn: Mapped[str] = mapped_column(String(500), nullable=False)
+    upn_suffix: Mapped[str] = mapped_column(String(253), default="", server_default="", nullable=False)
+    netbios_domain: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)
+    timeout_s: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    bind_dn: Mapped[str] = mapped_column(String(500), nullable=False)
+    secret_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    login_attribute: Mapped[str] = mapped_column(String(64), default="sAMAccountName", server_default="sAMAccountName", nullable=False)
+    display_name_attribute: Mapped[str] = mapped_column(String(64), default="displayName", server_default="displayName", nullable=False)
+    email_attribute: Mapped[str] = mapped_column(String(64), default="mail", server_default="mail", nullable=False)
+    use_for_users: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    use_for_admins: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class CaCertificate(Base):
+    """Корневой/промежуточный сертификат удостоверяющего центра для проверки LDAPS (и, по желанию, SMTP). Закрытых ключей здесь нет."""
+
+    __tablename__ = "ca_certificates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    subject: Mapped[str] = mapped_column(String(1000), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(1000), nullable=False)
+    serial: Mapped[str] = mapped_column(String(100), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    not_before: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    not_after: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    is_ca: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    self_signed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pem: Mapped[str] = mapped_column(Text, nullable=False)
+    added_by: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class MailProfile(Base):
+    """Профиль исходящей почты (SMTP). Пароль — зашифрован. Активен один профиль (`is_active`)."""
+
+    __tablename__ = "mail_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    host: Mapped[str] = mapped_column(String(253), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    security: Mapped[str] = mapped_column(String(10), default="starttls", server_default="starttls", nullable=False)   # none | starttls | ssl
+    auth_type: Mapped[str] = mapped_column(String(10), default="none", server_default="none", nullable=False)         # none | login
+    username: Mapped[str] = mapped_column(String(320), default="", server_default="", nullable=False)
+    secret_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    from_address: Mapped[str] = mapped_column(String(320), nullable=False)
+    from_name: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    timeout_s: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    verify_cert: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class MailMessage(Base):
+    """Письмо в очереди. Тела писем и документы в таблице НЕ хранятся — собираются из данных встречи в момент отправки."""
+
+    __tablename__ = "mail_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    meeting_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("meetings.id", ondelete="SET NULL"), index=True)
+    room_name: Mapped[str | None] = mapped_column(String(200))
+    recipient: Mapped[str] = mapped_column(String(320), nullable=False)
+    recipient_name: Mapped[str | None] = mapped_column(String(300))
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    kinds: Mapped[list | None] = mapped_column(JSONType)        # какие материалы: protocol | summary | transcript …
+    trigger: Mapped[str] = mapped_column(String(10), default="auto", nullable=False)   # auto | manual | test
+    requested_by: Mapped[str | None] = mapped_column(String(300))
+    state: Mapped[str] = mapped_column(String(10), default="queued", index=True, nullable=False)   # queued | sending | sent | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(600))
+    delivery: Mapped[str | None] = mapped_column(String(10))     # attachment | link — как доставлены материалы
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    sending_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class StorageSyncRun(Base):
+    """Запуск сверки метаданных базы с реальным содержимым хранилищ (отчёт для администратора)."""
+
+    __tablename__ = "storage_sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    trigger: Mapped[str] = mapped_column(String(10), nullable=False)    # manual | auto
+    actor: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(12), default="running", nullable=False)   # running | ok | partial | unavailable | failed
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    checked: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    missing: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # впервые обнаружены отсутствующими
+    restored: Mapped[int] = mapped_column(Integer, default=0, nullable=False)      # снова на месте
+    orphans: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # неизвестные файлы (не импортируются)
+    unavailable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)   # не удалось проверить (хранилище недоступно)
+    details: Mapped[dict | None] = mapped_column(JSONType)

@@ -5,11 +5,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Settings
 from ..models import User, utcnow
+from ..security.passwords import verify_room_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
 from .sessions import SessionData, SessionStore
 from .throttle import LoginThrottle, ThrottledError
@@ -26,6 +27,7 @@ _MESSAGES = {
     "account_restriction": ("Вход этой учётной записи ограничен политикой домена.", 403),
     "access_denied": ("Нет разрешения на вход в систему.", 403),
     "throttled": ("Слишком много неудачных попыток. Повторите позже.", 429),
+    "not_configured": ("Вход доменной учётной записью пока не настроен. Войдите локальным администратором и подключите каталог в разделе «LDAP и доступ».", 503),
 }
 _UNAVAILABLE = ("Служба входа временно недоступна. Повторите позже или обратитесь к администратору.", 503)
 
@@ -49,6 +51,7 @@ class AuthService:
         self._dir = directory
         self._throttle = throttle
         self._sessions = sessions
+        self.settings_svc = None  # services.settings.SettingsService — группы доступа из веб-настроек; задаётся при запуске
 
     async def login(self, db: AsyncSession, login: str, password: str, ip: str) -> LoginResult:
         try:
@@ -64,8 +67,12 @@ class AuthService:
             log.warning("Вход отклонён throttle", extra={"login_hash_only": True, "retry_after": exc.retry_after})
             raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
 
+        local = await self._local_login(db, norm, password, ip)
+        if local is not None:
+            return local
+
         try:
-            identity: DirectoryIdentity = await asyncio.to_thread(self._dir.authenticate, norm, password)
+            identity: DirectoryIdentity = await asyncio.to_thread(self._dir.authenticate, login.strip() if "\\" in login or "@" in login else norm, password)
         except DirectoryError as exc:
             code = "invalid_credentials" if exc.code in ("user_not_found", "ambiguous_user") else exc.code
             if code == "invalid_credentials":
@@ -77,10 +84,14 @@ class AuthService:
             raise AuthError("directory_unavailable", *_UNAVAILABLE) from None
 
         # Доступ к системе в целом (необязательная группа).
-        access_dn = self._s.ldap_access_group_dn.strip().lower()
-        admin_dn = self._s.ldap_admin_group_dn.strip().lower()
-        is_admin = bool(admin_dn) and admin_dn in identity.groups
-        if access_dn and access_dn not in identity.groups and not is_admin:
+        admin_groups = {g.strip().lower() for g in [self._s.ldap_admin_group_dn] if g.strip()}
+        access_groups = {g.strip().lower() for g in [self._s.ldap_access_group_dn] if g.strip()}
+        if self.settings_svc is not None:    # группы, заданные в веб-интерфейсе («LDAP и доступ»), добавляются к заданным в .env
+            acc = await self.settings_svc.get(db, "access")
+            admin_groups |= {g.lower() for g in acc.admin_groups}      # type: ignore[attr-defined]
+            access_groups |= {g.lower() for g in acc.user_groups}      # type: ignore[attr-defined]
+        is_admin = bool(admin_groups & identity.groups) and identity.for_admins
+        if (access_groups and not (access_groups & identity.groups) and not is_admin) or (not identity.for_users and not is_admin):
             await self._throttle.record_success(norm)  # пароль верный — это не перебор
             raise AuthError("access_denied", *_MESSAGES["access_denied"])
 
@@ -94,6 +105,24 @@ class AuthService:
         )
         log.info("Вход выполнен", extra={"user_id": str(user.id), "is_admin": is_admin})
         return LoginResult(sid, data, user)
+
+    async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str) -> LoginResult | None:
+        """Локальный (аварийный) администратор: проверяется ПЕРВЫМ и не зависит от каталога. Нет такого логина — None (идём в каталог)."""
+        row = (await db.execute(select(User).where(User.auth_source == "local", func.lower(User.sam_account_name) == norm.lower()))).scalar_one_or_none()
+        if row is None or not row.password_hash:
+            return None
+        if not verify_room_password(row.password_hash, password):
+            await self._throttle.record_failure(norm, ip)
+            return None   # возможно, это одноимённый доменный пользователь — пусть решает каталог
+        if not row.is_active:
+            raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
+        await self._throttle.record_success(norm)
+        row.last_login_at = utcnow()
+        await db.commit()
+        sid, data = await self._sessions.create(user_id=str(row.id), ad_guid=row.ad_guid, sam=row.sam_account_name, display_name=row.display_name,
+                                                is_admin=True, groups=[], local=True, must_change=row.must_change_password)
+        log.info("Вход локального администратора", extra={"user_id": str(row.id)})
+        return LoginResult(sid, data, row)
 
     @staticmethod
     async def _upsert_user(db: AsyncSession, ident: DirectoryIdentity, is_admin: bool) -> User:

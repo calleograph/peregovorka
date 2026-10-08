@@ -153,7 +153,8 @@ async def directory_search(request: Request, kind: str = Query(pattern="^(group|
     try:
         return await asyncio.to_thread(request.app.state.directory.search, kind, q, 20)
     except DirectoryError as exc:
-        raise HTTPException(status_code=503, detail=f"Каталог недоступен ({exc.code})") from None
+        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «LDAP и доступ»." if exc.code == "not_configured"
+                            else f"Каталог недоступен ({exc.code})") from None
 
 
 # ------------------------------------------------------------------------------- встречи
@@ -227,7 +228,7 @@ async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(1
         stmt = stmt.where(Recording.room_id == room_id)
     return [{"id": str(r.id), "meeting_id": str(r.meeting_id), "room": name, "identity": r.participant_identity, "path": r.path,
              "size_bytes": r.size_bytes, "duration_s": r.duration_s, "created_at": r.created_at,
-             "export_status": r.export_status, "export_location": r.export_location, "export_error": r.export_error}
+             "export_status": r.export_status, "export_location": r.export_location, "export_error": r.export_error, "file_state": r.file_state}
             for r, name in (await db.execute(stmt)).all()]
 
 
@@ -300,7 +301,7 @@ async def system_status(request: Request, su: SessionUser = Depends(require_admi
         await asyncio.to_thread(app.state.directory.check_service_account)
         out["checks"]["ldap"] = {"ok": True}
     except DirectoryError as exc:
-        out["checks"]["ldap"] = {"ok": False, "error": exc.code}
+        out["checks"]["ldap"] = {"ok": True, "configured": False} if exc.code == "not_configured" else {"ok": False, "error": exc.code}
     except Exception as exc:  # noqa: BLE001
         out["checks"]["ldap"] = {"ok": False, "error": type(exc).__name__}
 

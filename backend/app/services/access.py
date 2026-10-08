@@ -46,6 +46,10 @@ async def can_access_meeting_actor(db: AsyncSession, redis: Redis, meeting: Meet
 async def can_access_meeting(db: AsyncSession, redis: Redis, meeting: Meeting, su: SessionUser) -> bool:
     if su.is_admin:
         return True
+    from . import roles  # noqa: PLC0415 — руководитель комнаты видит встречи своей комнаты (материалы, протоколы, рассылка)
+
+    if roles.is_room_leader(meeting.room, su):
+        return True
     participated = any(p.user_id == su.user_id for p in meeting.participants)
     if meeting.ended_at is None:
         return participated

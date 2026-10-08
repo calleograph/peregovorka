@@ -1,23 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type AclEntry, type ApiError, type RoomManage, type RoomType } from "../api";
+import { api, type AclEntry, type ApiError, type MailDeliverySpec, type RoomManage, type RoomType } from "../api";
 import { copyText } from "../util";
 import AclPicker from "./AclPicker";
 import { Modal } from "./Dialogs";
+import DeliveryEditor, { emptySpec } from "./DeliveryEditor";
 
-type TabId = "main" | "mode" | "access" | "guests";
-const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Режим и запись"], ["access", "Доступ и руководители"], ["guests", "Гости"]];
+type TabId = "main" | "mode" | "access" | "guests" | "notify";
+const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Режим и запись"], ["access", "Доступ и руководители"], ["guests", "Гости"], ["notify", "Уведомления"]];
 
 interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
   room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean;
-  guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[];
+  guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
 }
 
 const toForm = (r: RoomManage): Form => ({
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, password: "", clearPassword: false,
   welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record,
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, guest_access_enabled: r.guest_access_enabled,
-  acl: r.acl, moderators: r.moderators,
+  acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
 });
 
 /**
@@ -53,7 +54,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
         welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, room_type: form.room_type,
         record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, guest_access_enabled: form.guest_access_enabled,
-        acl: form.acl, moderators: form.moderators,
+        acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
         ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}),
       });
       setRoom(r); setForm(toForm(r)); onSaved?.(r);
@@ -158,6 +159,8 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
               </fieldset>
             </div>
           )}
+
+          {tab === "notify" && <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(s) => set("mail_delivery", s)} />}
 
           {note && <div className="alert ok" role="status">{note}</div>}
           {error && <div className="alert error" role="alert">{error}</div>}

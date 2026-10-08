@@ -5,6 +5,7 @@ import BoardViewer from "../board/BoardViewer";
 import ChatPanel from "../components/ChatPanel";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
+import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
 import ProtocolViewer from "../components/ProtocolViewer";
 import { formatTime, renderProtocol } from "../transcript";
@@ -36,6 +37,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [protocols, setProtocols] = useState<ProtocolItem[]>([]);
   const [recordings, setRecordings] = useState<MeetingRecording[]>([]);
+  const [sendOpen, setSendOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
@@ -123,6 +125,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
           <button onClick={() => downloadText(text, `${fileBase(meeting.room_name, meeting.started_at)}.txt`)} disabled={!segments.length}>Как на этой странице (.txt)</button>
         </Menu>
+        {finished && (isAdmin || meeting.can_send_materials) && <button className="btn" onClick={() => setSendOpen(true)} title="Протокол, резюме и стенограмма — выбранным получателям по электронной почте">Отправить материалы…</button>}
         {isAdmin && <MeetingAdminActions meeting={meeting} onChanged={() => { void loadMeeting(); loadRecordings(); void loadProtocols(); }} onDeleted={() => navigate("/history")} />}
       </div>
 
@@ -179,11 +182,12 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
             {recordings.map((r) => (
               <tr key={r.id}><td>{r.identity}</td><td>{r.name}</td><td>{r.duration_s ? `${Math.floor(r.duration_s / 60)}:${String(r.duration_s % 60).padStart(2, "0")}` : "—"}</td><td>{bytes(r.size_bytes)}</td>
                 <td>{r.export_status}{r.export_error && <span className="small" style={{ color: "var(--danger-text)" }}> {r.export_error}</span>}</td>
-                <td><a href={api.recordingUrl(meetingId, r.id)} download>Скачать</a></td></tr>))}
+                <td>{r.file_state === "missing" ? <span className="badge warn" title="Файл удалён из хранилища (обнаружено при сверке)">файл удалён</span> : <a href={api.recordingUrl(meetingId, r.id)} download>Скачать</a>}</td></tr>))}
           </tbody></table>
         </div>
       )}
 
+      {sendOpen && <SendMaterialsDialog meetingId={meetingId} onClose={() => setSendOpen(false)} />}
       {dialog && <ProtocolDialog meetingId={meetingId} kind={dialog.kind} isAdmin={isAdmin} initialInstruction={dialog.instruction} onClose={() => setDialog(null)} onStarted={onStarted} />}
     </section>
   );

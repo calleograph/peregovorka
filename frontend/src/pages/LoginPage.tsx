@@ -28,10 +28,10 @@ export default function LoginPage({ onLogin, version }: { onLogin: (m: Me) => vo
     <div className="login-wrap">
       <form className="card login" onSubmit={submit}>
         <h1>Вход в переговорку</h1>
-        <p className="muted">Используйте доменную учётную запись.</p>
+        <p className="muted">Используйте доменную учётную запись. Администратор сервера при первой настройке входит локальной учётной записью (её данные показаны в конце установки).</p>
         <label>Логин
           <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" autoFocus required maxLength={256}
-                 autoCapitalize="none" spellCheck={false} aria-invalid={login !== "" && !valid} placeholder="ivanov  или  ivanov@corp.local" />
+                 autoCapitalize="none" spellCheck={false} aria-invalid={login !== "" && !valid} placeholder="user1  или  user1@example.local" />
           {login !== "" && !valid && <span className="field-err" role="alert">{LOGIN_HINT}</span>}
         </label>
         <label>Пароль

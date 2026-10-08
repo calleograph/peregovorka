@@ -32,13 +32,14 @@ async function saveBlob(blob: Blob, name: string): Promise<void> {
 
 function ImageAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachment }) {
   const [url, setUrl] = useState("");
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(!!a.missing);
   useEffect(() => {
+    if (a.missing) return;
     let alive = true; let made = "";
     api.attachmentBlob(meetingId, a.id).then((b) => { if (alive) { made = URL.createObjectURL(b); setUrl(made); } }).catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; if (made) URL.revokeObjectURL(made); };
   }, [meetingId, a.id]);
-  if (failed) return <div className="chat-file broken"><Icon name="file" size={18} /><span className="chat-file-name">{a.name}</span><span className="muted small">не удалось загрузить</span></div>;
+  if (failed) return <div className="chat-file broken"><Icon name="file" size={18} /><span className="chat-file-name">{a.name}</span><span className="muted small">{a.missing ? "файл удалён из хранилища" : "не удалось загрузить"}</span></div>;
   return (
     <a className="chat-image" href={url || undefined} target="_blank" rel="noopener noreferrer" title={`${a.name} · ${formatSize(a.size)} — открыть оригинал`}
        onClick={(e) => { if (!url) e.preventDefault(); }}>
@@ -50,6 +51,7 @@ function ImageAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachmen
 function FileAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachment }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  if (a.missing) return <div className="chat-file broken"><Icon name="file" size={20} /><div className="chat-file-info"><span className="chat-file-name" title={a.name}>{a.name}</span><span className="muted small">файл удалён из хранилища</span></div></div>;
   const download = async () => {
     setBusy(true); setErr("");
     try { await saveBlob(await api.attachmentBlob(meetingId, a.id, true), a.name); }

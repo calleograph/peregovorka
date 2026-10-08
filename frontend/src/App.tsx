@@ -6,6 +6,8 @@ import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
 import LoginPage from "./pages/LoginPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
+import SetupWizard from "./components/SetupWizard";
 import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
 
@@ -22,6 +24,7 @@ function NavItem({ to, end, newTab, children }: { to: string; end?: boolean; new
 function StaffApp() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined — ещё проверяем сессию
   const [version, setVersion] = useState("");
+  const [wizard, setWizard] = useState(false);
   const navigate = useNavigate();
   const inMeeting = useActiveMeeting() !== null;
 
@@ -35,8 +38,20 @@ function StaffApp() {
   const onLogin = useCallback((m: Me) => { setCsrf(m.csrf_token); setMe(m); navigate("/"); }, [navigate]);
   const logout = async () => { await api.logout().catch(() => undefined); setCsrf(""); setMe(null); navigate("/"); };
 
+  // мастер первоначальной настройки — один раз после первого локального входа (пока не завершён и не закрыт)
+  useEffect(() => {
+    if (!me || me.must_change_password || !me.user.is_admin || !me.local) { setWizard(false); return; }
+    void api.admin.setupStatus().then((s) => setWizard(s.show)).catch(() => undefined);
+  }, [me]);
+  const goAdmin = (page: string) => {
+    try { sessionStorage.setItem("adminTab", page); } catch { /* ignore */ }
+    navigate("/admin");
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent("admin:goto", { detail: page })), 50);
+  };
+
   if (me === undefined) return <div className="center muted">Загрузка…</div>;
   if (me === null) return <LoginPage onLogin={onLogin} version={version} />;
+  if (me.must_change_password) return <ChangePasswordPage onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
 
   return (
     <div className="shell">
@@ -54,6 +69,7 @@ function StaffApp() {
         <button className="btn ghost" onClick={logout} disabled={inMeeting} title={inMeeting ? "Сначала выйдите из комнаты: выход из системы прервёт встречу" : undefined}>Выйти</button>
       </header>
       <main>
+        {wizard && <SetupWizard onGo={goAdmin} onClose={() => setWizard(false)} />}
         <Suspense fallback={<div className="muted">Загрузка…</div>}>
         <Routes>
           <Route path="/" element={<RoomsPage />} />

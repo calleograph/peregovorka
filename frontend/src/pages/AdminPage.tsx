@@ -1,12 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import AccessAdmin from "./admin/AccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
+import CaAdmin from "./admin/CaAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmFields, mailPolicyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
+import LdapAdmin from "./admin/LdapAdmin";
+import MailAdmin, { MailLogAdmin } from "./admin/MailAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import SettingsForm from "./admin/SettingsForm";
+import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
@@ -15,45 +20,49 @@ import TemplatesAdmin from "./admin/TemplatesAdmin";
 interface Page { id: string; label: string; render: (go: (id: string) => void) => ReactNode }
 interface Group { title: string; pages: Page[] }
 
-/** Пункты сгруппированы по задачам администратора; названия, пояснения и примеры заполнения — внутри форм. */
+/** Разделы сгруппированы по смыслу: состояние, вход и доступ, хранилища, почта, встречи, интеграции, журналы, система. Пароли нигде не показываются. */
 const GROUPS: Group[] = [
-  { title: "Обзор", pages: [
+  { title: "Состояние", pages: [
     { id: "system", label: "Состояние системы", render: (go) => <SystemAdmin onOpen={go} /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
     { id: "updates", label: "Обновления и версии", render: () => <UpdatesAdmin /> },
   ] },
-  { title: "Журналы", pages: [
-    { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
-    { id: "journal_settings", label: "Хранение журнала", render: () => (
-      <SettingsForm key="journal" group="journal" title="Хранение журнала событий" fields={journalFields} testable
-        intro="Сколько хранить записи, нужно ли держать их в базе сервера и куда дублировать во внешнее хранилище (диск или сетевой ресурс), чтобы не занимать место на сервере." />) },
-    { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
+  { title: "LDAP и доступ", pages: [
+    { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
+    { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
+    { id: "access", label: "Доступ к администрированию", render: () => <AccessAdmin /> },
   ] },
-  { title: "Встречи", pages: [
-    { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
-    { id: "recordings", label: "Записи аудио", render: () => <RecordingsAdmin /> },
+  { title: "Хранилища", pages: [
+    { id: "storages", label: "Серверы файлов (SMB, каталог)", render: (go) => <StoragesAdmin onOpen={go} /> },
+    { id: "storage", label: "Протоколы и материалы", render: () => (
+      <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
+        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Серверы файлов» — подпапки создаются автоматически." />) },
+    { id: "audio_storage", label: "Записи аудио", render: () => (
+      <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
+        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Серверы файлов»." />) },
+    { id: "chat_files", label: "Вложения чата", render: () => (
+      <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
+        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
+    { id: "storage_sync", label: "Сверка хранилищ", render: () => <StorageSyncAdmin /> },
   ] },
-  { title: "Комнаты и люди", pages: [
+  { title: "Электронная почта", pages: [
+    { id: "mail", label: "Исходящая почта (SMTP)", render: (go) => <MailAdmin onOpen={go} /> },
+    { id: "mail_policy", label: "Правила рассылки", render: () => (
+      <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
+        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Уведомления»); адреса сервера и пароль ему не показываются." />) },
+    { id: "mail_log", label: "Журнал отправки", render: () => <MailLogAdmin /> },
+  ] },
+  { title: "Встречи и комнаты", pages: [
     { id: "rooms", label: "Переговорки", render: () => <RoomsAdmin /> },
+    { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
+    { id: "recordings", label: "Записи аудио (список)", render: () => <RecordingsAdmin /> },
     { id: "users", label: "Пользователи", render: () => <UsersAdmin /> },
-  ] },
-  { title: "Протоколы", pages: [
-    { id: "protocol", label: "Инструкции и режим", render: () => (
+    { id: "protocol", label: "Инструкции и режим протоколов", render: () => (
       <SettingsForm key="protocol" group="protocol" title="Инструкции и режим формирования протоколов" fields={protocolFields}
         intro="Что по умолчанию просит модель и когда документы создаются сами. Пользователь всегда видит инструкцию в окне «Сформировать протокол» и может её изменить." />) },
     { id: "templates", label: "Общие шаблоны", render: () => <TemplatesAdmin /> },
   ] },
   { title: "Интеграции", pages: [
-    { id: "storages", label: "Хранилища (серверы файлов)", render: (go) => <StoragesAdmin onOpen={go} /> },
-    { id: "storage", label: "Хранилище протоколов", render: () => (
-      <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
-        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Хранилища» — подпапки создаются автоматически." />) },
-    { id: "audio_storage", label: "Хранилище записей", render: () => (
-      <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
-        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Хранилища»." />) },
-    { id: "chat_files", label: "Вложения чата", render: () => (
-      <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
-        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
     { id: "asr", label: "Распознавание речи (ASR)", render: () => <AsrModelsAdmin /> },
     { id: "anon", label: "Обезличивание", render: () => (
       <>
@@ -68,6 +77,13 @@ const GROUPS: Group[] = [
         <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmFields} />
       </>) },
   ] },
+  { title: "Журналы", pages: [
+    { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
+    { id: "journal_settings", label: "Хранение журнала", render: () => (
+      <SettingsForm key="journal" group="journal" title="Хранение журнала событий" fields={journalFields} testable
+        intro="Сколько хранить записи, нужно ли держать их в базе сервера и куда дублировать во внешнее хранилище (диск или сетевой ресурс), чтобы не занимать место на сервере." />) },
+    { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
+  ] },
   { title: "Система", pages: [
     { id: "screen", label: "Показ экрана", render: () => <SettingsForm key="screen" group="screen" title="Показ экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
     { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
@@ -78,6 +94,13 @@ export default function AdminPage({ version }: { version: string }) {
   const ids = GROUPS.flatMap((g) => g.pages.map((p) => p.id));
   const [tab, setTab] = useState(() => { const t = sessionStorage.getItem("adminTab"); return t && ids.includes(t) ? t : "system"; });
   const pick = (t: string) => { setTab(t); try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ } };
+  // переход из мастера первоначальной настройки (страница могла быть уже открыта)
+  useEffect(() => {
+    const on = (e: Event) => { const t = (e as CustomEvent<string>).detail; if (ids.includes(t)) pick(t); };
+    window.addEventListener("admin:goto", on);
+    return () => window.removeEventListener("admin:goto", on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const page = GROUPS.flatMap((g) => g.pages).find((p) => p.id === tab);
   return (
     <section>

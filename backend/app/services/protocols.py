@@ -86,6 +86,7 @@ class ProtocolService:
         self.profiles = ProfileService(svc)
         self.files = FileStore(svc, settings.data_dir)
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
+        self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self._tasks: set[asyncio.Task] = set()
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
@@ -200,6 +201,8 @@ class ProtocolService:
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
             if proto_cfg.auto_summary:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
+            if self.after_finalize is not None:
+                await self.after_finalize(meeting_id)
         except Exception:  # noqa: BLE001
             log.exception("Ошибка финализации встречи", extra={"meeting_id": str(meeting_id)})
 
@@ -275,7 +278,7 @@ class ProtocolService:
         cfg = await self._svc.get(db, "audio_storage")
         if not cfg.enabled:  # type: ignore[attr-defined]
             return 0
-        recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed"))))).scalars().all()
+        recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed")), Recording.file_state != "missing"))).scalars().all()
         n = 0
         for rec in recs:
             await self.export_recording(db, rec)

@@ -1,7 +1,7 @@
 // Клиент REST API. Сессия — HttpOnly cookie (JS её не видит); CSRF-токен хранится только в памяти.
 
 export interface User { id: string; sam_account_name: string; display_name: string; is_admin: boolean }
-export interface Me { user: User; csrf_token: string }
+export interface Me { user: User; csrf_token: string; local?: boolean; must_change_password?: boolean }
 export interface ActiveMeeting { id: string; started_at: string; participants: number }
 export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
@@ -38,7 +38,7 @@ export interface JoinInfo {
 /** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
 export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }
 export interface GuestRoomInfo { room_name: string; description: string | null; meeting_active: boolean; has_password: boolean; camera_allowed: boolean }
-export interface ChatAttachment { id: string; name: string; mime: string; size: number; kind: "image" | "file" }
+export interface ChatAttachment { id: string; name: string; mime: string; size: number; kind: "image" | "file"; missing?: boolean }
 export interface ChatMessage {
   id: number; meeting_id: string; created_at: string; author_type: "user" | "guest" | "system"; author_id: string | null; author_name: string; text: string;
   attachments?: ChatAttachment[];
@@ -54,6 +54,8 @@ export interface ProtocolItem {
   id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
   created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
   title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
+  /** Выгруженный файл удалён из хранилища (по сверке): ссылки `location` нет; сам текст остаётся в системе. */
+  file_state?: "ok" | "missing";
 }
 export interface ProtocolTemplate { id: string; name: string; kind: "any" | ProtocolKind; instruction: string; scope: "global" | "user"; can_edit: boolean }
 export interface AdminUser {
@@ -61,7 +63,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
+export type SettingsGroup = "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -83,9 +85,9 @@ export interface SystemStatus {
 export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null }
 export interface RecordingRow {
   id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
-  export_status?: string; export_location?: string | null; export_error?: string | null;
+  export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing";
 }
-export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null }
+export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
   user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest"; display_name: string; joined_at: string; left_at: string | null; online: boolean;
 }
@@ -94,7 +96,7 @@ export interface Meeting {
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
   /** Сообщений в чате встречи; доска «использовалась», если whiteboard_shapes > 0. */
-  chat_messages?: number; whiteboard_shapes?: number; guests?: number;
+  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean;
 }
 export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
@@ -130,8 +132,50 @@ export interface RoomManage {
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; room_type: RoomType; auto_record: boolean; record_audio: boolean;
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
+  mail_delivery?: MailDeliverySpec | null;
 }
 export type ProfileKind = "llm" | "anonymizer";
+export interface LdapProfile {
+  id: string; name: string; enabled: boolean; host: string; port: number; protocol: "ldaps" | "starttls"; base_dn: string; upn_suffix: string; netbios_domain: string;
+  timeout_s: number; bind_dn: string; secret_set: boolean; login_attribute: string; display_name_attribute: string; email_attribute: string;
+  use_for_users: boolean; use_for_admins: boolean; position: number; uri: string;
+}
+export interface DiagStage { stage: string; ok: boolean | null; message: string; ms?: number }
+export interface DiagResult { ok: boolean; stages: DiagStage[]; stage?: string; message?: string }
+export interface CaCert {
+  id: string; label: string; subject: string; issuer: string; serial: string; sha256: string; not_before: string; not_after: string; is_ca: boolean; self_signed: boolean;
+  expired: boolean; added_by: string | null; created_at: string | null; source: "web" | "file"; type?: string;
+}
+export interface CaInfo { subject: string; issuer: string; serial: string; sha256: string; not_before: string; not_after: string; is_ca: boolean; self_signed: boolean; expired: boolean; not_yet_valid: boolean; type: string }
+export interface LocalAdminInfo { exists: boolean; username?: string; is_active?: boolean; must_change_password?: boolean; last_login_at?: string | null; password_changed_at?: string | null; recovery: string }
+export interface SetupStep { id: string; title: string; done: boolean; page: string }
+export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean }
+export interface MailProfile {
+  id: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login"; username: string; secret_set: boolean;
+  from_address: string; from_name: string; timeout_s: number; verify_cert: boolean; is_active: boolean;
+}
+export interface MailMessageRow {
+  id: string; created_at: string; sent_at: string | null; state: "queued" | "sending" | "sent" | "failed"; attempts: number; max_attempts: number; next_attempt_at: string;
+  recipient: string; recipient_name: string | null; room: string | null; meeting_id: string | null; subject: string; kinds: string[]; trigger: string;
+  requested_by: string | null; last_error: string | null; delivery: string | null;
+}
+export interface MailDeliverySpec {
+  enabled: boolean; materials: string[];
+  recipients: { leaders: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
+}
+export interface DeliveryRecipient { email: string; name: string; source: string; problem: string | null }
+export interface DeliveryMaterialInfo { kind: string; label: string; describe?: string; available?: boolean; reason?: string | null }
+export interface DeliveryPlan {
+  materials: DeliveryMaterialInfo[]; recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; max_attachment_mb?: number;
+  available_kinds?: DeliveryMaterialInfo[]; selected?: string[]; attach_format?: string;
+}
+export interface SyncRun {
+  id: string; trigger: string; actor: string | null; status: "running" | "ok" | "partial" | "unavailable" | "failed"; started_at: string; finished_at: string | null;
+  checked: number; missing: number; restored: number; orphans: number; unavailable: number;
+  details?: { per_kind?: Record<string, Record<string, number>>; missing?: { kind: string; name: string; dir: string }[]; orphans?: { storage: string; path: string }[];
+    unavailable_backends?: Record<string, string>; suspicious?: Record<string, string>; orphan_scan_skipped?: boolean };
+}
+export interface SyncOverview { settings: { enabled: boolean; interval_hours: number; batch_size: number; guard_percent: number }; runs: SyncRun[]; running: SyncRun | null; last: SyncRun | null }
 export interface ApiProfile { id: string; kind: ProfileKind; name: string; config: Record<string, unknown>; secret_set: boolean; is_default: boolean; virtual: boolean }
 export interface RoomAdmin {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number;
@@ -307,6 +351,8 @@ export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100):
 
 export const api = {
   login: (login: string, password: string) => request<Me>("POST", "/auth/login", { login, password }),
+  /** Смена пароля локального администратора (первичный/сброшенный пароль меняется при первом входе). */
+  changePassword: (current_password: string, new_password: string) => request<void>("POST", "/auth/change-password", { current_password, new_password }),
   logout: () => request<void>("POST", "/auth/logout"),
   me: () => request<Me>("GET", "/auth/me"),
   rooms: () => request<Room[]>("GET", "/rooms"),
@@ -351,6 +397,15 @@ export const api = {
     patch: (roomId: string, body: Record<string, unknown>) => request<RoomManage>("PATCH", `/rooms/${roomId}/manage`, body),
     guestLink: (roomId: string, action: "rotate" | "revoke") => request<RoomManage>("POST", `/rooms/${roomId}/manage/guest-link/${action}`),
     search: (roomId: string, kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/rooms/${roomId}/manage/directory?kind=${kind}&q=${encodeURIComponent(q)}`),
+    /** Кому уйдёт рассылка по этим (даже несохранённым) настройкам: адреса из каталога, у кого адреса нет, что запрещено политикой. */
+    deliveryPreview: (roomId: string, spec: MailDeliverySpec) =>
+      request<{ recipients: DeliveryRecipient[]; participants_by_meeting: boolean; mail_configured: boolean; allowed_domains: string[]; materials: DeliveryMaterialInfo[] }>("POST", `/rooms/${roomId}/manage/delivery-preview`, { mail_delivery: spec }),
+  },
+  /** Ручная отправка материалов завершённой встречи (руководитель комнаты / администратор). */
+  delivery: {
+    preview: (meetingId: string) => request<DeliveryPlan>("GET", `/meetings/${meetingId}/delivery`),
+    send: (meetingId: string, kinds: string[], emails: string[]) =>
+      request<{ batch_id: string; queued: number; skipped: { name: string; email: string; reason: string }[]; kinds: string[]; unavailable: string[] }>("POST", `/meetings/${meetingId}/delivery/send`, { kinds, emails }),
   },
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
@@ -428,6 +483,31 @@ export const api = {
     deleteProfile: (id: string) => request<void>("DELETE", `/admin/api-profiles/${id}`),
     setDefaultProfile: (kind: ProfileKind, profileId: string) => request<{ ok: boolean }>("PUT", "/admin/api-profiles/default", { kind, profile_id: profileId }),
     testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
+    ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean }>("GET", "/admin/ldap-profiles"),
+    createLdap: (body: Record<string, unknown>) => request<LdapProfile>("POST", "/admin/ldap-profiles", body),
+    updateLdap: (id: string, body: Record<string, unknown>) => request<LdapProfile>("PATCH", `/admin/ldap-profiles/${id}`, body),
+    deleteLdap: (id: string) => request<void>("DELETE", `/admin/ldap-profiles/${id}`),
+    moveLdap: (id: string, direction: -1 | 1) => request<{ items: LdapProfile[] }>("POST", `/admin/ldap-profiles/${id}/move`, { direction }),
+    testLdap: (id: string) => request<DiagResult>("POST", `/admin/ldap-profiles/${id}/test`),
+    caList: () => request<{ items: CaCert[] }>("GET", "/admin/ca"),
+    caInspect: (body: { pem?: string; data_base64?: string }) => request<{ items: CaInfo[] }>("POST", "/admin/ca/inspect", body),
+    caAdd: (body: { pem?: string; data_base64?: string; label?: string; confirm_non_ca?: boolean }) => request<{ added: CaInfo[]; already_present: CaInfo[] }>("POST", "/admin/ca", body),
+    caDelete: (id: string) => request<void>("DELETE", `/admin/ca/${id}`),
+    localAdmin: () => request<LocalAdminInfo>("GET", "/admin/local-admin"),
+    setupStatus: () => request<SetupStatus>("GET", "/admin/setup/status"),
+    setupComplete: (skipped: string[]) => request<{ completed: boolean }>("POST", "/admin/setup/complete", { skipped }),
+    mailProfiles: () => request<{ items: MailProfile[] }>("GET", "/admin/mail/profiles"),
+    createMail: (body: Record<string, unknown>) => request<MailProfile>("POST", "/admin/mail/profiles", body),
+    updateMail: (id: string, body: Record<string, unknown>) => request<MailProfile>("PATCH", `/admin/mail/profiles/${id}`, body),
+    deleteMail: (id: string) => request<void>("DELETE", `/admin/mail/profiles/${id}`),
+    activateMail: (id: string) => request<MailProfile>("POST", `/admin/mail/profiles/${id}/activate`),
+    checkMail: (id: string) => request<DiagResult>("POST", `/admin/mail/profiles/${id}/check`),
+    testMail: (id: string, to: string) => request<{ ok: boolean; message: string }>("POST", `/admin/mail/profiles/${id}/test-send`, { to }),
+    mailMessages: (state = "", q = "", offset = 0) => request<{ items: MailMessageRow[]; counts: Record<string, number> }>("GET", `/admin/mail/messages?limit=100&offset=${offset}&state=${state}&q=${encodeURIComponent(q)}`),
+    retryMail: (id: string) => request<MailMessageRow>("POST", `/admin/mail/messages/${id}/retry`),
+    syncOverview: () => request<SyncOverview>("GET", "/admin/storage-sync"),
+    syncRun: (force = false) => request<{ run_id: string }>("POST", "/admin/storage-sync/run", { force }),
+    syncDetail: (id: string) => request<SyncRun>("GET", `/admin/storage-sync/runs/${id}`),
     storages: () => request<{ items: StorageProfile[]; folders: string[] }>("GET", "/admin/storages"),
     createStorage: (body: { name: string; kind: "local" | "smb"; config: Record<string, string>; secret?: string }) => request<StorageProfile>("POST", "/admin/storages", body),
     updateStorage: (id: string, body: { name?: string; config?: Record<string, string>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),

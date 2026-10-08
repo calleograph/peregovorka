@@ -596,3 +596,33 @@ pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 .rec-badge.tr { background: var(--ok-bg); color: var(--ok-text); font-weight: 500; }
 .chat-box:has(.chat-attach) { padding-left: 5px; }
 .form select, .form input, .form textarea { max-width: 100%; }
+
+/* ===== 0.3.0: подключения, сертификаты, почта, сверка хранилищ, мастер настройки ===== */
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.stage-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.stage-list li { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; }
+.stage-list .stage-mark { flex: none; width: 16px; font-weight: 700; }
+.stage-list li.bad .stage-mark { color: var(--danger-text); } .stage-list li.ok .stage-mark { color: var(--ok-text); }
+.conn-card { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.conn-card h3, .conn-card h4 { overflow-wrap: anywhere; }
+.secret-row { align-items: center; margin-top: 4px; }
+.secret-row input { flex: 1; min-width: 0; }
+.test-send { margin-top: 4px; } .test-send input { flex: 1; min-width: 0; }
+.cert-card { margin: 4px 0 0; display: grid; gap: 4px; font-size: 13px; }
+.cert-card > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; }
+.cert-card dt { color: var(--muted); } .cert-card dd { margin: 0; overflow-wrap: anywhere; }
+.cert-card .fp { font-size: 11.5px; word-break: break-all; }
+.stats-row { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 8px 0; }
+.stats-row > div { display: flex; flex-direction: column; min-width: 90px; }
+.stats-row b { font-size: 22px; line-height: 1.1; } .stats-row span { color: var(--muted); font-size: 12.5px; }
+.stats-row .warn-n b { color: var(--danger-text); }
+ul.plain { list-style: none; padding: 0; margin: 4px 0; display: flex; flex-direction: column; gap: 3px; }
+.wizard-steps { list-style: none; margin: 8px 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wizard-steps li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.wizard-steps li.done { background: var(--ok-bg); border-color: transparent; } .wizard-steps li.skipped { opacity: .65; }
+.wz-n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--soft); font-weight: 700; }
+.wizard-steps li.done .wz-n { background: var(--ok); color: #fff; }
+.wz-body b { margin-right: 8px; }
+table.recipients td { padding: 5px 8px; vertical-align: top; } table.recipients tr.has-problem td { background: color-mix(in srgb, var(--warn-bg) 55%, transparent); }
+.table .err, .err { color: var(--danger-text); }
+@media (max-width: 700px) { .wizard-steps li { grid-template-columns: 30px minmax(0, 1fr); } .wizard-steps li .row { grid-column: 1 / -1; } .cert-card > div { grid-template-columns: 1fr; gap: 0; } }

@@ -5,11 +5,12 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
+from sqlalchemy import false as sa_false
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
-from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording,
+from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
                       TranscriptSegment)
 from ..services.access import can_access_meeting, release_lease
 from ..services import roles
@@ -17,7 +18,8 @@ from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_pdf
 from ..services.meetings import JoinError
 from ..services.segments import segment_to_dict
-from ..services.storage import StorageError
+from ..services.reconcile import mark_missing
+from ..services.storage import StorageError, StorageNotFound
 from .schemas import MeetingOut, ParticipantOut, SegmentOut, TranscriptOut
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -91,7 +93,10 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
     else:
         mine = select(MeetingParticipant.meeting_id).where(MeetingParticipant.user_id == su.user_id)
         granted = select(MeetingGrant.meeting_id).where(MeetingGrant.user_id == su.user_id)
-        cand = (await db.execute(stmt.where(Meeting.id.in_(mine) | Meeting.id.in_(granted)).limit(400))).scalars().unique().all()
+        # встречи комнат, которыми человек руководит, видны ему в истории даже без участия в них
+        led = [r.id for r in (await db.execute(select(Room))).scalars().unique() if roles.is_room_leader(r, su)]
+        cond = Meeting.id.in_(mine) | Meeting.id.in_(granted) | (Meeting.room_id.in_(led) if led else sa_false())
+        cand = (await db.execute(stmt.where(cond).limit(400))).scalars().unique().all()
         allowed = [m for m in cand if await can_access_meeting(db, request.app.state.redis, m, su)]
         meetings = allowed[offset:offset + limit]
     ids = [m.id for m in meetings]
@@ -102,7 +107,9 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
 @router.get("/{meeting_id}", response_model=MeetingOut)
 async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
-    return meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
+    out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
+    out.can_send_materials = roles.can_manage_room(m.room, su)
+    return out
 
 
 @router.post("/{meeting_id}/leave", status_code=204)
@@ -204,7 +211,9 @@ def _protocol_dict(p: Protocol, with_content: bool = False) -> dict:
     d = {"id": str(p.id), "meeting_id": str(p.meeting_id), "kind": p.kind, "status": p.status, "error": p.error,
          "created_by": p.created_by, "created_at": p.created_at, "updated_at": p.updated_at, "title": p.title,
          "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"),
-         "location": (p.meta or {}).get("location")}
+         # ссылка на выгруженный файл отдаётся, только пока файл есть (по сверке с хранилищем); сам текст всегда в базе
+         "location": (p.meta or {}).get("location") if p.file_state != "missing" else None, "file_state": p.file_state,
+         "export_files": (p.meta or {}).get("export_files")}
     if with_content:
         d["content"], d["instruction"] = p.content, p.instruction
     return d
@@ -321,7 +330,7 @@ async def meeting_recordings(meeting_id: uuid.UUID, su: SessionUser = Depends(re
     """Аудиозаписи встречи — только администраторам."""
     rows = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id).order_by(Recording.created_at))).scalars().all()
     return [{"id": str(r.id), "identity": r.participant_identity, "size_bytes": r.size_bytes, "duration_s": r.duration_s,
-             "name": r.path.rsplit("/", 1)[-1], "export_status": r.export_status, "export_error": r.export_error} for r in rows]
+             "name": r.path.rsplit("/", 1)[-1], "export_status": r.export_status, "export_error": r.export_error, "file_state": r.file_state} for r in rows]
 
 
 @router.get("/{meeting_id}/recordings/{recording_id}")
@@ -330,8 +339,13 @@ async def download_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, req
     rec = await db.get(Recording, recording_id)
     if rec is None or rec.meeting_id != meeting_id:
         raise HTTPException(status_code=404, detail="Запись не найдена")
+    if rec.file_state == "missing":
+        raise HTTPException(status_code=410, detail={"code": "file_missing", "message": "Файл записи удалён из хранилища (обнаружено при сверке). Скачать его нельзя."})
     try:
         data = await request.app.state.protocols.read_recording(db, rec)
+    except StorageNotFound:
+        await mark_missing(db, rec, request.app.state.journal, "запись аудио")
+        raise HTTPException(status_code=410, detail={"code": "file_missing", "message": "Файл записи не найден в хранилище — вероятно, его удалили вне приложения. Состояние записи обновлено."}) from None
     except StorageError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.download",

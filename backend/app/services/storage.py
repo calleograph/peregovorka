@@ -29,6 +29,10 @@ class StorageError(Exception):
     pass
 
 
+class StorageNotFound(StorageError):
+    """Файла нет в хранилище (а само хранилище отвечает) — в отличие от «хранилище недоступно»."""
+
+
 def safe_component(name: str, fallback: str = "room") -> str:
     """Имя каталога/файла без запрещённых символов и без «..». Пользовательский ввод в путь не попадает «как есть»."""
     cleaned = _BAD.sub("_", name).strip(" .")
@@ -52,6 +56,7 @@ class StorageBackend(Protocol):
     def list_dir(self, rel: str) -> list[str]: ...
     def delete_dir(self, rel: str) -> None: ...
     def test(self) -> str: ...
+    def probe(self) -> None: ...   # лёгкая проверка доступности хранилища (без записи); StorageError — недоступно
 
 
 def _check_rel(rel: str) -> PurePosixPath:
@@ -88,8 +93,14 @@ class LocalStorage:
     def read_bytes(self, rel: str) -> bytes:
         try:
             return self._full(rel).read_bytes()
+        except FileNotFoundError:
+            raise StorageNotFound("Файл не найден в хранилище") from None
         except OSError as exc:
             raise StorageError(f"Не удалось прочитать файл: {exc.strerror or exc}") from None
+
+    def probe(self) -> None:
+        if not self._root.is_dir():
+            raise StorageError(f"Каталог хранилища {self._root} не найден (том не подключён?)")
 
     def delete(self, rel: str) -> None:
         try:
@@ -169,7 +180,20 @@ class SmbStorage:
             with smb.open_file(self._unc(rel), mode="rb") as fh:
                 return fh.read()
         except Exception as exc:  # noqa: BLE001
+            text = f"{type(exc).__name__} {exc}".lower()
+            if isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == 2 or "object_name_not_found" in text or "object_path_not_found" in text or "no such file" in text:
+                raise StorageNotFound("Файл не найден в хранилище") from None
             raise StorageError(f"SMB: не удалось прочитать файл ({type(exc).__name__})") from None
+
+    def probe(self) -> None:
+        smb = self._session()
+        try:
+            if not smb.path.isdir("\\\\" + self._server + "\\" + self._share):
+                raise StorageError(f"SMB: ресурс {self._server}\\{self._share} не найден")
+        except StorageError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: ресурс недоступен ({type(exc).__name__})") from None
 
     def delete(self, rel: str) -> None:
         smb = self._session()

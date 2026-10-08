@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from ..models import Meeting, Room
 from ..security.passwords import hash_room_password
 from ..services import roles
 from ..services.audit import write_audit
+from ..services.mail_delivery import MATERIALS, clean_spec
 from ..services.rooms import acl_allows
 from .admin import _acl_rows, _mod_rows, new_guest_token
 from .schemas import AclEntryIn, AclEntryOut
@@ -58,6 +59,7 @@ class RoomManageOut(BaseModel):
     moderators: list[AclEntryOut]
     active_meeting_id: uuid.UUID | None = None
     can_edit_system_fields: bool = False
+    mail_delivery: dict | None = None      # «Уведомления и доставка материалов» — выбор «что и кому»; SMTP руководителю не показывается
 
 
 class RoomManagePatch(BaseModel):
@@ -78,6 +80,7 @@ class RoomManagePatch(BaseModel):
     guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None
+    mail_delivery: dict | None = None
 
 
 async def _room_for_leader(request: Request, db: AsyncSession, room_id: uuid.UUID, su: SessionUser) -> Room:
@@ -100,7 +103,14 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser) -> RoomManageOut:
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
-        active_meeting_id=active, can_edit_system_fields=su.is_admin)
+        active_meeting_id=active, can_edit_system_fields=su.is_admin, mail_delivery=_safe_spec(room.mail_delivery))
+
+
+def _safe_spec(raw: dict | None) -> dict:
+    try:
+        return clean_spec(raw)
+    except ValueError:
+        return clean_spec(None)
 
 
 @router.get("", response_model=RoomManageOut)
@@ -131,6 +141,16 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
         if not room.guest_access_enabled:
             await db.flush()
             changed["guests_disconnected"] = await request.app.state.meetings.kick_guests(db, room.id)
+    if "mail_delivery" in fields:
+        try:
+            spec = clean_spec(fields["mail_delivery"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if spec != _safe_spec(room.mail_delivery):
+            room.mail_delivery = spec
+            r = spec["recipients"]
+            changed["mail_delivery"] = {"enabled": spec["enabled"], "materials": spec["materials"], "leaders": r["leaders"], "participants": r["participants"],
+                                        "users": len(r["users"]), "emails": len(r["emails"])}
     if body.moderators is not None:
         rows = _mod_rows(body.moderators)
         if not rows and not su.is_admin:
@@ -181,4 +201,22 @@ async def directory(room_id: uuid.UUID, request: Request, kind: str = Query(patt
     try:
         return await asyncio.to_thread(request.app.state.directory.search, kind, q, 20)
     except DirectoryError as exc:
-        raise HTTPException(status_code=503, detail=f"Каталог недоступен ({exc.code})") from None
+        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «LDAP и доступ»." if exc.code == "not_configured"
+                            else f"Каталог недоступен ({exc.code})") from None
+
+
+@router.post("/delivery-preview")
+async def delivery_preview(room_id: uuid.UUID, request: Request, body: dict = Body(default={}), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Кому уйдёт рассылка по текущим (даже ещё не сохранённым) настройкам: адреса из каталога, у кого адреса нет, что запрещено политикой доменов.
+    Участники встречи определяются по факту встречи — здесь их состав неизвестен. Реквизиты почтового сервера руководителю не показываются."""
+    room = await _room_for_leader(request, db, room_id, su)
+    try:
+        spec = clean_spec(body.get("mail_delivery") if body.get("mail_delivery") is not None else room.mail_delivery)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    delivery = request.app.state.delivery
+    recipients = await delivery.resolve(db, room, None, spec)
+    pol = await delivery.policy(db)
+    return {"recipients": [r.public() for r in recipients], "participants_by_meeting": spec["recipients"]["participants"],
+            "mail_configured": await request.app.state.mail.active(db) is not None, "allowed_domains": pol.domains(),
+            "materials": [{"kind": k, "label": d.label, "describe": d.describe} for k, d in MATERIALS.items()]}

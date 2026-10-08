@@ -55,7 +55,11 @@ DIAG="$(bexec "
 import os,urllib.request
 r=urllib.request.Request('http://127.0.0.1:8000/internal/v1/diag?deep=1',headers={'Authorization':'Bearer '+os.environ['TOKEN']})
 print(urllib.request.urlopen(r,timeout=60).read().decode())" || true)"
+if printf '%s' "$DIAG" | grep -Eq '"ldap": ?\{"ok": ?true, ?"configured": ?false'; then
+  rec "LDAP/LDAPS" SKIP "не подключён — настраивается в веб-интерфейсе (Администрирование → LDAP и доступ); вход локальным администратором работает"
+else
 printf '%s' "$DIAG" | grep -Eq '"ldap": ?\{"ok": ?true' && rec "LDAP/LDAPS" OK "bind сервисной учётки выполнен (сертификат проверен)" || rec "LDAP/LDAPS" FAIL "нет связи или bind не удался (scripts/logs.sh backend)"
+fi
 read -r acode abody <<<"$(svc_http asr http://127.0.0.1:8090/readyz)"
 if [ "$acode" = 200 ] && printf '%s' "$abody" | grep -q '"model_loaded": *true'; then
   ST="$(dc exec -T asr python -c "

@@ -51,8 +51,7 @@ fi
 REQUIRED=(APP_PUBLIC_URL DATA_ROOT WEB_BIND_ADDR WEB_PORT LIVEKIT_HTTP_PORT LIVEKIT_BIND_ADDR
           LIVEKIT_TCP_PORT LIVEKIT_UDP_PORT LIVEKIT_NODE_IP LIVEKIT_API_KEY LIVEKIT_API_SECRET
           LIVEKIT_PUBLIC_URL POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD REDIS_PASSWORD
-          APP_MASTER_KEY INTERNAL_API_TOKEN LDAP_URIS LDAP_BASE_DN LDAP_BIND_DN LDAP_BIND_PASSWORD
-          LDAP_CA_FILE LDAP_ADMIN_GROUP_DN)
+          APP_MASTER_KEY INTERNAL_API_TOKEN)
 for v in "${REQUIRED[@]}"; do
   if [ -z "${!v:-}" ]; then pfail "Не задана обязательная переменная $v"; fi
 done
@@ -283,7 +282,7 @@ log; log "== Active Directory (LDAPS) =="
 if [ "$SKIP_NET" -eq 1 ]; then
   pwarn "Сетевые проверки LDAP пропущены (--skip-network)"
 elif [ -z "${LDAP_URIS:-}" ]; then
-  pfail "LDAP_URIS не задан"
+  pass "LDAP в .env не задан — каталог подключается в веб-интерфейсе после установки (вход локальным администратором)"
 else
   IFS=',' read -ra URIS <<< "$LDAP_URIS"
   reachable=0

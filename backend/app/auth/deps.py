@@ -14,6 +14,7 @@ from ..config import Settings
 from .sessions import SessionData, SessionStore
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_ALLOWED_WHILE_CHANGING = {"/api/v1/auth/me", "/api/v1/auth/logout", "/api/v1/auth/change-password"}
 _IP_RE = re.compile(r"^[0-9a-fA-F:.]{2,45}$")
 
 
@@ -27,11 +28,13 @@ class SessionUser:
     is_admin: bool
     groups: frozenset[str]
     csrf: str
+    local: bool = False
+    must_change: bool = False
 
     @classmethod
     def from_session(cls, sid: str, data: SessionData) -> "SessionUser":
         return cls(sid, uuid.UUID(data.user_id), data.ad_guid, data.sam_account_name, data.display_name,
-                   data.is_admin, frozenset(data.groups), data.csrf)
+                   data.is_admin, frozenset(data.groups), data.csrf, data.local, data.must_change)
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -119,6 +122,9 @@ async def require_user(request: Request) -> SessionUser:
     su = await current_session(request)
     if su is None:
         raise HTTPException(status_code=401, detail="Требуется вход")
+    if su.must_change and request.url.path not in _ALLOWED_WHILE_CHANGING:
+        # первичный/сброшенный пароль нужно сменить до любых других действий
+        raise HTTPException(status_code=403, detail={"code": "password_change_required", "message": "Сначала смените пароль."})
     if request.method not in _SAFE_METHODS:
         if not _origin_ok(request):
             raise HTTPException(status_code=403, detail="Недопустимый Origin")

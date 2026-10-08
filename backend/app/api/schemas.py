@@ -26,6 +26,8 @@ class UserOut(BaseModel):
 class MeOut(BaseModel):
     user: UserOut
     csrf_token: str
+    local: bool = False                 # локальный (аварийный) администратор
+    must_change_password: bool = False  # первичный/сброшенный пароль нужно сменить до работы
 
 
 class ActiveMeetingOut(BaseModel):
@@ -111,6 +113,7 @@ class MeetingOut(BaseModel):
     chat_messages: int = 0
     whiteboard_shapes: int = 0       # 0 — доска не использовалась
     guests: int = 0
+    can_send_materials: bool = False   # руководитель комнаты / администратор: «Отправить материалы» по почте
 
 
 class SegmentOut(BaseModel):

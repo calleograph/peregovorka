@@ -317,6 +317,78 @@ class GeneralSettings(_Group):
         return v
 
 
+def _clean_dn_list(v: list[str], what: str) -> list[str]:
+    out: list[str] = []
+    for item in v or []:
+        item = str(item).strip()
+        if not item:
+            continue
+        if len(item) > 600 or "=" not in item:
+            raise ValueError(f"{what}: нужен DN группы (например, CN=Admins,OU=Groups,DC=example,DC=local)")
+        if item.lower() not in [x.lower() for x in out]:
+            out.append(item)
+    if len(out) > 50:
+        raise ValueError(f"{what}: не больше 50 групп")
+    return out
+
+
+class AccessSettings(_Group):
+    """Кто входит в систему из каталога: группы администраторов и (необязательно) группы, которым разрешён вход. Локальный администратор от этого не зависит."""
+
+    admin_groups: list[str] = Field(default_factory=list)
+    user_groups: list[str] = Field(default_factory=list)   # пусто — вход разрешён всем доменным пользователям подключений
+
+    @field_validator("admin_groups")
+    @classmethod
+    def _admin(cls, v: list[str]) -> list[str]:
+        return _clean_dn_list(v, "Группы администраторов")
+
+    @field_validator("user_groups")
+    @classmethod
+    def _users(cls, v: list[str]) -> list[str]:
+        return _clean_dn_list(v, "Группы доступа")
+
+
+class SetupSettings(_Group):
+    """Мастер первоначальной настройки: после завершения или пропуска больше не показывается автоматически."""
+
+    completed: bool = False
+    skipped: list[str] = Field(default_factory=list)
+
+
+class MailPolicySettings(_Group):
+    """Глобальные правила отправки материалов встреч (SMTP-реквизиты — в профилях почты). Руководитель комнаты выбирает только «что и кому»."""
+
+    max_attachment_mb: int = Field(default=10, ge=1, le=50)       # крупнее — вместо вложения ссылка на материал в приложении
+    attach_format: Literal["docx", "pdf", "txt", "md"] = "docx"
+    allowed_domains: str = ""                                      # через запятую; пусто — любые адреса
+    max_attempts: int = Field(default=4, ge=1, le=10)
+    retry_minutes: int = Field(default=5, ge=1, le=240)            # задержка до первого повтора (дальше удваивается)
+    keep_days: int = Field(default=90, ge=1, le=3650)              # сколько хранить записи об отправке
+    subject_prefix: str = Field(default="", max_length=60)
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _domains(cls, v: str) -> str:
+        items = [d.strip().lower().lstrip("@") for d in re.split(r"[,\s;]+", v or "") if d.strip()]
+        for d in items:
+            if not re.fullmatch(r"[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?", d):
+                raise ValueError(f"Домен «{d}»: латиница, цифры, точка и дефис (например, example.local)")
+        return ",".join(dict.fromkeys(items))
+
+    def domains(self) -> list[str]:
+        return [d for d in self.allowed_domains.split(",") if d]
+
+
+class StorageSyncSettings(_Group):
+    """Периодическая сверка метаданных базы с реальным содержимым хранилищ (в фоне, пакетами)."""
+
+    enabled: bool = True
+    interval_hours: int = Field(default=12, ge=1, le=168)
+    batch_size: int = Field(default=500, ge=50, le=5000)         # объектов за один проход перед паузой
+    guard_percent: int = Field(default=95, ge=50, le=100)        # если «пропало» не меньше стольких процентов (и не менее 10 файлов) — похоже на сбой, не применять без подтверждения
+
+
 GROUPS: dict[str, type[_Group]] = {
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,
@@ -328,6 +400,10 @@ GROUPS: dict[str, type[_Group]] = {
     "general": GeneralSettings,
     "asr": AsrModelSettings,
     "journal": JournalSettings,
+    "access": AccessSettings,
+    "setup": SetupSettings,
+    "mail_policy": MailPolicySettings,
+    "storage_sync": StorageSyncSettings,
 }
 
 

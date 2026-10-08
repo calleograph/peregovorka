@@ -68,6 +68,9 @@ class PrefixedStorage:
     def test(self) -> str:
         return self._base.test()
 
+    def probe(self) -> None:
+        self._base.probe()
+
 
 class FileStore:
     def __init__(self, svc: SettingsService, data_dir: str):

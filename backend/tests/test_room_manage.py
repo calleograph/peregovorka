@@ -98,3 +98,20 @@ def test_directory_search_is_for_leaders_only(client):
     r = client.get(url(room, "/directory"), params={"kind": "user", "q": "bo"})
     assert r.status_code == 200 and isinstance(r.json(), list)
     assert client.get(url(room, "/directory"), params={"kind": "oops", "q": "bo"}).status_code == 422
+
+
+def test_room_leader_sees_and_opens_meetings_of_own_room_only(client):
+    from .test_transcripts import _join
+
+    room = make_room(client, moderators=LEADERS)
+    other = make_room(client, name="Чужая")
+    mid = _join(client, "alice", room["id"])["meeting_id"]
+    oid = _join(client, "bob", other["id"])["meeting_id"]
+    login(client, "carol")                                         # руководитель, сам во встрече не участвовал
+    ids = {m["id"] for m in client.get("/api/v1/meetings").json()}
+    assert mid in ids and oid not in ids
+    got = client.get(f"/api/v1/meetings/{mid}").json()
+    assert got["can_send_materials"] is True
+    assert client.get(f"/api/v1/meetings/{oid}").status_code == 404
+    login(client, "alice")
+    assert client.get(f"/api/v1/meetings/{mid}").json()["can_send_materials"] is False

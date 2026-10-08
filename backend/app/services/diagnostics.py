@@ -204,7 +204,9 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
         await asyncio.to_thread(app.state.directory.check_service_account)
         c["ldap"] = {"ok": True}
     except Exception as exc:  # noqa: BLE001
-        c["ldap"] = {"ok": False, "error": getattr(exc, "code", type(exc).__name__)}
+        code = getattr(exc, "code", type(exc).__name__)
+        # каталог ещё не подключён (свежая установка): это не сбой — вход локальным администратором работает, каталог настраивается в вебе
+        c["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
     try:
         async with httpx.AsyncClient(timeout=3.0) as cl:
             c["livekit_http"] = {"ok": (await cl.get(s.livekit_http_url + "/")).status_code == 200}

@@ -13,8 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_asr, admin_journal, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
-from .auth.directory import DirectoryClient, LdapDirectory
+from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, admin_journal, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
+from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
 from .auth.sessions import SessionStore
@@ -30,8 +30,16 @@ from .services.journal import Journal, run_journal_retention
 from .security.secretbox import SecretBox, SecretBoxError
 from .services.meetings import MeetingService
 from .services.protocols import ProtocolService
+from .services.ca_bundle import CaBundleService
+from .services.audit import write_audit
+from .services.mail import MailService
+from .services.reconcile import Reconciler
+from .services.mail_delivery import DeliveryService
+from .services.ldap_profiles import LdapService, ProfileDirectory
 from .services.settings import SettingsService
 from .workers.asr_sync import run_asr_sync
+from .workers.mail_queue import run_mail_queue
+from .workers.storage_sync import run_storage_sync
 from .workers.reaper import run_reaper
 from .workers.retention import run_retention
 from .workers.segment_consumer import run_consumer
@@ -55,7 +63,6 @@ def create_app(
         engine = create_engine(settings)
         session_maker = create_session_maker(engine)
         redis = redis_factory(settings) if redis_factory else Redis.from_url(settings.effective_redis_url, decode_responses=True)
-        directory = directory_factory(settings) if directory_factory else LdapDirectory(settings)
         bridge = AsrBridge(redis)
         meetings_svc = MeetingService(settings, redis, bridge)
         sessions = SessionStore(redis, settings)
@@ -67,6 +74,9 @@ def create_app(
         settings_svc = SettingsService(box)
         journal = Journal(session_maker, settings_svc, settings.data_dir)
         profiles = ProfileService(settings_svc)
+        ca = CaBundleService(settings.data_dir, settings.ldap_ca_file)
+        ldap_service = LdapService(settings_svc, ca)
+        directory = directory_factory(settings) if directory_factory else ProfileDirectory(settings, ldap_service)
         protocols = ProtocolService(settings, session_maker, settings_svc, transports=getattr(app.state, "test_transports", None))
         meetings_svc.settings_svc = settings_svc
         protocols.journal = journal
@@ -89,8 +99,28 @@ def create_app(
         app.state.chat_files = protocols.chat_files
         app.state.journal = journal
         app.state.profiles = profiles
-        app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings), sessions)
+        mail = MailService(settings_svc, ca)
+        delivery = DeliveryService(session_maker, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
+        protocols.after_finalize = delivery.run_auto
+        async def _sync_audit(db, *, actor, action, target_id, details):
+            await write_audit(db, actor_user_id=None, actor_name=actor, action=action, target_type="storage", target_id=target_id, details=details)
 
+        reconciler = Reconciler(session_maker, protocols.files, settings.recordings_path, journal, _sync_audit)
+        app.state.reconciler = reconciler
+        app.state.mail = mail
+        app.state.delivery = delivery
+        app.state.ca = ca
+        app.state.ldap = ldap_service
+        app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings), sessions)
+        app.state.auth.settings_svc = settings_svc
+
+        try:   # набор CA и подключения к каталогу из базы (при сбое БД приложение всё равно стартует: вход локальным администратором останется)
+            async with session_maker() as boot_db:
+                await ca.rebuild(boot_db)
+                if hasattr(directory, "reload"):
+                    await directory.reload(boot_db)
+        except Exception:  # noqa: BLE001
+            log.warning("Не удалось загрузить подключения к каталогу (при первом запуске до миграций это нормально)", extra={"error": "boot_load_failed"})
         tasks: list[asyncio.Task] = []
         journal.start()
         set_journal_sink(journal.emit)
@@ -100,6 +130,8 @@ def create_app(
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
             tasks.append(asyncio.create_task(run_asr_sync(session_maker, settings_svc, redis), name="asr-model-sync"))
             tasks.append(asyncio.create_task(run_journal_retention(journal), name="journal-retention"))
+            tasks.append(asyncio.create_task(run_mail_queue(session_maker, delivery), name="mail-queue"))
+            tasks.append(asyncio.create_task(run_storage_sync(session_maker, settings_svc, reconciler, redis), name="storage-sync"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
         journal.emit("system", "app_started", message=f"Версия {settings.app_version}, commit {settings.app_git_commit}")
         try:
@@ -147,7 +179,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_system.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, admin_system.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

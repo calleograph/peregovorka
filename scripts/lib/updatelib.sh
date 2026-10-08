@@ -211,6 +211,19 @@ upd_ensure_updater_dir() {
   chmod 1777 "$d" 2>/dev/null || true
 }
 
+# Каталоги данных, появившиеся в новых версиях (CA-сертификаты, вложения чата): создаются ДО запуска контейнеров с владельцем uid 10001 (backend),
+# иначе Docker создаст их от root и backend не сможет в них писать.
+upd_ensure_data_dirs() {
+  local d
+  for d in ca chat-files; do
+    [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || { warn "Не удалось создать $DATA_ROOT/$d"; continue; }
+    if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then
+      chown 10001:10001 "$DATA_ROOT/$d" 2>/dev/null || sudo -n chown 10001:10001 "$DATA_ROOT/$d" 2>/dev/null \
+        || warn "Не удалось назначить владельца $DATA_ROOT/$d (uid 10001): выполните sudo chown 10001:10001 $DATA_ROOT/$d"
+    fi
+  done
+}
+
 upd_git_fetch() {
   local i=1 n="${GIT_RETRIES:-4}"
   while :; do
