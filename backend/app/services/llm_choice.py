@@ -67,8 +67,17 @@ def clean_choice(raw: dict | None) -> dict | None:
     return out
 
 
+async def system_llm(profiles: ProfileService, db: AsyncSession):
+    """Системная модель по умолчанию. Первичен РЕЖИМ из общих настроек (Локальная / Внешняя / Отключено).
+    Профиль, отмеченный «Внешний API по умолчанию», применяется только при режиме «Внешняя» и никогда не перебивает выбранную локальную модель или «Отключено»."""
+    main = await profiles.get_settings(db, "llm", None)
+    if main.settings.effective_provider == "external":    # type: ignore[union-attr]
+        return await profiles.resolve(db, "llm", None)
+    return main
+
+
 async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSession, room: Room, meeting: Meeting | None = None) -> LlmChoice:
-    system = await profiles.resolve(db, "llm", None)
+    system = await system_llm(profiles, db)
     sys_cfg: LlmSettings = system.settings   # type: ignore[assignment]
     override = meeting.llm_override if (meeting is not None and meeting.llm_override) else None
     choice = override or room_choice(room)
@@ -77,9 +86,10 @@ async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessio
     policy = getattr(sys_cfg, "on_missing", "system")
 
     def system_choice(note: str | None = None) -> LlmChoice:
-        eff, _ = local.effective(sys_cfg)
+        eff, is_local = local.effective(sys_cfg)
         ok = bool(eff.enabled)
-        return LlmChoice(sys_cfg, system.name, "system", ok, None if ok else "Языковая модель по умолчанию отключена или не настроена", note)
+        name = local.model(getattr(eff, "local_model", None)).title if (ok and is_local) else system.name     # «Qwen3 0.6B…», а не «Основной»
+        return LlmChoice(sys_cfg, name, "system", ok, None if ok else "Языковая модель по умолчанию отключена или не настроена", note)
 
     if mode == "inherit":
         return system_choice()
@@ -123,7 +133,7 @@ def describe(ch: LlmChoice) -> dict:
 
 async def llm_options(profiles: ProfileService, local: LocalLlm, db: AsyncSession) -> dict:
     """Что можно выбрать в настройках комнаты/встречи: системная модель по умолчанию, установленные локальные модели, внешние профили. Секретов нет."""
-    system = await profiles.resolve(db, "llm", None)
+    system = await system_llm(profiles, db)
     eff, is_local = local.effective(system.settings)    # type: ignore[arg-type]
     policy = getattr(system.settings, "on_missing", "system")
     locals_: list[dict] = []

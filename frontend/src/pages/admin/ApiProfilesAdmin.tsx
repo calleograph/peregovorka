@@ -30,6 +30,8 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
   const [tests, setTests] = useState<Record<string, TestResult | "running">>({});
   const [del, setDel] = useState<ApiProfile | null>(null);
   const w = WORDS[kind];
+  const llm = kind === "llm";
+  const defLabel = llm ? "Внешний API по умолчанию" : "По умолчанию";
   const editFields = fields.filter((f) => f.name !== "enabled");
 
   const load = useCallback(() => api.admin.profiles(kind).then(setRows).catch((e) => setErr(e.message)), [kind]);
@@ -72,20 +74,23 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
     <section className="card profiles">
       <div className="row"><h2>{w.many}</h2><div className="spacer" />
         {!edit && <button className="btn primary" onClick={() => open()}>Добавить API</button>}</div>
-      <p className="muted">Можно подключить несколько API {w.one}: например, внутренний и внешний. Отметьте один «по умолчанию» — он будет использоваться для {w.where} во всех переговорках,
-        у которых не выбран свой. Свой API назначается в настройках переговорки (Переговорки → Изменить → «Нейросети»). «Основной» — настройки этой страницы ниже.</p>
+      <p className="muted">Можно подключить несколько API {w.one}: например, внутренний и внешний. {llm
+        ? <>Отметьте один «Внешний API по умолчанию»: он используется, только когда в «Режиме» выше выбрана <b>«Внешняя LLM»</b>. При режиме «Локальная» или «Отключено» эта отметка ничего не меняет и локальную модель не перебивает.
+          Для конкретной комнаты или встречи модель выбирается в «Настройках комнаты» → «Языковая модель» и «Эта встреча». «Основной» — настройки этой страницы выше.</>
+        : <>Отметьте один «по умолчанию» — он будет использоваться для {w.where} во всех переговорках,
+        у которых не выбран свой. Свой API назначается в настройках переговорки (Переговорки → Изменить → «Нейросети»). «Основной» — настройки этой страницы ниже.</>}</p>
       {err && <div className="alert error" role="alert">{err}</div>}
 
       {!edit && (
         <table className="table">
-          <thead><tr><th>По умолчанию</th><th>Название</th><th>Адрес и модель</th><th>Ключ</th><th /></tr></thead>
+          <thead><tr><th>{defLabel}</th><th>Название</th><th>Адрес и модель</th><th>Ключ</th><th /></tr></thead>
           <tbody>
             {rows.map((p) => {
               const t = tests[p.id];
               return (
                 <tr key={p.id}>
-                  <td><input type="radio" name={`default-${kind}`} checked={p.is_default} onChange={() => makeDefault(p)} aria-label={`Использовать «${p.name}» по умолчанию`} /></td>
-                  <td>{p.name}{p.virtual && <span className="badge"> основной</span>}{p.is_default && <span className="badge ok"> по умолчанию</span>}</td>
+                  <td><input type="radio" name={`default-${kind}`} checked={p.is_default} onChange={() => makeDefault(p)} aria-label={llm ? `Сделать «${p.name}» внешним API по умолчанию` : `Использовать «${p.name}» по умолчанию`} /></td>
+                  <td>{p.name}{p.virtual && <span className="badge"> основной</span>}{p.is_default && <span className="badge ok"> {llm ? "внешний API по умолчанию" : "по умолчанию"}</span>}</td>
                   <td className="small">{target(p)}</td>
                   <td className="small">{p.secret_set ? "задан" : <span className="muted">нет</span>}</td>
                   <td className="actions">
@@ -115,7 +120,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
 
       {del && (
         <ConfirmDialog title="Удалить профиль API?" confirmLabel="Удалить" onClose={() => setDel(null)}
-          body={<p>Профиль «{del.name}» будет удалён. Переговорки, которые его использовали, перейдут на профиль по умолчанию. Действие записывается в журнал аудита.</p>}
+          body={<p>Профиль «{del.name}» будет удалён. Переговорки, которые его использовали, перейдут на {llm ? "системную модель по умолчанию (или сообщат «модель недоступна» — по правилу из настроек LLM)" : "профиль по умолчанию"}. Действие записывается в журнал аудита.</p>}
           onConfirm={async () => { await api.admin.deleteProfile(del.id); await load(); }} />
       )}
     </section>

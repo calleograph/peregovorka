@@ -227,3 +227,108 @@ def test_materials_tab_data_shows_retention_read_only_and_leader_can_edit_instru
     assert out["protocol_instructions"] == "Только решения и сроки"
     r = client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"text_retention_days": 1})          # сроки хранения — только администратор
     assert r.status_code in (200, 422) and client.get(f"/api/v1/rooms/{room['id']}/manage").json()["retention"]["text_days"] != 1
+
+
+# ------------------------------------------------------------------------------------------------ приоритет выбора модели
+def default_ext_profile(c, model="big-model"):
+    """Внешний профиль, отмеченный «по умолчанию среди внешних API»."""
+    login(c, "root")
+    r = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "Внешний по умолчанию", "secret": "SECRET-D", "make_default": True,
+                                                    "config": {"type": "openai_compatible", "base_url": "https://llm-d.test/v1", "model": model}})
+    assert r.status_code == 201 and r.json()["is_default"] is True, r.text
+    return r.json()["id"]
+
+
+def generate(c, mid, kind="summary"):
+    r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": kind, "instruction": "x"})
+    assert r.status_code == 202, r.text
+    _drain(c)
+
+
+def test_external_default_profile_never_overrides_system_local_mode(tmp_path, directory):
+    """Регрессия: при системном режиме «Локальная» протокол/резюме из «Истории» шли во внешний профиль, отмеченный «по умолчанию»."""
+    ext_seen: list[dict] = []
+    rt = Runtime()
+    with app_(tmp_path, directory, rt, ext_seen) as c:
+        default_ext_profile(c)
+        put_settings(c, "llm", provider="local")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        end_by_alice(c, mid)
+        login(c, "carol")
+        # комната «Системная по умолчанию» — это локальная Qwen
+        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
+        assert got["llm"]["mode"] == "inherit" and got["llm_effective"]["name"].startswith("Qwen3") and got["llm_options"]["system"]["provider"] == "local"
+        p = plan(c, mid)
+        assert p["llm_local"] is True and p["llm_source"] == "system" and p["llm_ready"] is True
+        # История → сформировать резюме, протокол и повторная генерация
+        for kind in ("summary", "protocol", "summary"):
+            generate(c, mid, kind)
+        assert len(rt.seen) >= 3, "документы должны формироваться локальной моделью"
+        assert ext_seen == [], "внешний профиль по умолчанию не должен использоваться при системном режиме «Локальная»"
+
+
+def test_external_default_profile_is_used_only_when_system_mode_is_external(tmp_path, directory):
+    ext_seen: list[dict] = []
+    rt = Runtime()
+    with app_(tmp_path, directory, rt, ext_seen) as c:
+        default_ext_profile(c, model="default-ext-model")
+        put_settings(c, "llm", provider="external", type="openai_compatible", base_url="https://main.test/v1", model="main-model", api_key="K")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        end_by_alice(c, mid)
+        login(c, "carol")
+        p = plan(c, mid)
+        assert p["llm_local"] is False and p["llm_model"] == "default-ext-model" and p["llm_source"] == "system"
+        generate(c, mid)
+        assert ext_seen and rt.seen == []
+        # режим «Отключено»: профиль по умолчанию ничего не включает
+        put_settings(c, "llm", provider="off")
+        login(c, "carol")
+        assert plan(c, mid)["llm_ready"] is False
+
+
+def test_precedence_meeting_over_room_over_system(tmp_path, directory):
+    ext_seen: list[dict] = []
+    rt = Runtime()
+    with app_(tmp_path, directory, rt, ext_seen) as c:
+        pid = ext_profile(c)
+        default_ext_profile(c, model="default-ext-model")
+        put_settings(c, "llm", provider="local")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        eff = lambda: c.get(f"/api/v1/meetings/{mid}/settings").json()["llm"]["effective"]   # noqa: E731
+        assert eff()["source"] == "system" and eff()["name"].startswith("Qwen3")            # 3. системная
+        manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
+        assert eff()["source"] == "room" and eff()["name"] == "Сильная внешняя"             # 2. комната
+        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "local", "local_model": "qwen3-0.6b-q4_k_m"}})
+        assert eff()["source"] == "meeting" and eff()["name"].startswith("Qwen3")           # 1. встреча
+        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "off"}})
+        assert eff()["source"] == "meeting" and eff()["available"] is False                 # встреча явно «отключена»
+        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": None})
+        assert eff()["source"] == "room" and eff()["name"] == "Сильная внешняя"
+        manage(c, room["id"], llm={"mode": "inherit"})
+        assert eff()["source"] == "system" and eff()["name"].startswith("Qwen3")
+
+
+def test_unavailable_selected_model_falls_back_to_system_model_not_external_default(tmp_path, directory):
+    ext_seen: list[dict] = []
+    rt = Runtime()
+    with app_(tmp_path, directory, rt, ext_seen) as c:
+        pid = ext_profile(c)
+        default_ext_profile(c)
+        put_settings(c, "llm", provider="local")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
+        login(c, "root")
+        assert c.delete(f"/api/v1/admin/api-profiles/{pid}").status_code in (200, 204)
+        end_by_alice(c, mid)
+        login(c, "carol")
+        p = plan(c, mid)
+        assert p["llm_local"] is True and "удалён" in (p["llm_note"] or ""), "выбранный профиль удалён → системная (локальная) модель, а не внешний по умолчанию"
+        generate(c, mid)
+        assert rt.seen and ext_seen == []
+        # политика «не формировать»
+        put_settings(c, "llm", on_missing="unavailable")
+        login(c, "carol")
+        p = plan(c, mid)
+        assert p["llm_ready"] is False and "удалён" in (p["llm_reason"] or "")
