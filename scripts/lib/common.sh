@@ -48,6 +48,37 @@ load_env() {
   done < "$file"
 }
 
+# «Стерильное» окружение для жизненного цикла (install/update/updater/rebuild/ctl): параметры проекта берутся ТОЛЬКО из .env.
+# Docker Compose отдаёт переменным окружения приоритет над --env-file, а load_env не перезаписывает уже заданные переменные —
+# поэтому случайно унаследованные ASR_*, NGINX_*, LIVEKIT_* (из профиля пользователя, sudo -E, systemd Environment=) тихо подменяли .env
+# (реальный случай: в .env ASR_MAX_CONCURRENT_INFERENCE=1, а в контейнер попадало 2). Вызывать ДО load_env.
+# Сохраняются только управляющие переменные (PEREGOVORKA_KEEP_VARS) и всё, что явно перечислено в PEREGOVORKA_KEEP_ENV (через пробел);
+# PEREGOVORKA_KEEP_ENV=all отключает очистку (для отладки и тестов).
+PEREGOVORKA_KEEP_VARS="ENV_FILE IMAGE_TAG DRY_RUN BUILD_MODE FORCE_BUILD PULL_BASES APP_BUILT_AT_OVERRIDE APP_BUILD_TIME UPDATE_SOURCE UPDATE_BY GIT_RETRIES UPD_POLL UPD_REPORT_EVERY"
+sanitize_project_env() {
+  [ "${PEREGOVORKA_KEEP_ENV:-}" = all ] && return 0
+  local f n k keep
+  for n in $(compgen -e); do
+    case "$n" in
+      ASR_*|NGINX_*|LIVEKIT_*|LDAP_*|POSTGRES_*|REDIS_*|GIGAAM_*|TRUSTED_PROXY_*|SESSION_*|LOGIN_*|DEFAULT_*|COOKIE_*|DOCS_*|LOG_LEVEL|LOG_FORMAT|WEB_*|MEETING_*|MIN_FREE_DISK_GB|MIN_RAM_GB|BACKUP_DIR|INTERNAL_API_TOKEN|APP_MASTER_KEY|APP_PUBLIC_URL|APP_ROOT|DATA_ROOT|INSTALL_PROFILE|COMPOSE_*) ;;
+      *) continue ;;
+    esac
+    keep=0
+    for k in $PEREGOVORKA_KEEP_VARS ${PEREGOVORKA_KEEP_ENV:-}; do [ "$k" = "$n" ] && keep=1 && break; done
+    [ "$keep" -eq 1 ] || unset "$n"
+  done
+  # всё, что описано в самом .env / .env.example (на случай новых параметров вне перечисленных префиксов)
+  for f in "$ENV_FILE" "$REPO_ROOT/.env.example"; do
+    [ -r "$f" ] || continue
+    while IFS= read -r n; do
+      keep=0
+      for k in $PEREGOVORKA_KEEP_VARS ${PEREGOVORKA_KEEP_ENV:-}; do [ "$k" = "$n" ] && keep=1 && break; done
+      [ "$keep" -eq 1 ] || unset "$n"
+    done < <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$f" | tr -d '=')
+  done
+  return 0
+}
+
 require_vars() {
   local missing=0 v
   for v in "$@"; do
@@ -127,3 +158,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/updatelib.sh"
 
 # shellcheck source=verifylib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"
+
+# shellcheck source=prereqlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/prereqlib.sh"
+# shellcheck source=repairlib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"

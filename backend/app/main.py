@@ -36,6 +36,8 @@ from .services.mail import MailService
 from .services.reconcile import Reconciler
 from .services.mail_delivery import DeliveryService
 from .services.ldap_profiles import LdapService, ProfileDirectory
+from .services.legacy_ldap import LegacyLdapMigrator
+from .util_errors import describe_error
 from .services.settings import SettingsService
 from .workers.asr_sync import run_asr_sync
 from .workers.mail_queue import run_mail_queue
@@ -114,17 +116,35 @@ def create_app(
         app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings), sessions)
         app.state.auth.settings_svc = settings_svc
 
-        try:   # набор CA и подключения к каталогу из базы (при сбое БД приложение всё равно стартует: вход локальным администратором останется)
+        # Набор CA и подключения к каталогу из базы. Два РАЗНЫХ шага: сбой перестройки набора CA (например, нет прав на каталог /data/ca)
+        # не должен лишать приложение каталога — иначе вход по домену молча превращается в «not_configured» (реальный сбой при обновлении до 0.3.0).
+        # Причина сбоя пишется в журнал безопасным описанием (класс ошибки, ошибка ОС, путь) — без секретов.
+        app.state.boot_errors = {}
+        legacy = LegacyLdapMigrator(settings, ldap_service, ca, settings_svc)
+        app.state.legacy_ldap = legacy
+        try:
             async with session_maker() as boot_db:
-                await ca.rebuild(boot_db)
-                if hasattr(directory, "reload"):
-                    await directory.reload(boot_db)
-        except Exception:  # noqa: BLE001
-            log.warning("Не удалось загрузить подключения к каталогу (при первом запуске до миграций это нормально)", extra={"error": "boot_load_failed"})
+                try:
+                    await ca.rebuild(boot_db)
+                except Exception as exc:  # noqa: BLE001
+                    app.state.boot_errors["ca"] = describe_error(exc)
+                    log.error("Не удалось собрать набор CA: %s (проверьте права на каталог данных; администратору: Администрирование → Состояние системы → «Исправить автоматически»)",
+                              app.state.boot_errors["ca"], extra={"error": "boot_ca_failed"})
+                try:
+                    if hasattr(directory, "reload"):
+                        await directory.reload(boot_db)
+                except Exception as exc:  # noqa: BLE001
+                    app.state.boot_errors["directory"] = describe_error(exc)
+                    log.error("Не удалось загрузить подключения к каталогу: %s", app.state.boot_errors["directory"], extra={"error": "boot_directory_failed"})
+        except Exception as exc:  # noqa: BLE001
+            app.state.boot_errors["database"] = describe_error(exc)
+            log.warning("Не удалось загрузить подключения к каталогу: база недоступна (%s; при первом запуске до миграций это нормально)", app.state.boot_errors["database"],
+                        extra={"error": "boot_load_failed"})
         tasks: list[asyncio.Task] = []
         journal.start()
         set_journal_sink(journal.emit)
         if start_workers:
+            tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
             tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc), name="meeting-reaper"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))

@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars DATA_ROOT
 git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || die "Не git-репозиторий"
 [ -z "$(git -C "$REPO_ROOT" status --porcelain)" ] || die "Есть локальные изменения в рабочей копии — отказ (ничего не изменено)."

@@ -35,7 +35,7 @@ pass()  { ok "$*"; N_OK=$((N_OK+1)); }
 pwarn() { warn "$*"; N_WARN=$((N_WARN+1)); }
 pfail() { fail "$*"; N_FAIL=$((N_FAIL+1)); }
 
-load_env "$ENV_FILE"
+sanitize_project_env; load_env "$ENV_FILE"
 PROFILE="${PROFILE_ARG:-${INSTALL_PROFILE:-}}"
 
 # ---------------------------------------------------------------- конфигурация

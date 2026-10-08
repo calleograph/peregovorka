@@ -13,7 +13,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 
 SERVICES=(postgres redis livekit backend asr web)
 all_healthy() {

@@ -4,6 +4,7 @@ import { ConfirmDialog } from "../../components/Dialogs";
 import { Markdown } from "../../components/Markdown";
 import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
+import RepairsPanel from "./RepairsPanel";
 
 const MAX_LOG = 600_000;
 
@@ -19,7 +20,7 @@ function ago(sec?: number | null): string {
  * который запускает штатный scripts/update.sh. Ход обновления (этапы, сборка образов, миграции, проверки) показывается построчно в окне;
  * окно переживает перезапуск самого сервиса — журнал читается с диска, соединение восстанавливается автоматически.
  */
-export default function UpdatesAdmin() {
+export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => void } = {}) {
   const [ov, setOv] = useState<UpdatesOverview | null>(null);
   const [err, setErr] = useState("");
   const [log, setLog] = useState("");
@@ -49,7 +50,7 @@ export default function UpdatesAdmin() {
   }, []);
 
   useEffect(() => { void loadOverview(); void pollLog(); }, [loadOverview, pollLog]);
-  const running = ov?.updater.state === "updating" || ov?.updater.request_pending || Date.now() < watchUntil.current;
+  const running = ov?.updater.state === "updating" || ov?.updater.state === "repairing" || ov?.updater.request_pending || Date.now() < watchUntil.current;
   useEffect(() => {
     const t = window.setInterval(() => { void pollLog(); void loadOverview(); }, running ? 1500 : 8000);
     return () => window.clearInterval(t);
@@ -72,7 +73,12 @@ export default function UpdatesAdmin() {
   const u = ov?.updater, rem = ov?.remote;
   const unknownBuild = !!ov && (!ov.installed.commit || ov.installed.commit === "unknown");
   const pct = u?.step_total ? Math.min(100, Math.round(((u.step_no ?? 0) / u.step_total) * 100)) : 0;
+  const isRepair = u?.action === "repair";
+  const oc = ov?.outcome ?? null;
+  // Итоги раздельно: сбой проверки интеграций (LDAP и т. п.) — не «обновление завершено с ошибкой»: версия установлена, сервисы работают
   const finishedOk = u?.state === "idle" && u?.result === "ok", finishedBad = u?.state === "idle" && u?.result === "failed";
+  const integFail = finishedOk && !isRepair && oc?.integrations === "fail";
+  const st = (v?: string) => (v === "ok" ? <span className="badge ok">успешно</span> : v === "fail" || v === "failed" ? <span className="badge warn">ошибка</span> : v === "skipped" ? <span className="badge">пропущено</span> : <span className="badge">нет данных</span>);
   const behind = rem?.behind ?? 0;
 
   return (
@@ -91,8 +97,8 @@ export default function UpdatesAdmin() {
             <div className="l">{unknownBuild ? <span className="badge warn" title="Образ собран без данных Git — вероятно, вручную командой docker compose build">собран вне штатного обновления</span> : ov?.installed.built_at && ov.installed.built_at !== "unknown" ? `сборка ${ov.installed.built_at}` : ""}</div></div>
           <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? (rem.remote_version ? versionLabel(rem.remote_version, rem.remote) : shortCommit(rem.remote)) : "—"}</div>
             <div className="l">{rem ? `проверено ${ago(rem.age_s)}` : "проверка ещё не выполнялась"}</div></div>
-          <div><div className="l">Исполнитель обновлений</div>
-            <div className="v small-v">{u?.available ? <span className="badge ok">работает</span> : <span className="badge warn">не запущен</span>}</div>
+          <div><div className="l">Помощник обновлений</div>
+            <div className="v small-v">{u?.available ? (ov?.helper.privileged ? <span className="badge ok">работает</span> : <span className="badge warn" title="Служба прежней версии работает без прав администратора сервера">работает без прав</span>) : <span className="badge warn">не установлен</span>}</div>
             <div className="l">{u?.heartbeat_age_s != null ? `пульс ${ago(u.heartbeat_age_s)}` : "нет данных"}</div></div>
         </div>
 
@@ -105,11 +111,17 @@ export default function UpdatesAdmin() {
         )}
         {!u?.available && ov && (
           <div className="alert error updater-missing" role="alert">
-            <b>Кнопка «Обновить проект» пока недоступна: веб-обновление заработает только после однократной установки службы обновлений на сервере.</b>
-            Это нужно сделать один раз — под тем пользователем, который обычно выполняет <code>./scripts/update.sh</code>:
-            <pre className="cmd">cd каталог_проекта{"\n"}./scripts/updater.sh install        # установить службу systemd (покажет файл службы и спросит подтверждение; нужен sudo){"\n"}./scripts/updater.sh status         # проверить: «Исполнитель работает»</pre>
-            Без systemd службу можно запустить вручную: <code>./scripts/updater.sh run</code> (в терминале, tmux или nohup). Пока служба не установлена, обновляйте командой <code>./scripts/update.sh</code> на сервере — результат тот же.
-            Служба выполняет только штатный <code>update.sh</code> (сборка идёт тем же путём, с автоматическим переходом BuildKit → legacy); произвольные команды из веб-интерфейса выполнить нельзя.
+            <b>Кнопка «Обновить проект» пока недоступна: нужно один раз установить помощник обновлений на сервере.</b>
+            При обычной установке («sudo ./install.sh») он ставится сам; здесь он не найден — например, сервер установлен прежней версией. Выполните один раз от администратора сервера:
+            <pre className="cmd">cd каталог_проекта{"\n"}sudo ./scripts/updater.sh install --yes</pre>
+            Помощник работает от root, но выполняет только фиксированный набор действий (обновление, исправление известных проблем, проверки); произвольные команды из веб-интерфейса выполнить нельзя.
+            Пока он не установлен, обновляйте командой <code>sudo ./scripts/update.sh</code> на сервере — результат тот же, а помощник при этом установится сам.
+          </div>
+        )}
+        {u?.available && ov && !ov.helper.privileged && (
+          <div className="alert error updater-missing" role="alert">
+            <b>Помощник обновлений работает без прав администратора сервера</b> (так его устанавливали прежние версии), поэтому «Исправить автоматически» и часть обновления (права на каталоги, настройки веб-сервера) из браузера недоступны.
+            Один раз выполните от администратора сервера: <pre className="cmd">sudo ./scripts/updater.sh install --yes</pre> Либо просто обновите проект командой <code>sudo ./scripts/update.sh</code> — служба обновится сама.
           </div>
         )}
         {rem && !rem.ok && <div className="alert error">Не удалось проверить GitHub: {rem.error || "нет данных"}. Возможно, у сервера нет выхода в интернет — тогда обновляйте на сервере командой <code>./scripts/update.sh --env ...</code> из заранее полученного репозитория.</div>}
@@ -154,13 +166,17 @@ export default function UpdatesAdmin() {
         </div>
       </div>
 
+      <RepairsPanel onOpen={onOpen} quiet />
+
       {(running || ranHere) && (
         <div className="card upd-term">
           <div className="row">
-            <h3 style={{ margin: 0 }}>Ход обновления</h3>
+            <h3 style={{ margin: 0 }}>{isRepair ? "Ход исправления" : "Ход обновления"}</h3>
             {running && <span className="badge rec">выполняется</span>}
-            {finishedOk && <span className="badge ok">завершено успешно</span>}
-            {finishedBad && <span className="badge warn">завершено с ошибкой (код {u?.exit_code})</span>}
+            {finishedOk && !integFail && <span className="badge ok">завершено успешно</span>}
+            {integFail && <span className="badge ok">обновление завершено</span>}
+            {integFail && <span className="badge warn">интеграции: нужна проверка</span>}
+            {finishedBad && <span className="badge warn">{isRepair ? "исправить не удалось" : "остановлено"} (код {u?.exit_code})</span>}
             {u?.by && <span className="muted small">запустил: {u.by}</span>}
             {u?.finished_at ? <span className="muted small">окончание: {fmt(new Date(u.finished_at * 1000).toISOString())}</span> : null}
             <div className="spacer" />
@@ -174,8 +190,24 @@ export default function UpdatesAdmin() {
             </div>
           )}
           <pre className="term" ref={term} tabIndex={0} aria-live="off" onScroll={(e) => { const t = e.currentTarget; setFollow(t.scrollHeight - t.scrollTop - t.clientHeight < 40); }}>{log || "Ожидание вывода…"}</pre>
-          {finishedBad && <div className="alert error">Обновление остановилось. Данные, настройки и модели не затронуты. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) либо выполните <code>./scripts/update.sh</code> на сервере.</div>}
-          {finishedOk && <div className="alert ok">Обновление выполнено: проверки пройдены. Обновите страницу, чтобы загрузить новую версию интерфейса.
+          {oc && !isRepair && !running && (
+            <ul className="outcome" aria-label="Итог обновления">
+              <li>Обновление программы: {st(oc.update)}</li>
+              <li>Развёртывание (сервисы запущены): {st(oc.deployment)}</li>
+              <li>Работоспособность (база, ASR, звонки, веб): {st(oc.health)}</li>
+              <li>Интеграции (каталог LDAP и др.): {oc.integrations === "fail" ? <span className="badge warn">требуют внимания{oc.integration_issues ? `: ${oc.integration_issues}` : ""}</span> : st(oc.integrations)}</li>
+            </ul>
+          )}
+          {integFail && (
+            <div className="alert info">
+              <b>Версия установлена, сервисы работают.</b> Проверка подключения к каталогу{oc?.integration_issues ? ` (${oc.integration_issues})` : ""} не прошла — это не ошибка обновления, но вход по домену может не работать.
+              <div className="row" style={{ marginTop: 6 }}>
+                <button className="btn primary" onClick={() => onOpen?.("ldap")}>Исправить LDAP / открыть диагностику LDAP</button>
+                <button className="btn" onClick={() => onOpen?.("system")}>Состояние системы</button></div>
+            </div>
+          )}
+          {finishedBad && <div className="alert error">{isRepair ? "Исправление не выполнено. Остальная система не затронута; причина — в последних строках журнала." : "Обновление остановилось."} Данные, настройки и модели не затронуты. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) либо выполните <code>./scripts/update.sh</code> на сервере.</div>}
+          {finishedOk && !isRepair && <div className="alert ok">Обновление выполнено{integFail ? "" : ": проверки пройдены"}. Обновите страницу, чтобы загрузить новую версию интерфейса.
             <button className="btn mini primary" onClick={() => window.location.reload()}>Обновить страницу</button></div>}
         </div>
       )}

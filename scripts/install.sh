@@ -22,14 +22,16 @@
 # образы, тома, сеть и контейнеры своего COMPOSE_PROJECT_NAME.
 # Чего НЕ делает никогда: apt upgrade/dist-upgrade/autoremove, reboot, docker system/image/volume prune, удаление
 # /var/lib/docker|containerd, размонтирование чужих mount'ов, остановку чужих контейнеров, правку чужих nginx/apache/php.
-# shared-host: Docker и nginx — внешние зависимости, не ставятся. standalone: может поставить их через apt install.
+# standalone: ставит ВСЁ необходимое сам (манифест scripts/lib/prereqlib.sh: Docker Engine + Compose + Buildx, nginx, git, curl, openssl и системные
+# утилиты) и применяет параметры ядра (/etc/sysctl.d/99-peregovorka.conf). shared-host: Docker, nginx и параметры ядра — решение администратора,
+# автоматически не ставятся и не меняются (только список недостающего и предупреждения).
 # Файрвол меняется ТОЛЬКО с явным --configure-firewall. --dry-run печатает план и ничего не меняет.
 
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-STAGES=(prerequisites preflight dirs models pull build database migrations services healthcheck nginx firewall verify report)
+STAGES=(prerequisites preflight dirs kernel models pull build database migrations services healthcheck nginx firewall verify report)
 PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""
 FORCE_BUILD=0; ADOPT=0
 while [ $# -gt 0 ]; do
@@ -44,14 +46,14 @@ while [ $# -gt 0 ]; do
     --skip-models) SKIP_MODELS=1; shift ;;
     --skip-start) SKIP_START=1; shift ;;
     --configure-firewall) FIREWALL=1; shift ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
 export DRY_RUN FORCE_BUILD
 if [ -n "$FROM_STAGE" ]; then printf '%s\n' "${STAGES[@]}" | grep -qx "$FROM_STAGE" || die "Неизвестный этап: $FROM_STAGE (доступны: ${STAGES[*]})"; fi
 
-load_env "$ENV_FILE"
+sanitize_project_env; load_env "$ENV_FILE"
 PROFILE="${PROFILE_ARG:-${INSTALL_PROFILE:-}}"
 case "$PROFILE" in shared-host|standalone) ;; *) die "Укажите --profile shared-host|standalone" ;; esac
 validate_project_name
@@ -98,33 +100,33 @@ log "== Установка экземпляра '${COMPOSE_PROJECT_NAME}' (пр�
 
 # ----------------------------------------------------------------------- этапы
 stage_prerequisites() {
-  if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
-    if [ "$PROFILE" = "shared-host" ]; then
+  local out
+  prereq_os_detect || { [ "$PREREQ_SUPPORTED" = yes ] || {
+    if [ "$PROFILE" = standalone ]; then fail_stage os-unsupported "${PREREQ_WHY}"; else warn "${PREREQ_WHY}"; fi; }; }
+  [ -z "$PREREQ_WHY" ] || [ "$PREREQ_SUPPORTED" != yes ] || warn "$PREREQ_WHY"
+  [ -z "${PREREQ_ID:-}" ] || info "Система: ${PREREQ_ID} ${PREREQ_VERSION} (${PREREQ_CODENAME:-?})"
+  if [ "$PROFILE" = "standalone" ]; then
+    if out="$(prereq_verify standalone)"; then ok "Все системные зависимости (Docker, Compose, Buildx, nginx, git, curl, openssl и утилиты) на месте."
+    else
+      info "standalone: недостающее будет установлено автоматически (apt install, без upgrade):"; printf '%s\n' "$out" | sed 's/^/    - /'
+      as_root "$REPO_ROOT/scripts/prereq.sh" --install --profile standalone || fail_stage prerequisites "Не удалось установить системные зависимости (подробности выше)."
+      [ "$DRY_RUN" = "1" ] || prereq_verify standalone >/dev/null || fail_stage prerequisites "После установки не хватает: $(prereq_verify standalone | tr '\n' ';')"
+    fi
+  else
+    # shared-host: ничего не ставим на чужой сервер сами — только точный список недостающего
+    if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
       fail_stage docker-missing "Docker/Compose отсутствуют. В профиле shared-host автоматическая установка Docker ЗАПРЕЩЕНА — установите вручную и повторите."
     fi
-    info "standalone: будет установлен Docker Engine из официального репозитория Docker (apt install, без upgrade)."
-    as_root apt-get update
-    as_root apt-get install -y ca-certificates curl gnupg
-    as_root install -m 0755 -d /etc/apt/keyrings
-    as_root curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    as_root chmod a+r /etc/apt/keyrings/docker.asc
-    if [ "$DRY_RUN" != "1" ]; then
-      . /etc/os-release
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-    else
-      info "[dry-run] будет создан /etc/apt/sources.list.d/docker.list"
-    fi
-    as_root apt-get update
-    as_root apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  else
-    ok "Docker и Compose уже установлены — не трогаем."
-    docker_diag ok warn fail || fail_stage docker-runtime "Docker не готов к работе (см. выше)."
+    if out="$(prereq_verify shared-host)"; then ok "Системные утилиты на месте."
+    elif [ "$DRY_RUN" = "1" ]; then warn "На сервере не хватает утилит: $(printf %s "$out" | tr "\n" ";") — реальная установка остановится на этом этапе."
+    else fail_stage prerequisites "На сервере не хватает утилит: $(printf '%s' "$out" | tr '\n' ';'). Установите их средствами системы (shared-host ничего не ставит сам; список: scripts/prereq.sh --list)."; fi
+    docker buildx version >/dev/null 2>&1 || warn "docker buildx не установлен — сборка пойдёт старым встроенным builder'ом (допустимо, но медленнее); рекомендуется поставить docker-buildx-plugin."
   fi
   if [ "${NGINX_MANAGE:-no}" = "yes" ] && ! command -v nginx >/dev/null 2>&1; then
-    if [ "$PROFILE" = "shared-host" ]; then fail_stage nginx-missing "nginx не найден, а NGINX_MANAGE=yes. В shared-host nginx не ставится автоматически."; fi
-    as_root apt-get install -y nginx
+    [ "$DRY_RUN" = "1" ] && { info "[dry-run] nginx будет установлен"; return 0; }
+    fail_stage nginx-missing "nginx не найден, а NGINX_MANAGE=yes. В shared-host nginx не ставится автоматически."
   fi
+  if command -v docker >/dev/null 2>&1 && [ "$DRY_RUN" != "1" ]; then docker_diag ok warn fail || fail_stage docker-runtime "Docker не готов к работе (см. выше)."; fi
 }
 
 stage_preflight() {
@@ -146,6 +148,21 @@ stage_dirs() {
   for d in recordings exports ca chat-files; do
     if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then as_root chown 10001:10001 "$DATA_ROOT/$d"; fi
   done
+}
+
+# Параметры ядра для звука/видео (UDP-буферы, vm.overcommit_memory) — собственным файлом /etc/sysctl.d/99-peregovorka.conf.
+# standalone: применяются автоматически; shared-host: sysctl глобален для всего сервера — только предупреждение (решает администратор).
+stage_kernel() {
+  if [ "$PROFILE" != standalone ]; then
+    local kv=""; kern_note() { kv="$kv $1"; }
+    kernel_tuning_check : kern_note 2>/dev/null || true
+    if [ -z "$kv" ]; then ok "Параметры ядра соответствуют рекомендациям."; else warn "Параметры ядра ниже рекомендаций (shared-host: автоматически не меняются). Посмотреть и применить осознанно: sudo scripts/tune-kernel.sh --apply"; fi
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] будет создан /etc/sysctl.d/99-peregovorka.conf и применён (sysctl -p)"; return 0; fi
+  as_root "$REPO_ROOT/scripts/tune-kernel.sh" --env "$ENV_FILE" --apply --yes >/dev/null \
+    && ok "Параметры ядра применены (/etc/sysctl.d/99-peregovorka.conf)" \
+    || warn "Параметры ядра не применены (контейнер/виртуальная среда без права менять sysctl?). Установка продолжается; звук при высокой нагрузке может страдать."
 }
 
 stage_models() {
@@ -283,6 +300,7 @@ stage_firewall() {
 stage_verify() {
   if [ "$DRY_RUN" = "1" ]; then info "[dry-run] итоговая проверка: контейнеры/healthcheck, PostgreSQL, Redis, backend, ASR+модель, LiveKit, web, alembic, HTTP-цепочка, порты, параметры ядра"; return 0; fi
   if ! verify_deployment; then fail_stage verification "итоговая проверка нашла ошибки (выше). Приложение НЕ считается работоспособным."; fi
+  repair_verify_record pass      # метка «проверка выполнена для этой версии кода» — иначе помощник сочтёт, что нужна повторная проверка
 }
 
 stage_report() {
@@ -312,6 +330,7 @@ stage_report() {
 run_stage prerequisites stage_prerequisites
 run_stage preflight     stage_preflight
 run_stage dirs          stage_dirs
+run_stage kernel        stage_kernel
 run_stage models        stage_models
 run_stage pull          stage_pull
 run_stage build         stage_build

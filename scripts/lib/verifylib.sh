@@ -228,6 +228,14 @@ verify_deployment() {
   if alembic_verify exec; then v_ok "Alembic: ${ALEMBIC_CUR} (head)"
   else v_fail "Alembic: текущая ревизия «${ALEMBIC_CUR:-?}», head «${ALEMBIC_HEAD:-?}» — миграции не применены/не подтверждены"; fi
 
+  log "-- права на каталоги данных (запись от имени сервисов) --"
+  _stage_begin
+  wbad="$(writable_probe backend "${WRITABLE_BACKEND_DIRS[@]}"; writable_probe asr "${WRITABLE_ASR_DIRS[@]}")"
+  if [ -z "$wbad" ]; then v_ok "Каталоги данных доступны сервисам на запись (backend: ${WRITABLE_BACKEND_DIRS[*]##*/}; asr: ${WRITABLE_ASR_DIRS[*]##*/})"
+  else v_warn "Сервис не может писать в: $(printf '%s' "$wbad" | tr '
+' ' ') — права на каталоги данных неверны (сертификаты, вложения, записи не сохранятся). В браузере: Состояние системы → «Исправить автоматически»; на сервере: sudo scripts/repair.sh data_dirs"; fi
+  _stage_end "Права на каталоги данных"
+
   log "-- backend, ASR, версия --"
   _stage_begin
   read -r code body <<<"$(svc_http backend http://127.0.0.1:8000/api/v1/health/ready)"
@@ -283,4 +291,18 @@ verify_deployment() {
   realtime_config_check v_ok v_warn
 
   return "$VERIFY_FAILS"
+}
+
+# ---- запись в каталоги данных от имени сервисов. Владелец каталога на хосте — лишь косвенный признак: решает, может ли записать ПРОЦЕСС контейнера (uid 10001).
+WRITABLE_BACKEND_DIRS=(/data/ca /data/chat-files /data/exports /data/recordings /data/updater)
+WRITABLE_ASR_DIRS=(/data/recordings)
+# writable_probe СЕРВИС КАТАЛОГ… — печатает каталоги, в которые процесс сервиса записать не смог (пробный файл создаётся и сразу удаляется).
+# Остановленный сервис не считается нарушением (проверять нечем): такие каталоги не печатаются.
+writable_probe() {
+  local svc="$1" d; shift
+  [ -n "$(dc ps -q "$svc" 2>/dev/null | head -1)" ] || return 0
+  for d in "$@"; do
+    dc exec -T "$svc" sh -c 'f="$1/.write-probe.$$"; : > "$f" && rm -f "$f"' _ "$d" >/dev/null 2>&1 || printf '%s:%s
+' "$svc" "$d"
+  done
 }

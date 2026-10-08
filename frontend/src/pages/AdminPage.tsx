@@ -25,7 +25,7 @@ const GROUPS: Group[] = [
   { title: "Состояние", pages: [
     { id: "system", label: "Состояние системы", render: (go) => <SystemAdmin onOpen={go} /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
-    { id: "updates", label: "Обновления и версии", render: () => <UpdatesAdmin /> },
+    { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
   ] },
   { title: "LDAP и доступ", pages: [
     { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },

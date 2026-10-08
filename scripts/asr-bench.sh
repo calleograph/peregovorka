@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 if [ -n "$WAV" ]; then
   [ -r "$WAV" ] || die "Файл не найден: $WAV"
   cid="$(dc ps -q asr | head -1)"; [ -n "$cid" ] || die "Контейнер asr не запущен"

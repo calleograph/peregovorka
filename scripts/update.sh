@@ -50,14 +50,14 @@ STEP=0; STEPS=16; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
   fail "$*"
-  [ "$DRY_RUN" = "1" ] || { upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null; upd_history_append failed "$CUR_STAGE"; }
+  [ "$DRY_RUN" = "1" ] || { upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null; upd_state_set update_status failed 2>/dev/null; upd_history_append failed "$CUR_STAGE"; }
   warn "Обновление остановлено на этапе «${CUR_STAGE}». Данные, .env и модели не затронуты. Устраните причину и повторите ./scripts/update.sh — он продолжит (сборка и миграции идемпотентны)."
   exit 1
 }
 
 # --------------------------------------------------------------------------------------------- фаза 1
 phase1() {
-  load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
+  sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
   if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — обновление не начато, ничего не изменено."; fi
   step "Определение проекта и текущей версии"
   command -v git >/dev/null || die "git не найден"
@@ -153,6 +153,7 @@ phase1() {
   : > "$(upd_marker_file)"
   upd_state_set started_at "$(date -Is)"; upd_state_set previous_git_commit "$OLD"; upd_state_set target_git_commit "$TARGET"
   upd_state_set env_backup "$ENVBK"; upd_state_set migrations_changed "${MIG:-0}"; upd_state_set result "in_progress"
+  upd_state_set update_status in_progress; upd_state_set deploy_status ""; upd_state_set health_status ""; upd_state_set integration_status ""; upd_state_set integration_issues ""
   host_version_info; OLD12="${OLD:0:12}"
   if [ "$(upd_svc_state backend)" != missing ]; then
     upd_save_prev_images "$OLD12"; ok "Образы работающей версии сохранены (теги prev-${OLD12}) — для отката без пересборки"
@@ -170,7 +171,7 @@ phase1() {
 
 # --------------------------------------------------------------------------------------------- фаза 2
 phase2() {
-  load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
+  sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
   OLD="$(upd_state_get previous_git_commit)"; TARGET="$(git -C "$REPO_ROOT" rev-parse HEAD)"; OLD12="${OLD:0:12}"
   STEP=6
   upd_state_set target_git_commit "$TARGET"
@@ -237,6 +238,7 @@ phase2() {
   step "Host nginx (собственный site)"
   if [ "$NO_NGINX" -eq 1 ]; then info "Пропущено (--no-nginx)"; else upd_nginx_migrate; fi
 
+  upd_state_set update_status ok; upd_state_set deploy_status ok
   step "Проверка (verify)"
   VF=0; WARN_N=0
   log "== Проверка экземпляра ${COMPOSE_PROJECT_NAME} =="
@@ -244,27 +246,45 @@ phase2() {
   WARN_N=${#VERIFY_WARNINGS[@]}; VSTAGES="$(print_verify_stages)"
   [ "$VF" -eq 0 ] && ok "Verify: PASS" || fail "Verify: FAIL (ошибок: $VF)"
 
-  SM="skipped"; SMRC=0
+  SM="skipped"; SMRC=0; SMISS=""
   step "Smoke-test"
   if [ "$SKIP_SMOKE" -eq 1 ]; then info "Пропущено (--skip-smoke)"
   else
     SMLOG="$(mktemp)"; "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE" 2>&1 | tee "$SMLOG"; SMRC=${PIPESTATUS[0]}
-    [ "$SMRC" -eq 0 ] && SM="PASS" || SM="FAIL"
+    case "$SMRC" in 0) SM="PASS" ;; 3) SM="INTEGRATION" ;; *) SM="FAIL" ;; esac
+    SMISS="$(sed -n 's/^Integration issues: //p' "$SMLOG" | tail -1 | tr -d '\r' | cut -c1-200)"
     SW="$(grep -o 'Предупреждений: [0-9]*' "$SMLOG" | grep -o '[0-9]*$' | tail -1)"; WARN_N=$((WARN_N + ${SW:-0})); rm -f "$SMLOG"
   fi
 
-  summary "$VF" "$SM" "$WARN_N"
+  # Четыре независимых итога. Сбой проверки интеграций (например, каталога LDAP) НЕ делает обновление «неудачным»:
+  # код, образы, миграции и запуск выполнены, сервисы здоровы — это отдельное предупреждение с кнопкой в диагностику.
+  upd_classify_outcome "$VF" "$SMRC" "$SM"
+  upd_state_set health_status "$H_ST"; upd_state_set integration_status "$I_ST"; upd_state_set integration_issues "$SMISS"
+  repair_verify_record "$([ "$H_ST" = ok ] && { [ "$I_ST" = fail ] && echo integration || echo pass; } || echo fail)"
+  summary "$VF" "$SM" "$WARN_N" "$H_ST" "$I_ST" "$SMISS"
   rm -f "$(upd_marker_file)"
-  if [ "$VF" -eq 0 ] && [ "$SMRC" -eq 0 ]; then upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok; exit 0; fi
-  upd_state_set result "verify_or_smoke_failed"; upd_history_append failed "проверка после обновления (verify/smoke)"
+  upd_self_heal_updater
+  if [ "$H_ST" = ok ]; then
+    upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok
+    [ "$I_ST" = fail ] && exit 3
+    exit 0
+  fi
+  upd_state_set result "health_failed"; upd_history_append failed "проверка работоспособности после обновления"
   exit 1
 }
 
 # Итоговый вывод: коротко и по делу.
-summary() { # vf smoke warnings
-  local s st lk asrline add=""
+summary() { # vf smoke warnings health integration integration_issues
+  local s st lk asrline add="" up_s="SUCCESS" dep_s="SUCCESS" h_s i_s
+  [ "$4" = ok ] && h_s=SUCCESS || h_s=FAIL
+  case "$5" in ok) i_s=SUCCESS ;; skipped) i_s=SKIPPED ;; *) i_s="WARNING${6:+ ($6)}" ;; esac
   log; log "===================================================="
-  if [ "$1" -eq 0 ] && [ "$2" != FAIL ]; then ok "Peregovorka update completed"; else fail "Peregovorka update finished WITH ERRORS"; fi
+  if [ "$4" = ok ]; then ok "Peregovorka update completed"; else fail "Peregovorka update: версия установлена, но проверка работоспособности нашла ошибки"; fi
+  log
+  printf 'Update:       %s\nDeployment:   %s\nHealth:       %s\nIntegrations: %s\n' "$up_s" "$dep_s" "$h_s" "$i_s"
+  if [ "$5" = fail ]; then
+    warn "Интеграции требуют внимания (${6:-см. журнал выше}). Обновление и сервисы в порядке. Откройте веб-интерфейс: Администрирование → LDAP и доступ → Диагностика."
+  fi
   log
   local oldv newv
   oldv="$(git -C "$REPO_ROOT" show "${OLD:-HEAD}:VERSION" 2>/dev/null | tr -d '[:space:]')"; newv="$(version_file_read "$REPO_ROOT/VERSION")"
@@ -298,7 +318,7 @@ for m in d['models']:
   [ -n "${VSTAGES:-}" ] && printf '%s\n' "$VSTAGES"
   printf '\nVerify: %s\nSmoke:  %s\n\nWarnings: %s\n' "$([ "$1" -eq 0 ] && echo PASS || echo FAIL)" "$2" "$3"
   [ "$3" -gt 0 ] && echo "Run ./scripts/diag.sh for details."
-  [ "$1" -ne 0 ] || [ "$2" = FAIL ] && echo "Откат кода: ./scripts/rollback.sh  (откат кода ≠ откат БД: docs/INSTALL_AND_UPDATE.md, раздел «Rollback»)"
+  [ "$4" != ok ] && echo "Откат кода: ./scripts/rollback.sh  (откат кода ≠ откат БД: docs/INSTALL_AND_UPDATE.md, раздел «Rollback»)"
   log "===================================================="
 }
 

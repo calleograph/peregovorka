@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"
+sanitize_project_env; load_env "$ENV_FILE"
 require_vars DATA_ROOT
 msg="$(validate_local_dir "$DATA_ROOT" DATA_ROOT)" || die "$msg"
 MODEL="${MODEL:-${ASR_MODEL_NAME:-v3_e2e_rnnt}}"

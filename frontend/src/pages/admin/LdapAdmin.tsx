@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type DiagResult, type LdapProfile } from "../../api";
+import { api, type ApiError, type DiagResult, type LdapProfile, type LegacyLdap } from "../../api";
 import { SecretInput, StageList, secretToSend } from "./common";
 
 interface Form {
@@ -21,6 +21,9 @@ const toForm = (p: LdapProfile): Form => ({ ...p, secret: "", secret_set: p.secr
 export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void }) {
   const [items, setItems] = useState<LdapProfile[]>([]);
   const [env, setEnv] = useState<{ configured: boolean; uris: string[] } | null>(null);
+  const [legacy, setLegacy] = useState<LegacyLdap | null>(null);
+  const [bootErrors, setBootErrors] = useState<Record<string, string>>({});
+  const [importing, setImporting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
@@ -28,7 +31,7 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
   const [busy, setBusy] = useState(false);
   const [diag, setDiag] = useState<Record<string, DiagResult | "run">>({});
 
-  const load = useCallback(() => api.admin.ldapProfiles().then((r) => { setItems(r.items); setEnv(r.env); setErrors(r.errors); }).catch((e) => setError((e as ApiError).message)), []);
+  const load = useCallback(() => api.admin.ldapProfiles().then((r) => { setItems(r.items); setEnv(r.env); setErrors(r.errors); setLegacy(r.legacy); setBootErrors(r.boot_errors ?? {}); }).catch((e) => setError((e as ApiError).message)), []);
   useEffect(() => { void load(); }, [load]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
@@ -62,6 +65,15 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
     setError(""); setNote("");
     try { await api.admin.deleteLdap(p.id); await load(); } catch (e) { setError((e as ApiError).message); }
   };
+  const importLegacy = async () => {
+    setError(""); setNote(""); setImporting(true);
+    try {
+      const r = await api.admin.ldapLegacyImport();
+      setNote(`Настройки перенесены: ${r.profiles.join(", ")}${r.ca_added ? `; сертификатов CA: ${r.ca_added}` : ""}${r.groups_added ? `; групп доступа: ${r.groups_added}` : ""}. Подключение проверено.`);
+      await load();
+    } catch (e) { setError((e as ApiError).message); }
+    setImporting(false);
+  };
   const toggle = async (p: LdapProfile) => { try { await api.admin.updateLdap(p.id, { enabled: !p.enabled }); await load(); } catch (e) { setError((e as ApiError).message); } };
   const move = async (p: LdapProfile, d: -1 | 1) => { try { setItems((await api.admin.moveLdap(p.id, d)).items); } catch (e) { setError((e as ApiError).message); } };
 
@@ -71,7 +83,18 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
         {!form && <button className="btn primary" onClick={() => { setForm({ ...empty }); setError(""); setNote(""); }}>＋ Добавить подключение</button>}</div>
       <p className="muted">Каталог Active Directory, по которому сотрудники входят в систему. Соединение — только защищённое (LDAPS или STARTTLS), сертификат сервера проверяется по сертификатам из раздела{" "}
         {onOpen ? <a href="#ca" onClick={(e) => { e.preventDefault(); onOpen("ca"); }}>«Сертификаты (CA)»</a> : "«Сертификаты (CA)»"}. Сервисной учётной записи нужно только чтение.</p>
-      {env?.configured && !items.length && <div className="alert info">Сейчас используется прежняя настройка из файла установки (.env): {env.uris.join(", ")}. Добавьте подключение здесь — и оно заменит её.</div>}
+      {legacy?.needs_import && (
+        <div className="alert info legacy-ldap" role="status">
+          <b>Обнаружена старая конфигурация LDAP.</b> {legacy.active ? "Вход по домену сейчас работает по настройке из файла .env" : "В файле .env есть настройка каталога, но она не загрузилась"}{" "}
+          ({legacy.uris.join(", ")}). Нажмите «Перенести настройки»: сертификат CA, подключение и пароль сервисной учётной записи (хранится зашифрованно) перейдут в управляемые настройки,
+          подключение будет проверено. Если проверка не пройдёт — ничего не изменится, а прежний вход продолжит работать.
+          {legacy.last_error && <div className="small" style={{ marginTop: 4 }}>Последняя автоматическая попытка: {legacy.last_error}</div>}
+          <div className="row" style={{ marginTop: 6 }}><button className="btn primary" disabled={importing} onClick={() => void importLegacy()}>{importing ? "Переношу…" : "Перенести настройки"}</button></div>
+        </div>
+      )}
+      {legacy?.present && legacy.migrated && <div className="muted small">Прежняя настройка LDAP в файле .env перенесена и больше не используется; строки <code>LDAP_*</code> из .env можно удалить.</div>}
+      {bootErrors.ca && <div className="alert error">Не удалось записать набор сертификатов при запуске: {bootErrors.ca}. Откройте «Состояние системы» и нажмите «Исправить автоматически».</div>}
+      {env?.configured && !items.length && !legacy?.needs_import && <div className="alert info">Сейчас используется прежняя настройка из файла установки (.env): {env.uris.join(", ")}. Добавьте подключение здесь — и оно заменит её.</div>}
       {!items.length && !env?.configured && !form && <div className="alert info">Каталог пока не подключён: войти можно только локальным администратором. Добавьте подключение, затем загрузите сертификат CA и укажите группы администраторов.</div>}
       {Object.entries(errors).map(([n, m]) => <div key={n} className="alert error">Подключение «{n}» не загружено: {m}</div>)}
       {note && <div className="alert ok" role="status">{note}</div>}

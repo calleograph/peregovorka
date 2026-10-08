@@ -206,7 +206,11 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         code = getattr(exc, "code", type(exc).__name__)
         # каталог ещё не подключён (свежая установка): это не сбой — вход локальным администратором работает, каталог настраивается в вебе
-        c["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
+        if code == "not_configured" and s.ldap_uri_list:
+            # в .env подключение задано, а загружено не было — это НЕ «каталог не настроен», а сбой загрузки (например, нет прав на каталог CA)
+            c["ldap"] = {"ok": False, "error": "legacy_not_loaded", "boot_errors": dict(getattr(app.state, "boot_errors", {}) or {})}
+        else:
+            c["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
     try:
         async with httpx.AsyncClient(timeout=3.0) as cl:
             c["livekit_http"] = {"ok": (await cl.get(s.livekit_http_url + "/")).status_code == 200}

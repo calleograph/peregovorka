@@ -16,6 +16,7 @@ from ..models import CaCertificate, LdapProfile, MailProfile, StorageProfile
 from ..services import local_admin as la
 from ..services.audit import write_audit
 from ..services.ca_bundle import CertError, decode_upload, parse_certificates
+from ..services.legacy_ldap import LegacyImportError
 from ..services.settings import SettingsError
 
 router = APIRouter(prefix="/admin", tags=["admin-access"])
@@ -34,7 +35,30 @@ async def ldap_list(request: Request, su: SessionUser = Depends(require_admin), 
     d = request.app.state.directory
     return {"items": await request.app.state.ldap.list(db),
             "env": {"configured": bool(s.ldap_uri_list), "uris": s.ldap_uri_list, "base_dn": s.ldap_base_dn},   # прежняя настройка из .env — только для сведения
-            "errors": getattr(d, "errors", {}), "active": bool(getattr(d, "configured", True))}
+            "errors": getattr(d, "errors", {}), "active": bool(getattr(d, "configured", True)),
+            "legacy": await request.app.state.legacy_ldap.status(db, d), "boot_errors": getattr(request.app.state, "boot_errors", {})}
+
+
+@router.get("/ldap-legacy")
+async def ldap_legacy(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Прежняя настройка LDAP из .env: используется ли она сейчас и можно ли её перенести в управляемые настройки. Пароль не показывается."""
+    return await request.app.state.legacy_ldap.status(db, request.app.state.directory)
+
+
+@router.post("/ldap-legacy/import")
+async def ldap_legacy_import(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """«Перенести настройки»: CA из LDAP_CA_FILE, подключение (пароль шифруется), группы доступа; затем проверка подключения. Не прошла — ничего не сохраняется."""
+    try:
+        out = await request.app.state.legacy_ldap.import_now(db, su.display_name)
+    except LegacyImportError as exc:
+        request.app.state.journal.emit("auth", "ldap_legacy_import_failed", level="warn", user=su.display_name, ip=client_ip(request), message=str(exc)[:300])
+        raise HTTPException(status_code=409, detail={"message": str(exc), "stages": exc.stages}) from None
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="ldap.legacy_import", target_type="ldap_profile", target_id="legacy",
+                      ip=client_ip(request), details={"profiles": out["profiles"], "ca_added": out["ca_added"], "groups_added": out["groups_added"]})
+    await db.commit()
+    await _reload_directory(request, db)
+    request.app.state.legacy_ldap.last_error = ""
+    return out
 
 
 @router.post("/ldap-profiles", status_code=201)

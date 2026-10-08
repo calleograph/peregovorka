@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-load_env "$ENV_FILE"
+sanitize_project_env; load_env "$ENV_FILE"
 validate_project_name
 command -v docker >/dev/null 2>&1 || die "Docker не найден"
 

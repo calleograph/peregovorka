@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars DATA_ROOT POSTGRES_DB POSTGRES_USER
 if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — резервная копия не создана (ничего не записано на диск)."; fi
 DEST="${BACKUP_DIR:-$DATA_ROOT/backups}"

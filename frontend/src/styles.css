@@ -626,3 +626,12 @@ ul.plain { list-style: none; padding: 0; margin: 4px 0; display: flex; flex-dire
 table.recipients td { padding: 5px 8px; vertical-align: top; } table.recipients tr.has-problem td { background: color-mix(in srgb, var(--warn-bg) 55%, transparent); }
 .table .err, .err { color: var(--danger-text); }
 @media (max-width: 700px) { .wizard-steps li { grid-template-columns: 30px minmax(0, 1fr); } .wizard-steps li .row { grid-column: 1 / -1; } .cert-card > div { grid-template-columns: 1fr; gap: 0; } }
+
+/* «Исправить автоматически» и раздельные итоги обновления */
+.repairs { border-left: 3px solid var(--warn, #c77700); }
+.repair-item { padding: 10px 0; border-top: 1px solid var(--line); }
+.repair-item:first-of-type { border-top: 0; }
+.repair-item.manual pre.cmd { margin: 6px 0 0; }
+.outcome { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.outcome li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.legacy-ldap { border-left-color: var(--warn, #c77700); }

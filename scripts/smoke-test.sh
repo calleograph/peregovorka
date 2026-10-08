@@ -10,7 +10,8 @@
 # параметры ядра (UDP-буферы); TLS публичного URL (без -k: доверие к цепочке, имя хоста, срок, полнота цепочки);
 # тестовая комната (внутренняя сессия без реального пользователя).
 # С --login ЛОГИН: реальная аутентификация через AD (пароль без эха, нигде не сохраняется/не логируется).
-# Токены и пароли в вывод не попадают. Код возврата: 0 — ошибок нет (предупреждения допустимы), 1 — есть FAIL.
+# Токены и пароли в вывод не попадают. Код возврата: 0 — ошибок нет (предупреждения допустимы); 1 — сбой самой системы (сервисы, БД, ASR, LiveKit, web);
+# 3 — система работает, но не прошла проверка ИНТЕГРАЦИЙ (подключение к каталогу LDAP и т. п.): это не отказ обновления/установки, а повод открыть диагностику.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/verifylib.sh"
@@ -23,13 +24,19 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars WEB_PORT LIVEKIT_HTTP_PORT POSTGRES_USER POSTGRES_DB INTERNAL_API_TOKEN
 
-T_NAME=(); T_ST=(); T_NOTE=(); FAILS=0; WARNS=0
+T_NAME=(); T_ST=(); T_NOTE=(); FAILS=0; WARNS=0; INTEG_FAILS=0; INTEG_NAMES=()
+is_integration() { case "$1" in "LDAP/LDAPS"|"Вход через AD") return 0 ;; esac; return 1; }
 rec() { # rec ИМЯ СТАТУС [ПОЯСНЕНИЕ]
   T_NAME+=("$1"); T_ST+=("$2"); T_NOTE+=("${3:-}")
-  case "$2" in OK|configured) ok "$1: ${3:-$2}" ;; WARNING) WARNS=$((WARNS+1)); warn "$1: ${3:-}" ;; SKIP) info "$1: ${3:-пропущено}" ;; *) FAILS=$((FAILS+1)); fail "$1: ${3:-}" ;; esac
+  case "$2" in
+    OK|configured) ok "$1: ${3:-$2}" ;;
+    WARNING) WARNS=$((WARNS+1)); warn "$1: ${3:-}" ;;
+    SKIP) info "$1: ${3:-пропущено}" ;;
+    *) if is_integration "$1"; then INTEG_FAILS=$((INTEG_FAILS+1)); INTEG_NAMES+=("$1"); fail "$1: ${3:-}"; else FAILS=$((FAILS+1)); fail "$1: ${3:-}"; fi ;;
+  esac
 }
 WEB_ADDR="${WEB_BIND_ADDR:-127.0.0.1}"; [ "$WEB_ADDR" = "0.0.0.0" ] && WEB_ADDR="127.0.0.1"
 BASE="http://${WEB_ADDR}:${WEB_PORT}"
@@ -159,6 +166,10 @@ done
 log "==============================================="
 if [ "$FAILS" -eq 0 ]; then
   [ "$WARNS" -gt 0 ] && warn "Предупреждений: $WARNS (не блокируют; см. пояснения выше)"
+  if [ "$INTEG_FAILS" -gt 0 ]; then
+    warn "Сервисы Peregovorka работают, но проверка интеграций не пройдена: ${INTEG_NAMES[*]}. Откройте Администрирование → LDAP и доступ → Диагностика."
+    log "Integration issues: ${INTEG_NAMES[*]}"; log "Smoke test: INTEGRATION"; exit 3
+  fi
   ok "SMOKE TEST ПРОЙДЕН"; log "Smoke test: PASS"; exit 0
 fi
 fail "SMOKE TEST: ошибок — $FAILS"; exit 1

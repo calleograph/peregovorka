@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент/сервис: $1 (допустимы: backend asr web livekit)" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
 if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — сборка не начата."; fi
 
 host_version_info

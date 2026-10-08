@@ -76,3 +76,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash tests/nginx/run.sh
+
+  clean-os:
+    # «С чистой ОС»: в чистом контейнере Ubuntu/Debian нет ни Docker, ни nginx, ни git. Автоматическая установка зависимостей (манифест scripts/lib/prereqlib.sh)
+    # должна поставить Docker Engine + Compose + Buildx, nginx, git, curl, openssl и утилиты, а повторный запуск — ничего не ломать.
+    # Проверяется стадия prerequisites и план установки (dry-run). Полная сборка образов и запуск сервисов требуют настоящего Docker-демона и ВМ — здесь не проверяются.
+    name: clean-os (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "ubuntu:22.04", "debian:12", "debian:13"]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Система чистая
+        run: |
+          for c in docker nginx git; do if command -v "$c" >/dev/null 2>&1; then echo "::error::$c уже есть в чистом образе"; exit 1; fi; done
+          cat /etc/os-release | head -3
+      - uses: actions/checkout@v4
+      - name: Установка зависимостей (как в install.sh)
+        run: bash scripts/prereq.sh --install --profile standalone
+      - name: Всё установлено
+        run: |
+          docker --version; docker compose version; docker buildx version
+          nginx -v; git --version; curl --version | head -1; openssl version
+          bash scripts/prereq.sh --check --profile standalone
+      - name: Повторный запуск безопасен
+        run: bash scripts/prereq.sh --install --profile standalone
+      - name: План установки (dry-run) на чистой системе
+        run: |
+          export PEREGOVORKA_TEST_NO_ROOT_CHECK=1
+          ENV_FILE=/tmp/clean.env bash scripts/setup.sh --auto --env-only --host 192.0.2.10 --https-port 8443 --data /tmp/pg-data --skip-models
+          ENV_FILE=/tmp/clean.env bash scripts/install.sh --profile standalone --dry-run --skip-preflight --skip-models 2>&1 | tee /tmp/dry.out
+          grep -q "Dry-run завершён" /tmp/dry.out

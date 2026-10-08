@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FILE" ] && [ -f "$FILE" ] || die "Укажите существующий файл дампа"
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars POSTGRES_DB POSTGRES_USER
 
 warn "Будет ПЕРЕЗАПИСАНА база '${POSTGRES_DB}' проекта '${COMPOSE_PROJECT_NAME}' из файла: $FILE"

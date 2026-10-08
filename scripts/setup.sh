@@ -184,7 +184,50 @@ log; log "== Проверка (ничего не меняет) =="
 log; log "== План установки =="
 "$REPO_ROOT/scripts/install.sh" --profile "$PROFILE" --dry-run --skip-preflight
 ask_yn "Применить установку? Затрагиваются только объекты проекта (см. план выше) [y/N] " N || { info "Отменено. Повторный запуск безопасен."; exit 0; }
-"$REPO_ROOT/scripts/install.sh" --profile "$PROFILE" $([ "$SKIP_MODELS" -eq 1 ] && echo --skip-models)
-"$REPO_ROOT/scripts/smoke-test.sh" || warn "Smoke-test не пройден: scripts/status.sh, scripts/logs.sh"
-ok "Сервисы запущены."
-"$REPO_ROOT/scripts/bootstrap-admin.sh" --env "$ENV" || warn "Локальный администратор не создан автоматически. Выполните: ./scripts/bootstrap-admin.sh"
+# Признак незавершённой установки: корневой install.sh не считает её готовой, пока не пройдены ВСЕ проверки и не создан администратор.
+if [ "$AUTO" -eq 1 ]; then mkdir -p "$DATA_ROOT/state"; : > "$DATA_ROOT/state/install-pending"; rm -f "$DATA_ROOT/state/install-complete"; fi
+"$REPO_ROOT/scripts/install.sh" --profile "$PROFILE" --env "$ENV" $([ "$SKIP_MODELS" -eq 1 ] && echo --skip-models)
+
+SMOKE_LOG="$(mktemp)"; trap 'rm -f "$SMOKE_LOG"' EXIT
+"$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV" 2>&1 | tee "$SMOKE_LOG"; SMRC=${PIPESTATUS[0]}
+if [ "$AUTO" -ne 1 ]; then
+  [ "$SMRC" -eq 0 ] || warn "Smoke-test не пройден: scripts/status.sh, scripts/logs.sh"
+  ok "Сервисы запущены."
+  "$REPO_ROOT/scripts/bootstrap-admin.sh" --env "$ENV" || warn "Локальный администратор не создан автоматически. Выполните: ./scripts/bootstrap-admin.sh"
+  exit 0
+fi
+
+# ---- полностью автоматическая установка: «готово» объявляется только после полной проверки
+if [ "$SMRC" -ne 0 ] && [ "$SMRC" -ne 3 ]; then
+  fail "УСТАНОВКА НЕ ЗАВЕРШЕНА: итоговая проверка нашла ошибки (таблица выше)."
+  warn "Администратор не создан и пароль не показан. Устраните причину (scripts/status.sh, scripts/logs.sh <сервис>) и запустите ту же команду снова: sudo ./install.sh"
+  exit 1
+fi
+repair_verify_record "$([ "$SMRC" -eq 0 ] && echo pass || echo integration)"
+smoke_state() { # smoke_state "Имя проверки" … — итоговый статус по таблице smoke-test (OK / WARNING / FAIL / ?)
+  local n st="" first=1
+  for n in "$@"; do
+    l="$(grep -E "^${n} \.+ " "$SMOKE_LOG" | tail -1 | awk '{print $NF}')"
+    [ -n "$l" ] || continue
+    case "$l" in FAIL) st=FAIL ;; WARNING) [ "$st" = FAIL ] || st=WARNING ;; OK|configured) [ -n "$st" ] || st=OK ;; SKIP) [ -n "$st" ] || st=SKIP ;; esac
+  done
+  printf '%s' "${st:-?}"
+}
+if "$REPO_ROOT/scripts/updater.sh" install --env "$ENV" --yes >/dev/null 2>&1; then UPD_NOTE="OK"; else UPD_NOTE="не установлен (ставится позже: sudo ./scripts/updater.sh install --yes)"; fi
+BOOT_OK=1
+log; log "================================================================"
+log "                    УСТАНОВКА ЗАВЕРШЕНА"
+log "================================================================"
+printf '  %-34s %s\n' "Сервисы (Docker)" "$(smoke_state "Backend" "Frontend")" \
+  "База данных" "$(smoke_state "PostgreSQL" "Redis" "Миграции (Alembic)")" \
+  "Распознавание речи (ASR)" "$(smoke_state "ASR")" \
+  "Звонки (LiveKit)" "$(smoke_state "LiveKit HTTP" "RTC TCP" "RTC UDP")" \
+  "Веб-интерфейс" "$(smoke_state "Frontend" "Тестовая комната")" \
+  "Помощник обновлений в браузере" "$UPD_NOTE"
+[ "$SKIP_MODELS" -eq 1 ] && warn "Модель распознавания речи не скачана (--skip-models): звонки работают, расшифровки не будет, пока не выполнено scripts/models.sh."
+log "================================================================"
+"$REPO_ROOT/scripts/bootstrap-admin.sh" --env "$ENV" || { BOOT_OK=0; warn "Локальный администратор не создан автоматически. Выполните от root: ./scripts/bootstrap-admin.sh"; }
+if [ "$BOOT_OK" -eq 1 ]; then
+  rm -f "$DATA_ROOT/state/install-pending"; : > "$DATA_ROOT/state/install-complete"
+  log "Дальше всё делается в браузере: LDAP, сертификаты, SMB, почта. На сервер заходить для обычной настройки и обновления больше не нужно."
+fi

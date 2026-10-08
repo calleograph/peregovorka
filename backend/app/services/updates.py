@@ -8,7 +8,9 @@
     updater  →  remote.json   что нового в репозитории (список commit'ов, миграции, параметры .env)
     updater  →  update.log    построчный вывод scripts/update.sh (его показывает окно обновления)
 
-Исполнитель запускает только `scripts/update.sh --yes` с разрешёнными флагами: произвольные команды из веб-интерфейса выполнить нельзя.
+Исполнитель (служба от root) выполняет только фиксированный набор действий: `check`, `scan`, `update` (scripts/update.sh --yes с разрешёнными флагами)
+и `repair` с ID из белого списка REPAIR_IDS (зеркало scripts/lib/repairlib.sh; совпадение проверяется тестом). Произвольные команды из
+веб-интерфейса выполнить нельзя. Найденные проблемы исполнитель пишет в `repairs.json`.
 """
 from __future__ import annotations
 
@@ -30,6 +32,10 @@ HEARTBEAT_MAX_AGE = 40          # с: исполнитель считается 
 REQUEST_MAX_AGE = 600           # с: старый запрос исполнитель игнорирует
 LOG_CHUNK = 64 * 1024
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+# Белый список исправлений («Исправить автоматически»): зеркало REPAIR_IDS в scripts/lib/repairlib.sh. Backend передаёт исполнителю только эти ID.
+REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "image_commit", "migrations", "reverify")
+BUSY_STATES = ("updating", "repairing")
 
 # Версии, с которыми проект проверен (зеркало deployment/compat.env; совпадение проверяется тестом).
 TESTED = {"livekit_server": "v1.13.7", "livekit_client_js": "2.22.3", "livekit_python_sdk": "1.1.20", "livekit_api_python": "1.2.1"}
@@ -97,16 +103,39 @@ class Channel:
         return {"offset": offset + len(raw), "size": size, "text": raw.decode("utf-8", errors="replace"), "reset": reset}
 
     # ---------------------------------------------------------------- запись
-    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False) -> str:
-        if action not in ("check", "update"):
+    def repairs(self) -> dict | None:
+        r = self._json("repairs.json")
+        if r and r.get("checked_at"):
+            r["age_s"] = int(time.time() - float(r["checked_at"]))
+        return r
+
+    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False, repair: str | None = None) -> str:
+        if action not in ("check", "update", "scan", "repair"):
             raise ValueError("action")
+        if action == "repair" and repair not in REPAIR_IDS:
+            raise ValueError("repair")
         rid = uuid.uuid4().hex[:16]
-        body = "\n".join([f"id={rid}", f"action={action}", f"force_build={int(force_build)}", f"pull={int(pull)}",
+        extra = [f"repair={repair}"] if action == "repair" else []
+        body = "\n".join([f"id={rid}", f"action={action}", f"force_build={int(force_build)}", f"pull={int(pull)}", *extra,
                           f"by={_SAFE.sub('_', by)[:60]}", f"at={int(time.time())}"]) + "\n"
         tmp = self.dir / f".request.{rid}.tmp"
         tmp.write_text(body, encoding="utf-8")
         tmp.replace(self.dir / "request.txt")
         return rid
+
+
+def outcome_summary(st: dict) -> dict | None:
+    """Итог последнего обновления ПО раздельно: обновление · развёртывание · работоспособность · интеграции. Сбой интеграции (LDAP и т. п.) —
+    не «обновление завершено с ошибкой»: версия установлена, сервисы работают, нужна точечная проверка настроек."""
+    if st.get("action") == "repair" or not st.get("finished_at") or st.get("state") in BUSY_STATES:
+        return None
+    res = st.get("result")
+    upd = st.get("update_status") or ("ok" if res == "ok" else "failed")
+    dep = st.get("deploy_status") or ("ok" if res == "ok" else "unknown")
+    health = st.get("health_status") or ("ok" if res == "ok" else "unknown")
+    integ = st.get("integration_status") or ("ok" if res == "ok" else "unknown")
+    return {"update": upd, "deployment": dep, "health": health, "integrations": integ, "integration_issues": st.get("integration_issues") or "",
+            "needs_attention": integ == "fail" or res != "ok"}
 
 
 # --------------------------------------------------------------------------------- версии компонентов

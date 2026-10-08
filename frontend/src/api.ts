@@ -214,7 +214,7 @@ export interface AsrTestResult {
 export interface AsrCompare { ok: boolean; error?: string; audio_s?: number; reference?: string; results: AsrTestResult[]; summary: string[]; note?: string }
 
 export interface UpdaterState {
-  available: boolean; heartbeat_age_s: number | null; state: string | null; request_id?: string; step_no?: number; step_total?: number; step_name?: string;
+  available: boolean; heartbeat_age_s: number | null; state: string | null; action?: string; repair_id?: string; request_id?: string; step_no?: number; step_total?: number; step_name?: string;
   started_at?: number; finished_at?: number; exit_code?: number | null; result?: string; request_pending?: boolean; project?: string; by?: string;
   /** Результат прежнего запуска из веб-интерфейса, после которого уже было успешное обновление: текущим не считается. */
   stale?: boolean;
@@ -227,14 +227,31 @@ export interface RemoteInfo {
   checked_at: number; age_s?: number; ok: boolean; error: string; branch: string; current: string; remote: string; behind: number; ahead: number;
   ff_possible: boolean; local_changes: number; current_version?: string; remote_version?: string; changelog?: string; migrations_changed: number; env_example_changed: boolean; commits: RemoteCommit[];
 }
+/** Итог обновления раздельно: обновление ПО · развёртывание · работоспособность · проверка интеграций (LDAP и т. п.). */
+export interface UpdateOutcome {
+  update: string; deployment: string; health: string; integrations: string; integration_issues: string; needs_attention: boolean;
+}
+/** Помощник обновлений на сервере (служба от root). problem: not_installed — не запущен; no_privileges — запущен без прав (служба прежней версии). */
+export interface HelperInfo { available: boolean; privileged: boolean; uid: number | null; problem: null | "not_installed" | "no_privileges" }
+export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string }
+export interface RepairsInfo {
+  items: RepairItem[]; checked_at: number | null; age_s?: number | null; helper: HelperInfo; busy: boolean;
+  current: { repair_id: string | null; state: string | null; result: string | null; finished_at: number | null } | null;
+}
+export interface LegacyLdap {
+  present: boolean; migrated: boolean; active: boolean; needs_import: boolean; uris: string[]; base_dn: string; bind_dn: string; password_set: boolean;
+  ca_file: string | null; ca_file_readable: boolean; admin_group_dn: string | null; access_group_dn: string | null; last_error: string | null;
+}
 export interface UpdatesOverview {
   installed: { version: string; commit: string; built_at: string }; updater: UpdaterState; remote: RemoteInfo | null; active_meetings: number;
+  outcome: UpdateOutcome | null; helper: HelperInfo;
   can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
   history: UpdateAttempt[]; last_success: UpdateAttempt | null;
 }
 export interface UpdateLog {
   offset: number; size: number; text: string; reset: boolean; state: string | null; step_no: number | null; step_total: number | null; step_name: string | null;
   exit_code: number | null; result: string | null; finished_at: number | null; available: boolean;
+  action?: string | null; repair_id?: string | null; outcome?: UpdateOutcome | null;
 }
 export interface ComponentRow {
   key: string; title: string; installed: string | null; tested: string | null; latest: string | null; status: "ok" | "newer" | "ahead" | "unknown"; pinned: boolean; note: string;
@@ -483,7 +500,11 @@ export const api = {
     deleteProfile: (id: string) => request<void>("DELETE", `/admin/api-profiles/${id}`),
     setDefaultProfile: (kind: ProfileKind, profileId: string) => request<{ ok: boolean }>("PUT", "/admin/api-profiles/default", { kind, profile_id: profileId }),
     testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
-    ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean }>("GET", "/admin/ldap-profiles"),
+    ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean; legacy: LegacyLdap; boot_errors: Record<string, string> }>("GET", "/admin/ldap-profiles"),
+    ldapLegacyImport: () => request<{ profiles: string[]; ca_added: number; groups_added: number }>("POST", "/admin/ldap-legacy/import"),
+    repairs: () => request<RepairsInfo>("GET", "/admin/updates/repairs"),
+    repairsScan: () => request<{ request_id: string }>("POST", "/admin/updates/repairs/scan"),
+    repairFix: (id: string) => request<{ request_id?: string; done?: boolean }>("POST", `/admin/updates/repairs/${encodeURIComponent(id)}/fix`),
     createLdap: (body: Record<string, unknown>) => request<LdapProfile>("POST", "/admin/ldap-profiles", body),
     updateLdap: (id: string, body: Record<string, unknown>) => request<LdapProfile>("PATCH", `/admin/ldap-profiles/${id}`, body),
     deleteLdap: (id: string) => request<void>("DELETE", `/admin/ldap-profiles/${id}`),

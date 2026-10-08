@@ -5,9 +5,11 @@
 #   chmod +x install.sh
 #   sudo ./install.sh
 #
-# Скрипт сам: проверит сервер, поставит недостающее (git, curl, openssl, Docker), скачает проект с GitHub в /opt/peregovorka,
-# соберёт и запустит сервисы (база, контейнеры, миграции), создаст локального администратора и в конце покажет в терминале адрес,
-# логин и первичный пароль. Дальше всё — в браузере: LDAPS, сертификаты, группы администраторов, SMB и почта.
+# Скрипт сам: проверит сервер, поставит ВСЁ недостающее (git, curl, openssl, Docker Engine + Compose + Buildx, nginx, системные утилиты),
+# применит параметры ядра для звука, скачает проект с GitHub в /opt/peregovorka, модель распознавания речи, соберёт и запустит сервисы
+# (база, контейнеры, миграции), выполнит полную проверку, создаст локального администратора и в конце покажет в терминале «УСТАНОВКА
+# ЗАВЕРШЕНА», адрес, логин и первичный пароль. Дальше всё — в браузере: LDAPS, сертификаты, группы администраторов, SMB, почта и обновления.
+# Предварительно ничего устанавливать не нужно. Поддерживаются Ubuntu 22.04+/24.04 и Debian 12+.
 #
 # Параметры (все необязательны):
 #   --host ИМЯ_ИЛИ_IP   под каким адресом сервер открывают в браузере (по умолчанию — основной IP сервера)
@@ -18,7 +20,7 @@
 #   --skip-models       не скачивать модель распознавания речи сейчас (позже: scripts/models.sh)
 #   --yes               не задавать вопросов
 #
-# Установка ничего не удаляет и не обновляет на сервере без необходимости: устанавливаются только Docker (если его нет) и nginx для HTTPS.
+# Установка ничего не удаляет и не обновляет (apt upgrade не выполняется): ставятся только недостающие программы.
 # Повторный запуск безопасен: уже установленный экземпляр не затрагивается — скрипт подскажет, как обновиться.
 set -euo pipefail
 
@@ -41,7 +43,7 @@ while [ $# -gt 0 ]; do
     --ref) REF="${2:?}"; shift 2 ;;
     --skip-models) SKIP_MODELS=1; shift ;;
     --yes|-y) YES=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) die "Неизвестный параметр: $1 (справка: ./install.sh --help)" ;;
   esac
 done
@@ -73,7 +75,11 @@ command -v systemctl >/dev/null 2>&1 || warn "systemd не найден — ав
 RESUME=0
 if [ -d "$DIR/.git" ] && [ -f "$DIR/.env" ]; then
   droot="$(sed -n 's/^DATA_ROOT=//p' "$DIR/.env" | head -1 | tr -d "\"'")"
-  if [ -n "$droot" ] && [ -s "$droot/state/install-history.log" ]; then DONE=1; else DONE=0; fi
+  # Готова — если есть метка завершения (её ставит scripts/setup.sh после полной проверки и создания администратора) либо это установка
+  # прежних версий (история есть, а метки «не завершена» нет). Установка, прерванная на проверке, продолжится при повторном запуске.
+  if [ -n "$droot" ] && [ -f "$droot/state/install-complete" ]; then DONE=1
+  elif [ -n "$droot" ] && [ -s "$droot/state/install-history.log" ] && [ ! -f "$droot/state/install-pending" ]; then DONE=1
+  else DONE=0; fi
 else
   DONE=0
 fi
@@ -96,7 +102,7 @@ step "Что будет сделано"
 say "  • установка в:        $DIR"
 say "  • данные (БД, записи): ${DATA:-/srv/peregovorka-data}"
 say "  • адрес для входа:    https://$HOST_SHOWN$([ "$PORT" = "443" ] || printf ':%s' "$PORT")  (сертификат HTTPS — самоподписанный, заменить можно позже)"
-say "  • будут установлены при необходимости: git, curl, openssl, Docker, nginx"
+say "  • будет установлено при необходимости: git, curl, openssl, Docker (Engine, Compose, Buildx), nginx и системные утилиты"
 say "  • будет скачана модель распознавания речи (до ~2 ГБ) и собраны образы — это займёт 10–30 минут"
 if [ "$YES" -ne 1 ] && [ -t 0 ]; then
   read -r -p "Продолжить? [Y/n] " a || exit 1
@@ -110,10 +116,11 @@ for c in git curl openssl; do command -v "$c" >/dev/null 2>&1 || need+=("$c"); d
 if [ "${#need[@]}" -gt 0 ]; then
   [ "$APT" -eq 1 ] || die "Не найдены: ${need[*]}. Установите их средствами вашей системы и запустите установку снова."
   say "Устанавливаю: ${need[*]} ca-certificates…"
-  DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need[@]}" ca-certificates >/dev/null
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=300 update -y >/dev/null
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends "${need[@]}" ca-certificates >/dev/null
 fi
 ok "git, curl, openssl на месте"
+[ "$APT" -eq 1 ] || warn "Система не Ubuntu/Debian: автоматическая установка Docker и nginx недоступна — установите их заранее, иначе установка остановится с понятным сообщением."
 
 # --- версия для установки: последний релиз (тег vX.Y.Z), иначе main
 if [ -z "$REF" ]; then
@@ -135,6 +142,10 @@ args=(--auto --https-port "$PORT" --name peregovorka)
 [ "$SKIP_MODELS" -eq 1 ] && args+=(--skip-models)
 cd "$DIR"
 chmod +x scripts/*.sh scripts/lib/*.sh 2>/dev/null || true
+if [ "$APT" -eq 1 ]; then
+  step "Системные программы и Docker"
+  ./scripts/prereq.sh --install --profile standalone || die "Не удалось установить системные программы (подробности выше). Повторный запуск безопасен: sudo $0"
+fi
 if ! ./scripts/setup.sh "${args[@]}"; then
   say ""
   die "Установка прервана. Повторный запуск безопасен: sudo $0 — завершённые шаги будут пропущены (подробности выше)."

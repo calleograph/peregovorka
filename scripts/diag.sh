@@ -17,7 +17,7 @@ while [ $# -gt 0 ]; do
     *) die "Неизвестный аргумент: $1" ;;
   esac
 done
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 TS="$(date +%Y%m%d-%H%M%S)"; W="$(mktemp -d)"; B="$W/peregovorka-diag-$TS"; mkdir -p "$B/logs" "$OUTDIR"
 trap 'rm -rf "$W"' EXIT
 section() { printf '== %s ==\n' "$1"; }

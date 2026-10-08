@@ -17,7 +17,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [[ "$MIN" =~ ^[0-9]+$ && "$INT" =~ ^[0-9]+$ && "$INT" -ge 2 ]] || die "--minutes и --interval — целые числа (interval ≥ 2)"
-load_env "$ENV_FILE"; validate_project_name
+sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 OUT="${OUT:-$REPO_ROOT/metrics-$(date +%Y%m%d-%H%M%S).csv}"
 ids="$(dc ps -q 2>/dev/null)"; [ -n "$ids" ] || die "Контейнеры проекта не найдены"
 echo "ts,service,cpu_pct,mem_bytes,load1" > "$OUT"

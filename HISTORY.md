@@ -445,3 +445,17 @@ verify сразу после `up -d` (web ещё `starting`), сбой `apt-get`
 - **Проверка.** Backend: 347 тестов (новые: локальный администратор, LDAP-профили, CA, группы, почта и доставка, сверка хранилищ); frontend: 143 тестов vitest; shell: 337 тестов (в т. ч. `install.sh`, `setup.sh --auto`, `bootstrap-admin.sh`, `admin-reset.sh` с подставным docker). Интерфейс — в Edge против настоящего backend (смена первичного пароля, мастер, LDAP/CA/доступ/почта/сверка/диалог отправки).
   **Не проверено:** реальные AD/LDAPS, SMTP/Exchange и SMB; `install.sh` на чистом сервере.
 - Документы: `docs/ADMIN_SETUP.md`, `docs/MAIL.md`; обновлены `README.md` (установка «за пять шагов», обновление, восстановление), `docs/INSTALL_AND_UPDATE.md`, `docs/STORAGE.md`, `docs/ROOMS_AND_ROLES.md`, `PROJECT.md`, `CHANGELOG.md`.
+
+---
+
+## 2026-10-08 — После 0.3.0: установка «с чистой ОС», помощник от root, «Исправить автоматически», перенос legacy LDAP
+
+Задача владельца «доработать установку и обновление» (11 пунктов) + замечания по реальному обновлению 0.2.0 → 0.3.0 (12 пунктов): каталоги `ca`/`chat-files` остались за прежним пользователем, `CaBundleService.rebuild()` не записал `bundle.pem`, LDAP не загрузился (`not_configured`), обновление выглядело «завершённым с ошибкой», web-updater упирался в `sudo: a terminal is required`, `ASR_MAX_CONCURRENT_INFERENCE=1` из `.env` перебивался унаследованной `=2`.
+
+- **Установка:** манифест `scripts/lib/prereqlib.sh` + `scripts/prereq.sh`; `install.sh` (этапы `prerequisites` по манифесту, `kernel`), `setup.sh --auto` (итоговая проверка → «УСТАНОВКА ЗАВЕРШЕНА» → администратор; метки `install-pending/complete`), корневой `install.sh` ставит зависимости до `setup.sh`. Тест сверяет манифест с вызовами в скриптах.
+- **Помощник:** `updater.sh` от root, белый список `check/scan/update/repair`, `env -i`, безопасные временные файлы; `repairlib.sh` (7 исправлений), `scripts/repair.sh`; backend `GET/POST /admin/updates/repairs*`, `helper`, `outcome`; интерфейс `RepairsPanel`, раздельные итоги, кнопка в диагностику LDAP.
+- **Обновление:** `update.sh` — четыре статуса и код 3; `smoke-test.sh` — код 3 только для интеграций; `sanitize_project_env`; `upd_ensure_data_dirs` приводит все каталоги данных к uid 10001 (рекурсивно) до запуска; `upd_self_heal_updater`.
+- **LDAP:** `LegacyLdapMigrator` (автоперенос и кнопка), раздельные `try` при запуске, `describe_error`, диагностика `legacy_not_loaded`, проверка записи в каталоги данных в `verify`.
+- **Проверка:** backend 362, frontend 143, shell 382 (2 — только Linux). Новый тест пути обновления (`test_upgrade_path.py`). CI: джоб `clean-os`.
+- **Не проверено:** полная установка на чистой ВМ, живой systemd-помощник, реальный AD.
+

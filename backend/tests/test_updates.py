@@ -49,7 +49,7 @@ def test_overview_without_updater_explains_what_to_do(client):
     login(client, "root")
     o = client.get(U).json()
     assert o["updater"]["available"] is False and o["can_update"] is False
-    assert any("updater.sh" in r for r in o["reasons"]) and o["commands"]["install"] == "./scripts/updater.sh install"
+    assert any("помощник" in r.lower() for r in o["reasons"]) and o["commands"]["install"] == "sudo ./scripts/updater.sh install --yes"
     assert client.post(f"{U}/run", json={"confirm": True}).status_code == 409
     assert client.post(f"{U}/check").status_code == 409
 

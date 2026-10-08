@@ -240,3 +240,13 @@ t "commit отличается от HEAD → предупреждение" bash 
 
 # ---- права на запуск (./scripts/update.sh должен запускаться без bash)
 t "все scripts/*.sh (кроме lib/) имеют бит исполнения в git (иначе «Permission denied» при ./scripts/…)" bash -c 'cd "$1" && git rev-parse --git-dir >/dev/null 2>&1 || exit 0; bad="$(git ls-files -s scripts | awk "\$1!=\"100755\" && \$4 ~ /^scripts\/[^\/]+\.sh$/ {print \$4}")"; [ -z "$bad" ] || { echo "$bad" >&2; exit 1; }' _ "$ROOT"
+
+# ------------------------------------------------------------- раздельные итоги обновления (обновление · сервисы · интеграции)
+outcome() { bash -c 'source "$1/scripts/lib/common.sh"; upd_classify_outcome "$2" "$3" "$4"; printf "%s/%s" "$H_ST" "$I_ST"' _ "$ROOT" "$@"; }
+t "итог: verify и smoke в порядке → здоровье ok, интеграции ok" eq "$(outcome 0 0 PASS)" "ok/ok"
+t "итог: проблема LDAP (smoke 3) НЕ делает обновление неудачным: здоровье ok, интеграции fail" eq "$(outcome 0 3 INTEGRATION)" "ok/fail"
+t "итог: сбой сервисов (smoke 1) → здоровье fail" eq "$(outcome 0 1 FAIL)" "fail/unknown"
+t "итог: verify нашёл ошибки → здоровье fail" eq "$(outcome 2 0 PASS)" "fail/ok"
+t "итог: smoke пропущен → интеграции skipped, здоровье ok" eq "$(outcome 0 0 skipped)" "ok/skipped"
+t "итог: smoke-test.sh различает сбой системы (1) и сбой интеграции (3), update.sh отдаёт код 3" bash -c 'grep -q "exit 3" "$1/scripts/smoke-test.sh" && grep -q "is_integration" "$1/scripts/smoke-test.sh" && grep -q "exit 3" "$1/scripts/update.sh" && grep -q "Integrations:" "$1/scripts/update.sh"' _ "$ROOT"
+t "итог: update.sh пишет четыре статуса в last-update.state" bash -c 'for k in update_status deploy_status health_status integration_status integration_issues; do grep -q "upd_state_set $k" "$1/scripts/update.sh" || exit 1; done' _ "$ROOT"

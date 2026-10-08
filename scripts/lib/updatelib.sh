@@ -211,17 +211,22 @@ upd_ensure_updater_dir() {
   chmod 1777 "$d" 2>/dev/null || true
 }
 
-# Каталоги данных, появившиеся в новых версиях (CA-сертификаты, вложения чата): создаются ДО запуска контейнеров с владельцем uid 10001 (backend),
-# иначе Docker создаст их от root и backend не сможет в них писать.
+# Каталоги данных, в которые пишут контейнеры (backend и asr работают от uid 10001): создаются/приводятся к нужному владельцу и режиму ДО запуска
+# контейнеров. Иначе Docker создаёт отсутствующий каталог от root, а каталог, оставшийся за прежним пользователем, не принимает запись — в 0.3.0 из-за
+# этого не собирался набор сертификатов CA и вход по домену «пропадал». Проверяются и вложенные файлы (каталог мог быть создан от root вместе с содержимым).
+# От root исправляется молча; не от root — через `sudo -n`, а если нельзя — понятное предупреждение (помощник обновлений, работающий от root, исправит сам).
 upd_ensure_data_dirs() {
-  local d
-  for d in ca chat-files; do
-    [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || { warn "Не удалось создать $DATA_ROOT/$d"; continue; }
-    if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then
-      chown 10001:10001 "$DATA_ROOT/$d" 2>/dev/null || sudo -n chown 10001:10001 "$DATA_ROOT/$d" 2>/dev/null \
-        || warn "Не удалось назначить владельца $DATA_ROOT/$d (uid 10001): выполните sudo chown 10001:10001 $DATA_ROOT/$d"
+  local d p rc=0
+  for d in recordings exports ca chat-files; do
+    p="$DATA_ROOT/$d"
+    [ -d "$p" ] || mkdir -p "$p" 2>/dev/null || sudo -n mkdir -p "$p" 2>/dev/null || { warn "Не удалось создать $p"; rc=1; continue; }
+    if [ "$(stat -c '%u' "$p" 2>/dev/null || echo x)" != "10001" ] || [ -n "$(find "$p" -not -uid 10001 -print -quit 2>/dev/null)" ]; then
+      chown -R 10001:10001 "$p" 2>/dev/null || sudo -n chown -R 10001:10001 "$p" 2>/dev/null         || { warn "Не удалось назначить владельца $p (uid 10001): запустите обновление от root (sudo ./scripts/update.sh) либо нажмите «Исправить автоматически» в браузере"; rc=1; }
     fi
   done
+  for d in models/gigaam state backups; do [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || sudo -n mkdir -p "$DATA_ROOT/$d" 2>/dev/null || true; done
+  upd_ensure_updater_dir
+  return "$rc"
 }
 
 upd_git_fetch() {
@@ -252,4 +257,52 @@ upd_history_append() {
   chmod 644 "$f" 2>/dev/null || true
   if [ "$(wc -l < "$f" 2>/dev/null || echo 0)" -gt 100 ]; then tail -n 100 "$f" > "$f.tmp" 2>/dev/null && cat "$f.tmp" > "$f"; rm -f "$f.tmp"; fi
   return 0
+}
+
+# ------------------------------------------------------------------------------- служба-помощник обновлений
+# Помощник обновлений (scripts/updater.sh) должен работать от root: без пароля sudo он иначе не может выдать права на каталоги данных,
+# обновить собственный nginx-site и применить параметры ядра (реальный сбой 0.3.0: «sudo: a terminal is required to read the password»).
+# Службы, созданные прежними версиями, работали от обычного пользователя. Ручное обновление от root (sudo ./scripts/update.sh) исправляет это само;
+# если служба ещё не установлена, на standalone она ставится автоматически. Из веб-интерфейса службу не перезапустить (она сама выполняет обновление).
+upd_self_heal_updater() {
+  [ "${DRY_RUN:-0}" = "1" ] && return 0
+  [ "${UPDATE_SOURCE:-}" = web ] && return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local unit="/etc/systemd/system/peregovorka-updater-${COMPOSE_PROJECT_NAME}.service" want
+  if [ "$(id -u)" -ne 0 ]; then
+    if [ -f "$unit" ] && ! grep -qx 'User=root' "$unit" 2>/dev/null; then
+      warn "Помощник обновлений работает без прав администратора, поэтому кнопки «Обновить» и «Исправить автоматически» в браузере смогут не всё. Один раз выполните от root: sudo ./scripts/updater.sh install --yes"
+    fi
+    return 0
+  fi
+  want="$("$REPO_ROOT/scripts/updater.sh" print-unit --env "$ENV_FILE" 2>/dev/null)"
+  [ -n "$want" ] || return 0
+  if [ ! -f "$unit" ]; then
+    if [ "${INSTALL_PROFILE:-}" = standalone ]; then
+      info "Устанавливаю службу-помощник обновлений (кнопки «Обновить» и «Исправить автоматически» в браузере)…"
+      "$REPO_ROOT/scripts/updater.sh" install --env "$ENV_FILE" --yes >/dev/null 2>&1 && ok "Помощник обновлений установлен и запущен" || warn "Не удалось установить помощник обновлений: sudo ./scripts/updater.sh install --yes"
+    fi
+    return 0
+  fi
+  if [ "$(cat "$unit")" = "$want" ]; then
+    systemctl is-active --quiet "$(basename "$unit")" 2>/dev/null || systemctl restart "$(basename "$unit")" >/dev/null 2>&1 || true
+    return 0
+  fi
+  info "Обновляю службу-помощник обновлений (теперь она работает от root и умеет исправлять права и настройки)…"
+  printf '%s\n' "$want" > "$unit" && systemctl daemon-reload && systemctl enable "$(basename "$unit")" >/dev/null 2>&1
+  systemctl restart "$(basename "$unit")" >/dev/null 2>&1 && ok "Служба-помощник обновлена и перезапущена" || warn "Не удалось перезапустить службу-помощник: sudo systemctl restart $(basename "$unit")"
+}
+
+# Четыре независимых итога после обновления. upd_classify_outcome VERIFY_FAILS SMOKE_RC SMOKE_LABEL → H_ST (ok|fail), I_ST (ok|fail|skipped|unknown).
+# Работоспособность (health) — verify без ошибок и smoke без сбоя САМОЙ системы (код 1 = сервисы, БД, ASR, LiveKit, web).
+# Интеграции — отдельно: код 3 smoke (например, нет связи с каталогом LDAP) — это НЕ провал обновления, а предупреждение с кнопкой диагностики.
+upd_classify_outcome() {
+  local vf="$1" rc="$2" label="$3"
+  if [ "$vf" -eq 0 ] && { [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; }; then H_ST=ok; else H_ST=fail; fi
+  case "$label" in
+    INTEGRATION) I_ST=fail ;;
+    skipped) I_ST=skipped ;;
+    FAIL) I_ST=unknown ;;
+    *) I_ST=ok ;;
+  esac
 }

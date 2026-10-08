@@ -3,6 +3,7 @@ import { version as lkClientVersion } from "livekit-client";
 import { api, type ApiError, type JournalStats, type SystemStatus } from "../../api";
 import { bytes, downloadText, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
+import RepairsPanel from "./RepairsPanel";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
   join_backend_ms: ["Обработка входа на сервере", "Время работы backend над запросом «Войти» (БД и выдача пропуска) без сети и прокси."],
@@ -65,6 +66,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
         <button className="btn" onClick={() => run("ret", async () => { const r = await api.admin.runRetention(); setNote({ ok: true, text: `Очистка по срокам выполнена: ${JSON.stringify(r)}` }); await load(); })} disabled={!!busy}>Запустить очистку по срокам</button></div>
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
       {problems && (problems.length ? <div className="alert error"><b>Найдено в отчёте:</b><ul style={{ margin: "4px 0 0" }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul></div> : <div className="alert ok">Диагностика не нашла проблем.</div>)}
+      <RepairsPanel onOpen={onOpen} />
       {!s.master_key_ok && <div className="alert error">APP_MASTER_KEY не задан или некорректен — секретные настройки (пароли, токены, ключи) сохранить нельзя.</div>}
       {s.kernel && !s.kernel.ok && <div className="alert"><b>Параметры ядра ниже рекомендаций WebRTC.</b> {s.kernel.note} На общем сервере применяет администратор сервера.</div>}
       {(s.recording_export?.failed ?? 0) > 0 && <div className="alert error">Записей, не выгруженных во внешнее хранилище: {s.recording_export?.failed}. Файлы сохранены локально — проверьте раздел «Хранилище записей» и нажмите «Повторить выгрузку».</div>}
