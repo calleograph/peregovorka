@@ -12,6 +12,7 @@ import LdapAdmin from "./admin/LdapAdmin";
 import MailAdmin, { MailLogAdmin } from "./admin/MailAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
+import SipAdmin from "./admin/SipAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
@@ -52,7 +53,7 @@ const GROUPS: Group[] = [
     { id: "mail", label: "Исходящая почта (SMTP)", render: (go) => <MailAdmin onOpen={go} /> },
     { id: "mail_policy", label: "Правила рассылки", render: () => (
       <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
-        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Уведомления»); адреса сервера и пароль ему не показываются." />) },
+        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Материалы после встречи»); адреса сервера и пароль ему не показываются." />) },
     { id: "mail_log", label: "Журнал отправки", render: () => <MailLogAdmin /> },
   ] },
   { title: "Встречи и комнаты", pages: [
@@ -80,6 +81,7 @@ const GROUPS: Group[] = [
           intro="Выберите, чем формировать протоколы и резюме: встроенной локальной моделью, внешней LLM или ничем. Для внешней модели действует обезличивание: если оно включено, данные отправляются только после него; если выключено (в общих настройках или в переговорке) — в исходном виде. Локальная модель данные наружу не отправляет, поэтому обезличивание для неё по умолчанию не применяется (в настройках переговорки его можно включить принудительно)." />
         <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmFields} />
       </>) },
+    { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
   ] },
   { title: "Журналы", pages: [
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },

@@ -89,7 +89,7 @@ export interface RecordingRow {
 }
 export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
-  user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest"; display_name: string; joined_at: string; left_at: string | null; online: boolean;
+  user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; display_name: string; joined_at: string; left_at: string | null; online: boolean;
 }
 export interface Meeting {
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
@@ -137,6 +137,46 @@ export interface RoomManage {
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
+  protocol_instructions?: string | null;
+  /** Сроки хранения и обезличивание задаёт администратор: руководителю показываются только для сведения. */
+  retention?: { text_days: number | null; audio_days: number | null; history_access: string; anonymize_mode: string } | null;
+  llm?: LlmChoice | null; llm_effective?: LlmEffective | null; llm_options?: LlmOptions | null;
+  sip?: RoomSip | null; sip_options?: SipOptions | null;
+}
+/** Выбор языковой модели: inherit — системная по умолчанию; local — локальная модель; profile — внешний профиль; off — отключена. */
+export interface LlmChoice { mode: "inherit" | "local" | "profile" | "off"; profile_id: string | null; local_model: string | null }
+export interface LlmEffective { name: string; source: "system" | "room" | "meeting"; available: boolean; reason: string | null; note: string | null }
+export interface LlmOptions {
+  system: { name: string; provider: "local" | "external" | "off"; model: string | null };
+  local: { id: string; title: string; light: boolean; installed: boolean }[];
+  profiles: { id: string; name: string; model: string; is_default: boolean }[];
+  on_missing: "system" | "unavailable";
+}
+export interface RoomSip {
+  mode: "off" | "default" | "profile"; profile_id: string | null; extension: string | null; allow_inbound: boolean; allow_outbound: boolean; contacts: { name: string; number: string }[];
+}
+export interface SipOptions { server_enabled: boolean; profiles: { id: string; name: string; direction: string; is_default: boolean; synced: boolean }[]; default: string | null }
+export interface MeetingSettings {
+  ended: boolean;
+  delivery: { effective: MailDeliverySpec; room: MailDeliverySpec; override: boolean };
+  llm: { effective: LlmEffective; room: LlmChoice; override: LlmChoice | null };
+  llm_options: LlmOptions;
+}
+export interface PhoneState {
+  can_call: boolean; reason: string | null; profile: string | null; contacts: { name: string; number: string }[]; extension: string | null; allow_inbound: boolean;
+  active_meeting_id: string | null; phones: { guest_id: string; display_name: string }[]; allowed_prefixes: string[];
+}
+export interface SipProfile {
+  id: string; name: string; enabled: boolean; is_default: boolean; direction: "outbound" | "inbound" | "both"; host: string; port: number; transport: "udp" | "tcp" | "tls";
+  username: string; realm: string; caller_id: string; allowed_numbers: string[]; inbound_numbers: string[]; allowed_addresses: string[]; codecs: string[];
+  media_encryption: "disable" | "allow" | "require"; ring_timeout_s: number; secret_set: boolean; synced: boolean; rooms_using?: number;
+  last_check: { ok: boolean; message?: string; test_call?: boolean; stages?: DiagStage[] } | null; last_check_at: string | null; sync?: { ok: boolean | null; message: string };
+}
+export interface SipStatus {
+  enabled_on_server: boolean; ports: { signaling_port: number; rtp_start: number; rtp_end: number; media_ip: string | null; allowed_cidrs: string[] };
+  service: { running: boolean | null; detail: string }; livekit: { ok: boolean | null; detail: string }; redis: { ok: boolean | null; detail: string };
+  trunks: { profiles: number; enabled: number; synced: number; in_livekit?: number; missing?: string[] };
+  last_check: { profile: string; result: { ok: boolean; message?: string }; at: string | null } | null; active_trunk: string | null; codecs_supported: string[];
 }
 export type ProfileKind = "llm" | "anonymizer";
 export interface LdapProfile {
@@ -164,7 +204,7 @@ export interface MailMessageRow {
   requested_by: string | null; last_error: string | null; delivery: string | null;
 }
 export interface MailDeliverySpec {
-  enabled: boolean; materials: string[];
+  enabled: boolean; archive?: boolean; materials: string[];
   recipients: { leaders: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
 }
 export interface DeliveryRecipient { email: string; name: string; source: string; problem: string | null }
@@ -426,6 +466,11 @@ export const api = {
     guestLink: (roomId: string, action: "rotate" | "revoke") => request<RoomManage>("POST", `/rooms/${roomId}/manage/guest-link/${action}`),
     search: (roomId: string, kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/rooms/${roomId}/manage/directory?kind=${kind}&q=${encodeURIComponent(q)}`),
     /** Кому уйдёт рассылка по этим (даже несохранённым) настройкам: адреса из каталога, у кого адреса нет, что запрещено политикой. */
+    meetingSettings: (meetingId: string) => request<MeetingSettings>("GET", `/meetings/${meetingId}/settings`),
+    saveMeetingSettings: (meetingId: string, body: { delivery?: MailDeliverySpec | null; llm?: LlmChoice | null }) => request<MeetingSettings>("PUT", `/meetings/${meetingId}/settings`, body),
+    phone: (roomId: string) => request<PhoneState>("GET", `/rooms/${roomId}/phone`),
+    phoneCall: (roomId: string, body: { number?: string; contact?: number }) => request<{ guest_id: string; identity: string; display_name: string; profile: string }>("POST", `/rooms/${roomId}/phone/call`, body),
+    phoneHangup: (roomId: string, guestId: string) => request<{ ok: boolean }>("POST", `/rooms/${roomId}/phone/hangup`, { guest_id: guestId }),
     deliveryPreview: (roomId: string, spec: MailDeliverySpec) =>
       request<{ recipients: DeliveryRecipient[]; participants_by_meeting: boolean; mail_configured: boolean; allowed_domains: string[]; materials: DeliveryMaterialInfo[] }>("POST", `/rooms/${roomId}/manage/delivery-preview`, { mail_delivery: spec }),
   },
@@ -514,6 +559,14 @@ export const api = {
     ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean; legacy: LegacyLdap; boot_errors: Record<string, string> }>("GET", "/admin/ldap-profiles"),
     ldapLegacyImport: () => request<{ profiles: string[]; ca_added: number; groups_added: number }>("POST", "/admin/ldap-legacy/import"),
     localLlm: () => request<LocalLlmStatus>("GET", "/admin/llm/local"),
+    sipStatus: () => request<SipStatus>("GET", "/admin/sip/status"),
+    sipProfiles: () => request<{ items: SipProfile[] }>("GET", "/admin/sip/profiles"),
+    createSip: (body: Record<string, unknown>) => request<SipProfile>("POST", "/admin/sip/profiles", body),
+    updateSip: (id: string, body: Record<string, unknown>) => request<SipProfile>("PATCH", `/admin/sip/profiles/${id}`, body),
+    deleteSip: (id: string) => request<void>("DELETE", `/admin/sip/profiles/${id}`),
+    syncSip: (id: string) => request<{ ok: boolean | null; message: string }>("POST", `/admin/sip/profiles/${id}/sync`),
+    checkSip: (id: string) => request<DiagResult>("POST", `/admin/sip/profiles/${id}/check`),
+    testCallSip: (id: string, number: string) => request<{ ok: boolean; message: string; ms: number; sip_status?: number | null }>("POST", `/admin/sip/profiles/${id}/test-call`, { number }),
     localLlmTest: () => request<{ ok: boolean; message: string; ms: number }>("POST", "/admin/llm/local/test"),
     repairs: () => request<RepairsInfo>("GET", "/admin/updates/repairs"),
     repairsScan: () => request<{ request_id: string }>("POST", "/admin/updates/repairs/scan"),

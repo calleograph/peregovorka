@@ -18,6 +18,7 @@ import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { LiveBus, backoffDelay } from "../liveSocket";
 import { fileBase as fileBaseName } from "../util";
+import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
 import { takePreJoin } from "../prejoin";
 import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
@@ -25,6 +26,8 @@ import { isScreenProfile, screenShareOptions } from "../screenShare";
 
 // диалог настроек нужен только руководителю — грузится по требованию (вместе с общим для администрирования выбором доступа)
 const RoomManageDialog = lazy(() => import("../components/RoomManageDialog"));
+const MeetingSettingsDialog = lazy(() => import("../components/MeetingSettingsDialog"));
+const PhoneDialog = lazy(() => import("../components/PhoneDialog"));
 
 type CtlKey = "mic" | "cam" | "screen" | "rec" | "tr" | "device" | "audio" | "general";
 type CtlErrors = Partial<Record<CtlKey, string>>;
@@ -79,6 +82,8 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
   const [canBoard, setCanBoard] = useState(true);
   const [manageOpen, setManageOpen] = useState(false);
+  const [meetingSettingsOpen, setMeetingSettingsOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const [asrReady, setAsrReady] = useState(true);
   const [participants, setParticipants] = useState<PView[]>([]);
   const [state, setState] = useState<ConnectionState>(ConnectionState.Disconnected);
@@ -146,7 +151,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
     if (!r) return;
     const all: Participant[] = [r.localParticipant, ...Array.from(r.remoteParticipants.values())];
     setParticipants(all.map((p) => ({
-      identity: p.identity, name: p.name || p.identity, local: p.isLocal, mic: p.isMicrophoneEnabled, cam: p.isCameraEnabled,
+      identity: p.identity, name: tileName(p.identity, p.name, p.attributes), local: p.isLocal, mic: p.isMicrophoneEnabled, cam: p.isCameraEnabled,
       screen: p.isScreenShareEnabled, speaking: p.isSpeaking, participant: p,
     })));
   }, []);
@@ -826,7 +831,9 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
           )}
           {room.transcription_enabled && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
           <div className="spacer" />
-          {isLeader && <button className="btn mini" onClick={() => setManageOpen(true)} title="Название, режим комнаты, запись, доступ, руководители и гостевая ссылка"><Icon name="gear" size={15} /> Настройки комнаты</button>}
+          {isLeader && <button className="btn mini" onClick={() => setPhoneOpen(true)} title="Позвонить на телефон через SIP: абонент подключится к встрече"><Icon name="phone" size={15} /> Позвонить</button>}
+          {isLeader && <button className="btn mini" onClick={() => setMeetingSettingsOpen(true)} title="Рассылка материалов и языковая модель только для этой встречи"><Icon name="sliders" size={15} /> Эта встреча</button>}
+          {isLeader && <button className="btn mini" onClick={() => setManageOpen(true)} title="Название, режим, запись, доступ, материалы после встречи, языковая модель и телефония"><Icon name="gear" size={15} /> Настройки комнаты</button>}
           <button className={`btn mini ${debug ? "primary" : ""}`} onClick={toggleDebug} title="Тайминги входа, статистика соединения и показа экрана"><Icon name="sliders" size={15} /> Диагностика</button>
         </div>
 
@@ -942,6 +949,8 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
+      {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
+      {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}
       <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} paused={!transcribing} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />

@@ -288,6 +288,7 @@ class SipService:
     def public(self, r: SipProfile) -> dict:
         d = {k: getattr(r, k) for k in FIELDS}
         d.update(id=str(r.id), secret_set=bool(r.secret_enc), synced=bool(r.lk_outbound_trunk_id or r.lk_inbound_trunk_id),
+                 lk_outbound_trunk_id=r.lk_outbound_trunk_id, lk_inbound_trunk_id=r.lk_inbound_trunk_id,
                  last_check=r.last_check, last_check_at=r.last_check_at.isoformat() if r.last_check_at else None)
         for k in ("allowed_numbers", "inbound_numbers", "allowed_addresses", "codecs"):
             d[k] = list(d.get(k) or [])
@@ -539,7 +540,7 @@ class SipRouting:
             return False
         await self.gateway.hangup(meeting.livekit_room, g.livekit_identity)
         g.left_at = g.left_at or utcnow()
-        self._emit("call_hangup", "info", room, f"Телефонный участник отключён: {g.display_name}", {}, str(meeting.id))
+        self._emit("call_hangup", "info", room, "Телефонный участник отключён руководителем", {}, str(meeting.id))
         return True
 
     # входящие

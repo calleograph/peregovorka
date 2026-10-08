@@ -1,17 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type AclEntry, type ApiError, type MailDeliverySpec, type RoomManage, type RoomType } from "../api";
+import { api, type AclEntry, type ApiError, type LlmChoice, type MailDeliverySpec, type RoomManage, type RoomSip, type RoomType } from "../api";
 import { copyText } from "../util";
 import AclPicker from "./AclPicker";
 import { Modal } from "./Dialogs";
 import DeliveryEditor, { emptySpec } from "./DeliveryEditor";
+import LlmChoiceEditor from "./LlmChoiceEditor";
+import TelephonyEditor from "./TelephonyEditor";
+import { choiceLabel, emptyChoice } from "../phone";
 
-type TabId = "main" | "mode" | "access" | "guests" | "notify";
-const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Режим и запись"], ["access", "Доступ и руководители"], ["guests", "Гости"], ["notify", "Уведомления"]];
+/** Разделы сгруппированы по смыслу: что за комната, как проходит встреча, кто допущен, что остаётся после встречи, какая модель и телефония. */
+type TabId = "main" | "mode" | "access" | "materials" | "model" | "phone";
+const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["materials", "Материалы после встречи"], ["model", "Языковая модель"], ["phone", "Телефония"]];
+const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: null, allow_inbound: false, allow_outbound: false, contacts: [] });
+const days = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
 
 interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
   room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
+  protocol_instructions: string; llm: LlmChoice; sip: RoomSip;
 }
 
 const toForm = (r: RoomManage): Form => ({
@@ -19,6 +26,7 @@ const toForm = (r: RoomManage): Form => ({
   welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record,
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
+  protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), sip: r.sip ?? emptySip(),
 });
 
 /**
@@ -47,6 +55,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
     e.preventDefault();
     if (!form || busy) return;
     if (!form.name.trim()) { setTab("main"); setError("Укажите название комнаты."); return; }
+    if (form.sip.mode !== "off" && form.sip.allow_inbound && !form.sip.extension) { setTab("phone"); setError("Для входящих звонков укажите внутренний номер комнаты."); return; }
     setBusy(true); setError(""); setNote("");
     try {
       const r = await api.manage.patch(roomId, {
@@ -55,6 +64,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
         record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
+        protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, sip: form.sip,
         ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}),
       });
       setRoom(r); setForm(toForm(r)); onSaved?.(r);
@@ -138,11 +148,6 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                          search={(kind, q) => api.manage.search(roomId, kind, q)}
                          leaderEmpty="Руководителей нет — комнатой смогут управлять только администраторы сервера." />
               <p className="help">Нельзя оставить комнату совсем без руководителей: тогда управлять ею будет некому, кроме администратора сервера.</p>
-            </div>
-          )}
-
-          {tab === "guests" && (
-            <div role="tabpanel">
               <fieldset className="group"><legend>Гостевой доступ</legend>
                 <label className="check"><input type="checkbox" checked={form.guest_access_enabled} onChange={(e) => set("guest_access_enabled", e.target.checked)} />
                   <span className="check-body">Разрешить вход по гостевой ссылке<span className="help">Гость вводит имя и попадает в идущую встречу как «Имя (гость)»: без истории, стенограммы и показа экрана. Выключение отключает гостей, ссылка сохраняется.</span></span></label>
@@ -160,7 +165,37 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
             </div>
           )}
 
-          {tab === "notify" && <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(s) => set("mail_delivery", s)} />}
+          {tab === "materials" && (
+            <div role="tabpanel">
+              <fieldset className="group"><legend>Хранение</legend>
+                <p className="help" style={{ marginTop: 0 }}>Куда складываются стенограмма, протокол, переписка и схема, и как долго — задаёт администратор сервера; здесь это только для сведения.</p>
+                <table className="table compact"><tbody>
+                  <tr><td>Текст встреч хранится</td><td>{days(room.retention?.text_days)}</td></tr>
+                  <tr><td>Записи аудио хранятся</td><td>{room.record_audio || form.auto_record ? days(room.retention?.audio_days) : "запись не ведётся"}</td></tr>
+                  <tr><td>Кто видит завершённую встречу</td><td>{room.retention?.history_access === "participants" ? "участники встречи" : "руководители и администраторы (и участники, пока открыта страница встречи)"}</td></tr>
+                  <tr><td>Обезличивание перед внешней моделью</td><td>{room.retention?.anonymize_mode === "on" ? "всегда" : room.retention?.anonymize_mode === "off" ? "выключено" : "как в общих настройках"}</td></tr>
+                </tbody></table>
+              </fieldset>
+              <fieldset className="group"><legend>Инструкция для протокола этой комнаты</legend>
+                <label>Дополнение к общей инструкции <span className="muted small">(необязательно)</span>
+                  <textarea rows={3} value={form.protocol_instructions} onChange={(e) => set("protocol_instructions", e.target.value)} maxLength={20000}
+                            placeholder="Например: фиксируй решения и сроки по проектам, не выделяй обсуждение погоды" />
+                  <span className="help">Добавляется к общей инструкции организации и показывается в окне «Сформировать протокол» — участник видит и может изменить её перед отправкой.</span></label>
+              </fieldset>
+              <h3 style={{ margin: "14px 0 4px" }}>Рассылка протоколов</h3>
+              <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} />
+              <p className="help">Эти значения действуют для каждой встречи этой комнаты по умолчанию. Для конкретной встречи руководитель может изменить их кнопкой «Эта встреча» в комнате.</p>
+            </div>
+          )}
+
+          {tab === "model" && (
+            <div role="tabpanel">
+              <LlmChoiceEditor scope="room" value={form.llm} onChange={(c) => set("llm", c)} options={room.llm_options} effective={room.llm_effective} />
+              {room.llm_effective && form.llm.mode !== room.llm?.mode && <p className="muted small">Сейчас сохранено: {choiceLabel(room.llm ?? emptyChoice(), room.llm_options)}. Нажмите «Сохранить», чтобы применить выбор.</p>}
+            </div>
+          )}
+
+          {tab === "phone" && <TelephonyEditor sip={form.sip} options={room.sip_options} onChange={(sp) => set("sip", sp)} />}
 
           {note && <div className="alert ok" role="status">{note}</div>}
           {error && <div className="alert error" role="alert">{error}</div>}

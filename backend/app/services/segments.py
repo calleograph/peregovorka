@@ -30,7 +30,7 @@ def author_name(seg: TranscriptSegment) -> str | None:
     if seg.user:
         return seg.user.display_name
     if seg.guest:
-        return f"{seg.guest.display_name} (гость)"
+        return seg.guest.label        # гость — «Имя (гость)», телефонный абонент — «Телефон: +7…»
     return None
 
 

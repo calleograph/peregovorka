@@ -10,7 +10,7 @@ export const SOURCE_LABEL: Record<string, string> = { leader: "руководи�
 export const PROBLEM_LABEL: Record<string, string> = { no_email: "в каталоге нет адреса электронной почты", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
-export const emptySpec = (): MailDeliverySpec => ({ enabled: false, materials: ["protocol", "summary"], recipients: { leaders: true, participants: true, users: [], emails: [] } });
+export const emptySpec = (): MailDeliverySpec => ({ enabled: false, archive: false, materials: ["protocol", "summary"], recipients: { leaders: true, participants: true, users: [], emails: [] } });
 
 /** Таблица получателей с пометками: у кого нет адреса или он запрещён политикой — видно сразу, а не «молчаливой ошибкой». */
 export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRecipient[]; selected?: Set<string>; onToggle?: (email: string) => void }) {
@@ -69,6 +69,8 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId: str
         {MATERIAL_KINDS.map((m) => (
           <label key={m.kind} className="check"><input type="checkbox" checked={spec.materials.includes(m.kind)} onChange={() => toggleKind(m.kind)} />
             <span className="check-body">{m.label}<span className="help">{m.help}</span></span></label>))}
+        <label className="check"><input type="checkbox" checked={!!spec.archive} onChange={(e) => set({ archive: e.target.checked })} disabled={spec.materials.length < 2} />
+          <span className="check-body">Отправлять одним архивом (zip)<span className="help">Все выбранные документы кладутся в один файл — удобно, когда их несколько. {spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : ""}</span></span></label>
         <span className="help">Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа).</span>
       </fieldset>
 

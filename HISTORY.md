@@ -475,3 +475,14 @@ verify сразу после `up -d` (web ещё `starting`), сбой `apt-get`
 - **Сделано:** `llmlib.sh`, `models.sh --llm*`, стадия `llm` в `install.sh`, шаг в `update.sh`, сервис `llm-local` (профиль, internal-сеть), `verify_local_llm`, строки в `smoke-test.sh`/`diag.sh`/итоговом блоке установки, исправление `llm_model`; backend: `LocalLlm`, `provider`, `/admin/llm/local*`, `plan()` с предупреждениями; интерфейс: режим, карточка модели, предупреждение в окне протокола, строка в «Состоянии системы».
 - **Проверка:** backend `test_local_llm.py` (14), shell `part_llm.sh` (38). **Не проверено:** запуск llama.cpp и реальные ответы модели на сервере.
 
+---
+
+## 2026-10-08 — Верхнее меню, комната: материалы/модель/телефония, SIP (в разработке, следующий релиз)
+
+Задача владельца (11 пунктов): компактное верхнее меню; рассылка материалов в настройках комнаты с изменением для конкретной встречи; модель на уровне комнаты и встречи с наследованием и политикой при недоступной модели; пересмотр настроек комнаты по разделам; SIP-телефония через собственный LiveKit SIP (Asterisk первым, модель данных общая) — профили, проверка, тестовый вызов, входящие/исходящие, телефонный участник в стенограмме и записи, безопасность портов, состояние, verify/smoke/diag; итоговый аудит интерфейса.
+
+- **Меню:** `navMenu.ts` (чистые функции, тесты) + `NavMenu.tsx` (ARIA, Esc, стрелки, клик вне, бургер ≤760 px, `prefers-reduced-motion`); `?tab=` в админке.
+- **Комната:** шесть разделов; `DeliveryEditor` (+архив), `LlmChoiceEditor`, `TelephonyEditor`; «Эта встреча» (`MeetingSettingsDialog`), «Позвонить» (`PhoneDialog`).
+- **Backend:** миграция 0009; `resolve_llm` и `on_missing`; `delivery_override`, `effective_delivery`, архив zip; `services/sip.py` (профили, синхронизация, проверки по этапам, тестовый вызов, правило направления на время встречи, SIP-коды → понятные причины, маскирование номеров); `api/admin_sip.py`, `api/telephony.py`; телефонные участники в списках, стенограмме, webhook.
+- **Инфраструктура:** `livekit-sip` (профиль `sip`), `scripts/sip.sh` (enable/disable/status/firewall), `siplib.sh`, исправления `sip_enable`/`sip_disable`, `verify_sip`, строки в smoke/diag (выключено = пропущено), `LIVEKIT_REDIS_LINE`.
+- **Проверка:** pytest (`test_sip.py`, `test_room_settings.py`), vitest (`navMenu`, `phone`), shell `part_sip.sh` (21). **Не проверено:** реальный livekit-sip, Asterisk, звук, формат идентичности входящего участника, NAT.
