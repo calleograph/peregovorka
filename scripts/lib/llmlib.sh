@@ -42,7 +42,7 @@ _llm_size() { stat -c '%s' "$1" 2>/dev/null || wc -c < "$1" 2>/dev/null || echo 
 # sha256 файла с кэшем: повторные проверки (verify, обновление) не читают 484 МБ заново, пока размер и время изменения те же.
 llm_sha_cached() { # путь → печатает sha256
   local f="$1" cache="$1.sha256" key sum
-  key="$(_llm_size "$f") $(stat -c '%Y' "$f" 2>/dev/null || echo 0)"
+  key="$(_llm_size "$f") $(stat -c '%y %i' "$f" 2>/dev/null || echo 0)"
   if [ -r "$cache" ] && [ "$(sed -n 1p "$cache" 2>/dev/null)" = "$key" ]; then sed -n 2p "$cache"; return 0; fi
   sum="$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1)"
   [ -n "$sum" ] || return 1

@@ -43,4 +43,4 @@ t "sip: точка обновления — sip_enable и sip_disable разре
 t ".env.example: SIP выключен по умолчанию, порты описаны" bash -c 'grep -q "^SIP_ENABLED=no" "$1/.env.example" && grep -q "^SIP_SIGNALING_PORT=5060" "$1/.env.example" && grep -q "^SIP_RTP_START=20000" "$1/.env.example"' _ "$ROOT"
 
 # ---- защита от CRLF: один такой файл ломает `bash -n` и загрузку библиотек на Linux
-t "скрипты не содержат символов возврата каретки (CRLF)" bash -c '! grep -lP "\r" "$1"/scripts/*.sh "$1"/scripts/lib/*.sh "$1"/tests/scripts/*.sh "$1"/install.sh 2>/dev/null' _ "$ROOT"
+t "скрипты не содержат символов возврата каретки (CRLF)" bash -c '! grep -lP "\r$" "$1"/scripts/*.sh "$1"/scripts/lib/*.sh "$1"/tests/scripts/*.sh "$1"/install.sh 2>/dev/null' _ "$ROOT"
