@@ -19,6 +19,7 @@ from .entities import (
     MailMessage,
     MailProfile,
     Room,
+    SipProfile,
     StorageProfile,
     StorageSyncRun,
     RoomAcl,
@@ -29,5 +30,5 @@ from .entities import (
 
 __all__ = [
     "Base", "utcnow", "CaCertificate", "LdapProfile", "MailMessage", "MailProfile", "StorageSyncRun", "ApiProfile", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
-    "Room", "RoomAcl", "RoomModerator", "TranscriptSegment", "User",
+    "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]

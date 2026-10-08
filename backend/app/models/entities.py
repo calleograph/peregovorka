@@ -89,6 +89,18 @@ class Room(Base):
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # доставка материалов встречи по почте (настраивает руководитель): {enabled, materials[], recipients{leaders,participants,users[],emails[]}}
     mail_delivery: Mapped[dict | None] = mapped_column(JSONType)
+    # Языковая модель комнаты: inherit — системная по умолчанию; profile — внешний профиль (llm_profile_id); local — локальная модель (llm_local_model); off — отключена.
+    # Для комнат старых версий: llm_profile_id задан → profile. Выбранный профиль удалён/модель недоступна → политика llm.on_missing (системная или «недоступна»).
+    llm_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
+    llm_local_model: Mapped[str | None] = mapped_column(String(80))
+    # Телефония (SIP через LiveKit SIP): off — отключена; default — профиль по умолчанию; profile — конкретный (sip_profile_id).
+    sip_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off", nullable=False)
+    sip_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    sip_extension: Mapped[str | None] = mapped_column(String(32), unique=True)      # внутренний номер комнаты для входящих звонков
+    sip_allow_inbound: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    sip_allow_outbound: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    sip_dispatch_rule_id: Mapped[str | None] = mapped_column(String(100))          # правило LiveKit для входящих (постоянное, переиспользуется)
+    sip_contacts: Mapped[list | None] = mapped_column(JSONType)                     # сохранённые номера для исходящих: [{name, number}]
     welcome_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -145,6 +157,9 @@ class Meeting(Base):
     end_reason: Mapped[str | None] = mapped_column(String(40))
     started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     empty_since: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Настройки ЭТОЙ встречи поверх настроек комнаты (задаёт руководитель): рассылка материалов и языковая модель; None — как в комнате
+    delivery_override: Mapped[dict | None] = mapped_column(JSONType)
+    llm_override: Mapped[dict | None] = mapped_column(JSONType)
     transcription_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     record_audio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
@@ -210,10 +225,23 @@ class GuestParticipant(Base):
     joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     left_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Идентификатор участника в LiveKit, если он выдан не нами (входящий телефонный звонок: sip_<номер>…); иначе выводится из id
+    lk_identity: Mapped[str | None] = mapped_column(String(160), index=True)
+
+    @property
+    def is_phone(self) -> bool:
+        return self.participant_type == "phone"
+
+    @property
+    def label(self) -> str:
+        """Как показывать участника: гость — «Имя (гость)», телефонный абонент — «Телефон: +7…»."""
+        return self.display_name if self.is_phone else f"{self.display_name} (гость)"
 
     @property
     def livekit_identity(self) -> str:
-        return f"g-{self.id.hex}"
+        if self.lk_identity:
+            return self.lk_identity
+        return f"{'p' if self.is_phone else 'g'}-{self.id.hex}"
 
 
 class MeetingChatMessage(Base):
@@ -511,6 +539,7 @@ class MailMessage(Base):
     recipient_name: Mapped[str | None] = mapped_column(String(300))
     subject: Mapped[str] = mapped_column(String(300), nullable=False)
     kinds: Mapped[list | None] = mapped_column(JSONType)        # какие материалы: protocol | summary | transcript …
+    options: Mapped[dict | None] = mapped_column(JSONType)      # {"archive": true} — одним архивом (zip)
     trigger: Mapped[str] = mapped_column(String(10), default="auto", nullable=False)   # auto | manual | test
     requested_by: Mapped[str | None] = mapped_column(String(300))
     state: Mapped[str] = mapped_column(String(10), default="queued", index=True, nullable=False)   # queued | sending | sent | failed
@@ -541,3 +570,35 @@ class StorageSyncRun(Base):
     orphans: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # неизвестные файлы (не импортируются)
     unavailable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)   # не удалось проверить (хранилище недоступно)
     details: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class SipProfile(Base):
+    """Профиль SIP-телефонии (транк к АТС или провайдеру): общий для LiveKit SIP; Asterisk/PJSIP — первый проверенный вариант, но не единственный.
+    Пароль зашифрован (AES-GCM, ключ APP_MASTER_KEY) и обратно не отдаётся. Идентификаторы транков LiveKit хранятся для обновления и удаления."""
+
+    __tablename__ = "sip_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), default="both", server_default="both", nullable=False)   # outbound | inbound | both
+    host: Mapped[str] = mapped_column(String(253), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, default=5060, nullable=False)
+    transport: Mapped[str] = mapped_column(String(8), default="udp", server_default="udp", nullable=False)       # udp | tcp | tls
+    username: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    secret_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    realm: Mapped[str] = mapped_column(String(253), default="", server_default="", nullable=False)             # домен/realm для входящей авторизации
+    caller_id: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)           # номер, с которого звоним
+    allowed_numbers: Mapped[list | None] = mapped_column(JSONType)       # шаблоны допустимых номеров назначения (префиксы)
+    inbound_numbers: Mapped[list | None] = mapped_column(JSONType)       # номера, принимаемые входящим транком (пусто — любые)
+    allowed_addresses: Mapped[list | None] = mapped_column(JSONType)     # адреса/подсети АТС, с которых принимаются входящие (IP allowlist)
+    codecs: Mapped[list | None] = mapped_column(JSONType)                # допустимые кодеки; пусто — по умолчанию LiveKit
+    media_encryption: Mapped[str] = mapped_column(String(10), default="disable", server_default="disable", nullable=False)   # disable | allow | require
+    ring_timeout_s: Mapped[int] = mapped_column(Integer, default=45, server_default="45", nullable=False)
+    lk_outbound_trunk_id: Mapped[str | None] = mapped_column(String(100))
+    lk_inbound_trunk_id: Mapped[str | None] = mapped_column(String(100))
+    last_check: Mapped[dict | None] = mapped_column(JSONType)            # итог последней проверки настроек/тестового вызова (без секретов)
+    last_check_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)

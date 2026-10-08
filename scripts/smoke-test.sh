@@ -92,6 +92,20 @@ print('OK' if d['choices'][0]['message'] is not None else 'EMPTY')" || true)"
   else rec "Локальная LLM" WARNING "контейнер запущен, но тестовый запрос не выполнен (модель ещё загружается или сбой — scripts/logs.sh llm-local)"; fi
 fi
 
+log "-- SIP-телефония --"
+if ! sip_enabled; then rec "SIP-телефония" SKIP "не включена (необязательно): sudo scripts/sip.sh enable или Администрирование → SIP-телефония"
+elif [ -z "$(dc ps -q livekit-sip 2>/dev/null | head -1)" ]; then rec "SIP-телефония" WARNING "включена, но контейнер livekit-sip не запущен (образ $(sip_image) не скачан?)"
+else
+  SIPC="$(bexec "
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://livekit-sip:8081/', timeout=6).status)
+except Exception as e:
+    print(type(e).__name__)" | tr -d ' ')"
+  if [ "$SIPC" = 200 ]; then rec "SIP-телефония" OK "служба livekit-sip отвечает; SIP $(sip_port)/udp+tcp, RTP $(sip_rtp)/udp (порты телефонии — отдельно от браузерных)"
+  else rec "SIP-телефония" WARNING "контейнер запущен, но служба не отвечает (${SIPC:-нет ответа}) — scripts/logs.sh livekit-sip"; fi
+fi
+
 log "-- LiveKit --"
 c="$(http_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$c" = 200 ] && rec "LiveKit HTTP" OK "127.0.0.1:${LIVEKIT_HTTP_PORT}" || rec "LiveKit HTTP" FAIL "HTTP $c"
 LKV="$(dc exec -T livekit livekit-server --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"

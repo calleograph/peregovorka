@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, admin_journal, admin_llm, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
+from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -37,6 +37,7 @@ from .services.reconcile import Reconciler
 from .services.mail_delivery import DeliveryService
 from .services.ldap_profiles import LdapService, ProfileDirectory
 from .services.legacy_ldap import LegacyLdapMigrator
+from .services.sip import SipGateway, SipRouting, SipService
 from .util_errors import describe_error
 from .services.settings import SettingsService
 from .workers.asr_sync import run_asr_sync
@@ -97,10 +98,17 @@ def create_app(
         app.state.settings_svc = settings_svc
         app.state.protocols = protocols
         app.state.local_llm = protocols.local_llm
+        # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
+        app.state.sip = SipService(settings_svc)
+        app.state.sip_gateway = SipGateway(settings)
+        app.state.sip_routing = SipRouting(app.state.sip, app.state.sip_gateway, session_maker)
         app.state.files = protocols.files
         protocols.chat_files = ChatFilesService(protocols.files, settings_svc, journal)
         app.state.chat_files = protocols.chat_files
         app.state.journal = journal
+        app.state.sip_routing.journal = journal
+        meetings_svc.on_started = lambda mid: asyncio.get_running_loop().create_task(app.state.sip_routing.on_meeting_started(mid))
+        meetings_svc.on_ended_extra = lambda mid: asyncio.get_running_loop().create_task(app.state.sip_routing.on_meeting_ended(mid))
         app.state.profiles = profiles
         mail = MailService(settings_svc, ca)
         delivery = DeliveryService(session_maker, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
@@ -200,7 +208,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, admin_system.router, admin_llm.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, meeting_settings.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

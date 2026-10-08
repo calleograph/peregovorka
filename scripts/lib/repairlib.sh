@@ -11,7 +11,7 @@
 if [ -n "${_VM_REPAIRLIB_LOADED:-}" ]; then return 0; fi
 _VM_REPAIRLIB_LOADED=1
 
-REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing image_commit migrations reverify llm_model)
+REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing image_commit migrations reverify llm_model sip_enable sip_disable)
 BACKEND_UID=10001
 
 repair_id_valid() { local i; for i in "${REPAIR_IDS[@]}"; do [ "$i" = "$1" ] && return 0; done; return 1; }
@@ -27,6 +27,8 @@ repair_text() {
     image_commit) echo "Версия работающих компонентов не определена|${REPAIR_DETAIL:-Компоненты собраны без сведений о версии.} Непонятно, какой именно код работает.|Пересобрать компоненты и перезапустить" ;;
     migrations) echo "База данных не обновлена до текущей версии|${REPAIR_DETAIL:-Структура базы данных отстаёт от программы.} Часть функций может не работать.|Применить обновление структуры базы (с резервной копией)" ;;
     llm_model) echo "Локальная языковая модель не готова|${REPAIR_DETAIL:-Модель Qwen3 0.6B не загружена или повреждена.} Краткие протоколы и резюме на локальной модели не будут работать (внешняя LLM и остальная система — работают).|Скачать модель заново (с проверкой размера и контрольной суммы) и запустить её контейнер" ;;
+    sip_enable) echo "SIP-телефония включена, но служба не работает|${REPAIR_DETAIL:-Телефония включена в настройках сервера, но контейнер livekit-sip не запущен.} Звонки из комнат и входящие звонки не работают.|Запустить службу телефонии (с подключением LiveKit к общей шине Redis)" ;;
+    sip_disable) echo "Выключить SIP-телефонию|Контейнер livekit-sip будет остановлен, порты SIP и RTP перестанут публиковаться. Профили в базе сохранятся.|Остановить службу телефонии" ;;
     reverify) echo "Нужна повторная проверка работоспособности|${REPAIR_DETAIL:-После последнего изменения полная проверка не выполнялась.} Состояние системы неизвестно.|Запустить полную проверку" ;;
   esac
 }
@@ -127,6 +129,14 @@ repair_detect_llm_model() {
   command -v docker >/dev/null 2>&1 || return 1
   if ! docker image inspect "$(llm_image)" >/dev/null 2>&1; then REPAIR_DETAIL="Модель на месте, но программа запуска (llama.cpp) не скачана."; return 0; fi
   if repair_docker_up && [ -z "$(dc ps -q llm-local 2>/dev/null | head -1)" ]; then REPAIR_DETAIL="Модель на месте, но её контейнер не запущен."; return 0; fi
+  return 1
+}
+
+repair_detect_sip_enable() {
+  sip_enabled || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  if ! docker image inspect "$(sip_image)" >/dev/null 2>&1; then REPAIR_DETAIL="Образ службы телефонии не скачан."; return 0; fi
+  if repair_docker_up && [ -z "$(dc ps -q livekit-sip 2>/dev/null | head -1)" ]; then REPAIR_DETAIL="Контейнер livekit-sip не запущен."; return 0; fi
   return 1
 }
 
@@ -247,6 +257,9 @@ except Exception:
   done
   fail "Контейнер запущен, но llama.cpp не ответил за 90 с (scripts/logs.sh llm-local)"; return 1
 }
+
+repair_apply_sip_enable() { "$REPO_ROOT/scripts/sip.sh" enable --env "$ENV_FILE" --yes; }
+repair_apply_sip_disable() { "$REPO_ROOT/scripts/sip.sh" disable --env "$ENV_FILE" --yes; }
 
 repair_apply_reverify() {
   local vf=0 sm=0

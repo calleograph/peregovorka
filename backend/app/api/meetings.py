@@ -37,7 +37,7 @@ def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestPartic
     for p in sorted(m.participants, key=lambda p: p.joined_at):
         latest[p.user_id] = p
     c = counts or {}
-    guests = [ParticipantOut(guest_id=g.id, participant_type="guest", display_name=f"{g.display_name} (гость)", joined_at=g.joined_at,
+    guests = [ParticipantOut(guest_id=g.id, participant_type="phone" if g.is_phone else "guest", display_name=g.label, joined_at=g.joined_at,
                              left_at=g.left_at, online=g.left_at is None) for g in guests or []]
     return MeetingOut(
         id=m.id, room_id=m.room_id, room_name=m.room.name, started_at=m.started_at, ended_at=m.ended_at,

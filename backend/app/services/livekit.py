@@ -18,6 +18,8 @@ log = logging.getLogger("app.livekit")
 
 IDENTITY_PREFIX = "u-"
 GUEST_IDENTITY_PREFIX = "g-"
+PHONE_IDENTITY_PREFIX = "p-"      # исходящий звонок из комнаты (identity выдаём мы)
+SIP_IDENTITY_PREFIX = "sip_"      # входящий звонок (identity выдаёт LiveKit SIP)
 SERVICE_IDENTITY_PREFIX = "asr-"
 
 
@@ -47,6 +49,20 @@ def parse_guest_identity(identity: str) -> uuid.UUID | None:
         return uuid.UUID(hex=identity[len(GUEST_IDENTITY_PREFIX):])
     except ValueError:
         return None
+
+
+def parse_phone_identity(identity: str) -> uuid.UUID | None:
+    """p-<32 hex> → UUID телефонного участника (исходящий звонок); всё остальное → None."""
+    if not identity.startswith(PHONE_IDENTITY_PREFIX):
+        return None
+    try:
+        return uuid.UUID(hex=identity[len(PHONE_IDENTITY_PREFIX):])
+    except ValueError:
+        return None
+
+
+def is_phone_identity(identity: str) -> bool:
+    return identity.startswith(PHONE_IDENTITY_PREFIX) or identity.startswith(SIP_IDENTITY_PREFIX)
 
 
 def meeting_room_name(meeting_id: uuid.UUID) -> str:

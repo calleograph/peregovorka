@@ -132,6 +132,9 @@ def test_only_user_microphone_tracks_are_recognized():
     assert not is_user_microphone_track(VIDEO, MIC, "u-abc", **kw)
     assert not is_user_microphone_track(AUDIO, MIC, "asr-worker", **kw)  # служебные — нет
     assert not is_user_microphone_track(AUDIO, MIC, "someone", **kw)  # identity вне схемы приложения — нет
+    # телефонные абоненты SIP: исходящий звонок (p-…) и входящий (sip_…) распознаются так же, как браузерные участники
+    assert is_user_microphone_track(AUDIO, MIC, "p-0123abcd", **kw) and is_user_microphone_track(AUDIO, MIC, "sip_+70000000000_x1", **kw)
+    assert not is_user_microphone_track(AUDIO, SCREEN_AUDIO, "p-0123abcd", **kw) and not is_user_microphone_track(AUDIO, MIC, "g-0123abcd", **kw)   # гости по-прежнему нет
 
 
 def test_parse_session_contract():

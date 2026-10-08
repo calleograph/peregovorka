@@ -221,6 +221,9 @@ class LlmSettings(_Group):
     # off — выключена. None (настройки до 0.5.0): external, если включена (enabled), иначе off.
     provider: Literal["local", "external", "off"] | None = None
     local_model: str = "qwen3-0.6b-q4_k_m"
+    # Что делать, если выбранная для комнаты/встречи модель недоступна (профиль удалён, локальная модель не загружена):
+    # system — использовать системную модель по умолчанию (с пометкой); unavailable — оставить состояние «модель недоступна».
+    on_missing: Literal["system", "unavailable"] = "system"
     type: Literal["openai", "anthropic", "openai_compatible"] = "openai_compatible"
     base_url: str = ""
     model: str = ""

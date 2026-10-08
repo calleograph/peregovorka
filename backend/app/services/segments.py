@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import GuestParticipant, Meeting, MeetingParticipant, TranscriptSegment, User
 from . import events
-from .livekit import SERVICE_IDENTITY_PREFIX, parse_guest_identity, parse_meeting_room_name, parse_user_identity
+from .livekit import SERVICE_IDENTITY_PREFIX, SIP_IDENTITY_PREFIX, parse_guest_identity, parse_meeting_room_name, parse_phone_identity, parse_user_identity
 
 log = logging.getLogger("app.segments")
 
@@ -101,12 +101,14 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
 
     # Гость определяется так же строго: только g-<uuid> из состава ЭТОЙ встречи.
     guest: GuestParticipant | None = None
-    guest_id = parse_guest_identity(identity)
+    guest_id = parse_guest_identity(identity) or parse_phone_identity(identity)      # телефонный абонент (исходящий звонок) — тоже участник встречи
     if guest_id is not None:
         guest = await db.get(GuestParticipant, guest_id)
         if guest is None or guest.meeting_id != meeting_id:
             guest = None
             log.warning("Гостевая identity не из состава встречи", extra={"meeting_id": str(meeting_id)})
+    elif identity.startswith(SIP_IDENTITY_PREFIX):       # входящий звонок: identity выдал LiveKit SIP, запись участника заведена по webhook
+        guest = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id, GuestParticipant.lk_identity == identity))).scalars().first()
 
     def _json(name: str):
         try:
@@ -127,5 +129,5 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
         await db.rollback()
         return IngestResult.DUPLICATE
     await db.refresh(seg)
-    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (f"{guest.display_name} (гость)" if guest else None))})
+    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (guest.label if guest else None))})
     return IngestResult.STORED

@@ -73,6 +73,9 @@ services:
         LIVEKIT_IMAGE_TAG: ${LIVEKIT_IMAGE_TAG:?}
     image: ${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG}
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy       # нужен, когда включена SIP-телефония (общая шина LiveKit ↔ SIP)
     # Внутренние порты ICE равны опубликованным: LiveKit сообщает клиентам
     # именно эти значения в ICE-кандидатах, расхождение ломает подключение.
     ports:
@@ -88,6 +91,7 @@ services:
           udp_port: ${LIVEKIT_UDP_PORT}
           use_external_ip: false
           node_ip: ${LIVEKIT_NODE_IP:?}
+        ${LIVEKIT_REDIS_LINE:-}
         room:
           # Не закрывать комнату мгновенно: обновление страницы и краткий обрыв сети не должны её удалять.
           departure_timeout: ${LIVEKIT_ROOM_DEPARTURE_TIMEOUT:-60}
@@ -160,6 +164,12 @@ services:
       DATA_DIR: /data
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # локальная LLM (контейнер llm-local, профиль llm): внутренний адрес и каталог модели (только чтение — статус, размер, контрольная сумма)
+      SIP_ENABLED: ${SIP_ENABLED:-no}
+      SIP_SIGNALING_PORT: ${SIP_SIGNALING_PORT:-5060}
+      SIP_RTP_START: ${SIP_RTP_START:-20000}
+      SIP_RTP_END: ${SIP_RTP_END:-20100}
+      SIP_MEDIA_IP: ${SIP_MEDIA_IP:-}
+      SIP_ALLOWED_CIDRS: ${SIP_ALLOWED_CIDRS:-}
       LOCAL_LLM_URL: http://llm-local:8080
       LOCAL_LLM_MODELS_DIR: /models/llm
       LOCAL_LLM_ENABLED: ${LLM_LOCAL_ENABLED:-yes}
@@ -237,6 +247,40 @@ services:
       retries: 5
       start_period: 120s
     stop_grace_period: 20s
+    logging: *default-logging
+
+  # SIP-телефония: LiveKit SIP Service (профиль `sip`, по умолчанию не запускается и порты не публикуются). Связан с LiveKit через общий Redis (db 1).
+  # Включение — scripts/sip.sh enable / кнопка в админке. SIP signalling и RTP — отдельные порты для АТС; браузерные участники их не используют.
+  livekit-sip:
+    profiles: ["sip"]
+    image: ${SIP_IMAGE:-livekit/sip:v1.13.0}
+    restart: unless-stopped
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${SIP_BIND_ADDR:-0.0.0.0}:${SIP_SIGNALING_PORT:-5060}:${SIP_SIGNALING_PORT:-5060}/udp"
+      - "${SIP_BIND_ADDR:-0.0.0.0}:${SIP_SIGNALING_PORT:-5060}:${SIP_SIGNALING_PORT:-5060}/tcp"
+      - "${SIP_BIND_ADDR:-0.0.0.0}:${SIP_RTP_START:-20000}-${SIP_RTP_END:-20100}:${SIP_RTP_START:-20000}-${SIP_RTP_END:-20100}/udp"
+    environment:
+      SIP_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:?}
+        api_secret: ${LIVEKIT_API_SECRET:?}
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+          password: ${REDIS_PASSWORD:?}
+          db: 1
+        sip_port: ${SIP_SIGNALING_PORT:-5060}
+        rtp_port: ${SIP_RTP_START:-20000}-${SIP_RTP_END:-20100}
+        health_port: 8081
+        use_external_ip: false
+        nat_1_to_1_ip: ${SIP_MEDIA_IP:-${LIVEKIT_NODE_IP}}
+        media_nat_1_to_1_ip: ${SIP_MEDIA_IP:-${LIVEKIT_NODE_IP}}
+        logging:
+          level: info
     logging: *default-logging
 
   # Локальная LLM (Qwen3 0.6B Q4_K_M по умолчанию): llama.cpp, CPU. OpenAI-совместимый API (/v1/chat/completions) доступен только backend через

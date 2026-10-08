@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
+from .llm_choice import resolve_llm
 from .local_llm import LocalLlm
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
@@ -172,7 +173,7 @@ class ProtocolService:
                 storage_cfg = await self._svc.get(db, "storage")
                 names = {p.user.livekit_identity: p.user.display_name for p in meeting.participants}
                 for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))).scalars():
-                    names[g.livekit_identity] = f"{g.display_name} (гость)"
+                    names[g.livekit_identity] = g.label
                 rel = meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz))
                 room_slug = meeting.room.slug
 
@@ -370,18 +371,19 @@ class ProtocolService:
     async def plan(self, db: AsyncSession, meeting: Meeting) -> dict:
         """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
         room = meeting.room
-        llm = await self.profiles.resolve(db, "llm", room)
-        eff, is_local = self.local_llm.effective(llm.settings)       # type: ignore[arg-type]
+        llm = await resolve_llm(self.profiles, self.local_llm, db, room, meeting)    # системная → комната → встреча
+        eff, is_local = self.local_llm.effective(llm.settings)
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
         an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
         # Локальная модель данные наружу не отправляет — обезличивание по умолчанию не нужно (только если включено явно для комнаты)
         anonymize = mode == "on" or (mode == "inherit" and not is_local and an is not None and bool(an.settings.enabled))
-        out = {"llm_ready": bool(eff.enabled), "llm_profile": llm.name, "anonymize": anonymize,
+        out = {"llm_ready": bool(eff.enabled) and llm.available, "llm_profile": llm.name, "llm_source": llm.source, "llm_note": llm.note, "llm_reason": llm.reason,
+               "anonymize": anonymize,
                "anonymizer_profile": an.name if (anonymize and an) else None,
                "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled),
                "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None}
-        lm = self.local_llm.limits(llm.settings)                      # type: ignore[arg-type]
-        if lm is not None:
+        lm = self.local_llm.limits(llm.settings)
+        if lm is not None and llm.available:
             fs = await asyncio.to_thread(self.local_llm.file_state, lm)
             if fs["state"] != "ok":
                 out["llm_ready"] = False
@@ -407,10 +409,12 @@ class ProtocolService:
         if meeting is None:
             raise SettingsError("Встреча не найдена")
         room = meeting.room
-        llm_res = await self.profiles.resolve(db, "llm", room)
+        llm_res = await resolve_llm(self.profiles, self.local_llm, db, room, meeting)   # системная → комната → встреча
+        if not llm_res.available:
+            raise LlmError("unavailable", llm_res.reason or "")
         llm_cfg = llm_res.settings
-        eff_cfg, is_local = self.local_llm.effective(llm_cfg)           # type: ignore[arg-type]
-        lm = self.local_llm.limits(llm_cfg)                            # type: ignore[arg-type]
+        eff_cfg, is_local = self.local_llm.effective(llm_cfg)
+        lm = self.local_llm.limits(llm_cfg)
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
         transcript = await self.transcript_text(db, meeting, tz)
@@ -466,7 +470,7 @@ class ProtocolService:
             out = r.text
         meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "llm_calls": calls,  # type: ignore[attr-defined]
                 "prompt_tokens": pt, "completion_tokens": ct, "anonymized_chunks": clean.chunks,
-                "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name,
+                "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
                 "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
                 "sources": materials.meta()}
         return out, meta

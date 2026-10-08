@@ -33,6 +33,7 @@ from .livekit import (
     list_present_identities,
     meeting_room_name,
     parse_guest_identity,
+    parse_phone_identity,
     parse_user_identity,
     remove_participant,
     set_publish_permission,
@@ -71,6 +72,8 @@ class MeetingService:
         self._r = redis
         self._bridge = bridge
         self.on_ended: Callable[[uuid.UUID], None] | None = None  # запуск финализации (экспорт, протокол)
+        self.on_started: Callable[[uuid.UUID], None] | None = None      # встреча началась (например, подготовка входящих телефонных звонков)
+        self.on_ended_extra: Callable[[uuid.UUID], None] | None = None  # встреча закончилась (например, снять правило входящих звонков)
         self.settings_svc = None  # SettingsService (срок «аренды» доступа после завершения), назначается в main
 
     # ------------------------------------------------------------------ вход
@@ -126,6 +129,8 @@ class MeetingService:
             await self._bridge.start(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(room.id),
                                      transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio)
             log.info("Встреча начата", extra={"meeting_id": str(meeting.id), "room": room.slug})
+            if self.on_started is not None:
+                self.on_started(meeting.id)
         await events.publish(self._r, meeting.id, {"type": "participant_joined", "user_id": str(su.user_id),
                                                    "display_name": su.display_name})
 
@@ -189,7 +194,7 @@ class MeetingService:
         if guest.left_at is None:
             guest.left_at = utcnow()
             await db.commit()
-            await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "guest"})
+            await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "phone" if guest.is_phone else "guest"})
         await self._update_emptiness(db, meeting_id)
 
     async def kick_guests(self, db: AsyncSession, room_id: uuid.UUID) -> int:
@@ -198,7 +203,7 @@ class MeetingService:
         if meeting is None:
             return 0
         guests = (await db.execute(select(GuestParticipant).where(
-            GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None)))).scalars().all()
+            GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None), GuestParticipant.participant_type == "guest"))).scalars().all()   # телефонные участники не гости
         now = utcnow()
         for g in guests:
             g.left_at = now
@@ -298,6 +303,8 @@ class MeetingService:
             await delete_livekit_room(self._s, meeting.livekit_room)
         if self.on_ended is not None:
             self.on_ended(meeting.id)
+        if self.on_ended_extra is not None:
+            self.on_ended_extra(meeting.id)
         log.info("Встреча завершена", extra={"meeting_id": str(meeting.id), "reason": reason})
         return True
 
@@ -339,7 +346,7 @@ class MeetingService:
                     p.left_at = now  # был и пропал, либо так и не подключился
             for g in (await db.execute(select(GuestParticipant).where(
                     GuestParticipant.meeting_id == meeting.id, GuestParticipant.left_at.is_(None)))).scalars().all():
-                if guest_identity(g.id) in present:
+                if g.livekit_identity in present:
                     g.connected_at = g.connected_at or now
                 elif g.connected_at is not None or now - g.joined_at > connect_deadline:
                     g.left_at = now
@@ -393,11 +400,12 @@ class MeetingService:
                 MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == uid, MeetingParticipant.left_at.is_(None)))).first()
             if row:
                 return "user", uid
-        gid = parse_guest_identity(identity)
-        if gid is not None:
-            g = await db.get(GuestParticipant, gid)
-            if g is not None and g.meeting_id == meeting.id and g.left_at is None:
-                return "guest", gid
+        gid = parse_guest_identity(identity) or parse_phone_identity(identity)
+        g = await db.get(GuestParticipant, gid) if gid is not None else None
+        if g is None and identity.startswith("sip_"):    # входящий звонок: identity выдал LiveKit SIP
+            g = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id, GuestParticipant.lk_identity == identity))).scalars().first()
+        if g is not None and g.meeting_id == meeting.id and g.left_at is None:
+            return "guest", g.id
         raise JoinError("participant_not_found", "Участник не найден среди присутствующих на встрече.", 404)
 
     async def set_floor(self, db: AsyncSession, meeting: Meeting, identity: str, granted: bool, *, by: str) -> bool:

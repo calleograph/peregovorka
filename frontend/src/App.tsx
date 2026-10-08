@@ -2,6 +2,8 @@ import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, setCsrf, setUnauthorizedHandler, type Me } from "./api";
 import { versionLabel } from "./util";
+import NavMenu from "./components/NavMenu";
+import { ADMIN_QUICK, adminHref, type MenuItem } from "./navMenu";
 import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
@@ -26,7 +28,10 @@ function StaffApp() {
   const [version, setVersion] = useState("");
   const [wizard, setWizard] = useState(false);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [burger, setBurger] = useState(false);
   const inMeeting = useActiveMeeting() !== null;
+  useEffect(() => setBurger(false), [pathname]);   // на малых экранах меню закрывается при переходе
 
   useEffect(() => {
     api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }).catch(() => setMe(null));
@@ -53,20 +58,36 @@ function StaffApp() {
   if (me === null) return <LoginPage onLogin={onLogin} version={version} />;
   if (me.must_change_password) return <ChangePasswordPage onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
 
+  // Верхнее меню — для повседневной работы; полный список разделов администрирования остаётся в левом меню самой админки
+  const adminItems: MenuItem[] = [
+    ...ADMIN_QUICK.map((q) => ({ kind: "link" as const, key: q.tab, label: q.label, to: adminHref(q.tab), hint: q.hint })),
+    { kind: "divider", key: "sep" },
+    { kind: "link", key: "all", label: "Все разделы администрирования →", to: "/admin" },
+  ];
+  const userItems: MenuItem[] = [
+    { kind: "text", key: "who", label: me.user.is_admin ? "Администратор системы" : "Пользователь" },
+    { kind: "link", key: "hist", label: "История моих встреч", to: "/history" },
+    { kind: "divider", key: "sep" },
+    ...(version ? [{ kind: "text" as const, key: "ver", label: `Версия ${version}` }] : []),
+    { kind: "action", key: "out", label: "Выйти", danger: true, disabled: inMeeting, hint: inMeeting ? "сначала выйдите из комнаты" : undefined, onSelect: () => void logout() },
+  ];
+  const initial = (me.user.display_name || "?").trim().charAt(0).toUpperCase();
+
   return (
     <div className="shell">
-      <header className="topbar">
+      <header className={`topbar ${burger ? "burger-open" : ""}`}>
         {inMeeting
           ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке">Переговорка ↗</a>
           : <Link to="/" className="brand">Переговорка</Link>}
-        <nav>
+        <button type="button" className="burger" aria-label="Меню" aria-expanded={burger} onClick={() => setBurger((b) => !b)}><span /><span /><span /></button>
+        <nav aria-label="Основная навигация" className="topnav">
           <NavItem to="/" end newTab={inMeeting}>Комнаты</NavItem>
           <NavItem to="/history" newTab={inMeeting}>История</NavItem>
-          {me.user.is_admin && <NavItem to="/admin" newTab={inMeeting}>Администрирование</NavItem>}
+          {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab={inMeeting} />}
         </nav>
         <div className="spacer" />
-        <span className="muted">{me.user.display_name}</span>
-        <button className="btn ghost" onClick={logout} disabled={inMeeting} title={inMeeting ? "Сначала выйдите из комнаты: выход из системы прервёт встречу" : undefined}>Выйти</button>
+        <NavMenu className="usermenu" align="right" items={userItems} newTab={inMeeting} title={me.user.display_name}
+                 label={<><span className="avatar" aria-hidden>{initial}</span><span className="uname">{me.user.display_name}</span></>} />
       </header>
       <main>
         {wizard && <SetupWizard onGo={goAdmin} onClose={() => setWizard(false)} />}

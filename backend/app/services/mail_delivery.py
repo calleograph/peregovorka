@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Awaitable, Callable
@@ -82,10 +84,16 @@ MATERIALS: dict[str, MaterialDef] = {
 }
 
 
+def effective_delivery(meeting: Meeting) -> dict | None:
+    """Настройки рассылки для встречи: свои (если руководитель их менял) или настройки комнаты по умолчанию."""
+    return meeting.delivery_override if meeting.delivery_override else meeting.room.mail_delivery
+
+
 def clean_spec(raw: dict | None) -> dict:
     """Приводит настройки доставки комнаты к безопасному виду; неверные значения — ValueError с текстом для пользователя."""
     raw = raw or {}
-    spec = {"enabled": bool(raw.get("enabled")), "materials": [], "recipients": {"leaders": False, "participants": False, "users": [], "emails": []}}
+    spec = {"enabled": bool(raw.get("enabled")), "archive": bool(raw.get("archive")), "materials": [],
+            "recipients": {"leaders": False, "participants": False, "users": [], "emails": []}}
     for k in raw.get("materials") or []:
         if k not in MATERIALS:
             raise ValueError(f"Неизвестный материал: {k}")
@@ -226,7 +234,7 @@ class DeliveryService:
         when = meeting.started_at.astimezone(tz).strftime("%d.%m.%Y %H:%M")
         return f"{pol.subject_prefix + ' ' if pol.subject_prefix else ''}Материалы встречи «{meeting.room.name}» от {when}"[:300]
 
-    async def enqueue(self, db: AsyncSession, meeting: Meeting, kinds: list[str], recipients: list[Recipient], *, trigger: str, by: str) -> dict:
+    async def enqueue(self, db: AsyncSession, meeting: Meeting, kinds: list[str], recipients: list[Recipient], *, trigger: str, by: str, archive: bool = False) -> dict:
         pol = await self.policy(db)
         tz = await self.protocols._tz(db)   # noqa: SLF001
         batch = uuid.uuid4()
@@ -237,7 +245,7 @@ class DeliveryService:
                 skipped.append({"name": r.name, "email": r.email, "reason": PROBLEM_TEXT.get(r.problem, r.problem)})
                 continue
             db.add(MailMessage(batch_id=batch, meeting_id=meeting.id, room_name=meeting.room.name, recipient=r.email, recipient_name=r.name[:300],
-                               subject=self._subject(pol, meeting, tz), kinds=kinds, trigger=trigger, requested_by=by[:300], state="queued",
+                               subject=self._subject(pol, meeting, tz), kinds=kinds, options={"archive": True} if archive else None, trigger=trigger, requested_by=by[:300], state="queued",
                                max_attempts=pol.max_attempts, next_attempt_at=utcnow()))
             queued += 1
         await db.flush()
@@ -251,7 +259,7 @@ class DeliveryService:
                 if meeting is None or meeting.ended_at is None:
                     return
                 try:
-                    spec = clean_spec(meeting.room.mail_delivery)
+                    spec = clean_spec(effective_delivery(meeting))      # настройки встречи (если руководитель их менял) поверх настроек комнаты
                 except ValueError:
                     return
                 if not spec["enabled"]:
@@ -274,7 +282,7 @@ class DeliveryService:
                 if not have:
                     self._emit("mail_skipped", "warn", meeting, "Рассылка не выполнена: ни один из выбранных материалов не готов", {"wanted": spec["materials"]})
                     return
-                res = await self.enqueue(db, meeting, have, recipients, trigger="auto", by="автоматически")
+                res = await self.enqueue(db, meeting, have, recipients, trigger="auto", by="автоматически", archive=spec["archive"])
                 for s in res["skipped"]:
                     self._emit("mail_recipient_skipped", "warn", meeting, f"{s['name'] or s['email'] or 'получатель'}: {s['reason']}", {})
                 await db.commit()
@@ -287,7 +295,16 @@ class DeliveryService:
             self.journal.emit("mail", event, level=level, room=meeting.room.name if meeting else None, meeting_id=str(meeting.id) if meeting else None, message=message, data=data)
 
     # ----------------------------------------------------------------------------------------------- отправка
-    async def _render_attachments(self, db: AsyncSession, meeting: Meeting, kinds: list[str], fmt: str) -> tuple[list[tuple[str, str, bytes]], list[Material]]:
+    @staticmethod
+    def _zip(files: list[tuple[str, str, bytes]], name: str) -> list[tuple[str, str, bytes]]:
+        """Все выбранные документы одним архивом (удобно, когда их несколько)."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for fname, _mime, data in files:
+                z.writestr(fname, data)
+        return [(name, "application/zip", buf.getvalue())]
+
+    async def _render_attachments(self, db: AsyncSession, meeting: Meeting, kinds: list[str], fmt: str, archive: bool = False) -> tuple[list[tuple[str, str, bytes]], list[Material]]:
         files: list[tuple[str, str, bytes]] = []
         mats: list[Material] = []
         tz = await self.protocols._tz(db)  # noqa: SLF001
@@ -299,6 +316,8 @@ class DeliveryService:
             mats.append(m)
             data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
             files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.{fmt}", FORMAT_MIME[fmt], data))
+        if archive and files:
+            files = self._zip(files, f"Материалы встречи - {safe_component(meeting.room.name)} - {date}.zip")
         return files, mats
 
     async def deliver(self, message_id: uuid.UUID) -> None:
@@ -316,7 +335,7 @@ class DeliveryService:
                 pol = await self.policy(db)
                 if meeting is None:
                     raise MailError("content", "встреча удалена — отправлять нечего")
-                files, mats = await self._render_attachments(db, meeting, list(row.kinds or []), pol.attach_format)
+                files, mats = await self._render_attachments(db, meeting, list(row.kinds or []), pol.attach_format, bool((row.options or {}).get("archive")))
                 if not mats:
                     raise MailError("content", "выбранные материалы больше недоступны")
                 total = sum(len(f[2]) for f in files)

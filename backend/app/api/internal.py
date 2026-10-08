@@ -20,6 +20,8 @@ from ..services.livekit import (
     issue_user_token,
     meeting_room_name,
     parse_guest_identity,
+    parse_phone_identity,
+    is_phone_identity,
     parse_meeting_room_name,
     parse_user_identity,
     user_identity,
@@ -42,7 +44,27 @@ async def livekit_webhook(request: Request):
 
     meeting_id = parse_meeting_room_name(event.room.name) if event.room and event.room.name else None
     user_id = parse_user_identity(event.participant.identity) if event.participant and event.participant.identity else None
-    guest_id = parse_guest_identity(event.participant.identity) if event.participant and event.participant.identity else None
+    ident = event.participant.identity if event.participant and event.participant.identity else ""
+    guest_id = (parse_guest_identity(ident) or parse_phone_identity(ident)) if ident else None
+    # входящий телефонный звонок: identity выдаёт LiveKit SIP (sip_…) — заводим/находим запись участника по ней
+    if event.event in ("participant_joined", "participant_left") and meeting_id and ident.startswith("sip_") and not (user_id or guest_id):
+        async with request.app.state.session_maker() as db:
+            if event.event == "participant_joined":
+                g = await request.app.state.sip_routing.register_inbound(db, meeting_id, ident, dict(event.participant.attributes), event.participant.name or "")
+                await db.commit()
+                if g is not None:
+                    from ..services import events as ev  # noqa: PLC0415
+
+                    await ev.publish(request.app.state.redis, meeting_id, {"type": "participant_joined", "guest_id": str(g.id), "display_name": g.display_name, "participant_type": "phone"})
+            else:
+                from sqlalchemy import select  # noqa: PLC0415
+
+                from ..models import GuestParticipant  # noqa: PLC0415
+
+                g = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id, GuestParticipant.lk_identity == ident))).scalars().first()
+                if g is not None:
+                    await request.app.state.meetings.on_guest_left(db, meeting_id, g.id)
+        return {"ok": True}
     if event.event in ("participant_joined", "participant_left") and meeting_id and (user_id or guest_id):
         svc = request.app.state.meetings
         async with request.app.state.session_maker() as db:

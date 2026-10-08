@@ -15,7 +15,7 @@ from ..models import Meeting
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.mail import valid_email
-from ..services.mail_delivery import MATERIALS, Recipient, clean_spec
+from ..services.mail_delivery import MATERIALS, Recipient, clean_spec, effective_delivery
 
 router = APIRouter(prefix="/meetings/{meeting_id}/delivery", tags=["delivery"])
 
@@ -32,7 +32,7 @@ async def _meeting(request: Request, db: AsyncSession, meeting_id: uuid.UUID, su
 
 def _spec(meeting: Meeting) -> dict:
     try:
-        return clean_spec(meeting.room.mail_delivery or {"enabled": False, "materials": [k for k in ("protocol", "summary")], "recipients": {"leaders": True, "participants": True}})
+        return clean_spec(effective_delivery(meeting) or {"enabled": False, "materials": [k for k in ("protocol", "summary")], "recipients": {"leaders": True, "participants": True}})
     except ValueError:
         return clean_spec(None)
 
@@ -86,7 +86,7 @@ async def send_materials(meeting_id: uuid.UUID, request: Request, body: dict[str
     available = [k for k in kinds if await MATERIALS[k].load(delivery, db, meeting) is not None]
     if not available:
         raise HTTPException(status_code=409, detail="Выбранные материалы ещё не сформированы.")
-    res = await delivery.enqueue(db, meeting, available, chosen, trigger="manual", by=su.display_name)
+    res = await delivery.enqueue(db, meeting, available, chosen, trigger="manual", by=su.display_name, archive=bool(body.get("archive", spec.get("archive"))))
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.materials.send", target_type="meeting", target_id=str(meeting.id),
                       ip=client_ip(request), details={"room": meeting.room.slug, "kinds": available, "queued": res["queued"], "skipped": len(res["skipped"]),
                                                       "unavailable": [k for k in kinds if k not in available]})

@@ -12,7 +12,7 @@ while [ $# -gt 0 ]; do
     --env) ENV_FILE="$2"; shift 2 ;;
     -f|--follow) ARGS+=(--follow); shift ;;
     --tail) TAIL="$2"; shift 2 ;;
-    postgres|redis|livekit|backend|asr|web|llm-local) SVC+=("$1"); shift ;;
+    postgres|redis|livekit|backend|asr|web|llm-local|livekit-sip) SVC+=("$1"); shift ;;
     *) die "Неизвестный аргумент/сервис: $1" ;;
   esac
 done

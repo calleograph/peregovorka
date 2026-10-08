@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
+import { tabFromSearch } from "../navMenu";
 import AccessAdmin from "./admin/AccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import CaAdmin from "./admin/CaAdmin";
@@ -94,7 +96,8 @@ const GROUPS: Group[] = [
 
 export default function AdminPage({ version }: { version: string }) {
   const ids = GROUPS.flatMap((g) => g.pages.map((p) => p.id));
-  const [tab, setTab] = useState(() => { const t = sessionStorage.getItem("adminTab"); return t && ids.includes(t) ? t : "system"; });
+  const location = useLocation();
+  const [tab, setTab] = useState(() => tabFromSearch(location.search, ids) ?? (() => { const t = sessionStorage.getItem("adminTab"); return t && ids.includes(t) ? t : "system"; })());
   const pick = (t: string) => { setTab(t); try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ } };
   // переход из мастера первоначальной настройки (страница могла быть уже открыта)
   useEffect(() => {
@@ -103,6 +106,8 @@ export default function AdminPage({ version }: { version: string }) {
     return () => window.removeEventListener("admin:goto", on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // переход из верхнего меню (/admin?tab=…) при уже открытой странице
+  useEffect(() => { const t = tabFromSearch(location.search, ids); if (t) pick(t); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [location.search]);
   const page = GROUPS.flatMap((g) => g.pages).find((p) => p.id === tab);
   return (
     <section>

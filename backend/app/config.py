@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     local_llm_model_alias: str = "qwen3-0.6b-q4_k_m"
     local_llm_model_bytes: int = 484_220_320
     local_llm_model_sha256: str = "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
+    # --- SIP-телефония (контейнер livekit-sip, профиль compose `sip`; по умолчанию выключена и порты не открыты)
+    sip_enabled: str = "no"
+    sip_signaling_port: int = 5060
+    sip_rtp_start: int = 20000
+    sip_rtp_end: int = 20100
+    sip_media_ip: str = ""
+    sip_allowed_cidrs: str = ""
+    sip_health_url: str = "http://livekit-sip:8081"
     livekit_node_ip: str = ""
     livekit_rtc_tcp_port: int = 0
     livekit_rtc_udp_port: int = 0

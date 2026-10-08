@@ -25,6 +25,8 @@ log = logging.getLogger("asr.pipeline")
 
 SERVICE_PREFIX = "asr-"
 USER_PREFIX = "u-"
+# Телефонные абоненты (SIP): исходящий звонок из комнаты — "p-…", входящий — "sip_…" (identity выдаёт LiveKit SIP). Их звук распознаётся и пишется как у обычных участников.
+PHONE_PREFIXES = ("p-", "sip_")
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 

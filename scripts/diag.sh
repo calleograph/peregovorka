@@ -34,7 +34,7 @@ section() { printf '== %s ==\n' "$1"; }
 dc ps 2>&1 | mask_stream > "$B/containers.txt"
 dc config 2>&1 | mask_stream > "$B/compose.config.masked.yml"
 mask_stream < "$ENV_FILE" > "$B/env.masked"
-for s in postgres redis livekit backend asr web llm-local; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
+for s in postgres redis livekit backend asr web llm-local livekit-sip; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
 {
   section "локальная LLM"
   echo "включена: ${LLM_LOCAL_ENABLED:-yes}"; echo "файл: $(llm_file_name)"
@@ -44,6 +44,12 @@ for s in postgres redis livekit backend asr web llm-local; do dc logs --no-color
   echo "контейнер: $(dc ps llm-local 2>/dev/null | tail -n +2 | head -1)"
   echo "сеть llm_internal internal: $(docker network inspect "${COMPOSE_PROJECT_NAME}_llm_internal" -f '{{.Internal}}' 2>/dev/null || echo н/д)"
 } 2>&1 | mask_stream > "$B/local-llm.txt"
+{
+  section "SIP-телефония"
+  echo "включена: ${SIP_ENABLED:-no}"; echo "signalling: $(sip_port)/udp+tcp"; echo "RTP: $(sip_rtp)/udp"; echo "адрес привязки: ${SIP_BIND_ADDR:-0.0.0.0}"
+  echo "разрешённые адреса АТС: ${SIP_ALLOWED_CIDRS:-не заданы}"; echo "образ: $(sip_image) ($(docker image inspect "$(sip_image)" >/dev/null 2>&1 && echo есть || echo нет))"
+  echo "контейнер: $(dc ps livekit-sip 2>/dev/null | tail -n +2 | head -1)"
+} 2>&1 | mask_stream > "$B/sip.txt"
 {
   section "uname"; uname -a
   section "cpu/ram"; nproc 2>/dev/null; free -m 2>/dev/null || true

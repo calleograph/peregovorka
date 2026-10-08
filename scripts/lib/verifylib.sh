@@ -260,6 +260,9 @@ verify_deployment() {
   log "-- локальная LLM (Qwen3 0.6B) --"
   verify_local_llm
 
+  log "-- SIP-телефония --"
+  verify_sip
+
   log "-- HTTP-цепочка --"
   if command -v curl >/dev/null 2>&1; then
     code="$(_curl_code "http://${web_addr}:${WEB_PORT}/")"; [ "$code" = 200 ] && v_ok "Internal HTTP (web ${web_addr}:${WEB_PORT}): $code" || v_fail "Web ${web_addr}:${WEB_PORT} вернул $code"
@@ -333,5 +336,23 @@ except Exception as e:
   net="$(docker network inspect "${COMPOSE_PROJECT_NAME}_llm_internal" -f '{{.Internal}}' 2>/dev/null)"
   if [ "$net" = true ]; then v_ok "Сеть локальной LLM внутренняя (internal): выхода наружу нет, данные не покидают сервер"
   else v_warn "Сеть ${COMPOSE_PROJECT_NAME}_llm_internal не внутренняя или не найдена — проверьте compose.yml"; fi
+  return 0
+}
+
+# SIP-телефония — необязательная возможность: «не включена» — это SKIP (v_ok с пометкой), а не отказ; проблемы включённой службы — предупреждения.
+verify_sip() {
+  local cid st
+  if ! sip_enabled; then v_ok "SIP-телефония не включена (пропущено): служба и порты SIP/RTP не создавались"; return 0; fi
+  cid="$(dc ps -q livekit-sip 2>/dev/null | head -1)"
+  if [ -z "$cid" ]; then v_warn "SIP-телефония включена, но контейнер livekit-sip не запущен (образ $(sip_image) не скачан?). Администрирование → SIP-телефония → «Состояние»"; return 0; fi
+  st="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null)"
+  if [ "$st" != running ]; then v_warn "Контейнер livekit-sip: состояние «$st» — scripts/logs.sh livekit-sip"; return 0; fi
+  v_ok "livekit-sip запущен: SIP $(sip_port)/udp+tcp, RTP $(sip_rtp)/udp"
+  if [ "$(dc exec -T backend python -c "
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://livekit-sip:8081/', timeout=5).status)
+except Exception as e:
+    print(type(e).__name__)" 2>/dev/null | tr -d ' ')" = 200 ]; then v_ok "Служба SIP отвечает (связана с LiveKit и Redis)"; else v_warn "Служба SIP не отвечает на проверку работоспособности — scripts/logs.sh livekit-sip"; fi
   return 0
 }

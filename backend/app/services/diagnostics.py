@@ -175,6 +175,26 @@ async def livekit_checks(settings: Settings) -> dict:
     return out
 
 
+async def _sip_check(app) -> dict:
+    """SIP-телефония: «не включена» — не сбой (необязательная возможность); включена, но служба не работает — сбой. Без секретов."""
+    try:
+        from .sip import service_status  # noqa: PLC0415
+
+        async with app.state.session_maker() as db:
+            profiles = await app.state.sip.list(db)
+        st = await service_status(app.state.settings, app.state.sip_gateway, profiles, getattr(app.state, "test_transports", {}).get("sip_health"))
+        if not st["enabled_on_server"]:
+            return {"ok": True, "configured": False, "state": "disabled", "note": st["service"]["detail"]}
+        ok = bool(st["service"]["running"]) and st["livekit"]["ok"] is not False
+        out = {"ok": ok, "configured": True, "state": "running" if ok else "problem", "service": st["service"]["detail"], "livekit": st["livekit"]["detail"],
+               "ports": st["ports"], "profiles": st["trunks"]}
+        if not ok:
+            out["error"] = (st["service"]["detail"] if not st["service"]["running"] else st["livekit"]["detail"])
+        return out
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": True, "configured": False, "error": type(exc).__name__}
+
+
 async def _local_llm_check(app) -> dict:
     """Локальная языковая модель: файл (размер, SHA-256) и runtime. «Не загружена» — не сбой системы (ok=True, configured=False): она необязательна;
     сбоем (ok=False) это считается, только если администратор выбрал режим «Локальная», а модель не готова."""
@@ -232,6 +252,7 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
         else:
             c["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
     c["llm_local"] = await _local_llm_check(app)
+    c["sip"] = await _sip_check(app)
     try:
         async with httpx.AsyncClient(timeout=3.0) as cl:
             c["livekit_http"] = {"ok": (await cl.get(s.livekit_http_url + "/")).status_code == 200}
@@ -279,7 +300,7 @@ def verdict(rep: dict) -> list[str]:
     """Короткий список проблем простым языком (пусто — замечаний нет)."""
     out: list[str] = []
     c = rep.get("checks", {})
-    for name in ("postgres", "redis", "ldap", "llm_local", "livekit_http"):
+    for name in ("postgres", "redis", "ldap", "llm_local", "sip", "livekit_http"):
         if c.get(name, {}).get("ok") is False:
             out.append(f"{name}: недоступен ({c[name].get('error', '')})")
     lk = c.get("livekit", {})
