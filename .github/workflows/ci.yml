@@ -35,7 +35,8 @@ jobs:
         with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
         working-directory: frontend
-      - run: npm test && npm run build
+      # Типы проверяются раздельно: production-конфигурация (tsconfig.json) не включает *.test.ts и не знает Node, тесты — свой tsconfig.test.json.
+      - run: npm run typecheck:tests && npm test && npm run build
         working-directory: frontend
 
   scripts:
@@ -90,6 +91,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash tests/nginx/run.sh
+      - name: Сборка web так же, как при обновлении (compose build, прежний сборщик, те же аргументы)
+        run: |
+          cp .env.example .env
+          mkdir -p /tmp/vm-ca && touch /tmp/vm-ca/ad-ca.pem
+          sed -i 's#^LDAP_CA_FILE=.*#LDAP_CA_FILE=/tmp/vm-ca/ad-ca.pem#; s#^DATA_ROOT=.*#DATA_ROOT=/tmp/vm-data#' .env
+          DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 APP_VERSION="$(cat VERSION)" APP_GIT_COMMIT="${GITHUB_SHA::7}" APP_BUILT_AT="$(date -u +%FT%TZ)"             docker compose -p ci --project-directory deployment --env-file .env -f deployment/compose.yml build web
 
   clean-os:
     # «С чистой ОС»: в чистом контейнере Ubuntu/Debian нет ни Docker, ни nginx, ни git. Автоматическая установка зависимостей (манифест scripts/lib/prereqlib.sh)

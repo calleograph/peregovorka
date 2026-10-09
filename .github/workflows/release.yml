@@ -6,9 +6,28 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  ci-gate:
+    # Релиз GitHub публикуется только если CI этого же коммита зелёный: иначе «Релиз» оставался зелёным при несобирающемся образе (0.8.2).
+    # Тег и коммит в ветке уходят сразу (update.sh работает по ним); задерживается только публикация страницы релиза.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Ждём результата CI для этого коммита
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 120); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --json status,conclusion --jq '.[] | "\(.status):\(.conclusion)"')"
+            echo "CI для ${GITHUB_SHA::7}: $(echo "$runs" | tr '\n' ' ')"
+            if echo "$runs" | grep -Eq ':(failure|cancelled|timed_out|startup_failure)$'; then echo "::error::CI красный — релиз не публикуется"; exit 1; fi
+            if [ -n "$runs" ] && ! echo "$runs" | grep -Eq '^(queued|in_progress|waiting|pending|requested):'; then echo "CI зелёный"; exit 0; fi
+            sleep 30
+          done
+          echo "::error::CI не завершился за час"; exit 1
   release:
+    needs: ci-gate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
