@@ -13,3 +13,10 @@
 2. `python tests/live/devserver_live.py` — backend на 8000 (нужны зависимости backend + Pillow); `npm run dev` в `frontend` — страница на 5173 (прокси на 8000).
 3. `pip install websockets`; `python tests/live/smoke_room.py` (переменные: `BROWSER_PATH`, `PEREGOVORKA_URL`, `SMOKE_OUT`).
 Между запусками состояние встречи остаётся в памяти backend — перезапускайте стенд для чистого прогона.
+
+## Дополнительные сценарии
+Запускаются на том же стенде (`devserver_live.py` + LiveKit + `npm run dev`):
+* `scenario_chat_files.py` — вложения в чате (картинка, просмотрщик, документ, запрещённый тип);
+* `scenario_history_protocol.py` — реплики стенограммы (подсовываются в поток вместо ASR через `/__dev/segment`) → завершение встречи → история → протокол с подставной LLM на порту 9100 → экспорт `.docx/.html/.md/.pdf`;
+* `scenario_livekit_restart.py` — надёжность: LiveKit останавливается на 10 с во время встречи (`LIVEKIT_DIR` — каталог с `livekit-server` и `lk.yaml`), клиенты должны вернуться сами.
+Комнаты стенда: у каждого сценария своя (`sales`, `pm`, `legal`, `arch`), поэтому они не мешают друг другу; между полными прогонами стенд лучше перезапускать.
