@@ -14,7 +14,8 @@ export type LiveEvent =
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
   | { type: "whiteboard_saved"; seq: number; shapes: number; by: string };
 
-const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "whiteboard_patch", "whiteboard_saved"]);
+export const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved"]);
+// Каждый тип из LiveEvent обязан быть здесь, иначе событие молча отбрасывается (так «рука» и «печатает» годами не доходили до остальных; охрана — liveEvents.test.ts)
 
 /** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */
 export class LiveBus {

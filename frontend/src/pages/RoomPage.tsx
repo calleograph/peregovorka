@@ -392,8 +392,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         if (track.kind === Track.Kind.Audio && audioBox.current) {
           const el = track.attach();
           el.dataset.identity = participant.identity;
-          el.muted = localMutedRef.current.has(participant.identity);        // заглушённый для себя остаётся заглушённым и после переподключения
+          const identity = participant.identity;
+          const reapply = () => { el.muted = localMutedRef.current.has(identity); };      // заглушённый для себя остаётся заглушённым и после переподключения/перезагрузки
+          reapply();
+          el.addEventListener("loadedmetadata", reapply); el.addEventListener("playing", reapply);          // LiveKit при старте воспроизведения сам сбрасывает muted
           audioBox.current.appendChild(el);
+          window.setTimeout(reapply, 500);
         }
         if (pub.source === Track.Source.ScreenShare) dlog("получен экран участника");
         refresh();

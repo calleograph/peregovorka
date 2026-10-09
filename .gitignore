@@ -33,3 +33,7 @@ Thumbs.db
 # Артефакты диагностики и замеров (могут содержать сведения об установке)
 /diagnostics/
 metrics-*.csv
+
+# живой smoke-test: данные и снимки стенда
+tests/live/data/
+tests/live/out/
