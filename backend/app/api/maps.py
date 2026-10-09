@@ -50,7 +50,8 @@ def _state(rec, meeting, plan: dict, can_edit: bool) -> dict:
 @router.get("")
 async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
-    rec = await request.app.state.maps.get(db, meeting_id)
+    maps = request.app.state.maps
+    rec = await maps.refresh(db, await maps.get(db, meeting_id))
     return _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
 
 
@@ -67,7 +68,7 @@ async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     if not plan["ready"]:
         raise HTTPException(status_code=409, detail=plan["reason"])
     maps = request.app.state.maps
-    cur = await maps.get(db, meeting_id)
+    cur = await maps.refresh(db, await maps.get(db, meeting_id))
     if cur is not None and cur.status in ("pending", "running"):
         return {"status": cur.status}                    # уже идёт: повторное нажатие ничего не запускает
     again = cur is not None

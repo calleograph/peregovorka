@@ -482,6 +482,7 @@ class MapService:
     def __init__(self, ps):
         self.ps = ps                      # ProtocolService: сессии, настройки, выбор модели, фоновые задачи
         self._sem = asyncio.Semaphore(1)
+        self._active: set[uuid.UUID] = set()      # карты, которые этот процесс сейчас ставил в очередь или строит
         self.journal = None
 
     # ------------------------------------------------------------------ состояние
@@ -502,7 +503,16 @@ class MapService:
         return rec
 
     def start(self, map_id: uuid.UUID) -> None:
+        self._active.add(map_id)
         self.ps.spawn(self.run(map_id), f"map-{map_id}")
+
+    async def refresh(self, db: AsyncSession, rec: ConversationMap | None) -> ConversationMap | None:
+        """Запись «в очереди/строится», которой нет среди задач этого процесса (сервис перезапускали), — не вечное «Обрабатывается», а понятная ошибка."""
+        if rec is not None and rec.status in ("pending", "running") and rec.id not in self._active:
+            rec.status, rec.error = "failed", "Формирование прервано перезапуском сервиса. Нажмите «Пересоздать»."
+            rec.meta = {**(rec.meta or {}), "failed": True, "interrupted": True}
+            await db.commit()
+        return rec
 
     async def maybe_auto(self, meeting_id: uuid.UUID) -> None:
         """После завершения встречи: если для комнаты (или системно) включено автоформирование — ставит карту в очередь."""
@@ -519,6 +529,12 @@ class MapService:
 
     # ------------------------------------------------------------------ выполнение
     async def run(self, map_id: uuid.UUID) -> None:
+        try:
+            await self._run(map_id)
+        finally:
+            self._active.discard(map_id)
+
+    async def _run(self, map_id: uuid.UUID) -> None:
         async with self.ps._sm() as db:
             rec = await db.get(ConversationMap, map_id)
             if rec is None:

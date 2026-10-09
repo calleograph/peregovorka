@@ -262,3 +262,28 @@ def test_map_is_built_automatically_only_when_enabled_in_system_or_room(tmp_path
         assert c.post(f"{API}/{a['meeting_id']}/end").status_code == 204
         _drain(c)
         assert c.get(f"{API}/{a['meeting_id']}/map").json()["status"] == "none"
+
+
+def test_map_left_running_by_a_restarted_service_is_reported_as_interrupted_and_can_be_recreated(tmp_path, directory):
+    from sqlalchemy import update
+
+    from app.models import ConversationMap
+
+    with map_app(tmp_path, directory) as c:
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        _room, mid = finished_meeting(c)
+        login(c, "alice")
+        assert c.post(f"{API}/{mid}/map").status_code == 202
+        _drain(c)
+
+        async def _stale():
+            async with c.app_obj.state.session_maker() as db:
+                await db.execute(update(ConversationMap).values(status="running"))      # как будто процесс убили посреди работы
+                await db.commit()
+
+        c.portal.call(_stale)
+        st = c.get(f"{API}/{mid}/map").json()
+        assert st["status"] == "failed" and "перезапуск" in st["error"]
+        assert c.post(f"{API}/{mid}/map").status_code == 202
+        _drain(c)
+        assert c.get(f"{API}/{mid}/map").json()["status"] == "ready"
