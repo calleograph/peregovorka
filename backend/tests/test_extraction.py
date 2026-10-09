@@ -404,3 +404,26 @@ def test_when_the_task_words_are_not_near_any_name_the_owner_stays_unconfirmed()
     t, st = verify_recap("подготовить презентацию для руководства", "Дмитрий Фёдоров")
     assert t.assignee_guess in ("", "Дмитрий Фёдоров") and (t.assignee == "" or t.assignee == "Дмитрий Фёдоров")
     assert ex.association_distances(RECAP[0], "чинить два нестабильных теста", ex.people_of(["Галина Белова", "Дмитрий Фёдоров"]))["Галина Белова"] <= 2
+
+
+REAL_RECAP = ("[10:18:58] Анна Крылова: Давайте подведём итоги. Релиз переносим на вторник. Борис отдаёт исправление прав в понедельник к обеду. "
+              "Виктор в среду вечером увеличивает память до шестнадцати гигабайт, в ночь с пятницы на субботу мигрирует базу. Завтра до обеда подаёт заявку на сертификат. "
+              "Галина чинит два теста до среды, Дмитрий помогает. Елена уточняет вопрос по логам у юристов.")
+
+
+def verify_real(task, assignee):
+    ls = ex.parse_transcript(HEADER + REAL_RECAP + "\n")[1]
+    people = ex.people_of(["Анна Крылова", "Борис Мельник", "Виктор Орлов", "Галина Белова", "Дмитрий Фёдоров", "Елена Морозова"])
+    pid = {p.full: p.pid for p in people}
+    st = stats0()
+    items = ex.verify_pass("tasks", {"tasks": [{"assignee": pid[assignee], "task": task, "deadline": "", "ts": "10:18:58"}]}, ls, 1, people, st, date(2026, 10, 12))
+    return items[0]
+
+
+def test_recap_names_are_matched_within_the_sentence_and_deadline_words_do_not_attract_names():
+    t = verify_real("чинить два теста до среды", "Дмитрий Фёдоров")        # «до среды» стоит рядом с «Дмитрий», но задача — Галины
+    assert t.assignee == "Галина Белова"
+    t = verify_real("подать заявку на сертификат", "Галина Белова")          # в этом предложении имени нет (продолжение цепочки Виктора): не гадаем
+    assert t.assignee == "" and t.assignee_guess == "Галина Белова"
+    assert verify_real("увеличить память до шестнадцати гигабайт", "Виктор Орлов").assignee == "Виктор Орлов"
+    assert verify_real("отдать исправление прав", "Борис Мельник").assignee == "Борис Мельник"

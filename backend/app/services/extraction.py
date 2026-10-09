@@ -271,6 +271,7 @@ TIMEWORD_RE = re.compile(
     r"\b(?:понедельник|вторник|четверг|пятниц|суббот|воскресень)\w*|\bсред(?:а|ы|у|е|ой)\b|"
     r"\b(?:январ|феврал|апрел|июн|июл|август|сентябр|октябр|ноябр|декабр)\w+|\bмарта?\b|\bма(?:я|й|е)\b)", re.I)
 QUESTION_SIGNAL = re.compile(r"открыт\w+ вопрос|не знаем|не знаю|не уверен|надо уточнить|нужно уточнить|уточню|уточнит|уточним|выясн|пока нет ответа|отложим|не решаем|вопрос не|не определ|решение отклад", re.I)
+TIME_STEMS = {"завтр", "сегод", "послез", "понед", "вторн", "среды", "среду", "четве", "пятни", "суббо", "воскр", "недел", "месяц", "вечер", "утром", "обеда", "конца", "ночь ", "ночью", "следу"}
 PROPOSAL_CUE = re.compile(r"предлаг|предложени|предложу|давайте|можно|может\b|можем|стоит|нужно|надо|а если|лучше|я бы|мы бы|хорошо бы|было бы|вариант|не берем|не берём|отказ|вместо", re.I)
 LEAK_RE = re.compile(r"\s*[.;,]?\s*(?:время реплики|реплика|источник)\s*[:\-—].*$|,?\s*если не утвержден\w*\.?|,?\s*с согласия всех участников\.?", re.I)
 LEAD_RE = re.compile(r"^\s*(?:решение|решили|принято решение|задача|поручение|открытый вопрос|вопрос)\s*[:\-—]\s*", re.I)
@@ -393,19 +394,28 @@ def association_distances(text: str, task: str, people: list[Person]) -> dict[st
     """Насколько близко к словам задачи стоит каждый названный в реплике участник (в словах). В итоговой реплике «Галина чинит тесты, Дмитрий
     помогает …» названы несколько человек, и модель легко приписывает задачу не тому: берётся тот, чьё имя стоит рядом с глаголом/существительным задачи.
     None — слов задачи в реплике не нашли (по близости судить нельзя)."""
-    words = re.findall(r"[А-Яа-яЁёA-Za-z0-9-]+", text)
-    low = [norm(w) for w in words]
-    name_idx: dict[str, list[int]] = {}
-    for i, wl in enumerate(low):
-        hits = [p for p in people if wl == norm(p.first) or wl == norm(p.last)]
-        if len(hits) == 1:
-            name_idx.setdefault(hits[0].full, []).append(i)
-    taken = {i for v in name_idx.values() for i in v}
-    stems = {norm(w)[:5] for w in re.findall(r"[А-Яа-яЁё]{5,}", task)}
-    pos = [i for i, wl in enumerate(low) if i not in taken and len(wl) >= 5 and wl[:5] in stems]
-    out: dict[str, int | None] = {}
+    # слова срока («до среды», «завтра») стоят рядом с любым именем и ничего не говорят о том, кто делает; поэтому в расчёт не берутся
+    stems = {norm(w)[:5] for w in re.findall(r"[А-Яа-яЁё]{5,}", task)} - TIME_STEMS
+    best: tuple[int, list[str], dict[str, list[int]], list[int]] | None = None
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        low = [norm(w) for w in re.findall(r"[А-Яа-яЁёA-Za-z0-9-]+", sent)]
+        name_idx: dict[str, list[int]] = {}
+        for i, wl in enumerate(low):
+            hits = [p for p in people if wl == norm(p.first) or wl == norm(p.last)]
+            if len(hits) == 1:
+                name_idx.setdefault(hits[0].full, []).append(i)
+        taken = {i for v in name_idx.values() for i in v}
+        pos = [i for i, wl in enumerate(low) if i not in taken and len(wl) >= 5 and wl[:5] in stems]
+        if pos and (best is None or len(pos) > best[0]):
+            best = (len(pos), low, name_idx, pos)
+    everyone: dict[str, int | None] = {full: None for full in mentions_direct(text, people)}
+    if best is None:
+        return everyone                       # слов задачи в реплике не нашли — по близости судить нельзя
+    _n, _low, name_idx, pos = best
+    out: dict[str, int | None] = {full: 999 for full in everyone}      # назван в другом предложении — к этой задаче отношения не имеет
     for full, idxs in name_idx.items():
-        out[full] = min(abs(i - j) for i in idxs for j in pos) if pos else None
+        # имя обычно стоит перед глаголом («Галина чинит …»): имя после слов задачи считается чуть дальше
+        out[full] = min((j - i) if j >= i else (i - j + 1) for i in idxs for j in pos)
     return out
 
 
