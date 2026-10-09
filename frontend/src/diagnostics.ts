@@ -51,7 +51,7 @@ export class JoinTimeline {
     const x = this.m[a], y = this.m[b];
     return x === undefined || y === undefined ? undefined : Math.max(0, Math.round(y - x));
   }
-  /** Метрики, совпадающие по именам с серверными (админка → «Состояние системы» → «Время входа»). */
+  /** Метрики, совпадающие по именам с серверными (админка → «Обзор» → «Технические показатели»). */
   metrics(): Record<string, number | undefined> {
     return {
       join_api_ms: this.span("joinStart", "joinEnd"),

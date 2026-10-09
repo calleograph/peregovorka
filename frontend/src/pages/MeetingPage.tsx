@@ -6,7 +6,7 @@ import ChatPanel from "../components/ChatPanel";
 import { Icon } from "../components/Icons";
 import Menu from "../components/Menu";
 import MapTab from "../components/MapTab";
-import MeetingAdminActions from "../components/MeetingAdminActions";
+import { useMeetingAdmin } from "../components/MeetingAdminActions";
 import DeliveryLog from "../components/DeliveryLog";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
@@ -131,6 +131,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
     return () => window.clearTimeout(t);
   }, [boardUsedEarly]);
 
+  const adminActs = useMeetingAdmin(meeting ?? { id: meetingId, room_name: "", recordings: 0, ended_at: null }, () => { void loadMeeting(); loadRecordings(); void loadProtocols(); }, () => navigate("/history"));
   if (error && !meeting) return <div className="alert error">{error}</div>;
   if (!meeting) return <div className="muted">Загрузка…</div>;
   const finished = !!meeting.ended_at;
@@ -146,18 +147,21 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         {(chatCount > 0 || boardUsed) && <> · Материалы: {chatCount > 0 && `чат (${chatCount})`}{chatCount > 0 && boardUsed && ", "}{boardUsed && "общая доска (схема)"}</>}</p>
       {error && <div className="alert error" role="alert">{error}</div>}
       {notice && <div className="alert ok" role="status">{notice}</div>}
-      {finished && <div className="alert info small">Пока эта страница открыта, вы можете формировать протоколы. После выхода со страницы доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
+      {finished && !isAdmin && <div className="alert warn" role="note"><b>Не закрывайте эту страницу, пока не сохранили нужное.</b> После выхода доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
+      {finished && isAdmin && <div className="alert info small">Участники видят материалы, пока открыта эта страница; после выхода доступ закрывается (если не разрешено иначе). Вы как администратор видите всё всегда.</div>}
 
       <div className="row" style={{ margin: "10px 0" }}>
         <button className="btn primary" disabled={!canMake} onClick={() => setDialog({ kind: "protocol" })}
                 title={!finished ? "Протокол формируется после завершения встречи" : !canMake ? "Нет ни реплик, ни чата, ни схемы" : "Окно с инструкцией для модели. Материалы: стенограмма, чат и схема с доски"}>Сформировать протокол</button>
         <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button>
-        <Menu label="Скачать стенограмму">
+        <Menu label="Ещё" title="Скачать стенограмму, отправить материалы, действия администратора">
+          <span className="menu-h">Скачать стенограмму</span>
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
           <button onClick={() => downloadText(text, `${fileBase(meeting.room_name, meeting.started_at)}.txt`)} disabled={!segments.length}>Как на этой странице (.txt)</button>
+          {finished && (isAdmin || meeting.can_send_materials) && <button onClick={() => setSendOpen(true)} title="Протокол, резюме и стенограмма — выбранным получателям по электронной почте">Отправить материалы…</button>}
+          {isAdmin && <><span className="menu-h">Администратор</span>{adminActs.items}</>}
         </Menu>
-        {finished && (isAdmin || meeting.can_send_materials) && <button className="btn" onClick={() => setSendOpen(true)} title="Протокол, резюме и стенограмма — выбранным получателям по электронной почте">Отправить материалы…</button>}
-        {isAdmin && <MeetingAdminActions meeting={meeting} onChanged={() => { void loadMeeting(); loadRecordings(); void loadProtocols(); }} onDeleted={() => navigate("/history")} />}
+        {adminActs.dialogs}
       </div>
 
       <div className="tabs" role="tablist">

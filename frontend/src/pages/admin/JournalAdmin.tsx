@@ -40,6 +40,7 @@ export default function JournalAdmin({ onOpenSettings }: { onOpenSettings?: () =
   const [note, setNote] = useState("");
   const [confirm, setConfirm] = useState<"selected" | "matching" | "purge" | null>(null);
   const [advOpen, setAdvOpen] = useState(false);
+  const [dense, setDense] = useState(() => { try { return localStorage.getItem("pg:journalDense") === "1"; } catch { return false; } });
 
   useEffect(() => { const t = window.setTimeout(() => setQ(text), 300); return () => window.clearTimeout(t); }, [text]);
 
@@ -128,8 +129,8 @@ export default function JournalAdmin({ onOpenSettings }: { onOpenSettings?: () =
         <a className="btn" href={api.admin.journalExportUrl("24h")} download title="ZIP: journal.csv (для Excel), journal.ndjson и audit.csv за последние 24 часа">⬇ Выгрузить за сутки</a>
         <a className="btn" href={api.admin.journalExportUrl("30d")} download title="ZIP: journal.csv (для Excel), journal.ndjson и audit.csv за 30 дней">⬇ Полный архив за 30 дней</a>
       </div>
-      <p className="muted">Что происходило в системе: входы и отказы, подключения к комнатам, обрывы и медленная установка соединения, ошибки микрофона и камеры (с данными о браузере, сети и устройствах клиента),
-        создание протоколов, действия администраторов. Пароли, ключи и содержимое разговоров в журнал не попадают. Записи старше срока хранения удаляются сами.</p>
+      <p className="muted small">Что происходило в системе: входы, подключения к комнатам, обрывы, ошибки микрофона и камеры, создание протоколов, действия администраторов. Пароли, ключи и содержимое разговоров в журнал не попадают.</p>
+      {stats && <div className={`alert ${stats.errors_24h ? "error" : "ok"}`} role="status">{stats.errors_24h ? `За сутки ошибок: ${stats.errors_24h}. Покажите только их: уровень «Ошибка» в фильтрах ниже.` : "За сутки ошибок нет."}</div>}
 
       {stats && (
         <div className="kpi">
@@ -219,7 +220,9 @@ export default function JournalAdmin({ onOpenSettings }: { onOpenSettings?: () =
       {note && <div className="alert ok" role="status">{note} <button className="btn mini ghost" onClick={() => setNote("")}>Закрыть</button></div>}
       {err && <div className="alert error" role="alert">{err}</div>}
 
-      <div className="table-scroll">
+      <label className="check dense-toggle"><input type="checkbox" checked={dense} onChange={(e) => { setDense(e.target.checked); try { localStorage.setItem("pg:journalDense", e.target.checked ? "1" : "0"); } catch { /* не запомнится */ } }} />
+        <span className="check-body">Компактно</span></label>
+      <div className={`journal-scroll ${dense ? "dense" : ""}`}>
         <table className="table journal-table">
           <thead><tr><th className="c-chk" /><th>Время</th><th>Уровень</th><th>Категория</th><th>Событие</th><th>Пользователь</th><th>Комната</th><th>IP</th><th>Браузер и ОС</th><th>Сообщение</th></tr></thead>
           <tbody>
@@ -242,8 +245,11 @@ export default function JournalAdmin({ onOpenSettings }: { onOpenSettings?: () =
                   <tr className="detail"><td colSpan={10}>
                     <div className="detail-grid">
                       <div><b>Сообщение</b><div>{r.message ?? "—"}</div></div>
-                      <div><b>Идентификаторы</b><div className="small">запись #{r.id}{r.request_id ? ` · запрос ${r.request_id}` : ""}{r.meeting_id ? <> · встреча <Link to={`/history/${r.meeting_id}`}>{r.meeting_id.slice(0, 8)}</Link></> : null}</div></div>
-                      {r.data && <div className="wide"><b>Данные события</b><pre className="debug-log">{JSON.stringify(r.data, null, 2)}</pre></div>}
+                      {r.meeting_id && <div><b>Встреча</b><div className="small"><Link to={`/history/${r.meeting_id}`}>открыть встречу</Link></div></div>}
+                      <details className="wide tech-details"><summary>Технические детали</summary>
+                        <div className="small">запись #{r.id}{r.request_id ? ` · запрос ${r.request_id}` : ""}{r.meeting_id ? ` · встреча ${r.meeting_id}` : ""}</div>
+                        {r.data && <pre className="debug-log">{JSON.stringify(r.data, null, 2)}</pre>}
+                      </details>
                     </div>
                   </td></tr>
                 )}

@@ -27,8 +27,9 @@ function Bar({ value, warn = 70, bad = 90 }: { value: number; warn?: number; bad
 }
 const ms = (v?: number | null) => (v === undefined || v === null ? "—" : `${v} мс`);
 
-/** Состояние системы: ресурсы, сервисы, ASR, комнаты и пользователи, хранилища, версии, времена входа; скачивание диагностического отчёта. */
-export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => void } = {}) {
+/** «Обзор» (общее состояние: проблемы, службы, ссылки) и «Технические показатели» (ресурсы, ASR, тайминги, ядро, обслуживание): ресурсы, сервисы, ASR, комнаты и пользователи, хранилища, версии, времена входа; скачивание диагностического отчёта. */
+export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (page: string) => void; view?: "overview" | "tech" } = {}) {
+  const tech = view === "tech";
   const [s, setS] = useState<SystemStatus | null>(null);
   const [err, setErr] = useState("");
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -60,10 +61,8 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
 
   return (
     <section className="sysadmin">
-      <div className="row"><h2>Состояние системы</h2><div className="spacer" />
-        <button className="btn primary" onClick={report} disabled={!!busy}>{busy === "report" ? "Формирование…" : "Скачать диагностический отчёт"}</button>
-        <button className="btn" onClick={() => run("exp", async () => { const r = await api.admin.retryExports(); setNote({ ok: true, text: `Повторная выгрузка записей: выгружено ${r.exported}, с ошибкой ${r.still_failed}` }); await load(); })} disabled={!!busy}>Повторить выгрузку записей</button>
-        <button className="btn" onClick={() => run("ret", async () => { const r = await api.admin.runRetention(); setNote({ ok: true, text: `Очистка по срокам выполнена: ${JSON.stringify(r)}` }); await load(); })} disabled={!!busy}>Запустить очистку по срокам</button></div>
+      <div className="row"><h2>{tech ? "Технические показатели" : "Обзор"}</h2><div className="spacer" />
+        <button className="btn primary" onClick={report} disabled={!!busy} title="Только чтение: формирует файл с диагностикой без секретов">{busy === "report" ? "Формирование…" : "Скачать диагностический отчёт"}</button></div>
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
       {problems && (problems.length ? <div className="alert error"><b>Найдено в отчёте:</b><ul style={{ margin: "4px 0 0" }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul></div> : <div className="alert ok">Диагностика не нашла проблем.</div>)}
       <RepairsPanel onOpen={onOpen} />
@@ -74,8 +73,8 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
       <div className="kpi">
         <div className="card"><div className="l">Идёт встреч</div><div className="v">{s.counts.active_meetings}</div></div>
         <div className="card"><div className="l">Пользователей онлайн</div><div className="v">{s.live?.users_online ?? "—"}</div></div>
-        <div className="card"><div className="l">Нагрузка CPU (load1 / {h.cpus ?? "?"} ядер)</div><div className="v">{cpuPct !== undefined ? `${Math.round(cpuPct)} %` : "—"}</div>{cpuPct !== undefined && <Bar value={cpuPct} />}</div>
-        <div className="card"><div className="l">Память занята</div><div className="v">{memUsed !== undefined ? `${Math.round(memUsed)} %` : "—"}</div>{memUsed !== undefined && <><Bar value={memUsed} warn={80} bad={92} /><div className="l">свободно {bytes(h.mem_available)} из {bytes(h.mem_total)}</div></>}</div>
+        {tech && <div className="card"><div className="l">Нагрузка CPU (load1 / {h.cpus ?? "?"} ядер)</div><div className="v">{cpuPct !== undefined ? `${Math.round(cpuPct)} %` : "—"}</div>{cpuPct !== undefined && <Bar value={cpuPct} />}</div>}
+        {tech && <div className="card"><div className="l">Память занята</div><div className="v">{memUsed !== undefined ? `${Math.round(memUsed)} %` : "—"}</div>{memUsed !== undefined && <><Bar value={memUsed} warn={80} bad={92} /><div className="l">свободно {bytes(h.mem_available)} из {bytes(h.mem_total)}</div></>}</div>}
         <div className="card"><div className="l">Свободно на диске данных</div><div className="v">{bytes(s.disk_free_bytes)}</div></div>
         {js && (
           <div className="card"><div className="l">Журнал событий</div><div className="v">{bytes(js.size_bytes)}</div>
@@ -84,7 +83,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
               {onOpen && <button className="btn mini" onClick={() => onOpen("journal")}>Открыть</button>}
               {onOpen && <button className="btn mini" onClick={() => onOpen("journal_settings")}>Хранение и очистка</button>}</div></div>
         )}
-        <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{versionLabel(s.version, s.commit)}</div><div className="l">{s.built_at ?? ""}</div></div>
+        {tech && <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{versionLabel(s.version, s.commit)}</div><div className="l">{s.built_at ?? ""}</div></div>}
       </div>
 
       <h3>Сервисы</h3>
@@ -93,7 +92,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
           <div key={k} className="card"><div className="row"><span className={`dot ${v.ok ? "ok" : "bad"}`} /><b>{names[k] ?? k}</b></div>
             <div className="muted small">{v.ok ? (k === "llm_local" ? (v.configured ? (v.selected ? "работает, выбрана для протоколов" : "модель на месте, не выбрана в настройках") : v.state === "disabled" ? "отключена при установке" : "не загружена (необязательно)") : k === "sip" ? (v.configured ? `работает · signalling ${(v as { ports?: { signaling_port?: number } }).ports?.signaling_port ?? "?"}` : "не включена (необязательно)") : "работает") : `недоступен${v.error ? ` (${v.error})` : ""}`}</div>
             {k === "sip" && onOpen && <div className="row tight" style={{ marginTop: 6 }}><button className="btn mini" onClick={() => onOpen("sip")}>Открыть SIP-телефонию</button></div>}
-            {k === "asr" && (
+            {tech && k === "asr" && (
               <div className="muted small" style={{ marginTop: 4 }}>
                 модель: {prov}<br />
                 очередь {String(asr?.queue_depth ?? "—")} · обработано {String(asr?.processed ?? "—")} · отброшено {String(asr?.dropped ?? "—")} · ошибок {String(asr?.errors ?? "—")}<br />
@@ -103,6 +102,20 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
           </div>))}
       </div>
 
+      {!tech && (
+        <div className="card quick-links">
+          <b>Быстрые переходы</b>
+          <div className="row" style={{ marginTop: 8, flexWrap: "wrap" }}>
+            {onOpen && <button className="btn mini" onClick={() => onOpen("updates")}>Обновления и версии</button>}
+            {onOpen && <button className="btn mini" onClick={() => onOpen("journal")}>Журнал событий</button>}
+            {onOpen && <button className="btn mini" onClick={() => onOpen("clients")}>Диагностика клиентов</button>}
+            {onOpen && <button className="btn mini" onClick={() => onOpen("llm")}>Языковая модель</button>}
+            {onOpen && <button className="btn mini" onClick={() => onOpen("system_tech")}>Технические показатели →</button>}
+          </div>
+        </div>
+      )}
+      {tech && (
+        <>
       <h3>Время входа в комнату (последние измерения)</h3>
       <p className="muted small">Сравнение строк показывает, где теряется время: backend, прокси, сигналинг, ICE, микрофон или ASR. Данные присылают браузеры участников и ASR; хранятся сутки.</p>
       <table className="table compact"><thead><tr><th>Этап</th><th>Среднее</th><th>p95</th><th>Максимум</th><th>Измерений</th></tr></thead><tbody>
@@ -146,6 +159,17 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
         {Object.entries({ "Пользователей": s.counts.users, "Комнат": s.counts.rooms, "Встреч": s.counts.meetings, "Реплик": s.counts.segments, "Записей аудио": s.counts.recordings,
           "Объём записей": bytes(s.counts.recordings_bytes), "Документов (протоколов и резюме)": s.counts.protocols, "Публичный адрес": s.public_url }).map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
       </tbody></table>
+
+          <div className="card maintenance" role="group" aria-label="Обслуживание">
+            <h3 style={{ marginTop: 0 }}>Обслуживание — действия изменяют данные</h3>
+            <p className="muted small" style={{ marginTop: 0 }}>Очистка удаляет данные по срокам хранения, повторная выгрузка пишет файлы во внешнее хранилище. Всё остальное на этой странице — только просмотр.</p>
+            <div className="row">
+              <button className="btn" onClick={() => run("exp", async () => { const r = await api.admin.retryExports(); setNote({ ok: true, text: `Повторная выгрузка записей: выгружено ${r.exported}, с ошибкой ${r.still_failed}` }); await load(); })} disabled={!!busy}>Повторить выгрузку записей</button>
+              <button className="btn" onClick={() => run("ret", async () => { const r = await api.admin.runRetention(); setNote({ ok: true, text: `Очистка по срокам выполнена: ${JSON.stringify(r)}` }); await load(); })} disabled={!!busy}>Запустить очистку по срокам</button>
+            </div>
+          </div>
+        </>
+      )}
     </section>
   );
 }

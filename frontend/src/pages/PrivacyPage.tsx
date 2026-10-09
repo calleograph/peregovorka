@@ -5,7 +5,7 @@ import { loadPrivacy, type Privacy } from "../privacy";
 const SECTIONS: [keyof Privacy, string][] = [["operator", "Оператор"], ["purpose", "Назначение системы"], ["data_types", "Какие данные обрабатываются"],
   ["cookies", "Технические cookie"], ["retention", "Сроки хранения"], ["contact", "Вопросы и обращения"]];
 
-/** «Обработка данных»: страница открывается без входа. Тексты вводит администратор («Администрирование → Cookie и обработка данных»); в приложении юридический текст не зашит. */
+/** «Обработка данных»: страница открывается без входа. Тексты вводит администратор («Администрирование → Конфиденциальность и cookie»); в приложении юридический текст не зашит. */
 export default function PrivacyPage() {
   const [p, setP] = useState<Privacy | null>(null);
   useEffect(() => { void loadPrivacy().then(setP); }, []);

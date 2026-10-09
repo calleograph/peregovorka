@@ -56,9 +56,9 @@ function Assignments({ onGo }: { onGo: (t: Tab) => void }) {
     <div className="stack">
       {err && <div className="alert error" role="alert">{err}</div>}
       <div className="card">
-        <div className="row"><h3 style={{ margin: 0 }}>Какая модель для какой задачи</h3><div className="spacer" />
-          <span className="muted small" title="Разовый выбор в окне «Сформировать» сильнее всего; затем настройка встречи, переговорки и, если их нет, значение из этой таблицы.">
-            Порядок выбора: Разовый выбор → Встреча → Переговорка → Системное значение <span className="help-q" aria-hidden>?</span></span></div>
+        <h3 style={{ margin: 0 }}>Какая модель для какой задачи</h3>
+        <details className="tech-details"><summary>Как определяется модель</summary>
+          <p className="muted small" style={{ margin: "6px 0" }}>Сильнее всего разовый выбор в окне «Сформировать», затем настройка встречи, затем переговорки; если их нет — значение из этой таблицы.</p></details>
         {!eff || !ch ? <div className="muted">Загрузка…</div> : (
           <div style={{ overflowX: "auto" }}>
             <table className="table">
@@ -81,7 +81,7 @@ function Assignments({ onGo }: { onGo: (t: Tab) => void }) {
             </table>
           </div>
         )}
-        <div className="row small"><button className="btn mini ghost" onClick={() => setSrc(!src)}>{src ? "Скрыть источник настройки" : "Показать источник настройки"}</button>
+        <div className="row small"><button className="btn mini ghost" onClick={() => setSrc(!src)}>{src ? "Скрыть, почему выбрана модель" : "Почему выбрана эта модель"}</button>
           <span className="muted">Подключить новый API — вкладка «<a href="#llm-ext" onClick={(e) => { e.preventDefault(); onGo("external"); }}>Внешние API</a>».</span></div>
       </div>
       {ch && <FallbackPolicy value={ch.on_missing} onSaved={load} />}
@@ -145,7 +145,8 @@ function Generation() {
     <div className="stack">
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Фактические пределы ответа</h3>
-        <p className="muted small" style={{ marginTop: 0 }}>Предел = меньшее из: потолок задачи (ниже), предел подключения и свободное окно контекста модели.</p>
+        <details className="tech-details"><summary>Как считается предел</summary>
+          <p className="muted small" style={{ margin: "6px 0" }}>Предел — меньшее из трёх значений: потолок задачи (ниже), предел самого подключения и свободное окно контекста модели.</p></details>
         {!eff ? <div className="muted">Загрузка…</div> : (
           <table className="table compact"><tbody>
             {TASKS.map(([k, label]) => (
@@ -155,8 +156,8 @@ function Generation() {
           </tbody></table>
         )}
       </div>
-      <SettingsForm key="llm-task" group="llm" title="Параметры задач" fields={llmTaskFields}
-        intro="Потолки длины ответа по задачам — общие для всех подключений. Параметры самого подключения (таймаут, температура, поддержка JSON и системного сообщения, окно контекста) задаются в карточке подключения на вкладке «Внешние API»." />
+      <SettingsForm key="llm-task" group="llm" title="Параметры задач (протокол, резюме, карта)" fields={llmTaskFields}
+        intro="Настройки задачи: потолок длины ответа для протокола, резюме и карты. Таймаут, температура, окно контекста и возможности — это параметры подключения: они в карточке подключения на вкладке «Внешние API»." />
       <SettingsForm key="protocol-mode" group="protocol" title="Структурный вывод и повторы" fields={structuredFields}
         intro="Режим структурного вывода: узкие запросы, JSON по схеме, таблицы и оформление собирает система. Оборванный по длине ответ повторяется по меньшим частям автоматически." />
     </div>

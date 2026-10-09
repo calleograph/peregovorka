@@ -11,7 +11,7 @@ const short = (c?: string | null) => (c && c !== "unknown" ? c.slice(0, 7) : "")
 export function LoginFooter({ info }: { info: BuildInfo | null }) {
   return (
     <footer className="login-foot">
-      <span title={info && short(info.commit) ? `сборка ${short(info.commit)}${info.built_at ? ` · ${info.built_at}` : ""}` : undefined}>Peregovorka{info?.version ? ` ${info.version}` : ""}</span>
+      <span>Peregovorka{info?.version ? ` ${info.version}` : ""}</span>
       <span aria-hidden> · </span>
       <a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Проект</a>
     </footer>
@@ -40,7 +40,7 @@ export function AppFooter({ info }: { info: BuildInfo | null }) {
   return (
     <>
       <footer className="app-foot">
-        <button type="button" onClick={() => setOpen(true)} title={short(info?.commit) ? `О сервисе · сборка ${short(info?.commit)}` : "О сервисе"}>Peregovorka{info?.version ? ` ${info.version}` : ""}</button>
+        <button type="button" onClick={() => setOpen(true)} title="О сервисе">Peregovorka{info?.version ? ` ${info.version}` : ""}</button>
       </footer>
       {open && <AboutDialog info={info} onClose={() => setOpen(false)} />}
     </>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, type AdminUser, type ApiError, type Grant, type Meeting } from "../api";
 import { ConfirmDialog, Modal } from "./Dialogs";
 import Menu from "./Menu";
@@ -38,17 +38,19 @@ function GrantsDialog({ meetingId, onClose }: { meetingId: string; onClose: () =
   );
 }
 
-/** Админские действия над встречей: доступ, удаление аудиозаписи (только звук), удаление встречи целиком. Всё подтверждается и пишется в аудит. */
-export default function MeetingAdminActions({ meeting, onChanged, onDeleted }: { meeting: M; onChanged: () => void; onDeleted?: () => void }) {
+/** Пункты и окна админских действий над встречей. Окна живут отдельно от пунктов: меню закрывается по клику и убирает пункты, а подтверждение должно остаться. */
+export function useMeetingAdmin(meeting: M, onChanged: () => void, onDeleted?: () => void): { items: ReactNode; dialogs: ReactNode } {
   const [dlg, setDlg] = useState<"grants" | "audio" | "meeting" | null>(null);
   const close = () => setDlg(null);
-  return (
+  const items = (
     <>
-      <Menu label="Администрирование" title="Действия администратора">
-        <button onClick={() => setDlg("grants")}>Доступ к встрече…</button>
-        {meeting.recordings > 0 && <button onClick={() => setDlg("audio")}>Удалить запись (только аудио)…</button>}
-        <button onClick={() => setDlg("meeting")} style={{ color: "var(--danger-text)" }}>Удалить встречу со всеми материалами…</button>
-      </Menu>
+      <button onClick={() => setDlg("grants")}>Доступ к встрече…</button>
+      {meeting.recordings > 0 && <button onClick={() => setDlg("audio")}>Удалить запись (только аудио)…</button>}
+      <button onClick={() => setDlg("meeting")} style={{ color: "var(--danger-text)" }}>Удалить встречу со всеми материалами…</button>
+    </>
+  );
+  const dialogs = (
+    <>
       {dlg === "grants" && <GrantsDialog meetingId={meeting.id} onClose={close} />}
       {dlg === "audio" && (
         <ConfirmDialog title="Удалить запись?" confirmLabel="Удалить запись" onClose={close}
@@ -62,6 +64,18 @@ export default function MeetingAdminActions({ meeting, onChanged, onDeleted }: {
             <p>Копии, уже выгруженные во внешнее хранилище протоколов, система не удаляет. Действие необратимо; в журнале аудита останется запись о том, кто и когда её выполнил.</p></>}
           onConfirm={async () => { await api.deleteMeeting(meeting.id); (onDeleted ?? onChanged)(); }} />
       )}
+    </>
+  );
+  return { items, dialogs };
+}
+
+/** Админские действия над встречей: доступ, удаление аудиозаписи (только звук), удаление встречи целиком. Всё подтверждается и пишется в аудит. */
+export default function MeetingAdminActions({ meeting, onChanged, onDeleted }: { meeting: M; onChanged: () => void; onDeleted?: () => void }) {
+  const { items, dialogs } = useMeetingAdmin(meeting, onChanged, onDeleted);
+  return (
+    <>
+      <Menu label="Администрирование" title="Действия администратора">{items}</Menu>
+      {dialogs}
     </>
   );
 }

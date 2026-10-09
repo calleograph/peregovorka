@@ -14,11 +14,12 @@ function SoundSettings() {
   const [vol, setVol] = useState(soundVolume);
   return (
     <div className="card">
-      <h2>Звуки уведомлений</h2>
+      <h2>Уведомления</h2>
+      <p className="muted small" style={{ margin: "0 0 6px" }}>Звуки в комнате — только на этом устройстве.</p>
       <label className="check"><input type="checkbox" checked={chat} onChange={(e) => { setChatSoundEnabled(e.target.checked); setChat(e.target.checked); }} />
-        <span className="check-body">Звук новых сообщений чата<span className="help">Один короткий сигнал на сообщение другого участника; серия сообщений звучит один раз, своё сообщение — без звука.</span></span></label>
+        <span className="check-body">Звук новых сообщений чата<span className="help">Короткий сигнал на сообщение другого участника.</span></span></label>
       <label className="check"><input type="checkbox" checked={hand} onChange={(e) => { setHandSoundEnabled(e.target.checked); setHand(e.target.checked); }} />
-        <span className="check-body">Звук поднятой руки<span className="help">Другой сигнал (два тона), чтобы отличать его от чата.</span></span></label>
+        <span className="check-body">Звук поднятой руки<span className="help">Другой сигнал, не похожий на чат.</span></span></label>
       <label>Громкость уведомлений
         <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setSoundVolume(v); setVol(v); }} aria-valuetext={`${Math.round(vol * 100)} %`} /></label>
       <div className="row">
@@ -57,8 +58,8 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
           <div className="profile-ava">
             <Avatar name={p.display_name} url={p.avatar_url} size={112} />
             <div className="row" style={{ justifyContent: "center" }}>
-              <button className="btn mini" onClick={() => input.current?.click()} disabled={busy}>{p.avatar_url ? "Заменить" : "Загрузить фото"}</button>
-              {p.avatar_url && <button className="btn mini ghost danger" onClick={() => void run(() => api.deleteAvatar(), "Аватарка удалена — будут показаны инициалы.")} disabled={busy}>Удалить</button>}
+              <button className="btn mini" onClick={() => input.current?.click()} disabled={busy}>{p.avatar_url ? "Изменить фото" : "Загрузить фото"}</button>
+              {p.avatar_url && <button className="btn mini ghost danger" onClick={() => void run(() => api.deleteAvatar(), "Аватарка удалена — будут показаны инициалы.")} disabled={busy}>Удалить фото</button>}
             </div>
             <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setFile(f); }} />
             <span className="muted small">JPEG, PNG или WebP. Хранится на сервере; из каталога фото не берётся.</span>

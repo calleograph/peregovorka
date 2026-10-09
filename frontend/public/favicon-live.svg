@@ -11,4 +11,6 @@
   <g stroke="#1d46b8" stroke-width="3.8" stroke-linecap="round">
     <path d="M22 24v9"/><path d="M29 20v17"/><path d="M36 17v23"/><path d="M43 22v13"/>
   </g>
+  <circle cx="46" cy="18" r="11.5" fill="#1d46b8"/>
+  <circle cx="46" cy="18" r="9.5" fill="#e53935"/>
 </svg>

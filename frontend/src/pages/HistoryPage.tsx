@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Icon } from "../components/Icons";
 import { api, type ExportFormat, type Meeting } from "../api";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
@@ -8,6 +9,23 @@ import { duration, fmt } from "../util";
 
 export { fmt } from "../util";
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
+
+/** Материалы встречи: значки со счётчиками вместо длинной строки; полное название — в подсказке. */
+function Materials({ m, isAdmin }: { m: Meeting; isAdmin: boolean }) {
+  const items: [Parameters<typeof Icon>[0]["name"], number, string][] = [
+    ["transcript", m.segments, "реплик стенограммы"], ["file", m.protocols, "документов (протоколов и резюме)"],
+    ...(isAdmin ? [["record", m.recordings, "записей аудио"] as [Parameters<typeof Icon>[0]["name"], number, string]] : []),
+    ["chat", m.chat_messages ?? 0, "сообщений чата"],
+  ];
+  const shown = items.filter(([, n]) => n > 0);
+  if (!shown.length && !m.whiteboard_shapes) return <span className="muted small">—</span>;
+  return (
+    <span className="mat" aria-label={shown.map(([, n, t]) => `${n} ${t}`).join(", ")}>
+      {shown.map(([icon, n, t]) => <span key={t} className="mat-i" title={`${n} ${t}`}><Icon name={icon} size={14} />{n}</span>)}
+      {m.whiteboard_shapes ? <span className="mat-i" title="есть схема на доске"><Icon name="board" size={14} /></span> : null}
+    </span>
+  );
+}
 
 export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [q, setQ] = useState("");
@@ -30,19 +48,19 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
         : <p className="muted">Здесь — встречи, к которым у вас есть доступ: завершённая встреча доступна, пока открыта её страница, а также если так настроено для комнаты или выдано администратором.</p>}
       {list.error && <div className="alert error">{list.error}</div>}
       {shown.length === 0 && list.done && <p className="muted">{items.length ? "Ничего не найдено." : "Пока нет доступных встреч."}</p>}
-      <div className="table-scroll"><table className="table">
+      <div className="table-scroll"><table className="table hist-table">
         <thead><tr><th>Комната</th><th>Начало</th><th>Длительность</th><th>Участники</th><th>Материалы</th><th /></tr></thead>
         <tbody>
           {shown.map((m) => (
             <tr key={m.id}>
-              <td><Link to={`/history/${m.id}`}>{m.room_name}</Link></td>
-              <td>{fmt(m.started_at)}</td>
-              <td>{m.ended_at ? duration(m.started_at, m.ended_at) : <span className="badge rec">идёт</span>}</td>
-              <td>{m.participants.map((p) => p.display_name).join(", ")}</td>
-              <td className="small muted">реплик: {m.segments} · документов: {m.protocols}{isAdmin ? ` · записей: ${m.recordings}` : ""}{m.chat_messages ? ` · чат: ${m.chat_messages}` : ""}{m.whiteboard_shapes ? " · доска" : ""}</td>
+              <td className="h-room"><Link to={`/history/${m.id}`}>{m.room_name}</Link></td>
+              <td data-label="Начало">{fmt(m.started_at)}</td>
+              <td data-label="Длительность">{m.ended_at ? duration(m.started_at, m.ended_at) : <span className="badge rec">идёт</span>}</td>
+              <td data-label="Участники" className="h-people" title={m.participants.map((p) => p.display_name).join(", ")}>{m.participants.map((p) => p.display_name).join(", ")}</td>
+              <td data-label="Материалы"><Materials m={m} isAdmin={isAdmin} /></td>
               <td className="actions">
-                <Link className="btn mini" to={`/history/${m.id}`}>Открыть</Link>{" "}
-                <Menu label="Скачать" className="btn mini" title="Стенограмма встречи">
+                <Link className="btn mini primary" to={`/history/${m.id}`}>Открыть</Link>{" "}
+                <Menu label="Ещё" className="btn mini" title="Скачать стенограмму">
                   {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(m.id, f)} download>Стенограмма: {l}</a>)}
                 </Menu>{" "}
                 {isAdmin && <MeetingAdminActions meeting={m} onChanged={load} />}

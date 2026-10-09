@@ -145,11 +145,11 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
   const bars = 16;
   return (
     <fieldset className="precheck">
-      <legend>Проверка оборудования</legend>
+      <legend>Проверка оборудования — по желанию</legend>
       <div className="perm-intro">
-        <p style={{ margin: 0 }}>Сейчас браузер запросит доступ к микрофону{cameraAllowed ? " и камере" : ""}. <b>Рекомендуем разрешить доступ сразу</b> — иначе позже браузер может не показать запрос повторно.</p>
+        <p style={{ margin: 0 }}>Разрешите доступ к микрофону{cameraAllowed ? " и камере" : ""}, чтобы проверить оборудование.</p>
         <div className="row">
-          {perm.mic !== "denied" && <button type="button" className="btn mini primary" onClick={() => void requestAll()}>Запросить разрешения</button>}
+          {perm.mic !== "denied" && <button type="button" className="btn mini primary" onClick={() => void requestAll()}>Разрешить доступ</button>}
           <span className={`pill ${perm.mic === "granted" || micOk ? "live" : ""}`}>Микрофон: {perm.mic === "denied" ? "запрещён" : micOk || perm.mic === "granted" ? "разрешён" : "ещё не разрешён"}</span>
           {cameraAllowed && <span className={`pill ${perm.cam === "granted" || camOn ? "live" : ""}`}>Камера: {perm.cam === "denied" ? "запрещена" : camOn || perm.cam === "granted" ? "разрешена" : "ещё не разрешена"}</span>}
           {waiting && <span className="perm-arrow" aria-hidden title="Окно запроса браузера — слева вверху, у адресной строки">↖ окно браузера</span>}
@@ -195,7 +195,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
           <div className="pc-row">
             <label>{NAMES.videoinput}
               <select value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
-                {!devices.videoinput.length && <option value="">— не найдена —</option>}
+                {!devices.videoinput.length && <option value="">Камера не обнаружена</option>}
                 {devices.videoinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.videoinput} ${i + 1}`}</option>)}
               </select>
             </label>
@@ -204,6 +204,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
               : <button type="button" className="btn mini" onClick={() => void startCam(camId || undefined)}>Проверить камеру</button>}
           </div>
           {camOn && <video ref={video} className="precheck-video" autoPlay playsInline muted />}
+          {!devices.videoinput.length && <p className="muted small">Камера не обнаружена. Войти можно без видео.</p>}
           {camErr && <div className="alert error small" role="alert">{camErr}</div>}
           {camOn && <p className="muted small">Камера будет включена при входе. Если не нужна — выключите её здесь.</p>}
         </>

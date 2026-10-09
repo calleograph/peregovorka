@@ -74,11 +74,11 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
           <button aria-pressed={mode === "source"} onClick={() => setMode("source")}>Исходник</button>
         </span>
       </div>
-      <p className="muted small">
-        {fmt(item.created_at)}{item.created_by ? ` · сформировал: ${item.created_by}` : ""}{item.model ? ` · ${item.model}` : ""}
-        {item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}
-      </p>
-      {generationLine(item) && <p className="small" style={{ margin: "0 0 6px" }}>{generationLine(item)}</p>}
+      <p className="muted small" style={{ margin: "0 0 2px" }}>{fmt(item.created_at)}{item.created_by ? ` · сформировал: ${item.created_by}` : ""}{item.edited_at ? ` · изменён: ${fmt(item.edited_at)}` : ""}</p>
+      <details className="tech-details"><summary>Как создан документ</summary>
+        <p className="muted small" style={{ margin: "4px 0" }}>{item.model ? `Модель: ${item.model}` : "Модель не указана"}{item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}</p>
+        {generationLine(item) && <p className="small" style={{ margin: "0 0 6px" }}>{generationLine(item)}</p>}
+      </details>
       {item.truncated && <div className="alert error" role="alert"><b>Документ может быть неполным:</b> ответ модели оборван по лимиту длины. Проверьте текст целиком, увеличьте «Максимальную длину ответа» для этой задачи (Администрирование → Языковая модель) или сформируйте документ заново другой моделью.</div>}
 
       {item.warnings?.map((w) => (

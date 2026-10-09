@@ -5,6 +5,7 @@ import Avatar from "./components/Avatar";
 import { AppFooter, CookieNotice, type BuildInfo } from "./components/ProductInfo";
 import PrivacyPage from "./pages/PrivacyPage";
 import { versionLabel } from "./util";
+import { applyFavicon, pageTitle } from "./pageTitle";
 import NavMenu from "./components/NavMenu";
 import { ADMIN_QUICK, adminHref, type MenuItem } from "./navMenu";
 import { useActiveMeeting } from "./activeMeeting";
@@ -36,7 +37,9 @@ function StaffApp() {
   const { pathname } = useLocation();
   const [burger, setBurger] = useState(false);
   const inMeeting = useActiveMeeting() !== null;
-  useEffect(() => setBurger(false), [pathname]);   // на малых экранах меню закрывается при переходе
+  useEffect(() => setBurger(false), [pathname]);
+  useEffect(() => { document.title = pageTitle(pathname, me !== null); }, [pathname, me]);
+  useEffect(() => { applyFavicon(inMeeting); return () => applyFavicon(false); }, [inMeeting]);   // во время встречи у значка вкладки красная точка   // на малых экранах меню закрывается при переходе
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);        // аватарка в верхнем меню; хуки — до любых ранних return
   const myId = me ? me.user.id : null;
   useEffect(() => { if (myId) void api.profile().then((p) => setAvatarUrl(p.avatar_url)).catch(() => undefined); }, [myId]);
@@ -135,6 +138,7 @@ function GuestApp() {
 
 export default function App() {
   const { pathname } = useLocation();
+  useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false); }, [pathname]);
   if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;
 }

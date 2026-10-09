@@ -152,7 +152,7 @@ export default function AsrModelsAdmin() {
         <SettingsForm key="asr-vad" group="asr" title="Параметры деления речи (VAD)" fields={vadFields}
           intro="Влияют на задержку и качество реплик: слишком короткая пауза дробит фразы, слишком длинная — задерживает текст. Применяются к новым трекам без перезапуска ASR; пустое поле — значение из .env. Проверьте на реальных разговорах: обрезание концов слов, короткие реплики, длинная речь, пунктуация." />
       </div>
-      <p className="muted small">Все прогоны пишутся в журнал аудита. Метрики рабочего распознавания (inference_ms, audio_duration_ms, realtime_factor, queue_wait_ms) — в журнале ASR по каждому сегменту и в разделе «Состояние системы».</p>
+      <p className="muted small">Все прогоны пишутся в журнал аудита. Метрики рабочего распознавания (inference_ms, audio_duration_ms, realtime_factor, queue_wait_ms) — в журнале ASR по каждому сегменту и в разделе «Обзор → Технические показатели».</p>
     </section>
   );
 }

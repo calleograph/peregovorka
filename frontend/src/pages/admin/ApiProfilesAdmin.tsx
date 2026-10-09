@@ -92,7 +92,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
       {ctxNode}
       {!edit && (
         <table className="table">
-          <thead><tr>{!llm && <th>{defLabel}</th>}<th>Название</th><th>Адрес и модель</th><th>Ключ</th><th /></tr></thead>
+          <thead><tr>{!llm && <th>{defLabel}</th>}{llm ? <><th>Подключение</th><th>Состояние</th></> : <><th>Название</th><th>Адрес и модель</th><th>Ключ</th></>}<th /></tr></thead>
           <tbody>
             {rows.map((p) => {
               const t = tests[p.id];
@@ -104,9 +104,23 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
                   { id: "del", label: "Удалить", icon: "close", danger: true, hidden: p.virtual, confirm: `Удалить подключение «${p.name}»?`, onSelect: () => setDel(p) },
                 ])}>
                   {!llm && <td><input type="radio" name={`default-${kind}`} checked={p.is_default} onChange={() => makeDefault(p)} aria-label={`Сделать «${p.name}» по умолчанию`} /></td>}
-                  <td>{p.name}{!llm && p.is_default && <span className="badge ok"> по умолчанию</span>}</td>
-                  <td className="small">{target(p)}</td>
-                  <td className="small">{p.secret_set ? "задан" : <span className="muted">нет</span>}</td>
+                  {llm ? (
+                    <>
+                      <td><b>{p.name}</b>
+                        <div className="small">{String((p.config as Record<string, unknown>).model || "модель не указана")}</div>
+                        <details className="tech-details"><summary>Адрес и возможности</summary>
+                          <div className="muted small">{String((p.config as Record<string, unknown>).base_url || (p.config as Record<string, unknown>).type)}</div>
+                          <div className="muted small">системное сообщение: {(p.config as Record<string, unknown>).supports_system === false ? "нет" : "да"} · строгий JSON: {(p.config as Record<string, unknown>).supports_json === false ? "нет" : "да"} · таймаут: {String((p.config as Record<string, unknown>).timeout ?? "по умолчанию")}</div>
+                        </details></td>
+                      <td className="small">{!p.secret_set ? <span className="badge warn">ключ не задан</span> : t && t !== "running" ? <span className={`badge ${t.ok ? "ok" : "bad"}`}>{t.ok ? "работает" : "ошибка"}</span> : <span className="muted">ключ задан, не проверено</span>}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{p.name}{p.is_default && <span className="badge ok"> по умолчанию</span>}</td>
+                      <td className="small">{target(p)}</td>
+                      <td className="small">{p.secret_set ? "задан" : <span className="muted">нет</span>}</td>
+                    </>
+                  )}
                   <td className="actions">
                     <button className="btn mini" onClick={() => test(p)} disabled={t === "running"}>{t === "running" ? "Проверка…" : "Проверить"}</button>{" "}
                     {!p.virtual && <><button className="btn mini" onClick={() => open(p)}>Изменить</button>{" "}<button className="btn mini ghost danger" onClick={() => setDel(p)}>Удалить</button></>}

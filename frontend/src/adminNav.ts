@@ -1,4 +1,4 @@
-/** Свёрнутые разделы левого меню администрирования: хранится список названий свёрнутых разделов (по умолчанию все развёрнуты). */
+/** Свёрнутые разделы левого меню администрирования: хранится список названий свёрнутых разделов. Пока пользователь сам ничего не сворачивал/разворачивал — открыта только группа активной страницы. */
 const KEY = "pg:adminNav";
 
 export function loadCollapsed(storage: Pick<Storage, "getItem"> | null = safeStorage()): Set<string> {
@@ -11,6 +11,14 @@ export function loadCollapsed(storage: Pick<Storage, "getItem"> | null = safeSto
 
 export function saveCollapsed(set: Set<string>, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
   try { storage?.setItem(KEY, JSON.stringify([...set])); } catch { /* хранилище недоступно: состояние не запомнится, меню работает */ }
+}
+
+/** Стартовое состояние: сохранённый выбор пользователя, а если его нет — всё свёрнуто, кроме группы активной страницы. */
+export function initialCollapsed(titles: string[], active: string | undefined, storage: Pick<Storage, "getItem"> | null = safeStorage()): Set<string> {
+  let saved: string | null = null;
+  try { saved = storage?.getItem(KEY) ?? null; } catch { saved = null; }
+  if (saved !== null) return loadCollapsed(storage);
+  return new Set(titles.filter((t) => t !== active));
 }
 
 export const toggleGroup = (set: Set<string>, title: string): Set<string> => { const n = new Set(set); if (n.has(title)) n.delete(title); else n.add(title); return n; };

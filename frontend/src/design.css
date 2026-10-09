@@ -391,3 +391,88 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .tile-flash { position: absolute; left: 8px; bottom: 44px; z-index: 3; padding: 3px 10px; border-radius: 999px; background: rgba(17, 24, 39, .85); color: #fff; font-size: 12px; pointer-events: none; }
 .tp-note { padding: 3px 8px; border-radius: 8px; background: var(--ok-bg); color: var(--ok-text); margin-bottom: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- 0.8.2: поиск по меню админки, блок «Обслуживание», справка без бесконечных строк ---- */
+.nav-search { width: 100%; box-sizing: border-box; margin: 0 0 6px; }
+.nav-found { display: flex; flex-direction: column; gap: 2px; }
+.nav-found button { display: block; width: 100%; text-align: left; }
+.maintenance { border-left: 3px solid var(--warn, #c77c00); margin-top: 14px; }
+.quick-links { margin-top: 14px; }
+.help, .muted.small, .check-body .help { max-width: 72ch; }
+.tech-details { margin: 4px 0 0; } .tech-details > summary { cursor: pointer; color: var(--muted); font-size: 12px; list-style-position: inside; }
+.tech-details[open] > summary { margin-bottom: 4px; }
+.rc-actions.inline .copybtn { width: auto; padding: 0 9px; gap: 5px; font-size: 12px; font-weight: 600; }
+.cta-note { display: block; font-weight: 400; font-size: 11px; opacity: .85; margin-left: 4px; }
+.cta { flex-wrap: wrap; }
+.rm-desc { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pj-h { margin: 0; font-size: 15px; }
+.pj-facts li { padding: 8px 10px; gap: 10px; } .pj-facts .fi { width: 28px; height: 28px; border-radius: 8px; }
+.pj-rec { display: flex; align-items: center; gap: 8px; margin: 0; }
+.pj-actions { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---- 0.8.2: история — значки материалов и карточки на узких экранах ---- */
+.mat { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; color: var(--muted); font-size: 13px; }
+.mat-i { display: inline-flex; align-items: center; gap: 4px; }
+.h-people { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .table-scroll > .table.hist-table { min-width: 0; display: block; border: 0; box-shadow: none; background: transparent; overflow: visible; }
+  .hist-table thead { display: none; }
+  .hist-table tbody { display: grid; gap: 10px; }
+  .hist-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+  .hist-table td { display: block; padding: 0; border: 0; background: none !important; min-width: 0; }
+  .hist-table td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .hist-table .h-room { grid-column: 1 / -1; font-size: 16px; font-weight: 600; }
+  .hist-table .h-people { grid-column: 1 / -1; max-width: none; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .hist-table td[data-label="Материалы"] { grid-column: 1 / -1; }
+  .hist-table .actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; padding-top: 4px; }
+}
+.menu-h { display: block; padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.alert.warn { background: var(--warn-bg); color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 30%, transparent); }
+
+/* ---- 0.8.2: журнал — прокрутка внутри блока, закреплённая шапка, «Компактно» ---- */
+.journal-scroll { overflow: auto; max-height: 70vh; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); -webkit-overflow-scrolling: touch; }
+.journal-scroll > .table { margin-top: 0; border: 0; box-shadow: none; overflow: visible; }
+.journal-scroll thead th { position: sticky; top: 0; z-index: 2; }
+.journal-scroll.dense .table td { padding-top: 2px; padding-bottom: 2px; font-size: 12px; }
+.journal-scroll.dense .table .msg { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dense-toggle { margin: 8px 0 0; }
+
+/* ---- 0.8.2: адаптивность. Телефоны (≤560), планшеты и iPad (561–1024), ноутбуки и ПК (>1024) ---- */
+html { -webkit-text-size-adjust: 100%; }
+body { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+button, .btn, a.btn, select, summary { touch-action: manipulation; }
+@media (min-width: 1025px) { main { max-width: 1480px; margin-inline: auto; } }
+@media (max-width: 1024px) {
+  .uname { max-width: 110px; }
+  .topnav a, .topnav .dd-btn { padding: 6px 8px; }
+  .kpi { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .admin-layout { grid-template-columns: 200px minmax(0, 1fr); gap: 14px; }
+  .table-scroll, .table-wrap { -webkit-overflow-scrolling: touch; }
+}
+@media (max-width: 860px) {
+  .admin-layout { grid-template-columns: 1fr; }
+  .admin-nav { max-height: 46vh; overflow: auto; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .admin-nav .nav-group { flex: 1 1 100%; }
+  .nav-found { flex-direction: column; }
+}
+@media (max-width: 560px) {
+  main { padding: 10px 12px calc(14px + env(safe-area-inset-bottom, 0px)); }
+  h1 { font-size: 21px; } h2 { font-size: 17px; }
+  .row { flex-wrap: wrap; }
+  .row > .btn, .row > .menu { flex: 0 1 auto; }
+  input, select, textarea { font-size: 16px; }                  /* iOS не приближает страницу при вводе */
+  .btn, .menu > button, .tab { min-height: 40px; }
+  .btn.mini { min-height: 34px; }
+  .kpi { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi .card { padding: 10px; }
+  .pj-body { padding: 16px 14px 18px; }
+  .pj-actions .btn { flex: 1 1 100%; justify-content: center; }
+  .rooms-toolbar { flex-direction: column; align-items: stretch; }
+  .rooms-toolbar .chips { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .rooms-compact { grid-template-columns: 1fr; }
+  .rooms-hero { flex-direction: column; align-items: stretch; }
+  .rooms-hero .cta { width: 100%; }
+  .modal, .modal-card, [role="dialog"] { max-width: calc(100vw - 16px); }
+  .journal-scroll { max-height: 60vh; }
+}
+@media (hover: none) and (pointer: coarse) { .copybtn { width: 38px; height: 38px; } .nav-found button, .admin-nav button { min-height: 40px; } }

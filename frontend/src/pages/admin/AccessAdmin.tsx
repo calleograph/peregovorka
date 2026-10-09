@@ -74,7 +74,7 @@ function LocalAdminCard({ info, onChanged }: { info: LocalAdminInfo | null; onCh
   );
 }
 
-/** «Доступ к администрированию»: AD-группы администраторов (отдельно от настройки самого LDAP), необязательные группы допуска и локальный администратор. */
+/** «Администраторы»: AD-группы администраторов (отдельно от настройки самого LDAP), необязательные группы допуска и локальный администратор. */
 export default function AccessAdmin() {
   const [admins, setAdmins] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -96,8 +96,8 @@ export default function AccessAdmin() {
 
   return (
     <section>
-      <div className="row"><h2>Доступ к администрированию</h2></div>
-      <p className="muted">Кто из доменных пользователей получает права администратора. Кто вообще может входить в систему — отдельно, в разделе «Доступ к системе». Подключение к каталогу настраивается отдельно — в разделе «Подключения LDAP».</p>
+      <div className="row"><h2>Администраторы</h2></div>
+      <p className="muted">Кто из доменных пользователей получает права администратора. Кто вообще может входить в систему — отдельно, в разделе «Кто может входить». Подключение к каталогу настраивается отдельно — в разделе «Подключения LDAP».</p>
       {!loaded ? <div className="muted">Загрузка…</div> : (
         <div className="card form">
           <GroupList title="Группы администраторов" value={admins} onChange={setAdmins}

@@ -62,11 +62,11 @@ function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: stri
   const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   return (
     <span className={`rc-actions ${compact ? "" : "inline"}`}>
-      <button type="button" className="copybtn reg" onClick={() => void copy(roomUrl(r), "Ссылка для зарегистрированных")}
-              title="Скопировать ссылку для зарегистрированных участников" aria-label={`Скопировать ссылку для зарегистрированных участников: ${r.name}`}><Icon name="copy" size={15} /></button>
+      <button type="button" className="copybtn reg" onClick={() => void copy(roomUrl(r), "Ссылка для сотрудников")}
+              title="Ссылка для сотрудников: вход по учётной записи" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={15} />{!compact && <span className="cb-l">Сотрудникам</span>}</button>
       {r.guest_token && (
-        <button type="button" className="copybtn guest" onClick={() => void copy(guestUrl(r), "Ссылка для гостей")}
-                title="Скопировать ссылку для гостей" aria-label={`Скопировать ссылку для гостей: ${r.name}`}><Icon name="copy" size={15} /></button>
+        <button type="button" className="copybtn guest" onClick={() => void copy(guestUrl(r), "Гостевая ссылка")}
+                title="Гостевая ссылка: вход без учётной записи, по приглашению" aria-label={`Скопировать гостевую ссылку: ${r.name}`}><Icon name="copy" size={15} />{!compact && <span className="cb-l">Гостям</span>}</button>
       )}
     </span>
   );
@@ -86,9 +86,9 @@ function RoomMini({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast
         <span className="rm-name" title={r.name}>{r.name}</span>
         <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />{live ? `${live.participants}` : "Свободна"}</span>
       </div>
-      <div className="rm-sub small muted">
-        <code title="Технический идентификатор (адрес комнаты)">{r.slug}</code>
-        <span>{full ? "мест нет" : `до ${r.max_participants}`}{r.has_password ? " · пароль" : ""}{r.lifetime === "temporary" ? " · временная" : ""}</span>
+      {r.description && <div className="rm-desc small muted" title={r.description}>{r.description}</div>}
+      <div className="rm-sub small muted" title={`Адрес комнаты: ${r.slug}`}>
+        <span>{full ? "мест нет" : `до ${r.max_participants} уч.`}{r.has_password ? " · пароль" : ""}{r.lifetime === "temporary" ? " · временная" : ""}{r.transcription_enabled ? " · стенограмма" : ""}{r.auto_record ? " · запись" : ""}</span>
       </div>
       {menu.node}
       <div className="rm-act" onClick={(e) => e.stopPropagation()}>
@@ -184,6 +184,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
           <button className="btn primary cta" {...magnet} onClick={() => setTempOpen(true)} disabled={!policy?.can_create}
                   title={policy?.can_create ? "Комната на одну встречу: закрывается сама, материалы остаются в «Истории»" : `Уже ${policy?.active_mine} активных временных переговорок (предел ${policy?.max_per_user})`}>
             <Icon name="sparkle" size={17} /> Временная переговорка
+            <small className="cta-note">закроется после встречи</small>
           </button>
         )}
       </header>

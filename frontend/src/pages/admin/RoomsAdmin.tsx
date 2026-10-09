@@ -130,7 +130,7 @@ export default function RoomsAdmin() {
 
   return (
     <section>
-      <div className="row"><h2>Переговорки</h2><div className="spacer" />
+      <div className="row"><h2>Комнаты и доступ</h2><div className="spacer" />
         <label className="check small" style={{ margin: 0 }}><input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> показывать закрытые временные</label>
         {!form && <button className="btn primary" onClick={() => open({ ...empty })}>＋ Создать комнату</button>}</div>
       {note && <div className="alert ok">{note}</div>}

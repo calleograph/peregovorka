@@ -93,7 +93,7 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
         </div>
       )}
       {legacy?.present && legacy.migrated && <div className="muted small">Прежняя настройка LDAP в файле .env перенесена и больше не используется; строки <code>LDAP_*</code> из .env можно удалить.</div>}
-      {bootErrors.ca && <div className="alert error">Не удалось записать набор сертификатов при запуске: {bootErrors.ca}. Откройте «Состояние системы» и нажмите «Исправить автоматически».</div>}
+      {bootErrors.ca && <div className="alert error">Не удалось записать набор сертификатов при запуске: {bootErrors.ca}. Откройте «Обзор» и нажмите «Исправить автоматически».</div>}
       {env?.configured && !items.length && !legacy?.needs_import && <div className="alert info">Сейчас используется прежняя настройка из файла установки (.env): {env.uris.join(", ")}. Добавьте подключение здесь — и оно заменит её.</div>}
       {!items.length && !env?.configured && !form && <div className="alert info">Каталог пока не подключён: войти можно только локальным администратором. Добавьте подключение, затем загрузите сертификат CA и укажите группы администраторов.</div>}
       {Object.entries(errors).map(([n, m]) => <div key={n} className="alert error">Подключение «{n}» не загружено: {m}</div>)}
@@ -136,7 +136,7 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
             <label className="check"><input type="checkbox" checked={form.use_for_users} onChange={(e) => set("use_for_users", e.target.checked)} />
               <span className="check-body">Вход пользователей<span className="help">Сотрудники этого каталога входят в комнаты и историю.</span></span></label>
             <label className="check"><input type="checkbox" checked={form.use_for_admins} onChange={(e) => set("use_for_admins", e.target.checked)} />
-              <span className="check-body">Вход администраторов<span className="help">Члены групп из раздела «Доступ к администрированию» получают права администратора. Если выключено — через это подключение администратором не войти (локальный администратор не затрагивается).</span></span></label>
+              <span className="check-body">Вход администраторов<span className="help">Члены групп из раздела «Администраторы» получают права администратора. Если выключено — через это подключение администратором не войти (локальный администратор не затрагивается).</span></span></label>
           </fieldset>
           <details className="group"><summary>Атрибуты каталога (обычно менять не нужно)</summary>
             <div className="cols">

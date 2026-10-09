@@ -216,7 +216,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
               <b>Версия установлена, сервисы работают.</b> Проверка подключения к каталогу{oc?.integration_issues ? ` (${oc.integration_issues})` : ""} не прошла — это не ошибка обновления, но вход по домену может не работать.
               <div className="row" style={{ marginTop: 6 }}>
                 <button className="btn primary" onClick={() => onOpen?.("ldap")}>Исправить LDAP / открыть диагностику LDAP</button>
-                <button className="btn" onClick={() => onOpen?.("system")}>Состояние системы</button></div>
+                <button className="btn" onClick={() => onOpen?.("system")}>Обзор</button></div>
             </div>
           )}
           {finishedBad && <div className="alert error">{isRepair ? "Исправление не выполнено. Остальная система не затронута; причина — в последних строках журнала." : "Обновление остановилось."} Данные, настройки и модели не затронуты. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) либо выполните <code>./scripts/update.sh</code> на сервере.</div>}

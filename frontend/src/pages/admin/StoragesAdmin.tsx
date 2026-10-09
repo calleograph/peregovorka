@@ -64,7 +64,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
 
   return (
     <section>
-      <div className="row"><h2>Хранилища</h2><div className="spacer" />
+      <div className="row"><h2>Файловые хранилища</h2><div className="spacer" />
         {!form && <button className="btn primary" onClick={() => { setForm({ ...empty }); setError(""); setNote(""); }}>＋ Добавить хранилище</button>}</div>
       <p className="muted">Адрес и учётная запись вводятся здесь один раз. Записи, протоколы, вложения чата и журнал только выбирают хранилище в своих разделах. Внутри автоматически создаются подпапки:{" "}
         {FOLDER_HELP.map(([f, d], i) => <span key={f}>{i ? ", " : ""}<code>{f}/</code> — {d}</span>)}.</p>

@@ -24,13 +24,13 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
   const name = room?.name ?? "Комната";
   const t = tint(name);
   const live = room?.active_meeting;
-  const facts: [Parameters<typeof Icon>[0]["name"], string, string, boolean][] = [
-    ["mic", "Микрофон включится сразу", "Его можно выключить кнопкой в комнате. В презентационной комнате участники слушают, пока им не дадут слово.", true],
+  // «Перед входом»: обычные сведения одним коротким списком; запись звука — отдельным предупреждением (это единственное, что может удивить)
+  const facts: [Parameters<typeof Icon>[0]["name"], string, string][] = [
+    ["mic", "Микрофон включится сразу", "Выключить его можно кнопкой в комнате."],
   ];
-  if (room?.transcription_enabled !== false) facts.push(["transcript", "Идёт стенограмма", "Реплики участников записываются в текст и потом попадают в протокол встречи.", true]);
-  if (room?.auto_record) facts.push(["record", "Запись звука начнётся сразу", "Аудио сохраняется вместе со встречей. Отметка «Идёт запись» видна всем участникам.", false]);
-  else if (room?.record_audio) facts.push(["record", "Руководитель может включить запись", "Если запись включат, об этом появится заметная отметка.", false]);
-  if (room?.lifetime === "temporary") facts.push(["sparkle", "Временная переговорка", "Комната закроется сама вскоре после выхода всех. Материалы останутся в «Истории».", true]);
+  if (room?.transcription_enabled !== false) facts.push(["transcript", "Ведётся стенограмма", "Реплики попадут в протокол встречи."]);
+  if (room?.lifetime === "temporary") facts.push(["sparkle", "Временная комната", "Закроется после встречи; материалы останутся в «Истории»."]);
+  const rec = room?.auto_record ? "Запись звука начнётся сразу. Отметка «Идёт запись» видна всем участникам." : room?.record_audio ? "Руководитель может включить запись звука — об этом появится заметная отметка." : "";
 
   return (
     <section className="prejoin-pro" style={{ "--ha": t.a, "--hb": t.b } as CSSProperties}>
@@ -45,14 +45,16 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
         </div>
         <div className="pj-body">
           {room?.description && <p className="pj-desc">{room.description}</p>}
+          <h2 className="pj-h">Перед входом</h2>
           <ul className="pj-facts" aria-label="Что произойдёт после входа">
-            {facts.map(([icon, title, text, ok], i) => (
-              <li key={title} style={{ "--i": i } as CSSProperties} className={ok ? "" : "warn"}>
-                <span className="fi" aria-hidden><Icon name={icon} size={17} /></span>
+            {facts.map(([icon, title, text], i) => (
+              <li key={title} style={{ "--i": i } as CSSProperties}>
+                <span className="fi" aria-hidden><Icon name={icon} size={16} /></span>
                 <div><b>{title}</b><p>{text}</p></div>
               </li>
             ))}
           </ul>
+          {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
           {onHw && !busy && <PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={onHw} />}
           {needPassword && (
             <label>Пароль комнаты
@@ -61,7 +63,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
             </label>
           )}
           {error && <div className="alert error" role="alert">{error}</div>}
-          <div className="row pj-actions">
+          <div className="row pj-actions" role="group" aria-label="Вход в комнату">
             <button className="btn primary cta" {...magnet} disabled={busy || (needPassword && !password)} onClick={onJoin}>
               {busy ? <><i className="spin" aria-hidden /> Вход…</> : <>{live ? "Присоединиться" : "Войти в комнату"} <Icon name="arrowR" size={17} /></>}
             </button>

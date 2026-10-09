@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { tabFromSearch } from "../navMenu";
-import { collapseAll, expandAll, loadCollapsed, saveCollapsed, toggleGroup } from "../adminNav";
+import { collapseAll, expandAll, initialCollapsed, saveCollapsed, toggleGroup } from "../adminNav";
 import { Icon } from "../components/Icons";
 import AccessAdmin from "./admin/AccessAdmin";
 import LoginAccessAdmin from "./admin/LoginAccessAdmin";
@@ -31,28 +31,29 @@ interface Group { title: string; pages: Page[] }
 /** Разделы сгруппированы по смыслу: состояние, вход и доступ, хранилища, почта, встречи, интеграции, журналы, система. Пароли нигде не показываются. */
 const GROUPS: Group[] = [
   { title: "Состояние", pages: [
-    { id: "system", label: "Состояние системы", render: (go) => <SystemAdmin onOpen={go} /> },
+    { id: "system", label: "Обзор", render: (go) => <SystemAdmin onOpen={go} /> },
+    { id: "system_tech", label: "Технические показатели", render: (go) => <SystemAdmin onOpen={go} view="tech" /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
     { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
   ] },
-  { title: "LDAP и доступ", pages: [
+  { title: "Доступ и каталог (LDAP)", pages: [
     { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
     { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
-    { id: "login_access", label: "Доступ к системе (кто может входить)", render: (go) => <LoginAccessAdmin onOpen={go} /> },
-    { id: "access", label: "Доступ к администрированию", render: () => <AccessAdmin /> },
+    { id: "login_access", label: "Кто может входить", render: (go) => <LoginAccessAdmin onOpen={go} /> },
+    { id: "access", label: "Администраторы", render: () => <AccessAdmin /> },
   ] },
   { title: "Хранилища", pages: [
-    { id: "storages", label: "Серверы файлов (SMB, каталог)", render: (go) => <StoragesAdmin onOpen={go} /> },
-    { id: "storage", label: "Протоколы и материалы", render: () => (
+    { id: "storages", label: "Файловые хранилища", render: (go) => <StoragesAdmin onOpen={go} /> },
+    { id: "storage", label: "Документы встреч", render: () => (
       <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
-        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Серверы файлов» — подпапки создаются автоматически." />) },
-    { id: "audio_storage", label: "Записи аудио", render: () => (
+        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Файловые хранилища» — подпапки создаются автоматически." />) },
+    { id: "audio_storage", label: "Аудиозаписи", render: () => (
       <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
-        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Серверы файлов»." />) },
+        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Файловые хранилища»." />) },
     { id: "chat_files", label: "Вложения чата", render: () => (
       <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
         intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
-    { id: "storage_sync", label: "Сверка хранилищ", render: () => <StorageSyncAdmin /> },
+    { id: "storage_sync", label: "Проверка целостности хранилищ", render: () => <StorageSyncAdmin /> },
   ] },
   { title: "Электронная почта", pages: [
     { id: "mail", label: "Исходящая почта (SMTP)", render: (go) => <MailAdmin onOpen={go} /> },
@@ -62,10 +63,10 @@ const GROUPS: Group[] = [
     { id: "mail_templates", label: "Шаблоны писем", render: () => <MailTemplatesAdmin /> },
     { id: "mail_log", label: "Журнал отправки", render: () => <MailLogAdmin /> },
   ] },
-  { title: "Встречи и комнаты", pages: [
-    { id: "rooms", label: "Переговорки", render: () => <RoomsAdmin /> },
+  { title: "Комнаты и встречи", pages: [
+    { id: "rooms", label: "Комнаты и доступ", render: () => <RoomsAdmin /> },
     { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
-    { id: "recordings", label: "Записи аудио (список)", render: () => <RecordingsAdmin /> },
+    { id: "recordings", label: "Аудиозаписи (список)", render: () => <RecordingsAdmin /> },
     { id: "users", label: "Пользователи", render: () => <UsersAdmin /> },
     { id: "protocol", label: "Инструкции и режим протоколов", render: () => (
       <SettingsForm key="protocol" group="protocol" title="Инструкции и режим формирования протоколов" fields={protocolFields}
@@ -91,19 +92,30 @@ const GROUPS: Group[] = [
     { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
   ] },
   { title: "Система", pages: [
-    { id: "screen", label: "Показ экрана", render: () => <SettingsForm key="screen" group="screen" title="Показ экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
-    { id: "privacy", label: "Cookie и обработка данных", render: () => (
-      <SettingsForm key="privacy" group="privacy" title="Cookie и обработка данных" fields={privacyFields}
+    { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
+    { id: "privacy", label: "Конфиденциальность и cookie", render: () => (
+      <SettingsForm key="privacy" group="privacy" title="Конфиденциальность и cookie" fields={privacyFields}
         intro="Тексты для страницы входа и страницы «Обработка данных» (открывается без входа и по ссылке «Подробнее»). Юридические формулировки в приложении не зашиты — заполните их по правилам вашей организации. Используются только технические cookie." /> ) },
     { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
   ] },
 ];
 
+/** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
+const KEYWORDS: Record<string, string> = {
+  system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
+  login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
+  mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
+  sip: "телефония asterisk звонок", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
+};
+
 export default function AdminPage({ version }: { version: string }) {
   const ids = GROUPS.flatMap((g) => g.pages.map((p) => p.id));
   const location = useLocation();
   const [tab, setTab] = useState(() => tabFromSearch(location.search, ids) ?? (() => { const t = sessionStorage.getItem("adminTab"); return t && ids.includes(t) ? t : "system"; })());
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => initialCollapsed(GROUPS.map((g) => g.title), GROUPS.find((g) => g.pages.some((p) => p.id === tab))?.title));
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
+  const found = needle ? GROUPS.flatMap((g) => g.pages.filter((p) => `${p.label} ${g.title} ${KEYWORDS[p.id] ?? ""}`.toLowerCase().includes(needle)).map((p) => ({ id: p.id, label: p.label, group: g.title }))) : null;
   const setGroups = (s: Set<string>) => { setCollapsed(s); saveCollapsed(s); };
   // переход к странице (из мастера настройки, верхнего меню) раскрывает её раздел, чтобы пункт не оказался скрытым
   const pick = (t: string) => {
@@ -127,11 +139,19 @@ export default function AdminPage({ version }: { version: string }) {
       <div className="row"><h1>Администрирование</h1><div className="spacer" /><span className="muted small">Версия: {version || "—"}</span></div>
       <div className="admin-layout">
         <nav className="admin-nav" aria-label="Разделы администрирования">
-          <div className="nav-tools" role="group" aria-label="Все разделы меню">
+          <input type="search" className="nav-search" placeholder="Найти раздел или настройку" aria-label="Поиск по разделам администрирования" value={q} onChange={(e) => setQ(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === "Enter" && found?.length) { pick(found[0].id); setQ(""); } if (e.key === "Escape") setQ(""); }} />
+          {found && (
+            <div className="nav-found" role="list">
+              {found.length === 0 && <div className="muted small">Ничего не найдено</div>}
+              {found.map((x) => <button key={x.id} role="listitem" className={tab === x.id ? "active" : ""} onClick={() => { pick(x.id); setQ(""); }}>{x.label}<span className="muted small"> · {x.group}</span></button>)}
+            </div>
+          )}
+          <div className="nav-tools" role="group" aria-label="Все разделы меню" hidden={!!found}>
             <button type="button" className="icon-btn" onClick={() => setGroups(expandAll())} title="Развернуть все разделы" aria-label="Развернуть все разделы"><Icon name="expandAll" size={16} /></button>
             <button type="button" className="icon-btn" onClick={() => setGroups(collapseAll(GROUPS.map((g) => g.title)))} title="Свернуть все разделы" aria-label="Свернуть все разделы"><Icon name="collapseAll" size={16} /></button>
           </div>
-          {GROUPS.map((g, gi) => {
+          {!found && GROUPS.map((g, gi) => {
             const open = !collapsed.has(g.title);
             return (
               <div key={g.title} className={`nav-group ${open ? "open" : ""}`}>
