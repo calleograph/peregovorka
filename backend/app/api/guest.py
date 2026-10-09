@@ -69,7 +69,7 @@ async def _room_by_token(db: AsyncSession, token: str) -> Room:
     room = None
     if 10 <= len(token) <= 64:
         room = (await db.execute(select(Room).where(Room.guest_token == token))).scalars().first()
-    if room is None or not room.guest_access_enabled or not room.is_enabled:
+    if room is None or not room.guest_access_enabled or not room.is_enabled or room.lifecycle == "closed":
         raise HTTPException(status_code=404, detail="Гостевая ссылка недействительна или отозвана")
     return room
 

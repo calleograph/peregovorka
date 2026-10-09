@@ -93,6 +93,10 @@ class Room(Base):
     # Для комнат старых версий: llm_profile_id задан → profile. Выбранный профиль удалён/модель недоступна → политика llm.on_missing (системная или «недоступна»).
     llm_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
     llm_local_model: Mapped[str | None] = mapped_column(String(80))
+    # То же для КРАТКОГО РЕЗЮМЕ (протокол и резюме — разные задачи, модель выбирается отдельно): inherit — системная модель для резюме.
+    llm_summary_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
+    llm_summary_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    llm_summary_local_model: Mapped[str | None] = mapped_column(String(80))
     # Телефония (SIP через LiveKit SIP): off — отключена; default — профиль по умолчанию; profile — конкретный (sip_profile_id).
     sip_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off", nullable=False)
     sip_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
@@ -102,6 +106,17 @@ class Room(Base):
     sip_dispatch_rule_id: Mapped[str | None] = mapped_column(String(100))          # правило LiveKit для входящих (постоянное, переиспользуется)
     sip_contacts: Mapped[list | None] = mapped_column(JSONType)                     # сохранённые номера для исходящих: [{name, number}]
     welcome_message: Mapped[str | None] = mapped_column(Text)
+    # Прежние технические идентификаторы (адреса) комнаты: по ним старая ссылка перенаправляет на нынешнюю. Список строк.
+    slug_history: Mapped[list | None] = mapped_column(JSONType)
+    # Срок жизни: permanent — обычная переговорка; temporary — временная, создаётся пользователем на одну встречу и по её окончании закрывается.
+    # (Не путать с room_type: обычная / презентационная.) Материалы закрытой временной комнаты остаются в истории: строка не удаляется.
+    lifetime: Mapped[str] = mapped_column(String(12), default="permanent", server_default="permanent", nullable=False)
+    # Состояние временной комнаты: active → grace_period (все вышли, ждём возврата) → closed. У постоянной всегда active.
+    lifecycle: Mapped[str] = mapped_column(String(12), default="active", server_default="active", nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    auto_close_at: Mapped[datetime | None] = mapped_column(UTCDateTime)      # когда комната закроется сама, если никто не вернётся
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    created_by_name: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -160,6 +175,7 @@ class Meeting(Base):
     # Настройки ЭТОЙ встречи поверх настроек комнаты (задаёт руководитель): рассылка материалов и языковая модель; None — как в комнате
     delivery_override: Mapped[dict | None] = mapped_column(JSONType)
     llm_override: Mapped[dict | None] = mapped_column(JSONType)
+    llm_summary_override: Mapped[dict | None] = mapped_column(JSONType)
     transcription_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     record_audio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)

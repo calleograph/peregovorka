@@ -7,7 +7,7 @@ _VM_UPDLIB_LOADED=1
 
 UPD_SERVICES=(postgres redis livekit backend asr web)
 UPD_NEW_SAFE=(); UPD_NEW_DECIDE=(); UPD_NEW_EMPTY=()
-UPD_FULL_OK=0; UPD_GGUF_OK=0; UPD_UNHEALTHY=()
+UPD_FULL_OK=0; UPD_UNHEALTHY=()
 
 fsize() { stat -c '%s' "$1" 2>/dev/null || wc -c < "$1"; }
 upd_as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
@@ -88,17 +88,14 @@ upd_livekit_pin() { # ENV
 
 # ---------------------------------------------------------------------------------------------- модели
 # Проверка наличия моделей (НЕ скачивает и не удаляет). Размер — минимальная проверка целостности; контрольные суммы не сверяются
-# (решение владельца: upstream-файлы могут меняться). Заполняет UPD_FULL_OK / UPD_GGUF_OK.
+# (решение владельца: upstream-файлы могут меняться). Заполняет UPD_FULL_OK.
 upd_models_check() {
-  local dir="${DATA_ROOT}/models/gigaam" name="${ASR_MODEL_NAME:-v3_e2e_rnnt}" f gg
-  UPD_FULL_OK=0; UPD_GGUF_OK=0
+  local dir="${DATA_ROOT}/models/gigaam" name="${ASR_MODEL_NAME:-v3_e2e_rnnt}" f
+  UPD_FULL_OK=0
   f="$dir/$name.ckpt"
   if [ -f "$f" ] && [ "$(fsize "$f")" -ge $((1024 * 1024)) ] && [ -s "$dir/${name}_tokenizer.model" ]; then
     UPD_FULL_OK=1; ok "Модель Full: $name.ckpt ($(fsize "$f") байт) + токенайзер — на месте, повторная загрузка не нужна"
   else warn "Модель Full ($name.ckpt / ${name}_tokenizer.model) не найдена или неполная в $dir"; fi
-  gg="$dir/${GGUF_MODEL_FILE:-gigaam-v3-e2e-rnnt-Q5_K_M.gguf}"
-  if [ -f "$gg" ] && [ "$(fsize "$gg")" -ge $((1024 * 1024)) ]; then UPD_GGUF_OK=1; ok "Модель Q5_K_M (GGUF): $(basename "$gg") ($(fsize "$gg") байт) — доступна"
-  else info "Модель Q5_K_M (GGUF) не установлена — необязательна (scripts/models.sh --gguf --skip-full)"; fi
 }
 
 # ------------------------------------------------------------------------------------- ожидание сервисов

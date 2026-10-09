@@ -14,7 +14,7 @@ import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
 
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
-const RoomPage = lazy(() => import("./pages/RoomPage"));
+const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 
 /** Раздел верхней панели. Пока в этой вкладке идёт встреча, раздел открывается в НОВОЙ вкладке: уход со страницы комнаты оборвал бы звонок. */
@@ -94,7 +94,7 @@ function StaffApp() {
         <Suspense fallback={<div className="muted">Загрузка…</div>}>
         <Routes>
           <Route path="/" element={<RoomsPage />} />
-          <Route path="/rooms/:roomId" element={<RoomPage selfName={me.user.display_name} />} />
+          <Route path="/rooms/:roomId" element={<RoomRoute selfName={me.user.display_name} />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />

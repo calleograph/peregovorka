@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
-from .llm_choice import resolve_llm
+from . import llm_stats
+from .llm_choice import parse_once, resolve_llm
+from .extraction import structured_pipeline
 from .local_llm import LocalLlm, LocalModel
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
@@ -45,7 +47,7 @@ _ANON_HINT = ("В стенограмме персональные и конфи�
 
 def system_prompt(anonymized: bool = True, sources: bool = False) -> str:
     """Общая часть системного промпта. Пример метки [ФИО_1] даётся ТОЛЬКО когда текст действительно обезличен: иначе небольшие модели
-    подражают примеру и выдают [ФИО_1] вместо реальных имён (проверено на Qwen3 0.6B)."""
+    подражают примеру и выдают [ФИО_1] вместо реальных имён (проверено на Qwen3)."""
     return _BASE_PROMPT + ((" " + _ANON_HINT) if anonymized else "") + " Ответ — только текст протокола." + ((" " + SOURCES_PROMPT) if sources else "")
 
 
@@ -55,8 +57,8 @@ SYSTEM_PROMPT_WITH_SOURCES = system_prompt(True, True)
 # Промежуточный шаг для длинных встреч. Должен ИЗВЛЕКАТЬ, а не переписывать: прежнее «сделай подробные заметки (факты, решения, поручения)» небольшие модели
 # выполняли дословным пересказом стенограммы и упирались в лимит длины (проверено на Qwen3 0.6B — вся середина встречи терялась).
 NOTES_PROMPT = ("Ты — секретарь совещания. Из фрагмента стенограммы выпиши КРАТКИЙ список: (1) принятые решения; (2) задачи: кто ответственный, что сделать, срок "
-                "(если срок не назван — «не указан»); (3) открытые вопросы; (4) важные значения: даты, числа, адреса, версии. Каждый пункт — одна короткая строка своими словами. "
-                "НЕ копируй реплики из стенограммы. Ничего не выдумывай. Если пунктов нет — напиши «нет».")
+                "(если срок не назван — «не указан»); (3) открытые вопросы. Каждый пункт — одна короткая строка своими словами. "
+                "НЕ копируй реплики из стенограммы. Ничего не выдумывай (в частности, адреса, версии и числа, которых нет в тексте). Если пунктов нет — напиши «нет».")
 NOTES_ANON_HINT = " Метки вроде [ФИО_1] сохраняй как есть."
 NOTES_MAX_TOKENS = 600     # хороший список короткий; если модель вместо списка начинает переписывать текст, это видно по обрезке и не тратит минуты на CPU
 
@@ -69,6 +71,8 @@ LOCAL_SOURCES_HINT = " Кроме стенограммы могут быть ч�
 LOCAL_INSTRUCTION_LIMIT = 400       # более длинную (подробный шаблон) инструкцию локальная модель не получает — пользователю показывается предупреждение
 LOCAL_INSTRUCTION_IGNORED = ("Подробная инструкция не применена: облегчённая локальная модель получила упрощённую. Для протокола по сложному шаблону "
                              "(таблицы, строгая структура) выберите более сильную внешнюю модель.")
+STRUCTURED_INSTRUCTION_NOTE = ("Облегчённая локальная модель собирает протокол по фиксированному шаблону (темы, решения, поручения, отклонённое, открытые вопросы с источниками): "
+                               "индивидуальная инструкция к нему не применяется. Для протокола по своему шаблону выберите более сильную внешнюю модель.")
 TRUNCATED_LOCAL = ("Локальная модель не смогла полностью обработать стенограмму: ответ оборвался по лимиту длины{where}. "
                    "Результат может быть неполным — проверьте его или сформируйте документ более сильной (внешней) моделью.")
 TRUNCATED_EXTERNAL = ("Ответ языковой модели оборван по лимиту длины{where}: результат неполный. "
@@ -116,6 +120,7 @@ class PipelineResult:
     completion_tokens: int = 0
     parts: int = 1
     truncated: bool = False
+    structured: dict = field(default_factory=dict)       # проверенные пункты (темы, решения, поручения с источниками) — только для локального структурного режима
     notes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -134,10 +139,24 @@ def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, s
 
 
 async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
-                           has_sources: bool = False, mixed: bool = False) -> PipelineResult:
+                           has_sources: bool = False, mixed: bool = False, structured: bool = True) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
     if local is not None:
+        # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
+        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit) if structured else None
+        if sr is not None and sr.ok_fragments:
+            res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
+            res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
+            res.truncated = sr.truncated
+            res.warnings += sr.warnings
+            if kind == "protocol" and (instruction or "").strip() not in {DEFAULT_PROTOCOL_INSTRUCTION.strip(), DEFAULT_SUMMARY_INSTRUCTION.strip()}:
+                res.warnings.append(STRUCTURED_INSTRUCTION_NOTE)
+            if sr.truncated and kind == "summary":
+                res.warnings.append(TRUNCATED_LOCAL.format(where=" (резюме)"))
+            return res
+        if sr is not None:
+            res.warnings.append("Структурное извлечение не удалось (модель не вернула разбираемый JSON ни для одного фрагмента) — использован упрощённый текстовый режим.")
         system, warn = local_system(kind, instruction, has_sources)
         if warn:
             res.warnings.append(warn)
@@ -417,11 +436,12 @@ class ProtocolService:
         extra = (meeting.room.protocol_instructions or "").strip()
         return base + (f"\n\nДополнительно для этой переговорки: {extra}" if extra else "")
 
-    async def create_protocol_row(self, meeting_id: uuid.UUID, kind: str, actor: str, instruction: str | None) -> uuid.UUID:
+    async def create_protocol_row(self, meeting_id: uuid.UUID, kind: str, actor: str, instruction: str | None, llm_once: str | None = None) -> uuid.UUID:
         async with self._sm() as db:
             meeting = await db.get(Meeting, meeting_id)
             instr = (instruction or "").strip() or (await self.default_instruction(db, meeting, kind) if meeting else None)
-            rec = Protocol(meeting_id=meeting_id, kind=kind, status="pending", created_by=actor, instruction=instr)
+            rec = Protocol(meeting_id=meeting_id, kind=kind, status="pending", created_by=actor, instruction=instr,
+                           meta={"llm_once": llm_once} if llm_once else None)
             db.add(rec)
             await db.commit()
             return rec.id
@@ -435,8 +455,13 @@ class ProtocolService:
             if rec is None:
                 return
             started = datetime.now(timezone.utc)
+            once = (rec.meta or {}).get("llm_once")
+            info: dict = {"requested": rec.created_at, "started": started}      # времена этапов и сведения о модели (заполняет _generate)
             try:
-                text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "")
+                text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info)
+                meta.update(self._timing_meta(info, datetime.now(timezone.utc)))
+                if once:
+                    meta["llm_once"] = once
                 rec.content, rec.status, rec.error, rec.meta = text, "ready", None, meta
                 await db.commit()
                 self._emit("llm", "protocol_ready", rec, started, data={k: meta.get(k) for k in (
@@ -444,11 +469,13 @@ class ProtocolService:
                 await self._export_generated(db, rec)
             except (AnonymizerError, LlmError) as exc:
                 rec.status, rec.error = "failed", exc.describe()
+                rec.meta = self._failure_meta(info, once, exc.code)
                 log.warning("Протокол не создан", extra={"protocol": str(protocol_id), "code": exc.code})
                 await db.commit()
                 self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": exc.code, "stage": "anonymizer" if isinstance(exc, AnonymizerError) else "llm"})
             except SettingsError as exc:
                 rec.status, rec.error = "failed", str(exc)[:480]
+                rec.meta = self._failure_meta(info, once, "settings")
                 await db.commit()
                 if isinstance(exc, NothingToProcess):  # штатное отсутствие данных — не ошибка
                     self._emit("llm", "protocol_skipped", rec, started, level="info", message=rec.error, data={"stage": "empty"})
@@ -457,13 +484,46 @@ class ProtocolService:
             except Exception:  # noqa: BLE001
                 log.exception("Ошибка создания протокола", extra={"protocol": str(protocol_id)})
                 rec.status, rec.error = "failed", "Внутренняя ошибка (см. журнал сервера)"
+                rec.meta = self._failure_meta(info, once, "internal")
                 await db.commit()
                 self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "internal"})
 
-    async def plan(self, db: AsyncSession, meeting: Meeting) -> dict:
+    @staticmethod
+    def _aware(d: datetime | None) -> datetime | None:
+        return d if d is None or d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    def _timing_meta(self, info: dict, finished: datetime) -> dict:
+        """Времена этапов документа: нажатие «Сформировать» → начало обработки → начало работы модели → готово; очередь, подготовка и работа модели отдельно."""
+        req = self._aware(info.get("requested")) or info["started"]
+        started, ls, lf = info["started"], info.get("llm_started"), info.get("llm_finished")
+
+        def iso(d):
+            return d.isoformat() if d else None
+
+        def sec(a, b):
+            return round((b - a).total_seconds(), 1) if a and b else None
+        return {"requested_at": iso(req), "started_at": iso(started), "llm_started_at": iso(ls), "llm_finished_at": iso(lf), "finished_at": iso(finished),
+                "queue_s": max(0.0, sec(req, started) or 0.0), "prepare_s": sec(started, ls), "llm_s": sec(ls, lf), "total_s": sec(req, finished)}
+
+    def _failure_meta(self, info: dict, once: str | None, code: str) -> dict:
+        """Метаданные неудачной попытки: модель и время — чтобы ошибки учитывались в статистике моделей."""
+        m = {k: info[k] for k in ("model", "model_title", "llm_local", "llm_type", "llm_profile", "llm_source", "api_type") if k in info}
+        m.update(self._timing_meta(info, datetime.now(timezone.utc)), failed=True, error_code=code)
+        if "llm_started" in info and not info.get("llm_finished"):
+            m["llm_s"] = round((datetime.now(timezone.utc) - info["llm_started"]).total_seconds(), 1)
+        if once:
+            m["llm_once"] = once
+        return m
+
+    async def plan(self, db: AsyncSession, meeting: Meeting, kind: str = "protocol", once: str | None = None) -> dict:
         """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
         room = meeting.room
-        llm = await resolve_llm(self.profiles, self.local_llm, db, room, meeting)    # системная → комната → встреча
+        purpose = "summary" if kind == "summary" else "protocol"
+        try:
+            once_choice = parse_once(once)
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from None
+        llm = await resolve_llm(self.profiles, self.local_llm, db, room, meeting, purpose, once=once_choice)    # разово → встреча → комната → система
         eff, is_local = self.local_llm.effective(llm.settings)
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
         an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
@@ -473,7 +533,10 @@ class ProtocolService:
                "anonymize": anonymize,
                "anonymizer_profile": an.name if (anonymize and an) else None,
                "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled),
-               "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None}
+               "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None, "once": bool(once_choice),
+               "llm_api_type": eff.type if not is_local else "local"}
+        tokens, tnote = eff.output_limit(purpose)
+        out["max_output_tokens"], out["max_output_note"] = tokens, tnote
         lm = self.local_llm.limits(llm.settings)
         if lm is not None and llm.available:
             fs = await asyncio.to_thread(self.local_llm.file_state, lm)
@@ -489,6 +552,13 @@ class ProtocolService:
                 if lm.light and chars > lm.warn_input_chars:
                     out["warnings"].append(f"Стенограмма длинная ({chars:,} знаков)".replace(",", " ") + f". Локальная модель {lm.title} — облегчённая: на длинных встречах качество может быть "
                                            "ниже, чем у более крупных моделей. Результат стоит проверить; для важных встреч лучше использовать внешнюю модель.")
+        if out["llm_ready"] and out["input_chars"] is None:
+            out["input_chars"] = len(await self.transcript_text(db, meeting, await self._tz(db)))
+        if out["llm_ready"] and out["input_chars"] is not None:
+            pr = await self._svc.get(db, "protocol")
+            limit = min(pr.max_input_chars, lm.max_input_chars) if lm else pr.max_input_chars   # type: ignore[attr-defined]
+            out["forecast"] = llm_stats.forecast(await llm_stats.recent_runs(db, 600), kind=purpose, model=eff.model, local=is_local,
+                                                 profile="" if is_local else llm.name, chars=out["input_chars"], limit=limit)
         return out
 
     def _emit(self, category: str, event: str, rec: Protocol, started: datetime, *, level: str = "info", message: str | None = None,
@@ -499,17 +569,26 @@ class ProtocolService:
         self.journal.emit(category, event, level=level, meeting_id=str(rec.meeting_id), message=message or f"{rec.kind}: {ms} мс",
                           data={"kind": rec.kind, "duration_ms": ms, "created_by": rec.created_by, **(data or {})})
 
-    async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str) -> tuple[str, dict]:
+    async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str, *, once: str | None = None,
+                        info: dict | None = None) -> tuple[str, dict]:
+        info = info if info is not None else {}
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             raise SettingsError("Встреча не найдена")
         room = meeting.room
-        llm_res = await resolve_llm(self.profiles, self.local_llm, db, room, meeting)   # системная → комната → встреча
+        purpose = "summary" if kind == "summary" else "protocol"
+        try:
+            once_choice = parse_once(once)
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from None
+        llm_res = await resolve_llm(self.profiles, self.local_llm, db, room, meeting, purpose, once=once_choice)   # системная → комната → встреча; для резюме своя цепочка
         if not llm_res.available:
             raise LlmError("unavailable", llm_res.reason or "")
         llm_cfg = llm_res.settings
         eff_cfg, is_local = self.local_llm.effective(llm_cfg)
         lm = self.local_llm.limits(llm_cfg)
+        info.update(model=eff_cfg.model, model_title=lm.title if lm else llm_res.name, llm_local=is_local, llm_type="local" if is_local else eff_cfg.type,
+                    api_type="local" if is_local else eff_cfg.type, llm_profile=llm_res.name, llm_source=llm_res.source)
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
         transcript = await self.transcript_text(db, meeting, tz)
@@ -531,22 +610,32 @@ class ProtocolService:
             log.info("Обезличивание выключено — текст передаётся в LLM как есть", extra={"meeting_id": str(meeting_id), "room_mode": mode})
 
         # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
-        llm = self.local_llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))  # type: ignore[arg-type]
+        llm = self.local_llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"), purpose=purpose)  # type: ignore[arg-type]
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
         limit = min(pr_cfg.max_input_chars, lm.max_input_chars) if lm else pr_cfg.max_input_chars   # type: ignore[attr-defined]
         warnings: list[str] = []
         if lm is not None and lm.light and len(clean.text) > lm.warn_input_chars:
             warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
-        pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
-                                      has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript)
+        info["llm_started"] = datetime.now(timezone.utc)
+        try:
+            pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
+                                          has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript)
+        finally:
+            info["llm_finished"] = datetime.now(timezone.utc)
+            info["llm_stats"] = dict(llm.stats)
         warnings += pipe.warnings
         out = pipe.text
         meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
-                "llm_calls": pipe.calls, "parts": pipe.parts,
+                "llm_calls": pipe.calls, "parts": pipe.parts, "structured": pipe.structured or None,
                 "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens, "anonymized_chunks": clean.chunks,
                 "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
                 "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
                 "sources": materials.meta()}
+        st = llm.stats
+        sstats = (pipe.structured or {}).get("stats") or {}
+        meta.update(model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
+                    retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)), length_hits=st["length"], finish=dict(st["finish"]),
+                    max_tokens=st["max_tokens"] or None, limit_note=eff_cfg.output_limit(purpose)[1] or None, llm_source=llm_res.source)
         return out, meta
 
     async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:

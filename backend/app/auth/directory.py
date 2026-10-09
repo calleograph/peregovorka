@@ -48,6 +48,7 @@ class DirectoryIdentity:
     source: str = ""         # название подключения, через которое найден пользователь
     for_users: bool = True   # подключение используется для входа обычных пользователей
     for_admins: bool = True  # … и для административного входа
+    disabled: bool = False   # учётная запись отключена в каталоге (заполняется только при поиске без пароля — `lookup`)
 
 
 @dataclass
@@ -286,6 +287,61 @@ class LdapDirectory:
                 groups=frozenset(groups),
                 source=self._s.name, for_users=self._s.use_for_users, for_admins=self._s.use_for_admins,
             )
+        finally:
+            try:
+                svc.unbind()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def lookup(self, login: str) -> DirectoryIdentity:
+        """Найти пользователя и его группы (с вложенными) БЕЗ проверки пароля — для проверки правил доступа в админке.
+        Отключённая учётная запись не ошибка: возвращается с признаком `disabled`."""
+        from ldap3 import SUBTREE
+        from ldap3.core.exceptions import LDAPException
+        from ldap3.utils.conv import escape_filter_chars
+
+        value, is_upn = parse_login(login)
+        attr = "userPrincipalName" if is_upn else self._s.ldap_login_attribute
+        svc = self._service_connection()
+        try:
+            flt = f"(&(objectCategory=person)(objectClass=user)({attr}={escape_filter_chars(value)}))"
+            attrs = ["objectGUID", "distinguishedName", "sAMAccountName", "userPrincipalName",
+                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl"]
+            try:
+                svc.search(self._s.ldap_base_dn, flt, search_scope=SUBTREE, attributes=attrs, size_limit=2)
+            except LDAPException as exc:
+                raise self._transport_error(exc) from None
+            entries = [e for e in (svc.response or []) if e.get("type") == "searchResEntry"]
+            if not entries:
+                raise DirectoryError("user_not_found")
+            if len(entries) > 1:
+                raise DirectoryError("ambiguous_user")
+            entry = entries[0]
+            dn, vals, raw = entry["dn"], entry.get("attributes", {}), entry.get("raw_attributes", {})
+            uac = vals.get("userAccountControl")
+            groups: set[str] = set()
+            try:
+                gflt = f"(&(objectClass=group)(member:{LDAP_MATCHING_RULE_IN_CHAIN}:={escape_filter_chars(dn)}))"
+                for item in svc.extend.standard.paged_search(self._s.ldap_base_dn, gflt, search_scope=SUBTREE,
+                                                             attributes=["distinguishedName"], paged_size=500, generator=True):
+                    if item.get("type") == "searchResEntry":
+                        groups.add(str(item["dn"]).lower())
+            except LDAPException as exc:
+                raise self._transport_error(exc) from None
+
+            def first(name: str) -> str | None:
+                v = vals.get(name)
+                if isinstance(v, list):
+                    v = v[0] if v else None
+                return str(v).strip() if v not in (None, "") else None
+
+            sam = first("sAMAccountName") or value
+            guid_raw = (raw.get("objectGUID") or [b""])[0]
+            return DirectoryIdentity(
+                ad_guid=guid_from_bytes(guid_raw) if len(guid_raw) == 16 else "", dn=dn, sam_account_name=sam, upn=first("userPrincipalName"),
+                display_name=first(self._s.ldap_display_name_attribute) or sam, email=first(self._s.ldap_email_attribute),
+                groups=frozenset(groups), source=self._s.name, for_users=self._s.use_for_users, for_admins=self._s.use_for_admins,
+                disabled=bool(isinstance(uac, int) and uac & _UAC_DISABLED))
         finally:
             try:
                 svc.unbind()

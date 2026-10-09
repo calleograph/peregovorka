@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
+from ..auth.directory import DirectoryError
 from ..models import CaCertificate, LdapProfile, MailProfile, StorageProfile
 from ..services import local_admin as la
 from ..services.audit import write_audit
@@ -176,6 +177,52 @@ async def local_admin_info(su: SessionUser = Depends(require_admin), db: AsyncSe
             "password_changed_at": u.password_changed_at.isoformat() if u.password_changed_at else None, "recovery": "./scripts/admin-reset.sh"}
 
 
+# ============================================================ допуск к системе («кто может входить»)
+async def _acl_counts(request: Request, db: AsyncSession) -> dict[str, Any]:
+    s = request.app.state.settings
+    acc = await request.app.state.settings_svc.get(db, "access")
+    env_users = bool((s.ldap_access_group_dn or "").strip())
+    env_admins = bool((s.ldap_admin_group_dn or "").strip())
+    n_users = len(acc.user_groups) + (1 if env_users else 0)        # type: ignore[attr-defined]
+    n_admins = len(acc.admin_groups) + (1 if env_admins else 0)     # type: ignore[attr-defined]
+    return {"restricted": n_users > 0, "user_groups": n_users, "admin_groups": n_admins, "env_user_group": env_users, "env_admin_group": env_admins}
+
+
+@router.get("/access/status")
+async def access_status(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Настроено ли ограничение входа. Пока список групп допуска пуст, в систему входит любой активный пользователь каталога."""
+    return await _acl_counts(request, db)
+
+
+@router.post("/access/check-user")
+async def access_check_user(request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """«Проверить пользователя»: найден ли в каталоге, пропустят ли его правила допуска (и по какой группе), получит ли права
+    администратора. Пароль не нужен и не проверяется; группы читаются сервисной учётной записью (с вложенными)."""
+    login = str(body.get("login") or "").strip()
+    if not login or len(login) > 256:
+        raise HTTPException(status_code=422, detail="Укажите логин пользователя")
+    d = request.app.state.directory
+    if not hasattr(d, "lookup"):
+        raise HTTPException(status_code=501, detail="Каталог не поддерживает такую проверку")
+    try:
+        ident = await asyncio.to_thread(d.lookup, login)
+    except DirectoryError as exc:
+        if exc.code in ("user_not_found", "ambiguous_user"):
+            out = {"found": False, "message": "Пользователь не найден в каталоге" if exc.code == "user_not_found" else "Найдено несколько учётных записей — уточните логин (user@домен)"}
+            request.app.state.journal.emit("auth", "access_check", user=su.display_name, ip=client_ip(request), message="проверка пользователя: не найден")
+            return out
+        raise HTTPException(status_code=503, detail="Каталог недоступен или не настроен: " + (exc.detail or exc.code)) from None
+    dec = await request.app.state.auth.access_decision(db, ident)
+    disabled = bool(getattr(ident, "disabled", False))
+    out = {"found": True, "login": ident.sam_account_name, "display_name": ident.display_name, "source": ident.source,
+           "account_disabled": disabled, "restricted": dec.restricted,
+           "would_log_in": dec.allowed and not disabled, "reason": "account_disabled" if disabled else dec.reason,
+           "allowed_via": dec.via, "admin": dec.is_admin, "admin_via": dec.admin_via, "groups_total": len(ident.groups)}
+    request.app.state.journal.emit("auth", "access_check", user=su.display_name, ip=client_ip(request),
+                                   message=f"проверка пользователя {ident.sam_account_name}: {'пропустят' if out['would_log_in'] else 'не пропустят'}")
+    return out
+
+
 async def _count(db: AsyncSession, model, *where) -> int:
     return (await db.execute(select(func.count()).select_from(model).where(*where))).scalar_one()
 
@@ -190,12 +237,14 @@ async def setup_status(request: Request, su: SessionUser = Depends(require_admin
     ldap_n = await _count(db, LdapProfile, LdapProfile.enabled.is_(True)) + (1 if s.ldap_uri_list else 0)
     ca_n = await _count(db, CaCertificate) + (1 if s.ldap_ca_file else 0)
     groups_n = len(access.admin_groups) + (1 if s.ldap_admin_group_dn else 0)   # type: ignore[attr-defined]
+    login_n = len(access.user_groups) + (1 if s.ldap_access_group_dn else 0)      # type: ignore[attr-defined]
     storage_n = await _count(db, StorageProfile)
     mail_n = await _count(db, MailProfile, MailProfile.is_active.is_(True))
     steps = [
         {"id": "ldap", "title": "Подключение к каталогу (LDAPS)", "done": ldap_n > 0, "page": "ldap"},
         {"id": "ca", "title": "Сертификаты CA", "done": ca_n > 0, "page": "ca"},
         {"id": "access", "title": "Группы администраторов", "done": groups_n > 0, "page": "access"},
+        {"id": "login_acl", "title": "Кто может входить в систему (группы допуска)", "done": login_n > 0, "page": "login_access"},
         {"id": "storage", "title": "Файловое хранилище", "done": storage_n > 0, "page": "storages"},
         {"id": "mail", "title": "Исходящая почта", "done": mail_n > 0, "page": "mail"},
         {"id": "check", "title": "Проверка системы", "done": False, "page": "system"},

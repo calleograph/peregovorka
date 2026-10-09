@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -14,7 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import ApiProfile, Room, utcnow
-from .settings import AnonymizerSettings, LlmSettings, SettingsError, SettingsService, _first_error
+from .settings import AnonymizerSettings, LlmSettings, SettingsError, SettingsService, _first_error, merge_secret_headers
 
 Kind = Literal["llm", "anonymizer"]
 MAIN = "main"
@@ -61,20 +62,62 @@ class ProfileService:
         except Exception:  # noqa: BLE001 — повреждённый секрет не должен ронять выбор профиля
             return ""
 
-    def _build(self, kind: Kind, config: dict, secret: str):
+    # Секрет профиля хранится одним зашифрованным значением: ключ API, а у профилей LLM с секретными заголовками — JSON {"__p":1,"k":ключ,"h":{заголовки}}.
+    @staticmethod
+    def _pack(secret: str, headers: dict[str, str]) -> str:
+        return json.dumps({"__p": 1, "k": secret, "h": headers}, ensure_ascii=False) if headers else secret
+
+    @staticmethod
+    def _unpack(payload: str) -> tuple[str, dict[str, str]]:
+        if payload.startswith('{"__p"'):
+            try:
+                d = json.loads(payload)
+                return str(d.get("k") or ""), {str(k): str(v) for k, v in (d.get("h") or {}).items()}
+            except ValueError:
+                return payload, {}
+        return payload, {}
+
+    @staticmethod
+    def _split_headers(kind: Kind, config: dict, old: dict[str, str] | None = None) -> tuple[dict, dict[str, str] | None]:
+        """Из конфигурации профиля убирает secret_headers: возвращает (конфигурация без них, новые секретные заголовки или None — не менять)."""
+        cfg = dict(config or {})
+        raw = cfg.pop("secret_headers", None)
+        cfg.pop("secret_header_names", None)
+        if kind != "llm" or raw is None:
+            return cfg, None
+        try:
+            new = json.loads(raw or "{}") if isinstance(raw, str) else dict(raw)
+        except ValueError:
+            raise SettingsError("secret_headers: ожидается объект {имя: значение}") from None
+        try:
+            return cfg, merge_secret_headers(old or {}, new)
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from None
+
+    def _build(self, kind: Kind, config: dict, secret: str, headers: dict[str, str] | None = None):
         model = _MODELS[kind]
-        data = {k: v for k, v in (config or {}).items() if k in model.model_fields and k != _SECRET[kind]}
+        data = {k: v for k, v in (config or {}).items() if k in model.model_fields and k not in (_SECRET[kind], "secret_headers", "secret_header_names")}
         data.setdefault("enabled", True)
         data[_SECRET[kind]] = secret
+        if kind == "llm" and headers:
+            data["secret_headers"] = json.dumps(headers, ensure_ascii=False)
+            data["secret_header_names"] = sorted(headers, key=str.lower)
         try:
             return model(**data)
         except ValueError as exc:
             raise SettingsError(_first_error(exc)) from None
 
+    def _key_set(self, row: ApiProfile) -> bool:
+        plain = self._decrypt(row)
+        return bool(self._unpack(plain)[0]) if plain else bool(row.secret_enc)
+
     def _public(self, row: ApiProfile, default_id: str) -> dict:
         cfg = dict(row.config or {})
         cfg.pop(_SECRET[row.kind], None)
-        return {"id": str(row.id), "kind": row.kind, "name": row.name, "config": cfg, "secret_set": bool(row.secret_enc),
+        cfg.pop("secret_headers", None)
+        if row.kind == "llm":
+            cfg["secret_header_names"] = sorted(self._unpack(self._decrypt(row))[1], key=str.lower)
+        return {"id": str(row.id), "kind": row.kind, "name": row.name, "config": cfg, "secret_set": self._key_set(row),
                 "is_default": str(row.id) == default_id, "virtual": False}
 
     # ------------------------------------------------------------------------ чтение
@@ -105,7 +148,8 @@ class ProfileService:
             row = None
         if row is None or row.kind != kind:
             raise SettingsError("Профиль API не найден")
-        return Resolved(self._build(kind, row.config or {}, self._decrypt(row)), str(row.id), row.name)
+        key, hdrs = self._unpack(self._decrypt(row))
+        return Resolved(self._build(kind, row.config or {}, key, hdrs), str(row.id), row.name)
 
     async def resolve(self, db: AsyncSession, kind: str, room: Room | None = None) -> Resolved:
         """Профиль для комнаты: её собственный → общий по умолчанию → «main». Битая ссылка комнаты = «по умолчанию»."""
@@ -131,10 +175,11 @@ class ProfileService:
         dup = (await db.execute(select(ApiProfile).where(ApiProfile.kind == kind, ApiProfile.name == name))).scalars().first()
         if dup:
             raise SettingsError("Профиль с таким названием уже есть")
-        self._build(kind, config, secret)  # проверка значений
+        config, hdrs = self._split_headers(kind, config)
+        self._build(kind, config, secret, hdrs)  # проверка значений
         pid = uuid.uuid4()
         clean = {k: v for k, v in config.items() if k in _MODELS[kind].model_fields and k != _SECRET[kind]}
-        row = ApiProfile(id=pid, kind=kind, name=name, config=clean, secret_enc=self._encrypt(pid, secret), is_default=False)
+        row = ApiProfile(id=pid, kind=kind, name=name, config=clean, secret_enc=self._encrypt(pid, self._pack(secret, hdrs or {})), is_default=False)
         db.add(row)
         await db.flush()
         if make_default:
@@ -155,18 +200,21 @@ class ProfileService:
             if dup:
                 raise SettingsError("Профиль с таким названием уже есть")
         cfg = dict(row.config or {})
-        for k, v in (patch.get("config") or {}).items():
+        old_key, old_hdrs = self._unpack(self._decrypt(row))
+        new_cfg, new_hdrs = self._split_headers(kind, patch.get("config") or {}, old_hdrs)
+        for k, v in new_cfg.items():
             if k in _MODELS[kind].model_fields and k != _SECRET[kind]:
                 cfg[k] = v
-        secret = self._decrypt(row)
+        secret = old_key
         if "secret" in patch and patch["secret"] is not None:   # None = не менять, "" = очистить
             secret = patch["secret"]
-        self._build(kind, cfg, secret)
+        hdrs = old_hdrs if new_hdrs is None else new_hdrs
+        self._build(kind, cfg, secret, hdrs)
         if new_name is not None:
             row.name = new_name
         row.config = cfg
-        if "secret" in patch and patch["secret"] is not None:
-            row.secret_enc = self._encrypt(row.id, secret)
+        if ("secret" in patch and patch["secret"] is not None) or new_hdrs is not None:
+            row.secret_enc = self._encrypt(row.id, self._pack(secret, hdrs))
         row.updated_at = utcnow()
         await db.commit()
         return self._public(row, await self.default_id(db, kind))

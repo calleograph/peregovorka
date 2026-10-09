@@ -36,6 +36,19 @@ class AuthError(Exception):
     def __init__(self, code: str, message: str, status: int, retry_after: int | None = None):
         super().__init__(code)
         self.code, self.message, self.status, self.retry_after = code, message, status, retry_after
+        self.reason = ""
+
+
+@dataclass
+class AccessDecision:
+    """Решение о допуске после успешной проверки пароля: пустой список групп допуска — ограничения нет (вход всем)."""
+
+    allowed: bool
+    is_admin: bool
+    reason: str                    # ok | not_in_allowed_groups | connection_not_for_users
+    restricted: bool               # включён ли список групп допуска
+    via: list[str]                 # группы допуска, в которые входит пользователь
+    admin_via: list[str]           # группы администраторов, в которые входит пользователь
 
 
 @dataclass
@@ -43,6 +56,7 @@ class LoginResult:
     session_id: str
     session: SessionData
     user: User
+    decision: AccessDecision | None = None
 
 
 class AuthService:
@@ -83,17 +97,14 @@ class AuthService:
             log.error("Ошибка каталога при входе", extra={"directory_code": exc.code})
             raise AuthError("directory_unavailable", *_UNAVAILABLE) from None
 
-        # Доступ к системе в целом (необязательная группа).
-        admin_groups = {g.strip().lower() for g in [self._s.ldap_admin_group_dn] if g.strip()}
-        access_groups = {g.strip().lower() for g in [self._s.ldap_access_group_dn] if g.strip()}
-        if self.settings_svc is not None:    # группы, заданные в веб-интерфейсе («LDAP и доступ»), добавляются к заданным в .env
-            acc = await self.settings_svc.get(db, "access")
-            admin_groups |= {g.lower() for g in acc.admin_groups}      # type: ignore[attr-defined]
-            access_groups |= {g.lower() for g in acc.user_groups}      # type: ignore[attr-defined]
-        is_admin = bool(admin_groups & identity.groups) and identity.for_admins
-        if (access_groups and not (access_groups & identity.groups) and not is_admin) or (not identity.for_users and not is_admin):
+        # Порядок: пароль в каталоге → правила допуска → только потом сессия. Без допуска — ни сессии, ни данных.
+        decision = await self.access_decision(db, identity)
+        is_admin = decision.is_admin
+        if not decision.allowed:
             await self._throttle.record_success(norm)  # пароль верный — это не перебор
-            raise AuthError("access_denied", *_MESSAGES["access_denied"])
+            err = AuthError("access_denied", *_MESSAGES["access_denied"])
+            err.reason = decision.reason               # для журнала (в ответ пользователю не попадает)
+            raise err
 
         await self._throttle.record_success(norm)
         user = await self._upsert_user(db, identity, is_admin)
@@ -104,7 +115,25 @@ class AuthService:
             display_name=user.display_name, is_admin=is_admin, groups=sorted(identity.groups),
         )
         log.info("Вход выполнен", extra={"user_id": str(user.id), "is_admin": is_admin})
-        return LoginResult(sid, data, user)
+        return LoginResult(sid, data, user, decision)
+
+    async def access_decision(self, db: AsyncSession, identity: DirectoryIdentity) -> AccessDecision:
+        """Допуск пользователя каталога. Администраторы (по группам администраторов) допускаются всегда; локальный администратор
+        сюда не попадает вовсе. Группы берутся из «LDAP и доступ» и из .env; читаются при каждом входе — перезапуск не нужен."""
+        admin_groups = {g.strip().lower() for g in [self._s.ldap_admin_group_dn] if g.strip()}
+        access_groups = {g.strip().lower() for g in [self._s.ldap_access_group_dn] if g.strip()}
+        if self.settings_svc is not None:
+            acc = await self.settings_svc.get(db, "access")
+            admin_groups |= {g.lower() for g in acc.admin_groups}      # type: ignore[attr-defined]
+            access_groups |= {g.lower() for g in acc.user_groups}      # type: ignore[attr-defined]
+        admin_via = sorted(admin_groups & identity.groups)
+        via = sorted(access_groups & identity.groups)
+        is_admin = bool(admin_via) and identity.for_admins
+        if not identity.for_users and not is_admin:
+            return AccessDecision(False, False, "connection_not_for_users", bool(access_groups), via, admin_via)
+        if access_groups and not via and not is_admin:
+            return AccessDecision(False, False, "not_in_allowed_groups", True, via, admin_via)
+        return AccessDecision(True, is_admin, "ok", bool(access_groups), via, admin_via)
 
     async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str) -> LoginResult | None:
         """Локальный (аварийный) администратор: проверяется ПЕРВЫМ и не зависит от каталога. Нет такого логина — None (идём в каталог)."""

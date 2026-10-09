@@ -9,7 +9,7 @@ interface Form {
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; acl: AclEntry[]; moderators: AclEntry[]; history_access: HistoryAccess;
   anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; welcome_message: string;
-  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; board_allowed: boolean;
+  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; board_allowed: boolean; slug_history?: string[];
 }
 
 const empty: Form = {
@@ -21,7 +21,8 @@ const empty: Form = {
 };
 
 const days = (v: string) => (v.trim() === "" ? null : Number(v));
-const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
+const SLUG = /^[a-z0-9][a-z0-9_-]{1,62}$/;
+const host = () => window.location.host;
 
 function toForm(r: RoomAdmin): Form {
   return { id: r.id, slug: r.slug, name: r.name, description: r.description ?? "", is_enabled: r.is_enabled,
@@ -32,7 +33,7 @@ function toForm(r: RoomAdmin): Form {
     anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "",
     mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "",
     guest_access_enabled: r.guest_access_enabled ?? false, guest_token: r.guest_token ?? null,
-    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, board_allowed: r.board_allowed ?? true };
+    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, board_allowed: r.board_allowed ?? true, slug_history: r.slug_history ?? [] };
 }
 
 type TabId = "main" | "access" | "features" | "ai" | "storage";
@@ -76,22 +77,26 @@ export default function RoomsAdmin() {
   const [note, setNote] = useState("");
   const [llmProfiles, setLlmProfiles] = useState<ApiProfile[]>([]);
   const [anonProfiles, setAnonProfiles] = useState<ApiProfile[]>([]);
+  const [showClosed, setShowClosed] = useState(false);
+  const [origSlug, setOrigSlug] = useState("");
   useEffect(() => {
     if (!form) return;
     void api.admin.profiles("llm").then(setLlmProfiles).catch(() => undefined);
     void api.admin.profiles("anonymizer").then(setAnonProfiles).catch(() => undefined);
   }, [form === null]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const load = useCallback(() => api.admin.rooms().then(setRooms).catch((e) => setError(e.message)), []);
+  const load = useCallback(() => api.admin.rooms(showClosed).then(setRooms).catch((e) => setError(e.message)), [showClosed]);
   useEffect(() => { void load(); }, [load]);
 
-  const open = (f: Form) => { setForm(f); setTab("main"); setError(""); };
+  const open = (f: Form) => { setForm(f); setOrigSlug(f.slug); setTab("main"); setError(""); };
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
     setError(""); setNote("");
     if (!form.name.trim()) { setTab("main"); setError("Укажите название комнаты."); return; }
-    if (!form.id && !SLUG.test(form.slug)) { setTab("main"); setError("Технический идентификатор: латиница, цифры и дефис, 2–63 символа, начинается с буквы или цифры."); return; }
+    const slug = form.slug.trim().toLowerCase();
+    if (!SLUG.test(slug)) { setTab("main"); setError("Адрес комнаты: латиница, цифры, «-» и «_», 2–63 символа, начинается с буквы или цифры."); return; }
+    if (form.id && slug !== origSlug && !window.confirm(`Адрес комнаты изменится: ${host()}/rooms/${origSlug} → ${host()}/rooms/${slug}.\n\nСтарая ссылка продолжит работать и перенаправит на новую. Гостевая ссылка не изменится. Сменить адрес?`)) return;
     const base = {
       name: form.name, description: form.description || null, is_enabled: form.is_enabled, max_participants: form.max_participants,
       transcription_enabled: true, record_audio: form.record_audio || form.auto_record, camera_allowed: form.camera_allowed,
@@ -105,9 +110,9 @@ export default function RoomsAdmin() {
     };
     try {
       if (form.id) {
-        await api.admin.patchRoom(form.id, { ...base, ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}) });
+        await api.admin.patchRoom(form.id, { ...base, slug: form.slug.trim().toLowerCase(), ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}) });
       } else {
-        await api.admin.createRoom({ ...base, slug: form.slug, password: form.password || null });
+        await api.admin.createRoom({ ...base, slug: form.slug.trim().toLowerCase(), password: form.password || null });
       }
       setForm(null); setNote("Сохранено"); await load();
     } catch (err) { setError((err as ApiError).message); }
@@ -123,6 +128,7 @@ export default function RoomsAdmin() {
   return (
     <section>
       <div className="row"><h2>Переговорки</h2><div className="spacer" />
+        <label className="check small" style={{ margin: 0 }}><input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> показывать закрытые временные</label>
         {!form && <button className="btn primary" onClick={() => open({ ...empty })}>＋ Создать комнату</button>}</div>
       {note && <div className="alert ok">{note}</div>}
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -139,8 +145,12 @@ export default function RoomsAdmin() {
               <div className="cols">
                 <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Переговорная «Север»" />
                   <span className="example">Пример: <code>ИТ-1</code></span></label>
-                <label>Технический идентификатор<input value={form.slug} onChange={(e) => set("slug", e.target.value)} disabled={!!form.id} placeholder="meeting-room-1" />
-                  <span className="help">Латиница, цифры и дефис; после создания не меняется.</span><span className="example">Пример: <code>it-1</code></span></label>
+                <label>Технический идентификатор / адрес комнаты<input value={form.slug} onChange={(e) => set("slug", e.target.value.toLowerCase())} placeholder="meeting-room-1" spellCheck={false} />
+                  <span className="help">Латиница, цифры, «-» и «_»; регистр не важен. Уникален. Попадает в ссылку на комнату.</span>
+                  <span className="help">Адрес: <code>{host()}/rooms/{form.slug.trim() || "…"}</code></span>
+                  {form.id && form.slug.trim().toLowerCase() !== origSlug && <span className="help" style={{ color: "var(--danger-text)" }}>Постоянная ссылка изменится. Старая ({origSlug}) продолжит работать и перенаправит на новую; ссылки с UUID тоже работают. Гостевая ссылка не изменится.</span>}
+                  {form.id && (form.slug_history?.length ?? 0) > 0 && <span className="help">Прежние адреса (перенаправляют на нынешний): {form.slug_history?.join(", ")}</span>}
+                  <span className="example">Пример: <code>it-1</code></span></label>
               </div>
               <label>Описание<input value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Еженедельная планёрка отдела" /></label>
               <div className="cols">
@@ -256,8 +266,8 @@ export default function RoomsAdmin() {
         <tbody>
           {rooms.map((r) => (
             <tr key={r.id}>
-              <td>{r.name}<div className="muted small"><code>{r.slug}</code></div></td>
-              <td>{r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча</span>}
+              <td>{r.name}{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
+              <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча</span>}
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>

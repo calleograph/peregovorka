@@ -74,11 +74,11 @@ t "LiveKit более новый конкретный тег — оставле�
 
 # ---------------------------------------------------------------------------------------------- модели
 MD="$TMP/models-data"; mkdir -p "$MD/models/gigaam"
-mc() { env DATA_ROOT="$MD" ASR_MODEL_NAME=v3_e2e_rnnt bash -c 'source "$1"; upd_models_check 2>&1; echo "F=$UPD_FULL_OK G=$UPD_GGUF_OK"' _ "$UL"; }
+mc() { env DATA_ROOT="$MD" ASR_MODEL_NAME=v3_e2e_rnnt bash -c 'source "$1"; upd_models_check 2>&1; echo "F=$UPD_FULL_OK"' _ "$UL"; }
 export MD; export -f mc
-t "модели отсутствуют: Full=0, GGUF=0, ничего не скачивается и не создаётся" bash -c 'out="$(mc)"; grep -q "F=0 G=0" <<<"$out" && [ -z "$(ls -A "$1/models/gigaam")" ]' _ "$MD"
-head -c 2000000 /dev/zero > "$MD/models/gigaam/v3_e2e_rnnt.ckpt"; echo tok > "$MD/models/gigaam/v3_e2e_rnnt_tokenizer.model"; head -c 1500000 /dev/zero > "$MD/models/gigaam/gigaam-v3-e2e-rnnt-Q5_K_M.gguf"
-t "обе модели на месте: Full=1, GGUF=1" bash -c 'mc | grep -q "F=1 G=1"'
+t "модели отсутствуют: Full=0, ничего не скачивается и не создаётся" bash -c 'out="$(mc)"; grep -q "F=0" <<<"$out" && [ -z "$(ls -A "$1/models/gigaam")" ]' _ "$MD"
+head -c 2000000 /dev/zero > "$MD/models/gigaam/v3_e2e_rnnt.ckpt"; echo tok > "$MD/models/gigaam/v3_e2e_rnnt_tokenizer.model"
+t "полная модель на месте: Full=1" bash -c 'mc | grep -q "F=1"'
 t "существующие файлы моделей не изменяются проверкой" bash -c 'a="$(cksum "$1"/*)"; mc >/dev/null; [ "$a" = "$(cksum "$1"/*)" ]' _ "$MD/models/gigaam"
 
 # --------------------------------------------------------------------------- ожидание healthcheck

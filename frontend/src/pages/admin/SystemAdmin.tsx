@@ -50,7 +50,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
 
   if (err && !s) return <div className="alert error">{err}</div>;
   if (!s) return <div className="muted">Загрузка…</div>;
-  const names: Record<string, string> = { postgres: "PostgreSQL", redis: "Redis", livekit: "LiveKit", asr: "ASR (транскрибация)", ldap: "Active Directory (LDAPS)", llm_local: "Локальная LLM (Qwen3 0.6B)", sip: "SIP-телефония" };
+  const names: Record<string, string> = { postgres: "PostgreSQL", redis: "Redis", livekit: "LiveKit", asr: "ASR (транскрибация)", ldap: "Active Directory (LDAPS)", llm_local: "Локальная LLM (Qwen3 1.7B)", sip: "SIP-телефония" };
   const h = s.host ?? {};
   const cpuPct = h.load1 !== undefined && h.cpus ? (h.load1 / h.cpus) * 100 : undefined;
   const memUsed = h.mem_total && h.mem_available !== undefined ? ((h.mem_total - h.mem_available) / h.mem_total) * 100 : undefined;

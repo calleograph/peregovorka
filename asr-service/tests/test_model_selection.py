@@ -38,7 +38,7 @@ class Echo(FakeProvider):
 
 def make_mgr(tmp_path: Path, builders: dict, busy=lambda: None) -> ModelManager:
     s = AsrSettings(asr_model_dir=str(tmp_path))
-    cat = default_catalog()
+    cat = default_catalog(include_quantized=True)       # тестовому менеджеру нужны две модели для переключения
     for spec in cat:
         for f in spec.files:
             (tmp_path / f).write_bytes(b"x" * 1000)
@@ -46,8 +46,9 @@ def make_mgr(tmp_path: Path, builders: dict, busy=lambda: None) -> ModelManager:
 
 
 # ------------------------------------------------------------------------------------------- каталог
-def test_default_catalog_has_full_pytorch_and_q5_gguf_with_expected_files():
-    cat = {m.id: m for m in default_catalog()}
+def test_default_catalog_has_only_the_full_model_and_the_quantized_one_is_retired():
+    assert [m.id for m in default_catalog()] == [FULL_ID], "штатный каталог: только полная GigaAM; квантованная снята с вооружения"
+    cat = {m.id: m for m in default_catalog(include_quantized=True)}
     full, q5 = cat[FULL_ID], cat[Q5_ID]
     assert (full.runtime, full.files, full.quant) == ("pytorch", ("v3_e2e_rnnt.ckpt", "v3_e2e_rnnt_tokenizer.model"), "")
     assert (q5.runtime, q5.files, q5.quant) == ("gguf", ("gigaam-v3-e2e-rnnt-Q5_K_M.gguf",), "Q5_K_M")
@@ -62,9 +63,9 @@ def test_catalog_json_extends_without_code_changes_and_skips_bad_entries(tmp_pat
         {"runtime": "gguf"},
     ]), encoding="utf-8")
     ids = [m.id for m in load_catalog(tmp_path)]
-    assert ids == [FULL_ID, Q5_ID, "gigaam-v3-e2e-rnnt-q8_0"]
+    assert ids == [FULL_ID, "gigaam-v3-e2e-rnnt-q8_0"]
     (tmp_path / "catalog.json").write_text("не json", encoding="utf-8")
-    assert [m.id for m in load_catalog(tmp_path)] == [FULL_ID, Q5_ID]
+    assert [m.id for m in load_catalog(tmp_path)] == [FULL_ID]
 
 
 def test_file_status_reports_missing_files_and_size(tmp_path):
@@ -150,7 +151,7 @@ async def test_failed_load_does_not_crash_or_replace_active_model(tmp_path):
 
 async def test_start_without_any_model_stays_alive_and_not_ready(tmp_path):
     s = AsrSettings(asr_model_dir=str(tmp_path))
-    m = ModelManager(s, default_catalog())
+    m = ModelManager(s, default_catalog(include_quantized=True))
     res = await m.activate(FULL_ID)
     assert not res["ok"] and not m.is_ready() and m.status()["active_id"] is None
 
@@ -195,7 +196,7 @@ async def test_compare_skips_missing_models_and_is_blocked_during_meetings(tmp_p
 # ---------------------------------------------------------------------------------- runtime GGUF
 def test_gguf_runtime_reports_clear_error_when_binary_or_file_is_missing(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "transcribe_cpp", None)  # привязки недоступны (в окружении разработчика они могут быть установлены)
-    spec = default_catalog()[1]
+    spec = default_catalog(include_quantized=True)[1]
     s = AsrSettings(asr_model_dir=str(tmp_path), asr_gguf_bin="definitely-not-installed-transcribe")
     p = build_for_spec(spec, s)
     with pytest.raises(ModelNotPreparedError, match="не найден"):
@@ -206,7 +207,7 @@ def test_gguf_runtime_reports_clear_error_when_binary_or_file_is_missing(tmp_pat
 
 
 def test_gguf_cli_adapter_runs_external_command_and_parses_text(tmp_path):
-    spec = default_catalog()[1]
+    spec = default_catalog(include_quantized=True)[1]
     (tmp_path / spec.files[0]).write_bytes(b"gguf")
     script = tmp_path / "fake_transcribe.py"
     script.write_text(textwrap.dedent("""

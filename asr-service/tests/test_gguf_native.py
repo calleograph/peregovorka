@@ -64,7 +64,7 @@ def fake_lib(*, fail_load: bool = False, delay: float = 0.0):
 
 
 def spec():
-    return default_catalog()[1]
+    return default_catalog(include_quantized=True)[1]
 
 
 def settings(tmp_path, **kw):

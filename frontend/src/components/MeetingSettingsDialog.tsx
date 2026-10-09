@@ -14,17 +14,19 @@ export default function MeetingSettingsDialog({ meetingId, roomId, onClose }: { 
   const [tab, setTab] = useState<"delivery" | "model">("delivery");
   const [spec, setSpec] = useState<MailDeliverySpec>(emptySpec());
   const [choice, setChoice] = useState<LlmChoice>(emptyChoice());
+  const [choiceSummary, setChoiceSummary] = useState<LlmChoice>(emptyChoice());
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const apply = (s: MeetingSettings) => { setSt(s); setSpec(s.delivery.effective); setChoice(s.llm.override ?? { mode: "inherit", profile_id: null, local_model: null }); };
+  const apply = (s: MeetingSettings) => { setSt(s); setSpec(s.delivery.effective); setChoice(s.llm.override ?? { mode: "inherit", profile_id: null, local_model: null }); setChoiceSummary(s.llm_summary.override ?? { mode: "inherit", profile_id: null, local_model: null }); };
   useEffect(() => { void api.manage.meetingSettings(meetingId).then(apply).catch((e) => setErr((e as ApiError).message)); }, [meetingId]);
 
   const save = async (what: "delivery" | "llm", reset = false) => {
     setBusy(true); setErr(""); setNote("");
     try {
-      const body = what === "delivery" ? { delivery: reset ? null : spec } : { llm: reset ? null : (choice.mode === "inherit" ? null : choice) };
+      const one = (c: LlmChoice) => (reset || c.mode === "inherit" ? null : c);
+      const body = what === "delivery" ? { delivery: reset ? null : spec } : { llm: one(choice), llm_summary: one(choiceSummary) };
       apply(await api.manage.saveMeetingSettings(meetingId, body));
       setNote(reset ? "Возвращено «как в комнате»." : "Сохранено для этой встречи.");
     } catch (e) { setErr((e as ApiError).message); }
@@ -39,7 +41,7 @@ export default function MeetingSettingsDialog({ meetingId, roomId, onClose }: { 
           <p className="help" style={{ marginTop: 0 }}>Здесь можно изменить рассылку материалов и языковую модель <b>только для этой встречи</b>. Настройки комнаты не меняются и снова действуют на следующей встрече.</p>
           <div className="tabs" role="tablist" aria-label="Настройки встречи">
             <button type="button" role="tab" aria-selected={tab === "delivery"} className={`tab ${tab === "delivery" ? "active" : ""}`} onClick={() => setTab("delivery")}>Рассылка материалов{st.delivery.override ? " ●" : ""}</button>
-            <button type="button" role="tab" aria-selected={tab === "model"} className={`tab ${tab === "model" ? "active" : ""}`} onClick={() => setTab("model")}>Языковая модель{st.llm.override ? " ●" : ""}</button>
+            <button type="button" role="tab" aria-selected={tab === "model"} className={`tab ${tab === "model" ? "active" : ""}`} onClick={() => setTab("model")}>Языковая модель{st.llm.override || st.llm_summary.override ? " ●" : ""}</button>
           </div>
           {tab === "delivery" && (
             <>
@@ -56,10 +58,13 @@ export default function MeetingSettingsDialog({ meetingId, roomId, onClose }: { 
           )}
           {tab === "model" && (
             <>
-              <LlmChoiceEditor scope="meeting" value={choice} onChange={setChoice} options={st.llm_options} effective={st.llm.effective} />
+              <h3 style={{ margin: "0 0 6px" }}>Модель для протокола</h3>
+              <LlmChoiceEditor scope="meeting" purpose="protocol" value={choice} onChange={setChoice} options={st.llm_options} effective={st.llm.effective} />
+              <h3 style={{ margin: "18px 0 6px" }}>Модель для резюме</h3>
+              <LlmChoiceEditor scope="meeting" purpose="summary" value={choiceSummary} onChange={setChoiceSummary} options={st.llm_options} effective={st.llm_summary.effective} />
               <div className="row form-actions">
                 <button type="button" className="btn primary" disabled={busy} onClick={() => void save("llm")}>Сохранить для этой встречи</button>
-                <button type="button" className="btn" disabled={busy || !st.llm.override} onClick={() => void save("llm", true)}>Вернуть как в комнате</button>
+                <button type="button" className="btn" disabled={busy || (!st.llm.override && !st.llm_summary.override)} onClick={() => void save("llm", true)}>Вернуть как в комнате</button>
               </div>
             </>
           )}

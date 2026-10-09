@@ -222,7 +222,7 @@ async def repairs_fix(repair_id: str, request: Request, su: SessionUser = Depend
     rep = ch.repairs() or {}
     boot_ca = bool((getattr(request.app.state, "boot_errors", {}) or {}).get("ca")) and repair_id == "data_dirs"
     # «Скачать модель» локальной LLM доступна всегда (идемпотентно: валидный файл не скачивается), остальные исправления — только найденные последней проверкой
-    if repair_id not in {i.get("id") for i in rep.get("items", [])} and not boot_ca and repair_id not in ("llm_model", "llm17_enable", "llm17_disable", "sip_enable", "sip_disable"):
+    if repair_id not in {i.get("id") for i in rep.get("items", [])} and not boot_ca and repair_id not in ("llm_model", "sip_enable", "sip_disable"):
         raise HTTPException(status_code=409, detail="Эта проблема сейчас не обнаружена — обновите проверку")
     try:
         rid = ch.request("repair", by=su.sam_account_name, repair=repair_id)

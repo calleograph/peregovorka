@@ -23,13 +23,13 @@ describe("телефонные участники", () => {
   });
 });
 
-const opts: LlmOptions = { system: { name: "Основной", provider: "external", model: "gpt-x" }, local: [{ id: "q", title: "Qwen3 0.6B", light: true, installed: true }],
+const opts: LlmOptions = { system: { name: "Основной", provider: "external", model: "gpt-x" }, local: [{ id: "q", title: "Qwen3 1.7B", light: true, installed: true }],
   profiles: [{ id: "p1", name: "Сильная", model: "big", is_default: false }], on_missing: "system" };
 
 describe("выбор языковой модели", () => {
   it("подписи вариантов", () => {
     expect(choiceLabel({ mode: "inherit", profile_id: null, local_model: null }, opts)).toBe("Как системная (gpt-x)");
-    expect(choiceLabel({ mode: "local", profile_id: null, local_model: "q" }, opts)).toBe("Qwen3 0.6B");
+    expect(choiceLabel({ mode: "local", profile_id: null, local_model: "q" }, opts)).toBe("Qwen3 1.7B");
     expect(choiceLabel({ mode: "profile", profile_id: "p1", local_model: null }, opts)).toBe("Сильная");
     expect(choiceLabel({ mode: "off", profile_id: null, local_model: null }, opts)).toBe("Отключена");
   });

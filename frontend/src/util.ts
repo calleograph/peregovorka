@@ -1,3 +1,16 @@
+/** Время суток с секундами в часовом поясе браузера: «10:42:13». */
+export const clock = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleTimeString("ru-RU", { hour12: false }) : "");
+
+/** Длительность словами: «4 мин 38 с», «52 с», «1 ч 05 мин». */
+export function spanRu(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s} с`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 ? `${m} мин ${s % 60} с` : `${m} мин`;
+  return `${Math.floor(m / 60)} ч ${String(m % 60).padStart(2, "0")} мин`;
+}
+
 export const fmt = (iso: string) => new Date(iso).toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" });
 
 export function duration(startIso: string, endIso: string | null): string {

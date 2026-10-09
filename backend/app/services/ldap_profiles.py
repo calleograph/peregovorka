@@ -272,6 +272,24 @@ class ProfileDirectory:
                 raise                              # неверный пароль/блокировка: решение принято, дальше не ходим
         raise unavailable or DirectoryError("user_not_found")
 
+    def lookup(self, login: str) -> DirectoryIdentity:
+        """Пользователь и его группы без проверки пароля (проверка правил доступа в админке)."""
+        cands = self._candidates(login)
+        if not cands:
+            raise DirectoryError("not_configured")
+        unavailable: DirectoryError | None = None
+        for _cfg, d in cands:
+            try:
+                return d.lookup(login)
+            except DirectoryError as exc:
+                if exc.code == "user_not_found":
+                    continue
+                if exc.code in ("server_unavailable", "tls_error", "service_account_error", "config_error"):
+                    unavailable = exc
+                    continue
+                raise
+        raise unavailable or DirectoryError("user_not_found")
+
     def check_service_account(self) -> None:
         if not self._dirs:
             raise DirectoryError("not_configured")

@@ -1,19 +1,28 @@
 import { Fragment } from "react";
 import type { SettingsValues } from "../../api";
 import type { Field } from "./SettingsForm";
+import HeadersEditor, { type HeaderRow } from "./HeadersEditor";
 
 /**
  * Редактор набора полей (название, пояснение, пример — у каждого). Используется и общей формой настроек, и профилями API.
  * Секреты не показываются: `values[name_set]` говорит, задан ли секрет; новое значение хранится отдельно в `secrets`.
  */
-export default function FieldsEditor({ fields, values, onChange, secrets, onSecret }: {
+export default function FieldsEditor({ fields, values, onChange, secrets, onSecret, headers, onHeaders }: {
   fields: Field[]; values: SettingsValues; onChange: (name: string, v: string | number | boolean | null) => void;
   secrets: Record<string, string>; onSecret: (name: string, v: string) => void;
+  /** Строки таблицы дополнительных заголовков (для полей типа «headers»); состояние держит форма-владелец. */
+  headers?: HeaderRow[]; onHeaders?: (rows: HeaderRow[]) => void;
 }) {
   const set = onChange;
   const setSecrets = (next: Record<string, string>) => { for (const k of Object.keys(next)) if (next[k] !== secrets[k]) onSecret(k, next[k]); };
   const visible = fields.filter((f) => !f.showIf || f.showIf(values));
-  const renderField = (f: Field) => (
+  const renderField = (f: Field) => f.type === "headers" ? (
+    <div key={f.name} className="field-block">
+      <span>{f.label}</span>
+      <HeadersEditor rows={headers ?? []} onChange={(r) => onHeaders?.(r)} />
+      {f.help && <span className="help">{f.help}</span>}
+    </div>
+  ) : (
     <label key={f.name} className={f.type === "bool" ? "check" : ""}>
       {f.type === "bool" ? (
         <>

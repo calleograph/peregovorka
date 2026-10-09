@@ -7,6 +7,7 @@ import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
+import { docState, generationLine } from "../components/GenerationInfo";
 import ProtocolViewer from "../components/ProtocolViewer";
 import { formatTime, renderProtocol } from "../transcript";
 import { bytes, downloadText, duration, fileBase, fmt } from "../util";
@@ -144,7 +145,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
             {protocols.map((p) => (
               <button key={p.id} className={`doc-item ${openId === p.id ? "active" : ""}`} onClick={() => setOpenId(p.id)}>
                 <span><b>{p.title || KIND_TITLE[p.kind] || p.kind}</b> <span className="badge">{KIND_TITLE[p.kind] ?? p.kind}</span></span>
-                <span className="muted small">{fmt(p.created_at)} · {p.status === "pending" ? "создаётся…" : p.status === "ready" ? (p.edited_at ? "отредактирован" : "готов") : "ошибка"}</span>
+                <span className="muted small">{fmt(p.created_at)} · {docState(p).label}</span>
+                {generationLine(p) && <span className="muted small">{generationLine(p)}</span>}
               </button>
             ))}
           </div>

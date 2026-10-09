@@ -37,11 +37,19 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     try:
         result = await request.app.state.auth.login(db, body.login, body.password, ip)
     except AuthError as exc:
-        journal.emit("auth", "login_locked" if exc.code == "throttled" else "login_failed", level="warn", user=login_shown, ip=ip, client=ua,
-                     message=exc.message, data={"code": exc.code, "retry_after": exc.retry_after, "http": exc.status})
+        if exc.code == "access_denied":   # пароль верный, но правила допуска не пропускают: отдельное событие для аудита
+            journal.emit("auth", "login_denied_acl", level="warn", user=login_shown, ip=ip, client=ua,
+                         message="Вход запрещён: пользователь не входит ни в одну разрешённую группу" if exc.reason == "not_in_allowed_groups"
+                         else "Вход запрещён: подключение каталога не предназначено для входа пользователей",
+                         data={"code": exc.code, "reason": exc.reason, "http": exc.status})
+        else:
+            journal.emit("auth", "login_locked" if exc.code == "throttled" else "login_failed", level="warn", user=login_shown, ip=ip, client=ua,
+                         message=exc.message, data={"code": exc.code, "retry_after": exc.retry_after, "http": exc.status})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
-    journal.emit("auth", "login_ok", user=result.session.sam_account_name, ip=ip, client=ua, data={"admin": bool(result.session.is_admin)})
+    d = result.decision
+    journal.emit("auth", "login_ok", user=result.session.sam_account_name, ip=ip, client=ua,
+                 data={"admin": bool(result.session.is_admin), **({"allowed_via": d.via[:5], "admin_via": d.admin_via[:5], "restricted": d.restricted} if d else {"local": True})})
     response.set_cookie(
         settings.cookie_name, result.session_id, httponly=True, secure=settings.cookie_secure,
         samesite="lax", path="/",

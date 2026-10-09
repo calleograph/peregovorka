@@ -18,7 +18,7 @@ interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
   room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
-  protocol_instructions: string; llm: LlmChoice; sip: RoomSip;
+  protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip;
 }
 
 const toForm = (r: RoomManage): Form => ({
@@ -26,7 +26,7 @@ const toForm = (r: RoomManage): Form => ({
   welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record,
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
-  protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), sip: r.sip ?? emptySip(),
+  protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(),
 });
 
 /**
@@ -64,7 +64,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
         record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
-        protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, sip: form.sip,
+        protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, llm_summary: form.llm_summary, sip: form.sip,
         ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}),
       });
       setRoom(r); setForm(toForm(r)); onSaved?.(r);
@@ -95,8 +95,9 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
       {error && !form && <div className="alert error" role="alert">{error}</div>}
       {form && room && (
         <form className="form room-form" onSubmit={save} noValidate>
+          {room.lifetime === "temporary" && <p className="muted small" style={{ marginTop: 0 }}>Временная переговорка: показаны только основные настройки. Кого пригласить — на вкладке «Доступ и гости»; языковая модель, телефония и рассылка материалов берутся из системных настроек.</p>}
           <div className="tabs" role="tablist" aria-label="Разделы настроек комнаты">
-            {TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
+            {TABS.filter(([id]) => room.lifetime !== "temporary" || !["model", "phone", "materials"].includes(id)).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
           </div>
 
           {tab === "main" && (
@@ -190,8 +191,13 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
 
           {tab === "model" && (
             <div role="tabpanel">
-              <LlmChoiceEditor scope="room" value={form.llm} onChange={(c) => set("llm", c)} options={room.llm_options} effective={room.llm_effective} />
+              <h3 style={{ margin: "0 0 6px" }}>Модель для протокола</h3>
+              <LlmChoiceEditor scope="room" purpose="protocol" value={form.llm} onChange={(c) => set("llm", c)} options={room.llm_options} effective={room.llm_effective} />
               {room.llm_effective && form.llm.mode !== room.llm?.mode && <p className="muted small">Сейчас сохранено: {choiceLabel(room.llm ?? emptyChoice(), room.llm_options)}. Нажмите «Сохранить», чтобы применить выбор.</p>}
+              <h3 style={{ margin: "18px 0 6px" }}>Модель для резюме</h3>
+              <p className="help" style={{ marginTop: 0 }}>Протокол и краткое резюме — разные задачи, поэтому у каждой своя модель и своё наследование: система → комната → встреча.</p>
+              <LlmChoiceEditor scope="room" purpose="summary" value={form.llm_summary} onChange={(c) => set("llm_summary", c)} options={room.llm_options} effective={room.llm_summary_effective} />
+              {room.llm_summary_effective && form.llm_summary.mode !== room.llm_summary?.mode && <p className="muted small">Сейчас сохранено: {choiceLabel(room.llm_summary ?? emptyChoice(), room.llm_options)}. Нажмите «Сохранить», чтобы применить выбор.</p>}
             </div>
           )}
 

@@ -2,10 +2,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { tabFromSearch } from "../navMenu";
 import AccessAdmin from "./admin/AccessAdmin";
+import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmFields, mailPolicyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmApiFields, llmModeFields, mailPolicyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -18,6 +19,7 @@ import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import LocalLlmPanel from "./admin/LocalLlmPanel";
+import { LlmEffectivePanel, LlmStatsPanel } from "./admin/LlmOverview";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
 
@@ -34,6 +36,7 @@ const GROUPS: Group[] = [
   { title: "LDAP и доступ", pages: [
     { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
     { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
+    { id: "login_access", label: "Доступ к системе (кто может входить)", render: (go) => <LoginAccessAdmin onOpen={go} /> },
     { id: "access", label: "Доступ к администрированию", render: () => <AccessAdmin /> },
   ] },
   { title: "Хранилища", pages: [
@@ -76,10 +79,14 @@ const GROUPS: Group[] = [
       </>) },
     { id: "llm", label: "Языковая модель (LLM)", render: () => (
       <>
+        <LlmEffectivePanel />
+        <SettingsForm key="llm-mode" group="llm" title="Системные значения по умолчанию: какая модель что делает" fields={llmModeFields}
+          intro="Эти значения действуют, пока для переговорки, встречи или конкретного формирования документа не выбрана другая модель. Порядок выбора при формировании: модель, выбранная в окне «Сформировать» → настройка встречи → настройка переговорки → эти значения." />
         <LocalLlmPanel />
-        <SettingsForm key="llm" group="llm" title="Языковая модель: режим и внешний API" fields={llmFields} testable
-          intro="Выберите, чем формировать протоколы и резюме: встроенной локальной моделью, внешней LLM или ничем. Для внешней модели действует обезличивание: если оно включено, данные отправляются только после него; если выключено (в общих настройках или в переговорке) — в исходном виде. Локальная модель данные наружу не отправляет, поэтому обезличивание для неё по умолчанию не применяется (в настройках переговорки его можно включить принудительно)." />
-        <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmFields} />
+        <SettingsForm key="llm-api" group="llm" title="Внешний API по умолчанию (прежние общие настройки)" fields={llmApiFields} testable
+          intro="Подключение к внешней модели, которое используется, когда выше выбрано «Внешняя LLM». Для внешней модели действует обезличивание по правилам переговорки. Несколько подключений можно завести в разделе ниже." />
+        <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmApiFields} />
+        <LlmStatsPanel />
       </>) },
     { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
   ] },

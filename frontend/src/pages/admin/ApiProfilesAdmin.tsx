@@ -2,11 +2,13 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ApiProfile, type ProfileKind, type SettingsValues, type TestResult } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
 import FieldsEditor from "./FieldsEditor";
+import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import type { Field } from "./SettingsForm";
 
 const SECRET: Record<ProfileKind, string> = { llm: "api_key", anonymizer: "token" };
 const DEFAULTS: Record<ProfileKind, SettingsValues> = {
-  llm: { type: "openai_compatible", base_url: "", model: "", routing_provider: "", max_tokens: 4000, temperature: 0.2, timeout: 180, use_corporate_ca: true, allow_http: false },
+  llm: { type: "openai_compatible", base_url: "", model: "", routing_provider: "", max_tokens_summary: null, max_tokens_protocol: null, context_window: 0, temperature: 0,
+    timeout: 180, send_temperature: true, supports_system: true, supports_streaming: false, supports_json: true, use_corporate_ca: true, allow_http: false },
   anonymizer: { profile: "docclean", base_url: "", docclean_mode: "ai_ready", docclean_groups: "", connect_timeout: 5, timeout: 60, max_chunk_chars: 20000, use_corporate_ca: true,
     allow_http: false, endpoint: "/anonymize", request_field: "text", response_field: "anonymized_text", status_field: "", status_ok_value: "", auth_type: "bearer",
     auth_header_name: "X-API-Key", auth_username: "", extra_body: "" },
@@ -25,6 +27,7 @@ interface Edit { id?: string; name: string; values: SettingsValues; secrets: Rec
 export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; fields: Field[] }) {
   const [rows, setRows] = useState<ApiProfile[]>([]);
   const [edit, setEdit] = useState<Edit | null>(null);
+  const [headers, setHeaders] = useState<HeaderRow[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [tests, setTests] = useState<Record<string, TestResult | "running">>({});
@@ -37,16 +40,19 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
   const load = useCallback(() => api.admin.profiles(kind).then(setRows).catch((e) => setErr(e.message)), [kind]);
   useEffect(() => { setEdit(null); setTests({}); void load(); }, [load]);
 
-  const open = (p?: ApiProfile) => setEdit(p
+  const open = (p?: ApiProfile) => { setHeaders(p ? headersFromValues(p.config as SettingsValues) : []); setEdit(p
     ? { id: p.id, name: p.name, values: { ...DEFAULTS[kind], ...(p.config as SettingsValues), [`${SECRET[kind]}_set`]: p.secret_set }, secrets: {}, secretSet: p.secret_set }
-    : { name: "", values: { ...DEFAULTS[kind], [`${SECRET[kind]}_set`]: false }, secrets: {}, secretSet: false });
+    : { name: "", values: { ...DEFAULTS[kind], [`${SECRET[kind]}_set`]: false }, secrets: {}, secretSet: false }); };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!edit) return;
     setBusy(true); setErr("");
     const config: Record<string, unknown> = {};
-    for (const f of editFields) if (f.type !== "secret") config[f.name] = edit.values[f.name];
+    for (const f of editFields) {
+      if (f.type === "headers") Object.assign(config, headersPayload(headers));
+      else if (f.type !== "secret") config[f.name] = edit.values[f.name];
+    }
     const secret = SECRET[kind] in edit.secrets ? edit.secrets[SECRET[kind]] : undefined;
     try {
       if (edit.id) await api.admin.updateProfile(edit.id, { name: edit.name, config, ...(secret !== undefined ? { secret } : {}) });
@@ -113,7 +119,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
             <span className="help">Так профиль называется в списках и в настройках переговорок.</span></label>
           <FieldsEditor fields={editFields} values={edit.values} secrets={edit.secrets}
                         onChange={(n, v) => setEdit({ ...edit, values: { ...edit.values, [n]: v } })}
-                        onSecret={(n, v) => setEdit({ ...edit, secrets: { ...edit.secrets, [n]: v } })} />
+                        onSecret={(n, v) => setEdit({ ...edit, secrets: { ...edit.secrets, [n]: v } })} headers={headers} onHeaders={setHeaders} />
           <div className="row"><button className="btn primary" disabled={busy}>Сохранить</button><button type="button" className="btn ghost" onClick={() => setEdit(null)}>Отмена</button></div>
         </form>
       )}

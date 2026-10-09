@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# llmlib.sh — локальная языковая модель (LLM): манифест модели, проверка файла, загрузка, признак «включена и пригодна к запуску».
+# llmlib.sh — локальная языковая модель (LLM): манифест модели, проверка файла, загрузка, признак «включена и можно запускать».
 #
-# Модель — Qwen3 0.6B (квантование Q4_K_M, формат GGUF, ~484 МБ), runtime — llama.cpp (llama-server, CPU) в контейнере `llm-local`.
-# Файл хранится ВНЕ образов: ${DATA_ROOT}/models/llm/ — при обновлении проекта заново не скачивается. Данные из этой модели наружу не уходят:
+# Модель — Qwen3 1.7B (квантование Q4_K_M, формат GGUF, ~1,28 ГБ), runtime — llama.cpp (llama-server, CPU) в контейнере `llm-local`.
+# Файл хранится ВНЕ образов: ${DATA_ROOT}/models/llm/ — при обновлении проекта заново не скачивается. Данные из этой модели наружу не отправляются:
 # контейнер подключён только к внутренней сети compose (internal), доступ к нему есть у backend.
 #
-# Источник: файл Qwen_Qwen3-0.6B-Q4_K_M.gguf из репозитория bartowski/Qwen_Qwen3-0.6B-GGUF (484 220 320 байт). В репозитории
-# tensorblock/Qwen_Qwen3-0.6B-GGUF файла Q4_K_M нет (только Q2_K и Q3_K_M) — поэтому используется bartowski. Адрес, имя и хеш можно переопределить
+# Прежняя Qwen3 0.6B больше не устанавливается и не предлагается: для протоколов она оказалась слишком слабой. Её файл на старых серверах можно удалить
+# (${DATA_ROOT}/models/llm/Qwen3-0.6B-Q4_K_M.gguf).
+#
+# Источник: файл Qwen_Qwen3-1.7B-Q4_K_M.gguf из репозитория bartowski/Qwen_Qwen3-1.7B-GGUF (1 282 439 584 байт). Адрес, имя и хеш можно переопределить
 # в .env (LLM_MODEL_URL, LLM_MODEL_FILE, LLM_MODEL_SHA256); LLM_MODEL_SHA256=skip отключает проверку хеша (остаётся проверка размера).
 #
-# Как добавить другую локальную модель (например, Gemma 3 4B): положить её .gguf в ${DATA_ROOT}/models/llm, задать LLM_MODEL_FILE, LLM_MODEL_URL,
+# Как добавить другую локальную модель (например, более крупную): положить её .gguf в ${DATA_ROOT}/models/llm, задать LLM_MODEL_FILE, LLM_MODEL_URL,
 # LLM_MODEL_SHA256, LLM_MODEL_BYTES (и LLM_MODEL_ALIAS) в .env и добавить запись в LOCAL_MODELS (backend/app/services/local_llm.py). Остальная система
 # обращается к модели по OpenAI-совместимому API (/v1/chat/completions) и от конкретного runtime не зависит.
 #
@@ -18,12 +20,12 @@
 if [ -n "${_VM_LLMLIB_LOADED:-}" ]; then return 0; fi
 _VM_LLMLIB_LOADED=1
 
-LLM_DEFAULT_FILE="Qwen3-0.6B-Q4_K_M.gguf"
-LLM_DEFAULT_URL="https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf"
-LLM_DEFAULT_BYTES=484220320
-LLM_DEFAULT_SHA256="9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
+LLM_DEFAULT_FILE="Qwen3-1.7B-Q4_K_M.gguf"
+LLM_DEFAULT_URL="https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf"
+LLM_DEFAULT_BYTES=1282439584
+LLM_DEFAULT_SHA256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
 LLM_DEFAULT_IMAGE="ghcr.io/ggml-org/llama.cpp:server-b11371"
-LLM_DEFAULT_ALIAS="qwen3-0.6b-q4_k_m"
+LLM_DEFAULT_ALIAS="qwen3-1.7b-q4_k_m"
 
 llm_file_name()  { printf '%s' "${LLM_MODEL_FILE:-$LLM_DEFAULT_FILE}"; }
 llm_dir()        { printf '%s' "${DATA_ROOT:-}/models/llm"; }
@@ -39,7 +41,7 @@ llm_local_enabled() { [ "${LLM_LOCAL_ENABLED:-yes}" = "yes" ]; }
 
 _llm_size() { stat -c '%s' "$1" 2>/dev/null || wc -c < "$1" 2>/dev/null || echo 0; }
 
-# sha256 файла с кэшем: повторные проверки (verify, обновление) не читают 484 МБ заново, пока размер и время изменения те же.
+# sha256 файла с кэшем: повторные проверки (verify, обновление) не читают 1,3 ГБ заново, пока размер и время изменения те же.
 llm_sha_cached() { # путь → печатает sha256
   local f="$1" cache="$1.sha256" key sum
   key="$(_llm_size "$f") $(stat -c '%y %i' "$f" 2>/dev/null || echo 0)"
@@ -131,32 +133,11 @@ llm_local_active() {
   return 0
 }
 
-# ---- Qwen3 1.7B Q4_K_M — необязательная модель в отдельном контейнере `llm-local-17b` (compose profile `llm17`).
-# Не входит в обычную установку: администратор включает её командой `sudo scripts/llm.sh enable-17b` (или кнопкой в админке). Файл — рядом с основной моделью
-# (${DATA_ROOT}/models/llm), проверяется по размеру и SHA-256 тем же кодом, что и основная (подмена LLM_MODEL_* в подоболочке).
-LLM17_FILE="Qwen3-1.7B-Q4_K_M.gguf"
-LLM17_URL="https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf"
-LLM17_BYTES=1282439584
-LLM17_SHA256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
-LLM17_ALIAS="qwen3-1.7b-q4_k_m"
-
-llm17_enabled() { [ "${LLM_17B_ENABLED:-no}" = "yes" ]; }
-_llm17() { ( export LLM_MODEL_FILE="$LLM17_FILE" LLM_MODEL_URL="$LLM17_URL" LLM_MODEL_BYTES="$LLM17_BYTES" LLM_MODEL_SHA256="$LLM17_SHA256"; "$@" ); }
-llm17_model_state() { _llm17 llm_model_state; }
-llm17_model_fetch() { _llm17 llm_model_fetch "$@"; }
-
-_LLM17_ACTIVE=""
-llm17_refresh() { _LLM17_ACTIVE=""; }
-llm17_active() {   # контейнер llm-local-17b нужно запускать: включён в .env, файл валиден, образ runtime есть
-  if [ -n "$_LLM17_ACTIVE" ]; then [ "$_LLM17_ACTIVE" = 1 ]; return; fi
-  _LLM17_ACTIVE=0
-  llm17_enabled || return 1
-  [ -n "${DATA_ROOT:-}" ] || return 1
-  [ "$(llm17_model_state)" = ok ] || return 1
-  command -v docker >/dev/null 2>&1 || return 1
-  docker image inspect "$(llm_image)" >/dev/null 2>&1 || return 1
-  _LLM17_ACTIVE=1
-  return 0
+# В версии 0.6.0 Qwen3 1.7B запускалась отдельным необязательным контейнером llm-local-17b; теперь 1.7B — основная модель в llm-local. Старый контейнер, если он остался, убираем.
+llm_remove_legacy_container() {
+  command -v docker >/dev/null 2>&1 || return 0
+  [ -n "${COMPOSE_PROJECT_NAME:-}" ] || return 0
+  docker rm -f "${COMPOSE_PROJECT_NAME}-llm-local-17b-1" >/dev/null 2>&1 || true
 }
 
 # Подготовка при установке/обновлении: файл модели + образ runtime. Мягкий режим (soft): любая неудача — явное сообщение, но не отказ,
@@ -165,6 +146,7 @@ llm_prepare() { # llm_prepare [soft]
   local soft="${1:-}" st
   if ! llm_local_enabled; then info "Локальная LLM отключена (LLM_LOCAL_ENABLED=no) — пропущено."; return 0; fi
   if [ "${DRY_RUN:-0}" = "1" ]; then info "[dry-run] локальная LLM: $(llm_file_name) → $(llm_dir) (если ещё нет), образ $(llm_image)"; return 0; fi
+  llm_remove_legacy_container
   st="$(llm_model_state)"
   if [ "$st" != ok ]; then
     if ! llm_model_fetch; then

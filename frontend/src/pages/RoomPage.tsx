@@ -17,7 +17,7 @@ import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../mi
 import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { LiveBus, backoffDelay } from "../liveSocket";
-import { fileBase as fileBaseName } from "../util";
+import { copyText, fileBase as fileBaseName } from "../util";
 import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
 import { takePreJoin } from "../prejoin";
@@ -57,9 +57,10 @@ function Ctl({ error, onClose, children }: { error?: string; onClose: () => void
 /** Гостевой вход: сессия уже создана страницей гостя (имя, проверка оборудования); здесь — сама комната без административных функций. */
 export interface GuestSession { info: GuestJoinInfo; onLeft: (why: "left" | "ended") => void }
 
-export default function RoomPage({ guest, selfName }: { guest?: GuestSession; selfName?: string }) {
+export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: GuestSession; selfName?: string; roomIdOverride?: string }) {
   const { roomId: routeRoomId = "" } = useParams();
-  const roomId = guest ? guest.info.room.id : routeRoomId;
+  // адрес в строке — технический идентификатор комнаты; для запросов к серверу RoomRoute передаёт её UUID
+  const roomId = guest ? guest.info.room.id : (roomIdOverride ?? routeRoomId);
   const navigate = useNavigate();
   const bus = useMemo(() => new LiveBus(), []);
   const [boardMounted, setBoardMounted] = useState(false);
@@ -819,6 +820,7 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
       <section className={`stage ${recording && !ended ? "is-recording" : ""}`}>
         <div className="room-head row">
           <h1>{room.name}</h1>
+          {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
@@ -831,6 +833,10 @@ export default function RoomPage({ guest, selfName }: { guest?: GuestSession; se
           )}
           {room.transcription_enabled && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
           <div className="spacer" />
+          {room.lifetime === "temporary" && !guest && (
+            <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`)}
+                    title="Адрес комнаты: коллеги, которым вы дали доступ («Настройки комнаты» → доступ), смогут войти по нему">Скопировать ссылку</button>
+          )}
           {isLeader && <button className="btn mini" onClick={() => setPhoneOpen(true)} title="Позвонить на телефон через SIP: абонент подключится к встрече"><Icon name="phone" size={15} /> Позвонить</button>}
           {isLeader && <button className="btn mini" onClick={() => setMeetingSettingsOpen(true)} title="Рассылка материалов и языковая модель только для этой встречи"><Icon name="sliders" size={15} /> Эта встреча</button>}
           {isLeader && <button className="btn mini" onClick={() => setManageOpen(true)} title="Название, режим, запись, доступ, материалы после встречи, языковая модель и телефония"><Icon name="gear" size={15} /> Настройки комнаты</button>}

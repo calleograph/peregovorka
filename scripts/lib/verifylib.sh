@@ -257,7 +257,7 @@ verify_deployment() {
 
   check_build_versions
 
-  log "-- локальная LLM (Qwen3 0.6B) --"
+  log "-- локальная LLM (Qwen3 1.7B) --"
   verify_local_llm
 
   log "-- SIP-телефония --"

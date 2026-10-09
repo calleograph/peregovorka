@@ -225,7 +225,7 @@ log "================================================================"
 printf '  %-34s %s\n' "Сервисы (Docker)" "$(smoke_state "Backend" "Frontend")" \
   "База данных" "$(smoke_state "PostgreSQL" "Redis" "Миграции (Alembic)")" \
   "Распознавание речи (ASR)" "$(smoke_state "ASR")" \
-  "Локальная LLM (Qwen3 0.6B)" "$(llm_banner_state)" \
+  "Локальная LLM (Qwen3 1.7B)" "$(llm_banner_state)" \
   "Звонки (LiveKit)" "$(smoke_state "LiveKit HTTP" "RTC TCP" "RTC UDP")" \
   "Веб-интерфейс" "$(smoke_state "Frontend" "Тестовая комната")" \
   "Помощник обновлений в браузере" "$UPD_NOTE"

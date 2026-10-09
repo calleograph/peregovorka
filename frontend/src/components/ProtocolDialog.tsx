@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type ApiError, type ProtocolKind, type ProtocolPlan, type ProtocolTemplate } from "../api";
+import { api, type ApiError, type LlmChoiceOnce, type ProtocolKind, type ProtocolPlan, type ProtocolTemplate } from "../api";
 import { Modal } from "./Dialogs";
 
 interface Props {
@@ -28,6 +28,9 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<ProtocolPlan | null>(null);
+  const [choices, setChoices] = useState<LlmChoiceOnce[]>([]);
+  const [canOverride, setCanOverride] = useState(false);
+  const [llmKey, setLlmKey] = useState("");     // "" — модель по настройкам; иначе модель только для этого формирования
 
   const loadTemplates = useCallback(() => api.templates().then(setTemplates).catch(() => undefined), []);
   useEffect(() => { void loadTemplates(); }, [loadTemplates]);
@@ -35,15 +38,18 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.defaultInstruction(meetingId, kind).then((r) => {
+    api.defaultInstruction(meetingId, kind, llmKey).then((r) => {
       if (cancelled) return;
       setDefaultText(r.instruction);
       setPlan(r.plan ?? null);
-      setInstruction((cur) => (initialInstruction !== undefined && kind === kind0 ? cur || initialInstruction : r.instruction));
+      setChoices(r.llm_choices ?? []);
+      setCanOverride(!!r.can_override);
+      // смена модели пересчитывает только прогноз: введённая инструкция остаётся
+      setInstruction((cur) => (cur.trim() ? cur : initialInstruction !== undefined && kind === kind0 ? initialInstruction : r.instruction));
     }).catch((e) => { if (!cancelled) setErr((e as ApiError).message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId, kind]);
+  }, [meetingId, kind, llmKey]);
 
   const visible = useMemo(() => templates.filter((t) => t.kind === "any" || t.kind === kind), [templates, kind]);
   const chosen = templates.find((t) => t.id === tplId);
@@ -63,7 +69,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   };
   const start = async () => {
     setBusy(true); setErr("");
-    try { const r = await api.createProtocol(meetingId, kind, instruction.trim()); onStarted(r.protocol_id); onClose(); }
+    try { const r = await api.createProtocol(meetingId, kind, instruction.trim(), llmKey); onStarted(r.protocol_id); onClose(); }
     catch (e) { setErr((e as ApiError).message); setBusy(false); }
   };
 
@@ -72,10 +78,36 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
       <div className="row">
         <span className="seg" role="group" aria-label="Вид документа">
           {(Object.keys(KIND_LABEL) as ProtocolKind[]).map((k) => (
-            <button key={k} type="button" aria-pressed={kind === k} onClick={() => { setKind(k); setTplId(""); setInstruction(""); }}>{KIND_LABEL[k]}</button>
+            <button key={k} type="button" aria-pressed={kind === k} onClick={() => { setKind(k); setTplId(""); setInstruction(""); setLlmKey(""); }}>{KIND_LABEL[k]}</button>
           ))}
         </span>
       </div>
+      {plan && (
+        <fieldset className="group" aria-label="Какая модель будет работать">
+          <legend>Модель</legend>
+          <p style={{ margin: 0 }}>
+            <b>{plan.llm_profile || "не выбрана"}</b>
+            {plan.llm_local ? " · локальная, данные остаются на сервере" : plan.llm_ready ? ` · внешняя API${plan.llm_model ? `, модель ${plan.llm_model}` : ""}` : ""}
+            {plan.once ? " · выбрана на один раз" : plan.llm_source === "meeting" ? " · настройка встречи" : plan.llm_source === "room" ? " · настройка переговорки" : plan.llm_source === "system" ? " · системная по умолчанию" : ""}
+          </p>
+          {canOverride && (
+            <label style={{ marginTop: 6 }}>Использовать другую модель только для этого формирования
+              <select value={llmKey} onChange={(e) => setLlmKey(e.target.value)} disabled={busy}>
+                <option value="">Не менять: как настроено ({plan && !plan.once ? plan.llm_profile : "по настройкам"})</option>
+                {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+              <span className="help">Настройки переговорки и системы не меняются. Для внешней модели действует обезличивание по правилам переговорки; факт выбора записывается в журнал.</span>
+            </label>
+          )}
+          {plan.forecast && (
+            <p className="small" style={{ margin: "6px 0 0" }}>Ожидаемое время: <b>{plan.forecast.text}</b>
+              <span className="muted"> · {plan.forecast.note}{plan.forecast.chunks > 1 ? ` · частей: ${plan.forecast.chunks}` : ""}</span></p>
+          )}
+          {plan.max_output_tokens ? (
+            <p className="muted small" style={{ margin: "4px 0 0" }}>Предел длины ответа модели: {plan.max_output_tokens} токенов{plan.max_output_note ? ` (${plan.max_output_note})` : ""}.</p>
+          ) : null}
+        </fieldset>
+      )}
       {plan?.warnings?.map((w) => <div key={w} className="alert info" role="status">⚠ {w}</div>)}
       <label>Инструкция для модели
         <textarea rows={9} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} maxLength={20000}
@@ -115,7 +147,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
       <div className="row">
         <button className="btn primary" onClick={start} disabled={busy || loading || !instruction.trim()}>{busy ? "Отправка…" : "Сформировать"}</button>
         <button className="btn ghost" onClick={onClose} disabled={busy}>Отмена</button>
-        <span className="muted small">Документ появится на странице встречи; обычно это занимает до минуты.</span>
+        <span className="muted small">Документ появится на странице встречи{plan?.forecast ? `; ожидайте ${plan.forecast.text}` : ""}.</span>
       </div>
     </Modal>
   );

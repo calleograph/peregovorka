@@ -1,12 +1,13 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import FieldsEditor from "./FieldsEditor";
+import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import { api, type ApiError, type SettingsGroup, type SettingsValues, type StorageProfile, type TestResult } from "../../api";
 
 export interface Field {
   name: string;
   /** Полное название поля — по нему администратор ориентируется в форме. */
   label: string;
-  type: "text" | "number" | "bool" | "select" | "textarea" | "secret";
+  type: "text" | "number" | "bool" | "select" | "textarea" | "secret" | "headers";
   options?: [string, string][];
   /** Что делает поле и на что влияет. */
   help?: string;
@@ -39,6 +40,7 @@ interface Props {
 export default function SettingsForm({ group, title, intro, fields, testable, note }: Props) {
   const [values, setValues] = useState<SettingsValues | null>(null);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [headers, setHeaders] = useState<HeaderRow[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [test, setTest] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +51,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
   const shown = wantsProfiles ? fields.map((f) => f.name !== "profile_id" ? f : { ...f, options: [["", profiles.length ? "Не выбрано" : "Не выбрано (хранилищ пока нет — создайте в разделе «Хранилища»)"] as [string, string],
     ...profiles.map((p) => [p.id, `${p.name} — ${p.address.length > 48 ? `${p.address.slice(0, 45)}…` : p.address}`] as [string, string])] }) : fields;
 
-  const load = useCallback(() => api.admin.settings(group).then((v) => { setValues(v); setSecrets({}); }).catch((e) => setMsg({ ok: false, text: e.message })), [group]);
+  const load = useCallback(() => api.admin.settings(group).then((v) => { setValues(v); setSecrets({}); setHeaders(headersFromValues(v)); }).catch((e) => setMsg({ ok: false, text: e.message })), [group]);
   useEffect(() => { setValues(null); setMsg(null); setTest(null); void load(); }, [load]);
 
   if (!values) return msg ? <div className="alert error">{msg.text}</div> : <div className="muted">Загрузка…</div>;
@@ -60,10 +62,11 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
     setBusy(true); setMsg(null); setTest(null);
     const body: SettingsValues = {};
     for (const f of fields) {
-      if (f.type === "secret") { if (f.name in secrets) body[f.name] = secrets[f.name]; }
+      if (f.type === "headers") Object.assign(body, headersPayload(headers) as unknown as SettingsValues);
+      else if (f.type === "secret") { if (f.name in secrets) body[f.name] = secrets[f.name]; }
       else body[f.name] = values[f.name] as string | number | boolean | null;
     }
-    try { setValues(await api.admin.saveSettings(group, body)); setSecrets({}); setMsg({ ok: true, text: "Сохранено" }); }
+    try { const saved = await api.admin.saveSettings(group, body); setValues(saved); setSecrets({}); setHeaders(headersFromValues(saved)); setMsg({ ok: true, text: "Сохранено" }); }
     catch (err) { setMsg({ ok: false, text: (err as ApiError).message }); }
     finally { setBusy(false); }
   };
@@ -78,7 +81,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
     <form className="card form" onSubmit={save}>
       <h2>{title}</h2>
       {intro && <p className="muted">{intro}</p>}
-      <FieldsEditor fields={shown} values={values} onChange={set} secrets={secrets} onSecret={(n, v) => setSecrets((x) => ({ ...x, [n]: v }))} />
+      <FieldsEditor fields={shown} values={values} onChange={set} secrets={secrets} onSecret={(n, v) => setSecrets((x) => ({ ...x, [n]: v }))} headers={headers} onHeaders={setHeaders} />
       {note && <p className="muted small">{note}</p>}
       <div className="row">
         <button className="btn primary" disabled={busy}>Сохранить</button>

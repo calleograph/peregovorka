@@ -22,7 +22,7 @@ from ..auth.deps import SessionUser
 from ..config import Settings
 from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
-from . import events, roles
+from . import events, roles, temp_rooms
 from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
@@ -39,7 +39,7 @@ from .livekit import (
     set_publish_permission,
     user_identity,
 )
-from .rooms import RoomNotFound, get_accessible_room
+from .rooms import RoomNotFound, acl_allows, get_accessible_room
 
 log = logging.getLogger("app.meetings")
 
@@ -77,7 +77,23 @@ class MeetingService:
         self.settings_svc = None  # SettingsService (срок «аренды» доступа после завершения), назначается в main
 
     # ------------------------------------------------------------------ вход
+    async def _sync_room(self, db: AsyncSession, room: Room | None, meeting: Meeting | None) -> None:
+        """Временная комната: «в ней кто-то есть» ↔ «все вышли, ждём возврата» (срок закрытия); для постоянной ничего не делает."""
+        if room is None or room.lifetime != "temporary":
+            return
+        cfg = await self.settings_svc.get(db, "general") if self.settings_svc is not None else None
+        temp_rooms.sync_lifecycle(room, meeting, cfg)    # type: ignore[arg-type]
+        await db.commit()
+
+    async def _temp_grace_seconds(self, db: AsyncSession, room: Room | None) -> float | None:
+        if room is None or room.lifetime != "temporary" or self.settings_svc is None:
+            return None
+        return (await self.settings_svc.get(db, "general")).temp_room_grace_minutes * 60      # type: ignore[attr-defined]
+
     async def join(self, db: AsyncSession, room_id: uuid.UUID, su: SessionUser, password: str | None) -> JoinResult:
+        closed = await db.get(Room, room_id)
+        if closed is not None and closed.lifecycle == "closed" and acl_allows(closed, su):
+            raise JoinError("room_closed", "Временная переговорка закрыта. Материалы встречи — в «Истории».", 410)
         try:
             room = await get_accessible_room(db, room_id, su)
         except RoomNotFound:
@@ -124,6 +140,7 @@ class MeetingService:
             db.add(MeetingParticipant(meeting_id=meeting.id, user_id=su.user_id))
         meeting.empty_since = None
         await db.commit()
+        await self._sync_room(db, room, meeting)
 
         if created:
             await self._bridge.start(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(room.id),
@@ -153,6 +170,8 @@ class MeetingService:
     async def join_guest(self, db: AsyncSession, room: Room, display_name: str, *, ip: str | None, client: str | None) -> JoinResult:
         """Вход гостя по гостевой ссылке. Гость НЕ начинает встречу: она должна быть уже активна (иначе незнакомый человек
         запускал бы запись и ASR в пустой комнате). Права минимальные: без демонстрации экрана и без управления."""
+        if room.lifecycle == "closed":
+            raise JoinError("room_closed", "Эта временная переговорка закрыта.", 410)
         meeting = await self._active_meeting(db, room.id)
         if meeting is None:
             raise JoinError("meeting_not_active", "Встреча ещё не началась. Дождитесь, пока её откроет сотрудник.", 409)
@@ -165,6 +184,7 @@ class MeetingService:
         db.add(guest)
         meeting.empty_since = None
         await db.commit()
+        await self._sync_room(db, room, meeting)
         await events.publish(self._r, meeting.id, {"type": "participant_joined", "guest_id": str(guest.id),
                                                    "display_name": f"{display_name} (гость)", "participant_type": "guest"})
         return self._guest_result(meeting, room, guest)
@@ -275,6 +295,7 @@ class MeetingService:
         elif open_count > 0:
             meeting.empty_since = None
         await db.commit()
+        await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
 
     # ------------------------------------------------------------ завершение
     async def end(self, db: AsyncSession, meeting: Meeting, reason: str, *, kick: bool = False) -> bool:
@@ -301,6 +322,9 @@ class MeetingService:
         await events.publish(self._r, meeting.id, {"type": "meeting_ended", "reason": reason})
         if kick:
             await delete_livekit_room(self._s, meeting.livekit_room)
+        room = await db.get(Room, meeting.room_id)
+        if room is not None and temp_rooms.close(room, reason):      # временная переговорка живёт, пока идёт встреча; материалы остаются
+            await db.commit()
         if self.on_ended is not None:
             self.on_ended(meeting.id)
         if self.on_ended_extra is not None:
@@ -325,6 +349,7 @@ class MeetingService:
         row.connected_at = row.connected_at or utcnow()
         meeting.empty_since = None
         await db.commit()
+        await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
 
     async def on_participant_left(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await self._close_participant(db, meeting_id, user_id)
@@ -353,8 +378,11 @@ class MeetingService:
             await db.commit()
             await self._update_emptiness(db, meeting.id)
             await db.refresh(meeting)
+        grace = await self._temp_grace_seconds(db, await db.get(Room, meeting.room_id))
+        if grace is None:
+            grace = self._s.meeting_end_grace_seconds
         if (meeting.ended_at is None and meeting.empty_since is not None
-                and now - meeting.empty_since >= timedelta(seconds=self._s.meeting_end_grace_seconds)):
+                and now - meeting.empty_since >= timedelta(seconds=grace)):
             await self.end(db, meeting, "empty")
 
     async def reap_once(self, db: AsyncSession) -> int:
@@ -365,7 +393,33 @@ class MeetingService:
             except Exception:  # noqa: BLE001
                 log.exception("Ошибка сверки встречи", extra={"meeting_id": str(m.id)})
                 await db.rollback()
+        try:
+            await self.cleanup_temporary(db)
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка очистки временных переговорок")
+            await db.rollback()
         return len(active)
+
+    async def cleanup_temporary(self, db: AsyncSession) -> int:
+        """Зависшие временные комнаты: встреча дольше предельного срока завершается принудительно; комната, в которую никто так и не вошёл, закрывается."""
+        if self.settings_svc is None:
+            return 0
+        rooms = (await db.execute(select(Room).where(Room.lifetime == "temporary", Room.lifecycle != "closed"))).scalars().all()
+        if not rooms:
+            return 0
+        cfg = await self.settings_svc.get(db, "general")
+        now, n = utcnow(), 0
+        for room in rooms:
+            meeting = await self._active_meeting(db, room.id)
+            if meeting is not None:
+                if now - meeting.started_at >= timedelta(hours=cfg.temp_room_max_hours):      # type: ignore[attr-defined]
+                    await self.end(db, meeting, "temp_ttl", kick=True)
+                    n += 1
+            elif now - room.created_at >= timedelta(minutes=cfg.temp_room_idle_minutes) or (room.auto_close_at and now >= room.auto_close_at):  # type: ignore[attr-defined]
+                if temp_rooms.close(room, "idle"):
+                    await db.commit()
+                    n += 1
+        return n
 
     # ----------------------------------------------------- состояние встречи в Redis: слово и привилегированные
     @staticmethod

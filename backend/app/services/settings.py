@@ -30,7 +30,12 @@ class _Group(BaseModel):
     model_config = {"extra": "forbid"}
 
     @classmethod
-    def merge_hint(cls, merged: dict, patch: dict) -> None:
+    def derived_fields(cls, patch: dict) -> tuple[str, ...]:
+        """Поля, которые `merge_hint` вычисляет из присланных (их тоже нужно сохранить). По умолчанию таких нет."""
+        return ()
+
+    @classmethod
+    def merge_hint(cls, merged: dict, patch: dict, current: dict | None = None) -> None:
         """Поправка слияния «текущие значения + patch» до проверки (для групп с выводимыми полями). По умолчанию ничего не делает."""
 
 
@@ -212,25 +217,76 @@ class AnonymizerSettings(_Group):
         return self
 
 
+def merge_secret_headers(old: dict, new: dict) -> dict[str, str]:
+    """Секретные заголовки: значение None — оставить прежнее (клиент его не знает), имени нет в новом списке — заголовок удаляется."""
+    res: dict[str, str] = {}
+    for k, v in (new or {}).items():
+        k = _header_name(k)
+        val = old.get(k) if v is None else _header_value(str(v))
+        if val:
+            res[k] = val
+    return res
+
+
+DEFAULT_MAX_SUMMARY = 2000
+DEFAULT_MAX_PROTOCOL = 7000
+_HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
+_FORBIDDEN_HEADERS = {"host", "content-length", "transfer-encoding", "connection", "content-type"}
+
+
+def _header_name(name: str) -> str:
+    name = str(name).strip()
+    if not _HEADER_NAME.match(name):
+        raise ValueError("Имя заголовка: латиница, цифры и «-», до 64 знаков")
+    if name.lower() in _FORBIDDEN_HEADERS:
+        raise ValueError(f"Заголовок {name} задавать нельзя")
+    return name
+
+
+def _header_value(value: str) -> str:
+    value = str(value).strip()
+    if len(value) > 2000 or re.search(r"[\r\n\x00]", value):
+        raise ValueError("Значение заголовка: одна строка до 2000 знаков")
+    return value
+
+
 class LlmSettings(_Group):
     """Внешняя/внутренняя LLM для краткого протокола. Данные уходят ТОЛЬКО после обезличивания."""
 
-    SECRETS: ClassVar[tuple[str, ...]] = ("api_key",)
+    SECRETS: ClassVar[tuple[str, ...]] = ("api_key", "secret_headers")
     enabled: bool = False
-    # Режим: local — встроенная локальная модель (Qwen3 0.6B, данные не покидают сервер); external — внешняя/внутренняя API-модель по полям ниже;
+    # Режим: local — встроенная локальная модель (Qwen3 1.7B, данные не покидают сервер); external — внешняя/внутренняя API-модель по полям ниже;
     # off — выключена. None (настройки до 0.5.0): external, если включена (enabled), иначе off.
     provider: Literal["local", "external", "off"] | None = None
-    local_model: str = "qwen3-0.6b-q4_k_m"
+    local_model: str = "qwen3-1.7b-q4_k_m"
+    # Модель для КРАТКОГО РЕЗЮМЕ: same — такая же, как для протокола; local — локальная Qwen3; external — внешний API (по умолчанию); off — резюме не формируются.
+    summary_provider: Literal["same", "local", "external", "off"] = "same"
     # Что делать, если выбранная для комнаты/встречи модель недоступна (профиль удалён, локальная модель не загружена):
     # system — использовать системную модель по умолчанию (с пометкой); unavailable — оставить состояние «модель недоступна».
     on_missing: Literal["system", "unavailable"] = "system"
-    type: Literal["openai", "anthropic", "openai_compatible"] = "openai_compatible"
+    # Тип API: openai — OpenAI; anthropic — Anthropic Messages; openai_compatible — шлюз с OpenAI-совместимым /chat/completions
+    # (указывается base_url); custom — «свой» OpenAI-подобный сервис: любой адрес, дополнительные заголовки, возможности включаются вручную.
+    type: Literal["openai", "anthropic", "openai_compatible", "custom"] = "openai_compatible"
     base_url: str = ""
     model: str = ""
     api_key: str = ""
+    # Максимальная длина ответа раздельно: для резюме достаточно ~2 000 токенов, для часового протокола нужно больше. Пусто — значение по умолчанию.
+    # Прежняя единая настройка max_tokens (4 000) для протокола больше не используется, если не менялась вручную.
     max_tokens: int = Field(default=4000, ge=64, le=64000)
-    temperature: float = Field(default=0.2, ge=0, le=2)
+    max_tokens_summary: int | None = Field(default=None, ge=64, le=200000)
+    max_tokens_protocol: int | None = Field(default=None, ge=64, le=200000)
+    # Окно контекста модели (вход + ответ) в токенах; 0 — неизвестно. Если задано, длина ответа ограничивается им.
+    context_window: int = Field(default=0, ge=0, le=4_000_000)
+    temperature: float = Field(default=0.0, ge=0, le=2)     # для протоколов и резюме — 0 (воспроизводимый, не «творческий» ответ)
     timeout: int = Field(default=180, ge=5, le=1800)
+    # Возможности провайдера: параметр передаётся, только если провайдер его принимает (часть API отвергает temperature или даёт узкий диапазон).
+    send_temperature: bool = True
+    supports_system: bool = True        # отдельное системное сообщение; иначе инструкция вставляется в начало сообщения пользователя
+    supports_streaming: bool = False    # справочно: сервис ответы по частям пока не использует
+    supports_json: bool = True          # режим JSON-схемы (response_format); нужен структурному извлечению внешней модели
+    extra_headers: dict[str, str] = Field(default_factory=dict)       # дополнительные заголовки запроса (не секретные значения)
+    secret_header_names: list[str] = Field(default_factory=list)      # имена заголовков с секретными значениями (сами значения — в secret_headers)
+    secret_headers: str = ""            # JSON {имя: значение}: секретные заголовки, шифруются, наружу не отдаются
     use_corporate_ca: bool = True
     allow_http: bool = False
     routing_provider: str = ""  # для шлюзов вида polza.ai: provider.only
@@ -244,7 +300,63 @@ class LlmSettings(_Group):
         return v.rstrip("/")
 
     @classmethod
-    def merge_hint(cls, merged: dict, patch: dict) -> None:
+    def derived_fields(cls, patch: dict) -> tuple[str, ...]:
+        return ("secret_header_names",) if patch.get("secret_headers") is not None else ()
+
+    @field_validator("extra_headers")
+    @classmethod
+    def _headers(cls, v: dict[str, str]) -> dict[str, str]:
+        return {_header_name(k): _header_value(x) for k, x in v.items()}
+
+    @field_validator("secret_header_names")
+    @classmethod
+    def _secret_names(cls, v: list[str]) -> list[str]:
+        out = []
+        for n in v:
+            n = _header_name(n)
+            if n.lower() not in {x.lower() for x in out}:
+                out.append(n)
+        return out
+
+    def secret_header_map(self) -> dict[str, str]:
+        try:
+            d = json.loads(self.secret_headers) if self.secret_headers else {}
+        except ValueError:
+            return {}
+        return {str(k): str(x) for k, x in d.items()} if isinstance(d, dict) else {}
+
+    def all_headers(self) -> dict[str, str]:
+        """Дополнительные заголовки запроса: обычные + секретные (только для серверного использования)."""
+        return {**self.extra_headers, **self.secret_header_map()}
+
+    def output_limit(self, purpose: str = "protocol") -> tuple[int, str]:
+        """(токены, примечание) — длина ответа, которая реально уйдёт в запрос: настройка задачи, не больше окна контекста."""
+        summary = purpose == "summary"
+        want = self.max_tokens_summary if summary else self.max_tokens_protocol
+        if want is None:
+            want = DEFAULT_MAX_SUMMARY if summary else (self.max_tokens if self.max_tokens != 4000 else DEFAULT_MAX_PROTOCOL)
+        if self.context_window:
+            cap = max(256, self.context_window - 2048) if self.context_window > 4096 else max(64, self.context_window // 2)
+            if want > cap:
+                return cap, f"ограничено окном контекста модели ({self.context_window} токенов)"
+        return want, ""
+
+    @classmethod
+    def merge_hint(cls, merged: dict, patch: dict, current: dict | None = None) -> None:
+        # секретные заголовки приходят как JSON {имя: значение|null}: null — оставить прежнее значение, отсутствие имени — удалить
+        if "secret_headers" in patch and patch["secret_headers"] is not None:
+            old = {}
+            try:
+                old = json.loads((current or {}).get("secret_headers") or "{}")
+            except ValueError:
+                pass
+            try:
+                new = json.loads(patch["secret_headers"] or "{}") if isinstance(patch["secret_headers"], str) else dict(patch["secret_headers"])
+            except ValueError:
+                raise ValueError("secret_headers: ожидается JSON-объект {имя: значение}") from None
+            res = merge_secret_headers(old, new)
+            merged["secret_headers"] = json.dumps(res, ensure_ascii=False) if res else ""
+            merged["secret_header_names"] = sorted(res, key=str.lower)
         # клиент прежней версии меняет только флаг «включена» — режим выводится из него заново, а не берётся из ранее выведенного значения
         if "enabled" in patch and "provider" not in patch:
             merged["provider"] = None
@@ -308,6 +420,10 @@ class ScreenSettings(_Group):
     one_sharer_at_a_time: bool = False
 
 
+# Модели распознавания, снятые с вооружения: сохранённый ранее выбор молча заменяется штатной моделью (пустой выбор = модель по умолчанию).
+RETIRED_ASR_MODELS = frozenset({"gigaam-v3-e2e-rnnt-q5_k_m"})
+
+
 class AsrModelSettings(_Group):
     """Какая модель распознавания активна. Пусто — модель по умолчанию из .env (ASR_MODEL_ID). Список моделей ведёт сам ASR (каталог)."""
 
@@ -333,6 +449,14 @@ class GeneralSettings(_Group):
     post_meeting_access_minutes: int = Field(default=120, ge=1, le=1440)  # сколько участник, оставшийся на странице завершённой встречи, сохраняет доступ
     default_text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     default_audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    # Временные переговорки: пользователь создаёт комнату на одну встречу; закрывается сама, материалы остаются в истории.
+    temp_rooms_enabled: bool = True
+    temp_room_max_per_user: int = Field(default=2, ge=1, le=50)           # активных временных комнат у одного пользователя
+    temp_room_max_total: int = Field(default=30, ge=1, le=1000)          # активных временных комнат во всей системе
+    temp_room_grace_minutes: int = Field(default=5, ge=1, le=240)        # сколько ждать возврата, когда все вышли
+    temp_room_idle_minutes: int = Field(default=30, ge=5, le=1440)       # комната, в которую так никто и не вошёл
+    temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
+    temp_room_allow_guest_link: bool = False                             # можно ли владельцу временной комнаты выпускать гостевую ссылку
 
     @field_validator("timezone")
     @classmethod
@@ -503,13 +627,14 @@ class SettingsService:
         unknown = [k for k in patch if k not in model.model_fields]
         if unknown:
             raise SettingsError(f"Неизвестные поля: {', '.join(unknown)}")
-        merged = (await self.get(db, group)).model_dump()
+        current = (await self.get(db, group)).model_dump()
+        merged = dict(current)
         for k, v in patch.items():
             if k in model.SECRETS and v is None:
                 continue  # None = «не менять»
             merged[k] = v
-        model.merge_hint(merged, patch)
         try:
+            model.merge_hint(merged, patch, current)
             return model(**merged)
         except ValueError as exc:
             raise SettingsError(_first_error(exc)) from None
@@ -520,7 +645,7 @@ class SettingsService:
         new = await self.preview(db, group, patch)
         rows = await self._rows(db, group)
         changed: list[str] = []
-        for name, raw in patch.items():
+        for name, raw in [*patch.items(), *((n, True) for n in model.derived_fields(patch) if n not in patch)]:
             if name in model.SECRETS and raw is None:
                 continue
             val = getattr(new, name)

@@ -49,6 +49,10 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     if group not in GROUPS:
         raise HTTPException(status_code=404, detail="Неизвестная группа настроек")
     svc = request.app.state.settings_svc
+    before_acl = None
+    if group == "access":    # для аудита: какие группы добавлены и убраны (только DN групп — не секреты)
+        _a = await svc.get(db, "access")
+        before_acl = {"admin_groups": list(_a.admin_groups), "user_groups": list(_a.user_groups)}   # type: ignore[attr-defined]
     try:
         if group in ("storage", "audio_storage", "journal", "chat_files"):  # ошибки каталога видны сразу, а не при первой выгрузке
             new = await svc.preview(db, group, body)
@@ -63,9 +67,21 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     secrets = set(GROUPS[group].SECRETS)
+    details: dict[str, Any] = {"changed": changed, "protected_changed": [c for c in changed if c in secrets]}
+    if before_acl is not None:
+        _n = await svc.get(db, "access")
+        for key, label in (("user_groups", "login"), ("admin_groups", "admin")):
+            old = {g.lower(): g for g in before_acl[key]}
+            new = {g.lower(): g for g in getattr(_n, key)}
+            added = [new[k] for k in new if k not in old]
+            removed = [old[k] for k in old if k not in new]
+            if added or removed:
+                details[f"{label}_groups_added"], details[f"{label}_groups_removed"] = added, removed
+                request.app.state.journal.emit("auth", f"acl_{label}_changed", level="warn", user=su.display_name, ip=client_ip(request),
+                                               message=f"{'группы допуска' if label == 'login' else 'группы администраторов'}: добавлено {len(added)}, убрано {len(removed)}",
+                                               data={"added": added, "removed": removed})
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=f"settings.{group}.update",
-                      target_type="settings", target_id=group, ip=client_ip(request),
-                      details={"changed": changed, "protected_changed": [c for c in changed if c in secrets]})
+                      target_type="settings", target_id=group, ip=client_ip(request), details=details)
     await db.commit()
     return await svc.public(db, group)
 
@@ -104,7 +120,9 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         ok, msg, ms = await AnonymizerClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     if group == "llm":
-        ok, msg, ms = await request.app.state.local_llm.client(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
+        # проверяется именно внешний API (форма «Внешний API»): режим «Локальная» проверяется отдельной кнопкой в карточке встроенной модели
+        ext = cfg.model_copy(update={"provider": "external", "enabled": True})   # type: ignore[attr-defined]
+        ok, msg, ms = await request.app.state.local_llm.client(ext, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     raise HTTPException(status_code=404, detail="Для этой группы проверки нет")
 

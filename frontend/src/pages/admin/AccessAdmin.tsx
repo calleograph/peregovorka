@@ -6,7 +6,7 @@ import { fmtDate } from "./common";
 const asEntries = (dns: string[]): AclEntry[] => dns.map((d) => ({ subject_type: "group", subject_ref: d }));
 
 /** Список групп каталога с поиском: добавляются найденные группы или вручную введённый DN. */
-function GroupList({ title, help, empty, value, onChange }: { title: string; help: string; empty: string; value: string[]; onChange: (v: string[]) => void }) {
+export function GroupList({ title, help, empty, value, onChange }: { title: string; help: string; empty: string; value: string[]; onChange: (v: string[]) => void }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<DirHit[]>([]);
   const [msg, setMsg] = useState("");
@@ -77,20 +77,19 @@ function LocalAdminCard({ info, onChanged }: { info: LocalAdminInfo | null; onCh
 /** «Доступ к администрированию»: AD-группы администраторов (отдельно от настройки самого LDAP), необязательные группы допуска и локальный администратор. */
 export default function AccessAdmin() {
   const [admins, setAdmins] = useState<string[]>([]);
-  const [users, setUsers] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [info, setInfo] = useState<LocalAdminInfo | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => {
-    void api.admin.settings("access").then((v) => { setAdmins((v.admin_groups as unknown as string[]) ?? []); setUsers((v.user_groups as unknown as string[]) ?? []); setLoaded(true); }).catch((e) => setMsg({ ok: false, text: (e as ApiError).message }));
+    void api.admin.settings("access").then((v) => { setAdmins((v.admin_groups as unknown as string[]) ?? []); setLoaded(true); }).catch((e) => setMsg({ ok: false, text: (e as ApiError).message }));
     void api.admin.localAdmin().then(setInfo).catch(() => undefined);
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const save = async () => {
     setBusy(true); setMsg(null);
-    try { await api.admin.saveSettings("access", { admin_groups: admins, user_groups: users } as never); setMsg({ ok: true, text: "Сохранено. Новые права применяются при следующем входе пользователя." }); }
+    try { await api.admin.saveSettings("access", { admin_groups: admins } as never); setMsg({ ok: true, text: "Сохранено. Новые права применяются при следующем входе пользователя." }); }
     catch (e) { setMsg({ ok: false, text: (e as ApiError).message }); }
     setBusy(false);
   };
@@ -98,15 +97,12 @@ export default function AccessAdmin() {
   return (
     <section>
       <div className="row"><h2>Доступ к администрированию</h2></div>
-      <p className="muted">Кто из доменных пользователей может входить в «Администрирование». Подключение к каталогу настраивается отдельно — в разделе «Подключения LDAP».</p>
+      <p className="muted">Кто из доменных пользователей получает права администратора. Кто вообще может входить в систему — отдельно, в разделе «Доступ к системе». Подключение к каталогу настраивается отдельно — в разделе «Подключения LDAP».</p>
       {!loaded ? <div className="muted">Загрузка…</div> : (
         <div className="card form">
           <GroupList title="Группы администраторов" value={admins} onChange={setAdmins}
                      help="Члены этих групп (включая вложенные) входят с правами администратора системы. Можно указать несколько групп."
                      empty="Групп нет — администраторами работают только локальный администратор и группа из файла установки (если задана)." />
-          <GroupList title="Группы допуска (необязательно)" value={users} onChange={setUsers}
-                     help="Если список не пуст, войти в систему могут только члены этих групп (и администраторы). Пусто — любой активный доменный пользователь; доступ к комнатам всё равно задаётся в самих комнатах."
-                     empty="Ограничения нет: входит любой активный пользователь каталога." />
           {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
           <div className="row form-actions"><button className="btn primary" onClick={() => void save()} disabled={busy}>{busy ? "Сохранение…" : "Сохранить"}</button></div>
         </div>

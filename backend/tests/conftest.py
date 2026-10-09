@@ -46,6 +46,12 @@ class FakeDirectory:
             raise DirectoryError("invalid_credentials")
         return rec[1]
 
+    def lookup(self, login: str) -> DirectoryIdentity:
+        rec = self.users.get(login.lower())
+        if rec is None:
+            raise DirectoryError("user_not_found")
+        return rec[1]
+
     def check_service_account(self) -> None:
         return None
 

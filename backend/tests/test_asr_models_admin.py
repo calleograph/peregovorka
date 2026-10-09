@@ -9,7 +9,7 @@ from app.workers.asr_sync import DESIRED_MODEL_KEY, publish_desired
 
 from .conftest import login, make_settings, running_app
 
-FULL, Q5 = "gigaam-v3-e2e-rnnt-full", "gigaam-v3-e2e-rnnt-q5_k_m"
+FULL, Q5 = "gigaam-v3-e2e-rnnt-full", "gigaam-test-alt"
 
 
 def models_payload(q5_present: bool = True, active: str = FULL) -> dict:

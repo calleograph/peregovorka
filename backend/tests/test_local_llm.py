@@ -1,4 +1,4 @@
-"""Встроенная локальная языковая модель (Qwen3 0.6B Q4_K_M, llama.cpp): состояние файла, режимы «Локальная / Внешняя / Отключено», протокол через
+"""Встроенная локальная языковая модель (Qwen3 1.7B Q4_K_M, llama.cpp): состояние файла, режимы «Локальная / Внешняя / Отключено», протокол через
 локальную модель без выхода данных наружу, предупреждения для длинных стенограмм, исправление «llm_model». Без сети: httpx.MockTransport и временные файлы."""
 from __future__ import annotations
 
@@ -25,22 +25,30 @@ def model_env(tmp_path: Path, *, write: bool = True, content: bytes = FAKE_MODEL
     d = tmp_path / "models-llm"
     d.mkdir(exist_ok=True)
     if write:
-        (d / "Qwen3-0.6B-Q4_K_M.gguf").write_bytes(content)
+        (d / "Qwen3-1.7B-Q4_K_M.gguf").write_bytes(content)
     return dict(local_llm_models_dir=str(d), local_llm_model_bytes=len(declared), local_llm_model_sha256=hashlib.sha256(declared).hexdigest())
 
 
 class Runtime:
     """Подставной llama-server: /health и /v1/chat/completions; запоминает запросы."""
 
-    def __init__(self, reply: str = "<think>рассуждения модели</think>\n**Резюме**\n\n- решение по бюджету принято", health: int = 200, finish: str = "stop"):
-        self.reply, self.health, self.seen, self.hosts, self.finish = reply, health, [], [], finish
+    def __init__(self, reply: str = "<think>рассуждения модели</think>\n**Резюме**\n\n- решение по бюджету принято", health: int = 200, finish: str = "stop", plain: bool = False):
+        self.reply, self.health, self.seen, self.hosts, self.finish, self.plain = reply, health, [], [], finish, plain     # plain — всегда один и тот же текст, даже на запросы по схеме
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.hosts.append(f"{req.url.host}:{req.url.port}{req.url.path}")
         if req.url.path == "/health":
             return httpx.Response(self.health, json={"status": "ok" if self.health == 200 else "loading model"})
-        self.seen.append(json.loads(req.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": self.reply}, "finish_reason": self.finish}], "usage": {"prompt_tokens": 50, "completion_tokens": 20}})
+        body = json.loads(req.content)
+        self.seen.append(body)
+        content = self.reply
+        if "response_format" in body and not self.plain:
+            # структурное извлечение: подставной сервер находит в запросе первое время реплики и возвращает по нему одно решение
+            import re  # noqa: PLC0415
+
+            m = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", body["messages"][1]["content"])
+            content = json.dumps({"topics": [], "decisions": [{"text": "Принято решение по бюджету", "ts": m.group(1)}] if m else [], "tasks": [], "rejected": [], "open_questions": []}, ensure_ascii=False)
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": self.finish}], "usage": {"prompt_tokens": 50, "completion_tokens": 20}})
 
 
 def app_with(tmp_path, directory, rt: Runtime, anon_calls: list | None = None, **settings_over):
@@ -65,8 +73,8 @@ def test_local_settings_become_a_plain_openai_compatible_call(tmp_path):
 
     local = ll.LocalLlm(make_settings(tmp_path))
     eff, is_local = local.effective(LlmSettings(provider="local"))
-    assert is_local and eff.enabled and eff.type == "openai_compatible" and eff.base_url == "http://llm-local:8080/v1" and eff.model == "qwen3-0.6b-q4_k_m"
-    assert eff.allow_http and not eff.use_corporate_ca and eff.api_key == "" and eff.max_tokens <= 1200 and eff.timeout >= 600
+    assert is_local and eff.enabled and eff.type == "openai_compatible" and eff.base_url == "http://llm-local:8080/v1" and eff.model == "qwen3-1.7b-q4_k_m"
+    assert eff.allow_http and not eff.use_corporate_ca and eff.api_key == "" and eff.max_tokens <= 1500 and eff.output_limit("protocol")[0] <= 1500 and eff.output_limit("summary")[0] <= 1500 and eff.timeout >= 600
     off, loc = local.effective(LlmSettings(provider="off", enabled=True, model="m", base_url="https://x.test"))
     assert not off.enabled and not loc
     ext, loc = local.effective(LlmSettings(enabled=True, type="openai", model="gpt"))       # настройки до 0.5.0: «включена» = внешняя
@@ -77,7 +85,7 @@ def test_local_settings_become_a_plain_openai_compatible_call(tmp_path):
 def test_registry_is_ready_for_stronger_models():
     assert ll.DEFAULT_LOCAL_MODEL in ll.LOCAL_MODELS and ll.LOCAL_MODELS[ll.DEFAULT_LOCAL_MODEL].light
     m = ll.LOCAL_MODELS[ll.DEFAULT_LOCAL_MODEL]
-    assert m.size_bytes == 484_220_320 and len(m.sha256) == 64 and m.file.endswith(".gguf") and m.runtime.startswith("llama.cpp")
+    assert m.size_bytes == 1_282_439_584 and len(m.sha256) == 64 and m.file.endswith(".gguf") and m.runtime.startswith("llama.cpp")
 
 
 # ------------------------------------------------------------------------------------------------ состояние файла
@@ -86,9 +94,9 @@ def test_file_states_missing_partial_bad_size_bad_hash_ok(tmp_path):
     local = ll.LocalLlm(make_settings(tmp_path, **env))
     m = local.model()
     assert local.file_state(m)["state"] == "missing"
-    (tmp_path / "models-llm" / "Qwen3-0.6B-Q4_K_M.gguf.part").write_bytes(b"x")
+    (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf.part").write_bytes(b"x")
     assert local.file_state(m)["state"] == "partial"
-    f = tmp_path / "models-llm" / "Qwen3-0.6B-Q4_K_M.gguf"
+    f = tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf"
     f.write_bytes(FAKE_MODEL[:-5])
     assert local.file_state(m)["state"] == "bad_size"
     f.write_bytes(FAKE_MODEL[:-1] + b"\x00")                       # тот же размер, другое содержимое — повреждение
@@ -108,11 +116,11 @@ def test_admin_status_api(tmp_path, directory):
         login(c, "root")
         st = c.get("/api/v1/admin/llm/local").json()
         assert st["file"]["state"] == "missing" and st["ready"] is False and st["provider"] == "off" and st["model"]["light"] is True
-        assert "Qwen3 0.6B" in st["model"]["title"] and "облегч" in st["model"]["note"] and "наружу" in st["endpoint"]
+        assert "Qwen3 1.7B" in st["model"]["title"] and "небольш" in st["model"]["note"] and "наружу" in st["endpoint"]
         assert "/models" not in json.dumps(st) and "tmp" not in json.dumps(st).lower()                # путей хоста в ответе нет
         r = c.post("/api/v1/admin/llm/local/test").json()
         assert r["ok"] is False and "не загружена" in r["message"]
-        (tmp_path / "models-llm" / "Qwen3-0.6B-Q4_K_M.gguf").write_bytes(FAKE_MODEL)
+        (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf").write_bytes(FAKE_MODEL)
         st = c.get("/api/v1/admin/llm/local").json()
         assert st["file"]["state"] == "ok" and st["runtime"]["ready"] is True and st["ready"] is True
         t = c.post("/api/v1/admin/llm/local/test").json()
@@ -167,8 +175,8 @@ def test_protocol_via_local_model_keeps_data_inside_and_cleans_output(tmp_path, 
         assert anon_calls == [], "данные не покидают сервер — внешнее обезличивание для локальной модели не вызывается"
         assert set(rt.hosts) == {"llm-local:8080/v1/chat/completions"}
         body = rt.seen[-1]
-        assert body["model"] == "qwen3-0.6b-q4_k_m" and body["chat_template_kwargs"] == {"enable_thinking": False}
-        assert body["messages"][0]["content"].endswith("/no_think") and "не выдумывай" in body["messages"][0]["content"]
+        assert body["model"] == "qwen3-1.7b-q4_k_m" and body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["messages"][0]["content"].endswith("/no_think") and "ТОЛЬКО эти пункты" in body["messages"][0]["content"] and "Кратко: решения, задачи, ответственные" in body["messages"][0]["content"]
         assert "Authorization" not in json.dumps(body)
         meta = got["meta"] if "meta" in got else {}
         assert not meta or meta.get("llm_local") is True
@@ -201,7 +209,7 @@ def test_local_model_not_downloaded_blocks_generation_with_a_clear_message(tmp_p
 
 
 def test_long_transcript_warns_that_the_light_model_may_be_worse(tmp_path, directory, monkeypatch):
-    monkeypatch.setitem(ll.LOCAL_MODELS, ll.DEFAULT_LOCAL_MODEL, replace(ll.QWEN3_06B, warn_input_chars=10))
+    monkeypatch.setitem(ll.LOCAL_MODELS, ll.DEFAULT_LOCAL_MODEL, replace(ll.QWEN3_17B, warn_input_chars=10))
     rt = Runtime()
     with app_with(tmp_path, directory, rt, **model_env(tmp_path)) as c:
         put_settings(c, "llm", provider="local")
@@ -218,8 +226,8 @@ def test_long_transcript_warns_that_the_light_model_may_be_worse(tmp_path, direc
 
 
 def test_long_input_is_split_by_the_model_limit_not_the_global_one(tmp_path, directory, monkeypatch):
-    monkeypatch.setitem(ll.LOCAL_MODELS, ll.DEFAULT_LOCAL_MODEL, replace(ll.QWEN3_06B, max_input_chars=40))
-    rt = Runtime(reply="Заметки")
+    monkeypatch.setitem(ll.LOCAL_MODELS, ll.DEFAULT_LOCAL_MODEL, replace(ll.QWEN3_17B, max_input_chars=40))
+    rt = Runtime()
     with app_with(tmp_path, directory, rt, **model_env(tmp_path)) as c:
         put_settings(c, "llm", provider="local")
         room, mid = meeting_with_two(c)
@@ -229,7 +237,9 @@ def test_long_input_is_split_by_the_model_limit_not_the_global_one(tmp_path, dir
         login(c, "bob")
         c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
         _drain(c)
-        assert len(rt.seen) >= 3, "стенограмма длиннее предела локальной модели → заметки по фрагментам + итоговый вызов"
+        passes = [b for b in rt.seen if "response_format" in b]
+        assert len(passes) == 4 and len(rt.seen) == 5, "один фрагмент (реплика не делится) → четыре узких прохода по схеме + резюме по проверенным пунктам"
+        assert "response_format" not in rt.seen[-1] and all(p["max_tokens"] <= 900 for p in passes)
 
 
 def test_external_provider_is_unchanged_and_never_uses_the_local_endpoint(tmp_path, directory):
@@ -301,7 +311,7 @@ def _run(llm, **kw):
 
     from app.services.protocols import run_llm_pipeline
 
-    base = dict(kind="protocol", instruction="x", text="[10:00:00] Анна: Релиз переносим на вторник.\n" * 3, limit=100000, local=ll.QWEN3_06B, anonymized=False)
+    base = dict(kind="protocol", instruction="x", text="[10:00:00] Анна: Релиз переносим на вторник.\n" * 3, limit=100000, local=ll.QWEN3_17B, anonymized=False, structured=False)
     base.update(kw)
     return asyncio.run(run_llm_pipeline(llm, **base))
 

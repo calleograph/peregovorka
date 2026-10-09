@@ -57,7 +57,7 @@ def test_room_exposes_llm_options_and_effective_model(tmp_path, directory):
         got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
         assert got["llm"]["mode"] == "inherit" and got["llm_effective"]["source"] == "system"
         opts = got["llm_options"]
-        assert opts["system"]["provider"] == "local" and [m["id"] for m in opts["local"]] == ["qwen3-0.6b-q4_k_m", "qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True and opts["local"][1]["installed"] is False
+        assert opts["system"]["provider"] == "local" and [m["id"] for m in opts["local"]] == ["qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True
         assert pid in [p["id"] for p in opts["profiles"]] and "SECRET" not in json.dumps(got)
         assert opts["on_missing"] == "system"
 
@@ -71,7 +71,7 @@ def test_room_can_use_local_external_off_or_inherit(tmp_path, directory):
         room = make_room(c, moderators=LEADERS)
         login(c, "carol")
         # системная — «отключена», а комната выбрала локальную модель
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-0.6b-q4_k_m"})
+        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
         assert out["llm"]["mode"] == "local" and out["llm_effective"]["name"].startswith("Qwen3") and out["llm_effective"]["available"] is True
         _r, mid = (room, _join(c, "alice", room["id"])["meeting_id"])
         end_by_alice(c, mid)
@@ -130,8 +130,8 @@ def test_local_model_not_downloaded_in_room_uses_policy(tmp_path, directory):
         put_settings(c, "llm", enabled=True, type="openai_compatible", base_url="https://llm-main.test/v1", model="main-model", api_key="k")
         room = make_room(c, moderators=LEADERS)
         login(c, "carol")
-        (tmp_path / "models-llm" / "Qwen3-0.6B-Q4_K_M.gguf").unlink()           # файл пропал после выбора
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-0.6b-q4_k_m"})
+        (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf").unlink()           # файл пропал после выбора
+        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
         eff = out["llm_effective"]
         assert eff["available"] is True and eff["source"] == "system" and "не загружена" in eff["note"]       # запасной вариант — системная внешняя модель
         login(c, "root")
@@ -159,7 +159,7 @@ def test_meeting_overrides_win_over_room_and_can_be_reset(tmp_path, directory):
         assert s["llm"]["effective"]["name"] == "Сильная внешняя" and s["llm"]["effective"]["source"] == "meeting" and s["llm"]["room"]["mode"] == "inherit"
         end_by_alice(c, mid)
         login(c, "carol")
-        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
+        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"})      # выбор встречи для протокола; у резюме своя цепочка
         assert r.status_code == 202
         _drain(c)
         assert ext_seen and rt.seen == [], "для этой встречи использована внешняя модель, а не локальная"
@@ -299,7 +299,7 @@ def test_precedence_meeting_over_room_over_system(tmp_path, directory):
         assert eff()["source"] == "system" and eff()["name"].startswith("Qwen3")            # 3. системная
         manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
         assert eff()["source"] == "room" and eff()["name"] == "Сильная внешняя"             # 2. комната
-        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "local", "local_model": "qwen3-0.6b-q4_k_m"}})
+        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"}})
         assert eff()["source"] == "meeting" and eff()["name"].startswith("Qwen3")           # 1. встреча
         c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "off"}})
         assert eff()["source"] == "meeting" and eff()["available"] is False                 # встреча явно «отключена»
@@ -334,83 +334,88 @@ def test_unavailable_selected_model_falls_back_to_system_model_not_external_defa
         assert p["llm_ready"] is False and "удалён" in (p["llm_reason"] or "")
 
 
-# ------------------------------------------------------------------------------------------------ Qwen3 1.7B: необязательная модель в отдельном контейнере
-def _with_17b(monkeypatch, tmp_path):
-    """Подставной файл 1.7B с верными для него размером и хешем (настоящий весит 1,3 ГБ)."""
-    import hashlib
-
-    content = b"GGUF-1.7B" + bytes(range(200)) * 10
-    (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf").write_bytes(content)
-    monkeypatch.setitem(ll.LOCAL_MODELS, ll.QWEN3_17B.id, replace(ll.QWEN3_17B, size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest()))
+# ------------------------------------------------------------------------------------------------ единственная штатная модель Qwen3 1.7B; 0.6B снята с вооружения
+OLD_06B = "qwen3-0.6b-" + "q4_k_m"          # идентификатор снятой с вооружения модели (записан так, чтобы массовая замена имён его не трогала)
 
 
-def test_17b_is_listed_but_off_by_default_and_not_selectable_as_installed(tmp_path, directory, monkeypatch):
-    with app_(tmp_path, directory, Runtime()) as c:
-        _with_17b(monkeypatch, tmp_path)
-        put_settings(c, "llm", provider="local")
-        login(c, "root")
-        st = c.get("/api/v1/admin/llm/local").json()
-        models = {m["id"]: m for m in st["models"]}
-        assert set(models) == {"qwen3-0.6b-q4_k_m", "qwen3-1.7b-q4_k_m"}
-        assert models["qwen3-0.6b-q4_k_m"]["optional"] is False and models["qwen3-0.6b-q4_k_m"]["enabled_on_server"] is True
-        m17 = models["qwen3-1.7b-q4_k_m"]
-        assert m17["optional"] is True and m17["enabled_on_server"] is False and m17["file_state"] == "ok" and m17["ready"] is False
-        assert "не включена" in m17["runtime"]["detail"]
-        room = make_room(c, moderators=LEADERS)
-        login(c, "carol")
-        opts = c.get(f"/api/v1/rooms/{room['id']}/manage").json()["llm_options"]["local"]
-        by = {m["id"]: m for m in opts}
-        assert by["qwen3-0.6b-q4_k_m"]["installed"] is True and by["qwen3-1.7b-q4_k_m"]["installed"] is False, "файл есть, но модель на сервере не включена — выбирать её нельзя"
-
-
-def test_17b_uses_its_own_container_and_falls_back_when_not_enabled(tmp_path, directory, monkeypatch):
-    rt06, rt17 = Runtime(reply="Резюме от лёгкой"), Runtime(reply="Резюме от сильной")
-
-    def router(req: httpx.Request) -> httpx.Response:
-        return (rt17 if req.url.host == "llm-local-17b" else rt06)(req)
-
-    def build(enabled: str):
-        return running_app(make_settings(tmp_path, **model_env(tmp_path), local_llm_17b_enabled=enabled), directory,
-                           transports={"local_llm": httpx.MockTransport(router), "anonymizer": httpx.MockTransport(anon_ok)})
-
-    # выключена на сервере: комната, которая её выбрала, получает запасной вариант (системная 0.6B) с понятной пометкой
-    with build("no") as c:
-        _with_17b(monkeypatch, tmp_path)
+def test_only_the_1_7b_model_is_offered_and_old_0_6b_choices_silently_use_it(tmp_path, directory):
+    rt = Runtime(reply="Резюме от 1.7B")
+    with app_(tmp_path, directory, rt) as c:
         put_settings(c, "llm", provider="local")
         room, mid = meeting_with_two(c, moderators=LEADERS)
         login(c, "carol")
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
-        assert out["llm_effective"]["name"].startswith("Qwen3 0.6B") and "не включена на сервере" in (out["llm_effective"]["note"] or "")
+        opts = c.get(f"/api/v1/rooms/{room['id']}/manage").json()["llm_options"]
+        assert [m["id"] for m in opts["local"]] == ["qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True, "0.6B в выборе нет"
+        # старый выбор (например, сохранённый до этой версии) молча работает на основной модели
+        out = manage(c, room["id"], llm={"mode": "local", "local_model": OLD_06B})
+        assert out["llm_effective"]["name"].startswith("Qwen3 1.7B") and out["llm_effective"]["available"] is True
         end_by_alice(c, mid)
         login(c, "carol")
         generate(c, mid)
-        assert rt06.seen and not rt17.seen
-    # включена: запросы идут в контейнер llm-local-17b
-    rt06.seen.clear()
-    with build("yes") as c:
-        _with_17b(monkeypatch, tmp_path)
-        put_settings(c, "llm", provider="local")
-        room, mid = meeting_with_two(c, moderators=LEADERS)
-        login(c, "carol")
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
-        assert out["llm_effective"]["name"].startswith("Qwen3 1.7B") and out["llm_effective"]["source"] == "room"
-        end_by_alice(c, mid)
-        login(c, "carol")
-        generate(c, mid)
-        assert rt17.seen and not rt06.seen
-        assert rt17.hosts and set(rt17.hosts) == {"llm-local-17b:8080/v1/chat/completions"}
-        assert rt17.seen[-1]["model"] == "qwen3-1.7b-q4_k_m"
-        # системная по умолчанию остаётся 0.6B: комната без выбора её не получает
-        room2, mid2 = meeting_with_two(c, moderators=LEADERS)
-        login(c, "carol")
-        assert c.get(f"/api/v1/rooms/{room2['id']}/manage").json()["llm_effective"]["name"].startswith("Qwen3 0.6B")
+        assert rt.seen and all(b["model"] == "qwen3-1.7b-q4_k_m" for b in rt.seen)
+        st = (login(c, "root"), c.get("/api/v1/admin/llm/local").json())[1]
+        assert [m["id"] for m in st["catalog"]] == ["qwen3-1.7b-q4_k_m"] and st["model"]["id"] == "qwen3-1.7b-q4_k_m"
 
 
-def test_17b_url_and_registry_entry():
+def test_registry_has_one_visible_model_and_the_retired_one_is_hidden():
+    assert ll.DEFAULT_LOCAL_MODEL == "qwen3-1.7b-q4_k_m" and list(ll.VISIBLE_MODELS) == ["qwen3-1.7b-q4_k_m"]
     m = ll.LOCAL_MODELS["qwen3-1.7b-q4_k_m"]
-    assert m.optional and m.service == "llm-local-17b:8080" and m.size_bytes == 1_282_439_584 and len(m.sha256) == 64 and m.file.endswith(".gguf")
-    assert ll.DEFAULT_LOCAL_MODEL == "qwen3-0.6b-q4_k_m", "системной по умолчанию остаётся лёгкая модель"
+    assert m.size_bytes == 1_282_439_584 and len(m.sha256) == 64 and m.file == "Qwen3-1.7B-Q4_K_M.gguf" and m.max_input_chars == 6_000 and not m.hidden
+    assert ll.LOCAL_MODELS[OLD_06B].hidden is True
     from app.config import Settings
 
     local = ll.LocalLlm(Settings())
-    assert local.url_for(m) == "http://llm-local-17b:8080" and local.url_for(ll.QWEN3_06B).endswith("llm-local:8080")
+    assert local.model(OLD_06B).id == "qwen3-1.7b-q4_k_m" and local.model("что-то-старое").id == "qwen3-1.7b-q4_k_m" and local.model(None).id == "qwen3-1.7b-q4_k_m"
+
+
+# ------------------------------------------------------------------------------------------------ отдельные модели для протокола и для резюме
+def test_summary_and_protocol_have_separate_system_room_and_meeting_chains(tmp_path, directory):
+    ext_seen: list[dict] = []
+    rt = Runtime()
+    with app_(tmp_path, directory, rt, ext_seen) as c:
+        default_ext_profile(c, model="big-model")
+        put_settings(c, "llm", provider="local", summary_provider="external")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        login(c, "carol")
+        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
+        assert got["llm_effective"]["name"].startswith("Qwen3 1.7B") and got["llm_summary_effective"]["name"] == "Внешний по умолчанию"
+        assert got["llm_options"]["system"]["provider"] == "local" and got["llm_options"]["system_summary"]["provider"] == "external"
+        assert got["llm"]["mode"] == "inherit" and got["llm_summary"]["mode"] == "inherit"
+        end_by_alice(c, mid)
+        login(c, "carol")
+        generate(c, mid, "summary")
+        assert ext_seen and not rt.seen, "резюме — внешней моделью (системная модель резюме), локальная не вызывалась"
+        ext_seen.clear()
+        generate(c, mid, "protocol")
+        assert rt.seen and not ext_seen, "протокол — локальной (системная модель протокола)"
+        # комната меняет только резюме
+        out = manage(c, room["id"], llm_summary={"mode": "off"})
+        assert out["llm_summary_effective"]["available"] is False and "отключена" in out["llm_summary_effective"]["reason"]
+        assert out["llm_effective"]["available"] is True and out["llm"]["mode"] == "inherit"
+        assert c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction?kind=summary").json()["plan"]["llm_ready"] is False
+        assert c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction?kind=protocol").json()["plan"]["llm_ready"] is True
+        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
+        assert r.status_code == 409, "резюме отключено для комнаты, протокол это не затрагивает"
+        # встреча переопределяет резюме поверх комнаты
+        s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm_summary": {"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"}}).json()
+        assert s["llm_summary"]["effective"]["source"] == "meeting" and s["llm_summary"]["effective"]["available"] is True and s["llm"]["override"] is None
+        rt.seen.clear()
+        generate(c, mid, "summary")
+        assert rt.seen, "для этой встречи резюме пишет локальная модель"
+        s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm_summary": None}).json()
+        assert s["llm_summary"]["override"] is None and s["llm_summary"]["effective"]["source"] == "room"
+
+
+def test_system_summary_mode_off_and_same(tmp_path, directory):
+    rt = Runtime()
+    with app_(tmp_path, directory, rt) as c:
+        put_settings(c, "llm", provider="local", summary_provider="off")
+        room, mid = meeting_with_two(c, moderators=LEADERS)
+        end_by_alice(c, mid)
+        login(c, "carol")
+        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
+        assert got["llm_summary_effective"]["available"] is False and got["llm_effective"]["available"] is True
+        put_settings(c, "llm", summary_provider="same")
+        login(c, "carol")
+        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
+        assert got["llm_summary_effective"]["available"] is True and got["llm_summary_effective"]["name"] == got["llm_effective"]["name"]

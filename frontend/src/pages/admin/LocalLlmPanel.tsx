@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type LocalLlmStatus, type LocalModelInfo } from "../../api";
+import { api, type ApiError, type LocalLlmStatus } from "../../api";
 import { bytes } from "../../util";
 
 const FILE_TEXT: Record<LocalLlmStatus["file"]["state"], string> = {
@@ -12,7 +12,7 @@ const FILE_TEXT: Record<LocalLlmStatus["file"]["state"], string> = {
 const MODE_TEXT = { local: "Локальная (встроенная)", external: "Внешняя LLM", off: "Отключено" } as const;
 
 /**
- * Встроенная локальная языковая модель (Qwen3 0.6B Q4_K_M, llama.cpp, CPU): состояние файла и runtime, проверка и загрузка. Файл хранится вне образов
+ * Встроенная локальная языковая модель (Qwen3 1.7B Q4_K_M, llama.cpp, CPU): состояние файла и runtime, проверка и загрузка. Файл хранится вне образов
  * в каталоге моделей, при обновлении проекта не скачивается заново; скачивает и перезагружает его помощник обновлений на сервере (кнопка ниже).
  */
 export default function LocalLlmPanel() {
@@ -53,16 +53,6 @@ export default function LocalLlmPanel() {
     catch (e) { setMsg({ ok: false, text: (e as ApiError).message }); }
     setBusy("");
   };
-  const toggle17 = async (model: LocalModelInfo, enable: boolean) => {
-    if (!enable && !window.confirm(`Выключить ${model.title}? Контейнер остановится, комнаты с этой моделью перейдут на запасной вариант по правилам LLM. Файл модели останется на диске.`)) return;
-    setMsg(null); setBusy(`m-${model.id}`);
-    try {
-      await api.admin.repairFix(enable ? "llm17_enable" : "llm17_disable");
-      setMsg({ ok: true, text: enable ? `${model.title}: включение запущено на сервере (скачивание ~${Math.round(model.size_bytes / 1048576)} МБ при необходимости, проверка SHA-256, запуск контейнера — несколько минут).` : `${model.title}: выключение запущено на сервере.` });
-      window.setTimeout(() => void load(), 8000);
-    } catch (e) { setMsg({ ok: false, text: (e as ApiError).message }); }
-    setBusy("");
-  };
   const test = async () => {
     setMsg(null); setBusy("test");
     try { const r = await api.admin.localLlmTest(); setMsg({ ok: r.ok, text: r.ok ? `${r.message} (${r.ms} мс)` : r.message }); }
@@ -101,30 +91,6 @@ export default function LocalLlmPanel() {
             {downloading ? "Загрузка…" : f.state === "missing" || f.state === "partial" ? "Скачать модель" : "Скачать заново (файл повреждён)"}</button>)}
         <span className="muted small">Файл хранится на сервере вне образов и при обновлении проекта заново не скачивается. Позже можно подключить более сильную локальную модель без смены интерфейса.</span>
       </div>
-      {st.models && st.models.length > 1 && (
-        <div className="local-models">
-          <h4 style={{ margin: "14px 0 6px" }}>Доступные локальные модели</h4>
-          <p className="muted small" style={{ margin: "0 0 6px" }}>Какая из них используется, выбирается в «Режиме» ниже (для всей системы), в «Настройках комнаты → Языковая модель» и в «Эта встреча». Дополнительные модели не включены по умолчанию: каждая работает в своём контейнере и занимает память.</p>
-          <div className="table-wrap"><table className="table compact">
-            <thead><tr><th>Модель</th><th>Размер</th><th>Состояние</th><th /></tr></thead>
-            <tbody>{st.models.map((m) => (
-              <tr key={m.id}>
-                <td><b>{m.title}</b>{m.optional ? <span className="badge"> необязательная</span> : <span className="badge ok"> основная</span>}<div className="muted small">{m.light ? "облегчённая" : "расширенная"}</div></td>
-                <td className="small">{bytes(m.size_bytes)}</td>
-                <td className="small">
-                  {!m.enabled_on_server ? <span className="badge">выключена на сервере</span>
-                    : m.ready ? <span className="badge ok">работает</span>
-                    : m.file_state !== "ok" ? <span className="badge warn">{m.file_state === "missing" ? "файл не загружен" : "файл повреждён"}</span>
-                    : <span className="badge warn">{m.runtime.detail}</span>}
-                </td>
-                <td className="actions">{m.optional && (m.enabled_on_server
-                  ? <button className="btn mini" disabled={!!busy} onClick={() => void toggle17(m, false)}>Выключить</button>
-                  : <button className="btn mini primary" disabled={!!busy} onClick={() => void toggle17(m, true)}
-                            title="Скачает файл модели (нужен интернет), проверит SHA-256 и запустит отдельный контейнер; системной по умолчанию модель не станет">Включить на сервере</button>)}</td>
-              </tr>))}</tbody>
-          </table></div>
-          {st.models.some((m) => m.optional) && <p className="help">Более сильная модель заметно лучше держит содержание, но втрое медленнее на процессоре и требует около 2,5 ГБ памяти. Перед включением убедитесь, что на сервере есть запас по памяти.</p>}
-        </div>)}
     </section>
   );
 }

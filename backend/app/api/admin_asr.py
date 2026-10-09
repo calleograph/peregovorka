@@ -14,6 +14,8 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..services.audit import write_audit
 from ..workers.asr_sync import publish_desired
 
+from ..services.settings import RETIRED_ASR_MODELS  # noqa: E402
+
 router = APIRouter(prefix="/admin/asr", tags=["admin"])
 UNREACHABLE = "Сервис распознавания недоступен (контейнер asr не отвечает). Проверьте scripts/status.sh и scripts/logs.sh asr."
 
@@ -43,6 +45,8 @@ async def _call(request: Request, method: str, path: str, *, timeout: float = 10
 async def models(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Выбранная модель + фактическое состояние из ASR (активная, статус каждой, runtime, размер, устройство)."""
     desired = (await request.app.state.settings_svc.get(db, "asr")).active_model
+    if desired in RETIRED_ASR_MODELS:
+        desired = ""
     try:
         code, data = await _call(request, "GET", "/models")
         reachable = code == 200

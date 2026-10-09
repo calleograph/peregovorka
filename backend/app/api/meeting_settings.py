@@ -39,10 +39,12 @@ def _safe_spec(raw: dict | None) -> dict:
 async def _out(request: Request, db: AsyncSession, meeting: Meeting) -> dict:
     st = request.app.state
     choice = await resolve_llm(st.protocols.profiles, st.local_llm, db, meeting.room, meeting)
+    choice_s = await resolve_llm(st.protocols.profiles, st.local_llm, db, meeting.room, meeting, "summary")
     return {
         "ended": meeting.ended_at is not None,
         "delivery": {"effective": _safe_spec(effective_delivery(meeting)), "room": _safe_spec(meeting.room.mail_delivery), "override": meeting.delivery_override is not None},
         "llm": {"effective": describe(choice), "room": room_choice(meeting.room), "override": meeting.llm_override},
+        "llm_summary": {"effective": describe(choice_s), "room": room_choice(meeting.room, "summary"), "override": meeting.llm_summary_override},
         "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db),
     }
 
@@ -68,6 +70,10 @@ async def put_settings(meeting_id: uuid.UUID, request: Request, body: dict[str, 
             new_llm = clean_choice(body["llm"])
             meeting.llm_override = new_llm
             changed["llm"] = "как в комнате" if new_llm is None else new_llm
+        if "llm_summary" in body:
+            new_s = clean_choice(body["llm_summary"])
+            meeting.llm_summary_override = new_s
+            changed["llm_summary"] = "как в комнате" if new_s is None else new_s
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if changed:

@@ -55,11 +55,10 @@ class Settings(BaseSettings):
     local_llm_url: str = "http://llm-local:8080"
     local_llm_models_dir: str = "/models/llm"
     local_llm_enabled: str = "yes"
-    local_llm_model_file: str = "Qwen3-0.6B-Q4_K_M.gguf"
-    local_llm_model_alias: str = "qwen3-0.6b-q4_k_m"
-    local_llm_model_bytes: int = 484_220_320
-    local_llm_model_sha256: str = "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
-    local_llm_17b_enabled: str = "no"          # Qwen3 1.7B — отдельный необязательный контейнер llm-local-17b (scripts/llm.sh enable-17b)
+    local_llm_model_file: str = "Qwen3-1.7B-Q4_K_M.gguf"
+    local_llm_model_alias: str = "qwen3-1.7b-q4_k_m"
+    local_llm_model_bytes: int = 1_282_439_584
+    local_llm_model_sha256: str = "72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
     # --- SIP-телефония (контейнер livekit-sip, профиль compose `sip`; по умолчанию выключена и порты не открыты)
     sip_enabled: str = "no"
     sip_signaling_port: int = 5060

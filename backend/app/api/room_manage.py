@@ -58,6 +58,8 @@ class RoomManageOut(BaseModel):
     mute_on_join: bool
     welcome_message: str | None
     guest_access_enabled: bool
+    lifetime: str = "permanent"
+    lifecycle: str = "active"
     guest_token: str | None
     acl: list[AclEntryOut]
     moderators: list[AclEntryOut]
@@ -70,6 +72,8 @@ class RoomManageOut(BaseModel):
     # Языковая модель комнаты: системная по умолчанию → комната → встреча
     llm: dict | None = None                # {mode, profile_id, local_model}
     llm_effective: dict | None = None      # какая модель будет использована сейчас и почему
+    llm_summary: dict | None = None        # то же для краткого резюме (отдельная цепочка: система → комната → встреча)
+    llm_summary_effective: dict | None = None
     llm_options: dict | None = None
     # Телефония (SIP через LiveKit)
     sip: dict | None = None
@@ -97,6 +101,7 @@ class RoomManagePatch(BaseModel):
     mail_delivery: dict | None = None
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     llm: dict | None = None
+    llm_summary: dict | None = None
     sip: dict | None = None
 
 
@@ -127,8 +132,9 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
     if request is not None:
         st = request.app.state
         ch = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None)
+        chs = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None, "summary")
         sip, sip_opts = await _sip_block(request, db, room)
-        extra = {"llm": room_choice(room), "llm_effective": describe(ch), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
+        extra = {"llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
     return RoomManageOut(
         protocol_instructions=room.protocol_instructions,
         retention={"text_days": room.text_retention_days, "audio_days": room.audio_retention_days, "history_access": room.history_access, "anonymize_mode": room.anonymize_mode},
@@ -137,7 +143,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
         board_allowed=room.board_allowed, room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
-        guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
+        guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         active_meeting_id=active, can_edit_system_fields=su.is_admin, mail_delivery=_safe_spec(room.mail_delivery))
@@ -210,6 +216,8 @@ async def get_manage(room_id: uuid.UUID, request: Request, su: SessionUser = Dep
 async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     room = await _room_for_leader(request, db, room_id, su)
     fields = body.model_dump(exclude_unset=True)
+    if room.lifetime == "temporary" and fields.get("guest_access_enabled") and not room.guest_access_enabled:
+        await _require_temp_guest_policy(request, db)
     changed: dict = {}
     for name in LEADER_FIELDS:
         if name in fields and getattr(room, name) != fields[name]:
@@ -238,19 +246,23 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             r = spec["recipients"]
             changed["mail_delivery"] = {"enabled": spec["enabled"], "materials": spec["materials"], "leaders": r["leaders"], "participants": r["participants"],
                                         "users": len(r["users"]), "emails": len(r["emails"])}
-    if "llm" in fields:
+    for key, purpose in (("llm", "protocol"), ("llm_summary", "summary")):
+        if key not in fields:
+            continue
         try:
-            ch = clean_choice(fields["llm"] if fields["llm"] is not None else {"mode": "inherit"})
+            ch = clean_choice(fields[key] if fields[key] is not None else {"mode": "inherit"})
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         assert ch is not None
-        if (room.llm_mode, room.llm_profile_id and str(room.llm_profile_id), room.llm_local_model) != (ch["mode"], ch["profile_id"], ch["local_model"]):
-            room.llm_mode = ch["mode"]
-            room.llm_profile_id = uuid.UUID(ch["profile_id"]) if ch["profile_id"] and ch["profile_id"] != "main" else None
+        pre = "llm_summary" if purpose == "summary" else "llm"
+        cur = (getattr(room, f"{pre}_mode"), getattr(room, f"{pre}_profile_id") and str(getattr(room, f"{pre}_profile_id")), getattr(room, f"{pre}_local_model"))
+        if cur != (ch["mode"], ch["profile_id"], ch["local_model"]):
+            setattr(room, f"{pre}_mode", ch["mode"])
+            setattr(room, f"{pre}_profile_id", uuid.UUID(ch["profile_id"]) if ch["profile_id"] and ch["profile_id"] != "main" else None)
             if ch["profile_id"] == "main":
-                room.llm_mode = "inherit"        # «основной» профиль — это и есть системная настройка
-            room.llm_local_model = ch["local_model"]
-            changed["llm"] = ch
+                setattr(room, f"{pre}_mode", "inherit")        # «основной» профиль — это и есть системная настройка
+            setattr(room, f"{pre}_local_model", ch["local_model"])
+            changed[key] = ch
     if "sip" in fields and fields["sip"] is not None:
         await _apply_sip(request, db, room, fields["sip"], changed)
     if body.moderators is not None:
@@ -276,6 +288,12 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
     return out
 
 
+async def _require_temp_guest_policy(request: Request, db: AsyncSession) -> None:
+    """Гостевую ссылку для временной переговорки выпускают, только если это разрешено в «Общих настройках»."""
+    if not (await request.app.state.settings_svc.get(db, "general")).temp_room_allow_guest_link:     # type: ignore[attr-defined]
+        raise HTTPException(status_code=403, detail="Гостевая ссылка для временных переговорок отключена администратором")
+
+
 @router.post("/guest-link/{action}", response_model=RoomManageOut)
 async def guest_link(room_id: uuid.UUID, action: str, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """`rotate` — новая гостевая ссылка (старая перестаёт работать); `revoke` — отозвать ссылку (гостевой доступ выключается). Гости встречи отключаются."""
@@ -283,6 +301,8 @@ async def guest_link(room_id: uuid.UUID, action: str, request: Request, su: Sess
         raise HTTPException(status_code=404, detail="Неизвестное действие")
     room = await _room_for_leader(request, db, room_id, su)
     if action == "rotate":
+        if room.lifetime == "temporary":
+            await _require_temp_guest_policy(request, db)
         room.guest_token, room.guest_access_enabled = new_guest_token(), True
     else:
         room.guest_token, room.guest_access_enabled = None, False

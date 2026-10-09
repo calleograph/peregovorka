@@ -12,6 +12,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
 from ..services.audit import write_audit
+from ..services.rooms import slug_taken
 from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -64,6 +65,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
         room_type=room.room_type, auto_record=room.auto_record, board_allowed=room.board_allowed,
+        slug_history=list(room.slug_history or []), lifetime=room.lifetime, lifecycle=room.lifecycle, closed_at=room.closed_at, created_by_name=room.created_by_name,
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         active_meeting_id=active,
@@ -71,8 +73,12 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
 
 
 @router.get("/rooms", response_model=list[RoomAdminOut])
-async def list_rooms(su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    rooms = (await db.execute(select(Room).order_by(Room.name))).scalars().all()
+async def list_rooms(include_closed: bool = False, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Список комнат. Закрытые временные (их сотни за год; материалы остаются в «Истории») показываются только по `include_closed`."""
+    stmt = select(Room).order_by(Room.name)
+    if not include_closed:
+        stmt = stmt.where(Room.lifecycle != "closed")
+    rooms = (await db.execute(stmt)).scalars().all()
     return [await _out(db, r) for r in rooms]
 
 
@@ -80,6 +86,8 @@ async def list_rooms(su: SessionUser = Depends(require_admin), db: AsyncSession 
 async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = Depends(require_admin),
                       db: AsyncSession = Depends(get_db)):
     settings = request.app.state.settings
+    if await slug_taken(db, body.slug):
+        raise HTTPException(status_code=409, detail="Адрес комнаты уже занят (текущим или прежним адресом другой комнаты)")
     room = Room(
         slug=body.slug, name=body.name, description=body.description, is_enabled=body.is_enabled,
         max_participants=body.max_participants,
@@ -128,6 +136,14 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
         raise HTTPException(status_code=404, detail="Комната не найдена")
     fields = body.model_dump(exclude_unset=True)
     changed: dict = {}
+    new_slug = fields.pop("slug", None)
+    if new_slug and new_slug != room.slug:
+        if await slug_taken(db, new_slug, except_id=room.id):
+            raise HTTPException(status_code=409, detail="Адрес комнаты уже занят (текущим или прежним адресом другой комнаты)")
+        # прежний адрес сохраняется: ссылка со старым адресом откроет комнату по новому. Гостевая ссылка от адреса не зависит.
+        room.slug_history = [*([s for s in (room.slug_history or []) if s != new_slug]), room.slug][-50:]
+        changed["slug"] = {"from": room.slug, "to": new_slug}
+        room.slug = new_slug
     for name in _PATCHABLE:
         if name in fields and getattr(room, name) != fields[name]:
             changed[name] = {"from": str(getattr(room, name)) if isinstance(getattr(room, name), uuid.UUID) else getattr(room, name),

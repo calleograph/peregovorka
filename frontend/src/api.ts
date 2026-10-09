@@ -8,7 +8,11 @@ export interface Room {
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
   board_allowed?: boolean; room_type?: "regular" | "presentation"; auto_record?: boolean;
+  /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
+  lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
 }
+export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed" }
+export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
   screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
@@ -50,12 +54,26 @@ export interface WhiteboardState {
   xml: string | null; seq: number; patches: WhiteboardPatch[]; active: boolean; used: boolean; shapes: number; updated_at: string | null; updated_by: string | null;
 }
 export type ProtocolKind = "summary" | "protocol";
+export interface Timing {
+  requested_at: string | null; started_at: string | null; llm_started_at: string | null; llm_finished_at: string | null; finished_at: string | null;
+  queue_s: number | null; prepare_s: number | null; llm_s: number | null; total_s: number | null;
+}
+export interface Generation {
+  model: string | null; model_title: string | null; llm_local: boolean | null; api_type: string | null; llm_profile: string | null; llm_source: string | null;
+  llm_once: string | null; chunks: number | null; llm_calls: number | null; retries: number | null; length_hits: number | null; finish: Record<string, number> | null;
+  max_tokens: number | null; limit_note: string | null; input_chars: number | null; output_chars: number | null; prompt_tokens: number | null;
+  completion_tokens: number | null; structured: boolean | null; failed: boolean | null; error_code: string | null;
+}
 export interface ProtocolItem {
   id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
   created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
   title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
   /** Предупреждения при формировании: например, локальная модель не смогла полностью обработать стенограмму (truncated). */
   warnings?: string[]; truncated?: boolean;
+  /** Времена этапов (ISO) и длительности в секундах: нажатие → начало обработки → начало работы модели → готово; очередь, подготовка, модель, всего. */
+  timing?: Timing;
+  /** Как создан документ: модель, локальная ли, тип API, части, повторы, причины остановки. */
+  generation?: Generation;
   /** Выгруженный файл удалён из хранилища (по сверке): ссылки `location` нет; сам текст остаётся в системе. */
   file_state?: "ok" | "missing";
 }
@@ -108,8 +126,11 @@ export interface AclEntry { subject_type: "group" | "user"; subject_ref: string;
 export type HistoryAccess = "admin" | "participants";
 /** inherit — как в общих настройках; on — всегда обезличивать; off — не обезличивать (текст идёт в LLM как есть). */
 export type AnonymizeMode = "inherit" | "on" | "off";
+export interface Forecast { low_s: number; high_s: number; text: string; basis: "history" | "estimate"; samples: number; chunks: number; note: string }
+export interface LlmChoiceOnce { key: string; label: string; local: boolean }
 export interface ProtocolPlan {
   llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean;
+  forecast?: Forecast; max_output_tokens?: number; max_output_note?: string; llm_api_type?: string; llm_source?: string; once?: boolean;
   /** Локальная встроенная модель: данные не покидают сервер. warnings — например, длинная стенограмма для облегчённой модели. */
   llm_local?: boolean; llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
 }
@@ -137,12 +158,15 @@ export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; room_type: RoomType; auto_record: boolean; record_audio: boolean;
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
+  lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
   protocol_instructions?: string | null;
   /** Сроки хранения и обезличивание задаёт администратор: руководителю показываются только для сведения. */
   retention?: { text_days: number | null; audio_days: number | null; history_access: string; anonymize_mode: string } | null;
   llm?: LlmChoice | null; llm_effective?: LlmEffective | null; llm_options?: LlmOptions | null;
+  /** Модель для краткого резюме — отдельная цепочка «система → комната → встреча». */
+  llm_summary?: LlmChoice | null; llm_summary_effective?: LlmEffective | null;
   sip?: RoomSip | null; sip_options?: SipOptions | null;
 }
 /** Выбор языковой модели: inherit — системная по умолчанию; local — локальная модель; profile — внешний профиль; off — отключена. */
@@ -150,6 +174,7 @@ export interface LlmChoice { mode: "inherit" | "local" | "profile" | "off"; prof
 export interface LlmEffective { name: string; source: "system" | "room" | "meeting"; available: boolean; reason: string | null; note: string | null }
 export interface LlmOptions {
   system: { name: string; provider: "local" | "external" | "off"; model: string | null };
+  system_summary?: { name: string; provider: "local" | "external" | "off"; model: string | null };
   local: { id: string; title: string; light: boolean; installed: boolean }[];
   profiles: { id: string; name: string; model: string; is_default: boolean }[];
   on_missing: "system" | "unavailable";
@@ -162,6 +187,7 @@ export interface MeetingSettings {
   ended: boolean;
   delivery: { effective: MailDeliverySpec; room: MailDeliverySpec; override: boolean };
   llm: { effective: LlmEffective; room: LlmChoice; override: LlmChoice | null };
+  llm_summary: { effective: LlmEffective; room: LlmChoice; override: LlmChoice | null };
   llm_options: LlmOptions;
 }
 export interface PhoneState {
@@ -194,6 +220,20 @@ export interface CaCert {
 }
 export interface CaInfo { subject: string; issuer: string; serial: string; sha256: string; not_before: string; not_after: string; is_ca: boolean; self_signed: boolean; expired: boolean; not_yet_valid: boolean; type: string }
 export interface LocalAdminInfo { exists: boolean; username?: string; is_active?: boolean; must_change_password?: boolean; last_login_at?: string | null; password_changed_at?: string | null; recovery: string }
+export interface AccessStatus { restricted: boolean; user_groups: number; admin_groups: number; env_user_group: boolean; env_admin_group: boolean }
+export interface AccessCheck {
+  found: boolean; message?: string; login?: string; display_name?: string; source?: string; account_disabled?: boolean; restricted?: boolean;
+  would_log_in?: boolean; reason?: string; allowed_via?: string[]; admin?: boolean; admin_via?: string[]; groups_total?: number;
+}
+export interface EffectiveModel {
+  enabled: boolean; local: boolean; name: string; model: string | null; api_type: string | null; max_output_tokens: number | null; max_output_note: string;
+  ready: boolean; problem: string | null;
+}
+export interface EffectiveModels { protocol: EffectiveModel; summary: EffectiveModel; rooms_with_own_model: { protocol: number; summary: number } }
+export interface ModelStat {
+  model: string; local: boolean; profile: string; title: string; kind: string; documents: number; ok: number; failed: number; truncated: number; length_hits: number;
+  retries: number; avg_s: number | null; median_s: number | null; avg_input_chars: number | null; avg_output_chars: number | null; tokens_per_s: number | null; last: string | null;
+}
 export interface SetupStep { id: string; title: string; done: boolean; page: string }
 export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean }
 export interface MailProfile {
@@ -232,6 +272,7 @@ export interface RoomAdmin {
   mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
   room_type: RoomType; auto_record: boolean; board_allowed: boolean;
+  slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
@@ -285,12 +326,6 @@ export interface LocalLlmStatus {
   file: { file: string; size_bytes: number | null; expected_bytes: number; sha256_state: "ok" | "mismatch" | "unchecked" | "skipped"; state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash" };
   runtime: { reachable: boolean; ready: boolean; detail: string };
   catalog: { id: string; title: string; runtime: string; light: boolean; source: string }[];
-  /** Все локальные модели реестра: файл, включена ли на сервере (необязательные включаются отдельно), отвечает ли контейнер. */
-  models?: LocalModelInfo[];
-}
-export interface LocalModelInfo {
-  id: string; title: string; light: boolean; optional: boolean; enabled_on_server: boolean; size_bytes: number; note: string;
-  file_state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash"; ready: boolean; runtime: { reachable: boolean; ready: boolean; detail: string };
 }
 export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string }
 export interface RepairsInfo {
@@ -432,6 +467,9 @@ export const api = {
   logout: () => request<void>("POST", "/auth/logout"),
   me: () => request<Me>("GET", "/auth/me"),
   rooms: () => request<Room[]>("GET", "/rooms"),
+  resolveRoom: (ref: string) => request<RoomRef>("GET", `/rooms/resolve/${encodeURIComponent(ref)}`),
+  temporaryPolicy: () => request<TempRoomPolicy>("GET", "/rooms/temporary/policy"),
+  createTemporaryRoom: (name: string) => request<Room>("POST", "/rooms/temporary", { name }),
   join: (roomId: string, password?: string) => request<JoinInfo>("POST", `/rooms/${roomId}/join`, { password: password || null }),
   leave: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/leave`),
   /** Руководитель комнаты: выключить микрофоны у всех участников (кроме себя) или у одного. */
@@ -475,7 +513,7 @@ export const api = {
     search: (roomId: string, kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/rooms/${roomId}/manage/directory?kind=${kind}&q=${encodeURIComponent(q)}`),
     /** Кому уйдёт рассылка по этим (даже несохранённым) настройкам: адреса из каталога, у кого адреса нет, что запрещено политикой. */
     meetingSettings: (meetingId: string) => request<MeetingSettings>("GET", `/meetings/${meetingId}/settings`),
-    saveMeetingSettings: (meetingId: string, body: { delivery?: MailDeliverySpec | null; llm?: LlmChoice | null }) => request<MeetingSettings>("PUT", `/meetings/${meetingId}/settings`, body),
+    saveMeetingSettings: (meetingId: string, body: { delivery?: MailDeliverySpec | null; llm?: LlmChoice | null; llm_summary?: LlmChoice | null }) => request<MeetingSettings>("PUT", `/meetings/${meetingId}/settings`, body),
     phone: (roomId: string) => request<PhoneState>("GET", `/rooms/${roomId}/phone`),
     phoneCall: (roomId: string, body: { number?: string; contact?: number }) => request<{ guest_id: string; identity: string; display_name: string; profile: string }>("POST", `/rooms/${roomId}/phone/call`, body),
     phoneHangup: (roomId: string, guestId: string) => request<{ ok: boolean }>("POST", `/rooms/${roomId}/phone/hangup`, { guest_id: guestId }),
@@ -491,10 +529,11 @@ export const api = {
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
-  defaultInstruction: (meetingId: string, kind: ProtocolKind) =>
-    request<{ kind: string; instruction: string; plan?: ProtocolPlan }>("GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}`),
-  createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string) =>
-    request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction }),
+  defaultInstruction: (meetingId: string, kind: ProtocolKind, llm = "") =>
+    request<{ kind: string; instruction: string; plan?: ProtocolPlan; can_override?: boolean; llm_choices?: LlmChoiceOnce[] }>(
+      "GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}${llm ? `&llm=${encodeURIComponent(llm)}` : ""}`),
+  createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string, llmOnce = "") =>
+    request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction, ...(llmOnce ? { llm_once: llmOnce } : {}) }),
   editProtocol: (meetingId: string, id: string, body: { content?: string; title?: string }) =>
     request<ProtocolItem>("PATCH", `/meetings/${meetingId}/protocols/${id}`, body),
   deleteProtocol: (meetingId: string, id: string) => request<void>("DELETE", `/meetings/${meetingId}/protocols/${id}`),
@@ -524,7 +563,7 @@ export const api = {
   },
 
   admin: {
-    rooms: () => request<RoomAdmin[]>("GET", "/admin/rooms"),
+    rooms: (includeClosed = false) => request<RoomAdmin[]>("GET", `/admin/rooms${includeClosed ? "?include_closed=true" : ""}`),
     guestLink: (id: string, action: "rotate" | "revoke") => request<RoomAdmin>("POST", `/admin/rooms/${id}/guest-link/${action}`),
     createRoom: (body: Record<string, unknown>) => request<RoomAdmin>("POST", "/admin/rooms", body),
     patchRoom: (id: string, body: Record<string, unknown>) => request<RoomAdmin>("PATCH", `/admin/rooms/${id}`, body),
@@ -589,6 +628,10 @@ export const api = {
     caAdd: (body: { pem?: string; data_base64?: string; label?: string; confirm_non_ca?: boolean }) => request<{ added: CaInfo[]; already_present: CaInfo[] }>("POST", "/admin/ca", body),
     caDelete: (id: string) => request<void>("DELETE", `/admin/ca/${id}`),
     localAdmin: () => request<LocalAdminInfo>("GET", "/admin/local-admin"),
+    effectiveModels: () => request<EffectiveModels>("GET", "/admin/llm/effective"),
+    modelStats: () => request<{ documents: number; models: ModelStat[] }>("GET", "/admin/llm/stats"),
+    accessStatus: () => request<AccessStatus>("GET", "/admin/access/status"),
+    accessCheckUser: (login: string) => request<AccessCheck>("POST", "/admin/access/check-user", { login }),
     setupStatus: () => request<SetupStatus>("GET", "/admin/setup/status"),
     setupComplete: (skipped: string[]) => request<{ completed: boolean }>("POST", "/admin/setup/complete", { skipped }),
     mailProfiles: () => request<{ items: MailProfile[] }>("GET", "/admin/mail/profiles"),

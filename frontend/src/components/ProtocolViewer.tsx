@@ -3,6 +3,7 @@ import { api, type ApiError, type ExportFormat, type ProtocolItem } from "../api
 import { mdToPlain } from "../markdown";
 import { copyText, fmt } from "../util";
 import { ConfirmDialog } from "./Dialogs";
+import GenerationInfo, { docState, generationLine } from "./GenerationInfo";
 import { Markdown } from "./Markdown";
 import Menu from "./Menu";
 
@@ -44,11 +45,16 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
     finally { setBusy(false); }
   };
 
-  if (item.status === "pending") return <div className="card"><p className="muted" role="status">Документ формируется… Страница обновится сама.</p></div>;
+  if (item.status === "pending") {
+    return <div className="card"><p className="muted" role="status">Документ формируется… Страница обновится сама.</p>
+      {generationLine(item) && <p className="muted small">{generationLine(item)}</p>}</div>;
+  }
   if (item.status === "failed") {
     return (
       <div className="card">
         <div className="alert error" role="alert">Не удалось сформировать: {item.error ?? "неизвестная ошибка"}</div>
+        {generationLine(item) && <p className="muted small">{generationLine(item)}</p>}
+        <GenerationInfo item={item} />
         <div className="row"><button className="btn primary" onClick={() => onRegenerate(item)}>Сформировать заново</button>
           {isAdmin && <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Удалить</button>}</div>
         {confirmDelete && <DeleteProtocol meetingId={meetingId} id={item.id} onDeleted={onDeleted} onClose={() => setConfirmDelete(false)} />}
@@ -61,6 +67,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
       <div className="row">
         <h2>{item.title || KIND_TITLE[item.kind] || "Документ"}</h2>
         <span className="badge">{KIND_TITLE[item.kind] ?? item.kind}</span>
+        <span className={`badge ${docState(item).tone === "ok" ? "ok" : "warn"}`}>{docState(item).label}</span>
         <div className="spacer" />
         <span className="seg" role="group" aria-label="Режим показа">
           <button aria-pressed={mode === "view"} onClick={() => setMode("view")}>Просмотр</button>
@@ -71,6 +78,8 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         {fmt(item.created_at)}{item.created_by ? ` · сформировал: ${item.created_by}` : ""}{item.model ? ` · ${item.model}` : ""}
         {item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}
       </p>
+      {generationLine(item) && <p className="small" style={{ margin: "0 0 6px" }}>{generationLine(item)}</p>}
+      {item.truncated && <div className="alert error" role="alert"><b>Документ может быть неполным:</b> ответ модели оборван по лимиту длины. Проверьте текст целиком, увеличьте «Максимальную длину ответа» для этой задачи (Администрирование → Языковая модель) или сформируйте документ заново другой моделью.</div>}
 
       {item.warnings?.map((w) => (
         <div key={w} className={`alert ${item.truncated ? "error" : "info"}`} role="status">⚠ {w}</div>))}
@@ -111,6 +120,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         </div>
       )}
 
+      <GenerationInfo item={item} />
       {item.instruction && (
         <details style={{ marginTop: 12 }}>
           <summary className="muted small">Инструкция, по которой создан документ</summary>

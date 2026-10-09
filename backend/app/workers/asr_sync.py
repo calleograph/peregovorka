@@ -11,7 +11,7 @@ import logging
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..services.settings import SettingsService
+from ..services.settings import RETIRED_ASR_MODELS, SettingsService
 
 log = logging.getLogger("app.asr_sync")
 DESIRED_MODEL_KEY = "asr:desired_model"
@@ -22,6 +22,8 @@ async def publish_desired(db: AsyncSession, svc: SettingsService, redis: Redis) 
     """Записать выбранную модель в Redis. Пустой выбор (модель по умолчанию из .env) ключ удаляет."""
     cfg = await svc.get(db, "asr")
     model = cfg.active_model  # type: ignore[attr-defined]
+    if model in RETIRED_ASR_MODELS:
+        model = ""            # квантованная модель снята с вооружения: работаем на штатной полной
     vad = {k.removeprefix("vad_"): getattr(cfg, k) for k in ("vad_threshold", "vad_end_silence_ms", "vad_min_speech_ms", "vad_pad_ms", "vad_max_segment_seconds")
            if getattr(cfg, k, None) is not None}
     if vad:

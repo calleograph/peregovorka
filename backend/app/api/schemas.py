@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
 
 
 class LoginIn(BaseModel):
@@ -50,6 +50,10 @@ class RoomOut(BaseModel):
     board_allowed: bool = True
     room_type: str = "regular"
     auto_record: bool = False
+    lifetime: str = "permanent"        # permanent | temporary
+    lifecycle: str = "active"          # active | grace_period | closed
+    auto_close_at: datetime | None = None
+    created_by_name: str | None = None
     active_meeting: ActiveMeetingOut | None = None
 
 
@@ -172,6 +176,11 @@ class RoomAdminOut(BaseModel):
     auto_record: bool = False
     board_allowed: bool = True
     guest_access_enabled: bool = False
+    slug_history: list[str] = Field(default_factory=list)      # прежние адреса комнаты (старые ссылки перенаправляют на нынешний)
+    lifetime: str = "permanent"
+    lifecycle: str = "active"
+    closed_at: datetime | None = None
+    created_by_name: str | None = None
     guest_token: str | None = None     # секрет гостевой ссылки (виден только администраторам); None — ссылка не выпущена/отозвана
     acl: list[AclEntryOut]
     moderators: list[AclEntryOut] = Field(default_factory=list)
@@ -208,14 +217,16 @@ class RoomCreateIn(BaseModel):
     @field_validator("slug")
     @classmethod
     def _slug(cls, v: str) -> str:
+        v = v.strip().lower()           # регистр не важен: адрес хранится строчным
         if not SLUG_RE.match(v):
-            raise ValueError("slug: a-z, 0-9 и '-', 2–63 символа, начинается с буквы/цифры")
+            raise ValueError("Адрес комнаты: латиница, цифры, «-» и «_», 2–63 символа, начинается с буквы или цифры")
         return v
 
 
 class RoomPatchIn(BaseModel):
     """Частичное обновление. Пароль: строка — задать, пустая строка — снять, поле не передано — не менять."""
 
+    slug: str | None = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     is_enabled: bool | None = None
@@ -240,3 +251,13 @@ class RoomPatchIn(BaseModel):
     guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def _slug(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if not SLUG_RE.match(v):
+            raise ValueError("Адрес комнаты: латиница, цифры, «-» и «_», 2–63 символа, начинается с буквы или цифры")
+        return v

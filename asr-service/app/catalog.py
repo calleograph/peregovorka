@@ -39,19 +39,23 @@ class ModelSpec:
                 "quant": self.quant or "full", "description": self.description, "files": list(self.files)}
 
 
-def default_catalog(model_name: str = "v3_e2e_rnnt") -> list[ModelSpec]:
-    return [
+def default_catalog(model_name: str = "v3_e2e_rnnt", *, include_quantized: bool = False) -> list[ModelSpec]:
+    """Штатная модель распознавания — только полная GigaAM v3 e2e RNNT. Квантованная Q5_K_M снята с вооружения (хуже распознаёт и практической пользы не дала):
+    она не входит в каталог, не скачивается и не предлагается; код runtime GGUF оставлен для возможных будущих моделей (catalog.json)."""
+    specs = [
         ModelSpec(
             id=FULL_ID, title="GigaAM v3 e2e RNNT — Full", runtime="pytorch", quant="",
             files=(f"{model_name}.ckpt", f"{model_name}_tokenizer.model"), params={"model_name": model_name},
-            description="Полная точность, PyTorch. Эталон качества; текущий рабочий вариант.",
+            description="Полная точность, PyTorch. Штатная модель распознавания речи.",
         ),
-        ModelSpec(
+    ]
+    if include_quantized:
+        specs.append(ModelSpec(
             id=Q5_ID, title="GigaAM v3 e2e RNNT — Q5_K_M", runtime="gguf", quant="Q5_K_M",
             files=("gigaam-v3-e2e-rnnt-Q5_K_M.gguf",),
             description="Компактная квантованная модель (GGUF, движок transcribe.cpp встроен в образ ASR) для снижения нагрузки на CPU и ускорения распознавания.",
-        ),
-    ]
+        ))
+    return specs
 
 
 def load_catalog(model_dir: str | Path, model_name: str = "v3_e2e_rnnt") -> list[ModelSpec]:

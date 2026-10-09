@@ -77,14 +77,12 @@ t "web nginx: /livekit/ передаёт X-Forwarded-*" bash -c 'awk "/location 
 t ".env.example описывает ASR_INTEROP_THREADS и рекомендации по vCPU" bash -c 'grep -q "^ASR_INTEROP_THREADS=" "$1/.env.example" && grep -q "4 vCPU" "$1/.env.example"' _ "$ROOT"
 t "compose передаёт ASR_INTEROP_THREADS и таймауты комнаты LiveKit" bash -c 'grep -q "ASR_INTEROP_THREADS" "$1/deployment/compose.yml" && grep -q "departure_timeout" "$1/deployment/compose.yml" && grep -q "empty_timeout" "$1/deployment/compose.yml"' _ "$ROOT"
 
-# ---- models.sh: обе модели рядом (Full + GGUF), ничего не удаляется
-G="$TMP/gg"; mkdir -p "$G/src"; head -c 2000000 /dev/zero > "$G/src/v3_e2e_rnnt.ckpt"; echo tok > "$G/src/v3_e2e_rnnt_tokenizer.model"; head -c 1500000 /dev/zero > "$G/src/gigaam-v3-e2e-rnnt-Q5_K_M.gguf"
+# ---- models.sh: только полная модель (квантованная GigaAM снята с вооружения)
+G="$TMP/gg"; mkdir -p "$G/src"; head -c 2000000 /dev/zero > "$G/src/v3_e2e_rnnt.ckpt"; echo tok > "$G/src/v3_e2e_rnnt_tokenizer.model"
 printf 'DATA_ROOT=%s/data\nASR_MODEL_NAME=v3_e2e_rnnt\n' "$G" > "$G/env"
 t "models.sh: Full подготовлена" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src"' _ "$ROOT" "$G"
-t "models.sh --gguf --skip-full: добавляет GGUF, не трогая Full" bash -c 'before="$(cksum < "$2/data/models/gigaam/v3_e2e_rnnt.ckpt")"; bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src" --gguf --skip-full && [ -s "$2/data/models/gigaam/gigaam-v3-e2e-rnnt-Q5_K_M.gguf" ] && [ "$before" = "$(cksum < "$2/data/models/gigaam/v3_e2e_rnnt.ckpt")" ]' _ "$ROOT" "$G"
-t "обе модели лежат одновременно" bash -c 'ls "$1/data/models/gigaam" | grep -q "v3_e2e_rnnt.ckpt" && ls "$1/data/models/gigaam" | grep -q "Q5_K_M.gguf"' _ "$G"
-t "models.sh --gguf: для Q5_K_M по умолчанию задан публичный адрес (handy-computer/gigaam-v3-e2e-rnnt-gguf)" grep -q "huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf" "$ROOT/scripts/models.sh"
-t "models.sh --gguf без источника: понятная ошибка с подсказкой" bash -c 'rm -f "$2/data/models/gigaam/gigaam-v3-e2e-rnnt-Q5_K_M.gguf"; out="$(GGUF_MODEL_FILE=custom-model.gguf bash "$1/scripts/models.sh" --env "$2/env" --gguf --skip-full 2>&1)"; [ $? -ne 0 ] && printf "%s" "$out" | grep -q "GGUF_MODEL_URL"' _ "$ROOT" "$G"
+t "models.sh: параметр --gguf больше не поддерживается" bash -c '! bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src" --gguf --skip-full >/dev/null 2>&1' _ "$ROOT" "$G"
+t "models.sh: адреса квантованной модели в скрипте нет, на диск она не попадает" bash -c '! grep -q "handy-computer" "$1/scripts/models.sh" && ! ls "$2/data/models/gigaam" | grep -qi "gguf"' _ "$ROOT" "$G"
 t "compose: выбор модели не зашит (ASR_MODEL_ID — запасной), токен для управления моделями передаётся" bash -c 'grep -q "ASR_MODEL_ID:" "$1/deployment/compose.yml" && grep -q "INTERNAL_API_TOKEN" "$1/deployment/compose.yml"' _ "$ROOT"
 
 # ---- realtime: nginx и рекомендации

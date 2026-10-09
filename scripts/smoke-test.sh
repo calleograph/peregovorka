@@ -88,7 +88,7 @@ b=json.dumps({'model':'x','max_tokens':12,'temperature':0,'messages':[{'role':'u
 r=urllib.request.Request('http://llm-local:8080/v1/chat/completions',data=b,headers={'Content-Type':'application/json'})
 d=json.load(urllib.request.urlopen(r,timeout=90))
 print('OK' if d['choices'][0]['message'] is not None else 'EMPTY')" || true)"
-  if printf '%s' "$LT" | grep -q '^OK'; then rec "Локальная LLM" OK "Qwen3 0.6B отвечает на тестовый запрос (runtime llama.cpp, CPU, внутренняя сеть без выхода наружу)"
+  if printf '%s' "$LT" | grep -q '^OK'; then rec "Локальная LLM" OK "Qwen3 1.7B отвечает на тестовый запрос (runtime llama.cpp, CPU, внутренняя сеть без выхода наружу)"
   else rec "Локальная LLM" WARNING "контейнер запущен, но тестовый запрос не выполнен (модель ещё загружается или сбой — scripts/logs.sh llm-local)"; fi
 fi
 

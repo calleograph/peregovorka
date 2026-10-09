@@ -24,9 +24,9 @@ from .settings import LlmSettings
 
 log = logging.getLogger("app.llm.local")
 
-# Модель для «простых задач»: на длинных стенограммах качество ниже, чем у крупных моделей — интерфейс предупреждает о размере входа.
-LIGHT_NOTE = ("Qwen3 0.6B — облегчённая модель: хорошо подходит для краткого резюме, решений, задач, ответственных и короткого протокола. "
-              "На длинных стенограммах качество может быть ниже, чем у более крупных моделей (возможны пропуски и неточности) — проверяйте результат.")
+# Небольшая локальная модель: на длинных встречах ошибается (путает ответственных, сроки), поэтому интерфейс просит проверять результат.
+MODEL_NOTE = ("Qwen3 1.7B — небольшая локальная модель: данные не покидают сервер, документ собирается по проверенным пунктам с источниками (протокол — кодом, резюме — по этим пунктам). "
+              "Это всё ещё небольшая модель: на длинных встречах возможны пропуски и неточности, важные пункты нужно сверять с записью.")
 
 
 @dataclass(frozen=True)
@@ -38,36 +38,34 @@ class LocalModel:
     size_bytes: int
     sha256: str
     context_tokens: int        # размер контекста, с которым запускается runtime
-    light: bool                # облегчённая модель: показывать предупреждение на длинных входах
+    light: bool                # небольшая модель: показывать предупреждение на длинных входах
     max_input_chars: int       # безопасный размер одного фрагмента входа (символов); больше — разбивается на фрагменты
     warn_input_chars: int      # с какого размера стенограммы показывать предупреждение о качестве
     max_output_tokens: int
-    tasks: tuple[str, ...] = field(default=("краткое резюме", "решения", "задачи и ответственные", "короткий протокол"))
+    tasks: tuple[str, ...] = field(default=("краткое резюме", "решения", "задачи и ответственные", "протокол по проверенным пунктам"))
     source: str = ""
     note: str = ""
-    optional: bool = False     # необязательная модель: свой контейнер и свой флаг включения на сервере (не входит в обычную установку)
-    service: str = ""          # host:port отдельного контейнера этой модели во внутренней сети; пусто — основной контейнер llm-local (LOCAL_LLM_URL)
+    hidden: bool = False       # снята с вооружения: не скачивается, не показывается и не предлагается; сохранённый выбор молча заменяется основной моделью
 
-
-QWEN3_06B = LocalModel(
-    id="qwen3-0.6b-q4_k_m", title="Qwen3 0.6B Q4_K_M", runtime="llama.cpp (GGUF, CPU)", file="Qwen3-0.6B-Q4_K_M.gguf",
-    size_bytes=484_220_320, sha256="9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14", context_tokens=8192, light=True,
-    max_input_chars=12_000, warn_input_chars=15_000, max_output_tokens=1200,
-    source="huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF (Qwen_Qwen3-0.6B-Q4_K_M.gguf)", note=LIGHT_NOTE)
-
-MID_NOTE = ("Qwen3 1.7B — следующая по силе локальная модель: заметно лучше держит структуру и содержание, чем 0.6B, но втрое медленнее на CPU и занимает около 2,5 ГБ памяти. "
-            "Работает в отдельном контейнере llm-local-17b, который включается администратором (scripts/llm.sh enable-17b). Это всё ещё небольшая модель: результат нужно проверять.")
 
 QWEN3_17B = LocalModel(
-    id="qwen3-1.7b-q4_k_m", title="Qwen3 1.7B Q4_K_M", runtime="llama.cpp (GGUF, CPU)", file="Qwen3-1.7B-Q4_K_M.gguf", optional=True,
+    id="qwen3-1.7b-q4_k_m", title="Qwen3 1.7B Q4_K_M", runtime="llama.cpp (GGUF, CPU)", file="Qwen3-1.7B-Q4_K_M.gguf",
     size_bytes=1_282_439_584, sha256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb", context_tokens=8192, light=True,
-    max_input_chars=12_000, warn_input_chars=30_000, max_output_tokens=1500, service="llm-local-17b:8080",
-    source="huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF (Qwen_Qwen3-1.7B-Q4_K_M.gguf)", note=MID_NOTE)
+    max_input_chars=6_000, warn_input_chars=30_000, max_output_tokens=1500,
+    source="huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF (Qwen_Qwen3-1.7B-Q4_K_M.gguf)", note=MODEL_NOTE)
 
-# Реестр локальных моделей. Новая модель (Gemma 3 4B и др.) добавляется записью сюда + файл .gguf в каталоге моделей и параметры LLM_MODEL_* в .env:
+# Прежняя Qwen3 0.6B: на протоколах и длинных резюме оказалась слишком слабой (HISTORY.md). Запись оставлена только для старых сохранённых настроек.
+QWEN3_06B = LocalModel(
+    id="qwen3-0.6b-q4_k_m", title="Qwen3 0.6B Q4_K_M (снята с вооружения)", runtime="llama.cpp (GGUF, CPU)", file="Qwen3-0.6B-Q4_K_M.gguf",
+    size_bytes=484_220_320, sha256="9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14", context_tokens=8192, light=True,
+    max_input_chars=6_000, warn_input_chars=15_000, max_output_tokens=1200, hidden=True,
+    source="huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF (Qwen_Qwen3-0.6B-Q4_K_M.gguf)", note="Снята с вооружения: слишком слабая для протоколов.")
+
+# Реестр локальных моделей. Новая модель (более крупная) добавляется записью сюда + файл .gguf в каталоге моделей и параметры LLM_MODEL_* в .env:
 # API, протоколы и интерфейс от этого не зависят.
-LOCAL_MODELS: dict[str, LocalModel] = {QWEN3_06B.id: QWEN3_06B, QWEN3_17B.id: QWEN3_17B}
-DEFAULT_LOCAL_MODEL = QWEN3_06B.id
+LOCAL_MODELS: dict[str, LocalModel] = {QWEN3_17B.id: QWEN3_17B, QWEN3_06B.id: QWEN3_06B}
+DEFAULT_LOCAL_MODEL = QWEN3_17B.id
+VISIBLE_MODELS = {k: v for k, v in LOCAL_MODELS.items() if not v.hidden}
 
 
 class LocalLlm:
@@ -82,20 +80,20 @@ class LocalLlm:
         return self._s.local_llm_url.rstrip("/")
 
     def url_for(self, m: LocalModel) -> str:
-        """Внутренний адрес runtime этой модели: у моделей с собственным контейнером (1.7B) — он, иначе основной llm-local."""
-        return f"http://{m.service}".rstrip("/") if m.service else self.url
+        return self.url
 
     def model_enabled(self, m: LocalModel) -> bool:
-        """Включена ли модель на сервере: основная — установкой (LLM_LOCAL_ENABLED), необязательная — отдельным флагом (LLM_17B_ENABLED)."""
-        flag = self._s.local_llm_17b_enabled if m.optional else self._s.local_llm_enabled
-        return str(flag).strip().lower() in ("yes", "true", "1", "on")
+        """Локальная модель включена установкой (LLM_LOCAL_ENABLED)."""
+        return self.enabled()
 
     def enabled(self) -> bool:
         return str(self._s.local_llm_enabled).strip().lower() in ("yes", "true", "1", "on")
 
     def model(self, model_id: str | None = None) -> LocalModel:
         """Описание модели; для модели по умолчанию имя файла, размер и хеш берутся из окружения (переопределение в .env)."""
-        base = LOCAL_MODELS.get(model_id or DEFAULT_LOCAL_MODEL) or LOCAL_MODELS[DEFAULT_LOCAL_MODEL]
+        base = LOCAL_MODELS.get(model_id or DEFAULT_LOCAL_MODEL)
+        if base is None or base.hidden:         # снятая с вооружения (0.6B) или неизвестная модель в старых настройках → основная
+            base = LOCAL_MODELS[DEFAULT_LOCAL_MODEL]
         if base.id != DEFAULT_LOCAL_MODEL:
             return base
         s = self._s
@@ -165,10 +163,10 @@ class LocalLlm:
             fs = await asyncio.to_thread(self.file_state, mm)
             on = self.model_enabled(mm)
             rt = await self.runtime(mm) if (on and fs["state"] == "ok") else {"reachable": False, "ready": False, "detail": "не запущена" if on else "не включена на сервере"}
-            return {"id": mm.id, "title": mm.title, "light": mm.light, "optional": mm.optional, "enabled_on_server": on, "size_bytes": mm.size_bytes,
+            return {"id": mm.id, "title": mm.title, "light": mm.light, "enabled_on_server": on, "size_bytes": mm.size_bytes,
                     "file_state": fs["state"], "runtime": rt, "ready": on and fs["state"] == "ok" and rt["ready"], "note": mm.note}
 
-        return list(await asyncio.gather(*[one(k, v) for k, v in LOCAL_MODELS.items()]))
+        return list(await asyncio.gather(*[one(k, v) for k, v in VISIBLE_MODELS.items()]))
 
     async def status(self, cfg: LlmSettings) -> dict:
         m = self.model(cfg.local_model)
@@ -182,7 +180,7 @@ class LocalLlm:
             "file": fs, "runtime": rt,
             "ready": fs["state"] == "ok" and rt["ready"],
             "endpoint": "внутренний (контейнер llm-local, OpenAI-совместимый /v1), наружу не опубликован; сеть без выхода в интернет",
-            "available_models": [{"id": k, "title": v.title, "light": v.light} for k, v in LOCAL_MODELS.items()],
+            "available_models": [{"id": k, "title": v.title, "light": v.light} for k, v in VISIBLE_MODELS.items()],
             "models": await self.models_overview(),
         }
 
@@ -197,12 +195,16 @@ class LocalLlm:
         m = self.model(cfg.local_model)
         return cfg.model_copy(update={
             "enabled": True, "type": "openai_compatible", "base_url": f"{self.url_for(m)}/v1", "model": m.id, "api_key": "",
-            "max_tokens": min(cfg.max_tokens, m.max_output_tokens), "temperature": min(cfg.temperature, 0.3),
+            "max_tokens": m.max_output_tokens, "max_tokens_summary": min(cfg.max_tokens_summary or m.max_output_tokens, m.max_output_tokens),
+            "max_tokens_protocol": min(cfg.max_tokens_protocol or m.max_output_tokens, m.max_output_tokens), "context_window": m.context_tokens,
+            "temperature": min(cfg.temperature, 0.3), "send_temperature": True, "supports_system": True, "supports_json": True,
+            "extra_headers": {}, "secret_headers": "", "secret_header_names": [],
             "timeout": max(cfg.timeout, 600), "use_corporate_ca": False, "allow_http": True, "routing_provider": ""}), True
 
-    def client(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> LlmClient:
+    def client(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
+               purpose: str = "protocol") -> LlmClient:
         eff, local = self.effective(cfg)
-        return LlmClient(eff, ca_file=ca_file, transport=(self._transport or transport) if local else transport, local=local)
+        return LlmClient(eff, ca_file=ca_file, transport=(self._transport or transport) if local else transport, local=local, purpose=purpose)
 
     def limits(self, cfg: LlmSettings) -> LocalModel | None:
         """Описание модели, если выбрана локальная (для размера фрагментов и предупреждений), иначе None."""

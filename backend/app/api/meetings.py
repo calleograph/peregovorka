@@ -16,7 +16,9 @@ from ..services.access import can_access_meeting, release_lease
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_pdf
+from ..services.llm_choice import once_options
 from ..services.meetings import JoinError
+from ..services.settings import SettingsError
 from ..services.segments import segment_to_dict
 from ..services.reconcile import mark_missing
 from ..services.storage import StorageError, StorageNotFound
@@ -215,7 +217,12 @@ def _protocol_dict(p: Protocol, with_content: bool = False) -> dict:
          "warnings": (p.meta or {}).get("warnings") or [], "truncated": bool((p.meta or {}).get("truncated")),
          # ссылка на выгруженный файл отдаётся, только пока файл есть (по сверке с хранилищем); сам текст всегда в базе
          "location": (p.meta or {}).get("location") if p.file_state != "missing" else None, "file_state": p.file_state,
-         "export_files": (p.meta or {}).get("export_files")}
+         "export_files": (p.meta or {}).get("export_files"),
+         "timing": {k: (p.meta or {}).get(k) for k in ("requested_at", "started_at", "llm_started_at", "llm_finished_at", "finished_at", "queue_s", "prepare_s", "llm_s", "total_s")},
+         # как создан документ: модель, локальная ли, тип API, сколько частей и повторов, причины остановки; ошибка/обрыв видны в статусе
+         "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "llm_local", "api_type", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
+                                                               "length_hits", "finish", "max_tokens", "limit_note", "input_chars", "output_chars", "prompt_tokens",
+                                                               "completion_tokens", "structured", "failed", "error_code")}}
     if with_content:
         d["content"], d["instruction"] = p.content, p.instruction
     return d
@@ -231,11 +238,20 @@ async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUse
 
 @router.get("/{meeting_id}/protocols/default-instruction")
 async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str = Query("protocol", pattern="^(summary|protocol)$"),
-                              su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """Инструкция по умолчанию для окна «Сформировать протокол» (общая + дополнения переговорки)."""
+                              llm: str = Query("", max_length=80), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Инструкция по умолчанию для окна «Сформировать протокол» (общая + дополнения переговорки), план (какая модель, прогноз времени) и,
+    для руководителей, список моделей для разового выбора (`llm` — выбранная модель: прогноз пересчитывается под неё)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
     ps = request.app.state.protocols
-    return {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "plan": await ps.plan(db, meeting)}
+    can_override = roles.can_manage_room(meeting.room, su)
+    try:
+        plan = await ps.plan(db, meeting, kind, once=llm if can_override else None)
+    except SettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    out = {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "plan": plan, "can_override": can_override}
+    if can_override:
+        out["llm_choices"] = await once_options(ps.profiles, ps.local_llm, db)
+    return out
 
 
 @router.post("/{meeting_id}/protocols", status_code=202)
@@ -253,17 +269,27 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
     if meeting.ended_at is None:
         raise HTTPException(status_code=409, detail="Протокол формируется после завершения встречи")
     ps = request.app.state.protocols
-    plan = await ps.plan(db, meeting)
+    llm_once = body.get("llm_once") or None
+    if llm_once is not None:
+        if not isinstance(llm_once, str) or len(llm_once) > 80:
+            raise HTTPException(status_code=422, detail="llm_once: строка local:<модель> или profile:<профиль>")
+        if not roles.can_manage_room(meeting.room, su):
+            raise HTTPException(status_code=403, detail="Другую модель на один раз выбирают руководители комнаты и администраторы")
+    try:
+        plan = await ps.plan(db, meeting, kind, once=llm_once)
+    except SettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     if not plan["llm_ready"]:
         raise HTTPException(status_code=409, detail="Языковая модель (LLM) не настроена администратором")
     if not plan["anonymizer_ready"]:
         raise HTTPException(status_code=409, detail="Для этой переговорки включено обезличивание, но сервис обезличивания не настроен")
     if not await ps.has_materials(meeting_id):
         raise HTTPException(status_code=409, detail="В встрече нет реплик, чата и схемы — формировать протокол не из чего")
-    pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction)
+    pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction, llm_once)
     ps.start_protocol(pid)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.create",
-                      target_type="meeting", target_id=str(meeting_id), details={"protocol_id": str(pid), "kind": kind})
+                      target_type="meeting", target_id=str(meeting_id), details={"protocol_id": str(pid), "kind": kind, "llm_once": llm_once,
+                                                                                    "model": plan.get("llm_model"), "model_source": plan.get("llm_source")})
     await db.commit()
     return {"protocol_id": str(pid), "status": "pending"}
 
