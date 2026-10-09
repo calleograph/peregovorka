@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
 from .services.avatars import AvatarStore
-from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -30,6 +30,7 @@ from .services.chat_files import ChatFilesService
 from .services.journal import Journal, run_journal_retention
 from .security.secretbox import SecretBox, SecretBoxError
 from .services.meetings import MeetingService
+from .services.conv_map import MapService
 from .services.protocols import ProtocolService
 from .services.ca_bundle import CaBundleService
 from .services.audit import write_audit
@@ -87,6 +88,9 @@ def create_app(
         meetings_svc.settings_svc = settings_svc
         protocols.journal = journal
         protocols.profiles = profiles
+        protocols.maps = MapService(protocols)
+        protocols.maps.journal = journal
+        app.state.maps = protocols.maps
         meetings_svc.on_ended = lambda mid: protocols.spawn(protocols.finalize(mid), f"finalize-{mid}")
 
         app.state.settings = settings
@@ -214,7 +218,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, meeting_settings.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

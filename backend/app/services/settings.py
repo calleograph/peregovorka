@@ -261,6 +261,8 @@ class LlmSettings(_Group):
     local_model: str = "qwen3-1.7b-q4_k_m"
     # Модель для КРАТКОГО РЕЗЮМЕ: same — такая же, как для протокола; local — локальная Qwen3; external — внешний API (по умолчанию); off — резюме не формируются.
     summary_provider: Literal["same", "local", "external", "off"] = "same"
+    # Модель для КАРТЫ РАЗГОВОРА (отдельное назначение): same — как для протокола; local — локальная Qwen3; external — внешний API; off — карты не формируются.
+    map_provider: Literal["same", "local", "external", "off"] = "same"
     # Что делать, если выбранная для комнаты/встречи модель недоступна (профиль удалён, локальная модель не загружена):
     # system — использовать системную модель по умолчанию (с пометкой); unavailable — оставить состояние «модель недоступна».
     on_missing: Literal["system", "unavailable"] = "system"
@@ -409,6 +411,7 @@ class ProtocolSettings(_Group):
     summary_instructions: str = Field(default=DEFAULT_SUMMARY_INSTRUCTION, max_length=20000)
     auto_generate: bool = False
     auto_summary: bool = False
+    auto_map: bool = False          # формировать «Карту разговора» после каждой встречи (по умолчанию выключено: карта тратит время и процессор); комната может переопределить
     max_input_chars: int = Field(default=60000, ge=2000, le=1_000_000)
 
 

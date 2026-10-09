@@ -35,7 +35,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions")
+                 "record_audio", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -60,6 +60,7 @@ class RoomManageOut(BaseModel):
     mute_on_join: bool
     welcome_message: str | None
     guest_access_enabled: bool
+    auto_map_mode: str = "inherit"       # карта разговора после встречи: inherit — как в системных настройках, on / off
     lifetime: str = "permanent"
     lifecycle: str = "active"
     guest_token: str | None
@@ -99,6 +100,7 @@ class RoomManagePatch(BaseModel):
     mute_on_join: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
     guest_access_enabled: bool | None = None
+    auto_map_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None
     mail_delivery: dict | None = None
@@ -146,7 +148,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
         board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
-        guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
+        guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         active_meeting_id=active, can_edit_system_fields=su.is_admin, mail_delivery=_safe_spec(room.mail_delivery))

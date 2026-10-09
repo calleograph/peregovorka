@@ -5,12 +5,14 @@ import BoardViewer from "../board/BoardViewer";
 import ChatPanel from "../components/ChatPanel";
 import { Icon } from "../components/Icons";
 import Menu from "../components/Menu";
+import MapTab from "../components/MapTab";
 import MeetingAdminActions from "../components/MeetingAdminActions";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
 import { docState, generationLine } from "../components/GenerationInfo";
 import ProtocolViewer from "../components/ProtocolViewer";
 import { formatTime, renderProtocol, transcriptText } from "../transcript";
+import { findSegment } from "../mapExport";
 import { useToast } from "../components/Toast";
 import { bytes, copyText, downloadText, duration, fileBase, fmt } from "../util";
 
@@ -44,7 +46,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
-  const [tab, setTab] = useState<"docs" | "transcript" | "chat" | "board" | "audio">("docs");
+  const [tab, setTab] = useState<"docs" | "transcript" | "map" | "chat" | "board" | "audio">("docs");
+  const [focusSeg, setFocusSeg] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const timer = useRef<number | undefined>(undefined);
@@ -94,6 +97,20 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   }, [openId, meetingId, protocols]);
 
   const [toastNode, toast] = useToast();
+  // Переход от темы карты к первоисточнику: открываем стенограмму и прокручиваем к реплике (если стенограмма уже удалена по сроку хранения — честно говорим об этом)
+  const gotoSource = useCallback((sec: number, segmentId: number | null) => {
+    if (!meeting) return;
+    const hit = findSegment(segments, meeting.started_at, sec, segmentId);
+    if (!hit) { toast("Исходная стенограмма недоступна: возможно, удалена согласно сроку хранения", "error"); return; }
+    setTab("transcript"); setFocusSeg(hit.id);
+  }, [meeting, segments, toast]);
+  useEffect(() => {
+    if (tab !== "transcript" || focusSeg == null) return;
+    const node = document.getElementById(`seg-${focusSeg}`);
+    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const t = window.setTimeout(() => setFocusSeg(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [tab, focusSeg]);
   const text = useMemo(() => meeting
     ? renderProtocol(meeting.room_name, meeting.started_at, meeting.participants.map((p) => p.display_name), segments) : "", [meeting, segments]);
 
@@ -136,6 +153,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "docs"} className={`tab ${tab === "docs" ? "active" : ""}`} onClick={() => setTab("docs")}>Протоколы и резюме{protocols.length ? ` (${protocols.length})` : ""}</button>
         <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Стенограмма ({segments.length})</button>
+        {finished && <button role="tab" aria-selected={tab === "map"} className={`tab ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}>Карта разговора</button>}
         {chatCount > 0 && <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Чат ({chatCount})</button>}
         {boardUsed && <button role="tab" aria-selected={tab === "board"} className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>Доска</button>}
         {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Записи ({recordings.length})</button>}
@@ -171,8 +189,12 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
             <span className="muted small">{segments.length ? `${segments.length} реплик` : ""}</span>
           </div>
           {segments.length === 0 && <p className="muted">Реплик нет.</p>}
-          {segments.map((s) => <p key={s.uid} className="utt"><span className="time">{formatTime(s.started_at)}</span><strong>{s.display_name}</strong><span>{s.text}</span></p>)}
+          {segments.map((s) => <p key={s.uid} id={`seg-${s.id}`} className={`utt${focusSeg === s.id ? " focus" : ""}`}><span className="time">{formatTime(s.started_at)}</span><strong>{s.display_name}</strong><span>{s.text}</span></p>)}
         </div>
+      )}
+
+      {tab === "map" && finished && (
+        <MapTab meetingId={meetingId} roomName={meeting.room_name} startedAt={meeting.started_at} hasMaterials={segments.length > 0} onGoto={gotoSource} onToast={toast} />
       )}
 
       {tab === "chat" && (

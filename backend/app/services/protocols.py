@@ -205,6 +205,7 @@ class ProtocolService:
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
+        self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
         self._tasks: set[asyncio.Task] = set()
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
@@ -215,7 +216,7 @@ class ProtocolService:
         return task
 
     async def drain(self) -> None:
-        if self._tasks:
+        while self._tasks:      # задачи могут порождать другие (финализация → карта разговора): ждём, пока не опустеет
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     async def shutdown(self) -> None:
@@ -318,6 +319,8 @@ class ProtocolService:
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
             if proto_cfg.auto_summary:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
+            if self.maps is not None:
+                await self.maps.maybe_auto(meeting_id)          # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
             if self.after_finalize is not None:
                 await self.after_finalize(meeting_id)
         except Exception:  # noqa: BLE001

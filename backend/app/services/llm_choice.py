@@ -37,6 +37,8 @@ class LlmChoice:
 
 def room_choice(room: Room, purpose: str = "protocol") -> dict:
     """Выбор комнаты (для протокола или для резюме) в виде словаря; комнаты старых версий (внешний профиль без режима) считаются выбравшими профиль."""
+    if purpose == "map":
+        return {"mode": "inherit", "profile_id": None, "local_model": None}     # для карты разговора модель задаётся только в системных настройках (этап 1)
     if purpose == "summary":
         sm = room.llm_summary_mode if room.llm_summary_mode in MODES else "inherit"
         return {"mode": sm, "profile_id": str(room.llm_summary_profile_id) if room.llm_summary_profile_id else None, "local_model": room.llm_summary_local_model}
@@ -76,8 +78,8 @@ async def system_llm(profiles: ProfileService, db: AsyncSession, purpose: str = 
     Для резюме отдельная настройка `summary_provider`: same — как для протокола, иначе local / external / off."""
     main = await profiles.get_settings(db, "llm", None)
     cfg = main.settings
-    if purpose == "summary":
-        sp = getattr(cfg, "summary_provider", "same")
+    if purpose in ("summary", "map"):
+        sp = getattr(cfg, f"{purpose}_provider", "same")
         if sp == "off":
             return Resolved(cfg.model_copy(update={"provider": "off", "enabled": False}), main.profile_id, "Отключено")      # type: ignore[union-attr]
         if sp == "local":
@@ -112,7 +114,7 @@ async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessio
     system = await system_llm(profiles, db, purpose)
     sys_cfg: LlmSettings = system.settings   # type: ignore[assignment]
     ov = None
-    if meeting is not None:
+    if meeting is not None and purpose != "map":
         ov = meeting.llm_summary_override if purpose == "summary" else meeting.llm_override
     override = ov or None
     choice = once or override or room_choice(room, purpose)           # разовый выбор при формировании — сильнее встречи, комнаты и системы

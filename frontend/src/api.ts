@@ -126,6 +126,15 @@ export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
   started_at: string; ended_at: string; text: string; language: string | null;
 }
+/** Карта разговора: ответ сервера (данные карты — проверенный JSON, показывает окно /mapview). */
+export interface MapState {
+  status: "none" | "pending" | "running" | "ready" | "failed";
+  finished: boolean; can_edit: boolean;
+  plan: { ready: boolean; reason: string | null; model: string | null; profile: string; local: boolean; source: string };
+  categories: { id: string; label: string }[];
+  data?: unknown; meta?: Record<string, unknown> | null; error?: string | null; created_by?: string | null; updated_at?: string;
+}
+export interface MapTopicEdit { title?: string; category?: string | null; note?: string }
 export interface AclEntry { subject_type: "group" | "user"; subject_ref: string; display_name?: string | null }
 export type HistoryAccess = "admin" | "participants";
 /** inherit — как в общих настройках; on — всегда обезличивать; off — не обезличивать (текст идёт в LLM как есть). */
@@ -161,7 +170,7 @@ export interface StorageProfile {
 export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; record_audio: boolean;
-  transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
+  transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
@@ -571,6 +580,11 @@ export const api = {
     send: (meetingId: string, kinds: string[], emails: string[]) =>
       request<{ batch_id: string; queued: number; skipped: { name: string; email: string; reason: string }[]; kinds: string[]; unavailable: string[] }>("POST", `/meetings/${meetingId}/delivery/send`, { kinds, emails }),
   },
+
+  conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),
+  createMap: (meetingId: string) => request<{ status: string }>("POST", `/meetings/${meetingId}/map`),
+  editMapTopic: (meetingId: string, topicId: string, patch: MapTopicEdit) => request<MapState>("PATCH", `/meetings/${meetingId}/map/topics/${encodeURIComponent(topicId)}`, patch),
+  logMapExport: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/map/export`),
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),

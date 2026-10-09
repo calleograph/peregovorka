@@ -299,4 +299,11 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 /* фиксированные плашки: ширина по содержимому, но не шире экрана (left:50% без явной ширины сжимал их вдвое) */
 .cookie-note { left: 12px; right: 12px; transform: none; margin: 0 auto; width: fit-content; max-width: min(640px, calc(100vw - 24px)); }
 .toast-host { left: 12px; right: 12px; transform: none; display: flex; justify-content: center; }
-.toast { max-width: calc(100vw - 24px); }
+.toast { max-width: calc(100vw - 24px); }
+
+/* ---------- карта разговора ---------- */
+.map-tab { display: flex; flex-direction: column; gap: 12px; max-width: 1240px; }
+.map-bar .btn { white-space: nowrap; }
+.map-frame { display: block; width: 100%; border: 0; border-radius: var(--radius-lg); background: transparent; color-scheme: normal; }
+.badge.err { background: var(--danger-bg); color: var(--danger-text); }
+.utt.focus { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 8px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent); transition: background .4s; }

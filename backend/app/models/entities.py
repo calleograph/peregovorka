@@ -117,6 +117,8 @@ class Room(Base):
     sip_dispatch_rule_id: Mapped[str | None] = mapped_column(String(100))          # правило LiveKit для входящих (постоянное, переиспользуется)
     sip_contacts: Mapped[list | None] = mapped_column(JSONType)                     # сохранённые номера для исходящих: [{name, number}]
     welcome_message: Mapped[str | None] = mapped_column(Text)
+    # Автоматически формировать «Карту разговора» после встречи: inherit — как в системных настройках («Протоколы»), on / off — явно для комнаты.
+    auto_map_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
     # Прежние технические идентификаторы (адреса) комнаты: по ним старая ссылка перенаправляет на нынешнюю. Список строк.
     slug_history: Mapped[list | None] = mapped_column(JSONType)
     # Срок жизни: permanent — обычная переговорка; temporary — временная, создаётся пользователем на одну встречу и по её окончании закрывается.
@@ -411,6 +413,24 @@ class Protocol(Base):
     # состояние ВЫГРУЖЕННОГО файла (сам текст — в базе): ok | missing — файл удалён из хранилища
     file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
     file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ConversationMap(Base):
+    """Карта разговора одной встречи (тема → отрезки времени → участники → источники). Первичны ДАННЫЕ (`data`, проверенный JSON), а не HTML:
+    страница и HTML-выгрузка строятся из них. Пользовательские правки (`edits`) хранятся отдельно и переживают пересоздание карты."""
+
+    __tablename__ = "conversation_maps"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="pending", nullable=False)   # pending | running | ready | failed
+    data: Mapped[dict | None] = mapped_column(JSONType)       # карта: темы, отрезки, участники, источники (см. services/conv_map.py)
+    edits: Mapped[dict | None] = mapped_column(JSONType)      # правки пользователя: {topic_id: {title, category, note}} — отдельно от результата модели
+    meta: Mapped[dict | None] = mapped_column(JSONType)       # модель, время этапов, чанки, повторы, токены, предупреждения
+    error: Mapped[str | None] = mapped_column(String(500))
+    created_by: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
