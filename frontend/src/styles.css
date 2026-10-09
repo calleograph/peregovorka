@@ -701,3 +701,9 @@ ul.help { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: co
 details.group > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
 details.group { margin: 8px 0; }
 .table-wrap { overflow-x: auto; }
+
+/* ---- 0.8.6: «заглушён для вас» — заметная красная метка на плитке ---- */
+.tile-lmute { position: absolute; top: 8px; right: 8px; z-index: 3; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: #d92d20; color: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, .85), 0 2px 8px rgba(0, 0, 0, .4); }
+.tile.manageable .tile-lmute { right: 44px; }
+.pcard-mute { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin: 10px 0 4px; }
+.btn.danger-soft { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: var(--danger-bg); }

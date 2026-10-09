@@ -88,7 +88,7 @@ function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions
   );
 }
 
-export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatarUrl }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string; avatarUrl?: string }) {
+export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatarUrl, localMuted, onLocalMute }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string; avatarUrl?: string; localMuted?: boolean; onLocalMute?: (identity: string) => void }) {
   const [avFailed, setAvFailed] = useState(false);
   const { onContextMenu, node: ctxNode } = useContextMenu();
   const [flash, setFlash] = useState("");
@@ -96,6 +96,7 @@ export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatar
   // Правая кнопка: быстрые действия над участником (каждое доступно и обычным путём: клик по плитке, «⋯», карточка). Недоступное данному пользователю не показывается.
   const items = (): MenuItem[] => [
     { id: "card", label: "Открыть карточку", icon: "user", hidden: !onCard || p.local, onSelect: () => onCard?.(p) },
+    { id: "lmute", label: localMuted ? "Включить звук" : "Заглушить для себя", icon: localMuted ? "mic" : "micOff", hidden: p.local || !onLocalMute, onSelect: () => onLocalMute?.(p.identity) },
     { id: "mention", label: "Упомянуть в чате", icon: "chat", hidden: p.local, onSelect: () => window.dispatchEvent(new CustomEvent("pg:mention", { detail: p.name })) },
     { id: "name", label: "Копировать ФИО", icon: "copy", onSelect: () => void copyText(p.name).then((ok) => say(ok ? "ФИО скопировано" : "Не удалось скопировать")) },
     { id: "mail", label: "Копировать e-mail", icon: "copy", hidden: !meetingId || p.local,
@@ -121,6 +122,7 @@ export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatar
     <div ref={tileRef} onContextMenu={onContextMenu(items)} className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""} ${p.floor ? "has-floor" : ""} ${manageable ? "manageable" : ""}`} title={p.name}
          onClick={onCard ? () => onCard(p) : manageable ? toggleMenu : undefined} role={onCard ? "button" : undefined} tabIndex={onCard ? 0 : undefined}
          onKeyDown={onCard ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(p); } } : undefined}>
+      {localMuted && <span className="tile-lmute" title="Вы заглушили этого участника только для себя — остальные его слышат" role="img" aria-label="Заглушён для вас"><Icon name="micOff" size={14} /></span>}
       {p.hand && <span className="tile-hand" title={p.handOrder ? `Поднял руку (в очереди: ${p.handOrder})` : "Поднял руку"} role="img" aria-label="Поднята рука"><Icon name="hand" size={16} />{p.handOrder ? <b>{p.handOrder}</b> : null}</span>}
       <VideoTile p={p.participant} source={Track.Source.Camera} />
       {!p.cam && <div className="avatar" aria-hidden>{avatarUrl && !avFailed ? <img src={avatarUrl} alt="" draggable={false} onError={() => setAvFailed(true)} /> : initials}</div>}

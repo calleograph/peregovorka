@@ -554,3 +554,22 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 .pj-foot label.pj-pass { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; margin: 0; }
 .pj-foot label.pj-pass input { flex: 1 1 auto; width: auto; max-width: 320px; }
 .precheck-video { max-height: 78px; }
+
+/* ---- 0.8.6: подсказка о системном запросе доступа к микрофону/камере ---- */
+.perm-scrim { position: fixed; inset: 0; z-index: 2000; background: rgba(8, 12, 20, .5); pointer-events: none; animation: permFade .25s ease both; }
+.perm-callout { position: fixed; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 16px; border-radius: 14px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); box-shadow: 0 18px 44px -14px rgba(0, 0, 0, .55); }
+.perm-callout b { display: block; font-size: 15px; line-height: 1.3; }
+.perm-callout p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.perm-callout.at-top-left { top: 206px; left: 56px; }
+.perm-callout.at-top-center { top: 150px; left: 50%; margin-left: -190px; }
+.perm-callout.at-none { top: 16px; left: 50%; margin-left: calc(min(380px, calc(100vw - 32px)) / -2); }
+.perm-pointer { position: absolute; color: var(--accent); filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .4)); animation: permNudge 1.1s ease-in-out infinite; }
+.at-top-left .perm-pointer { left: 6px; top: -82px; }
+.at-top-center .perm-pointer { left: 50%; top: -82px; margin-left: -38px; rotate: 45deg; }
+@keyframes permNudge { 0%, 100% { translate: 0 0; } 50% { translate: -8px -8px; } }
+@keyframes permFade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .perm-pointer, .perm-scrim { animation: none; } }
+@media (max-width: 700px) { .perm-callout.at-top-left, .perm-callout.at-top-center { top: 16px; left: 50%; margin-left: calc(min(380px, calc(100vw - 32px)) / -2); } .perm-pointer { display: none; } }
+.perm-nomic { margin-top: 6px; }
+.pj-nomic { margin: 0; }

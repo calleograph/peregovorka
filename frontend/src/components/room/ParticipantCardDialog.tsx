@@ -4,7 +4,7 @@ import Avatar from "../Avatar";
 import { Modal } from "../Dialogs";
 
 /** Карточка участника: аватарка, ФИО, должность, подразделение и разрешённые контакты. Состав полей ограничен сервером (белый список); гостю и о госте — только имя. */
-export default function ParticipantCardDialog({ meetingId, identity, name, role, onClose }: { meetingId: string; identity: string; name: string; role?: string; onClose: () => void }) {
+export default function ParticipantCardDialog({ meetingId, identity, name, role, onClose, localMuted, onToggleLocalMute }: { meetingId: string; identity: string; name: string; role?: string; onClose: () => void; localMuted?: boolean; onToggleLocalMute?: () => void }) {
   const [card, setCard] = useState<ParticipantCard | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => { void api.participantCard(meetingId, identity).then(setCard).catch((e) => setErr((e as ApiError).message)); }, [meetingId, identity]);
@@ -30,6 +30,12 @@ export default function ParticipantCardDialog({ meetingId, identity, name, role,
       )}
       {card && !full && !card.guest && <p className="muted small">Подробные данные участников доступны только сотрудникам.</p>}
       {full && !card?.title && !card?.department && !card?.email && !card?.phone && <p className="muted small">Дополнительных данных в профиле нет.</p>}
+      {onToggleLocalMute && (
+        <div className="pcard-mute">
+          <button className={`btn ${localMuted ? "danger-soft" : ""}`} onClick={onToggleLocalMute} aria-pressed={!!localMuted}>{localMuted ? "Включить звук" : "Заглушить для себя"}</button>
+          <span className="muted small">{localMuted ? "Вы не слышите этого участника. Остальные его слышат." : "Только для вас: остальные продолжат его слышать."}</span>
+        </div>
+      )}
       <div className="row"><button className="btn ghost" onClick={onClose}>Закрыть</button></div>
     </Modal>
   );

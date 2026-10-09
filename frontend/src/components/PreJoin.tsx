@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type { Room } from "../api";
 import { initials, magnet, tint } from "../fx";
 import { Icon } from "./Icons";
@@ -21,6 +21,7 @@ interface Props {
 
 /** Экран перед входом в комнату: что за комната, кто уже там и что произойдёт после входа (микрофон, стенограмма, запись). */
 export default function PreJoin({ room, needPassword, password, onPassword, error, busy, onJoin, onBack, progress, onHw }: Props) {
+  const [micDenied, setMicDenied] = useState(false);          // микрофон заблокирован в браузере: входить можно, но без возможности говорить
   const name = room?.name ?? "Комната";
   const t = tint(name);
   const live = room?.active_meeting;
@@ -57,7 +58,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
             </ul>
             {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
           </div>
-          {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={onHw} /></div>}
+          {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={(p) => { setMicDenied(p.micDenied); onHw(p); }} /></div>}
         </div>
         <div className="pj-foot">
           {needPassword && (
@@ -66,6 +67,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
                      onKeyDown={(e) => { if (e.key === "Enter" && password && !busy) onJoin(); }} />
             </label>
           )}
+          {micDenied && <div className="alert warn pj-nomic" role="alert"><b>Вы войдёте без возможности говорить:</b> микрофон заблокирован в браузере.</div>}
           {error && <div className="alert error" role="alert">{error}</div>}
           {progress}
           <div className="row pj-actions" role="group" aria-label="Вход в комнату">
