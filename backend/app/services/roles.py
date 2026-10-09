@@ -66,13 +66,37 @@ def publish_sources(room: Room, su: SessionUser | None, *, guest: bool = False, 
     return _participant_sources(room, guest=guest)
 
 
+BOARD_LEVELS = ("everyone", "speakers", "leaders", "private")
+
+
+def board_level(room: Room) -> str:
+    """Действующий уровень доступа к доске. `auto` (по умолчанию): в презентационной комнате доска у руководителей, в обычной — у всех, если
+    доска не отключена для участников (`board_allowed`); явно выбранный уровень это правило заменяет."""
+    lvl = getattr(room, "board_access", "auto") or "auto"
+    if lvl in BOARD_LEVELS:
+        return lvl
+    if is_presentation(room):
+        return "leaders"
+    return "everyone" if room.board_allowed else "leaders"
+
+
+def is_leader_of(room: Room, su: SessionUser | None) -> bool:
+    return su is not None and (su.is_admin or is_room_leader(room, su))
+
+
+def can_view_board(room: Room, su: SessionUser | None, *, guest: bool = False) -> bool:
+    """Видит ли пользователь доску: при уровне `private` — только руководители и администраторы."""
+    return board_level(room) != "private" or is_leader_of(room, su)
+
+
 def can_edit_board(room: Room, su: SessionUser | None, *, guest: bool = False, has_floor: bool = False) -> bool:
     """Правка общей доски: руководитель/администратор — всегда; остальные — если комната разрешает доску, а в презентационной — ещё и со словом."""
-    if su is not None and (su.is_admin or is_room_leader(room, su)):
+    if is_leader_of(room, su):
         return True
-    if not room.board_allowed:
-        return False
-    return has_floor if is_presentation(room) else True
+    lvl = board_level(room)
+    if lvl == "everyone":
+        return True
+    return has_floor if lvl == "speakers" else False
 
 
 def can_control_meeting(room: Room, su: SessionUser) -> bool:

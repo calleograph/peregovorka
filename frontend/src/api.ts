@@ -7,11 +7,11 @@ export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
-  board_allowed?: boolean; room_type?: "regular" | "presentation"; auto_record?: boolean;
+  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation"; auto_record?: boolean;
   /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
 }
-export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed" }
+export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
   screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
@@ -30,6 +30,8 @@ export interface ClientConfig {
   /** Вам дано слово. */
   floor?: boolean;
   can_edit_board?: boolean;
+  /** Видна ли доска (при «только у руководителей» остальные её не видят) и действующий уровень: everyone | speakers | leaders | private. */
+  can_view_board?: boolean; board_access?: string;
   /** Комната допускает запись аудио (кнопка «Начать запись»). */
   recording_allowed?: boolean;
   /** Вложения в чат включены. */
@@ -156,7 +158,7 @@ export interface StorageProfile {
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
-  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; room_type: RoomType; auto_record: boolean; record_audio: boolean;
+  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; record_audio: boolean;
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null;
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
@@ -271,7 +273,7 @@ export interface RoomAdmin {
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
   mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
-  room_type: RoomType; auto_record: boolean; board_allowed: boolean;
+  room_type: RoomType; auto_record: boolean; board_allowed: boolean; board_access?: string;
   slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }

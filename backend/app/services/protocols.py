@@ -200,7 +200,7 @@ class ProtocolService:
         self._svc = svc
         self._transports = transports or {}
         self.profiles = ProfileService(svc)
-        self.local_llm = LocalLlm(settings, transport=self._transports.get("local_llm"))   # встроенная локальная модель (Qwen3 0.6B)
+        self.local_llm = LocalLlm(settings, transport=self._transports.get("local_llm"))   # встроенная локальная модель (Qwen3 1.7B)
         self.files = FileStore(svc, settings.data_dir)
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения

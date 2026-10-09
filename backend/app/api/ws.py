@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..auth.deps import SessionUser
 from ..models import Meeting, MeetingParticipant
-from ..services import events
+from ..services import events, roles
 from ..services.access import can_access_meeting
 
 router = APIRouter()
@@ -27,14 +27,16 @@ MAX_SUBSCRIPTIONS = 5
 GUEST_AUTH_TIMEOUT = 10
 
 
-async def _can_subscribe(app, su: SessionUser | None, guest, meeting_id: uuid.UUID) -> bool:
+async def _can_subscribe(app, su: SessionUser | None, guest, meeting_id: uuid.UUID) -> tuple[bool, bool]:
+    """(можно ли подписаться, руководитель ли подписчик). Руководителям отдаются события, помеченные `leaders_only` (закрытая доска)."""
     async with app.state.session_maker() as db:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
-            return False
+            return False, False
         if guest is not None:
-            return meeting.ended_at is None and str(meeting.id) == guest.meeting_id
-        return await can_access_meeting(db, app.state.redis, meeting, su)
+            return meeting.ended_at is None and str(meeting.id) == guest.meeting_id, False
+        ok = await can_access_meeting(db, app.state.redis, meeting, su)
+        return ok, bool(ok and roles.is_leader_of(meeting.room, su))
 
 
 async def _guest_alive(app, token: str):
@@ -82,6 +84,7 @@ async def ws_endpoint(ws: WebSocket):
 
     pubsub = app.state.redis.pubsub()
     subscribed: dict[str, uuid.UUID] = {}
+    leader_channels: set[str] = set()      # каналы, где подписчик — руководитель (администратор)
 
     async def forward() -> None:
         while True:
@@ -91,7 +94,16 @@ async def ws_endpoint(ws: WebSocket):
             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if msg and msg.get("type") == "message":
                 raw = msg["data"]
-                await ws.send_text(raw.decode() if isinstance(raw, bytes) else raw)
+                text = raw.decode() if isinstance(raw, bytes) else raw
+                if "leaders_only" in text:      # закрытая доска: схема и её изменения не уходят никому, кроме руководителей
+                    ch = msg.get("channel")
+                    ch = ch.decode() if isinstance(ch, bytes) else ch
+                    try:
+                        if json.loads(text).get("leaders_only") and ch not in leader_channels:
+                            continue
+                    except ValueError:
+                        pass
+                await ws.send_text(text)
 
     reader = asyncio.create_task(forward())
     try:
@@ -119,10 +131,13 @@ async def ws_endpoint(ws: WebSocket):
                 except ValueError:
                     await ws.send_text(json.dumps({"type": "error", "message": "bad_meeting_id"}))
                     continue
-                if len(subscribed) >= MAX_SUBSCRIPTIONS or not await _can_subscribe(app, su, guest, mid):
+                allowed, is_leader = (False, False) if len(subscribed) >= MAX_SUBSCRIPTIONS else await _can_subscribe(app, su, guest, mid)
+                if not allowed:
                     await ws.send_text(json.dumps({"type": "error", "message": "forbidden", "meeting_id": str(mid)}))
                     continue
                 ch = events.channel(mid)
+                if is_leader:
+                    leader_channels.add(ch)
                 if ch not in subscribed:
                     await pubsub.subscribe(ch)
                     subscribed[ch] = mid

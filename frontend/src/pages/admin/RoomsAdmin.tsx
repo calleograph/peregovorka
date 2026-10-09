@@ -9,7 +9,7 @@ interface Form {
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; acl: AclEntry[]; moderators: AclEntry[]; history_access: HistoryAccess;
   anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; welcome_message: string;
-  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; board_allowed: boolean; slug_history?: string[];
+  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; board_allowed: boolean; board_access: string; slug_history?: string[];
 }
 
 const empty: Form = {
@@ -17,11 +17,12 @@ const empty: Form = {
   transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
   text_retention_days: "", audio_retention_days: "", protocol_instructions: "", acl: [], moderators: [], history_access: "admin",
   anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "", mute_on_join: false, welcome_message: "",
-  guest_access_enabled: false, guest_token: null, room_type: "regular", auto_record: false, board_allowed: true,
+  guest_access_enabled: false, guest_token: null, room_type: "regular", auto_record: false, board_allowed: true, board_access: "auto",
 };
 
 const days = (v: string) => (v.trim() === "" ? null : Number(v));
 const SLUG = /^[a-z0-9][a-z0-9_-]{1,62}$/;
+const BOARD_OPTIONS: [string, string][] = [["auto", "Как принято для типа комнаты (обычная — все, презентация — только руководитель)"], ["everyone", "Все участники рисуют"], ["speakers", "Руководители и те, кому дали слово"], ["leaders", "Рисуют только руководители, остальные смотрят"], ["private", "Доска только у руководителей (остальные её не видят)"]];
 const host = () => window.location.host;
 
 function toForm(r: RoomAdmin): Form {
@@ -33,7 +34,7 @@ function toForm(r: RoomAdmin): Form {
     anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "",
     mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "",
     guest_access_enabled: r.guest_access_enabled ?? false, guest_token: r.guest_token ?? null,
-    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, board_allowed: r.board_allowed ?? true, slug_history: r.slug_history ?? [] };
+    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, board_allowed: r.board_allowed ?? true, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : ((r.board_allowed ?? true) ? "auto" : "leaders"), slug_history: r.slug_history ?? [] };
 }
 
 type TabId = "main" | "access" | "features" | "ai" | "storage";
@@ -100,7 +101,7 @@ export default function RoomsAdmin() {
     const base = {
       name: form.name, description: form.description || null, is_enabled: form.is_enabled, max_participants: form.max_participants,
       transcription_enabled: true, record_audio: form.record_audio || form.auto_record, camera_allowed: form.camera_allowed,
-      room_type: form.room_type, auto_record: form.auto_record, board_allowed: form.board_allowed,
+      room_type: form.room_type, auto_record: form.auto_record, board_allowed: form.board_allowed, board_access: form.board_access,
       screen_share_allowed: form.screen_share_allowed, text_retention_days: days(form.text_retention_days),
       audio_retention_days: days(form.audio_retention_days), protocol_instructions: form.protocol_instructions || null,
       acl: form.acl, moderators: form.moderators, history_access: form.history_access,
@@ -184,10 +185,14 @@ export default function RoomsAdmin() {
             <div role="tabpanel">
               <fieldset className="group"><legend>Что доступно участникам</legend>
                 <div className="checks">
-                  {([["camera_allowed", "Камера"], ["screen_share_allowed", "Демонстрация экрана"], ["board_allowed", "Общая доска"]] as const).map(([k, label]) => (
+                  {([["camera_allowed", "Камера"], ["screen_share_allowed", "Демонстрация экрана"]] as const).map(([k, label]) => (
                     <label key={k} className="check"><input type="checkbox" checked={form[k]} onChange={(e) => set(k, e.target.checked)} /> {label}</label>
                   ))}
                 </div>
+                <label>Общая доска: кто работает
+                  <select value={form.board_access} onChange={(e) => set("board_access", e.target.value)}>
+                    {BOARD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select></label>
                 <span className="help">Руководители комнаты могут всё независимо от этих галочек. Транскрибация включена всегда: во время встречи руководитель может её приостановить.</span>
               </fieldset>
               <fieldset className="group"><legend>Тип комнаты и запись</legend>

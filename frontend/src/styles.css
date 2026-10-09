@@ -1,7 +1,8 @@
-/* Рабочий корпоративный интерфейс: нейтральная палитра из старого проекта (legacy/php), без декоративности. */
-@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+/* Интерфейс: шрифты Inter (текст) и Manrope (заголовки) лежат на сервере — без CDN; обе гарнитуры с кириллицей, лицензия OFL (public/fonts). */
+@font-face { font-family: "Inter"; src: url("/fonts/inter-cyrillic-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family: "Inter"; src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: "Manrope"; src: url("/fonts/manrope-cyrillic-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family: "Manrope"; src: url("/fonts/manrope-latin-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
 
 :root {
   /* поверхности: холодный нейтральный ряд, чуть светлее у «поднятых» элементов */
@@ -17,7 +18,8 @@
   --radius: 10px; --radius-sm: 7px;
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .06);
   --shadow-pop: 0 8px 28px rgba(16, 24, 40, .18);
-  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: "Manrope", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: light;
 }
@@ -497,6 +499,8 @@ pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 
 /* ===== общая доска (draw.io) ===== */
 .board-stage { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 460px; height: calc(100vh - 380px); padding: 10px; margin: 0; }
+.board-stage.full:not(.off) { position: fixed; inset: 0; z-index: 1000; width: auto; height: auto; min-height: 0; margin: 0; border-radius: 0; padding: 8px 12px; background: var(--surface); }
+.board-stage.full .drawio-frame { flex: 1 1 auto; min-height: 0; height: 100%; }
 .board-stage.off { position: absolute; left: -10000px; top: 0; width: 1100px; height: 640px; visibility: hidden; pointer-events: none; }
 .board-head { gap: 10px; flex-wrap: wrap; }
 .board-head h2 { margin: 0; font-size: 16px; }

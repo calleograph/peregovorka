@@ -34,10 +34,10 @@ from .schemas import AclEntryIn, AclEntryOut
 router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
-LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "room_type", "auto_record",
+LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
                  "record_audio", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
-TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type"}
+TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
 
 class RoomManageOut(BaseModel):
@@ -51,6 +51,8 @@ class RoomManageOut(BaseModel):
     camera_allowed: bool
     screen_share_allowed: bool
     board_allowed: bool
+    board_access: str = "auto"
+    board_level: str = "everyone"      # действующий уровень с учётом типа комнаты
     room_type: str
     auto_record: bool
     record_audio: bool
@@ -90,6 +92,7 @@ class RoomManagePatch(BaseModel):
     camera_allowed: bool | None = None
     screen_share_allowed: bool | None = None
     board_allowed: bool | None = None
+    board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")
     room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
     auto_record: bool | None = None
     record_audio: bool | None = None
@@ -141,7 +144,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio,
+        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],

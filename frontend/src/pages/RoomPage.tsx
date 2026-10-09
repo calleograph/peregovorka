@@ -2,8 +2,9 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
-import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type JoinInfo } from "../api";
+import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type JoinInfo, type Room } from "../api";
 import Whiteboard from "../board/Whiteboard";
+import PreJoin from "../components/PreJoin";
 import ConnectProgress from "../components/room/ConnectProgress";
 import DebugPanel from "../components/room/DebugPanel";
 import { ParticipantTile, ScreenStage, type PView, type TileActions } from "../components/room/Tiles";
@@ -57,7 +58,7 @@ function Ctl({ error, onClose, children }: { error?: string; onClose: () => void
 /** Гостевой вход: сессия уже создана страницей гостя (имя, проверка оборудования); здесь — сама комната без административных функций. */
 export interface GuestSession { info: GuestJoinInfo; onLeft: (why: "left" | "ended") => void }
 
-export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: GuestSession; selfName?: string; roomIdOverride?: string }) {
+export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: { guest?: GuestSession; selfName?: string; roomIdOverride?: string; roomInfo?: Room | null }) {
   const { roomId: routeRoomId = "" } = useParams();
   // адрес в строке — технический идентификатор комнаты; для запросов к серверу RoomRoute передаёт её UUID
   const roomId = guest ? guest.info.room.id : (roomIdOverride ?? routeRoomId);
@@ -82,6 +83,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
   const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
   const [canBoard, setCanBoard] = useState(true);
+  const [canViewBoard, setCanViewBoard] = useState(true);       // при уровне «доска только у руководителей» остальные её не видят
   const [manageOpen, setManageOpen] = useState(false);
   const [meetingSettingsOpen, setMeetingSettingsOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
@@ -402,6 +404,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
   const applyClient = useCallback((info: JoinInfo) => {
     setSources(info.client.sources ?? ALL_SOURCES);
     setCanBoard(info.client.can_edit_board ?? true);
+    setCanViewBoard(info.client.can_view_board ?? true);
     setTranscribing(info.transcription ?? true);
     setRecording(info.recording);
   }, []);
@@ -673,11 +676,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
       if (r.camera_allowed) src.push("camera");
       if (r.screen_share_allowed && !guestRef.current) src.push("screen_share", "screen_share_audio");
       setSources(src);
-      setCanBoard(r.board_allowed ?? true);
+      setCanBoard(info.client.board_access === "speakers" || info.client.board_access === "everyone");     // слово даёт право рисовать только при выбранном уровне «и те, кому дали слово»
       setNotice({ kind: "ok", text: "Вам дали слово: можно включить микрофон" + (r.camera_allowed ? ", камеру" : "") + (r.screen_share_allowed && !guestRef.current ? " и показ экрана" : "") + "." });
     } else {
       setSources([]);
-      setCanBoard(false);
+      setCanBoard(info.client.board_access === "everyone");
       const lp = roomRef.current?.localParticipant;
       if (lp) {   // новые публикации сервер уже запретил; активные выключаем сами, не дожидаясь отзыва
         userStopRef.current = true;
@@ -772,24 +775,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
   }
   if (!join) {
     return (
-      <section className="prejoin card">
-        <h1>Вход в комнату</h1>
-        <p className="muted">Микрофон включится сразу после входа. Реплики участников записываются в протокол встречи.</p>
-        {needPassword && (
-          <label>Пароль комнаты
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus
-                   onKeyDown={(e) => { if (e.key === "Enter" && password && !busy) void connect(password); }} />
-          </label>
-        )}
-        {error && <div className="alert error" role="alert">{error}</div>}
-        <div className="row">
-          <button className="btn primary" disabled={busy || (needPassword && !password)} onClick={() => connect(needPassword ? password : undefined)}>
-            {busy ? "Вход…" : "Войти в комнату"}
-          </button>
-          <button className="btn ghost" onClick={() => navigate("/")}>Назад</button>
-        </div>
-        {busy && <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} />}
-      </section>
+      <PreJoin room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
+               onJoin={() => void connect(needPassword || roomInfo?.has_password ? password : undefined)} onBack={() => navigate("/")}
+               progress={busy ? <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} /> : null} />
     );
   }
 
@@ -867,7 +855,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
         {stage !== "ready" && !ended && <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done} />}
 
         {sharer && <ScreenStage key={sharer.identity} p={sharer} />}
-        {boardMounted && !ended && (
+        {boardMounted && !ended && canViewBoard && (
           <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardOpen} readOnly={!canBoard} fileBase={fileBaseName(room.name, new Date().toISOString())}
                       onClose={() => setBoardOpen(false)} onRemoteChange={(by) => setBoardNews(by || "участник")} />
         )}
@@ -913,11 +901,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride }: { guest?: 
               </RoundButton>
             </Ctl>
           )}
-          <Ctl onClose={() => undefined}>
+          {canViewBoard && <Ctl onClose={() => undefined}>
             <RoundButton icon="board" label={boardNews && !boardOpen ? "Доска · обновлена" : "Доска"} tone={boardOpen ? "on" : "neutral"} pressed={boardOpen} disabled={ended}
                          title={canBoard ? "Общая доска для схем: рисуют участники, схема сохраняется со встречей" : "Общая доска: вы можете смотреть. Править — руководитель или тот, кому дали слово"}
                          onClick={() => { setBoardMounted(true); setBoardOpen((o) => !o); setBoardNews(null); }} />
-          </Ctl>
+          </Ctl>}
           <Ctl onClose={() => undefined}>
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); }} />
           </Ctl>

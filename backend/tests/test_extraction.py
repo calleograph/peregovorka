@@ -377,3 +377,30 @@ def test_an_open_question_that_is_not_a_question_is_dropped_and_damaged_text_is_
     assert items == [] and st["questions_unsupported"] == 1
     items, st, _p = verify2("decisions", {"items": [{"status": "decision", "text": "Обновить приложение на версию 12.34.56.78 , если можно", "ts": "10:04:00"}]})
     assert items == [] and st.get("damaged_dropped") == 1
+
+
+RECAP = ["[10:18:58] Анна Крылова: Давайте подведём итоги. Виктор увеличивает память до шестнадцати гигабайт, Галина чинит два нестабильных теста до среды, Дмитрий помогает с компонентом загрузки, Елена уточняет срок хранения логов."]
+
+
+def verify_recap(task, assignee):
+    ls = ex.parse_transcript(HEADER + "\n".join(RECAP) + "\n")[1]
+    people = ex.people_of(["Анна Крылова", "Виктор Орлов", "Галина Белова", "Дмитрий Фёдоров", "Елена Морозова"])
+    pid = {p.full: p.pid for p in people}
+    st = stats0()
+    items = ex.verify_pass("tasks", {"tasks": [{"assignee": pid[assignee], "task": task, "deadline": "", "ts": "10:18:58"}]}, ls, 1, people, st, date(2026, 10, 12))
+    return items[0], st
+
+
+def test_in_a_recap_line_with_many_names_the_task_goes_to_the_person_standing_next_to_it():
+    t, st = verify_recap("чинить два нестабильных теста", "Дмитрий Фёдоров")        # модель перепутала: тесты чинит Галина
+    assert t.assignee == "Галина Белова" and st["assignee_reassigned"] == 1
+    t, st = verify_recap("увеличить память до шестнадцати гигабайт", "Виктор Орлов")  # назван верно — остаётся
+    assert t.assignee == "Виктор Орлов" and st.get("assignee_reassigned", 0) == 0
+    t, _ = verify_recap("уточнить срок хранения логов", "Елена Морозова")
+    assert t.assignee == "Елена Морозова"
+
+
+def test_when_the_task_words_are_not_near_any_name_the_owner_stays_unconfirmed():
+    t, st = verify_recap("подготовить презентацию для руководства", "Дмитрий Фёдоров")
+    assert t.assignee_guess in ("", "Дмитрий Фёдоров") and (t.assignee == "" or t.assignee == "Дмитрий Фёдоров")
+    assert ex.association_distances(RECAP[0], "чинить два нестабильных теста", ex.people_of(["Галина Белова", "Дмитрий Фёдоров"]))["Галина Белова"] <= 2

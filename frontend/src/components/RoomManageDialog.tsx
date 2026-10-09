@@ -11,12 +11,13 @@ import { choiceLabel, emptyChoice } from "../phone";
 /** Разделы сгруппированы по смыслу: что за комната, как проходит встреча, кто допущен, что остаётся после встречи, какая модель и телефония. */
 type TabId = "main" | "mode" | "access" | "materials" | "model" | "phone";
 const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["materials", "Материалы после встречи"], ["model", "Языковая модель"], ["phone", "Телефония"]];
+const BOARD_OPTIONS: [string, string][] = [["auto", "Как принято для типа комнаты (обычная — все, презентация — только руководитель)"], ["everyone", "Все участники рисуют"], ["speakers", "Руководители и те, кому дали слово"], ["leaders", "Рисуют только руководители, остальные смотрят"], ["private", "Доска только у руководителей (остальные её не видят)"]];
 const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: null, allow_inbound: false, allow_outbound: false, contacts: [] });
 const days = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
 
 interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
-  room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean;
+  room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip;
 }
@@ -24,7 +25,7 @@ interface Form {
 const toForm = (r: RoomManage): Form => ({
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, password: "", clearPassword: false,
   welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record,
-  camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, guest_access_enabled: r.guest_access_enabled,
+  camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(),
 });
@@ -62,7 +63,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
         name: form.name.trim(), description: form.description.trim() || null, max_participants: form.max_participants,
         welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, room_type: form.room_type,
         record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, camera_allowed: form.camera_allowed,
-        screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, guest_access_enabled: form.guest_access_enabled,
+        screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, board_access: form.board_access, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
         protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, llm_summary: form.llm_summary, sip: form.sip,
         ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}),
@@ -136,8 +137,12 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                 <div className="checks">
                   <label className="check"><input type="checkbox" checked={form.camera_allowed} onChange={(e) => set("camera_allowed", e.target.checked)} /> Камера</label>
                   <label className="check"><input type="checkbox" checked={form.screen_share_allowed} onChange={(e) => set("screen_share_allowed", e.target.checked)} /> Показ экрана</label>
-                  <label className="check"><input type="checkbox" checked={form.board_allowed} onChange={(e) => set("board_allowed", e.target.checked)} /> Общая доска</label>
                 </div>
+                <label>Общая доска: кто работает
+                  <select value={form.board_access} onChange={(e) => set("board_access", e.target.value)}>
+                    {BOARD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <span className="help">Руководители комнаты могут рисовать всегда. «Только у руководителей» — для закрытых презентаций: участники не видят доску и не получают её изменений. Слово (микрофон) право рисовать не даёт, если не выбран вариант «и те, кому дали слово».</span></label>
                 <span className="help">Руководители комнаты могут всё независимо от этих галочек. В презентационной комнате права участников действуют, пока у них есть слово.</span>
               </fieldset>
             </div>

@@ -48,6 +48,7 @@ class RoomOut(BaseModel):
     camera_allowed: bool
     screen_share_allowed: bool
     board_allowed: bool = True
+    board_access: str = "auto"
     room_type: str = "regular"
     auto_record: bool = False
     lifetime: str = "permanent"        # permanent | temporary
@@ -75,6 +76,8 @@ class ClientConfig(BaseModel):
     sources: list[str] = Field(default_factory=lambda: ["microphone", "camera", "screen_share", "screen_share_audio"])  # что можно публиковать сейчас
     floor: bool = False             # вам дано слово
     can_edit_board: bool = True     # можно ли править общую доску
+    can_view_board: bool = True     # видна ли доска (при уровне «только руководители» остальные её не видят)
+    board_access: str = "everyone"  # действующий уровень: everyone | speakers | leaders | private
     recording_allowed: bool = False  # комната допускает запись аудио (кнопка «Начать запись»)
     attachments: bool = True        # вложения в чат включены
 
@@ -175,6 +178,7 @@ class RoomAdminOut(BaseModel):
     room_type: str = "regular"
     auto_record: bool = False
     board_allowed: bool = True
+    board_access: str = "auto"
     guest_access_enabled: bool = False
     slug_history: list[str] = Field(default_factory=list)      # прежние адреса комнаты (старые ссылки перенаправляют на нынешний)
     lifetime: str = "permanent"
@@ -210,6 +214,7 @@ class RoomCreateIn(BaseModel):
     room_type: str = Field(default="regular", pattern="^(regular|presentation)$")
     auto_record: bool = False
     board_allowed: bool = True
+    board_access: str = Field(default="auto", pattern="^(auto|everyone|speakers|leaders|private)$")
     guest_access_enabled: bool = False
     acl: list[AclEntryIn] = Field(default_factory=list)
     moderators: list[AclEntryIn] = Field(default_factory=list)
@@ -248,6 +253,7 @@ class RoomPatchIn(BaseModel):
     room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
     auto_record: bool | None = None
     board_allowed: bool | None = None
+    board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")
     guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None

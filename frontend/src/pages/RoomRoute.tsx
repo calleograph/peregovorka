@@ -29,5 +29,5 @@ export default function RoomRoute({ selfName }: { selfName?: string }) {
   if (room.lifecycle === "closed") {
     return <div className="card"><h2>{room.name}</h2><p>Временная переговорка закрыта: новую встречу в ней начать нельзя. Запись, стенограмма, чат и протоколы остались в <Link to="/history">«Истории»</Link>.</p></div>;
   }
-  return <RoomPage key={room.id} roomIdOverride={room.id} selfName={selfName} />;
+  return <RoomPage key={room.id} roomIdOverride={room.id} roomInfo={room.room} selfName={selfName} />;
 }

@@ -250,6 +250,12 @@ async def _require_board_edit(request: Request, meeting: Meeting, actor: Actor) 
                             else "Правка общей доски в этой комнате отключена руководителем")
 
 
+def _require_board_view(meeting: Meeting, actor: Actor) -> None:
+    """При уровне «доска только у руководителей» остальные не видят ни схему, ни её изменений."""
+    if not roles.can_view_board(meeting.room, actor.user, guest=actor.is_guest):
+        raise HTTPException(status_code=403, detail="Общая доска в этой комнате доступна только руководителям")
+
+
 def _seq_key(meeting_id: uuid.UUID) -> str:
     return f"wb:{meeting_id}:seq"
 
@@ -267,6 +273,7 @@ def board_meta(row: MeetingWhiteboard | None) -> dict:
 async def board_get(meeting_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
     """Последний снимок схемы + патчи, пришедшие после него (чтобы опоздавший участник получил актуальное состояние)."""
     meeting = await _meeting_for_actor(request, db, meeting_id, actor)
+    _require_board_view(meeting, actor)
     row = await db.get(MeetingWhiteboard, meeting_id)
     base = row.seq if row else 0
     patches: list[dict] = []
@@ -300,6 +307,8 @@ async def board_patch(meeting_id: uuid.UUID, request: Request, body: dict[str, A
     seq = await redis.incr(_seq_key(meeting_id))
     event = {"type": "whiteboard_patch", "seq": seq, "patch": patch, "checksum": checksum if isinstance(checksum, str) else None,
              "from": client_id, "by": actor.label}
+    if roles.board_level(meeting.room) == "private":
+        event["leaders_only"] = True      # WebSocket отдаёт такое событие только руководителям
     await redis.rpush(_tail_key(meeting_id), json.dumps(event, ensure_ascii=False))
     await redis.ltrim(_tail_key(meeting_id), -PATCH_TAIL, -1)
     await redis.expire(_tail_key(meeting_id), BOARD_TTL)
@@ -332,7 +341,10 @@ async def board_save(meeting_id: uuid.UUID, request: Request, body: dict[str, An
         db.add(row)
     row.xml, row.seq, row.shapes, row.updated_at, row.updated_by = xml, seq, desc.shapes, utcnow(), actor.label
     await db.commit()
-    await events.publish(request.app.state.redis, meeting_id, {"type": "whiteboard_saved", "seq": seq, "shapes": desc.shapes, "by": actor.label})
+    saved = {"type": "whiteboard_saved", "seq": seq, "shapes": desc.shapes, "by": actor.label}
+    if roles.board_level(meeting.room) == "private":
+        saved["leaders_only"] = True
+    await events.publish(request.app.state.redis, meeting_id, saved)
     return {"saved": True, "seq": seq, **board_meta(row)}
 
 
@@ -341,7 +353,8 @@ async def board_download(meeting_id: uuid.UUID, request: Request, actor: Actor =
     """Схема в формате draw.io (XML): открывается в draw.io / diagrams.net для дальнейшего редактирования."""
     from fastapi.responses import Response  # noqa: PLC0415
 
-    await _meeting_for_actor(request, db, meeting_id, actor)
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor)
+    _require_board_view(meeting, actor)
     row = await db.get(MeetingWhiteboard, meeting_id)
     if row is None or not row.xml:
         raise HTTPException(status_code=404, detail="Доска в этой встрече не использовалась")

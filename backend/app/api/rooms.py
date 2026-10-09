@@ -26,7 +26,7 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, room_type=room.room_type, auto_record=room.auto_record,
+        board_allowed=room.board_allowed, board_access=room.board_access, room_type=room.room_type, auto_record=room.auto_record,
         lifetime=room.lifetime, lifecycle=room.lifecycle, auto_close_at=room.auto_close_at, created_by_name=room.created_by_name,
         active_meeting=ActiveMeetingOut(id=active.id, started_at=active.started_at, participants=participants) if active else None,
     )
@@ -56,7 +56,13 @@ async def resolve_room(ref: str, su: SessionUser = Depends(require_user), db: As
     room, canonical = await find_by_ref(db, ref)
     if room is None or not room.is_enabled or not acl_allows(room, su):
         raise HTTPException(status_code=404, detail="Комната не найдена или недоступна")
-    return {"id": str(room.id), "slug": room.slug, "name": room.name, "canonical": canonical, "lifetime": room.lifetime, "lifecycle": room.lifecycle}
+    active = (await db.execute(select(Meeting).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).scalars().first()
+    people = 0
+    if active is not None:
+        people = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(
+            MeetingParticipant.meeting_id == active.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
+    info = (await room_out(db, room, active, people)).model_dump(mode="json")      # для страницы «перед входом»: описание, возможности, кто уже в комнате
+    return {"id": str(room.id), "slug": room.slug, "name": room.name, "canonical": canonical, "lifetime": room.lifetime, "lifecycle": room.lifecycle, "room": info}
 
 
 @router.get("/temporary/policy")

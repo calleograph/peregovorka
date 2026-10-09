@@ -77,11 +77,11 @@ function StaffApp() {
     <div className="shell">
       <header className={`topbar ${burger ? "burger-open" : ""}`}>
         {inMeeting
-          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке">Переговорка ↗</a>
-          : <Link to="/" className="brand">Переговорка</Link>}
+          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке">Peregovorka ↗</a>
+          : <Link to="/" className="brand">Peregovorka</Link>}
         <button type="button" className="burger" aria-label="Меню" aria-expanded={burger} onClick={() => setBurger((b) => !b)}><span /><span /><span /></button>
         <nav aria-label="Основная навигация" className="topnav">
-          <NavItem to="/" end newTab={inMeeting}>Комнаты</NavItem>
+          <NavItem to="/" end newTab={inMeeting}>Переговорки</NavItem>
           <NavItem to="/history" newTab={inMeeting}>История</NavItem>
           {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab={inMeeting} />}
         </nav>
@@ -110,7 +110,7 @@ function StaffApp() {
 function GuestApp() {
   return (
     <div className="shell guest-shell">
-      <header className="topbar"><span className="brand">Переговорка</span><span className="muted">Гостевой доступ</span></header>
+      <header className="topbar"><span className="brand">Peregovorka</span><span className="muted">Гостевой доступ</span></header>
       <main>
         <Routes>
           <Route path="/guest/:token" element={<GuestPage />} />

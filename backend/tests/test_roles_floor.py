@@ -79,7 +79,8 @@ def test_leader_gives_and_takes_the_floor_and_rejoin_keeps_it(client, lk_calls):
     assert lk_calls["perm"][-1] == (a["identity"], ["microphone", "camera", "screen_share", "screen_share_audio"])
     assert client.get(f"/api/v1/meetings/{mid}/floor").json() == {"presentation": True, "floor": [a["identity"]], "leaders": [c["identity"]]}
     again = _join(client, "alice", room["id"])                       # переподключение (обрыв сети): слово сохраняется
-    assert grants(again["token"]).can_publish is True and again["client"]["floor"] is True and again["client"]["can_edit_board"] is True
+    assert grants(again["token"]).can_publish is True and again["client"]["floor"] is True and again["client"]["can_edit_board"] is False, \
+        "слово даёт говорить, но не рисовать: в презентации доска у руководителя"
     login(client, "carol")
     assert client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": False}).json()["granted"] is False
     assert lk_calls["perm"][-1] == (a["identity"], [])
@@ -178,6 +179,11 @@ def test_board_rights_follow_room_type_floor_and_room_policy(client, lk_calls):
     assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 1}}).status_code == 200
     client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": True})
     login(client, "alice")
+    assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 2}}).status_code == 403, "слово не даёт права рисовать в презентации"
+    # руководитель может сознательно разрешить доску и тем, кому дали слово
+    login(client, "carol")
+    assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "speakers"}).status_code == 200
+    login(client, "alice")
     assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 2}}).status_code == 200
     assert client.put(f"/api/v1/meetings/{mid}/whiteboard", json={"xml": BOARD, "seq": 2}).status_code == 200
     assert client.get(f"/api/v1/meetings/{mid}/whiteboard").json()["can_edit"] is True
@@ -231,3 +237,64 @@ def test_auto_record_implies_audio_recording_is_allowed_in_admin_api(client):
     patched = client.patch(f"/api/v1/admin/rooms/{make_room(client)['id']}", json={"auto_record": True}).json()
     assert patched["auto_record"] is True and patched["record_audio"] is True
     assert patched["room_type"] == "regular" and patched["board_allowed"] is True
+
+
+# ----------------------------------------------------------------------------------- уровни доступа к доске
+def test_board_levels_everyone_leaders_private_and_the_default_for_presentation(client, lk_calls):
+    for level, alice_edit, alice_view in (("everyone", True, True), ("speakers", False, True), ("leaders", False, True), ("private", False, False)):
+        room = make_room(client, moderators=LEADERS, board_access=level)
+        c = _join(client, "carol", room["id"])
+        a = _join(client, "alice", room["id"])
+        mid = c["meeting_id"]
+        assert a["client"]["can_edit_board"] is alice_edit and a["client"]["can_view_board"] is alice_view and a["client"]["board_access"] == level, level
+        assert c["client"]["can_edit_board"] is True and c["client"]["can_view_board"] is True
+        login(client, "alice")
+        got = client.get(f"/api/v1/meetings/{mid}/whiteboard")
+        assert got.status_code == (200 if alice_view else 403), level
+        assert client.get(f"/api/v1/meetings/{mid}/whiteboard.drawio").status_code in ((200, 404) if alice_view else (403,)), level
+        assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 1}}).status_code == (200 if alice_edit else 403), level
+        login(client, "carol")
+        assert client.get(f"/api/v1/meetings/{mid}/whiteboard").status_code == 200 and client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 2}}).status_code == 200
+    # по умолчанию (auto): презентация — только руководитель, обычная комната — все; board_allowed=False в обычной — только руководитель
+    pres = presentation(client)
+    assert _join(client, "alice", pres["id"])["client"]["board_access"] == "leaders"
+    reg = make_room(client, moderators=LEADERS)
+    assert _join(client, "alice", reg["id"])["client"]["board_access"] == "everyone"
+    off = make_room(client, moderators=LEADERS, board_allowed=False)
+    assert _join(client, "alice", off["id"])["client"]["board_access"] == "leaders"
+
+
+def test_private_board_events_are_not_delivered_to_non_leaders(client, lk_calls):
+    import time
+
+    room = make_room(client, moderators=LEADERS, board_access="private")
+    c = _join(client, "carol", room["id"])
+    a = _join(client, "alice", room["id"])
+    mid = c["meeting_id"]
+    login(client, "carol")
+    with client.websocket_connect("/api/v1/ws") as ws_c:
+        ws_c.send_json({"type": "subscribe", "meeting_id": mid})
+        assert ws_c.receive_json()["type"] == "subscribed"
+        login(client, "alice")
+        with client.websocket_connect("/api/v1/ws") as ws_a:
+            ws_a.send_json({"type": "subscribe", "meeting_id": mid})
+            assert ws_a.receive_json()["type"] == "subscribed"
+            login(client, "carol")
+            assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 1}, "client_id": "c1"}).status_code == 200
+            ev = ws_c.receive_json()
+            assert ev["type"] == "whiteboard_patch" and ev["leaders_only"] is True, "руководитель получает изменения закрытой доски"
+            time.sleep(1.6)
+            ws_a.send_json({"type": "ping"})
+            assert ws_a.receive_json()["type"] == "pong", "участнику изменения закрытой доски не приходят"
+    assert a["client"]["can_view_board"] is False
+
+
+def test_leader_changes_board_access_in_room_settings_and_participant_cannot(client, lk_calls):
+    room = make_room(client, moderators=LEADERS)
+    _join(client, "carol", room["id"])
+    login(client, "alice")
+    assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "private"}).status_code in (403, 404)
+    login(client, "carol")
+    r = client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "private"})
+    assert r.status_code == 200 and r.json()["board_access"] == "private" and r.json()["board_level"] == "private"
+    assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "nobody"}).status_code == 422

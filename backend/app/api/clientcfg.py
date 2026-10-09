@@ -15,5 +15,6 @@ def build_client_config(room: Room, screen, result, *, su: SessionUser | None = 
         can_manage=bool(su and roles.can_manage_room(room, su)), can_control=bool(su and roles.can_control_meeting(room, su)),
         presentation=roles.is_presentation(room), sources=sources, floor=bool(result.floor),
         can_edit_board=roles.can_edit_board(room, su, guest=guest, has_floor=bool(result.floor)),
+        can_view_board=roles.can_view_board(room, su, guest=guest), board_access=roles.board_level(room),
         recording_allowed=bool(room.record_audio), attachments=attachments,
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message or None)

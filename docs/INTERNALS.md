@@ -150,7 +150,7 @@ VAD режет речь на сегменты → очередь → GigaAM → 
 | Слой | Стек |
 | --- | --- |
 | Backend | Python 3.12, FastAPI, SQLAlchemy (async), Alembic, PostgreSQL 16, Redis 7 |
-| Frontend | React 19, TypeScript, Vite, livekit-client, шрифт IBM Plex Sans (локально, без CDN) |
+| Frontend | React 19, TypeScript, Vite, livekit-client, шрифты Inter и Manrope (локально, без CDN) |
 | Медиа | LiveKit Server (закреплённая проверенная версия) |
 | Распознавание | GigaAM v3 E2E RNNT (PyTorch), Silero VAD |
 | Развёртывание | Docker Compose, Bash-скрипты (установка, обновление, откат, проверки), nginx |

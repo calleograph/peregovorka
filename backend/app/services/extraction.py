@@ -389,6 +389,26 @@ def _first_person_commitment(line: str) -> bool:
     return False
 
 
+def association_distances(text: str, task: str, people: list[Person]) -> dict[str, int | None]:
+    """Насколько близко к словам задачи стоит каждый названный в реплике участник (в словах). В итоговой реплике «Галина чинит тесты, Дмитрий
+    помогает …» названы несколько человек, и модель легко приписывает задачу не тому: берётся тот, чьё имя стоит рядом с глаголом/существительным задачи.
+    None — слов задачи в реплике не нашли (по близости судить нельзя)."""
+    words = re.findall(r"[А-Яа-яЁёA-Za-z0-9-]+", text)
+    low = [norm(w) for w in words]
+    name_idx: dict[str, list[int]] = {}
+    for i, wl in enumerate(low):
+        hits = [p for p in people if wl == norm(p.first) or wl == norm(p.last)]
+        if len(hits) == 1:
+            name_idx.setdefault(hits[0].full, []).append(i)
+    taken = {i for v in name_idx.values() for i in v}
+    stems = {norm(w)[:5] for w in re.findall(r"[А-Яа-яЁё]{5,}", task)}
+    pos = [i for i, wl in enumerate(low) if i not in taken and len(wl) >= 5 and wl[:5] in stems]
+    out: dict[str, int | None] = {}
+    for full, idxs in name_idx.items():
+        out[full] = min(abs(i - j) for i in idxs for j in pos) if pos else None
+    return out
+
+
 def _assignee_confirmed(person: Person, frag: list[Line], src: Line, people: list[Person]) -> bool:
     """Ответственный подтверждён текстом: его называют в самой реплике-источнике (для короткого ответа вроде «Да, отдам» — в предыдущей реплике), либо он сам говорит
     в источнике и берёт дело на себя (глагол первого лица). Соседние чужие реплики и просто «говорящий» подтверждением не считаются."""
@@ -482,6 +502,18 @@ def verify_pass(kind: str, raw: dict, frag: list[Line], frag_no: int, people: li
                 if not verified:
                     stats["assignee_unverified"] += 1
                     guess, person = person.full, None          # неподтверждённого ответственного не назначаем: «не определён» лучше неверного
+            if person is not None and verified:
+                direct = mentions_direct(src.text, people)
+                if len(direct) >= 2 and person.full in direct:
+                    dist = association_distances(src.text, text, people)
+                    mine = dist.get(person.full)
+                    closer = sorted((d, n) for n, d in dist.items() if d is not None and n != person.full)
+                    if mine is not None and closer and closer[0][0] <= 3 and closer[0][0] + 2 <= mine:
+                        stats["assignee_reassigned"] = stats.get("assignee_reassigned", 0) + 1
+                        person = next(p for p in people if p.full == closer[0][1])     # задача стоит рядом с другим названным участником
+                    elif mine is not None and mine > 4:
+                        stats["assignee_unverified"] += 1
+                        guess, person = person.full, None                               # названы несколько человек, а к этой задаче имя не примыкает
             if person is None and not doubtful:
                 # модель не назвала или назвала неподтверждённо: если в реплике-источнике однозначно назван ровно один участник — это и есть ответственный (по тексту, а не по угадыванию)
                 named = mentions_direct(src.text, people)

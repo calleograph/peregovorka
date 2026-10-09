@@ -30,7 +30,7 @@ function Metric({ r }: { r: AsrTestResult }) {
   );
 }
 
-/** Выбор модели распознавания: Full (PyTorch) или Q5_K_M (GGUF); статус, размер, runtime, устройство; тест и сравнение на встроенном аудио. */
+/** Модели распознавания: статус, размер, runtime, устройство; тест и сравнение на встроенном аудио. Штатно доступна одна — полная GigaAM (PyTorch). */
 export default function AsrModelsAdmin() {
   const [data, setData] = useState<AsrModels | null>(null);
   const [err, setErr] = useState("");
@@ -77,8 +77,7 @@ export default function AsrModelsAdmin() {
   return (
     <section>
       <h2>Распознавание речи (ASR)</h2>
-      <p className="muted">Выберите модель для транскрибации. Выбор меняет и файл модели, и движок (runtime): Full работает на PyTorch, Q5_K_M — на GGUF (transcribe.cpp). Обе модели могут лежать на сервере одновременно;
-        переключение выполняется без остановки: новая модель загружается в фоне, прежняя работает до готовности новой. Выбор хранится в настройках приложения.</p>
+      <p className="muted">Транскрибацию выполняет полная модель GigaAM v3 e2e RNNT (PyTorch): она распознаёт точнее квантованных вариантов, которые больше не поставляются. Здесь видно, загружена ли модель и на каком устройстве она работает, и можно проверить скорость на встроенном аудио. Если в каталоге появятся другие модели, выбор между ними выполняется без остановки: новая модель загружается в фоне, прежняя работает до готовности новой.</p>
       {!data.reachable && <div className="alert error" role="alert">{data.error}</div>}
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
 

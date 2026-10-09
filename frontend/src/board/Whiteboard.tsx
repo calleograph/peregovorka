@@ -22,6 +22,8 @@ interface Props {
 /** Общая доска: один холст draw.io на всех участников встречи; правки синхронизируются, схема сохраняется вместе со встречей. */
 export default function Whiteboard({ meetingId, bus, open, readOnly = false, fileBase, onClose, onRemoteChange }: Props) {
   const frame = useRef<FrameHandle>(null);
+  const stage = useRef<HTMLElement>(null);
+  const [full, setFull] = useState(false);       // доска развёрнута на весь экран (редактор draw.io при этом не перезагружается)
   const clientId = useMemo(() => `b-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`, []);
   const [status, setStatus] = useState<BoardStatus>({ phase: "loading", saved: "saved" });
   const syncRef = useRef<BoardSync | null>(null);
@@ -50,11 +52,28 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
     return () => { off(); offSync(); sync.dispose(); syncRef.current = null; };
   }, [meetingId, bus, clientId, readOnly]);
 
+  // Выход из полноэкранного режима браузера (Esc) сворачивает и нашу «полную» доску; без поддержки Fullscreen API работает режим поверх страницы и Esc
+  useEffect(() => {
+    if (!full) return;
+    const onFs = () => { if (!document.fullscreenElement) setFull(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !document.fullscreenElement) setFull(false); };
+    document.addEventListener("fullscreenchange", onFs);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("fullscreenchange", onFs); window.removeEventListener("keydown", onKey); };
+  }, [full]);
+  useEffect(() => { if (!open && full) setFull(false); }, [open, full]);
+  useEffect(() => { if (!full && document.fullscreenElement && document.fullscreenElement === stage.current) void document.exitFullscreen().catch(() => undefined); }, [full]);
+  const toggleFull = () => {
+    if (full) { setFull(false); return; }
+    setFull(true);
+    void stage.current?.requestFullscreen?.().catch(() => undefined);      // не вышло (запрет браузера) — остаётся режим поверх страницы
+  };
+
   const onMessage = useCallback((m: Parameters<BoardSync["handleFrame"]>[0]) => syncRef.current?.handleFrame(m), []);
   const request = useCallback((f: Parameters<BoardSync["requestExport"]>[0], extra?: Record<string, unknown>) => syncRef.current?.requestExport(f, extra) ?? Promise.resolve(null), []);
 
   return (
-    <section className={`board-stage card ${open ? "" : "off"}`} aria-label="Общая доска" aria-hidden={!open}>
+    <section ref={stage} className={`board-stage card ${open ? "" : "off"} ${full ? "full" : ""}`} aria-label="Общая доска" aria-hidden={!open}>
       <div className="board-head row">
         <h2>Общая доска</h2>
         <span className={`badge ${status.saved === "saved" ? "ok" : "warn"}`} title="Схема хранится вместе со встречей">{SAVED_TEXT[status.saved]}</span>
@@ -67,6 +86,7 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
           </>
         )}
         <BoardExportMenu request={request} fileBase={fileBase} />
+        <button className="btn mini" onClick={toggleFull} aria-pressed={full} title={full ? "Вернуть доску в окно (Esc)" : "Развернуть доску на весь экран"}>{full ? "⤡ Свернуть" : "⤢ На весь экран"}</button>
         <button className="btn mini" onClick={onClose} title="Скрыть доску — вы остаётесь в звонке, правки продолжат приходить">Скрыть доску</button>
       </div>
       <p className="muted small board-hint">Фигуры — слева, перетащите на холст. Связь: наведите на фигуру и потяните за стрелку к другой фигуре. Цвета и стили — кнопка «Формат» вверху справа.</p>

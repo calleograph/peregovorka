@@ -87,6 +87,10 @@ class Room(Base):
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Кто работает с общей доской: auto — по типу комнаты (обычная: все, если board_allowed; презентация: только руководитель); everyone — все правят;
+    # speakers — руководители и те, кому дали слово; leaders — правят только руководители, остальные смотрят; private — доска только у руководителей
+    # (остальные её не видят и не получают её изменений).
+    board_access: Mapped[str] = mapped_column(String(10), default="auto", server_default="auto", nullable=False)
     # доставка материалов встречи по почте (настраивает руководитель): {enabled, materials[], recipients{leaders,participants,users[],emails[]}}
     mail_delivery: Mapped[dict | None] = mapped_column(JSONType)
     # Языковая модель комнаты: inherit — системная по умолчанию; profile — внешний профиль (llm_profile_id); local — локальная модель (llm_local_model); off — отключена.
