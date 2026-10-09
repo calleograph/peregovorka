@@ -491,7 +491,7 @@ async function fetchBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
-export type ExportFormat = "md" | "txt" | "docx" | "pdf";
+export type ExportFormat = "md" | "txt" | "docx" | "pdf" | "html";
 
 /** Параметры запроса журнала (фильтры — JSON-строкой; пустые поля не передаются). */
 export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100): string {

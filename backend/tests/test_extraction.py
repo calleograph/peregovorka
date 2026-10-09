@@ -198,10 +198,9 @@ def test_markdown_has_sources_and_honest_marks_for_unconfirmed_owner_and_missing
              ex.Item("proposal", "Открыть ssh наружу", "10:02:30", 150, sources=src("10:02:30", "Игорь Соколов", "Предлагаю открыть ssh наружу.")),
              ex.Item("open", "Сколько хранить логи", "10:03:00", 180, sources=src("10:03:00", "Анна Крылова", "пока не знаем"))]
     md = ex.render_markdown(["Переговорка: Тест", "Дата: 2026-10-12"], items)
-    assert "| Иван Петров | отдать исправление прав | в четверг к обеду (2026-10-15) | [10:00:20] Иван Петров «Да, в четверг к обеду отдам.»" in md
+    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) | [10:00:20] Иван Петров |" in md
     assert "не определён (модель предположила: Алексей Морозов; в репликах не подтверждено)" in md and "| не указан |" in md
     assert "## Предложения, не принятые как решение" in md and "Открыть ssh наружу" in md and "## Открытые вопросы" in md and "Сколько хранить логи" in md
-    assert "Миграцию сделаю / ночью" in md, "символ | в цитате не ломает таблицу"
     st = ex.to_structured(items)
     t = st["tasks"][0]
     assert t["assignee"] == "Иван Петров" and t["assignee_id"] == "p02" and t["deadline"] == "2026-10-15" and t["deadline_phrase"] == "в четверг к обеду" and t["source"]["ts"] == "10:00:20" and t["source"]["chunk"] == 1
@@ -216,7 +215,9 @@ def run(llm, **kw):
 
 
 def good(body, n):
-    return reply(answer(body, topics=[{"title": "Релиз", "ts": "10:00:05"}], decisions=[{"status": "decision", "text": "Релиз переносим на вторник, двадцатое октября", "ts": "10:00:05"},
+    if "response_format" not in body:
+        return reply("Релиз перенесли на вторник; исправление прав будет отдано в четверг к обеду.")      # итог — отдельный запрос без схемы
+    return reply(answer(body, topics=[{"title": "Перенос релиза", "summary": "Перенос релиза и окно выкладки", "ts": "10:00:05"}], decisions=[{"status": "decision", "text": "Релиз переносим на вторник, двадцатое октября", "ts": "10:00:05"},
                                                                                       {"status": "proposal", "text": "Открыть ssh наружу", "ts": "10:02:30"}],
                           tasks=[{"assignee": "p02", "task": "отдать исправление прав", "deadline": "в четверг к обеду", "ts": "10:00:20"}],
                           questions=[{"text": "Сколько хранить логи", "ts": "10:03:00"}]))
@@ -225,13 +226,17 @@ def good(body, n):
 def test_pipeline_runs_narrow_passes_with_a_common_prefix_and_builds_a_deterministic_protocol():
     llm, seen = llm_for(good)
     res = run(llm)
-    assert len(seen) == 4 and res.calls == 4 and res.parts == 1 and res.ok_fragments == 4 and not res.truncated
-    assert [pass_of(b) for b in seen] == ["topics", "items", "tasks", "questions"], "темы / решения / поручения / вопросы — отдельные проходы"
-    assert len({b["messages"][0]["content"] for b in seen}) == 1, "системный промпт одинаков во всех проходах (llama.cpp не обрабатывает фрагмент заново)"
-    frag_part = [b["messages"][1]["content"].split("\n\n=== ЗАДАНИЕ")[0] for b in seen]
-    assert len(set(frag_part)) == 1 and all(b["temperature"] == 0.0 and b["max_tokens"] <= 800 for b in seen)
+    assert len(seen) == 5 and res.calls == 5 and res.parts == 1 and res.ok_fragments == 4 and not res.truncated
+    passes = seen[:4]
+    assert "response_format" not in seen[4] and "Релиз переносим" in seen[4]["messages"][1]["content"], "итог пишется по проверенным пунктам, а не по стенограмме"
+    assert [pass_of(b) for b in passes] == ["topics", "items", "tasks", "questions"], "темы / решения / поручения / вопросы — отдельные проходы"
+    assert len({b["messages"][0]["content"] for b in passes}) == 1, "системный промпт одинаков во всех проходах (llama.cpp не обрабатывает фрагмент заново)"
+    frag_part = [b["messages"][1]["content"].split("\n\n=== ЗАДАНИЕ")[0] for b in passes]
+    assert len(set(frag_part)) == 1 and all(b["temperature"] == 0.0 and b["max_tokens"] <= 800 for b in passes)
     assert "p02 — Иван Петров" in seen[0]["messages"][0]["content"]
-    assert "| Иван Петров | отдать исправление прав | в четверг к обеду (2026-10-15) |" in res.text and "Открыть ssh наружу" in res.text and "| 1 | Релиз переносим" in res.text
+    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) |" in res.text and "Открыть ssh наружу" in res.text and "| 1 | Релиз переносим" in res.text
+    assert "## Итог" in res.text and "Релиз перенесли на вторник" in res.text and "| Перенос релиза | Перенос релиза и окно выкладки | Решение: Релиз переносим на вторник" in res.text
+    assert res.structured["document"]["discussion"][0]["discussion"] == "Перенос релиза и окно выкладки" and not res.structured["document"]["incomplete"]
     assert res.structured["tasks"][0]["assignee"] == "Иван Петров" and res.structured["tasks"][0]["source"]["ts"] == "10:00:05" and res.structured["stats"]["fragments"] == 1
 
 
@@ -239,17 +244,17 @@ def test_truncated_pass_is_split_and_retried_instead_of_using_cut_data():
     state = {"cut": 0}
 
     def handler(body, n):
-        if pass_of(body) == "items" and state["cut"] == 0:
+        if "response_format" in body and pass_of(body) == "items" and state["cut"] == 0:
             state["cut"] = 1
             return reply('{"items": [{"status": "deci', finish="length")                  # оборвано
         return good(body, n)
 
     llm, seen = llm_for(handler)
     res = run(llm)
-    assert res.truncated is True and res.failed == 0 and res.calls == 6          # 3 прохода как обычно + оборванный + две половины
+    assert res.truncated is True and res.failed == 0 and res.calls == 7          # 3 прохода как обычно + оборванный + две половины + итог
     assert any("пришлось повторить" in w and "лимиту длины — 1" in w for w in res.warnings), res.warnings
     assert res.structured["stats"]["length_retries"] == 1 and "Релиз переносим на вторник" in res.text
-    sizes = [len(b["messages"][1]["content"]) for b in seen if pass_of(b) == "items"]
+    sizes = [len(b["messages"][1]["content"]) for b in seen if "response_format" in b and pass_of(b) == "items"]
     assert sizes[1] < sizes[0] and sizes[2] < sizes[0], "повтор идёт меньшими частями"
 
 

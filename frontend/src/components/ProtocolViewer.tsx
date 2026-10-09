@@ -17,7 +17,7 @@ interface Props {
 }
 
 const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summary: "Краткое резюме" };
-const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
+const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["html", "Веб-страница (.html)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
 
 /** Просмотр протокола: отрисованный Markdown / исходник, правка вручную, копирование, скачивание, повторное формирование. */
 export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, onRegenerate, onDeleted }: Props) {

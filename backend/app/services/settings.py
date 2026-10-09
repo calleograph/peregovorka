@@ -411,6 +411,9 @@ class ProtocolSettings(_Group):
     summary_instructions: str = Field(default=DEFAULT_SUMMARY_INSTRUCTION, max_length=20000)
     auto_generate: bool = False
     auto_summary: bool = False
+    # Как внешняя (не локальная) модель формирует протокол и резюме: free — по инструкции пользователя, ответ — Markdown; structured — как локальная: узкие запросы,
+    # JSON по схеме, таблицы и оформление собирает система (один и тот же документ у любой модели). Локальная Qwen3 всегда работает в структурном режиме.
+    external_mode: Literal["free", "structured"] = "free"
     auto_map: bool = False          # формировать «Карту разговора» после каждой встречи (по умолчанию выключено: карта тратит время и процессор); комната может переопределить
     max_input_chars: int = Field(default=60000, ge=2000, le=1_000_000)
 

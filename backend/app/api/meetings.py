@@ -15,7 +15,7 @@ from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGran
 from ..services.access import can_access_meeting, release_lease
 from ..services import roles
 from ..services.audit import write_audit
-from ..services.export_docs import md_to_plain, to_docx, to_pdf
+from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.llm_choice import once_options
 from ..services.meetings import JoinError
 from ..services.settings import SettingsError
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 KINDS = ("summary", "protocol")
 CONTENT_TYPES = {
-    "md": "text/markdown; charset=utf-8", "txt": "text/plain; charset=utf-8",
+    "md": "text/markdown; charset=utf-8", "txt": "text/plain; charset=utf-8", "html": "text/html; charset=utf-8",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf",
 }
 
@@ -161,6 +161,8 @@ def _render(fmt: str, markdown: str, title: str) -> bytes:
         return (markdown.rstrip() + "\n").encode("utf-8")
     if fmt == "txt":
         return md_to_plain(markdown).encode("utf-8")
+    if fmt == "html":
+        return to_html(markdown, title).encode("utf-8")
     try:
         return to_docx(markdown, title) if fmt == "docx" else to_pdf(markdown, title)
     except RuntimeError as exc:
@@ -342,7 +344,7 @@ async def delete_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
 
 @router.get("/{meeting_id}/protocols/{protocol_id}/export")
 async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request,
-                          format: str = Query("docx", pattern="^(txt|md|docx|pdf)$"),
+                          format: str = Query("docx", pattern="^(txt|md|docx|pdf|html)$"),
                           su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
     if p.status != "ready" or not p.content:

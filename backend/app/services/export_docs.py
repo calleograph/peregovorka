@@ -190,20 +190,73 @@ def md_to_plain(md: str) -> str:
 
 
 # --------------------------------------------------------------------------------- DOCX
+ACCENT_FILL = {"ok": "E3F2E7", "info": "E3EEFA", "warn": "FCEFD0", "muted": "EEF0F3", None: "EEF1F6"}      # мягкие тона: читаются и в чёрно-белой печати
+WARN_FILL = "FFF3C4"
+
+
+def _runs_len(runs: list[Run]) -> int:
+    return len("".join(r.text for r in runs))
+
+
+def column_weights(rows: list[list[list[Run]]], cols: int) -> list[float]:
+    """Доли ширины столбцов по содержимому: узкие («№», срок) не растягиваются, длинные (тема, описание) получают место; ничего не обрезается."""
+    w = []
+    for c in range(cols):
+        longest = max((_runs_len(r[c]) for r in rows if c < len(r)), default=4)
+        w.append(float(min(max(longest, 5), 70)))
+    if cols > 2 and rows and _runs_len(rows[0][0]) <= 2:
+        w[0] = min(w[0], 4.0)                                   # столбец «№»
+    total = sum(w) or 1.0
+    return [x / total for x in w]
+
+
+def needs_landscape(blocks: list[Block]) -> bool:
+    return any(b.kind == "table" and max(len(r) for r in b.rows) >= 5 for b in blocks)
+
+
 def to_docx(md: str, title: str | None = None) -> bytes:
     from docx import Document
-    from docx.shared import Pt
+    from docx.enum.section import WD_ORIENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Cm, Pt, RGBColor
 
+    from .doc_render import section_accent, warn_text
+
+    blocks = parse_markdown(md)
     doc = Document()
-    doc.styles["Normal"].font.name = "Calibri"
-    doc.styles["Normal"].font.size = Pt(11)
+    st = doc.styles["Normal"]
+    st.font.name, st.font.size = "Calibri", Pt(11)
+    sec = doc.sections[0]
+    if needs_landscape(blocks):                       # широкие таблицы: альбомная ориентация, а не мелкий нечитаемый текст
+        sec.orientation = WD_ORIENT.LANDSCAPE
+        sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    sec.left_margin = sec.right_margin = Cm(2.0)
+    sec.top_margin = sec.bottom_margin = Cm(1.8)
+    usable = sec.page_width - sec.left_margin - sec.right_margin
+    for name in ("Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"):
+        try:
+            h = doc.styles[name]
+            h.font.color.rgb = RGBColor(0x1F, 0x29, 0x37)
+            h.paragraph_format.keep_with_next = True
+        except KeyError:
+            pass
     if title:
         doc.add_heading(title, level=0)
 
-    def add_runs(par, runs: list[Run]) -> None:
+    def shade(el_pr, fill: str) -> None:
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), fill)
+        el_pr.append(shd)
+
+    def add_runs(par, runs: list[Run], size: float | None = None) -> None:
         for r in runs:
             run = par.add_run(r.text + (f" ({r.href})" if r.href else ""))
             run.bold, run.italic = r.bold or None, r.italic or None
+            if size:
+                run.font.size = Pt(size)
             if r.code:
                 run.font.name = "Consolas"
 
@@ -215,35 +268,129 @@ def to_docx(md: str, title: str | None = None) -> bytes:
             for ch in it.children:
                 add_list(ch, depth + 1)
 
-    for b in parse_markdown(md):
+    accent: str | None = None
+    for b in blocks:
         if b.kind == "h":
+            if b.level == 2:
+                accent = section_accent(_runs_text(b.runs))
             add_runs(doc.add_heading("", level=min(b.level, 4)), b.runs)
         elif b.kind == "p":
             add_runs(doc.add_paragraph(), b.runs)
         elif b.kind in ("ul", "ol"):
             add_list(b, 0)
         elif b.kind == "quote":
-            add_runs(doc.add_paragraph(style="Quote"), b.runs)
+            p = doc.add_paragraph(style="Quote")
+            add_runs(p, b.runs)
+            if warn_text(_runs_text(b.runs)):
+                shade(p._p.get_or_add_pPr(), WARN_FILL)
         elif b.kind == "hr":
             doc.add_paragraph("—" * 30)
         elif b.kind == "code":
             p = doc.add_paragraph()
-            r = p.add_run(b.text); r.font.name = "Consolas"
+            r = p.add_run(b.text)
+            r.font.name, r.font.size = "Consolas", Pt(9.5)
+            p.paragraph_format.keep_together = True
+            shade(p._p.get_or_add_pPr(), "F3F4F6")
         elif b.kind == "table":
             cols = max(len(r) for r in b.rows)
             t = doc.add_table(rows=len(b.rows), cols=cols)
             t.style = "Table Grid"
+            t.autofit = False
+            weights = column_weights(b.rows, cols)
             for ri, row in enumerate(b.rows):
+                trpr = t.rows[ri]._tr.get_or_add_trPr()
+                trpr.append(OxmlElement("w:cantSplit"))              # строка не разрывается между страницами, если помещается целиком
+                if ri == 0:
+                    trpr.append(OxmlElement("w:tblHeader"))          # шапка таблицы повторяется на каждой странице
                 for ci in range(cols):
                     cell = t.cell(ri, ci)
+                    cell.width = int(usable * 0.99 * weights[ci])
                     cell.text = ""
-                    add_runs(cell.paragraphs[0], row[ci] if ci < len(row) else [])
+                    par = cell.paragraphs[0]
+                    add_runs(par, row[ci] if ci < len(row) else [], size=10)
+                    par.paragraph_format.space_after = Pt(2)
                     if ri == 0:
-                        for r in cell.paragraphs[0].runs:
+                        for r in par.runs:
                             r.bold = True
+                        shade(cell._tc.get_or_add_tcPr(), ACCENT_FILL[accent])
+            doc.add_paragraph().paragraph_format.space_after = Pt(2)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+# --------------------------------------------------------------------------------- HTML
+HTML_CSS = """
+:root{color-scheme:light;--text:#1f2937;--muted:#667085;--line:#d9dee7;--head:#eef1f6;--ok:#e3f2e7;--info:#e3eefa;--warn:#fcefd0;--mute:#eef0f3;--flag:#fff3c4}
+*{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Calibri,sans-serif}
+main{max-width:1100px;margin:24px auto;padding:28px 34px;background:#fff;border:1px solid var(--line);border-radius:14px}
+h1{font-size:26px;margin:0 0 14px;letter-spacing:-.01em}h2{font-size:18px;margin:26px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}h3{font-size:16px}
+p{margin:8px 0}em{color:var(--muted)}table{width:100%;border-collapse:collapse;margin:8px 0 14px;table-layout:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word;min-width:9em}th{background:var(--head);font-weight:600}
+tr{break-inside:avoid}thead{display:table-header-group}th:first-child,td:first-child{width:2.6em;min-width:0;color:var(--muted)}
+.ok th{background:var(--ok)}.info th{background:var(--info)}.warn th{background:var(--warn)}.muted th{background:var(--mute)}
+blockquote{margin:10px 0;padding:8px 14px;border-left:4px solid var(--line);background:#fafbfc;color:var(--muted)}blockquote.flag{background:var(--flag);border-color:#e0b100;color:var(--text)}
+pre{background:#f3f4f6;border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;font:13px/1.45 Consolas,"DejaVu Sans Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+code{font-family:Consolas,"DejaVu Sans Mono",monospace;background:#f3f4f6;padding:1px 4px;border-radius:4px}
+@media print{body{background:#fff}main{border:0;margin:0;padding:0;max-width:none}h2{break-after:avoid}}
+@page{margin:16mm}
+"""
+
+
+def _esc(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _runs_html(runs: list[Run]) -> str:
+    out = []
+    for r in runs:
+        t = _esc(r.text)
+        if r.code:
+            t = f"<code>{t}</code>"
+        if r.bold:
+            t = f"<strong>{t}</strong>"
+        if r.italic:
+            t = f"<em>{t}</em>"
+        if r.href:
+            t = f'<a href="{_esc(r.href)}" rel="noopener noreferrer">{t}</a>'
+        out.append(t)
+    return "".join(out)
+
+
+def to_html(md: str, title: str | None = None) -> str:
+    """Самостоятельная страница документа: общие стили, таблицы с переносом, мягкие акценты разделов; печать — через браузер. Текст модели экранируется."""
+    from .doc_render import section_accent, warn_text
+
+    def lst(b: Block) -> str:
+        tag = "ol" if b.kind == "ol" else "ul"
+        return f"<{tag}>" + "".join(f"<li>{_runs_html(it.runs)}" + "".join(lst(c) for c in it.children) + "</li>" for it in b.items) + f"</{tag}>"
+
+    body: list[str] = []
+    accent: str | None = None
+    for b in parse_markdown(md):
+        if b.kind == "h":
+            if b.level == 2:
+                accent = section_accent(_runs_text(b.runs))
+            body.append(f"<h{min(b.level, 4)}>{_runs_html(b.runs)}</h{min(b.level, 4)}>")
+        elif b.kind == "p":
+            body.append(f"<p>{_runs_html(b.runs)}</p>")
+        elif b.kind in ("ul", "ol"):
+            body.append(lst(b))
+        elif b.kind == "quote":
+            cls = ' class="flag"' if warn_text(_runs_text(b.runs)) else ""
+            body.append(f"<blockquote{cls}>{_runs_html(b.runs)}</blockquote>")
+        elif b.kind == "hr":
+            body.append("<hr>")
+        elif b.kind == "code":
+            body.append(f"<pre>{_esc(b.text)}</pre>")
+        elif b.kind == "table":
+            head, rows = b.rows[0], b.rows[1:]
+            cls = f' class="{accent}"' if accent else ""
+            body.append(f"<table{cls}><thead><tr>" + "".join(f"<th>{_runs_html(c)}</th>" for c in head) + "</tr></thead><tbody>"
+                        + "".join("<tr>" + "".join(f"<td>{_runs_html(c)}</td>" for c in r) + "</tr>" for r in rows) + "</tbody></table>")
+    t = _esc(title or "Документ")
+    return (f'<!doctype html>\n<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{t}</title><style>{HTML_CSS}</style></head><body><main>\n' + "\n".join(body) + "\n</main></body></html>\n")
 
 
 # ---------------------------------------------------------------------------------- PDF

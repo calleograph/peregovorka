@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 from ..integrations.llm import LlmClient, LlmError
 from .deadlines import is_deadline_phrase, meeting_date, resolve
+from .doc_render import build_document, document_to_markdown
 
 log = logging.getLogger("app.extraction")
 
@@ -39,7 +40,8 @@ COMMON_SYSTEM = (
     "Ты — секретарь совещания. Работай только по тексту фрагмента стенограммы, ничего не выдумывай: нет данных — пустой список. Ответ — JSON строго по схеме. "
     "Каждый пункт сопровождай ts — временем реплики [ЧЧ:ММ:СС], где это сказано. Приветствия, шум и организационные реплики не включай.")
 TASKS = {
-    "topics": ("ЗАДАНИЕ: перечисли вопросы (темы), которые обсуждались в этом фрагменте. Название темы — коротко, 2–6 слов.", 450),
+    "topics": ("ЗАДАНИЕ: перечисли вопросы (темы), которые обсуждались в этом фрагменте. title — название темы, 2–6 слов. summary — одно-два законченных предложения: что именно обсуждали "
+                "(только по тексту фрагмента; технические значения — точно как в репликах).", 700),
     "decisions": ("ЗАДАНИЕ: выпиши решения и предложения из этого фрагмента. status = decision — только если участники явно договорились (сказано «решили», «принимаем», «делаем», "
                   "«согласны», «утверждаем»). status = proposal — предложение, которое высказали, но не приняли, отклонили или отложили. Не включай поручения конкретным людям "
                   "и вопросы без ответа. text — суть решения одной фразой, без слов «Решение:», «Задача:», «Когда:».", 700),
@@ -234,7 +236,7 @@ def _arr(props: dict, req: list[str]) -> dict:
 def schema_for(kind: str, ids: list[str]) -> dict:
     s = {"type": "string"}
     if kind == "topics":
-        body = {"topics": _arr({"title": s, "ts": s}, ["title", "ts"])}
+        body = {"topics": _arr({"title": s, "summary": s, "ts": s}, ["title", "summary", "ts"])}
     elif kind == "decisions":
         body = {"items": _arr({"status": {"type": "string", "enum": ["decision", "proposal"]}, "text": s, "ts": s}, ["status", "text", "ts"])}
     elif kind == "tasks":
@@ -364,6 +366,7 @@ class Item:
     due: str = ""                  # фраза срока из реплики (проверенная)
     due_date: str = ""             # ISO-дата, если фраза однозначно переводится
     sources: list = field(default_factory=list)
+    detail: str = ""               # для темы: что обсуждали (1–2 предложения)
 
 
 def _clean_time_words(text: str, support: str, stats: dict) -> str:
@@ -466,7 +469,10 @@ def verify_pass(kind: str, raw: dict, frag: list[Line], frag_no: int, people: li
         pos = next((i for i, x in enumerate(frag) if x.idx == src.idx), 0)
         nxt = frag[pos + 1].text if pos + 1 < len(frag) else ""
         if kind == "topics":
-            items.append(Item("topic", text, src.ts, src.sec, sources=[source_of(src, frag_no)]))
+            detail = " ".join(str(it.get("summary") or "").split())
+            if any(v not in all_text for v in BIGVAL_RE.findall(detail)):
+                detail = ""                       # описание с выдуманным значением (IP, версия, число) не принимается целиком
+            items.append(Item("topic", text, src.ts, src.sec, detail=detail, sources=[source_of(src, frag_no)]))
         elif kind == "questions":
             pos = next((i for i, x in enumerate(frag) if x.idx == src.idx), 0)
             around = src.text + " " + (frag[pos + 1].text if pos + 1 < len(frag) else "")
@@ -586,6 +592,8 @@ def merge_items(items: list[Item]) -> list[Item]:
             merged.append(it)
             continue
         dup.sources.extend(it.sources)
+        if it.kind == "topic" and len(it.detail) > len(dup.detail):
+            dup.detail = it.detail
         if not dup.due and it.due:
             dup.due, dup.due_date = it.due, it.due_date
         if it.kind == "task" and it.assignee_verified and not dup.assignee_verified:
@@ -620,7 +628,7 @@ def to_structured(items: list[Item]) -> dict:
         for it in items:
             if it.kind in kinds:
                 s = it.sources[0]
-                d = {"text": it.text, "source": {"chunk": s["fragment"], "ts": it.ts, "speaker": s.get("speaker"), "quote": s.get("quote")}, "also_in": [x["ts"] for x in it.sources[1:4]]}
+                d = {"text": it.text, **({"detail": it.detail} if it.kind == "topic" else {}), "source": {"chunk": s["fragment"], "ts": it.ts, "speaker": s.get("speaker"), "quote": s.get("quote")}, "also_in": [x["ts"] for x in it.sources[1:4]]}
                 if it.kind == "task":
                     d.update(task=it.text, assignee=it.assignee or None, assignee_id=it.assignee_id or None, assignee_verified=it.assignee_verified,
                              deadline=it.due_date or None, deadline_phrase=it.due or None, assignee_guess=it.assignee_guess or None)
@@ -631,46 +639,8 @@ def to_structured(items: list[Item]) -> dict:
 
 
 def render_markdown(header: list[str], items: list[Item]) -> str:
-    L: list[str] = ["# Протокол совещания", ""]
-    for h in header:
-        if not h.startswith("==="):
-            L.append(f"**{h.split(':', 1)[0]}:**{h.split(':', 1)[1]}" if ":" in h else h)
-            L.append("")
-    L.append("_Протокол собран автоматически из стенограммы небольшой локальной моделью: каждый пункт проверен по тексту и привязан к реплике-источнику; чего в репликах нет — «не указан». "
-             "Важные пункты сверьте с записью._")
-    L.append("")
-    topics = [i for i in items if i.kind == "topic"]
-    L.append("## Обсуждавшиеся вопросы")
-    L += [f"{n}. {t.text} — [{t.ts}]" for n, t in enumerate(topics, 1)] if topics else ["— не выделены"]
-    L.append("")
-    dec = [i for i in items if i.kind == "decision"]
-    L.append("## Принятые решения")
-    if dec:
-        L += ["| № | Решение | Источник |", "|---|---|---|"] + [f"| {n} | {_cell(d.text)} | {_src(d)} |" for n, d in enumerate(dec, 1)]
-    else:
-        L.append("— не выделены")
-    L.append("")
-    tasks = [i for i in items if i.kind == "task"]
-    L.append("## Поручения")
-    if tasks:
-        L += ["| № | Ответственный | Поручение | Срок | Источник |", "|---|---|---|---|---|"]
-        for n, t in enumerate(tasks, 1):
-            owner = t.assignee or "не назначен"
-            if not t.assignee and t.assignee_guess:
-                owner = f"не определён (модель предположила: {t.assignee_guess}; в репликах не подтверждено)"
-            due = (t.due + (f" ({t.due_date})" if t.due_date else "")) if t.due else "не указан"
-            L.append(f"| {n} | {_cell(owner)} | {_cell(t.text)} | {_cell(due)} | {_src(t)} |")
-    else:
-        L.append("— не выделены")
-    L.append("")
-    pr = [i for i in items if i.kind == "proposal"]
-    L.append("## Предложения, не принятые как решение")
-    L += [f"- {r.text} — {_src(r)}" for r in pr] if pr else ["— нет"]
-    L.append("")
-    op = [i for i in items if i.kind == "open"]
-    L.append("## Открытые вопросы")
-    L += [f"- {o.text} — {_src(o)}" for o in op] if op else ["— нет"]
-    return "\n".join(L).rstrip() + "\n"
+    """Markdown документа из проверенных пунктов (оформление — services/doc_render.py)."""
+    return document_to_markdown(build_document(header, items))
 
 
 def facts_text(items: list[Item]) -> str:
@@ -793,25 +763,30 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
         res.warnings.append(f"У {stats['due_dropped']} поручений названный моделью срок не подтверждается репликами — срок не указан (придумывать сроки запрещено).")
     if stats["timewords_removed"] or stats["fabricated"]:
         res.warnings.append(f"Из формулировок убрано выдуманных слов срока ({stats['timewords_removed']}) и значений, которых нет в стенограмме ({stats['fabricated']}).")
-    if kind == "summary":
-        facts = facts_text(merged)
-        wish = ""
-        ins = (instruction or "").strip()
-        if ins and len(ins) <= 400:
-            wish = f"\nПожелания пользователя: {ins}"
-        try:
-            r = await llm.complete(SUMMARY_SYSTEM + wish, "Проверенные пункты встречи:\n\n" + facts)
-            res.calls += 1
-            res.prompt_tokens += r.prompt_tokens or 0
-            res.completion_tokens += r.completion_tokens or 0
-            if r.truncated or len(r.text.strip()) < 20:
-                res.truncated = res.truncated or r.truncated
-                res.text = fallback_summary(merged)
+    # Итог: один абзац по уже проверенным пунктам (модель не пересказывает встречу заново и не переписывает таблицы — их собирает код)
+    facts = facts_text(merged)
+    wish = ""
+    ins = (instruction or "").strip()
+    if kind == "summary" and ins and len(ins) <= 400:
+        wish = f"\nПожелания пользователя: {ins}"
+    summary = ""
+    summary_ok = False
+    try:
+        r = await llm.complete((SUMMARY_SYSTEM if kind == "summary" else SUMMARY_SYSTEM.replace("не более 8 строк", "не более 5 предложений")) + wish,
+                               "Проверенные пункты встречи:\n\n" + facts)
+        res.calls += 1
+        res.prompt_tokens += r.prompt_tokens or 0
+        res.completion_tokens += r.completion_tokens or 0
+        if r.truncated or len(r.text.strip()) < 20:
+            res.truncated = res.truncated or r.truncated
+            if kind == "summary":
                 res.warnings.append("Краткое резюме модель оборвала или не написала — показан перечень проверенных пунктов.")
-            else:
-                res.text = r.text
-        except LlmError:
-            res.text = fallback_summary(merged)
-    else:
-        res.text = render_markdown(header, merged)
+        else:
+            summary, summary_ok = r.text.strip(), True
+    except LlmError:
+        if kind == "summary":
+            res.warnings.append("Краткое резюме не удалось получить от модели — показан перечень проверенных пунктов.")
+    doc = build_document(header, merged, summary=summary if kind == "protocol" else "", incomplete=bool(res.failed))
+    res.structured["document"] = doc
+    res.text = (summary if summary_ok else fallback_summary(merged)) if kind == "summary" else document_to_markdown(doc)
     return res

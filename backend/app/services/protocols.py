@@ -37,6 +37,9 @@ from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_
 log = logging.getLogger("app.protocols")
 
 
+EXTERNAL_FRAGMENT_CHARS = 12000      # размер фрагмента для структурного режима внешней модели (проходы по фрагментам, а не одним огромным запросом)
+
+
 class NothingToProcess(SettingsError):
     """В встрече нет ни реплик, ни чата, ни схемы: это штатный случай (пустая встреча), а не сбой — в журнал ошибкой не пишется."""
 
@@ -139,9 +142,19 @@ def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, s
 
 
 async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
-                           has_sources: bool = False, mixed: bool = False, structured: bool = True) -> PipelineResult:
+                           has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
+    if local is None and external_structured and structured:
+        # Структурный режим внешней модели: тот же конвейер, что у локальной (JSON по схеме → проверка и сборка документа кодом); не получилось — обычный режим ниже
+        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=min(limit, EXTERNAL_FRAGMENT_CHARS))
+        if sr is not None and sr.ok_fragments:
+            res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
+            res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
+            res.truncated = sr.truncated
+            res.warnings += sr.warnings
+            return res
+        res.warnings.append("Структурный режим не сработал (модель не вернула разбираемый JSON) — использован обычный режим.")
     if local is not None:
         # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
         sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit) if structured else None
@@ -625,7 +638,8 @@ class ProtocolService:
         info["llm_started"] = datetime.now(timezone.utc)
         try:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
-                                          has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript)
+                                          has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
+                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured")
         finally:
             info["llm_finished"] = datetime.now(timezone.utc)
             info["llm_stats"] = dict(llm.stats)
