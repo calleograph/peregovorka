@@ -12,7 +12,8 @@ export class TypingSender {
   private idle: Timer | null = null;
 
   constructor(private send: (typing: boolean) => void, private now: () => number = () => Date.now(),
-              private setT: (fn: () => void, ms: number) => Timer = setTimeout, private clearT: (t: Timer) => void = clearTimeout) {}
+              private setT: (fn: () => void, ms: number) => Timer = (fn, ms) => setTimeout(fn, ms), private clearT: (t: Timer) => void = (t) => clearTimeout(t)) {}
+  // Ссылки на setTimeout/clearTimeout нельзя класть в поле и вызывать как this.setT(): в браузере это «Illegal invocation» (в Node — нет, поэтому тесты с поддельными таймерами этого не ловили)
 
   input(): void {
     const t = this.now();

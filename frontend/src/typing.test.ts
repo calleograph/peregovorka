@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TYPING_EXPIRE_MS, TYPING_HEARTBEAT_MS, TYPING_STOP_MS, TypingSender, TypingTracker, typingText } from "./typing";
 
 describe("«печатает…»", () => {
@@ -34,5 +34,21 @@ describe("«печатает…»", () => {
     expect(typingText(["Иван Петров"])).toBe("Иван Петров печатает…");
     expect(typingText(["Иван", "Анна"])).toBe("Иван и Анна печатают…");
     expect(typingText(["Иван Петров", "А", "Б", "В"])).toBe("Иван Петров и ещё 3 печатают…");
+  });
+});
+
+describe("TypingSender со стандартными таймерами (как в браузере)", () => {
+  it("не падает «Illegal invocation»: таймер вызывается не как метод объекта", () => {
+    const calls: string[] = [];
+    const strict = function (this: unknown, _fn: () => void, ms: number) { if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation"); calls.push(`set ${ms}`); return 1 as unknown as ReturnType<typeof setTimeout>; };
+    const strictClear = function (this: unknown) { if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation"); calls.push("clear"); };
+    vi.stubGlobal("setTimeout", strict); vi.stubGlobal("clearTimeout", strictClear);
+    try {
+      const sent: boolean[] = [];
+      const s = new TypingSender((t) => sent.push(t));
+      expect(() => { s.input(); s.input(); s.stop(); }).not.toThrow();
+      expect(sent).toEqual([true, false]);
+      expect(calls).toContain("set 4000");
+    } finally { vi.unstubAllGlobals(); }
   });
 });

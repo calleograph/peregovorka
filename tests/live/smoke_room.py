@@ -8,22 +8,14 @@ os.makedirs(OUT, exist_ok=True)
 HOST = os.environ.get("PEREGOVORKA_URL", "http://localhost:5173")
 ROOM = "/rooms/sales"
 results = []
+RUN_ID = str(int(time.time()))          # текст сообщения уникален: остаток прошлого прогона в той же встрече дал бы ложный успех
 
 INIT = r"""
 window.__errs = []; window.__osc = 0; window.__pcs = [];
-window.addEventListener('error', e => window.__errs.push(String(e.message)));
+window.addEventListener('error', e => window.__errs.push(String(e.message) + ' @ ' + String(e.filename || '').split('/').slice(-2).join('/') + ':' + e.lineno + ' ' + String((e.error && e.error.stack) || '').replace(/\s+/g, ' ').slice(0, 400)));
 window.addEventListener('unhandledrejection', e => window.__errs.push('rej:' + String(e.reason && e.reason.message || e.reason)));
 const _co = AudioContext.prototype.createOscillator;
 AudioContext.prototype.createOscillator = function () { window.__osc++; return _co.apply(this, arguments); };
-window.__fetches = [];
-const _fetch = window.fetch;
-window.fetch = function (u, o) { const t0 = Math.round(performance.now()); const url = String(u && u.url || u); const p = _fetch.apply(this, arguments);
-  if (/hands|\/hand$|floor/.test(url)) p.then(r => { window.__fetches.push(url.slice(-40) + ' ' + r.status + ' @' + t0 + '->' + Math.round(performance.now())); }).catch(() => {}); return p; };
-window.__wss = [];
-const _WS = window.WebSocket;
-window.WebSocket = function (u, p) { const w = p ? new _WS(u, p) : new _WS(u); const rec = {url: String(u).slice(0, 80), msgs: [], w}; window.__wss.push(rec);
-  w.addEventListener('message', (e) => { try { rec.msgs.push(String(e.data).slice(0, 60) + ' @' + Math.round(performance.now())); } catch (x) {} }); return w; };
-window.WebSocket.prototype = _WS.prototype; window.WebSocket.CONNECTING = 0; window.WebSocket.OPEN = 1; window.WebSocket.CLOSING = 2; window.WebSocket.CLOSED = 3;
 const _PC = window.RTCPeerConnection;
 window.RTCPeerConnection = function (...a) { const pc = new _PC(...a); window.__pcs.push(pc); return pc; };
 window.RTCPeerConnection.prototype = _PC.prototype;
@@ -190,13 +182,8 @@ async def main():
         print("hand button on bob:", hb)
         check("Боб: кнопка «Поднять руку» нажата", await B.click_btn("Поднять руку"))
         ok = await C.wait_for("!!document.querySelector('.tile-hand')", 12)
-        for c in cs:
-            print(c.label, "WS:", await c.js("JSON.stringify(window.__wss.map(r=>({u:r.url,rs:r.w.readyState,n:r.msgs.length,last:r.msgs.slice(-3)})))"))
         await C.shot("hand-root")
         print("root hands-bar:", await C.js("document.querySelector('.hands-bar')?.innerText || 'нет hands-bar'"), "| tiles:", await C.js("[...document.querySelectorAll('.tile')].map(t=>t.className+'|'+(t.getAttribute('title')))"))
-        print("root onLive calls:", await C.js("JSON.stringify(window.__live||null)"), "| bob:", await B.js("JSON.stringify(window.__live||null)"))
-        print("root fetches:", await C.js("JSON.stringify(window.__fetches)"))
-        print("root hand msgs:", await C.js("JSON.stringify(window.__wss.flatMap(r=>r.msgs.filter(m=>/hand|joined|subscr/.test(m))))"))
         print("hands API (root):", await C.js("fetch('/api/v1/meetings?limit=1').then(r=>r.json()).then(m=>fetch('/api/v1/meetings/'+m[0].id+'/hands').then(r=>r.json()))"))
         print("hand dbg bob:", await B.js("document.body.innerText.includes('рук') ? [...document.querySelectorAll('[class*=hand]')].map(e=>e.className).slice(0,6) : 'нет'"), "root errs:", (await C.state())["errs"][:3])
         check("поднятая рука Бориса видна у Администратора", ok)
@@ -211,10 +198,11 @@ async def main():
         await asyncio.sleep(0.6)
         oscb0 = await B.js("window.__osc")
         await A.js("document.querySelector('textarea[aria-label=\"Текст сообщения\"]').focus()")
-        await A.send("Input.insertText", text="Проверка чата из smoke-test")
+        await A.send("Input.insertText", text=f"Проверка чата {RUN_ID}")
+        check("пока Алиса печатает, у Боба видно «печатает…» и в консоли Алисы нет ошибок", await B.wait_for("document.body.innerText.includes('печатает')", 8) and not [e for e in (await A.state())["errs"] if "Illegal invocation" in e])
         await A.send("Input.dispatchKeyEvent", type="rawKeyDown", key="Enter", code="Enter", windowsVirtualKeyCode=13, nativeVirtualKeyCode=13)
         await A.send("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter", windowsVirtualKeyCode=13, nativeVirtualKeyCode=13)
-        ok = await B.wait_for("document.body.innerText.includes('Проверка чата из smoke-test')", 12)
+        ok = await B.wait_for("document.body.innerText.includes('Проверка чата "+RUN_ID+"')", 12)
         check("сообщение Алисы дошло до Боба", ok)
         await asyncio.sleep(1.0)
         oscb1 = await B.js("window.__osc")
@@ -249,4 +237,5 @@ async def main():
     bad = [r for r in results if not r[1]]
     print(f"\nИТОГО: {len(results) - len(bad)} из {len(results)} проверок прошли; не прошли: {[b[0] for b in bad]}")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
