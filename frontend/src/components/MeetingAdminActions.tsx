@@ -74,7 +74,7 @@ export default function MeetingAdminActions({ meeting, onChanged, onDeleted }: {
   const { items, dialogs } = useMeetingAdmin(meeting, onChanged, onDeleted);
   return (
     <>
-      <Menu label="Администрирование" title="Действия администратора">{items}</Menu>
+      <Menu label="Админ" className="btn mini" title="Действия администратора: доступ, удаление записи и встречи">{items}</Menu>
       {dialogs}
     </>
   );

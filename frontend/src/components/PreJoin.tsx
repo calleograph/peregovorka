@@ -34,7 +34,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
 
   return (
     <section className="prejoin-pro" style={{ "--ha": t.a, "--hb": t.b } as CSSProperties}>
-      <div className="pj-card">
+      <div className={`pj-card${onHw && !busy ? "" : " pj-single"}`}>
         <div className="pj-hero">
           <span className="pj-mark" aria-hidden>{initials(name)}</span>
           <div>
@@ -44,32 +44,36 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
           </div>
         </div>
         <div className="pj-body">
-          {room?.description && <p className="pj-desc">{room.description}</p>}
-          <h2 className="pj-h">Перед входом</h2>
-          <ul className="pj-facts" aria-label="Что произойдёт после входа">
-            {facts.map(([icon, title, text], i) => (
-              <li key={title} style={{ "--i": i } as CSSProperties}>
-                <span className="fi" aria-hidden><Icon name={icon} size={16} /></span>
-                <div><b>{title}</b><p>{text}</p></div>
-              </li>
-            ))}
-          </ul>
-          {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
-          {onHw && !busy && <PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={onHw} />}
+          <div className="pj-col pj-info">
+            {room?.description && <p className="pj-desc">{room.description}</p>}
+            <h2 className="pj-h">Перед входом</h2>
+            <ul className="pj-facts" aria-label="Что произойдёт после входа">
+              {facts.map(([icon, title, text], i) => (
+                <li key={title} style={{ "--i": i } as CSSProperties}>
+                  <span className="fi" aria-hidden><Icon name={icon} size={16} /></span>
+                  <div><b>{title}</b><p>{text}</p></div>
+                </li>
+              ))}
+            </ul>
+            {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
+          </div>
+          {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={onHw} /></div>}
+        </div>
+        <div className="pj-foot">
           {needPassword && (
-            <label>Пароль комнаты
+            <label className="pj-pass">Пароль комнаты
               <input type="password" value={password} onChange={(e) => onPassword(e.target.value)} autoFocus autoComplete="off"
                      onKeyDown={(e) => { if (e.key === "Enter" && password && !busy) onJoin(); }} />
             </label>
           )}
           {error && <div className="alert error" role="alert">{error}</div>}
+          {progress}
           <div className="row pj-actions" role="group" aria-label="Вход в комнату">
             <button className="btn primary cta" {...magnet} disabled={busy || (needPassword && !password)} onClick={onJoin}>
-              {busy ? <><i className="spin" aria-hidden /> Вход…</> : <>{live ? "Присоединиться" : "Войти в комнату"} <Icon name="arrowR" size={17} /></>}
+              {busy ? <><i className="spin" aria-hidden /> Вход…</> : <>{live ? "Присоединиться" : "Войти в переговорку"} <Icon name="arrowR" size={17} /></>}
             </button>
             <button className="btn ghost" onClick={onBack}>Назад к списку</button>
           </div>
-          {progress}
         </div>
       </div>
     </section>

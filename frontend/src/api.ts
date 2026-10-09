@@ -113,7 +113,7 @@ export interface RecordingRow {
 }
 export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
-  user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; display_name: string; joined_at: string; left_at: string | null; online: boolean;
+  user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; role?: "organizer" | "leader" | null; display_name: string; joined_at: string; left_at: string | null; online: boolean;
 }
 export interface Meeting {
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;

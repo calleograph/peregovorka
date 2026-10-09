@@ -143,72 +143,77 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
 
   const canSink = "setSinkId" in HTMLMediaElement.prototype;
   const bars = 16;
+  const micState = perm.mic === "denied" ? "запрещён" : micOk || perm.mic === "granted" ? "разрешён" : "не разрешён";
+  const camState = perm.cam === "denied" ? "запрещена" : camOn || perm.cam === "granted" ? "разрешена" : "не разрешена";
   return (
-    <fieldset className="precheck">
-      <legend>Проверка оборудования — по желанию</legend>
-      <div className="perm-intro">
-        <p style={{ margin: 0 }}>Разрешите доступ к микрофону{cameraAllowed ? " и камере" : ""}, чтобы проверить оборудование.</p>
-        <div className="row">
+    <div className="precheck" role="group" aria-label="Проверка оборудования — по желанию">
+      <div className="pc-card pc-perm">
+        <div className="pc-h"><b>Разрешения</b><span className="pc-note">по желанию</span></div>
+        <p className="pc-p">Разрешите доступ к микрофону{cameraAllowed ? " и камере" : ""}, чтобы проверить оборудование.</p>
+        <div className="pc-pills">
+          <span className={`pill ${perm.mic === "granted" || micOk ? "live" : ""}`}>Микрофон: {micState}</span>
+          {cameraAllowed && <span className={`pill ${perm.cam === "granted" || camOn ? "live" : ""}`}>Камера: {camState}</span>}
+        </div>
+        <div className="pc-btns">
           {perm.mic !== "denied" && <button type="button" className="btn mini primary" onClick={() => void requestAll()}>Разрешить доступ</button>}
-          <span className={`pill ${perm.mic === "granted" || micOk ? "live" : ""}`}>Микрофон: {perm.mic === "denied" ? "запрещён" : micOk || perm.mic === "granted" ? "разрешён" : "ещё не разрешён"}</span>
-          {cameraAllowed && <span className={`pill ${perm.cam === "granted" || camOn ? "live" : ""}`}>Камера: {perm.cam === "denied" ? "запрещена" : camOn || perm.cam === "granted" ? "разрешена" : "ещё не разрешена"}</span>}
           {waiting && <span className="perm-arrow" aria-hidden title="Окно запроса браузера — слева вверху, у адресной строки">↖ окно браузера</span>}
         </div>
-        {denied && (
-          <div className="alert error small" role="alert">
-            <b>Доступ запрещён в настройках браузера</b>, поэтому запрос больше не появится. Нажмите значок настроек сайта слева от адреса (замок), включите {perm.mic === "denied" ? "микрофон" : ""}{perm.mic === "denied" && cameraAllowed && perm.cam === "denied" ? " и " : ""}{cameraAllowed && perm.cam === "denied" ? "камеру" : ""} и обновите страницу. Или откройте настройки сайтов: <code>{settingsAddress().url}</code> ({settingsAddress().name}){" "}
-            <button type="button" className="btn mini" onClick={async () => { setCopied(await copyText(settingsAddress().url)); }}>{copied ? "Скопировано — вставьте в адресную строку" : "Скопировать адрес"}</button>
-            <div>Войти в комнату можно и без {perm.mic === "denied" ? "микрофона" : "камеры"} — включить позже можно будет, разрешив доступ.</div>
-          </div>
-        )}
       </div>
-      <div className="pc-row">
-        <label>{NAMES.audioinput}
-          <select value={micId} onChange={(e) => { setMicId(e.target.value); void startMic(e.target.value); }} disabled={!devices.audioinput.length}>
-            {!devices.audioinput.length && <option value="">— не найден —</option>}
-            {devices.audioinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.audioinput} ${i + 1}`}</option>)}
-          </select>
-        </label>
-        {!asked || !micOk
-          ? <button type="button" className="btn mini" disabled={perm.mic === "denied"} onClick={() => { setAsked(true); void startMic(micId || undefined); }}>Проверить микрофон</button>
-          : <span className="badge ok">Микрофон работает</span>}
-      </div>
-      <div className="level" role="meter" aria-label="Уровень микрофона" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)}>
-        {Array.from({ length: bars }, (_, i) => <span key={i} className={i < Math.round(level * bars) ? (i > bars * 0.8 ? "hot" : "on") : ""} />)}
-      </div>
-      <p className="muted small">{micOk ? "Скажите что-нибудь — полоса должна двигаться." : "Нажмите «Проверить микрофон» и разрешите доступ в браузере."}</p>
-      {micErr && <div className="alert error small" role="alert">{micErr} Войти в комнату можно и без микрофона — включить его можно позже.</div>}
 
-      <div className="pc-row">
-        <label>{NAMES.audiooutput}
-          <select value={speakerId} onChange={(e) => setSpeakerId(e.target.value)} disabled={!canSink || !devices.audiooutput.length}>
-            {(!canSink || !devices.audiooutput.length) && <option value="">По умолчанию</option>}
-            {canSink && devices.audiooutput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.audiooutput} ${i + 1}`}</option>)}
-          </select>
-        </label>
-        <button type="button" className="btn mini" onClick={() => void playTone()} disabled={toneBusy}>{toneBusy ? "Играет…" : "Проверить динамики"}</button>
+      <div className="pc-card">
+        <div className="pc-h"><b>{NAMES.audioinput}</b>{micOk && <span className="badge ok">работает</span>}</div>
+        <select aria-label={NAMES.audioinput} value={micId} onChange={(e) => { setMicId(e.target.value); void startMic(e.target.value); }} disabled={!devices.audioinput.length}>
+          {!devices.audioinput.length && <option value="">Микрофон не найден</option>}
+          {devices.audioinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.audioinput} ${i + 1}`}</option>)}
+        </select>
+        <div className="level" role="meter" aria-label="Уровень микрофона" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)}>
+          {Array.from({ length: bars }, (_, i) => <span key={i} className={i < Math.round(level * bars) ? (i > bars * 0.8 ? "hot" : "on") : ""} />)}
+        </div>
+        <div className="pc-btns">
+          {!asked || !micOk
+            ? <button type="button" className="btn mini" disabled={perm.mic === "denied"} onClick={() => { setAsked(true); void startMic(micId || undefined); }}>Проверить микрофон</button>
+            : <span className="pc-hint">Скажите что-нибудь — полоса должна двигаться.</span>}
+        </div>
+        {micErr && <div className="alert error small" role="alert">{micErr} Войти можно и без микрофона.</div>}
       </div>
-      {!canSink && <p className="muted small">Этот браузер не позволяет выбрать динамики — звук пойдёт на устройство по умолчанию.</p>}
 
       {cameraAllowed && (
-        <>
-          <div className="pc-row">
-            <label>{NAMES.videoinput}
-              <select value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
-                {!devices.videoinput.length && <option value="">Камера не обнаружена</option>}
-                {devices.videoinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.videoinput} ${i + 1}`}</option>)}
-              </select>
-            </label>
+        <div className="pc-card">
+          <div className="pc-h"><b>{NAMES.videoinput}</b>{camOn && <span className="badge ok">включена</span>}</div>
+          <select aria-label={NAMES.videoinput} value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
+            {!devices.videoinput.length && <option value="">Камера не обнаружена</option>}
+            {devices.videoinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.videoinput} ${i + 1}`}</option>)}
+          </select>
+          {camOn && <video ref={video} className="precheck-video" autoPlay playsInline muted />}
+          <div className="pc-btns">
             {camOn
               ? <button type="button" className="btn mini" onClick={stopCam}>Выключить камеру</button>
-              : <button type="button" className="btn mini" onClick={() => void startCam(camId || undefined)}>Проверить камеру</button>}
+              : <button type="button" className="btn mini" disabled={!devices.videoinput.length} onClick={() => void startCam(camId || undefined)}>Проверить камеру</button>}
+            {!devices.videoinput.length && <span className="pc-hint">Камера не обнаружена. Войти можно без видео.</span>}
           </div>
-          {camOn && <video ref={video} className="precheck-video" autoPlay playsInline muted />}
-          {!devices.videoinput.length && <p className="muted small">Камера не обнаружена. Войти можно без видео.</p>}
           {camErr && <div className="alert error small" role="alert">{camErr}</div>}
-          {camOn && <p className="muted small">Камера будет включена при входе. Если не нужна — выключите её здесь.</p>}
-        </>
+        </div>
       )}
-    </fieldset>
+
+      <div className="pc-card">
+        <div className="pc-h"><b>{NAMES.audiooutput}</b></div>
+        <select aria-label={NAMES.audiooutput} value={speakerId} onChange={(e) => setSpeakerId(e.target.value)} disabled={!canSink || !devices.audiooutput.length}>
+          {(!canSink || !devices.audiooutput.length) && <option value="">По умолчанию</option>}
+          {canSink && devices.audiooutput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.audiooutput} ${i + 1}`}</option>)}
+        </select>
+        <div className="pc-btns">
+          <button type="button" className="btn mini" onClick={() => void playTone()} disabled={toneBusy}>{toneBusy ? "Играет…" : "Проверить динамики"}</button>
+          {!canSink && <span className="pc-hint">Звук пойдёт на устройство по умолчанию.</span>}
+        </div>
+      </div>
+
+      {denied && (
+        <div className="alert error small pc-wide" role="alert">
+          <b>Доступ запрещён в настройках браузера</b>, поэтому запрос больше не появится. Нажмите значок настроек сайта слева от адреса (замок), включите {perm.mic === "denied" ? "микрофон" : ""}{perm.mic === "denied" && cameraAllowed && perm.cam === "denied" ? " и " : ""}{cameraAllowed && perm.cam === "denied" ? "камеру" : ""} и обновите страницу. Или откройте настройки сайтов: <code>{settingsAddress().url}</code> ({settingsAddress().name}){" "}
+          <button type="button" className="btn mini" onClick={async () => { setCopied(await copyText(settingsAddress().url)); }}>{copied ? "Скопировано — вставьте в адресную строку" : "Скопировать адрес"}</button>
+          <div>Войти можно и без {perm.mic === "denied" ? "микрофона" : "камеры"} — включить позже можно будет, разрешив доступ.</div>
+        </div>
+      )}
+    </div>
   );
 }

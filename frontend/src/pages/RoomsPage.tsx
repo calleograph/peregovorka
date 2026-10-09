@@ -46,7 +46,7 @@ type Toast = (text: string, tone?: "ok" | "error") => void;
 /** Пункты меню правой кнопки у комнаты (все они есть и обычным путём: карточка, кнопки копирования). «Настройки комнаты» — только администратору. */
 function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean) {
   const navigate = useNavigate();
-  const { onContextMenu, node } = useContextMenu();
+  const { onContextMenu, node, openAt } = useContextMenu();
   const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   const items = (): MenuItem[] => [
     { id: "enter", label: "Войти", icon: "arrowR", onSelect: () => navigate(`/rooms/${r.slug}`) },
@@ -55,7 +55,9 @@ function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean) {
     { id: "tab", label: "Открыть в новой вкладке", icon: "arrowR", onSelect: () => { window.open(roomUrl(r), "_blank", "noopener"); } },
     { id: "settings", label: "Настройки комнаты", icon: "gear", hidden: !isAdmin, onSelect: () => { try { sessionStorage.setItem("adminTab", "rooms"); } catch { /* вкладка не запомнится */ } navigate("/admin"); } },
   ];
-  return { handler: onContextMenu(items), node };
+  /** Кнопка «⋯»: то же меню, что и по правой кнопке, у самой кнопки (доступно с клавиатуры и на сенсорных экранах). */
+  const openFrom = (el: HTMLElement) => { const b = el.getBoundingClientRect(); openAt(Math.round(b.right), Math.round(b.bottom + 4), items()); };
+  return { handler: onContextMenu(items), node, openFrom };
 }
 
 function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: string, tone?: "ok" | "error") => void; compact?: boolean }) {
@@ -63,10 +65,10 @@ function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: stri
   return (
     <span className={`rc-actions ${compact ? "" : "inline"}`}>
       <button type="button" className="copybtn reg" onClick={() => void copy(roomUrl(r), "Ссылка для сотрудников")}
-              title="Ссылка для сотрудников: вход по учётной записи" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={15} />{!compact && <span className="cb-l">Сотрудникам</span>}</button>
+              title="Ссылка для сотрудников: вход по учётной записи" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={15} /></button>
       {r.guest_token && (
         <button type="button" className="copybtn guest" onClick={() => void copy(guestUrl(r), "Гостевая ссылка")}
-                title="Гостевая ссылка: вход без учётной записи, по приглашению" aria-label={`Скопировать гостевую ссылку: ${r.name}`}><Icon name="copy" size={15} />{!compact && <span className="cb-l">Гостям</span>}</button>
+                title="Гостевая ссылка: вход без учётной записи, по приглашению" aria-label={`Скопировать гостевую ссылку: ${r.name}`}><Icon name="copy" size={15} /></button>
       )}
     </span>
   );
@@ -83,17 +85,19 @@ function RoomMini({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast
     <div className="rm" role="listitem" onContextMenu={menu.handler} style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
          onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(); } }}>
       <div className="rm-top">
-        <span className="rm-name" title={r.name}>{r.name}</span>
-        <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />{live ? `${live.participants}` : "Свободна"}</span>
+        <span className="rm-name" title={r.description ? `${r.name} — ${r.description}` : r.name}>{r.name}</span>
+        <span className={`pill ${live ? "live" : "free"}`} title={live ? `Идёт встреча, участников: ${live.participants}` : "Свободна"}><i className="pulse" aria-hidden />{live ? live.participants : "Свободна"}</span>
       </div>
-      {r.description && <div className="rm-desc small muted" title={r.description}>{r.description}</div>}
-      <div className="rm-sub small muted" title={`Адрес комнаты: ${r.slug}`}>
-        <span>{full ? "мест нет" : `до ${r.max_participants} уч.`}{r.has_password ? " · пароль" : ""}{r.lifetime === "temporary" ? " · временная" : ""}{r.transcription_enabled ? " · стенограмма" : ""}{r.auto_record ? " · запись" : ""}</span>
+      <div className="rm-sub small muted">
+        <code title={`Технический идентификатор (адрес комнаты): ${r.slug}`}>{r.slug}</code>
+        <span title={r.has_password ? "Для входа нужен пароль" : undefined}>{full ? "мест нет" : `до ${r.max_participants}`}{r.has_password ? " · 🔒" : ""}</span>
       </div>
       {menu.node}
       <div className="rm-act" onClick={(e) => e.stopPropagation()}>
         <CopyLinks r={r} onCopy={onCopy} compact={false} />
-        <Link to={`/rooms/${r.slug}`} className="btn mini primary">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"}</Link>
+        <span className="spacer" />
+        <button type="button" className="rm-more" aria-label={`Действия: ${r.name}`} title="Действия (или правая кнопка мыши)" aria-haspopup="menu" onClick={(e) => menu.openFrom(e.currentTarget)}><Icon name="more" size={16} /></button>
+        <Link to={`/rooms/${r.slug}`} className="btn mini primary">{full ? "Мест нет" : "Войти"}</Link>
       </div>
     </div>
   );
@@ -114,7 +118,7 @@ function RoomCard({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast
       <div className="rc-top">
         <span className="rc-mark" aria-hidden>{initials(r.name)}</span>
         <div className="rc-title">
-          <h2>{r.name}</h2>
+          <h2 title={r.name}>{r.name}</h2>
           <span className={`pill ${live ? "live" : "free"}`}>
             <i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants} уч.` : "Свободна"}
           </span>

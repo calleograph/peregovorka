@@ -5,10 +5,26 @@ import { api, type ExportFormat, type Meeting } from "../api";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
 import { ListFooter, useInfinite } from "../useInfinite";
+import { moreLabel, summarizeParticipants } from "../meetingPeople";
 import { duration, fmt } from "../util";
 
 export { fmt } from "../util";
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
+
+/** Участники встречи в таблице: только ФИО, по одному в строке, первые несколько; остальные — «+ N». Должность и подразделение — в карточке участника (не здесь). */
+function People({ m }: { m: Meeting }) {
+  const s = summarizeParticipants(m.participants);
+  if (!s.total) return <span className="muted">—</span>;
+  const all = m.participants.map((p) => p.display_name).join(", ");
+  return (
+    <div className="people" title={s.more ? all : undefined}>
+      {s.shown.map((p) => (
+        <div key={p.user_id ?? p.guest_id ?? p.display_name} className={`pn${p.role ? ` ${p.role}` : ""}`} title={p.role === "organizer" ? `${p.display_name} — организатор` : p.role === "leader" ? `${p.display_name} — руководитель` : p.display_name}>{p.display_name}</div>
+      ))}
+      {s.more > 0 && <div className="pn more">{moreLabel(s.more)}</div>}
+    </div>
+  );
+}
 
 /** Материалы встречи: значки со счётчиками вместо длинной строки; полное название — в подсказке. */
 function Materials({ m, isAdmin }: { m: Meeting; isAdmin: boolean }) {
@@ -49,14 +65,15 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
       {list.error && <div className="alert error">{list.error}</div>}
       {shown.length === 0 && list.done && <p className="muted">{items.length ? "Ничего не найдено." : "Пока нет доступных встреч."}</p>}
       <div className="table-scroll"><table className="table hist-table">
-        <thead><tr><th>Комната</th><th>Начало</th><th>Длительность</th><th>Участники</th><th>Материалы</th><th /></tr></thead>
+        <thead><tr><th>Комната</th><th>Начало</th><th>Длительность</th><th>Участники</th><th className="num">Кол-во</th><th>Материалы</th><th /></tr></thead>
         <tbody>
           {shown.map((m) => (
             <tr key={m.id}>
               <td className="h-room"><Link to={`/history/${m.id}`}>{m.room_name}</Link></td>
               <td data-label="Начало">{fmt(m.started_at)}</td>
               <td data-label="Длительность">{m.ended_at ? duration(m.started_at, m.ended_at) : <span className="badge rec">идёт</span>}</td>
-              <td data-label="Участники" className="h-people" title={m.participants.map((p) => p.display_name).join(", ")}>{m.participants.map((p) => p.display_name).join(", ")}</td>
+              <td data-label="Участники" className="h-people"><People m={m} /></td>
+              <td data-label="Участников" className="num h-count">{m.participants.length}</td>
               <td data-label="Материалы"><Materials m={m} isAdmin={isAdmin} /></td>
               <td className="actions">
                 <Link className="btn mini primary" to={`/history/${m.id}`}>Открыть</Link>{" "}

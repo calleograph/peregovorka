@@ -146,7 +146,7 @@ def test_profiles_default_and_per_room_selection(tmp_path, directory):
         b = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "Для руководства", "secret": "SECRET-B",
                                                        "config": {"type": "openai_compatible", "base_url": "https://llm-b.test/v1", "model": "b-model"}}).json()
         listing = c.get("/api/v1/admin/api-profiles", params={"kind": "llm"}).json()
-        assert [p["name"] for p in listing][0].startswith("Основной") and {p["name"] for p in listing} >= {"Резервный", "Для руководства"}
+        assert [p["name"] for p in listing][0].startswith("Прежнее") and {p["name"] for p in listing} >= {"Резервный", "Для руководства"}
         assert "SECRET" not in json.dumps(listing) and all("secret_set" in p for p in listing)
         assert [p["name"] for p in listing if p["is_default"]] == ["Резервный"]
 
@@ -162,7 +162,7 @@ def test_profiles_default_and_per_room_selection(tmp_path, directory):
         # вернуть «основной» по умолчанию
         login(c, "root")
         assert c.put("/api/v1/admin/api-profiles/default", json={"kind": "llm", "profile_id": "main"}).status_code == 200
-        assert [p["name"] for p in c.get("/api/v1/admin/api-profiles", params={"kind": "llm"}).json() if p["is_default"]][0].startswith("Основной")
+        assert [p["name"] for p in c.get("/api/v1/admin/api-profiles", params={"kind": "llm"}).json() if p["is_default"]][0].startswith("Прежнее")
         # удаление профиля: комната возвращается к «по умолчанию», ссылка не ломает протоколы
         assert c.delete(f"/api/v1/admin/api-profiles/{b['id']}").status_code == 204
         assert c.get(f"/api/v1/admin/rooms/{room2['id']}").json()["llm_profile_id"] is None

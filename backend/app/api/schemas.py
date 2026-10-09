@@ -101,6 +101,7 @@ class ParticipantOut(BaseModel):
     user_id: uuid.UUID | None = None
     guest_id: uuid.UUID | None = None
     participant_type: str = "user"   # user | guest
+    role: str | None = None          # organizer — начал встречу; leader — руководитель комнаты (поимённо); иначе None
     display_name: str
     joined_at: datetime
     left_at: datetime | None

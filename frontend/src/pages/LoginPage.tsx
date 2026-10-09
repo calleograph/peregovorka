@@ -1,9 +1,12 @@
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, Suspense, lazy, useState } from "react";
 import { api, ApiError, type Me } from "../api";
 import { CookieNotice, LoginFooter, type BuildInfo } from "../components/ProductInfo";
 import { Icon } from "../components/Icons";
 import { magnet } from "../fx";
 import { isValidLogin, LOGIN_HINT } from "../loginRules";
+
+// Фон — только здесь (после входа компонент размонтируется); отдельный чанк, чтобы не утяжелять основной пакет
+const LoginBackdrop = lazy(() => import("../components/LoginBackdrop"));
 
 /** Страница входа: бренд, одна фраза, форма и мелкая служебная строка. Всё остальное — внутри продукта. */
 export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void; info: BuildInfo | null }) {
@@ -33,6 +36,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
 
   return (
     <div className="login-simple">
+      <Suspense fallback={null}><LoginBackdrop /></Suspense>
       <main className="login-center">
         <div className="logo login-logo"><span className="logo-mark" aria-hidden><Icon name="video" size={22} /></span> Peregovorka</div>
         <p className="login-tagline">Видеовстречи с автоматической стенограммой и протоколом</p>

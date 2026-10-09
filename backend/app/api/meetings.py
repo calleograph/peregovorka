@@ -39,12 +39,18 @@ def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestPartic
     for p in sorted(m.participants, key=lambda p: p.joined_at):
         latest[p.user_id] = p
     c = counts or {}
+    leaders = {(mod.subject_ref or "").lower() for mod in m.room.moderators if mod.subject_type == "user"}
+
+    def role_of(p: MeetingParticipant) -> str | None:
+        if m.started_by_user_id is not None and p.user_id == m.started_by_user_id:
+            return "organizer"
+        return "leader" if (p.user.ad_guid or "").lower() in leaders else None
     guests = [ParticipantOut(guest_id=g.id, participant_type="phone" if g.is_phone else "guest", display_name=g.label, joined_at=g.joined_at,
                              left_at=g.left_at, online=g.left_at is None) for g in guests or []]
     return MeetingOut(
         id=m.id, room_id=m.room_id, room_name=m.room.name, started_at=m.started_at, ended_at=m.ended_at,
         end_reason=m.end_reason, transcription_enabled=m.transcription_enabled,
-        participants=[ParticipantOut(user_id=p.user_id, display_name=p.user.display_name, joined_at=p.joined_at,
+        participants=[ParticipantOut(user_id=p.user_id, role=role_of(p), display_name=p.user.display_name, joined_at=p.joined_at,
                                      left_at=p.left_at, online=p.left_at is None) for p in latest.values()] + guests,
         segments=c.get("segments", 0), recordings=c.get("recordings", 0), protocols=c.get("protocols", 0),
         chat_messages=c.get("chat_messages", 0), whiteboard_shapes=c.get("whiteboard_shapes", 0), guests=len(guests),
