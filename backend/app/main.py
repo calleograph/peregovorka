@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
-from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, meetings, moderation, room_manage, rooms, templates, ws
+from .services.avatars import AvatarStore
+from .api import admin, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -44,6 +45,8 @@ from .workers.asr_sync import run_asr_sync
 from .workers.mail_queue import run_mail_queue
 from .workers.storage_sync import run_storage_sync
 from .workers.reaper import run_reaper
+from .workers.autoupdate import run_autoupdate
+from .services.autoupdate import AutoUpdater
 from .workers.retention import run_retention
 from .workers.segment_consumer import run_consumer
 
@@ -97,8 +100,10 @@ def create_app(
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc
         app.state.protocols = protocols
+        app.state.avatars = AvatarStore(settings.data_dir)
         app.state.local_llm = protocols.local_llm
         # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
+        app.state.autoupdate = AutoUpdater(session_maker, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
         app.state.sip_gateway = SipGateway(settings)
         app.state.sip_routing = SipRouting(app.state.sip, app.state.sip_gateway, session_maker)
@@ -156,6 +161,7 @@ def create_app(
             tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
             tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc), name="meeting-reaper"))
+            tasks.append(asyncio.create_task(run_autoupdate(app.state.autoupdate), name="auto-update"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
             tasks.append(asyncio.create_task(run_asr_sync(session_maker, settings_svc, redis), name="asr-model-sync"))
             tasks.append(asyncio.create_task(run_journal_retention(journal), name="journal-retention"))
@@ -208,7 +214,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, meeting_settings.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, meeting_settings.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     return app

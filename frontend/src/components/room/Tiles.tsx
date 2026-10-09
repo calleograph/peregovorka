@@ -8,6 +8,8 @@ export interface PView {
   identity: string; name: string; local: boolean; mic: boolean; cam: boolean; screen: boolean; speaking: boolean; participant: Participant;
   /** Участнику дано слово (презентационная комната) / участник — руководитель комнаты. */
   floor?: boolean; leader?: boolean;
+  /** Поднята рука; номер в очереди (1 — раньше всех). */
+  hand?: boolean; handOrder?: number;
 }
 
 /** Действия руководителя над участником; нет обработчика — нет и пункта меню. */
@@ -16,6 +18,8 @@ export interface TileActions {
   onMute?: (p: PView) => void;
   onFloor?: (p: PView, granted: boolean) => void;
   onKick?: (p: PView) => void;
+  /** Опустить руку участнику (руководитель). */
+  onLowerHand?: (p: PView) => void;
 }
 
 export function VideoTile({ p, source, className = "video", onSize }: {
@@ -60,6 +64,7 @@ function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions
           ? <button type="button" role="menuitem" onClick={run(() => actions.onFloor!(p, false))}><Icon name="hand" size={16} /> Забрать слово</button>
           : <button type="button" role="menuitem" onClick={run(() => actions.onFloor!(p, true))}><Icon name="hand" size={16} /> Дать слово</button>
       )}
+      {actions.onLowerHand && p.hand && <button type="button" role="menuitem" onClick={run(() => actions.onLowerHand!(p))}><Icon name="hand" size={16} /> Опустить руку</button>}
       {actions.onMute && <button type="button" role="menuitem" disabled={!p.mic} onClick={run(() => actions.onMute!(p))}><Icon name="micOff" size={16} /> {p.mic ? "Выключить микрофон" : "Микрофон уже выключен"}</button>}
       {actions.onKick && !p.leader && (confirmKick
         ? <button type="button" role="menuitem" className="danger" onClick={run(() => actions.onKick!(p))}><Icon name="userx" size={16} /> Точно удалить?</button>
@@ -69,7 +74,7 @@ function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions
   );
 }
 
-export function ParticipantTile({ p, compact, actions }: { p: PView; compact?: boolean; actions?: TileActions }) {
+export function ParticipantTile({ p, compact, actions, onCard }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void }) {
   const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
   const [menu, setMenu] = useState<{ top: number; right: number } | null>(null);
   const tileRef = useRef<HTMLDivElement>(null);
@@ -81,10 +86,12 @@ export function ParticipantTile({ p, compact, actions }: { p: PView; compact?: b
     if (!r) return null;
     return { top: Math.max(8, Math.min(r.top + 40, window.innerHeight - 170)), right: Math.max(8, window.innerWidth - r.right + 8) };
   });
-  const manageable = !!actions && !p.local && !!(actions.onMute || actions.onKick || (actions.presentation && actions.onFloor));
+  const manageable = !!actions && !p.local && !!(actions.onMute || actions.onKick || actions.onLowerHand || (actions.presentation && actions.onFloor));
   return (
     <div ref={tileRef} className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""} ${p.floor ? "has-floor" : ""} ${manageable ? "manageable" : ""}`} title={p.name}
-         onClick={manageable ? toggleMenu : undefined}>
+         onClick={onCard ? () => onCard(p) : manageable ? toggleMenu : undefined} role={onCard ? "button" : undefined} tabIndex={onCard ? 0 : undefined}
+         onKeyDown={onCard ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(p); } } : undefined}>
+      {p.hand && <span className="tile-hand" title={p.handOrder ? `Поднял руку (в очереди: ${p.handOrder})` : "Поднял руку"} role="img" aria-label="Поднята рука"><Icon name="hand" size={16} />{p.handOrder ? <b>{p.handOrder}</b> : null}</span>}
       <VideoTile p={p.participant} source={Track.Source.Camera} />
       {!p.cam && <div className="avatar" aria-hidden>{initials}</div>}
       {(p.floor || p.leader) && (

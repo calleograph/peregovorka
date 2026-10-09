@@ -19,11 +19,11 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.deps import get_db
+from ..auth.deps import SessionUser, get_db
 from ..auth.guests import Actor, require_actor
-from ..models import ChatAttachment, Meeting, MeetingChatMessage, MeetingWhiteboard, utcnow
+from ..models import ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services import events, roles, whiteboard as wb
-from ..services.livekit import guest_identity, user_identity
+from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
 from ..services.materials import chat_files_map, render_chat
 from ..services.access import can_access_meeting_actor
 from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out
@@ -58,6 +58,121 @@ async def _rate(request: Request, kind: str, actor: Actor, meeting_id: uuid.UUID
         await redis.expire(key, window)
     if n > limit:
         raise HTTPException(status_code=429, detail="Слишком часто. Подождите немного.", headers={"Retry-After": str(window)})
+
+
+TYPING_RATE = (14, 10)        # событий «печатает» / секунд на одного участника (клиент шлёт не чаще раза в 3 с)
+HAND_RATE = (12, 10)
+HAND_TTL = 3 * 24 * 3600
+
+
+def _hand_key(meeting_id: uuid.UUID) -> str:
+    return f"hands:{meeting_id}"
+
+
+def _identity_of(actor: Actor) -> str:
+    return guest_identity(actor.id) if actor.is_guest else user_identity(actor.id)
+
+
+# ------------------------------------------------------------------------------------------------ «печатает…»
+@router.post("/{meeting_id}/chat/typing", status_code=204)
+async def chat_typing(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(default_factory=dict), actor: Actor = Depends(require_actor),
+                      db: AsyncSession = Depends(get_db)):
+    """Признак «участник печатает». Ничего не хранится: событие уходит подписчикам встречи и забывается (клиент гасит индикатор сам через несколько секунд)."""
+    await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    await _rate(request, "typing", actor, meeting_id, TYPING_RATE)
+    await events.publish(request.app.state.redis, meeting_id, {"type": "chat_typing", "id": str(actor.id), "name": actor.label, "typing": bool(body.get("typing", True))})
+
+
+# ------------------------------------------------------------------------------------------------ «поднять руку»
+async def _hands(request: Request, meeting_id: uuid.UUID) -> list[dict]:
+    raw = await request.app.state.redis.hgetall(_hand_key(meeting_id))
+    out = []
+    for ident, val in raw.items():
+        try:
+            d = json.loads(val)
+            out.append({"identity": ident, "name": str(d.get("name") or ""), "at": float(d.get("at") or 0)})
+        except (ValueError, TypeError):
+            continue
+    return sorted(out, key=lambda h: h["at"])           # очередь по времени: кто поднял раньше — выше
+
+
+@router.get("/{meeting_id}/hands")
+async def hands_list(meeting_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    await _meeting_for_actor(request, db, meeting_id, actor)
+    return {"hands": await _hands(request, meeting_id)}
+
+
+@router.post("/{meeting_id}/hand")
+async def hand_set(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """Поднять/опустить руку. `raised` — состояние; `identity` (только руководитель) — опустить руку другому участнику. Состояние хранится до конца встречи."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    if meeting.ended_at is not None:
+        raise HTTPException(status_code=409, detail="Встреча завершена")
+    raised = body.get("raised")
+    if not isinstance(raised, bool):
+        raise HTTPException(status_code=422, detail="raised: true | false")
+    await _rate(request, "hand", actor, meeting_id, HAND_RATE)
+    redis = request.app.state.redis
+    target = str(body.get("identity") or "").strip()
+    by_leader = False
+    if target and target != _identity_of(actor):
+        if actor.is_guest or not roles.can_manage_room(meeting.room, actor.user) or raised:
+            raise HTTPException(status_code=403, detail="Опустить руку другому участнику может руководитель комнаты")
+        by_leader = True
+        name = ""
+    else:
+        target, name = _identity_of(actor), actor.label
+    key = _hand_key(meeting_id)
+    if raised:
+        if not await redis.hexists(key, target):          # повторное нажатие не сдвигает очередь
+            await redis.hset(key, target, json.dumps({"name": name, "at": utcnow().timestamp()}, ensure_ascii=False))
+            await redis.expire(key, HAND_TTL)
+            changed = True
+        else:
+            changed = False
+    else:
+        cur = await redis.hget(key, target)
+        if cur and by_leader:
+            try:
+                name = str(json.loads(cur).get("name") or "")
+            except ValueError:
+                name = ""
+        changed = bool(await redis.hdel(key, target))
+    queue = await _hands(request, meeting_id)
+    if changed:
+        await events.publish(redis, meeting_id, {"type": "hand_changed", "identity": target, "name": name, "raised": raised, "by_leader": by_leader, "queue": queue})
+    return {"raised": raised, "queue": queue}
+
+
+# ------------------------------------------------------------------------------------------------ карточка участника
+@router.get("/{meeting_id}/participants/{identity}/card")
+async def participant_card(meeting_id: uuid.UUID, identity: str, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """Карточка участника этой встречи. Состав полей ограничен белым списком; гостю и о госте — только имя. Чужого человека (не участника встречи) не показывает."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor)
+    uid = parse_user_identity(identity)
+    guest = identity.startswith("g-")
+    if uid is None:
+        name = ""
+        if guest:
+            gid = parse_guest_identity(identity)
+            g = await db.get(GuestParticipant, gid) if gid else None
+            if g is not None and g.meeting_id == meeting.id:
+                name = g.display_name
+        if not name:
+            raise HTTPException(status_code=404, detail="Участник не найден")
+        return {"identity": identity, "name": name, "guest": True, "card": "minimal"}
+    member = (await db.execute(select(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == uid))).scalars().first()
+    u = await db.get(User, uid)
+    if member is None or u is None:
+        raise HTTPException(status_code=404, detail="Участник не найден")
+    if actor.is_guest:
+        return {"identity": identity, "name": u.display_name, "guest": False, "card": "minimal"}
+    cfg = await request.app.state.settings_svc.get(db, "general")
+    out = {"identity": identity, "name": u.display_name, "guest": False, "card": "full", "title": u.title, "department": u.department,
+           "avatar_url": f"/api/v1/users/{u.id}/avatar?v={int(u.avatar_updated_at.timestamp())}" if u.avatar_mime and u.avatar_updated_at else None,
+           "email": u.email if cfg.card_show_email else None, "phone": u.phone if cfg.card_show_phone else None,    # type: ignore[attr-defined]
+           "login": u.sam_account_name if actor.user and actor.user.is_admin else None}
+    return out
 
 
 # ------------------------------------------------------------------------------------------------ чат

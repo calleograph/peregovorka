@@ -24,6 +24,8 @@ from ..config import Settings
 log = logging.getLogger("app.auth.directory")
 
 LDAP_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"
+# Атрибуты профиля, которые читаются из каталога (белый список): должность, подразделение, телефон. Остальное из каталога в систему не попадает.
+PROFILE_ATTRS = ("title", "department", "telephoneNumber")
 _UAC_DISABLED = 0x2
 
 
@@ -48,6 +50,9 @@ class DirectoryIdentity:
     source: str = ""         # название подключения, через которое найден пользователь
     for_users: bool = True   # подключение используется для входа обычных пользователей
     for_admins: bool = True  # … и для административного входа
+    title: str | None = None       # должность (атрибут title)
+    department: str | None = None  # подразделение (department)
+    phone: str | None = None       # телефон (telephoneNumber)
     disabled: bool = False   # учётная запись отключена в каталоге (заполняется только при поиске без пароля — `lookup`)
 
 
@@ -230,7 +235,7 @@ class LdapDirectory:
         try:
             flt = f"(&(objectCategory=person)(objectClass=user)({attr}={escape_filter_chars(value)}))"
             attrs = ["objectGUID", "distinguishedName", "sAMAccountName", "userPrincipalName",
-                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl"]
+                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl", *PROFILE_ATTRS]
             try:
                 svc.search(self._s.ldap_base_dn, flt, search_scope=SUBTREE, attributes=attrs, size_limit=2)
             except LDAPException as exc:
@@ -286,6 +291,7 @@ class LdapDirectory:
                 email=first(self._s.ldap_email_attribute),
                 groups=frozenset(groups),
                 source=self._s.name, for_users=self._s.use_for_users, for_admins=self._s.use_for_admins,
+                title=first("title"), department=first("department"), phone=first("telephoneNumber"),
             )
         finally:
             try:
@@ -306,7 +312,7 @@ class LdapDirectory:
         try:
             flt = f"(&(objectCategory=person)(objectClass=user)({attr}={escape_filter_chars(value)}))"
             attrs = ["objectGUID", "distinguishedName", "sAMAccountName", "userPrincipalName",
-                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl"]
+                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl", *PROFILE_ATTRS]
             try:
                 svc.search(self._s.ldap_base_dn, flt, search_scope=SUBTREE, attributes=attrs, size_limit=2)
             except LDAPException as exc:
@@ -341,6 +347,7 @@ class LdapDirectory:
                 ad_guid=guid_from_bytes(guid_raw) if len(guid_raw) == 16 else "", dn=dn, sam_account_name=sam, upn=first("userPrincipalName"),
                 display_name=first(self._s.ldap_display_name_attribute) or sam, email=first(self._s.ldap_email_attribute),
                 groups=frozenset(groups), source=self._s.name, for_users=self._s.use_for_users, for_admins=self._s.use_for_admins,
+                title=first("title"), department=first("department"), phone=first("telephoneNumber"),
                 disabled=bool(isinstance(uac, int) and uac & _UAC_DISABLED))
         finally:
             try:

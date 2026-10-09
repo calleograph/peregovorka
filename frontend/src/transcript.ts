@@ -18,6 +18,11 @@ export function formatTime(iso: string): string {
 }
 
 /** Простой текстовый протокол: шапка со списком участников и реплики «[время] Имя: текст». */
+/** Стенограмма обычным текстом, как на экране: «[время] Имя: реплика» по строке на реплику (без служебной разметки). */
+export function transcriptText(segments: Segment[]): string {
+  return segments.map((s) => `[${formatTime(s.started_at)}] ${s.display_name}: ${s.text}`).join("\n");
+}
+
 export function renderProtocol(roomName: string, startedAt: string, participants: string[], segments: Segment[]): string {
   const head = [
     `Переговорка: ${roomName}`,

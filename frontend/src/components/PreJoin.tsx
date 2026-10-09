@@ -2,6 +2,8 @@ import type { CSSProperties, ReactNode } from "react";
 import type { Room } from "../api";
 import { initials, magnet, tint } from "../fx";
 import { Icon } from "./Icons";
+import PreJoinCheck from "./PreJoinCheck";
+import type { PreJoin as PreJoinHw } from "../prejoin";
 
 interface Props {
   room?: Room | null;
@@ -13,10 +15,12 @@ interface Props {
   onJoin: () => void;
   onBack: () => void;
   progress?: ReactNode;
+  /** Выбор устройств с проверки оборудования; комната подхватит его при входе. */
+  onHw?: (p: PreJoinHw & { micOk: boolean }) => void;
 }
 
 /** Экран перед входом в комнату: что за комната, кто уже там и что произойдёт после входа (микрофон, стенограмма, запись). */
-export default function PreJoin({ room, needPassword, password, onPassword, error, busy, onJoin, onBack, progress }: Props) {
+export default function PreJoin({ room, needPassword, password, onPassword, error, busy, onJoin, onBack, progress, onHw }: Props) {
   const name = room?.name ?? "Комната";
   const t = tint(name);
   const live = room?.active_meeting;
@@ -49,6 +53,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
               </li>
             ))}
           </ul>
+          {onHw && !busy && <PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={onHw} />}
           {needPassword && (
             <label>Пароль комнаты
               <input type="password" value={password} onChange={(e) => onPassword(e.target.value)} autoFocus autoComplete="off"

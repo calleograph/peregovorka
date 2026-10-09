@@ -40,6 +40,13 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text)            # только для local (argon2id)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Профиль из каталога (только разрешённые атрибуты) и собственная аватарка. Обновляется при каждом входе и кнопкой «Обновить данные из AD».
+    title: Mapped[str | None] = mapped_column(String(300))            # должность
+    department: Mapped[str | None] = mapped_column(String(300))       # подразделение
+    phone: Mapped[str | None] = mapped_column(String(64))
+    profile_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    avatar_mime: Mapped[str | None] = mapped_column(String(20))       # есть аватарка — файл в DATA_DIR/avatars (см. services/avatars.py)
+    avatar_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

@@ -133,6 +133,29 @@ async def saved_changes(request: Request, from_version: str = Query(max_length=2
     return d
 
 
+@router.get("/auto")
+async def auto_status(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Настройка и состояние автообновления: когда следующий запуск, чем закончился последний, ждёт ли окна без встреч."""
+    svc = request.app.state.autoupdate
+    cfg = await request.app.state.settings_svc.get(db, "autoupdate")
+    st = await svc.state()
+    return {"settings": cfg.model_dump(), "phase": st.get("phase") or "idle", "deferred": st.get("deferred"), "from_version": st.get("from_version"),
+            "to_version": st.get("to_version"), "last": st.get("last"), "next_run_at": await svc.next_run(), "installed": request.app.state.settings.app_version}
+
+
+@router.post("/auto/run")
+async def auto_run(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """«Выполнить сейчас»: один цикл автообновления прямо сейчас по тем же правилам (проверка версии → защита от идущих встреч → обновление)."""
+    svc = request.app.state.autoupdate
+    if (await svc.state()).get("phase") in ("checking", "waiting", "running"):
+        raise HTTPException(status_code=409, detail="Автообновление уже выполняется или ждёт окна без встреч")
+    await svc.request_now()
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="system.autoupdate.run_now", target_type="system", target_id="autoupdate",
+                      ip=client_ip(request), details={})
+    await db.commit()
+    return {"started": True}
+
+
 @router.get("/log")
 async def update_log(request: Request, offset: int = Query(0, ge=-1), su: SessionUser = Depends(require_admin)):
     """Построчный вывод обновления начиная с байта offset (окно обновления опрашивает его раз в 1–2 с, в том числе во время перезапуска backend)."""

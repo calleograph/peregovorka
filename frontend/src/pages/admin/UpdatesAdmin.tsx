@@ -3,6 +3,7 @@ import { api, type ApiError, type UpdateAttempt, type UpdatesOverview } from "..
 import { ConfirmDialog } from "../../components/Dialogs";
 import { Markdown } from "../../components/Markdown";
 import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
+import AutoUpdatePanel from "./AutoUpdatePanel";
 import ChangesDialog from "./ChangesDialog";
 import ComponentsTable from "./ComponentsTable";
 import RepairsPanel from "./RepairsPanel";
@@ -224,6 +225,8 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
         </div>
       )}
 
+      <AutoUpdatePanel />
+
       <div className="card upd-history">
         <h3 style={{ margin: "0 0 6px" }}>История попыток обновления</h3>
         {!ov?.history.length && <p className="muted small">Попыток пока нет (учитываются обновления через <code>scripts/update.sh</code> — и из терминала, и из этого раздела).</p>}
@@ -236,7 +239,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
                 <tr key={`${h.at}-${i}`} className={superseded ? "muted" : undefined}>
                   <td>{fmt(new Date(h.at * 1000).toISOString())}</td>
                   <td>{attemptRoute(h)}{h.has_changes && h.from_version && h.to_version && <> <button className="btn mini ghost" onClick={() => setHistChanges({ from: h.from_version, to: h.to_version })}>что изменилось</button></>}</td>
-                  <td>{h.source === "web" ? `веб-интерфейс${h.by ? ` (${h.by})` : ""}` : "терминал"}</td>
+                  <td>{h.by === "auto-update" ? <span className="badge" title="Запущено автоматическим обновлением по расписанию">автоматически</span> : h.source === "web" ? `веб-интерфейс${h.by ? ` (${h.by})` : ""}` : "терминал"}</td>
                   <td>{h.result === "ok" ? <span className="badge ok">успешно</span> : <><span className="badge warn">ошибка</span> <span className="small">{h.stage}</span>{superseded && <span className="small"> · устранено последующим успешным обновлением</span>}</>}</td>
                 </tr>);
             })}</tbody>

@@ -38,6 +38,12 @@ const PATHS: Record<string, ReactNode> = {
   search: <><circle cx="10.8" cy="10.8" r="6" /><path d="m15.4 15.4 5 5" /></>,
   eye: <><path d="M2.6 12S6 5.6 12 5.6 21.4 12 21.4 12 18 18.4 12 18.4 2.6 12 2.6 12Z" /><circle cx="12" cy="12" r="2.8" /></>,
   eyeOff: <><path d="M9.4 6.1c.8-.3 1.6-.5 2.6-.5 6 0 9.4 6.4 9.4 6.4s-.9 1.7-2.6 3.3M6.3 7.8C3.9 9.4 2.6 12 2.6 12S6 18.4 12 18.4c1.5 0 2.8-.4 3.9-.9" /><path d="M10 10.2a2.8 2.8 0 0 0 3.8 3.8M3.5 3.5l17 17" /></>,
+  copy: <><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.4" /><path d="M15.5 8.5V6.4A2.4 2.4 0 0 0 13.1 4H6.4A2.4 2.4 0 0 0 4 6.4v6.7a2.4 2.4 0 0 0 2.4 2.4h2.1" /></>,
+  grid: <><rect x="4" y="4" width="6.8" height="6.8" rx="1.8" /><rect x="13.2" y="4" width="6.8" height="6.8" rx="1.8" /><rect x="4" y="13.2" width="6.8" height="6.8" rx="1.8" /><rect x="13.2" y="13.2" width="6.8" height="6.8" rx="1.8" /></>,
+  list: <><path d="M9 6.5h11M9 12h11M9 17.5h11" /><circle cx="4.8" cy="6.5" r="1.1" fill="currentColor" stroke="none" /><circle cx="4.8" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="4.8" cy="17.5" r="1.1" fill="currentColor" stroke="none" /></>,
+  chevronD: <><path d="m6 9.5 6 6 6-6" /></>,
+  expandAll: <><path d="m7 5.5 5 5 5-5M7 13.5l5 5 5-5" /></>,
+  collapseAll: <><path d="m7 10.5 5-5 5 5M7 18.5l5-5 5 5" /></>,
   sliders: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
 };
 

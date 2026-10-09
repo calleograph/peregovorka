@@ -47,7 +47,7 @@ class FakeDirectory:
         return rec[1]
 
     def lookup(self, login: str) -> DirectoryIdentity:
-        rec = self.users.get(login.lower())
+        rec = self.users.get(login.split("@")[0].split("\\")[-1].lower())
         if rec is None:
             raise DirectoryError("user_not_found")
         return rec[1]

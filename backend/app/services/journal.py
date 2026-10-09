@@ -73,6 +73,8 @@ class Journal:
         self._task: asyncio.Task | None = None
         self.dropped = 0
         self.written = 0
+        self._db_failed = False          # последняя запись в базу не удалась: события возвращены в очередь и будут записаны при следующей попытке
+        self._warned = False
         self.last_external: dict = {"ok": None, "at": None, "error": None, "files": 0}
 
     # ------------------------------------------------------------------------ приём
@@ -124,8 +126,15 @@ class Journal:
                 async with self._sm() as db:
                     db.add_all(EventLog(**e) for e in wanted)
                     await db.commit()
+                self._warned = False
             except Exception:  # noqa: BLE001
-                log.exception("Не удалось записать события журнала в базу")
+                # база ещё недоступна (запуск, перезапуск, обрыв): события не теряем, а возвращаем в очередь (в пределах её размера) и повторяем позже
+                if not self._warned:
+                    log.warning("Не удалось записать события журнала в базу: повторим позже", exc_info=True)
+                    self._warned = True
+                self._db_failed = True
+                self._q.extendleft(reversed(wanted))
+                return 0
         if wanted and cfg.enabled:
             self._ext.extend(wanted)
         self.written += len(wanted)
@@ -173,7 +182,8 @@ class Journal:
                     pass
                 self._wake.clear()
                 await asyncio.sleep(0.3)  # копим мелкие события в один пакет
-                while self._q:
+                self._db_failed = False
+                while self._q and not self._db_failed:
                     await self.flush()
                 cfg = await self.config()
                 if self._ext and time.monotonic() - self._ext_flushed_at >= cfg.external_flush_seconds:

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
-from ..services import temp_rooms, timings
+from ..services import roles, temp_rooms, timings
 from ..services.audit import write_audit
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
@@ -20,8 +20,10 @@ from .schemas import ActiveMeetingOut, JoinIn, JoinOut, RoomOut
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 
-async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, participants: int = 0) -> RoomOut:
+async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, participants: int = 0, su: SessionUser | None = None) -> RoomOut:
+    manage = bool(su and roles.can_manage_room(room, su))
     return RoomOut(
+        can_manage=manage, guest_token=room.guest_token if (manage and room.guest_access_enabled and room.guest_token) else None,
         id=room.id, slug=room.slug, name=room.name, description=room.description,
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
@@ -46,7 +48,7 @@ async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession =
             .where(MeetingParticipant.meeting_id.in_([m.id for m in active.values()]), MeetingParticipant.left_at.is_(None))
             .group_by(MeetingParticipant.meeting_id))
         counts = {mid: n for mid, n in rows}
-    return [await room_out(db, r, active.get(r.id), counts.get(active[r.id].id, 0) if r.id in active else 0) for r in rooms]
+    return [await room_out(db, r, active.get(r.id), counts.get(active[r.id].id, 0) if r.id in active else 0, su) for r in rooms]
 
 
 @router.get("/resolve/{ref}")

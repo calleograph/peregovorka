@@ -2,9 +2,11 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
-import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type JoinInfo, type Room } from "../api";
+import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room } from "../api";
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
+import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
+import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
 import DebugPanel from "../components/room/DebugPanel";
 import { ParticipantTile, ScreenStage, type PView, type TileActions } from "../components/room/Tiles";
@@ -21,7 +23,7 @@ import { LiveBus, backoffDelay } from "../liveSocket";
 import { copyText, fileBase as fileBaseName } from "../util";
 import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
-import { takePreJoin } from "../prejoin";
+import { setPreJoin, takePreJoin, type PreJoin as PreJoinHw } from "../prejoin";
 import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
 import { isScreenProfile, screenShareOptions } from "../screenShare";
 
@@ -80,6 +82,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [recording, setRecording] = useState(false);          // идёт запись аудио
   const [transcribing, setTranscribing] = useState(true);     // идёт транскрибация (по умолчанию всегда)
   const [sources, setSources] = useState<string[]>(ALL_SOURCES);   // что разрешено публиковать (сервер выдаёт в токене)
+  const [hands, setHands] = useState<HandInfo[]>([]);                      // очередь поднятых рук (раньше поднявший — выше)
+  const [cardOf, setCardOf] = useState<{ identity: string; name: string; role?: string } | null>(null);
+  const [handSound, setHandSound] = useState(handSoundEnabled);
   const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
   const [canBoard, setCanBoard] = useState(true);
@@ -209,6 +214,18 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }, [roomId]);
 
   useEffect(() => { leavingRef.current = false; return () => { void teardown(true); }; }, [teardown]);
+
+  // Draw.io прогревается в фоне, когда звонок уже установлен (можно говорить): тяжёлый редактор не задерживает вход, а открытие доски потом мгновенное.
+  // Пропускается на слабых устройствах и при экономии трафика.
+  useEffect(() => {
+    if (stage !== "ready" || boardMounted || !canViewBoard || ended) return;
+    const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+    if ((nav.deviceMemory ?? 8) <= 2 || nav.connection?.saveData) return;
+    const run = () => setBoardMounted(true);
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const h = ric ? ric(run, { timeout: 4000 }) : window.setTimeout(run, 2500);
+    return () => { if (ric) (window as unknown as { cancelIdleCallback?: (n: number) => void }).cancelIdleCallback?.(h as number); else window.clearTimeout(h); };
+  }, [stage, boardMounted, canViewBoard, ended]);
   useEffect(() => {
     const onHide = () => { if (meetingRef.current) leaveOnUnload(meetingRef.current); };
     window.addEventListener("pagehide", onHide);
@@ -411,6 +428,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
 
   const loadFloor = useCallback((mid: string) => {
     api.floor(mid).then((f) => { setFloorIds(new Set(f.floor)); setLeaderIds(new Set(f.leaders)); }).catch(() => undefined);
+    api.hands(mid).then((r) => setHands(r.hands)).catch(() => undefined);
   }, []);
 
   const scheduleRejoin = useCallback((attempt: number) => {
@@ -478,7 +496,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     infoRef.current = info;
     meetingRef.current = info.meeting_id;
     applyClient(info);
-    setFloorIds(new Set()); setLeaderIds(new Set());
+    setFloorIds(new Set()); setLeaderIds(new Set()); setHands([]);
     loadFloor(info.meeting_id);
     setAsrReady(info.asr_ready);
     asrWasReadyRef.current = info.asr_ready;
@@ -705,6 +723,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     if (e.type === "recording_changed") setRecording(e.enabled);
     else if (e.type === "transcription_changed") setTranscribing(e.enabled);
     else if (e.type === "participant_joined") { if (meetingRef.current) loadFloor(meetingRef.current); }
+    else if (e.type === "hand_changed") {
+      setHands(e.queue);
+      if (e.raised && e.identity !== infoRef.current?.identity) playHandSound();          // один тихий сигнал на событие; своя рука без звука
+    }
     else if (e.type === "floor_changed") {
       setFloorIds((cur) => { const n = new Set(cur); if (e.granted) n.add(e.identity); else n.delete(e.identity); return n; });
       if (e.identity === infoRef.current?.identity) onMyFloor(e.granted);
@@ -760,6 +782,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const toggleDebug = () => setDebug((d) => { lsSet("room.debug", d ? "0" : "1"); return !d; });
 
   // ---------------------------------------------------------------------- вид «до входа»
+  const onHw = (p: PreJoinHw & { micOk: boolean }) => setPreJoin({ micId: p.micId, speakerId: p.speakerId, camId: p.camId, camOn: p.camOn });
   const tl = timeline.current;
   const done = { prepare: tl.metrics().join_api_ms, server: tl.metrics().signaling_connect_ms, media: tl.metrics().ice_connect_ms };
   if (!join && guest) {
@@ -775,7 +798,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }
   if (!join) {
     return (
-      <PreJoin room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
+      <PreJoin onHw={onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
                onJoin={() => void connect(needPassword || roomInfo?.has_password ? password : undefined)} onBack={() => navigate("/")}
                progress={busy ? <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} /> : null} />
     );
@@ -791,9 +814,13 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const showScreen = !guest && (room.screen_share_allowed || canScreen);
   const myFloor = floorIds.has(join.identity);
   const listenerHint = "В презентационной комнате вы слушаете. Когда руководитель даст слово, кнопка станет доступна";
-  const viewParticipants: PView[] = participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity) }));
+  const handOrder = new Map(hands.map((h, i) => [h.identity, i + 1] as const));
+  const viewParticipants: PView[] = participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity), hand: handOrder.has(p.identity), handOrder: handOrder.get(p.identity) }));
+  const myHand = handOrder.has(join.identity);
+  const toggleHand = () => { void api.hand(join.meeting_id, !myHand).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
+  const lowerHand = (identity: string) => { void api.hand(join.meeting_id, false, identity).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
   const tileActions: TileActions | undefined = join.client.can_moderate || isLeader
-    ? { presentation, onMute: moderate, onFloor: isLeader ? giveFloor : undefined, onKick: isLeader ? removeParticipant : undefined } : undefined;
+    ? { presentation, onMute: moderate, onFloor: isLeader ? giveFloor : undefined, onKick: isLeader ? removeParticipant : undefined, onLowerHand: isLeader ? (v) => lowerHand(v.identity) : undefined } : undefined;
   const me = participants.find((p) => p.local);
   const sharer = participants.find((p) => p.screen);
   const connLabel = rejoin ? `Переподключение (попытка ${rejoin.attempt} из ${MAX_REJOIN})…`
@@ -859,8 +886,21 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardOpen} readOnly={!canBoard} fileBase={fileBaseName(room.name, new Date().toISOString())}
                       onClose={() => setBoardOpen(false)} onRemoteChange={(by) => setBoardNews(by || "участник")} />
         )}
+        {hands.length > 0 && (
+          <div className="hands-bar" role="status" aria-live="polite">
+            <span className="hands-title"><Icon name="hand" size={15} /> Подняли руку</span>
+            <ol>
+              {hands.map((h) => (
+                <li key={h.identity}><b>{h.name || participants.find((p) => p.identity === h.identity)?.name || "Участник"}</b>
+                  {(isLeader || join.client.can_moderate) && !guest && <button type="button" className="hands-x" onClick={() => lowerHand(h.identity)} aria-label="Опустить руку" title="Опустить руку">✕</button>}</li>
+              ))}
+            </ol>
+            <button type="button" className="btn mini ghost" onClick={() => { setHandSoundEnabled(!handSound); setHandSound(!handSound); }}
+                    title="Звуковое уведомление, когда кто-то поднимает руку" aria-pressed={handSound}>{handSound ? "🔔 Звук включён" : "🔕 Звук выключен"}</button>
+          </div>
+        )}
         <div className={`tiles n${n} ${sharer || boardOpen ? "strip" : ""}`}>
-          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} />)}
+          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 
@@ -907,6 +947,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                          onClick={() => { setBoardMounted(true); setBoardOpen((o) => !o); setBoardNews(null); }} />
           </Ctl>}
           <Ctl onClose={() => undefined}>
+            <RoundButton icon="hand" label={myHand ? "Опустить руку" : "Поднять руку"} tone={myHand ? "on" : "neutral"} pressed={myHand} disabled={ended}
+                         title={myHand ? "Опустить руку" : "Поднять руку: все увидят отметку, а вы встанете в очередь"} onClick={toggleHand} />
+          </Ctl>
+          <Ctl onClose={() => undefined}>
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); }} />
           </Ctl>
           {room.transcription_enabled && join.client.can_control && !guest && (
@@ -942,6 +986,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       </section>
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
+      {cardOf && <ParticipantCardDialog meetingId={join.meeting_id} identity={cardOf.identity} name={cardOf.name} role={cardOf.role} onClose={() => setCardOf(null)} />}
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
       {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}

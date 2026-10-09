@@ -55,6 +55,8 @@ class RoomOut(BaseModel):
     lifecycle: str = "active"          # active | grace_period | closed
     auto_close_at: datetime | None = None
     created_by_name: str | None = None
+    can_manage: bool = False                  # вошедший — руководитель комнаты или администратор (только список комнат)
+    guest_token: str | None = None            # секрет гостевой ссылки: отдаётся ТОЛЬКО руководителям и администраторам, и только если гостевой вход включён
     active_meeting: ActiveMeetingOut | None = None
 
 

@@ -444,7 +444,7 @@ class MeetingService:
         return bool(await self._r.sismember(self._priv_key(meeting_id), identity))
 
     async def _clear_state(self, meeting_id: uuid.UUID) -> None:
-        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id))
+        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id), f"hands:{meeting_id}")
 
     async def _member_check(self, db: AsyncSession, meeting: Meeting, identity: str) -> tuple[str, uuid.UUID]:
         """Идентичность должна принадлежать участнику ЭТОЙ встречи (человек или гость); иначе — отказ (чужие/выдуманные identity не принимаются)."""

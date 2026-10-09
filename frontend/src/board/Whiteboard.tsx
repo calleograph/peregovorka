@@ -3,7 +3,8 @@ import { api, type ApiError } from "../api";
 import type { LiveBus } from "../liveSocket";
 import BoardExportMenu from "./BoardExportMenu";
 import DrawioFrame, { type FrameHandle } from "./DrawioFrame";
-import { BoardSync, type BoardStatus } from "./whiteboardSync";
+import { reportEvent } from "../diagnostics";
+import { BoardSync, type BoardStatus, type BoardTimings } from "./whiteboardSync";
 
 const SAVED_TEXT = { saved: "Сохранено", saving: "Сохраняем…", dirty: "Есть несохранённые правки" } as const;
 
@@ -23,7 +24,8 @@ interface Props {
 export default function Whiteboard({ meetingId, bus, open, readOnly = false, fileBase, onClose, onRemoteChange }: Props) {
   const frame = useRef<FrameHandle>(null);
   const stage = useRef<HTMLElement>(null);
-  const [full, setFull] = useState(false);       // доска развёрнута на весь экран (редактор draw.io при этом не перезагружается)
+  const [full, setFull] = useState(false);
+  const [timings, setTimings] = useState<BoardTimings | null>(null);     // сколько заняла первая загрузка: редактор · схема · отрисовка       // доска развёрнута на весь экран (редактор draw.io при этом не перезагружается)
   const clientId = useMemo(() => `b-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`, []);
   const [status, setStatus] = useState<BoardStatus>({ phase: "loading", saved: "saved" });
   const syncRef = useRef<BoardSync | null>(null);
@@ -34,7 +36,7 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
 
   useEffect(() => {
     const sync = new BoardSync({
-      clientId, readOnly,
+      clientId, readOnly, prefetch: true,
       fetchState: () => api.whiteboard(meetingId),
       sendPatch: (b) => api.whiteboardPatch(meetingId, b),
       saveSnapshot: (xml, seq) => api.whiteboardSave(meetingId, xml, seq),
@@ -69,6 +71,14 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
     void stage.current?.requestFullscreen?.().catch(() => undefined);      // не вышло (запрет браузера) — остаётся режим поверх страницы
   };
 
+  useEffect(() => {
+    if (status.phase !== "ready" || timings) return;
+    const t = syncRef.current?.timings();
+    if (!t) return;
+    setTimings(t);
+    reportEvent("board_ready", { meetingId, data: { ...t, hidden_preload: !openRef.current } });     // в журнале видно, где теряется время при открытии доски
+  }, [status.phase, timings, meetingId]);
+
   const onMessage = useCallback((m: Parameters<BoardSync["handleFrame"]>[0]) => syncRef.current?.handleFrame(m), []);
   const request = useCallback((f: Parameters<BoardSync["requestExport"]>[0], extra?: Record<string, unknown>) => syncRef.current?.requestExport(f, extra) ?? Promise.resolve(null), []);
 
@@ -78,6 +88,10 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
         <h2>Общая доска</h2>
         <span className={`badge ${status.saved === "saved" ? "ok" : "warn"}`} title="Схема хранится вместе со встречей">{SAVED_TEXT[status.saved]}</span>
         {status.phase === "loading" && <span className="muted small">Загрузка редактора…</span>}
+        {timings && timings.total_ms !== undefined && (
+          <span className="muted small" title="Первая загрузка: окно редактора · получение схемы (параллельно) · отрисовка схемы в редакторе">
+            загружена за {(timings.total_ms / 1000).toFixed(1)} с (редактор {((timings.editor_ms ?? 0) / 1000).toFixed(1)} · схема {((timings.diagram_ms ?? 0) / 1000).toFixed(1)})</span>
+        )}
         <div className="spacer" />
         {(status.phase === "desync" || status.phase === "error") && (
           <>

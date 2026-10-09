@@ -32,6 +32,14 @@ _MESSAGES = {
 _UNAVAILABLE = ("Служба входа временно недоступна. Повторите позже или обратитесь к администратору.", 503)
 
 
+def apply_profile(user: User, ident: DirectoryIdentity) -> None:
+    """Профиль из каталога (разрешённые атрибуты) в локальную запись; пустое значение в каталоге очищает поле (человек сменил должность)."""
+    def cut(v: str | None, n: int) -> str | None:
+        return (v or "").strip()[:n] or None
+    user.title, user.department, user.phone = cut(ident.title, 300), cut(ident.department, 300), cut(ident.phone, 64)
+    user.profile_synced_at = utcnow()
+
+
 class AuthError(Exception):
     def __init__(self, code: str, message: str, status: int, retry_after: int | None = None):
         super().__init__(code)
@@ -164,6 +172,7 @@ class AuthService:
         user.upn = ident.upn
         user.display_name = ident.display_name
         user.email = ident.email
+        apply_profile(user, ident)
         user.last_is_admin = is_admin
         user.last_login_at = utcnow()
         await db.commit()

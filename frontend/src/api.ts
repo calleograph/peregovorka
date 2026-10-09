@@ -10,6 +10,8 @@ export interface Room {
   board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation"; auto_record?: boolean;
   /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
+  /** Только в списке комнат: вошедший — руководитель/администратор; секрет гостевой ссылки отдаётся только им и только при включённом гостевом входе. */
+  can_manage?: boolean; guest_token?: string | null;
 }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
@@ -85,7 +87,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
+export type SettingsGroup = "autoupdate" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -227,6 +229,15 @@ export interface AccessCheck {
   found: boolean; message?: string; login?: string; display_name?: string; source?: string; account_disabled?: boolean; restricted?: boolean;
   would_log_in?: boolean; reason?: string; allowed_via?: string[]; admin?: boolean; admin_via?: string[]; groups_total?: number;
 }
+export interface Profile {
+  id: string; display_name: string; login: string; email: string | null; title: string | null; department: string | null; phone: string | null;
+  source: "ad" | "local"; avatar_url: string | null; synced_at: string | null; is_admin: boolean;
+}
+export interface ParticipantCard {
+  identity: string; name: string; guest: boolean; card: "full" | "minimal";
+  title?: string | null; department?: string | null; avatar_url?: string | null; email?: string | null; phone?: string | null; login?: string | null;
+}
+export interface HandInfo { identity: string; name: string; at: number }
 export interface EffectiveModel {
   enabled: boolean; local: boolean; name: string; model: string | null; api_type: string | null; max_output_tokens: number | null; max_output_note: string;
   ready: boolean; problem: string | null;
@@ -344,6 +355,11 @@ export interface UpdatesOverview {
   can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
   history: UpdateAttempt[]; last_success: UpdateAttempt | null; changes?: UpdateChanges | null;
 }
+export interface AutoUpdateLast { at: number; result: "updated" | "no_update" | "failed" | "deferred" | "skipped" | string; from_version?: string | null; to_version?: string | null; duration_s?: number | null; error?: string; detail?: string }
+export interface AutoUpdateInfo {
+  settings: { enabled: boolean; time: string; window_hours: number }; phase: "idle" | "checking" | "waiting" | "running" | string; deferred: string | null;
+  from_version: string | null; to_version: string | null; last: AutoUpdateLast | null; next_run_at: string | null; installed: string;
+}
 export interface UpdateChanges {
   installed: string | null; available: string | null; versions: string[]; empty: boolean; saved_at?: number; by?: string;
   groups: { id: string; title: string; items: { version: string; text: string; alerts: string[] }[] }[];
@@ -427,6 +443,20 @@ function authHeaders(method: string): Record<string, string> {
   return h;
 }
 
+/** Загрузка картинки PUT-ом (аватарка): тело — сами байты. */
+async function putBlob<T>(path: string, blob: Blob): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { method: "PUT", headers: { ...authHeaders("PUT"), "Content-Type": blob.type || "application/octet-stream", Accept: "application/json" }, credentials: "same-origin", body: blob });
+  } catch {
+    throw new ApiError(0, "network", "Нет связи с сервером");
+  }
+  const data = await res.json().catch(() => null);
+  if (res.status === 413) throw new ApiError(413, "too_large", typeof data?.detail === "string" ? data.detail : "Файл слишком большой");
+  if (!res.ok) throw errorFrom(res, data);
+  return data as T;
+}
+
 /** Загрузка файла «как есть» (тело запроса — байты). Ошибки сервера (тип, размер, хранилище) приходят понятным текстом. */
 async function uploadBytes<T>(path: string, file: File): Promise<T> {
   let res: Response;
@@ -503,6 +533,14 @@ export const api = {
     request<{ seq: number }>("POST", `/meetings/${id}/whiteboard/patch`, body),
   whiteboardSave: (id: string, xml: string, seq: number) =>
     request<{ saved: boolean; seq: number; shapes: number; used: boolean }>("PUT", `/meetings/${id}/whiteboard`, { xml, seq }),
+  typing: (id: string, typing: boolean) => request<void>("POST", `/meetings/${id}/chat/typing`, { typing }),
+  hand: (id: string, raised: boolean, identity?: string) => request<{ raised: boolean; queue: HandInfo[] }>("POST", `/meetings/${id}/hand`, { raised, ...(identity ? { identity } : {}) }),
+  hands: (id: string) => request<{ hands: HandInfo[] }>("GET", `/meetings/${id}/hands`),
+  participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),
+  profile: () => request<Profile>("GET", "/profile"),
+  refreshProfile: () => request<Profile>("POST", "/profile/refresh"),
+  uploadAvatar: (blob: Blob) => putBlob<Profile>("/profile/avatar", blob),
+  deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
@@ -636,6 +674,8 @@ export const api = {
     caAdd: (body: { pem?: string; data_base64?: string; label?: string; confirm_non_ca?: boolean }) => request<{ added: CaInfo[]; already_present: CaInfo[] }>("POST", "/admin/ca", body),
     caDelete: (id: string) => request<void>("DELETE", `/admin/ca/${id}`),
     localAdmin: () => request<LocalAdminInfo>("GET", "/admin/local-admin"),
+    autoUpdate: () => request<AutoUpdateInfo>("GET", "/admin/updates/auto"),
+    autoUpdateRun: () => request<{ started: boolean }>("POST", "/admin/updates/auto/run"),
     effectiveModels: () => request<EffectiveModels>("GET", "/admin/llm/effective"),
     modelStats: () => request<{ documents: number; models: ModelStat[] }>("GET", "/admin/llm/stats"),
     accessStatus: () => request<AccessStatus>("GET", "/admin/access/status"),

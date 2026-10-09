@@ -8,4 +8,4 @@ export function isValidLogin(raw: string): boolean {
   return v.length > 0 && v.length <= 256 && RE.test(v);
 }
 
-export const LOGIN_HINT = "Допустимы буквы, цифры и символы . _ - ; можно в виде логина, ДОМЕН\\логин или логин@домен. Пробелы, кавычки, скобки и прочие символы не допускаются.";
+export const LOGIN_HINT = "В логине допустимы буквы, цифры и символы . _ - (например, ivanov). Пробелы, кавычки и скобки использовать нельзя.";

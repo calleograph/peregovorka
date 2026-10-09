@@ -59,7 +59,7 @@ export default function SystemAdmin({ onOpen }: { onOpen?: (page: string) => voi
   const prov = asrProv.name ? `${asrProv.name} · ${(asrProv as { runtime?: string }).runtime ?? "?"} · ${(asrProv.device ?? "?").toUpperCase()}` : "—";
 
   return (
-    <section>
+    <section className="sysadmin">
       <div className="row"><h2>Состояние системы</h2><div className="spacer" />
         <button className="btn primary" onClick={report} disabled={!!busy}>{busy === "report" ? "Формирование…" : "Скачать диагностический отчёт"}</button>
         <button className="btn" onClick={() => run("exp", async () => { const r = await api.admin.retryExports(); setNote({ ok: true, text: `Повторная выгрузка записей: выгружено ${r.exported}, с ошибкой ${r.still_failed}` }); await load(); })} disabled={!!busy}>Повторить выгрузку записей</button>

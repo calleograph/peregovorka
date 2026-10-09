@@ -2,6 +2,8 @@ import { type CSSProperties, FormEvent, useEffect, useMemo, useState } from "rea
 import { Link, useNavigate } from "react-router-dom";
 import { api, type ApiError, type Room, type TempRoomPolicy } from "../api";
 import { Icon } from "../components/Icons";
+import { useToast } from "../components/Toast";
+import { copyText } from "../util";
 import { Modal } from "../components/Dialogs";
 import { initials, magnet, spotlight, tint } from "../fx";
 
@@ -32,11 +34,55 @@ function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: 
 type Filter = "all" | "live" | "free" | "temp";
 const FILTERS: [Filter, string][] = [["all", "Все"], ["live", "Идёт встреча"], ["free", "Свободные"], ["temp", "Временные"]];
 
-function RoomCard({ r, i }: { r: Room; i: number }) {
+type View = "tiles" | "list";
+const VIEW_KEY = "pg:roomsView";
+const roomUrl = (r: Room) => `${window.location.origin}/rooms/${r.slug}`;
+const guestUrl = (r: Room) => `${window.location.origin}/guest/${r.guest_token}`;
+
+/** Кнопки копирования ссылок. Обычная (зелёная) — для сотрудников; гостевая (красная) — только если гостевой вход включён и пользователь вправе ею делиться. */
+function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: string, tone?: "ok" | "error") => void; compact?: boolean }) {
+  const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
+  return (
+    <span className={`rc-actions ${compact ? "" : "inline"}`}>
+      <button type="button" className="copybtn reg" onClick={() => void copy(roomUrl(r), "Ссылка для зарегистрированных")}
+              title="Скопировать ссылку для зарегистрированных участников" aria-label={`Скопировать ссылку для зарегистрированных участников: ${r.name}`}><Icon name="copy" size={15} /></button>
+      {r.guest_token && (
+        <button type="button" className="copybtn guest" onClick={() => void copy(guestUrl(r), "Ссылка для гостей")}
+                title="Скопировать ссылку для гостей" aria-label={`Скопировать ссылку для гостей: ${r.name}`}><Icon name="copy" size={15} /></button>
+      )}
+    </span>
+  );
+}
+
+function RoomRow({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
+  const live = r.active_meeting;
+  const full = live && live.participants >= r.max_participants;
+  return (
+    <div className="rl-row" style={{ "--i": i } as CSSProperties}>
+      <div className="rl-name">
+        <Link to={`/rooms/${r.slug}`}><b>{r.name}</b></Link>
+        <code title="Технический идентификатор (адрес комнаты)">{r.slug}</code>
+        {r.lifetime === "temporary" && <span className="tag">Временная</span>}
+      </div>
+      <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants}` : "Свободна"}</span>
+      <span className="rl-avail muted small">{full ? "мест нет" : `до ${r.max_participants} уч.`}{r.has_password ? " · пароль" : ""}{r.room_type === "presentation" ? " · презентация" : ""}</span>
+      <span className="rl-links small">
+        <span className="rl-link" title="Ссылка для зарегистрированных участников">{`/rooms/${r.slug}`}</span>
+        {r.guest_token && <span className="tag guest" title="Гостевой вход включён">гости</span>}
+      </span>
+      <CopyLinks r={r} onCopy={onCopy} compact={false} />
+      <Link to={`/rooms/${r.slug}`} className="btn mini primary rl-go">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"}</Link>
+    </div>
+  );
+}
+
+function RoomCard({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
   const t = tint(r.name);
   const live = r.active_meeting;
   const full = live && live.participants >= r.max_participants;
   return (
+    <div className="rc-cell" style={{ "--i": i } as CSSProperties}>
+    <CopyLinks r={r} onCopy={onCopy} />
     <Link to={`/rooms/${r.slug}`} className={`room-card rc ${live ? "is-live" : ""}`} style={{ "--i": i, "--ha": t.a, "--hb": t.b } as CSSProperties} onPointerMove={spotlight}
           aria-label={`${r.name}: ${live ? `идёт встреча, участников ${live.participants}` : "свободна"}`}>
       <span className="rc-glow" aria-hidden />
@@ -47,8 +93,8 @@ function RoomCard({ r, i }: { r: Room; i: number }) {
           <span className={`pill ${live ? "live" : "free"}`}>
             <i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants} уч.` : "Свободна"}
           </span>
+          {r.has_password && <span className="tag" title="Для входа нужен пароль"><Icon name="lock" size={12} /> Пароль</span>}
         </div>
-        {r.has_password && <span className="rc-lock" title="Для входа нужен пароль"><Icon name="lock" size={16} /></span>}
       </div>
       {r.description && <p className="rc-desc">{r.description}</p>}
       <div className="rc-tags">
@@ -63,6 +109,7 @@ function RoomCard({ r, i }: { r: Room; i: number }) {
         <span className="rc-go">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"} <Icon name="arrowR" size={16} /></span>
       </div>
     </Link>
+    </div>
   );
 }
 
@@ -73,6 +120,9 @@ export default function RoomsPage() {
   const [tempOpen, setTempOpen] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [view, setView] = useState<View>(() => { try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "tiles"; } catch { return "tiles"; } });
+  const [toast, showToast] = useToast();
+  const pickView = (v: View) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* хранилище недоступно — выбор не запомнится */ } };
 
   useEffect(() => { void api.temporaryPolicy().then(setPolicy).catch(() => undefined); }, [tempOpen]);
   useEffect(() => {
@@ -116,6 +166,10 @@ export default function RoomsPage() {
       {rooms.length > 0 && (
         <div className="rooms-toolbar">
           <label className="search"><Icon name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти комнату" aria-label="Найти комнату" /></label>
+          <div className="seg viewseg" role="group" aria-label="Вид списка">
+            <button type="button" aria-pressed={view === "tiles"} onClick={() => pickView("tiles")} title="Плитки"><Icon name="grid" size={15} /> Плитка</button>
+            <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Компактный список"><Icon name="list" size={15} /> Список</button>
+          </div>
           <div className="chips" role="group" aria-label="Фильтр комнат">
             {FILTERS.map(([id, label]) => <button key={id} type="button" className={`chip ${filter === id ? "on" : ""}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
           </div>
@@ -130,7 +184,10 @@ export default function RoomsPage() {
         </div>
       )}
       {rooms.length > 0 && shown.length === 0 && <p className="muted">По этому запросу комнат нет. Измените поиск или фильтр.</p>}
-      <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} />)}</div>
+      {view === "tiles"
+        ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} />)}</div>
+        : <div className="rooms-list" role="list">{shown.map((r, i) => <RoomRow key={r.id} r={r} i={i} onCopy={showToast} />)}</div>}
+      {toast}
       {tempOpen && policy && <TempRoomDialog policy={policy} onClose={() => setTempOpen(false)} />}
     </section>
   );

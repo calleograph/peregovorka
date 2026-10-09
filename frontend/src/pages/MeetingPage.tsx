@@ -3,14 +3,16 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, releaseOnUnload, type ApiError, type ExportFormat, type Meeting, type MeetingRecording, type ProtocolItem, type ProtocolKind, type Segment } from "../api";
 import BoardViewer from "../board/BoardViewer";
 import ChatPanel from "../components/ChatPanel";
+import { Icon } from "../components/Icons";
 import Menu from "../components/Menu";
 import MeetingAdminActions from "../components/MeetingAdminActions";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
 import { docState, generationLine } from "../components/GenerationInfo";
 import ProtocolViewer from "../components/ProtocolViewer";
-import { formatTime, renderProtocol } from "../transcript";
-import { bytes, downloadText, duration, fileBase, fmt } from "../util";
+import { formatTime, renderProtocol, transcriptText } from "../transcript";
+import { useToast } from "../components/Toast";
+import { bytes, copyText, downloadText, duration, fileBase, fmt } from "../util";
 
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
 const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summary: "Резюме" };
@@ -91,6 +93,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
     return () => { cancelled = true; };
   }, [openId, meetingId, protocols]);
 
+  const [toastNode, toast] = useToast();
   const text = useMemo(() => meeting
     ? renderProtocol(meeting.room_name, meeting.started_at, meeting.participants.map((p) => p.display_name), segments) : "", [meeting, segments]);
 
@@ -161,6 +164,12 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
 
       {tab === "transcript" && (
         <div className="card transcript-full" style={{ maxWidth: 1000 }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <button className="btn mini" disabled={!segments.length} title="Скопировать всю стенограмму обычным текстом: время, имя, реплика"
+                    onClick={async () => { if (await copyText(transcriptText(segments))) toast("Стенограмма скопирована"); else toast("Не удалось скопировать — выделите текст вручную", "error"); }}>
+              <Icon name="copy" size={14} /> Копировать</button>
+            <span className="muted small">{segments.length ? `${segments.length} реплик` : ""}</span>
+          </div>
           {segments.length === 0 && <p className="muted">Реплик нет.</p>}
           {segments.map((s) => <p key={s.uid} className="utt"><span className="time">{formatTime(s.started_at)}</span><strong>{s.display_name}</strong><span>{s.text}</span></p>)}
         </div>
@@ -191,6 +200,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
 
       {sendOpen && <SendMaterialsDialog meetingId={meetingId} onClose={() => setSendOpen(false)} />}
       {dialog && <ProtocolDialog meetingId={meetingId} kind={dialog.kind} isAdmin={isAdmin} initialInstruction={dialog.instruction} onClose={() => setDialog(null)} onStarted={onStarted} />}
+      {toastNode}
     </section>
   );
 }

@@ -1,6 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { describeMediaError } from "../mediaErrors";
 import { levelFromTimeDomain, toneWav, type PreJoin } from "../prejoin";
+import { copyText } from "../util";
+
+type Perm = PermissionState | "unknown";
+
+/** Адрес настроек сайта в браузере пользователя (страницу браузера нельзя открыть из веб-страницы — показываем адрес, его можно скопировать). */
+function settingsAddress(): { url: string; name: string } {
+  const ua = navigator.userAgent;
+  if (/YaBrowser/i.test(ua)) return { url: "browser://settings/content/microphone", name: "Яндекс.Браузер" };
+  if (/Edg\//.test(ua)) return { url: "edge://settings/content/microphone", name: "Microsoft Edge" };
+  if (/Firefox/i.test(ua)) return { url: "about:preferences#privacy", name: "Firefox" };
+  return { url: "chrome://settings/content/microphone", name: "Chrome" };
+}
+
+async function queryPerm(name: "microphone" | "camera"): Promise<{ state: Perm; sub?: (cb: (s: Perm) => void) => () => void }> {
+  try {
+    const st = await navigator.permissions.query({ name: name as PermissionName });
+    return { state: st.state, sub: (cb) => { const h = () => cb(st.state); st.addEventListener("change", h); return () => st.removeEventListener("change", h); } };
+  } catch { return { state: "unknown" }; }          // браузер не умеет (Safari/Firefox для camera/microphone): узнаем по результату запроса
+}
 
 type Kind = "audioinput" | "audiooutput" | "videoinput";
 const NAMES: Record<Kind, string> = { audioinput: "Микрофон", audiooutput: "Динамики", videoinput: "Камера" };
@@ -20,6 +39,8 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
   const [camErr, setCamErr] = useState("");
   const [micOk, setMicOk] = useState(false);
   const [asked, setAsked] = useState(false);
+  const [perm, setPerm] = useState<{ mic: Perm; cam: Perm }>({ mic: "unknown", cam: "unknown" });
+  const [copied, setCopied] = useState(false);
   const [toneBusy, setToneBusy] = useState(false);
   const micStream = useRef<MediaStream | null>(null);
   const camStream = useRef<MediaStream | null>(null);
@@ -77,6 +98,33 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
 
   const stopCam = useCallback(() => { camStream.current?.getTracks().forEach((t) => t.stop()); camStream.current = null; setCamOn(false); }, []);
 
+  // Состояние разрешений браузера: «запрещено» — повторно getUserMedia не вызываем (браузер всё равно не покажет запрос), даём инструкцию
+  useEffect(() => {
+    let alive = true; const offs: (() => void)[] = [];
+    void (async () => {
+      for (const [k, name] of [["mic", "microphone"], ["cam", "camera"]] as const) {
+        const r = await queryPerm(name);
+        if (!alive) return;
+        setPerm((p) => ({ ...p, [k]: r.state }));
+        const off = r.sub?.((s) => setPerm((p) => ({ ...p, [k]: s })));
+        if (off) offs.push(off);
+      }
+    })();
+    return () => { alive = false; offs.forEach((f) => f()); };
+  }, []);
+
+  /** Один клик «Запросить разрешения»: микрофон (проверка уровня) и, если комната допускает камеру, доступ к камере (камера при этом не включается). */
+  const requestAll = async () => {
+    setAsked(true);
+    if (perm.mic !== "denied") await startMic(micId || undefined);
+    if (cameraAllowed && perm.cam !== "denied" && !camOn) {
+      try { const s = await navigator.mediaDevices.getUserMedia({ video: true }); s.getTracks().forEach((t) => t.stop()); setCamErr(""); await listDevices(); }
+      catch (e) { setCamErr(describeMediaError(e, "camera").message); }
+    }
+  };
+  const denied = perm.mic === "denied" || (cameraAllowed && perm.cam === "denied");
+  const waiting = asked && !micOk && !micErr && perm.mic !== "denied";
+
   useEffect(() => { void listDevices(); return () => { stopMic(); camStream.current?.getTracks().forEach((t) => t.stop()); }; }, [listDevices, stopMic]);
   useEffect(() => { if (video.current) video.current.srcObject = camOn ? camStream.current : null; }, [camOn, camId]);
   useEffect(() => { onChange({ micId: micId || undefined, speakerId: speakerId || undefined, camId: camId || undefined, camOn, micOk }); }, [micId, speakerId, camId, camOn, micOk, onChange]);
@@ -98,6 +146,22 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
   return (
     <fieldset className="precheck">
       <legend>Проверка оборудования</legend>
+      <div className="perm-intro">
+        <p style={{ margin: 0 }}>Сейчас браузер запросит доступ к микрофону{cameraAllowed ? " и камере" : ""}. <b>Рекомендуем разрешить доступ сразу</b> — иначе позже браузер может не показать запрос повторно.</p>
+        <div className="row">
+          {perm.mic !== "denied" && <button type="button" className="btn mini primary" onClick={() => void requestAll()}>Запросить разрешения</button>}
+          <span className={`pill ${perm.mic === "granted" || micOk ? "live" : ""}`}>Микрофон: {perm.mic === "denied" ? "запрещён" : micOk || perm.mic === "granted" ? "разрешён" : "ещё не разрешён"}</span>
+          {cameraAllowed && <span className={`pill ${perm.cam === "granted" || camOn ? "live" : ""}`}>Камера: {perm.cam === "denied" ? "запрещена" : camOn || perm.cam === "granted" ? "разрешена" : "ещё не разрешена"}</span>}
+          {waiting && <span className="perm-arrow" aria-hidden title="Окно запроса браузера — слева вверху, у адресной строки">↖ окно браузера</span>}
+        </div>
+        {denied && (
+          <div className="alert error small" role="alert">
+            <b>Доступ запрещён в настройках браузера</b>, поэтому запрос больше не появится. Нажмите значок настроек сайта слева от адреса (замок), включите {perm.mic === "denied" ? "микрофон" : ""}{perm.mic === "denied" && cameraAllowed && perm.cam === "denied" ? " и " : ""}{cameraAllowed && perm.cam === "denied" ? "камеру" : ""} и обновите страницу. Или откройте настройки сайтов: <code>{settingsAddress().url}</code> ({settingsAddress().name}){" "}
+            <button type="button" className="btn mini" onClick={async () => { setCopied(await copyText(settingsAddress().url)); }}>{copied ? "Скопировано — вставьте в адресную строку" : "Скопировать адрес"}</button>
+            <div>Войти в комнату можно и без {perm.mic === "denied" ? "микрофона" : "камеры"} — включить позже можно будет, разрешив доступ.</div>
+          </div>
+        )}
+      </div>
       <div className="pc-row">
         <label>{NAMES.audioinput}
           <select value={micId} onChange={(e) => { setMicId(e.target.value); void startMic(e.target.value); }} disabled={!devices.audioinput.length}>
@@ -106,7 +170,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
           </select>
         </label>
         {!asked || !micOk
-          ? <button type="button" className="btn mini primary" onClick={() => { setAsked(true); void startMic(micId || undefined); }}>Проверить микрофон</button>
+          ? <button type="button" className="btn mini" disabled={perm.mic === "denied"} onClick={() => { setAsked(true); void startMic(micId || undefined); }}>Проверить микрофон</button>
           : <span className="badge ok">Микрофон работает</span>}
       </div>
       <div className="level" role="meter" aria-label="Уровень микрофона" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)}>

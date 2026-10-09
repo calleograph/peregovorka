@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { tabFromSearch } from "../navMenu";
+import { collapseAll, expandAll, loadCollapsed, saveCollapsed, toggleGroup } from "../adminNav";
+import { Icon } from "../components/Icons";
 import AccessAdmin from "./admin/AccessAdmin";
 import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
@@ -107,7 +109,15 @@ export default function AdminPage({ version }: { version: string }) {
   const ids = GROUPS.flatMap((g) => g.pages.map((p) => p.id));
   const location = useLocation();
   const [tab, setTab] = useState(() => tabFromSearch(location.search, ids) ?? (() => { const t = sessionStorage.getItem("adminTab"); return t && ids.includes(t) ? t : "system"; })());
-  const pick = (t: string) => { setTab(t); try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ } };
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const setGroups = (s: Set<string>) => { setCollapsed(s); saveCollapsed(s); };
+  // переход к странице (из мастера настройки, верхнего меню) раскрывает её раздел, чтобы пункт не оказался скрытым
+  const pick = (t: string) => {
+    setTab(t);
+    try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ }
+    const g = GROUPS.find((x) => x.pages.some((p) => p.id === t));
+    if (g) setCollapsed((c) => { if (!c.has(g.title)) return c; const n = new Set(c); n.delete(g.title); saveCollapsed(n); return n; });
+  };
   // переход из мастера первоначальной настройки (страница могла быть уже открыта)
   useEffect(() => {
     const on = (e: Event) => { const t = (e as CustomEvent<string>).detail; if (ids.includes(t)) pick(t); };
@@ -123,12 +133,22 @@ export default function AdminPage({ version }: { version: string }) {
       <div className="row"><h1>Администрирование</h1><div className="spacer" /><span className="muted small">Версия: {version || "—"}</span></div>
       <div className="admin-layout">
         <nav className="admin-nav" aria-label="Разделы администрирования">
-          {GROUPS.map((g) => (
-            <div key={g.title}>
-              <h4>{g.title}</h4>
-              {g.pages.map((p) => <button key={p.id} className={tab === p.id ? "active" : ""} aria-current={tab === p.id ? "page" : undefined} onClick={() => pick(p.id)}>{p.label}</button>)}
-            </div>
-          ))}
+          <div className="nav-tools" role="group" aria-label="Все разделы меню">
+            <button type="button" className="icon-btn" onClick={() => setGroups(expandAll())} title="Развернуть все разделы" aria-label="Развернуть все разделы"><Icon name="expandAll" size={16} /></button>
+            <button type="button" className="icon-btn" onClick={() => setGroups(collapseAll(GROUPS.map((g) => g.title)))} title="Свернуть все разделы" aria-label="Свернуть все разделы"><Icon name="collapseAll" size={16} /></button>
+          </div>
+          {GROUPS.map((g, gi) => {
+            const open = !collapsed.has(g.title);
+            return (
+              <div key={g.title} className={`nav-group ${open ? "open" : ""}`}>
+                <h4><button type="button" className="nav-head" aria-expanded={open} aria-controls={`navg-${gi}`} onClick={() => setGroups(toggleGroup(collapsed, g.title))}
+                            title={open ? "Свернуть раздел" : "Развернуть раздел"}><Icon name="chevronD" size={14} className="chev" /><span>{g.title}</span></button></h4>
+                <div id={`navg-${gi}`} className="nav-items" hidden={!open}>
+                  {g.pages.map((p) => <button key={p.id} className={tab === p.id ? "active" : ""} aria-current={tab === p.id ? "page" : undefined} onClick={() => pick(p.id)}>{p.label}</button>)}
+                </div>
+              </div>
+            );
+          })}
         </nav>
         <div style={{ minWidth: 0 }}>{page?.render(pick)}</div>
       </div>

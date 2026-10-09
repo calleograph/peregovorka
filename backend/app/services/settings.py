@@ -456,7 +456,10 @@ class GeneralSettings(_Group):
     temp_room_grace_minutes: int = Field(default=5, ge=1, le=240)        # сколько ждать возврата, когда все вышли
     temp_room_idle_minutes: int = Field(default=30, ge=5, le=1440)       # комната, в которую так никто и не вошёл
     temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
-    temp_room_allow_guest_link: bool = False                             # можно ли владельцу временной комнаты выпускать гостевую ссылку
+    temp_room_allow_guest_link: bool = False
+    # Карточка участника во встрече: какие контактные данные показывать другим сотрудникам (ФИО, должность, подразделение показываются всегда)
+    card_show_email: bool = True
+    card_show_phone: bool = False                             # можно ли владельцу временной комнаты выпускать гостевую ссылку
 
     @field_validator("timezone")
     @classmethod
@@ -540,6 +543,22 @@ class StorageSyncSettings(_Group):
     guard_percent: int = Field(default=95, ge=50, le=100)        # если «пропало» не меньше стольких процентов (и не менее 10 файлов) — похоже на сбой, не применять без подтверждения
 
 
+class AutoUpdateSettings(_Group):
+    """Автоматическое обновление: раз в сутки в заданное время. Идущие встречи не прерываются (обновление ждёт окна без встреч в пределах `window_hours`)."""
+
+    enabled: bool = False
+    time: str = "00:00"                                       # HH:MM по часовому поясу из «Общих настроек»
+    window_hours: int = Field(default=6, ge=1, le=23)         # сколько часов после назначенного времени ждать окна без встреч
+
+    @field_validator("time")
+    @classmethod
+    def _time(cls, v: str) -> str:
+        v = v.strip()
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("Время запуска: ЧЧ:ММ, например 00:00 или 03:30")
+        return v
+
+
 GROUPS: dict[str, type[_Group]] = {
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,
@@ -555,6 +574,7 @@ GROUPS: dict[str, type[_Group]] = {
     "setup": SetupSettings,
     "mail_policy": MailPolicySettings,
     "storage_sync": StorageSyncSettings,
+    "autoupdate": AutoUpdateSettings,
 }
 
 

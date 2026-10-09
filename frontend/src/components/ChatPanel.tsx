@@ -7,6 +7,7 @@ import type { LiveBus } from "../liveSocket";
 import { linkify } from "../linkify";
 import { formatTime } from "../transcript";
 import { copyText } from "../util";
+import { TypingSender, TypingTracker, typingText } from "../typing";
 
 const MAX_LEN = 4000;
 
@@ -132,6 +133,23 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   const cb = useRef({ onUnread });
   cb.current = { onUnread };
 
+  // «Печатает…»: отправляем «начал/закончил» с пульсом раз в несколько секунд, принимаем чужие и гасим по сроку; в историю чата это не попадает
+  const sender = useRef<TypingSender | null>(null);
+  const tracker = useRef(new TypingTracker());
+  const [typers, setTypers] = useState<string[]>([]);
+  useEffect(() => {
+    if (!bus || readOnly) { sender.current = null; return; }
+    const s = new TypingSender((t) => { void api.typing(meetingId, t).catch(() => undefined); });
+    sender.current = s;
+    return () => { s.stop(); sender.current = null; };
+  }, [bus, readOnly, meetingId]);
+  useEffect(() => {
+    if (!bus) return;
+    const off = bus.on((e) => { if (e.type === "chat_typing") { tracker.current.event(e.id, e.name, e.typing); setTypers(tracker.current.names(Date.now(), selfName)); } });
+    const tick = window.setInterval(() => { const n = tracker.current.names(Date.now(), selfName); setTypers((cur) => (cur.join("|") === n.join("|") ? cur : n)); }, 1000);
+    return () => { off(); window.clearInterval(tick); };
+  }, [bus, selfName]);
+
   const merge = useCallback((incoming: ChatMessage[]) => {
     setItems((cur) => {
       const seen = new Set(cur.map((m) => m.id));
@@ -154,6 +172,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
     const offEv = bus.on((e) => {
       if (e.type !== "chat_message") return;
       merge([e.message]);
+      tracker.current.event(e.message.author_id ?? "", e.message.author_name, false);          // сообщение пришло — автор больше не «печатает»
       if (!visibleRef.current && e.message.author_name !== selfName) { unread.current += 1; cb.current.onUnread?.(unread.current); }
     });
     const offSync = bus.onResync(() => {
@@ -242,6 +261,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
       merge([m]);
       stickRef.current = true;
       setDraft("");
+      sender.current?.stop();
       for (const p of ready) if (p.preview) URL.revokeObjectURL(p.preview);
       setPending((cur) => cur.filter((p) => p.state === "error"));
     } catch (e) { setError((e as ApiError).message || "Не удалось отправить сообщение"); }
@@ -275,6 +295,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
               ))}
             </ul>
           )}
+          <div className="chat-typing" aria-live="polite" role="status">{typingText(typers)}</div>
           <div className="chat-box">
             {canAttach && (
               <>
@@ -283,7 +304,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
               </>
             )}
             <textarea ref={inputRef} value={draft} maxLength={MAX_LEN} rows={1} placeholder="Сообщение" aria-label="Текст сообщения"
-                      onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} onPaste={onPaste} />
+                      onChange={(e) => { setDraft(e.target.value); if (e.target.value.trim()) sender.current?.input(); else sender.current?.stop(); }} onKeyDown={onKey} onPaste={onPaste} />
             <button type="button" className="chat-send" disabled={!canSend} onClick={() => void send()} title="Отправить (Enter)" aria-label="Отправить сообщение">
               <Icon name="send" size={18} />
             </button>

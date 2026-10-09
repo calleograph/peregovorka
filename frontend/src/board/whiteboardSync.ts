@@ -9,7 +9,11 @@
 import type { WhiteboardPatch, WhiteboardState } from "../api";
 import { FrameRpc, type ExportFormat, type FrameMsg } from "./frameRpc";
 
-export const EMPTY_XML = '<mxfile><diagram id="p1" name="Страница 1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
+/** Новая доска: страница A4 альбомная (1169×827) — шире по горизонтали, как удобнее для схем. Уже созданные доски этим не меняются. */
+export const EMPTY_XML = '<mxfile><diagram id="p1" name="Страница 1"><mxGraphModel dx="1200" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
+
+/** Времена загрузки доски, мс от создания (создание = начало загрузки окна редактора). */
+export interface BoardTimings { editor_ms?: number; state_ms?: number; diagram_ms?: number; total_ms?: number; prefetched?: boolean }
 
 export type BoardPhase = "loading" | "ready" | "desync" | "error";
 export interface BoardStatus { phase: BoardPhase; message?: string; saved: "saved" | "saving" | "dirty" }
@@ -26,6 +30,8 @@ export interface SyncDeps {
   setTimer?(fn: () => void, ms: number): unknown;
   clearTimer?(h: unknown): void;
   random?(): number;
+  /** Запросить схему сразу при создании (параллельно с загрузкой редактора). Выключено по умолчанию — для тестов. */
+  prefetch?: boolean;
 }
 
 const AUTHOR_SAVE_MS = 2500;
@@ -50,17 +56,34 @@ export class BoardSync {
   private saving = false;
   private rpc: FrameRpc;
   private status: BoardStatus = { phase: "loading", saved: "saved" };
+  private t0 = performance.now();
+  private tm: { init?: number; state?: number; loadPosted?: number; loaded?: number } = {};
+  private early: { at: number; p: Promise<WhiteboardState> } | null = null;
+  private usedEarly = false;
 
   constructor(private d: SyncDeps) {
     this.rpc = new FrameRpc((m) => this.d.post(m), (fn, ms) => this.timer(fn, ms), (h) => this.clear(h));
+    if (d.prefetch) {
+      // схема запрашивается СРАЗУ, пока загружается сам редактор (раньше запрос шёл только после его запуска — два ожидания подряд)
+      this.early = { at: performance.now(), p: d.fetchState() };
+      this.early.p.catch(() => undefined);
+    }
+  }
+
+  /** Сколько заняла загрузка: окно редактора, получение схемы, отрисовка схемы в редакторе. Пустой объект, пока доска не готова. */
+  timings(): BoardTimings {
+    const r = (x?: number, from = this.t0) => (x === undefined ? undefined : Math.round(x - from));
+    const t = this.tm;
+    return { editor_ms: r(t.init), state_ms: r(t.state), diagram_ms: t.loaded !== undefined && t.loadPosted !== undefined ? Math.round(t.loaded - t.loadPosted) : undefined,
+             total_ms: r(t.loaded), prefetched: this.usedEarly };
   }
 
   // ----------------------------------------------------------------------------------------- события редактора
   handleFrame(m: FrameMsg): void {
     if (this.phase === "disposed") return;
     switch (m.event) {
-      case "init": void this.start(); break;
-      case "load": if (this.phase === "loading") { this.phase = "ready"; this.setStatus({ phase: "ready" }); this.drain(); } break;
+      case "init": this.tm.init ??= performance.now(); void this.start(); break;
+      case "load": if (this.phase === "loading") { this.tm.loaded ??= performance.now(); this.phase = "ready"; this.setStatus({ phase: "ready" }); this.drain(); } break;
       case "autosave": this.onAutosave(m); break;
       case "patch": if (m.checksumMismatch) this.onMismatch(); break;
       case "export": this.rpc.handle(m); break;
@@ -112,8 +135,13 @@ export class BoardSync {
     this.phase = "fetching";
     this.setStatus({ phase: "loading" });
     let st: WhiteboardState;
-    try { st = await this.d.fetchState(); }
-    catch {
+    try {
+      const e = this.early;
+      this.early = null;
+      if (e && performance.now() - e.at < 20_000) { this.usedEarly = true; st = await e.p; }       // свежий ранний ответ; старый не используем
+      else st = await this.d.fetchState();
+      this.tm.state ??= performance.now();
+    } catch {
       if (this.phase !== "fetching") return;
       this.setStatus({ phase: "error", message: "Не удалось загрузить схему. Повтор…" });
       this.timer(() => { if (this.phase === "fetching") void this.start(); }, 3000);
@@ -126,6 +154,7 @@ export class BoardSync {
     for (const p of st.patches) if (p.seq > st.seq) this.pending.set(p.seq, p);
     this.dirtyOwn = false;
     this.phase = "loading";
+    this.tm.loadPosted ??= performance.now();
     this.d.post({ action: "load", xml: st.xml ?? EMPTY_XML, autosave: 1, diffSync: true });
   }
 

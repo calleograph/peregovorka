@@ -9,6 +9,8 @@ export type LiveEvent =
   | { type: "transcription_changed"; enabled: boolean }
   | { type: "floor_changed"; identity: string; granted: boolean; by?: string }
   | { type: "chat_message"; message: ChatMessage }
+  | { type: "chat_typing"; id: string; name: string; typing: boolean }
+  | { type: "hand_changed"; identity: string; name: string; raised: boolean; by_leader: boolean; queue: { identity: string; name: string; at: number }[] }
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
   | { type: "whiteboard_saved"; seq: number; shapes: number; by: string };
 
