@@ -320,7 +320,10 @@ class ProtocolService:
             if proto_cfg.auto_summary:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
             if self.maps is not None:
-                await self.maps.maybe_auto(meeting_id)          # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
+                try:
+                    await self.maps.maybe_auto(meeting_id)      # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
+                except Exception:  # noqa: BLE001 — сбой постановки карты в очередь не должен отменять рассылку материалов
+                    log.exception("Не удалось поставить карту разговора в очередь", extra={"meeting_id": str(meeting_id)})
             if self.after_finalize is not None:
                 await self.after_finalize(meeting_id)
         except Exception:  # noqa: BLE001
