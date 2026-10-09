@@ -258,30 +258,36 @@ def merge_topics(found: list[dict]) -> list[dict]:
 
 
 def resolve_overlaps(groups: list[dict], run: MapRun) -> None:
-    """Темы на шкале не накладываются: идём по времени, начало следующего отрезка сдвигается к концу предыдущего; полностью перекрытый отрезок отбрасывается.
-    Мелкие отрезки (шум) удаляются, соседние отрезки одной темы сливаются."""
-    flat = sorted(((s["start_s"], s["end_s"], gi, s) for gi, g in enumerate(groups) for s in g["segs"]), key=lambda x: (x[0], -x[1]))
+    """Темы на шкале не накладываются. Модель часто называет широкую тему и узкие внутри неё: на каждом участке времени остаётся самый узкий из покрывающих
+    его отрезков (конкретное важнее общего), широкая тема при этом делится. Мелкие участки (шум) удаляются, соседние участки одной темы сливаются."""
+    segs = [(s["start_s"], s["end_s"], gi, s) for gi, g in enumerate(groups) for s in g["segs"] if s["end_s"] > s["start_s"]]
     for g in groups:
         g["segs"] = []
-    cur_end = -1
-    for start, end, gi, s in flat:
-        start = max(start, cur_end)
-        if end - start < MIN_SEGMENT_S:
-            run.rejected += 1
-            run.rejected_reasons["слишком короткий или перекрытый отрезок"] = run.rejected_reasons.get("слишком короткий или перекрытый отрезок", 0) + 1
-            continue
-        groups[gi]["segs"].append({"start_s": start, "end_s": end, "first": s["first"], "last": s["last"]})
-        cur_end = end
+    points = sorted({p for a, b, _g, _s in segs for p in (a, b)})
+    pieces: list[tuple[int, int, int, dict]] = []
+    for a, b in zip(points, points[1:]):
+        cover = [x for x in segs if x[0] <= a and x[1] >= b]
+        if cover:
+            best = min(cover, key=lambda x: (x[1] - x[0], x[0]))
+            pieces.append((a, b, best[2], best[3]))
     for g in groups:
-        g["segs"].sort(key=lambda s: s["start_s"])
+        gi = groups.index(g)
+        mine = sorted((p for p in pieces if p[2] == gi), key=lambda p: p[0])
+        others = [p for p in pieces if p[2] != gi]
         merged: list[dict] = []
-        for s in g["segs"]:
-            if merged and s["start_s"] - merged[-1]["end_s"] <= MERGE_GAP_S:
-                merged[-1]["end_s"] = max(merged[-1]["end_s"], s["end_s"])
-                merged[-1]["last"] = max(merged[-1]["last"], s["last"])
+        for a, b, _gi, src in mine:
+            # соседние участки одной темы сливаются, только если между ними нет участков других тем
+            if merged and a - merged[-1]["end_s"] <= MERGE_GAP_S and not any(o[0] < a and o[1] > merged[-1]["end_s"] for o in others):
+                merged[-1]["end_s"] = b
+                merged[-1]["last"] = max(merged[-1]["last"], src["last"])
             else:
-                merged.append(dict(s))
-        g["segs"] = merged
+                merged.append({"start_s": a, "end_s": b, "first": src["first"], "last": src["last"]})
+        kept = [m for m in merged if m["end_s"] - m["start_s"] >= MIN_SEGMENT_S]
+        dropped = len(merged) - len(kept)
+        if dropped:
+            run.rejected += dropped
+            run.rejected_reasons["слишком короткий участок"] = run.rejected_reasons.get("слишком короткий участок", 0) + dropped
+        g["segs"] = kept
     groups[:] = [g for g in groups if g["segs"]]
 
 

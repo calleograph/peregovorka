@@ -110,7 +110,13 @@ def test_segments_do_not_overlap_short_noise_is_dropped_and_neighbours_merge():
     assert all(a[1] <= b[0] for a, b in zip(spans, spans[1:])), spans
     assert all(e - s >= cm.MIN_SEGMENT_S for s, e, _t in spans)
     a = next(g for g in groups if g["title"] == "A")
-    assert a["segs"] == [{"start_s": 0, "end_s": 100, "first": 0, "last": 1}], "перекрытый отрезок A, целиком внутри B, отброшен"
+    assert [(s["start_s"], s["end_s"]) for s in a["segs"]] == [(0, 100), (130, 200)], "отрезок B (90–300) делится между A и B: конкретное важнее общего"
+    # узкая тема внутри широкой не пропадает, а широкая делится
+    wide = [{"key": frozenset(), "title": "Общая", "summaries": [], "cats": {"dev": 1}, "segs": [{"start_s": 0, "end_s": 600, "first": 0, "last": 9}]},
+            {"key": frozenset(), "title": "Узкая", "summaries": [], "cats": {"dev": 1}, "segs": [{"start_s": 200, "end_s": 320, "first": 3, "last": 5}]}]
+    cm.resolve_overlaps(wide, cm.MapRun())
+    got = {g["title"]: [(s["start_s"], s["end_s"]) for s in g["segs"]] for g in wide}
+    assert got == {"Общая": [(0, 200), (320, 600)], "Узкая": [(200, 320)]}, got
 
 
 def test_more_topics_than_the_limit_collapse_into_other_discussions():
