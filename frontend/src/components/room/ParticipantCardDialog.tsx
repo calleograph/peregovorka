@@ -22,11 +22,10 @@ export default function ParticipantCardDialog({ meetingId, identity, name, role,
         </div>
       </div>
       {err && <div className="alert error" role="alert">{err}</div>}
-      {full && (card?.email || card?.phone || card?.login) && (
+      {full && (card?.email || card?.phone) && (
         <dl className="profile-dl">
           {card?.email && <div><dt>E-mail</dt><dd><a href={`mailto:${card.email}`}>{card.email}</a></dd></div>}
           {card?.phone && <div><dt>Телефон</dt><dd>{card.phone}</dd></div>}
-          {card?.login && <div><dt>Логин</dt><dd>{card.login}</dd></div>}
         </dl>
       )}
       {card && !full && !card.guest && <p className="muted small">Подробные данные участников доступны только сотрудникам.</p>}

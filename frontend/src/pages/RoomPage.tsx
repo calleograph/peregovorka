@@ -900,7 +900,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           </div>
         )}
         <div className={`tiles n${n} ${sharer || boardOpen ? "strip" : ""}`}>
-          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
+          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 

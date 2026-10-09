@@ -72,27 +72,51 @@ def clean_choice(raw: dict | None) -> dict | None:
     return out
 
 
+def task_mode(cfg: LlmSettings, purpose: str) -> tuple[str, str | None]:
+    """(режим, профиль) системного назначения задачи: local | external | off и идентификатор внешнего подключения ("main" или id профиля; None — по умолчанию)."""
+    if purpose == "protocol":
+        return cfg.effective_provider, cfg.protocol_profile or None
+    sp = getattr(cfg, f"{purpose}_provider", "same")
+    if sp == "same":
+        return cfg.effective_provider, getattr(cfg, f"{purpose}_profile", None) or cfg.protocol_profile or None
+    return sp, getattr(cfg, f"{purpose}_profile", None) or None
+
+
 async def system_llm(profiles: ProfileService, db: AsyncSession, purpose: str = "protocol"):
-    """Системная модель по умолчанию (для протокола или для резюме). Первичен РЕЖИМ из общих настроек (Локальная / Внешняя / Отключено).
-    Профиль, отмеченный «Внешний API по умолчанию», применяется только при режиме «Внешняя» и никогда не перебивает выбранную локальную модель или «Отключено».
-    Для резюме отдельная настройка `summary_provider`: same — как для протокола, иначе local / external / off."""
+    """Системная модель задачи («Назначения» в разделе LLM): режим (локальная / внешняя / отключена) и, для внешней, конкретное подключение.
+    Первичен РЕЖИМ задачи; профиль, отмеченный «по умолчанию», применяется только если у задачи подключение не выбрано явно, и никогда не перебивает локальную модель или «Отключено».
+    Для резюме и карты разговора режим `same` = как у протокола."""
     main = await profiles.get_settings(db, "llm", None)
     cfg = main.settings
-    if purpose in ("summary", "map"):
-        sp = getattr(cfg, f"{purpose}_provider", "same")
-        if sp == "off":
-            return Resolved(cfg.model_copy(update={"provider": "off", "enabled": False}), main.profile_id, "Отключено")      # type: ignore[union-attr]
-        if sp == "local":
-            return Resolved(cfg.model_copy(update={"provider": "local", "enabled": True}), main.profile_id, main.name)       # type: ignore[union-attr]
-        if sp == "external":
-            ext = await profiles.resolve(db, "llm", None)
-            es = ext.settings
-            if es.effective_provider != "external":                          # type: ignore[union-attr]
-                es = es.model_copy(update={"provider": "external", "enabled": True})      # type: ignore[union-attr]
-            return Resolved(es, ext.profile_id, ext.name)
-    if cfg.effective_provider == "external":    # type: ignore[union-attr]
-        return await profiles.resolve(db, "llm", None)
-    return main
+    mode, pid = task_mode(cfg, purpose)                       # type: ignore[arg-type]
+    if mode == "off":
+        return Resolved(cfg.model_copy(update={"provider": "off", "enabled": False}), main.profile_id, "Отключено")      # type: ignore[union-attr]
+    if mode == "local":
+        return Resolved(cfg.model_copy(update={"provider": "local", "enabled": True}), main.profile_id, main.name)       # type: ignore[union-attr]
+    ext = None
+    if pid:
+        try:
+            ext = await profiles.get_settings(db, "llm", pid)
+        except SettingsError:
+            ext = None                                         # выбранное подключение удалено — как «по умолчанию» (политика on_missing — на уровне комнат)
+    if ext is None:
+        ext = await profiles.resolve(db, "llm", None)
+    es = ext.settings
+    if es.effective_provider != "external":                    # type: ignore[union-attr]
+        es = es.model_copy(update={"provider": "external", "enabled": True})      # type: ignore[union-attr]
+    return Resolved(es, ext.profile_id, ext.name)
+
+
+async def apply_task_limit(profiles: ProfileService, db: AsyncSession, ch: "LlmChoice", purpose: str) -> "LlmChoice":
+    """Потолок ответа по задаче (системные `limit_*`): итог = min(потолок задачи, предел подключения), далее — окно контекста (в output_limit)."""
+    main = await profiles.get_settings(db, "llm", None)
+    cap = getattr(main.settings, f"limit_{purpose}", None)
+    if not cap or not ch.available:
+        return ch
+    field = f"max_tokens_{purpose}"
+    cur = getattr(ch.settings, field, None)
+    ch.settings = ch.settings.model_copy(update={field: cap if cur is None else min(cur, cap)})
+    return ch
 
 
 def parse_once(key: str | None) -> dict | None:
@@ -110,6 +134,13 @@ def parse_once(key: str | None) -> dict | None:
 
 async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
                       once: dict | None = None) -> LlmChoice:
+    """Модель для задачи (протокол / резюме / карта): разовый выбор → встреча → комната → системное назначение; затем применяется потолок ответа по задаче."""
+    ch = await _resolve_llm(profiles, local, db, room, meeting, purpose, once)
+    return await apply_task_limit(profiles, db, ch, purpose)
+
+
+async def _resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
+                       once: dict | None = None) -> LlmChoice:
     """Модель для протокола (purpose="protocol") или краткого резюме (purpose="summary"): система → комната → встреча, для каждой задачи своя цепочка."""
     system = await system_llm(profiles, db, purpose)
     sys_cfg: LlmSettings = system.settings   # type: ignore[assignment]

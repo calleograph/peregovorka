@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Participant, Track } from "livekit-client";
 import { Icon } from "../Icons";
+import { useContextMenu, type MenuItem } from "../ContextMenu";
+import { api } from "../../api";
+import { copyText } from "../../util";
 import { IDENTITY, clampView, panBy, percent, wheelFactor, zoomAt, type Size, type View } from "../../screenZoom";
 
 export interface PView {
@@ -85,7 +88,22 @@ function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions
   );
 }
 
-export function ParticipantTile({ p, compact, actions, onCard }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void }) {
+export function ParticipantTile({ p, compact, actions, onCard, meetingId }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string }) {
+  const { onContextMenu, node: ctxNode } = useContextMenu();
+  const [flash, setFlash] = useState("");
+  const say = (t: string) => { setFlash(t); window.setTimeout(() => setFlash(""), 2200); };
+  // Правая кнопка: быстрые действия над участником (каждое доступно и обычным путём: клик по плитке, «⋯», карточка). Недоступное данному пользователю не показывается.
+  const items = (): MenuItem[] => [
+    { id: "card", label: "Открыть карточку", icon: "user", hidden: !onCard || p.local, onSelect: () => onCard?.(p) },
+    { id: "mention", label: "Упомянуть в чате", icon: "chat", hidden: p.local, onSelect: () => window.dispatchEvent(new CustomEvent("pg:mention", { detail: p.name })) },
+    { id: "name", label: "Копировать ФИО", icon: "copy", onSelect: () => void copyText(p.name).then((ok) => say(ok ? "ФИО скопировано" : "Не удалось скопировать")) },
+    { id: "mail", label: "Копировать e-mail", icon: "copy", hidden: !meetingId || p.local,
+      onSelect: () => void api.participantCard(meetingId!, p.identity).then((c) => (c.email ? copyText(c.email).then((ok) => say(ok ? "E-mail скопирован" : "Не удалось скопировать")) : say("E-mail не указан"))).catch(() => say("Карточка недоступна")) },
+    { id: "floor", label: p.floor ? "Забрать слово" : "Дать слово", icon: "hand", hidden: !(actions?.presentation && actions.onFloor && !p.leader && !p.local), onSelect: () => actions?.onFloor?.(p, !p.floor) },
+    { id: "hand", label: "Снять поднятую руку", icon: "hand", hidden: !(actions?.onLowerHand && p.hand && !p.local), onSelect: () => actions?.onLowerHand?.(p) },
+    { id: "mute", label: "Выключить микрофон", icon: "micOff", hidden: !(actions?.onMute && p.mic && !p.local), onSelect: () => actions?.onMute?.(p) },
+    { id: "kick", label: "Удалить из встречи", icon: "userx", danger: true, hidden: !(actions?.onKick && !p.leader && !p.local), confirm: `Удалить «${p.name}» из встречи?`, onSelect: () => actions?.onKick?.(p) },
+  ];
   const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
   const [menu, setMenu] = useState<{ top: number; right: number } | null>(null);
   const tileRef = useRef<HTMLDivElement>(null);
@@ -99,7 +117,7 @@ export function ParticipantTile({ p, compact, actions, onCard }: { p: PView; com
   });
   const manageable = !!actions && !p.local && !!(actions.onMute || actions.onKick || actions.onLowerHand || (actions.presentation && actions.onFloor));
   return (
-    <div ref={tileRef} className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""} ${p.floor ? "has-floor" : ""} ${manageable ? "manageable" : ""}`} title={p.name}
+    <div ref={tileRef} onContextMenu={onContextMenu(items)} className={`tile ${p.speaking ? "speaking" : ""} ${compact ? "compact" : ""} ${p.floor ? "has-floor" : ""} ${manageable ? "manageable" : ""}`} title={p.name}
          onClick={onCard ? () => onCard(p) : manageable ? toggleMenu : undefined} role={onCard ? "button" : undefined} tabIndex={onCard ? 0 : undefined}
          onKeyDown={onCard ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(p); } } : undefined}>
       {p.hand && <span className="tile-hand" title={p.handOrder ? `Поднял руку (в очереди: ${p.handOrder})` : "Поднял руку"} role="img" aria-label="Поднята рука"><Icon name="hand" size={16} />{p.handOrder ? <b>{p.handOrder}</b> : null}</span>}
@@ -118,6 +136,8 @@ export function ParticipantTile({ p, compact, actions, onCard }: { p: PView; com
           {menu && <TileMenu p={p} actions={actions} pos={menu} onClose={closeMenu} />}
         </>
       )}
+      {ctxNode}
+      {flash && <span className="tile-flash" role="status">{flash}</span>}
       <div className="tile-foot">
         <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>
         <MicIndicator on={p.mic} speaking={p.speaking} name={p.name} />

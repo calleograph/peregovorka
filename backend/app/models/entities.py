@@ -209,6 +209,8 @@ class MeetingParticipant(Base):
     joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)  # токен выдан
     connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # подтверждено LiveKit
     left_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Снимок данных сотрудника на момент встречи (ФИО, должность, подразделение, e-mail, телефон): не меняется после сохранения, протоколы показывают данные того времени
+    snapshot: Mapped[dict | None] = mapped_column(JSONType)
 
     meeting: Mapped[Meeting] = relationship(back_populates="participants")
     user: Mapped[User] = relationship(lazy="joined")

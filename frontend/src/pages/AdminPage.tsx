@@ -8,12 +8,13 @@ import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmApiFields, llmModeFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
 import MailAdmin, { MailLogAdmin } from "./admin/MailAdmin";
 import MailTemplatesAdmin from "./admin/MailTemplatesAdmin";
+import LlmAdmin from "./admin/LlmAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import SipAdmin from "./admin/SipAdmin";
@@ -21,8 +22,6 @@ import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
-import LocalLlmPanel from "./admin/LocalLlmPanel";
-import { LlmEffectivePanel, LlmStatsPanel } from "./admin/LlmOverview";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
 
@@ -81,17 +80,7 @@ const GROUPS: Group[] = [
           intro="Внутренний сервис обезличивания (DocClean или совместимый JSON API). Пока он ВКЛЮЧЁН, текст проходит через него перед отправкой в языковую модель, а при сбое протокол не создаётся. Если выключить — протоколы и резюме создаются как обычно, но текст уходит в модель без обезличивания. Для отдельной переговорки обезличивание можно выключить или включить принудительно в её настройках." />
         <ApiProfilesAdmin key="anon-profiles" kind="anonymizer" fields={anonFields} />
       </>) },
-    { id: "llm", label: "Языковая модель (LLM)", render: () => (
-      <>
-        <LlmEffectivePanel />
-        <SettingsForm key="llm-mode" group="llm" title="Системные значения по умолчанию: какая модель что делает" fields={llmModeFields}
-          intro="Эти значения действуют, пока для переговорки, встречи или конкретного формирования документа не выбрана другая модель. Порядок выбора при формировании: модель, выбранная в окне «Сформировать» → настройка встречи → настройка переговорки → эти значения." />
-        <LocalLlmPanel />
-        <SettingsForm key="llm-api" group="llm" title="Внешний API по умолчанию (прежние общие настройки)" fields={llmApiFields} testable
-          intro="Подключение к внешней модели, которое используется, когда выше выбрано «Внешняя LLM». Для внешней модели действует обезличивание по правилам переговорки. Несколько подключений можно завести в разделе ниже." />
-        <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmApiFields} />
-        <LlmStatsPanel />
-      </>) },
+    { id: "llm", label: "Языковая модель (LLM)", render: () => <LlmAdmin /> },
     { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
   ] },
   { title: "Журналы", pages: [

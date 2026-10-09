@@ -12,7 +12,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Protocol
+from ..models import ConversationMap, Protocol
 
 # Грубые оценки секунд на 1 000 знаков стенограммы, пока нет истории. Локальная модель — по замерам на 4 потоках CPU (HISTORY.md), внешняя — по
 # сетевым вызовам; диапазон в прогнозе намеренно широкий.
@@ -77,6 +77,11 @@ async def recent_runs(db: AsyncSession, limit: int = 1500) -> list[dict]:
     for kind, status, meta, created in rows:
         if isinstance(meta, dict) and meta.get("model"):
             out.append({"kind": kind, "status": status, "meta": meta, "at": created})
+    maps = (await db.execute(select(ConversationMap.status, ConversationMap.meta, ConversationMap.updated_at).where(ConversationMap.meta.is_not(None))
+                             .order_by(ConversationMap.updated_at.desc()).limit(limit))).all()
+    for status, meta, at in maps:                          # карты разговоров — отдельная задача «map» в той же таблице показателей
+        if isinstance(meta, dict) and meta.get("model") and status in ("ready", "failed"):
+            out.append({"kind": "map", "status": status, "meta": meta, "at": at})
     return out
 
 
@@ -110,6 +115,13 @@ def forecast(runs: list[dict], *, kind: str, model: str, local: bool, profile: s
     return {"low_s": int(low), "high_s": int(high), "text": format_range(low, high), "basis": basis, "samples": count, "chunks": chunks,
             "note": ("по %d предыдущим документам этой модели" % count) if basis == "history"
             else "грубая оценка: по этой модели ещё нет истории, прогноз уточнится после нескольких документов"}
+
+
+ARCHIVED_MODELS = ("qwen3-0.6b",)          # снятые с вооружения модели: статистика остаётся, но помечается и по умолчанию скрывается
+
+
+def is_archived(model_id: str) -> bool:
+    return str(model_id or "").lower().startswith(ARCHIVED_MODELS)
 
 
 def model_stats(runs: list[dict]) -> list[dict]:
@@ -146,7 +158,7 @@ def model_stats(runs: list[dict]) -> list[dict]:
     for g in groups.values():
         t, i, o = g.pop("_t"), g.pop("_in"), g.pop("_out")
         tok, tok_s = g.pop("_tok"), g.pop("_tok_s")
-        g.update(documents=g["ok"] + g["failed"], avg_s=round(sum(t) / len(t), 1) if t else None, median_s=round(statistics.median(t), 1) if t else None,
+        g.update(archived=is_archived(g["model"]), documents=g["ok"] + g["failed"], avg_s=round(sum(t) / len(t), 1) if t else None, median_s=round(statistics.median(t), 1) if t else None,
                  avg_input_chars=int(sum(i) / len(i)) if i else None, avg_output_chars=int(sum(o) / len(o)) if o else None,
                  tokens_per_s=round(tok / tok_s, 1) if tok_s else None, last=g["last"].isoformat() if isinstance(g["last"], datetime) else None)
         out.append(g)

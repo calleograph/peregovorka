@@ -359,3 +359,35 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .rm-sub code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .rm-act { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
 .check-body .badge { display: inline-block; width: fit-content; align-self: flex-start; margin-left: 6px; }
+
+
+/* ---------- контекстное меню ---------- */
+.ctx-menu { position: fixed; z-index: 1500; min-width: 210px; max-width: 320px; padding: 5px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop); animation: toastIn .14s var(--ease) both; }
+.ctx-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.ctx-item:hover:not(:disabled), .ctx-item:focus-visible { background: var(--accent-soft); outline: none; }
+.ctx-item:disabled { opacity: .5; cursor: default; }
+.ctx-item.danger { color: var(--danger-text); }
+.ctx-item.danger:hover:not(:disabled), .ctx-item.danger:focus-visible { background: var(--danger-bg); }
+.ctx-ico { display: inline-flex; width: 16px; flex: none; color: var(--muted); }
+.ctx-item.danger .ctx-ico { color: inherit; }
+.ctx-sep { height: 1px; margin: 5px 4px; background: var(--line); }
+.ctx-confirm { padding: 8px 10px; } .ctx-confirm p { margin: 0 0 8px; font-size: 13.5px; }
+
+/* ---------- просмотрщик изображений ---------- */
+.iv-backdrop { position: fixed; inset: 0; z-index: 1400; background: rgba(10, 14, 22, .62); }
+.iv-window { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1100px, 82vw); height: min(780px, 82vh); min-width: 340px; min-height: 260px; max-width: 98vw; max-height: 98vh;
+  display: flex; flex-direction: column; overflow: hidden; resize: both; border-radius: 14px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop); outline: none; }
+.iv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; touch-action: none; }
+.iv-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13.5px; max-width: 40%; }
+.iv-tools { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; cursor: default; }
+.iv-pct { min-width: 44px; text-align: center; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.iv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: repeating-conic-gradient(var(--soft) 0 25%, transparent 0 50%) 50% / 22px 22px; touch-action: none; }
+.iv-stage img { position: absolute; left: 50%; top: 50%; max-width: none; max-height: none; transform-origin: center; user-select: none; -webkit-user-drag: none; will-change: transform; }
+.iv-msg { position: absolute; inset: 0; display: grid; place-items: center; }
+
+/* ---------- мелочи ---------- */
+.chat-image { padding: 0; border: 0; background: transparent; cursor: zoom-in; display: block; }
+.tile-flash { position: absolute; left: 8px; bottom: 44px; z-index: 3; padding: 3px 10px; border-radius: 999px; background: rgba(17, 24, 39, .85); color: #fff; font-size: 12px; pointer-events: none; }
+.tp-note { padding: 3px 8px; border-radius: 8px; background: var(--ok-bg); color: var(--ok-text); margin-bottom: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

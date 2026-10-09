@@ -58,7 +58,7 @@ async def refresh_profile(request: Request, su: SessionUser = Depends(require_us
     if ident.ad_guid and ident.ad_guid != u.ad_guid:
         raise HTTPException(status_code=409, detail="В каталоге найдена другая учётная запись с таким логином.")
     u.display_name, u.email = ident.display_name or u.display_name, ident.email
-    apply_profile(u, ident)
+    apply_profile(u, ident, clear_missing=True)
     await write_audit(db, actor_user_id=u.id, actor_name=u.display_name, action="profile.refresh", target_type="user", target_id=str(u.id), ip=client_ip(request), details={})
     await db.commit()
     return profile_out(u, su)

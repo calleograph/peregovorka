@@ -32,11 +32,15 @@ _MESSAGES = {
 _UNAVAILABLE = ("Служба входа временно недоступна. Повторите позже или обратитесь к администратору.", 503)
 
 
-def apply_profile(user: User, ident: DirectoryIdentity) -> None:
-    """Профиль из каталога (разрешённые атрибуты) в локальную запись; пустое значение в каталоге очищает поле (человек сменил должность)."""
+def apply_profile(user: User, ident: DirectoryIdentity, *, clear_missing: bool = False) -> None:
+    """Профиль из каталога (разрешённые атрибуты) в локальную запись при входе: ПРИХОДЯЩИЕ значения обновляют поля, а отсутствующий атрибут рабочее значение не стирает
+    (каталог мог временно не вернуть необязательный атрибут). Очищать поля по отсутствующему атрибуту можно только при ручном «Обновить данные» (`clear_missing=True`)."""
     def cut(v: str | None, n: int) -> str | None:
         return (v or "").strip()[:n] or None
-    user.title, user.department, user.phone = cut(ident.title, 300), cut(ident.department, 300), cut(ident.phone, 64)
+    for field, raw, n in (("title", ident.title, 300), ("department", ident.department, 300), ("phone", ident.phone, 64)):
+        val = cut(raw, n)
+        if val is not None or clear_missing:
+            setattr(user, field, val)
     user.profile_synced_at = utcnow()
 
 

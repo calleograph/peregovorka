@@ -58,6 +58,14 @@ jobs:
           sed -i 's#^LDAP_CA_FILE=.*#LDAP_CA_FILE=/tmp/vm-ca/ad-ca.pem#; s#^DATA_ROOT=.*#DATA_ROOT=/tmp/vm-data#' .env
           docker compose -p ci --project-directory deployment --env-file .env -f deployment/compose.yml config -q
 
+  private-data:
+    # Проект публичный: частная конфигурация конкретного сервера (домены, хосты, адреса, e-mail, IP) в репозиторий попадать не должна.
+    # Проверка по списку РАЗРЕШЁННОГО (scripts/private-data.allow); свои запрещённые шаблоны — вне git (PRIVATE_DENY_FILE).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_private_data.py
+
   version:
     # Версия задаётся одним файлом VERSION; CHANGELOG и frontend/package.json обязаны с ней совпадать, а тег (если это сборка тега) — быть vVERSION.
     runs-on: ubuntu-24.04

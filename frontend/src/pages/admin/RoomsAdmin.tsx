@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { copyText } from "../../util";
+import { useContextMenu } from "../../components/ContextMenu";
 import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile, type HistoryAccess, type RoomAdmin, type RoomType } from "../../api";
 import AclPicker, { entryLabel } from "../../components/AclPicker";
 
@@ -71,6 +72,7 @@ function GuestLink({ form, onChange }: { form: Form; onChange: (r: RoomAdmin) =>
 }
 
 export default function RoomsAdmin() {
+  const { onContextMenu, node: ctxNode } = useContextMenu();
   const [rooms, setRooms] = useState<RoomAdmin[]>([]);
   const [form, setForm] = useState<Form | null>(null);
   const [tab, setTab] = useState<TabId>("main");
@@ -266,11 +268,17 @@ export default function RoomsAdmin() {
         </form>
       )}
 
+      {ctxNode}
       <div className="table-scroll"><table className="table">
         <thead><tr><th>Название</th><th>Состояние</th><th>Доступ</th><th>Руководители</th><th>Опции</th><th /></tr></thead>
         <tbody>
           {rooms.map((r) => (
-            <tr key={r.id}>
+            <tr key={r.id} onContextMenu={onContextMenu(() => [
+              { id: "open", label: "Открыть комнату", icon: "arrowR", onSelect: () => window.open(`/rooms/${r.slug}`, "_blank", "noopener") },
+              { id: "edit", label: "Настроить", icon: "gear", onSelect: () => open(toForm(r)) },
+              { id: "url", label: "Скопировать URL", icon: "copy", onSelect: () => void copyText(`${window.location.origin}/rooms/${r.slug}`) },
+              { id: "del", label: "Удалить", icon: "close", danger: true, confirm: `Удалить переговорку «${r.name}»?`, onSelect: () => remove(r) },
+            ])}>
               <td>{r.name}{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
               <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча</span>}
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>

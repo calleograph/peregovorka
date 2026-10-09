@@ -1,7 +1,9 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { api, type Segment } from "../api";
 import { LiveBus, LiveSocket, type LiveEvent, type SocketStatus } from "../liveSocket";
-import { formatTime, mergeSegment, mergeSegments } from "../transcript";
+import { formatTime, mergeSegment, mergeSegments, transcriptCopyText } from "../transcript";
+import { copyText } from "../util";
+import { useContextMenu, type MenuItem } from "./ContextMenu";
 import { chatSoundEnabled, playChatSound, setChatSoundEnabled } from "../chatSound";
 import { type Collapsed, flexFor, loadRatio, ratioFromPointer, saveRatio, clampRatio } from "../panelSplit";
 import ChatPanel from "./ChatPanel";
@@ -78,6 +80,17 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, ca
   const [part, setPart] = useState<Collapsed>(null);
   const [soundOn, setSoundOn] = useState(chatSoundEnabled);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const { onContextMenu, node: menuNode } = useContextMenu();
+  const [copied, setCopied] = useState("");
+  const copyAll = async () => {          // вся накопленная транскрипция (из состояния панели), а не только то, что сейчас видно на экране
+    const ok = await copyText(transcriptCopyText(segments));
+    setCopied(ok ? "Транскрипция скопирована" : "Не удалось скопировать — выделите текст вручную");
+    window.setTimeout(() => setCopied(""), 2200);
+  };
+  const uttMenu = (s: { started_at: string; display_name: string; text: string }): MenuItem[] => [
+    { id: "text", label: "Копировать реплику", icon: "copy", onSelect: () => void copyText(s.text) },
+    { id: "full", label: "Копировать с именем и временем", icon: "copy", onSelect: () => void copyText(`[${formatTime(s.started_at)}] ${s.display_name}: ${s.text}`) },
+  ];
   const cb = useRef({ onMeetingEnded, forward, onStatus });
   cb.current = { onMeetingEnded, forward, onStatus };
 
@@ -147,14 +160,21 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, ca
       {onToggleCollapsed && <button type="button" className="icon-btn" onClick={onToggleCollapsed} title="Свернуть панель" aria-label="Свернуть панель"><Icon name="chevronR" size={18} /></button>}
     </div>
   );
+  const copyBtn = (
+    <button type="button" className="icon-btn" onClick={() => void copyAll()} disabled={!segments.length} title="Скопировать всю транскрипцию" aria-label="Скопировать всю транскрипцию"><Icon name="copy" size={15} /></button>
+  );
   const transcriptBody = (
     <>
+      {menuNode}
+      <span className="sr-only" role="status" aria-live="polite">{copied}</span>
+      {copied && <div className="tp-note small" aria-hidden>{copied}</div>}
+      {!split && <div className="row" style={{ justifyContent: "flex-end" }}>{copyBtn}</div>}
       {!enabled && <p className="muted">В этой комнате транскрибация отключена.</p>}
       {enabled && paused && <div className="alert info" role="status">Транскрибация приостановлена руководителем. Звонок и запись звука продолжаются; реплики за это время в стенограмму не попадут.</div>}
       {enabled && !paused && !asrReady && <div className="alert info" role="status">{asrLost ? "Транскрибация временно недоступна — звонок продолжается. Реплики вернутся, когда сервис распознавания восстановится." : "Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов."}</div>}
       <div className="transcript-list" ref={boxRef} onScroll={onScroll} aria-live="polite">
         {segments.map((s) => (
-          <p key={s.uid} className="utt">
+          <p key={s.uid} className="utt" onContextMenu={onContextMenu(() => uttMenu(s))}>
             <span className="time">{formatTime(s.started_at)}</span>
             <strong>{s.display_name}</strong>
             <span>{s.text}</span>
@@ -210,7 +230,7 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, ca
       {st.cls !== "ok" && <div className="muted small">{st.text}</div>}
       <div className="tp-body" ref={bodyRef}>
         <section className={`tp-pane tp-top ${part === "top" ? "min" : ""}`} style={{ flex: flexFor("top", ratio, part) }} aria-label="Транскрипция">
-          <div className="tp-head"><b>Транскрипция</b>{segments.length ? <span className="muted small">{segments.length}</span> : null}<span className="spacer" />{paneBtns("top", "транскрипцию")}</div>
+          <div className="tp-head"><b>Транскрипция</b>{segments.length ? <span className="muted small">{segments.length}</span> : null}<span className="spacer" />{copyBtn}{paneBtns("top", "транскрипцию")}</div>
           {part !== "top" && <div className="tp-content">{transcriptBody}</div>}
         </section>
         {part === null && <div className="tp-divider" role="separator" aria-orientation="horizontal" aria-label="Изменить высоту транскрипции и чата (стрелки вверх/вниз)"

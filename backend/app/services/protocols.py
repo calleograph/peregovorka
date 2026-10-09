@@ -142,12 +142,12 @@ def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, s
 
 
 async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
-                           has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False) -> PipelineResult:
+                           has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False, attendees: dict | None = None) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
     if local is None and external_structured and structured:
         # Структурный режим внешней модели: тот же конвейер, что у локальной (JSON по схеме → проверка и сборка документа кодом); не получилось — обычный режим ниже
-        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=min(limit, EXTERNAL_FRAGMENT_CHARS))
+        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=min(limit, EXTERNAL_FRAGMENT_CHARS), attendees=attendees)
         if sr is not None and sr.ok_fragments:
             res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
             res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
@@ -157,7 +157,7 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
         res.warnings.append("Структурный режим не сработал (модель не вернула разбираемый JSON) — использован обычный режим.")
     if local is not None:
         # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
-        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit) if structured else None
+        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, attendees=attendees) if structured else None
         if sr is not None and sr.ok_fragments:
             res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
             res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
@@ -295,6 +295,10 @@ class ProtocolService:
                 if meeting is None or meeting.ended_at is None:
                     return
                 tz = await self._tz(db)
+                from .attendees import ensure_snapshots  # noqa: PLC0415
+
+                await ensure_snapshots(db, meeting)       # снимок данных участников сохраняется при завершении встречи — протокол через годы покажет должности того времени
+                await db.commit()
                 storage_cfg = await self._svc.get(db, "storage")
                 names = {p.user.livekit_identity: p.user.display_name for p in meeting.participants}
                 for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))).scalars():
@@ -615,6 +619,9 @@ class ProtocolService:
         if not materials.usable:
             raise NothingToProcess("В стенограмме нет реплик, а чат и доска пусты — протокол не создаётся")
         text = materials.text
+        from .attendees import attendees as load_attendees  # noqa: PLC0415
+
+        att = await load_attendees(db, meeting)          # единый источник для всех видов документа: снимок данных участников на момент встречи
 
         # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
@@ -639,12 +646,16 @@ class ProtocolService:
         try:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
                                           has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
-                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured")
+                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att)
         finally:
             info["llm_finished"] = datetime.now(timezone.utc)
             info["llm_stats"] = dict(llm.stats)
         warnings += pipe.warnings
         out = pipe.text
+        if kind == "protocol" and not pipe.structured:         # свободный режим / текстовый запасной путь: раздел «Присутствовали» добавляет код
+            from .doc_render import inject_attendees  # noqa: PLC0415
+
+            out = inject_attendees(out, att)
         meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
                 "llm_calls": pipe.calls, "parts": pipe.parts, "structured": pipe.structured or None,
                 "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens, "anonymized_chunks": clean.chunks,

@@ -722,7 +722,7 @@ async def _run_pass(llm: LlmClient, kind: str, frag: list[Line], frag_no: int, s
     return []
 
 
-async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int) -> Result:
+async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, attendees: dict | None = None) -> Result:
     res = Result()
     header, lines = parse_transcript(text)
     if not lines:
@@ -786,7 +786,7 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
     except LlmError:
         if kind == "summary":
             res.warnings.append("Краткое резюме не удалось получить от модели — показан перечень проверенных пунктов.")
-    doc = build_document(header, merged, summary=summary if kind == "protocol" else "", incomplete=bool(res.failed))
+    doc = build_document(header, merged, summary=summary if kind == "protocol" else "", incomplete=bool(res.failed), attendees=attendees if kind == "protocol" else None)
     res.structured["document"] = doc
     res.text = (summary if summary_ok else fallback_summary(merged)) if kind == "summary" else document_to_markdown(doc)
     return res

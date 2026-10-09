@@ -19,7 +19,7 @@ from .settings import AnonymizerSettings, LlmSettings, SettingsError, SettingsSe
 
 Kind = Literal["llm", "anonymizer"]
 MAIN = "main"
-MAIN_NAME = "Основной (из общих настроек)"
+MAIN_NAME = "Прежнее подключение"
 _MODELS = {"llm": LlmSettings, "anonymizer": AnonymizerSettings}
 _SECRET = {"llm": "api_key", "anonymizer": "token"}
 _GROUP = {"llm": "llm", "anonymizer": "anonymizer"}

@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ApiProfile, type ProfileKind, type SettingsValues, type TestResult } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
+import { useContextMenu } from "../../components/ContextMenu";
 import FieldsEditor from "./FieldsEditor";
 import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import type { Field } from "./SettingsForm";
@@ -14,7 +15,7 @@ const DEFAULTS: Record<ProfileKind, SettingsValues> = {
     auth_header_name: "X-API-Key", auth_username: "", extra_body: "" },
 };
 const WORDS: Record<ProfileKind, { one: string; many: string; where: string }> = {
-  llm: { one: "языковой модели", many: "Несколько API языковой модели", where: "протоколов и резюме" },
+  llm: { one: "языковой модели", many: "Внешние API", where: "протоколов, резюме и карт" },
   anonymizer: { one: "сервиса обезличивания", many: "Несколько API обезличивания", where: "обезличивания текста" },
 };
 
@@ -25,6 +26,7 @@ interface Edit { id?: string; name: string; values: SettingsValues; secrets: Rec
  * назначить свой конкретной переговорке (в настройках комнаты). «Основной» профиль — прежние общие настройки на этой странице ниже.
  */
 export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; fields: Field[] }) {
+  const { onContextMenu, node: ctxNode } = useContextMenu();
   const [rows, setRows] = useState<ApiProfile[]>([]);
   const [edit, setEdit] = useState<Edit | null>(null);
   const [headers, setHeaders] = useState<HeaderRow[]>([]);
@@ -37,7 +39,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
   const defLabel = llm ? "Внешний API по умолчанию" : "По умолчанию";
   const editFields = fields.filter((f) => f.name !== "enabled");
 
-  const load = useCallback(() => api.admin.profiles(kind).then(setRows).catch((e) => setErr(e.message)), [kind]);
+  const load = useCallback(() => api.admin.profiles(kind).then((r) => setRows(kind === "llm" ? r.filter((p) => !p.virtual || (p.config as Record<string, unknown>).model) : r)).catch((e) => setErr(e.message)), [kind]);
   useEffect(() => { setEdit(null); setTests({}); void load(); }, [load]);
 
   const open = (p?: ApiProfile) => { setHeaders(p ? headersFromValues(p.config as SettingsValues) : []); setEdit(p
@@ -61,6 +63,8 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
     } catch (x) { setErr((x as ApiError).message); } finally { setBusy(false); }
   };
 
+  // «Дублировать»: новое подключение с теми же параметрами; ключ не копируется (его вводят заново)
+  const duplicate = (p: ApiProfile) => { setHeaders(headersFromValues(p.config as SettingsValues)); setEdit({ name: `${p.name} (копия)`, values: { ...DEFAULTS[kind], ...(p.config as SettingsValues), [`${SECRET[kind]}_set`]: false }, secrets: {}, secretSet: false }); };
   const makeDefault = async (p: ApiProfile) => {
     setErr("");
     try { await api.admin.setDefaultProfile(kind, p.id); await load(); } catch (x) { setErr((x as ApiError).message); }
@@ -79,24 +83,28 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
   return (
     <section className="card profiles">
       <div className="row"><h2>{w.many}</h2><div className="spacer" />
-        {!edit && <button className="btn primary" onClick={() => open()}>Добавить API</button>}</div>
-      <p className="muted">Можно подключить несколько API {w.one}: например, внутренний и внешний. {llm
-        ? <>Отметьте один «Внешний API по умолчанию»: он используется, только когда в «Режиме» выше выбрана <b>«Внешняя LLM»</b>. При режиме «Локальная» или «Отключено» эта отметка ничего не меняет и локальную модель не перебивает.
-          Для конкретной комнаты или встречи модель выбирается в «Настройках комнаты» → «Языковая модель» и «Эта встреча». «Основной» — настройки этой страницы выше.</>
-        : <>Отметьте один «по умолчанию» — он будет использоваться для {w.where} во всех переговорках,
-        у которых не выбран свой. Свой API назначается в настройках переговорки (Переговорки → Изменить → «Нейросети»). «Основной» — настройки этой страницы ниже.</>}</p>
+        {!edit && <button className="btn primary" onClick={() => open()}>{llm ? "＋ Добавить подключение" : "Добавить API"}</button>}</div>
+      <p className="muted small">{llm
+        ? <>Каталог подключений к внешним языковым моделям. Какая модель используется для протокола, резюме и карты — на вкладке «Назначения». Для внешней модели действует обезличивание по правилам переговорки.</>
+        : <>Можно подключить несколько API {w.one}. Отметьте один «по умолчанию» — он используется для {w.where} во всех переговорках, у которых не выбран свой.</>}</p>
       {err && <div className="alert error" role="alert">{err}</div>}
 
+      {ctxNode}
       {!edit && (
         <table className="table">
-          <thead><tr><th>{defLabel}</th><th>Название</th><th>Адрес и модель</th><th>Ключ</th><th /></tr></thead>
+          <thead><tr>{!llm && <th>{defLabel}</th>}<th>Название</th><th>Адрес и модель</th><th>Ключ</th><th /></tr></thead>
           <tbody>
             {rows.map((p) => {
               const t = tests[p.id];
               return (
-                <tr key={p.id}>
-                  <td><input type="radio" name={`default-${kind}`} checked={p.is_default} onChange={() => makeDefault(p)} aria-label={llm ? `Сделать «${p.name}» внешним API по умолчанию` : `Использовать «${p.name}» по умолчанию`} /></td>
-                  <td>{p.name}{p.virtual && <span className="badge"> основной</span>}{p.is_default && <span className="badge ok"> {llm ? "внешний API по умолчанию" : "по умолчанию"}</span>}</td>
+                <tr key={p.id} onContextMenu={onContextMenu(() => [
+                  { id: "test", label: "Проверить", icon: "retry", onSelect: () => void test(p) },
+                  { id: "edit", label: "Изменить", icon: "gear", hidden: p.virtual, onSelect: () => open(p) },
+                  { id: "dup", label: "Дублировать", icon: "copy", onSelect: () => duplicate(p) },
+                  { id: "del", label: "Удалить", icon: "close", danger: true, hidden: p.virtual, confirm: `Удалить подключение «${p.name}»?`, onSelect: () => setDel(p) },
+                ])}>
+                  {!llm && <td><input type="radio" name={`default-${kind}`} checked={p.is_default} onChange={() => makeDefault(p)} aria-label={`Сделать «${p.name}» по умолчанию`} /></td>}
+                  <td>{p.name}{!llm && p.is_default && <span className="badge ok"> по умолчанию</span>}</td>
                   <td className="small">{target(p)}</td>
                   <td className="small">{p.secret_set ? "задан" : <span className="muted">нет</span>}</td>
                   <td className="actions">

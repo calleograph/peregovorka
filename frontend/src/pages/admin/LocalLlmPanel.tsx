@@ -75,11 +75,15 @@ export default function LocalLlmPanel() {
       <table className="table compact"><tbody>
         <tr><td>Модель</td><td><b>{st.model.title}</b> — {st.model.runtime}, контекст {st.model.context_tokens.toLocaleString("ru-RU")} токенов</td></tr>
         <tr><td>Файл модели</td><td>{FILE_TEXT[f.state]}{f.size_bytes ? ` · ${bytes(f.size_bytes)}` : ""} <span className="muted small">(ожидается {bytes(f.expected_bytes)})</span></td></tr>
+      </tbody></table>
+      <details className="tech-details"><summary>Технические сведения</summary>
+        <table className="table compact"><tbody>
         <tr><td>Контрольная сумма SHA-256</td><td>{f.sha256_state === "ok" ? "✓ совпадает" : f.sha256_state === "mismatch" ? <span className="badge warn">не совпадает</span> : f.sha256_state === "skipped" ? "проверка отключена в настройках сервера" : "—"}</td></tr>
         <tr><td>Сервер модели</td><td>{missing ? "—" : st.runtime.detail}</td></tr>
         <tr><td>Где работает</td><td>{st.endpoint}. Данные встреч не отправляются наружу.</td></tr>
         <tr><td>Для каких задач</td><td>{st.model.tasks.join(", ")}</td></tr>
-      </tbody></table>
+        </tbody></table>
+      </details>
       {st.model.light && <div className="alert info">{st.model.note} Для встреч длиннее ~{st.model.warn_input_chars.toLocaleString("ru-RU")} знаков стенограммы перед созданием протокола будет показано предупреждение.</div>}
       {st.provider === "local" && !st.ready && <div className="alert error">Выбран режим «Локальная», но модель не готова: протоколы и резюме не будут создаваться, пока она не загружена и не запущена.</div>}
       {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}

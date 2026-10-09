@@ -32,3 +32,8 @@ export function renderProtocol(roomName: string, startedAt: string, participants
   ];
   return head.concat(segments.map((s) => `[${formatTime(s.started_at)}] ${s.display_name}: ${s.text}`)).join("\n");
 }
+
+/** Вся накопленная транскрипция для буфера обмена: «ЧЧ:ММ:СС Имя» и на следующей строке реплика; без разметки и служебных идентификаторов. */
+export function transcriptCopyText(segments: { started_at: string; display_name: string; text: string }[]): string {
+  return segments.map((s) => `${formatTime(s.started_at)} ${s.display_name}\n${s.text}`).join("\n\n") + (segments.length ? "\n" : "");
+}

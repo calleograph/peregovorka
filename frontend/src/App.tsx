@@ -102,7 +102,7 @@ function StaffApp() {
         {wizard && <SetupWizard onGo={goAdmin} onClose={() => setWizard(false)} />}
         <Suspense fallback={<div className="muted">Загрузка…</div>}>
         <Routes>
-          <Route path="/" element={<RoomsPage />} />
+          <Route path="/" element={<RoomsPage isAdmin={me.user.is_admin} />} />
           <Route path="/rooms/:roomId" element={<RoomRoute selfName={me.user.display_name} />} />
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />

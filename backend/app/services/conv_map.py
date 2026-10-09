@@ -613,7 +613,7 @@ class MapService:
         proto = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, Protocol.kind == "protocol", Protocol.status == "ready")
                                   .order_by(Protocol.created_at.desc()))).scalars().first()
         structured = (proto.meta or {}).get("structured") if proto else None
-        llm = ps.local_llm.client(choice.settings, ca_file=ps._ca(), transport=ps._transports.get("llm"), purpose="protocol")
+        llm = ps.local_llm.client(choice.settings, ca_file=ps._ca(), transport=ps._transports.get("llm"), purpose="map")
         t0 = datetime.now(timezone.utc)
         try:
             groups, run = await analyse(llm, lines)

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type MailTemplate } from "../../api";
+import { useContextMenu } from "../../components/ContextMenu";
 
 const empty = { name: "", subject: "", body: "", signature: "", materials: ["protocol", "summary"] as string[], is_default: false };
 
 /** «Шаблоны писем»: тема, текст, подпись и материалы по умолчанию для рассылки материалов встреч; переменные {{...}} подставляются при отправке. */
 export default function MailTemplatesAdmin() {
+  const { onContextMenu, node: ctxNode } = useContextMenu();
   const [items, setItems] = useState<MailTemplate[]>([]);
   const [vars, setVars] = useState<{ name: string; describe: string }[]>([]);
   const [mats, setMats] = useState<{ kind: string; label: string }[]>([]);
@@ -55,9 +57,15 @@ export default function MailTemplatesAdmin() {
           <div className="row"><button className="btn primary" onClick={() => void save()}>Сохранить</button><button className="btn ghost" onClick={() => setForm(null)}>Отмена</button></div>
         </div>
       )}
+      {ctxNode}
       <div className="stack">
         {items.map((t) => (
-          <div key={t.id} className="card">
+          <div key={t.id} className="card" onContextMenu={onContextMenu(() => [
+            { id: "edit", label: "Изменить", icon: "gear", onSelect: () => setForm({ ...t }) },
+            { id: "dup", label: "Дублировать", icon: "copy", onSelect: () => setForm({ ...t, id: undefined, name: `${t.name} (копия)`, is_default: false } as typeof empty & { id?: string }) },
+            { id: "def", label: "Сделать по умолчанию", icon: "sparkles", hidden: t.is_default, onSelect: () => void api.mailTemplates.update(t.id, { ...t, is_default: true }).then(load).catch((e) => setError((e as ApiError).message)) },
+            { id: "del", label: "Удалить", icon: "close", danger: true, hidden: t.is_default, confirm: `Удалить шаблон «${t.name}»?`, onSelect: () => void remove(t) },
+          ])}>
             <div className="row"><h3 style={{ margin: 0 }}>{t.name}</h3>{t.is_default && <span className="badge ok">по умолчанию</span>}<div className="spacer" />
               <button className="btn mini" onClick={() => setForm({ ...t })}>Изменить</button>
               {!t.is_default && <button className="btn mini ghost danger" onClick={() => void remove(t)}>Удалить</button>}</div>

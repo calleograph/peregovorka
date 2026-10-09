@@ -230,6 +230,7 @@ def merge_secret_headers(old: dict, new: dict) -> dict[str, str]:
 
 DEFAULT_MAX_SUMMARY = 2000
 DEFAULT_MAX_PROTOCOL = 7000
+DEFAULT_MAX_MAP = 4000
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
 _FORBIDDEN_HEADERS = {"host", "content-length", "transfer-encoding", "connection", "content-type"}
 
@@ -263,6 +264,16 @@ class LlmSettings(_Group):
     summary_provider: Literal["same", "local", "external", "off"] = "same"
     # Модель для КАРТЫ РАЗГОВОРА (отдельное назначение): same — как для протокола; local — локальная Qwen3; external — внешний API; off — карты не формируются.
     map_provider: Literal["same", "local", "external", "off"] = "same"
+    # Какое ВНЕШНЕЕ подключение использует каждая задача (когда для неё выбран режим «внешняя»): идентификатор профиля из «Внешние API» ("main" — прежние общие настройки).
+    # Пусто — профиль по умолчанию (как в прежних версиях); у задач «как протокол» — профиль протокола.
+    protocol_profile: str | None = None
+    summary_profile: str | None = None
+    map_profile: str | None = None
+    # Потолок длины ответа ПО ЗАДАЧЕ (системный): итоговый предел = min(потолок задачи, предел подключения, свободное окно контекста). Пусто — без потолка задачи.
+    limit_protocol: int | None = Field(default=None, ge=64, le=200000)
+    limit_summary: int | None = Field(default=None, ge=64, le=200000)
+    limit_map: int | None = Field(default=None, ge=64, le=200000)
+    max_tokens_map: int | None = Field(default=None, ge=64, le=200000)
     # Что делать, если выбранная для комнаты/встречи модель недоступна (профиль удалён, локальная модель не загружена):
     # system — использовать системную модель по умолчанию (с пометкой); unavailable — оставить состояние «модель недоступна».
     on_missing: Literal["system", "unavailable"] = "system"
@@ -291,7 +302,7 @@ class LlmSettings(_Group):
     secret_headers: str = ""            # JSON {имя: значение}: секретные заголовки, шифруются, наружу не отдаются
     use_corporate_ca: bool = True
     allow_http: bool = False
-    routing_provider: str = ""  # для шлюзов вида polza.ai: provider.only
+    routing_provider: str = ""  # для шлюзов вида LLM-шлюз: provider.only
 
     @field_validator("base_url")
     @classmethod
@@ -334,9 +345,9 @@ class LlmSettings(_Group):
     def output_limit(self, purpose: str = "protocol") -> tuple[int, str]:
         """(токены, примечание) — длина ответа, которая реально уйдёт в запрос: настройка задачи, не больше окна контекста."""
         summary = purpose == "summary"
-        want = self.max_tokens_summary if summary else self.max_tokens_protocol
+        want = self.max_tokens_summary if summary else (self.max_tokens_map if purpose == "map" else self.max_tokens_protocol)
         if want is None:
-            want = DEFAULT_MAX_SUMMARY if summary else (self.max_tokens if self.max_tokens != 4000 else DEFAULT_MAX_PROTOCOL)
+            want = DEFAULT_MAX_SUMMARY if summary else (DEFAULT_MAX_MAP if purpose == "map" else (self.max_tokens if self.max_tokens != 4000 else DEFAULT_MAX_PROTOCOL))
         if self.context_window:
             cap = max(256, self.context_window - 2048) if self.context_window > 4096 else max(64, self.context_window // 2)
             if want > cap:
@@ -375,6 +386,8 @@ class LlmSettings(_Group):
         self.enabled = self.provider != "off"
         if self.provider in ("local", "off"):
             return self                      # внешние поля не обязательны
+        if any((self.protocol_profile, self.summary_profile, self.map_profile)) and not self.model:
+            return self                      # подключение выбрано в «Назначениях» (отдельный профиль): прежние общие поля подключения заполнять не нужно
         if self.enabled or self.provider == "external":
             if not self.model:
                 raise ValueError("Укажите модель")

@@ -43,8 +43,30 @@ def meta_from_header(header: list[str]) -> list[list[str]]:
     return out
 
 
+def attendees_markdown(att: dict | None) -> list[str]:
+    """«Присутствовали»: сотрудники — таблица ФИО / Должность / Подразделение (по снимку на момент встречи); гости — Имя / Статус. Пустые значения — «—», не выдумываются."""
+    if not att or not (att.get("people") or att.get("guests")):
+        return []
+    L = ["## Присутствовали", ""]
+    if att.get("people"):
+        L += _table(["ФИО", "Должность", "Подразделение"], [[p.get("name", ""), p.get("title", ""), p.get("department", "")] for p in att["people"]]) + [""]
+    if att.get("guests"):
+        L += _table(["Имя", "Статус"], [[g.get("name", ""), g.get("status", "Гость")] for g in att["guests"]]) + [""]
+    return L
+
+
+def inject_attendees(md: str, att: dict | None) -> str:
+    """Свободный режим (Markdown от модели): раздел «Присутствовали» добавляется кодом сразу после первого заголовка, если модель его не написала."""
+    block = attendees_markdown(att)
+    if not block or re.search(r"^#{1,6}\s*Присутствовали", md, re.M | re.I):
+        return md
+    lines = md.splitlines()
+    at = next((i + 1 for i, ln in enumerate(lines) if ln.lstrip().startswith("#")), 0)
+    return "\n".join(lines[:at] + [""] + block + lines[at:]).rstrip() + "\n"
+
+
 def build_document(header: list[str], items: list, *, summary: str = "", incomplete: bool = False, notes: list[str] | None = None,
-                   title: str = "Протокол совещания") -> dict:
+                   title: str = "Протокол совещания", attendees: dict | None = None) -> dict:
     """Структура документа из проверенных пунктов (extraction.Item). Ничего не добавляется от себя: чего нет — «не указан» / «решение не принималось»."""
     topics = sorted((i for i in items if i.kind == "topic"), key=lambda i: i.sec)
     decisions = [i for i in items if i.kind == "decision"]
@@ -66,8 +88,12 @@ def build_document(header: list[str], items: list, *, summary: str = "", incompl
             owner = f"не определён (модель предположила: {t.assignee_guess}; в репликах не подтверждено)"
         due = (t.due + (f" ({t.due_date})" if t.due_date else "")) if t.due else NOT_SET
         task_rows.append({"task": t.text, "assignee": owner, "deadline": due, "source": where(t.sources[0] if t.sources else None)})
+    meta = meta_from_header(header)
+    if attendees and (attendees.get("people") or attendees.get("guests")):
+        meta = [m for m in meta if not m[0].lower().startswith("участвовали")]       # список имён заменяется таблицами «Присутствовали»
     return {
-        "title": title, "meta": meta_from_header(header), "summary": (summary or "").strip(),
+        "attendees": attendees or None,
+        "title": title, "meta": meta, "summary": (summary or "").strip(),
         "discussion": discussion,
         "decisions": [{"decision": d.text, "source": where(d.sources[0] if d.sources else None)} for d in decisions],
         "tasks": task_rows,
@@ -93,6 +119,7 @@ def document_to_markdown(doc: dict, *, disclaimer: bool = True) -> str:
         L += [f"> [проверить] {n}", ""]
     if disclaimer:
         L += ["_Документ собран автоматически: каждый пункт проверен по тексту и привязан к реплике-источнику; чего в репликах нет — «не указан». Важные пункты сверьте с записью._", ""]
+    L += attendees_markdown(doc.get("attendees"))
     if doc.get("summary"):
         L += ["## Итог", "", doc["summary"], ""]
     L += ["## Обсуждение", ""]

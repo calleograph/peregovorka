@@ -2,6 +2,7 @@ import { type CSSProperties, FormEvent, useEffect, useMemo, useState } from "rea
 import { Link, useNavigate } from "react-router-dom";
 import { api, type ApiError, type Room, type TempRoomPolicy } from "../api";
 import { Icon } from "../components/Icons";
+import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { useToast } from "../components/Toast";
 import { copyText } from "../util";
 import { Modal } from "../components/Dialogs";
@@ -40,6 +41,23 @@ const roomUrl = (r: Room) => `${window.location.origin}/rooms/${r.slug}`;
 const guestUrl = (r: Room) => `${window.location.origin}/guest/${r.guest_token}`;
 
 /** Кнопки копирования ссылок. Обычная (зелёная) — для сотрудников; гостевая (красная) — только если гостевой вход включён и пользователь вправе ею делиться. */
+type Toast = (text: string, tone?: "ok" | "error") => void;
+
+/** Пункты меню правой кнопки у комнаты (все они есть и обычным путём: карточка, кнопки копирования). «Настройки комнаты» — только администратору. */
+function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean) {
+  const navigate = useNavigate();
+  const { onContextMenu, node } = useContextMenu();
+  const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
+  const items = (): MenuItem[] => [
+    { id: "enter", label: "Войти", icon: "arrowR", onSelect: () => navigate(`/rooms/${r.slug}`) },
+    { id: "link", label: "Скопировать ссылку", icon: "copy", onSelect: () => void copy(roomUrl(r), "Ссылка") },
+    { id: "guest", label: "Скопировать гостевую ссылку", icon: "copy", hidden: !r.guest_token, onSelect: () => void copy(guestUrl(r), "Гостевая ссылка") },
+    { id: "tab", label: "Открыть в новой вкладке", icon: "arrowR", onSelect: () => { window.open(roomUrl(r), "_blank", "noopener"); } },
+    { id: "settings", label: "Настройки комнаты", icon: "gear", hidden: !isAdmin, onSelect: () => { try { sessionStorage.setItem("adminTab", "rooms"); } catch { /* вкладка не запомнится */ } navigate("/admin"); } },
+  ];
+  return { handler: onContextMenu(items), node };
+}
+
 function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: string, tone?: "ok" | "error") => void; compact?: boolean }) {
   const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   return (
@@ -55,13 +73,14 @@ function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: stri
 }
 
 /** Компактная карточка комнаты для режима «Компактно»: несколько колонок, длинное название — в две строки с подсказкой, вся карточка открывает комнату. */
-function RoomMini({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
+function RoomMini({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast; isAdmin: boolean }) {
+  const menu = useRoomMenu(r, onCopy, isAdmin);
   const live = r.active_meeting;
   const full = !!live && live.participants >= r.max_participants;
   const navigate = useNavigate();
   const open = () => navigate(`/rooms/${r.slug}`);
   return (
-    <div className="rm" role="listitem" style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
+    <div className="rm" role="listitem" onContextMenu={menu.handler} style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
          onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(); } }}>
       <div className="rm-top">
         <span className="rm-name" title={r.name}>{r.name}</span>
@@ -71,6 +90,7 @@ function RoomMini({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string,
         <code title="Технический идентификатор (адрес комнаты)">{r.slug}</code>
         <span>{full ? "мест нет" : `до ${r.max_participants}`}{r.has_password ? " · пароль" : ""}{r.lifetime === "temporary" ? " · временная" : ""}</span>
       </div>
+      {menu.node}
       <div className="rm-act" onClick={(e) => e.stopPropagation()}>
         <CopyLinks r={r} onCopy={onCopy} compact={false} />
         <Link to={`/rooms/${r.slug}`} className="btn mini primary">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"}</Link>
@@ -79,12 +99,14 @@ function RoomMini({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string,
   );
 }
 
-function RoomCard({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
+function RoomCard({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast; isAdmin: boolean }) {
+  const menu = useRoomMenu(r, onCopy, isAdmin);
   const t = tint(r.name);
   const live = r.active_meeting;
   const full = live && live.participants >= r.max_participants;
   return (
-    <div className="rc-cell" style={{ "--i": i } as CSSProperties}>
+    <div className="rc-cell" style={{ "--i": i } as CSSProperties} onContextMenu={menu.handler}>
+    {menu.node}
     <CopyLinks r={r} onCopy={onCopy} />
     <Link to={`/rooms/${r.slug}`} className={`room-card rc ${live ? "is-live" : ""}`} style={{ "--i": i, "--ha": t.a, "--hb": t.b } as CSSProperties} onPointerMove={spotlight}
           aria-label={`${r.name}: ${live ? `идёт встреча, участников ${live.participants}` : "свободна"}`}>
@@ -116,7 +138,7 @@ function RoomCard({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string,
   );
 }
 
-export default function RoomsPage() {
+export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [error, setError] = useState("");
   const [policy, setPolicy] = useState<TempRoomPolicy | null>(null);
@@ -188,8 +210,8 @@ export default function RoomsPage() {
       )}
       {rooms.length > 0 && shown.length === 0 && <p className="muted">По этому запросу комнат нет. Измените поиск или фильтр.</p>}
       {view === "tiles"
-        ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} />)}</div>
-        : <div className="rooms-compact" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} />)}</div>}
+        ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} />)}</div>
+        : <div className="rooms-compact" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} />)}</div>}
       {toast}
       {tempOpen && policy && <TempRoomDialog policy={policy} onClose={() => setTempOpen(false)} />}
     </section>

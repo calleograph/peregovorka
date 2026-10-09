@@ -126,7 +126,7 @@ export const llmApiFields: Field[] = [
   { section: "Подключение", name: "type", label: "Тип API", type: "select", options: TYPE_OPTIONS,
     help: "От типа зависят формат запроса и набор полей. «Свой OpenAI-подобный сервис» — для нестандартных шлюзов: все возможности включаются вручную." },
   { section: "Подключение", name: "base_url", label: "Адрес API (Base URL)", type: "text", showIf: needsUrl, placeholder: "https://llm.corp.local/v1",
-    help: "Для OpenAI и Anthropic адрес не нужен. Для совместимых и своих сервисов обязателен.", example: "https://llm.corp.local/v1 или https://api.polza.ai/api/v1" },
+    help: "Для OpenAI и Anthropic адрес не нужен. Для совместимых и своих сервисов обязателен.", example: "https://llm.corp.local/v1 или https://api.example.com/v1" },
   { section: "Подключение", name: "model", label: "Идентификатор модели", type: "text", placeholder: "gpt-4o-mini", help: "Название модели у выбранного провайдера.", example: "gpt-4o-mini, claude-sonnet-5-5" },
   { section: "Подключение", name: "api_key", label: "Ключ API", type: "secret", help: "Хранится зашифрованно и после сохранения не показывается. Пустое поле — оставить прежний." },
   { section: "Подключение", name: "extra_headers", label: "Дополнительные заголовки запроса", type: "headers", showIf: (v) => v.type === "custom" || v.type === "openai_compatible",
@@ -266,3 +266,14 @@ export const mailPolicyFields: Field[] = [
   { section: "Дополнительно (расширенные настройки)", name: "allowed_domains", label: "Разрешённые домены получателей", type: "text", placeholder: "example.local, partner.example",
     help: "Через запятую. Пусто — отправка на любые адреса. Если задано, письма на адреса других доменов (например, внешние) не отправляются — ни автоматически, ни вручную.", example: "example.local" },
 ];
+
+/** «Параметры задач» (вкладка «Параметры генерации»): потолок длины ответа по каждой задаче; итог = min(потолок задачи, предел подключения, свободный контекст). */
+export const llmTaskFields: Field[] = [
+  { section: "Потолок длины ответа по задачам", name: "limit_protocol", label: "Протокол", unit: "токенов", type: "number", min: 64, max: 200000, nullable: true, placeholder: "без потолка задачи",
+    help: "Пусто — действует предел подключения (по умолчанию 7 000)." },
+  { section: "Потолок длины ответа по задачам", name: "limit_summary", label: "Резюме", unit: "токенов", type: "number", min: 64, max: 200000, nullable: true, placeholder: "без потолка задачи",
+    help: "Резюме короткое: обычно хватает 1 500–2 500 токенов." },
+  { section: "Потолок длины ответа по задачам", name: "limit_map", label: "Карта разговора", unit: "токенов", type: "number", min: 64, max: 200000, nullable: true, placeholder: "без потолка задачи",
+    help: "Ответ на один фрагмент стенограммы — несколько тем; обычно достаточно 700–1 000." },
+];
+export const structuredFields: Field[] = protocolFields.filter((f) => f.name === "external_mode");

@@ -1,8 +1,12 @@
 import { playChatSound } from "../chatSound";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { autoGrow } from "../autoGrow";
 import { fileTypeLabel, formatSize, pastedName } from "../attachments";
 import { Icon } from "./Icons";
+import { useContextMenu, type MenuItem } from "./ContextMenu";
+
+// Просмотрщик изображений подгружается при первом открытии картинки: вход в комнату он не замедляет
+const ImageViewer = lazy(() => import("./ImageViewer"));
 import { api, type ApiError, type ChatAttachment, type ChatMessage } from "../api";
 import type { LiveBus } from "../liveSocket";
 import { linkify } from "../linkify";
@@ -32,7 +36,7 @@ async function saveBlob(blob: Blob, name: string): Promise<void> {
   window.setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-function ImageAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachment }) {
+function ImageAttachment({ meetingId, a, onOpen }: { meetingId: string; a: ChatAttachment; onOpen: () => void }) {
   const [url, setUrl] = useState("");
   const [failed, setFailed] = useState(!!a.missing);
   useEffect(() => {
@@ -43,10 +47,10 @@ function ImageAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachmen
   }, [meetingId, a.id]);
   if (failed) return <div className="chat-file broken"><Icon name="file" size={18} /><span className="chat-file-name">{a.name}</span><span className="muted small">{a.missing ? "файл удалён из хранилища" : "не удалось загрузить"}</span></div>;
   return (
-    <a className="chat-image" href={url || undefined} target="_blank" rel="noopener noreferrer" title={`${a.name} · ${formatSize(a.size)} — открыть оригинал`}
-       onClick={(e) => { if (!url) e.preventDefault(); }}>
+    <button type="button" className="chat-image" title={`${a.name} · ${formatSize(a.size)} — открыть в просмотрщике`} aria-label={`Открыть изображение ${a.name}`}
+            onClick={() => { if (url) onOpen(); }}>
       {url ? <img src={url} alt={a.name} loading="lazy" /> : <span className="chat-image-wait muted small">Загрузка…</span>}
-    </a>
+    </button>
   );
 }
 
@@ -72,11 +76,11 @@ function FileAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachment
   );
 }
 
-function Message({ m, mine, meetingId }: { m: ChatMessage; mine: boolean; meetingId: string }) {
+function Message({ m, mine, meetingId, onOpenImage, onMenu }: { m: ChatMessage; mine: boolean; meetingId: string; onOpenImage: (id: string) => void; onMenu: (m: ChatMessage, mine: boolean) => (e: React.MouseEvent) => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => { if (await copyText(m.text)) { setCopied(true); window.setTimeout(() => setCopied(false), 1500); } };
   return (
-    <div className={`chat-msg ${mine ? "mine" : ""} ${m.author_type === "guest" ? "guest" : ""}`}>
+    <div className={`chat-msg ${mine ? "mine" : ""} ${m.author_type === "guest" ? "guest" : ""}`} onContextMenu={onMenu(m, mine)}>
       <div className="chat-meta">
         <strong>{m.author_name}</strong>
         <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString("ru-RU")}>{formatTime(m.created_at)}</time>
@@ -85,7 +89,7 @@ function Message({ m, mine, meetingId }: { m: ChatMessage; mine: boolean; meetin
       {m.text && <MessageText text={m.text} />}
       {!!m.attachments?.length && (
         <div className="chat-atts">
-          {m.attachments.map((a) => a.kind === "image" ? <ImageAttachment key={a.id} meetingId={meetingId} a={a} /> : <FileAttachment key={a.id} meetingId={meetingId} a={a} />)}
+          {m.attachments.map((a) => a.kind === "image" ? <ImageAttachment key={a.id} meetingId={meetingId} a={a} onOpen={() => onOpenImage(a.id)} /> : <FileAttachment key={a.id} meetingId={meetingId} a={a} />)}
         </div>
       )}
     </div>
@@ -119,6 +123,8 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [viewer, setViewer] = useState<number | null>(null);
+  const { onContextMenu, node: menuNode } = useContextMenu();
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<Pending[]>([]);
   pendingRef.current = pending;
@@ -269,6 +275,28 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
     } catch (e) { setError((e as ApiError).message || "Не удалось отправить сообщение"); }
     setSending(false);
   };
+  // изображения чата в порядке сообщений — по ним листает просмотрщик
+  const images = useMemo(() => items.flatMap((m) => (m.attachments ?? []).filter((a) => a.kind === "image" && !a.missing).map((a) => ({ id: a.id, name: a.name, size: a.size }))), [items]);
+  const loadBlob = useCallback((id: string) => api.attachmentBlob(meetingId, id), [meetingId]);
+  const openImage = (id: string) => { const i = images.findIndex((x) => x.id === id); if (i >= 0) setViewer(i); };
+  const insert = (t: string) => { setDraft((d) => (d ? `${d}${d.endsWith(" ") || d.endsWith("\n") ? "" : " "}${t}` : t)); window.setTimeout(() => inputRef.current?.focus(), 0); };
+  const menuFor = (m: ChatMessage, mine: boolean): MenuItem[] => {
+    const files = (m.attachments ?? []).filter((a) => !a.missing);
+    const firstImg = files.find((a) => a.kind === "image");
+    return [
+      { id: "copy", label: "Копировать текст", icon: "copy", hidden: !m.text, onSelect: () => void copyText(m.text) },
+      { id: "reply", label: "Ответить", icon: "chat", hidden: readOnly, onSelect: () => insert(`> ${m.author_name}: ${(m.text || "вложение").replace(/\s+/g, " ").slice(0, 120)}\n`) },
+      { id: "mention", label: "Упомянуть автора", icon: "user", hidden: readOnly || mine, onSelect: () => insert(`@${m.author_name} `) },
+      { id: "open", label: "Открыть изображение", icon: "eye", hidden: !firstImg, onSelect: () => firstImg && openImage(firstImg.id) },
+      ...files.map((a): MenuItem => ({ id: `dl-${a.id}`, label: files.length > 1 ? `Скачать: ${a.name}` : "Скачать вложение", icon: "attach", onSelect: () => void api.attachmentBlob(meetingId, a.id, true).then((b) => saveBlob(b, a.name)) })),
+    ];
+  };
+  const onMsgMenu = (m: ChatMessage, mine: boolean) => onContextMenu(() => menuFor(m, mine));
+  useEffect(() => {          // «Упомянуть в чате» из контекстного меню участника
+    const on = (e: Event) => { const n = (e as CustomEvent<string>).detail; if (n && !readOnly) insert(`@${n} `); };
+    window.addEventListener("pg:mention", on);
+    return () => window.removeEventListener("pg:mention", on);
+  });
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
   };
@@ -278,7 +306,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
       <div className="chat-list" ref={boxRef} onScroll={onScroll} aria-live="polite" aria-label="Сообщения чата">
         {hasMore && <button type="button" className="btn mini ghost chat-older" onClick={() => { setHasMore(false); void loadOlder(); }}>Показать более ранние</button>}
         {loaded && items.length === 0 && !error && <p className="muted small">{readOnly ? "В этой встрече чат не использовался." : "Пока пусто. Адреса, ссылки, имена серверов и номера задач попадут в протокол."}</p>}
-        {items.map((m) => <Message key={m.id} m={m} mine={!!selfName && m.author_name === selfName} meetingId={meetingId} />)}
+        {items.map((m) => <Message key={m.id} m={m} mine={!!selfName && m.author_name === selfName} meetingId={meetingId} onOpenImage={openImage} onMenu={onMsgMenu} />)}
       </div>
       {error && <div className="alert error small" role="alert">{error}</div>}
       {!readOnly && (
@@ -313,6 +341,12 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
           </div>
           <div className="chat-hint">Enter — отправить, Shift+Enter — новая строка{canAttach ? " · файл можно перетащить или вставить (Ctrl+V)" : ""}</div>
         </div>
+      )}
+      {menuNode}
+      {viewer !== null && images[viewer] && (
+        <Suspense fallback={null}>
+          <ImageViewer images={images} index={viewer} load={loadBlob} onClose={() => setViewer(null)} onIndex={setViewer} />
+        </Suspense>
       )}
     </div>
   );

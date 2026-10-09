@@ -247,14 +247,27 @@ export interface ParticipantCard {
   title?: string | null; department?: string | null; avatar_url?: string | null; email?: string | null; phone?: string | null; login?: string | null;
 }
 export interface HandInfo { identity: string; name: string; at: number }
+export interface LlmChoices {
+  local: { id: string; title: string; installed: boolean }[];
+  external: { id: string; name: string; model: string; type: string | null; secret_set: boolean; virtual: boolean; host: string }[];
+  tasks: Record<"protocol" | "summary" | "map", { mode: "local" | "external" | "off"; profile_id: string | null; same_as_protocol: boolean }>;
+  on_missing: "system" | "unavailable"; limits: Record<string, number | null>;
+}
+export interface LlmDiagnose {
+  ok: boolean;
+  config: { provider: string; type: string; model: string; host: string; max_output_tokens: number; context_window: number | null; temperature: number | string;
+    capabilities: { system: boolean; json: boolean; temperature: boolean }; timeout_s: number };
+  tests: { name: string; ok: boolean; message: string; ms: number }[];
+}
 export interface EffectiveModel {
+  label?: string; profile_id?: string | null; context_window?: number | null;
   enabled: boolean; local: boolean; name: string; model: string | null; api_type: string | null; max_output_tokens: number | null; max_output_note: string;
   ready: boolean; problem: string | null;
 }
-export interface EffectiveModels { protocol: EffectiveModel; summary: EffectiveModel; rooms_with_own_model: { protocol: number; summary: number } }
+export interface EffectiveModels { protocol: EffectiveModel; summary: EffectiveModel; map: EffectiveModel; rooms_with_own_model: { protocol: number; summary: number; map: number } }
 export interface ModelStat {
   model: string; local: boolean; profile: string; title: string; kind: string; documents: number; ok: number; failed: number; truncated: number; length_hits: number;
-  retries: number; avg_s: number | null; median_s: number | null; avg_input_chars: number | null; avg_output_chars: number | null; tokens_per_s: number | null; last: string | null;
+  retries: number; avg_s: number | null; median_s: number | null; avg_input_chars: number | null; avg_output_chars: number | null; tokens_per_s: number | null; last: string | null; archived?: boolean;
 }
 export interface SetupStep { id: string; title: string; done: boolean; page: string }
 export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean }
@@ -706,7 +719,10 @@ export const api = {
     autoUpdate: () => request<AutoUpdateInfo>("GET", "/admin/updates/auto"),
     autoUpdateRun: () => request<{ started: boolean }>("POST", "/admin/updates/auto/run"),
     effectiveModels: () => request<EffectiveModels>("GET", "/admin/llm/effective"),
-    modelStats: () => request<{ documents: number; models: ModelStat[] }>("GET", "/admin/llm/stats"),
+    modelStats: (f: { days?: number; kind?: string; where?: string; archived?: boolean } = {}) =>
+      request<{ documents: number; models: ModelStat[]; archived_hidden: number }>("GET", `/admin/llm/stats?days=${f.days ?? 0}&kind=${f.kind ?? ""}&where=${f.where ?? ""}&archived=${f.archived ? "true" : "false"}`),
+    llmChoices: () => request<LlmChoices>("GET", "/admin/llm/choices"),
+    llmDiagnose: (target: string) => request<LlmDiagnose>("POST", "/admin/llm/diagnose", { target }),
     accessStatus: () => request<AccessStatus>("GET", "/admin/access/status"),
     accessCheckUser: (login: string) => request<AccessCheck>("POST", "/admin/access/check-user", { login }),
     setupStatus: () => request<SetupStatus>("GET", "/admin/setup/status"),

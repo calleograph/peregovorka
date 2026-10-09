@@ -315,4 +315,4 @@ def test_effective_models_panel_shows_what_will_actually_be_called(client):
     put_settings(client, "llm", provider="external", type="openai", model="gpt-x", api_key="k", summary_provider="off", context_window=8192, max_tokens_protocol=9000)
     d = client.get(f"{ADM}/llm/effective").json()
     assert d["protocol"]["local"] is False and d["protocol"]["model"] == "gpt-x" and d["protocol"]["max_output_tokens"] == 6144 and "окном контекста" in d["protocol"]["max_output_note"]
-    assert d["summary"]["enabled"] is False and d["rooms_with_own_model"] == {"protocol": 0, "summary": 0}
+    assert d["summary"]["enabled"] is False and d["rooms_with_own_model"] == {"protocol": 0, "summary": 0, "map": 0}
