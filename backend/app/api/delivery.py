@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
+from ..auth.throttle import within_limit
 from ..models import MailMessage, Meeting
 from ..services import roles
 from ..services.audit import write_audit
@@ -91,6 +92,8 @@ async def delivery_log(meeting_id: uuid.UUID, request: Request, su: SessionUser 
 async def send_materials(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """body: kinds — какие материалы; emails — кому (из списка предпросмотра и/или свои адреса)."""
     meeting = await _meeting(request, db, meeting_id, su)
+    if not await within_limit(request.app.state.redis, f"rl:mailsend:{su.user_id}", 30, 3600):
+        raise HTTPException(status_code=429, detail="Слишком много отправок за час. Повторите позже или обратитесь к администратору.", headers={"Retry-After": "600"})
     delivery = request.app.state.delivery
     if await request.app.state.mail.active(db) is None:
         raise HTTPException(status_code=409, detail="Исходящая почта не настроена. Обратитесь к администратору системы.")

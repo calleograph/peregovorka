@@ -303,7 +303,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 /* фиксированные плашки: ширина по содержимому, но не шире экрана (left:50% без явной ширины сжимал их вдвое) */
 .cookie-note { left: 12px; right: 12px; transform: none; margin: 0 auto; width: fit-content; max-width: min(640px, calc(100vw - 24px)); }
 .toast-host { left: 12px; right: 12px; transform: none; display: flex; justify-content: center; }
-.toast { max-width: calc(100vw - 24px); }
+.toast { max-width: calc(100vw - 24px); }
 
 /* ---------- карта разговора ---------- */
 /* редактор схемы истории, подгруженный за кадром: у него есть размеры (редактору нужны для вёрстки), но он не виден и не перехватывает ввод */
@@ -348,7 +348,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .tile-foot { flex-wrap: nowrap; }
 
 /* ---------- комнаты: компактный многоколоночный вид ---------- */
-.rooms-compact { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.rooms-compact { display: grid; grid-template-columns: repeat(auto-fill, minmax(370px, 1fr)); gap: 10px; }
 .rm { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card);
   cursor: pointer; transition: border-color .2s, transform .25s var(--spring), box-shadow .2s; animation: rise .45s var(--ease) both; animation-delay: calc(var(--i, 0) * 20ms); }
 .rm:hover, .rm:focus-visible { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-lift); outline: none; }
@@ -358,3 +358,4 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .rm-sub { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; min-width: 0; }
 .rm-sub code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .rm-act { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.check-body .badge { display: inline-block; width: fit-content; align-self: flex-start; margin-left: 6px; }

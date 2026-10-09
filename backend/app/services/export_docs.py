@@ -390,6 +390,7 @@ def to_html(md: str, title: str | None = None) -> str:
                         + "".join("<tr>" + "".join(f"<td>{_runs_html(c)}</td>" for c in r) + "</tr>" for r in rows) + "</tbody></table>")
     t = _esc(title or "Документ")
     return (f'<!doctype html>\n<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; base-uri \'none\'; form-action \'none\'">'
             f'<title>{t}</title><style>{HTML_CSS}</style></head><body><main>\n' + "\n".join(body) + "\n</main></body></html>\n")
 
 

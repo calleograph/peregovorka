@@ -139,3 +139,8 @@ def test_protocol_can_be_downloaded_as_html_docx_and_markdown(tmp_path, director
         assert h.status_code == 200 and h.headers["content-type"].startswith("text/html") and "Утвердили бюджет" in h.text and "<table" in h.text
         assert c.get(base, params={"format": "docx"}).content[:2] == b"PK" and c.get(base, params={"format": "md"}).status_code == 200
         assert c.get(base, params={"format": "exe"}).status_code == 422
+
+
+def test_standalone_html_forbids_network_and_scripts_by_its_own_policy():
+    page = xd.to_html(dr.document_to_markdown(sample_doc()), "T")
+    assert 'http-equiv="Content-Security-Policy"' in page and "default-src 'none'" in page and "script-src" not in page, "документ — без скриптов и сети"

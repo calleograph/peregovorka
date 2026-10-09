@@ -34,6 +34,7 @@ export function buildStandaloneHtml(title: string, css: string, js: string, payl
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>${escapeHtml(title)}</title>
 <style>
 ${css.replace(/<\/(style)/gi, "<\\/$1")}

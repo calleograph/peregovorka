@@ -16,6 +16,8 @@ describe("выгрузка карты в HTML", () => {
     expect(html.match(/<script/gi)?.length).toBe(2);             // только наши два тега
     expect(html).not.toContain("</title><script>alert(1)");
     expect(html).toContain('id="pg-map-data"');
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    expect(html).toContain("default-src 'none'");
   });
   it("в файл не попадают служебные сведения: профиль API, кто нажал, токены", () => {
     const meta = { model: "m", model_title: "Qwen", llm_profile: "Корпоративный шлюз", created_by: "Иванов", duration_s: 12, token: "secret", warnings: ["w"] };

@@ -293,3 +293,20 @@ def test_map_left_running_by_a_restarted_service_is_reported_as_interrupted_and_
         assert c.post(f"{API}/{mid}/map").status_code == 202
         _drain(c)
         assert c.get(f"{API}/{mid}/map").json()["status"] == "ready"
+
+
+def test_new_write_endpoints_require_csrf_and_are_rate_limited(tmp_path, directory):
+    with map_app(tmp_path, directory) as c:
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        _room, mid = finished_meeting(c)
+        login(c, "alice")
+        token = c.headers.pop("X-CSRF-Token")
+        for method, url, body in (("post", f"{API}/{mid}/map", None), ("post", f"{API}/{mid}/map/export", None), ("patch", f"{API}/{mid}/map/topics/t_x", {"title": "x"})):
+            r = getattr(c, method)(url, json=body) if body is not None else getattr(c, method)(url)
+            assert r.status_code == 403, (url, r.status_code)
+        c.headers["X-CSRF-Token"] = token
+        codes = []
+        for _ in range(14):
+            codes.append(c.post(f"{API}/{mid}/map").status_code)
+            _drain(c)
+        assert 429 in codes and codes[0] == 202, codes

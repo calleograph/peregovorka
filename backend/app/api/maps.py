@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
+from ..auth.throttle import within_limit
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.conv_map import CATEGORIES, apply_edits, clean_edit
@@ -71,6 +72,8 @@ async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     cur = await maps.refresh(db, await maps.get(db, meeting_id))
     if cur is not None and cur.status in ("pending", "running"):
         return {"status": cur.status}                    # уже идёт: повторное нажатие ничего не запускает
+    if not await within_limit(request.app.state.redis, f"rl:map:{su.user_id}", 12, 3600):
+        raise HTTPException(status_code=429, detail="Слишком много запросов на построение карт за час. Повторите позже.", headers={"Retry-After": "600"})
     again = cur is not None
     rec = await maps.request(db, meeting_id, su.display_name)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.recreate" if again else "map.create", target_type="meeting",

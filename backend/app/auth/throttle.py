@@ -62,3 +62,15 @@ class LoginThrottle:
     async def record_success(self, login: str) -> None:
         fail_u, lock_u, _ = self._keys(login, "")
         await self._r.delete(fail_u, lock_u)
+
+
+async def within_limit(redis: Redis, key: str, limit: int, window_s: int) -> bool:
+    """Не больше `limit` действий за `window_s` секунд на ключ (фиксированное окно). Ключ содержит пользователя/встречу, не персональные данные.
+    Сбой Redis не блокирует действие: ограничение — защита от злоупотреблений, а не условие работы."""
+    try:
+        n = await redis.incr(key)
+        if n == 1:
+            await redis.expire(key, window_s)
+        return n <= limit
+    except Exception:  # noqa: BLE001
+        return True
