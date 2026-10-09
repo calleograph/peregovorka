@@ -435,6 +435,22 @@ class ConversationMap(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
+class MailTemplate(Base):
+    """Шаблон письма с материалами встречи (тема, текст, подпись, материалы по умолчанию); переменные {{meeting_title}} и др. подставляются при отправке."""
+
+    __tablename__ = "mail_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    signature: Mapped[str | None] = mapped_column(Text)
+    materials: Mapped[list | None] = mapped_column(JSONType)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class ProtocolTemplate(Base):
     """Сохранённая инструкция для протокола: общая (admin) или личная."""
 

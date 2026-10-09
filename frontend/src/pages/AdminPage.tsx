@@ -8,11 +8,12 @@ import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmApiFields, llmModeFields, mailPolicyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, llmApiFields, llmModeFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
 import MailAdmin, { MailLogAdmin } from "./admin/MailAdmin";
+import MailTemplatesAdmin from "./admin/MailTemplatesAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import SipAdmin from "./admin/SipAdmin";
@@ -59,6 +60,7 @@ const GROUPS: Group[] = [
     { id: "mail_policy", label: "Правила рассылки", render: () => (
       <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
         intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Материалы после встречи»); адреса сервера и пароль ему не показываются." />) },
+    { id: "mail_templates", label: "Шаблоны писем", render: () => <MailTemplatesAdmin /> },
     { id: "mail_log", label: "Журнал отправки", render: () => <MailLogAdmin /> },
   ] },
   { title: "Встречи и комнаты", pages: [
@@ -101,6 +103,9 @@ const GROUPS: Group[] = [
   ] },
   { title: "Система", pages: [
     { id: "screen", label: "Показ экрана", render: () => <SettingsForm key="screen" group="screen" title="Показ экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
+    { id: "privacy", label: "Cookie и обработка данных", render: () => (
+      <SettingsForm key="privacy" group="privacy" title="Cookie и обработка данных" fields={privacyFields}
+        intro="Тексты для страницы входа и страницы «Обработка данных» (открывается без входа и по ссылке «Подробнее»). Юридические формулировки в приложении не зашиты — заполните их по правилам вашей организации. Используются только технические cookie." /> ) },
     { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
   ] },
 ];

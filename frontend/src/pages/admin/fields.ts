@@ -174,6 +174,17 @@ export const screenFields: Field[] = [
   { section: "Поведение", name: "one_sharer_at_a_time", label: "Только один показывающий одновременно", type: "bool", help: "Пока кто-то показывает экран, остальным кнопка недоступна." },
 ];
 
+export const privacyFields: Field[] = [
+  { section: "Уведомление о cookie", name: "cookie_text", label: "Текст уведомления на странице входа", type: "textarea", rows: 3, help: "Короткий текст под кнопками «Понятно» и «Подробнее». Принятие запоминается в браузере." },
+  { section: "Страница «Обработка данных»", name: "operator", label: "Оператор / организация", type: "text" },
+  { section: "Страница «Обработка данных»", name: "purpose", label: "Назначение системы", type: "textarea", rows: 3 },
+  { section: "Страница «Обработка данных»", name: "data_types", label: "Какие типы информации обрабатываются", type: "textarea", rows: 4 },
+  { section: "Страница «Обработка данных»", name: "cookies", label: "Использование технических cookie", type: "textarea", rows: 3 },
+  { section: "Страница «Обработка данных»", name: "retention", label: "Сроки хранения", type: "textarea", rows: 3 },
+  { section: "Страница «Обработка данных»", name: "contact", label: "Контакт для вопросов", type: "textarea", rows: 2 },
+  { section: "Страница «Обработка данных»", name: "policy_url", label: "Ссылка на внутреннюю политику (положение)", type: "text", placeholder: "https://intranet.example.local/policy" },
+];
+
 export const generalFields: Field[] = [
   { section: "Время", name: "timezone", label: "Часовой пояс", type: "text", placeholder: "Europe/Moscow", help: "Название IANA. Используется в именах папок хранилища и подписях времени документов.", example: "Europe/Moscow" },
   { section: "Доступ к завершённым встречам", name: "post_meeting_access_minutes", label: "Сколько минут участник сохраняет доступ после завершения встречи", unit: "минут", type: "number", min: 1, max: 1440,
@@ -245,13 +256,13 @@ export const syncFields: Field[] = [
 
 /** Правила рассылки материалов (SMTP-реквизиты — в профилях почты; «что и кому» выбирает руководитель комнаты). */
 export const mailPolicyFields: Field[] = [
-  { section: "Получатели", name: "allowed_domains", label: "Разрешённые домены получателей", type: "text", placeholder: "example.local, partner.example",
-    help: "Через запятую. Пусто — отправка на любые адреса. Если задано, письма на адреса других доменов (например, внешние) не отправляются — ни автоматически, ни вручную.", example: "example.local" },
-  { section: "Вложения", name: "attach_format", label: "Формат документов во вложении", type: "select", options: [["docx", "DOCX (Word)"], ["pdf", "PDF"], ["txt", "Простой текст"], ["md", "Markdown"]] },
+  { section: "Вложения", name: "attach_format", label: "Формат документов во вложении", type: "select", options: [["docx", "DOCX (Word)"], ["pdf", "PDF"], ["html", "HTML (веб-страница)"], ["txt", "Простой текст"], ["md", "Markdown"]] },
   { section: "Вложения", name: "max_attachment_mb", label: "Максимальный размер вложений в письме", unit: "МБ", type: "number", min: 1, max: 50,
     help: "Если документы вместе больше — они не вкладываются, а в письме даётся ссылка на страницу встречи (открывается после входа). Запись аудио по почте не отправляется.", example: "10" },
   { section: "Очередь и повторы", name: "max_attempts", label: "Попыток отправки", type: "number", min: 1, max: 10, help: "При временной ошибке сервера (нет связи, занят) письмо отправляется повторно.", example: "4" },
   { section: "Очередь и повторы", name: "retry_minutes", label: "Пауза до первого повтора", unit: "минут", type: "number", min: 1, max: 240, help: "Каждая следующая пауза вдвое длиннее.", example: "5" },
   { section: "Очередь и повторы", name: "keep_days", label: "Хранить журнал отправки", unit: "дней", type: "number", min: 1, max: 3650, example: "90" },
   { section: "Письмо", name: "subject_prefix", label: "Префикс темы письма", type: "text", placeholder: "[Peregovorka]", help: "Необязательно: помогает настроить фильтры в почтовых программах." },
+  { section: "Дополнительно (расширенные настройки)", name: "allowed_domains", label: "Разрешённые домены получателей", type: "text", placeholder: "example.local, partner.example",
+    help: "Через запятую. Пусто — отправка на любые адреса. Если задано, письма на адреса других доменов (например, внешние) не отправляются — ни автоматически, ни вручную.", example: "example.local" },
 ];

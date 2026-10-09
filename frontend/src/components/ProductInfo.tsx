@@ -47,17 +47,27 @@ export function AppFooter({ info }: { info: BuildInfo | null }) {
   );
 }
 
+import { Link } from "react-router-dom";
+import { DEFAULT_COOKIE_TEXT, loadPrivacy } from "../privacy";
+
 const KEY = "pg:cookieNotice";
 
 /** Компактное уведомление о cookie: сервис использует только технические cookie (сессия, защита от подделки запросов); аналитических и рекламных нет. Решение запоминается. */
 export function CookieNotice() {
   const [shown, setShown] = useState(false);
-  useEffect(() => { try { setShown(localStorage.getItem(KEY) !== "1"); } catch { setShown(true); } }, []);
+  const [text, setText] = useState(DEFAULT_COOKIE_TEXT);
+  useEffect(() => {
+    try { setShown(localStorage.getItem(KEY) !== "1"); } catch { setShown(true); }
+    void loadPrivacy().then((p) => { if (p.cookie_text.trim()) setText(p.cookie_text); });
+  }, []);
   if (!shown) return null;
   return (
     <div className="cookie-note" role="region" aria-label="Уведомление о cookie">
-      <span>Сервис использует технические cookie, необходимые для авторизации и работы системы.</span>
-      <button type="button" className="btn mini primary" onClick={() => { try { localStorage.setItem(KEY, "1"); } catch { /* не запомнится — покажем снова */ } setShown(false); }}>Понятно</button>
+      <span>{text}</span>
+      <span className="cookie-actions">
+        <Link to="/privacy" className="btn mini ghost">Подробнее</Link>
+        <button type="button" className="btn mini primary" onClick={() => { try { localStorage.setItem(KEY, "1"); } catch { /* не запомнится — покажем снова */ } setShown(false); }}>Понятно</button>
+      </span>
     </div>
   );
 }

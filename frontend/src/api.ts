@@ -87,7 +87,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
+export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -267,8 +267,14 @@ export interface MailMessageRow {
   recipient: string; recipient_name: string | null; room: string | null; meeting_id: string | null; subject: string; kinds: string[]; trigger: string;
   requested_by: string | null; last_error: string | null; delivery: string | null;
 }
+export interface MailTemplate { id: string; name: string; subject: string; body: string; signature: string; materials: string[]; is_default: boolean }
+export interface DeliveryTemplate { id: string; name: string; is_default: boolean; subject: string; body: string; materials: string[] }
+export interface DeliveryLogRow {
+  id: string; batch_id: string | null; at: string; sent_at: string | null; by: string | null; trigger: string; recipient: string; name: string | null; state: string; attempts: number;
+  error: string | null; kinds: string[]; template: string | null; formats: string[] | null; delivery: string | null; subject: string;
+}
 export interface MailDeliverySpec {
-  enabled: boolean; archive?: boolean; materials: string[];
+  enabled: boolean; archive?: boolean; materials: string[]; template_id?: string | null; formats?: string[]; if_missing?: "send" | "skip";
   recipients: { leaders: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
 }
 export interface DeliveryRecipient { email: string; name: string; source: string; problem: string | null }
@@ -276,6 +282,7 @@ export interface DeliveryMaterialInfo { kind: string; label: string; describe?: 
 export interface DeliveryPlan {
   materials: DeliveryMaterialInfo[]; recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; max_attachment_mb?: number;
   available_kinds?: DeliveryMaterialInfo[]; selected?: string[]; attach_format?: string;
+  templates?: DeliveryTemplate[]; template_id?: string | null; formats?: string[]; selected_formats?: string[];
 }
 export interface SyncRun {
   id: string; trigger: string; actor: string | null; status: "running" | "ok" | "partial" | "unavailable" | "failed"; started_at: string; finished_at: string | null;
@@ -577,8 +584,16 @@ export const api = {
   /** Ручная отправка материалов завершённой встречи (руководитель комнаты / администратор). */
   delivery: {
     preview: (meetingId: string) => request<DeliveryPlan>("GET", `/meetings/${meetingId}/delivery`),
-    send: (meetingId: string, kinds: string[], emails: string[]) =>
-      request<{ batch_id: string; queued: number; skipped: { name: string; email: string; reason: string }[]; kinds: string[]; unavailable: string[] }>("POST", `/meetings/${meetingId}/delivery/send`, { kinds, emails }),
+    send: (meetingId: string, kinds: string[], emails: string[], extra: { template_id?: string | null; subject?: string; body?: string; formats?: string[] } = {}) =>
+      request<{ batch_id: string; queued: number; skipped: { name: string; email: string; reason: string }[]; kinds: string[]; unavailable: string[] }>("POST", `/meetings/${meetingId}/delivery/send`, { kinds, emails, ...extra }),
+    log: (meetingId: string) => request<DeliveryLogRow[]>("GET", `/meetings/${meetingId}/delivery/log`),
+  },
+  mailTemplateNames: () => request<{ items: { id: string; name: string; is_default: boolean }[]; formats: string[] }>("GET", "/mail-templates"),
+  mailTemplates: {
+    list: () => request<{ items: MailTemplate[]; variables: { name: string; describe: string }[]; materials: { kind: string; label: string }[] }>("GET", "/admin/mail/templates"),
+    create: (b: Partial<MailTemplate>) => request<MailTemplate>("POST", "/admin/mail/templates", b),
+    update: (id: string, b: Partial<MailTemplate>) => request<MailTemplate>("PUT", `/admin/mail/templates/${id}`, b),
+    remove: (id: string) => request<void>("DELETE", `/admin/mail/templates/${id}`),
   },
 
   conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),

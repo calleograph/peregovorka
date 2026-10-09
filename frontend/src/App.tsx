@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from
 import { api, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
 import Avatar from "./components/Avatar";
 import { AppFooter, CookieNotice, type BuildInfo } from "./components/ProductInfo";
+import PrivacyPage from "./pages/PrivacyPage";
 import { versionLabel } from "./util";
 import NavMenu from "./components/NavMenu";
 import { ADMIN_QUICK, adminHref, type MenuItem } from "./navMenu";
@@ -134,5 +135,6 @@ function GuestApp() {
 
 export default function App() {
   const { pathname } = useLocation();
+  if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;
 }

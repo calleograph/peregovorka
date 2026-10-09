@@ -12,7 +12,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
-from ..models import MailMessage, utcnow
+from ..models import MailMessage, MailTemplate, utcnow
+from ..services import mail_templates as mt
+from ..services.mail_delivery import MATERIALS
 from ..services.audit import write_audit
 from ..services.mail import MailError, build_message, check_connection, send, valid_email
 from ..services.settings import SettingsError
@@ -154,3 +156,61 @@ async def message_retry(mid: str, request: Request, su: SessionUser = Depends(re
                       details={"recipient": m.recipient})
     await db.commit()
     return _row(m)
+
+
+# --------------------------------------------------------------------------------------------- шаблоны писем
+@router.get("/templates")
+async def templates(su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    items = [mt.public(t) for t in await mt.list_templates(db)]
+    await db.commit()
+    return {"items": items, "variables": [{"name": n, "describe": d} for n, d in mt.VARIABLES], "materials": [{"kind": k, "label": m.label} for k, m in MATERIALS.items()]}
+
+
+def _clean(body: dict) -> dict:
+    try:
+        return mt.clean_template(body, materials_known=set(MATERIALS))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@router.post("/templates", status_code=201)
+async def template_create(request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    data = _clean(body)
+    await mt.ensure_default(db)
+    t = MailTemplate(**data, is_default=False)
+    db.add(t)
+    await db.flush()
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="mail.template.create", target_type="mail_template", target_id=str(t.id),
+                      ip=client_ip(request), details={"name": t.name})
+    await db.commit()
+    return mt.public(t)
+
+
+@router.put("/templates/{tid}")
+async def template_update(tid: str, request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    t = await mt.get_template(db, tid)
+    if t is None or str(t.id) != tid:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    for k, v in _clean(body).items():
+        setattr(t, k, v)
+    if body.get("is_default") is True and not t.is_default:
+        for o in (await db.execute(select(MailTemplate).where(MailTemplate.is_default.is_(True)))).scalars():
+            o.is_default = False
+        t.is_default = True
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="mail.template.update", target_type="mail_template", target_id=tid, ip=client_ip(request),
+                      details={"name": t.name})
+    await db.commit()
+    return mt.public(t)
+
+
+@router.delete("/templates/{tid}", status_code=204)
+async def template_delete(tid: str, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    t = await mt.get_template(db, tid)
+    if t is None or str(t.id) != tid:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    if t.is_default:
+        raise HTTPException(status_code=409, detail="Шаблон по умолчанию удалить нельзя: сначала назначьте по умолчанию другой")
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="mail.template.delete", target_type="mail_template", target_id=tid, ip=client_ip(request),
+                      details={"name": t.name})
+    await db.delete(t)
+    await db.commit()

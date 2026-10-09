@@ -55,6 +55,15 @@ async def ready(request: Request):
     return JSONResponse({"status": status, "checks": checks}, status_code=200 if required_ok else 503)
 
 
+@router.get("/public/privacy")
+async def public_privacy(request: Request):
+    """Тексты о cookie и обработке данных для страницы входа и страницы «Обработка данных» — без входа в систему. Только то, что администратор сам разместил для всех."""
+    async with request.app.state.session_maker() as db:
+        cfg = await request.app.state.settings_svc.get(db, "privacy")
+    d = cfg.model_dump()                                           # type: ignore[attr-defined]
+    return JSONResponse(d, headers={"Cache-Control": "public, max-age=60"})
+
+
 @router.get("/version")
 async def version(request: Request):
     s = request.app.state.settings

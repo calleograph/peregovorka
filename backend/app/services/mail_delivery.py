@@ -23,14 +23,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import Meeting, MailMessage, Protocol, User, utcnow
-from .export_docs import md_to_plain, to_docx, to_pdf
+from . import mail_templates as mt
+from .export_docs import md_to_plain, to_docx, to_html, to_pdf
 from .mail import MailError, MailService, build_message, send, valid_email
 from .settings import MailPolicySettings, SettingsService
 from .storage import safe_component
 
 log = logging.getLogger("app.maildelivery")
 
-FORMAT_MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf",
+FORMATS = ("docx", "pdf", "html", "txt", "md")
+FORMAT_MIME = {"html": "text/html; charset=utf-8", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf",
                "txt": "text/plain; charset=utf-8", "md": "text/markdown; charset=utf-8"}
 MAX_MANUAL_EMAILS = 50
 MAX_RECIPIENTS = 300
@@ -42,6 +44,7 @@ class Material:
     label: str
     title: str
     md: str
+    link_only: bool = False      # не вкладывается файлом: в письме — ссылка на страницу встречи
 
 
 @dataclass
@@ -77,10 +80,19 @@ async def _transcript(svc, db, meeting):
     return Material("transcript", "Стенограмма", f"Стенограмма: {meeting.room.name}", "\n\n".join(lines))
 
 
+async def _map(svc, db, meeting):
+    """Карта разговора: в письме ссылка на страницу встречи (вкладка «Карта разговора»); самостоятельный HTML собирает браузер, поэтому файлом её сервер не вкладывает."""
+    from ..models import ConversationMap  # noqa: PLC0415
+
+    m = (await db.execute(select(ConversationMap).where(ConversationMap.meeting_id == meeting.id, ConversationMap.status == "ready"))).scalars().first()
+    return Material("map", "Карта разговора", f"Карта разговора: {meeting.room.name}", "", link_only=True) if m else None
+
+
 MATERIALS: dict[str, MaterialDef] = {
     "protocol": MaterialDef("Протокол", "Официальный протокол совещания (формируется языковой моделью)", _protocol),
     "summary": MaterialDef("Резюме встречи", "Краткое резюме: суть, решения и поручения", _summary),
     "transcript": MaterialDef("Стенограмма", "Полный текст реплик участников с временем", _transcript),
+    "map": MaterialDef("Карта разговора", "Ссылка на карту разговора на странице встречи (файлом не вкладывается)", _map),
 }
 
 
@@ -93,6 +105,8 @@ def clean_spec(raw: dict | None) -> dict:
     """Приводит настройки доставки комнаты к безопасному виду; неверные значения — ValueError с текстом для пользователя."""
     raw = raw or {}
     spec = {"enabled": bool(raw.get("enabled")), "archive": bool(raw.get("archive")), "materials": [],
+            "template_id": str(raw.get("template_id") or "") or None, "if_missing": "skip" if raw.get("if_missing") == "skip" else "send",
+            "formats": [f for f in dict.fromkeys(raw.get("formats") or []) if f in FORMATS],
             "recipients": {"leaders": False, "participants": False, "users": [], "emails": []}}
     for k in raw.get("materials") or []:
         if k not in MATERIALS:
@@ -230,12 +244,32 @@ class DeliveryService:
                 "allowed_domains": pol.domains(), "max_attachment_mb": pol.max_attachment_mb, "attach_format": pol.attach_format}
 
     # ----------------------------------------------------------------------------------------------- очередь
+    async def compose_for(self, db: AsyncSession, meeting: Meeting, template_id: str | None) -> tuple[str, str, str]:
+        """(тема, текст письма, название шаблона) для встречи по шаблону (или по умолчанию)."""
+        tz = await self.protocols._tz(db)   # noqa: SLF001
+        t = await mt.get_template(db, template_id)
+        ctx = await mt.meeting_context(db, meeting, tz)
+        if t is None:
+            return "", "", ""
+        subject, body = mt.compose(t, ctx)
+        return subject, body, t.name
+
     def _subject(self, pol: MailPolicySettings, meeting: Meeting, tz) -> str:
         when = meeting.started_at.astimezone(tz).strftime("%d.%m.%Y %H:%M")
         return f"{pol.subject_prefix + ' ' if pol.subject_prefix else ''}Материалы встречи «{meeting.room.name}» от {when}"[:300]
 
-    async def enqueue(self, db: AsyncSession, meeting: Meeting, kinds: list[str], recipients: list[Recipient], *, trigger: str, by: str, archive: bool = False) -> dict:
+    async def enqueue(self, db: AsyncSession, meeting: Meeting, kinds: list[str], recipients: list[Recipient], *, trigger: str, by: str, archive: bool = False,
+                      subject: str | None = None, body: str | None = None, formats: list[str] | None = None, template: str | None = None) -> dict:
         pol = await self.policy(db)
+        options: dict = {}
+        if archive:
+            options["archive"] = True
+        if body:
+            options["body"] = body
+        if formats:
+            options["formats"] = [f for f in formats if f in FORMATS]
+        if template:
+            options["template"] = template
         tz = await self.protocols._tz(db)   # noqa: SLF001
         batch = uuid.uuid4()
         queued = 0
@@ -245,7 +279,7 @@ class DeliveryService:
                 skipped.append({"name": r.name, "email": r.email, "reason": PROBLEM_TEXT.get(r.problem, r.problem)})
                 continue
             db.add(MailMessage(batch_id=batch, meeting_id=meeting.id, room_name=meeting.room.name, recipient=r.email, recipient_name=r.name[:300],
-                               subject=self._subject(pol, meeting, tz), kinds=kinds, options={"archive": True} if archive else None, trigger=trigger, requested_by=by[:300], state="queued",
+                               subject=mt.one_line(subject) if subject else self._subject(pol, meeting, tz), kinds=kinds, options=options or None, trigger=trigger, requested_by=by[:300], state="queued",
                                max_attempts=pol.max_attempts, next_attempt_at=utcnow()))
             queued += 1
         await db.flush()
@@ -268,27 +302,60 @@ class DeliveryService:
                 if done:
                     return
                 need = [k for k in spec["materials"] if k in ("protocol", "summary") and await MATERIALS[k].load(self, db, meeting) is None]
+                want_map = "map" in spec["materials"] and await MATERIALS["map"].load(self, db, meeting) is None
             if need and await self.protocols.has_materials(meeting_id):
                 for k in need:
                     try:
                         await self.protocols.run_protocol(await self.protocols.create_protocol_row(meeting_id, k, "auto-mail", None))
                     except Exception:  # noqa: BLE001
                         log.warning("Не удалось сформировать материал для рассылки", extra={"kind": k})
+            if want_map:
+                await self._wait_for_map(meeting_id)
             async with self._sm() as db:
                 meeting = await db.get(Meeting, meeting_id)
                 plan = await self.plan(db, meeting, spec)
                 have = [m["kind"] for m in plan["materials"] if m["available"]]
+                missing = [k for k in spec["materials"] if k not in have]
                 recipients = [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in plan["recipients"]]
-                if not have:
-                    self._emit("mail_skipped", "warn", meeting, "Рассылка не выполнена: ни один из выбранных материалов не готов", {"wanted": spec["materials"]})
+                if missing:       # материал не готов (например, протокол завершился ошибкой): событие фиксируется всегда, дальше — по настройке комнаты
+                    self._emit("mail_material_missing", "warn", meeting, "К рассылке не готовы материалы: " + ", ".join(MATERIALS[k].label for k in missing),
+                               {"missing": missing, "policy": spec["if_missing"]})
+                if not have or (missing and spec["if_missing"] == "skip"):
+                    self._emit("mail_skipped", "warn", meeting, "Рассылка не выполнена: " + ("ни один из выбранных материалов не готов" if not have else "часть материалов не готова, а в настройках комнаты выбрано «не отправлять»"),
+                               {"wanted": spec["materials"], "missing": missing})
                     return
-                res = await self.enqueue(db, meeting, have, recipients, trigger="auto", by="автоматически", archive=spec["archive"])
+                subject, body, tname = await self.compose_for(db, meeting, spec.get("template_id"))
+                pol = await self.policy(db)
+                res = await self.enqueue(db, meeting, have, recipients, trigger="auto", by="автоматически", archive=spec["archive"], subject=subject, body=body,
+                                         formats=spec.get("formats") or [pol.attach_format], template=tname)
                 for s in res["skipped"]:
                     self._emit("mail_recipient_skipped", "warn", meeting, f"{s['name'] or s['email'] or 'получатель'}: {s['reason']}", {})
                 await db.commit()
                 self._emit("mail_queued", "info", meeting, f"В очередь поставлено писем: {res['queued']}", {"kinds": have, "skipped": len(res["skipped"])})
         except Exception:  # noqa: BLE001
             log.exception("Ошибка автоматической рассылки материалов")
+
+    async def _wait_for_map(self, meeting_id: uuid.UUID, limit_s: int = 2700) -> None:
+        """Карта нужна письму — ждём её (если её формирование включено/запущено); не ждём бесконечно."""
+        maps = getattr(self.protocols, "maps", None)
+        if maps is None:
+            return
+        async with self._sm() as db:
+            rec = await maps.get(db, meeting_id)
+            if rec is None:
+                try:
+                    rec = await maps.request(db, meeting_id, "автоматическая рассылка")
+                except Exception:  # noqa: BLE001
+                    return
+                maps.start(rec.id)
+        waited = 0
+        while waited < limit_s:
+            async with self._sm() as db:
+                rec = await maps.get(db, meeting_id)
+                if rec is None or rec.status in ("ready", "failed"):
+                    return
+            await asyncio.sleep(10)
+            waited += 10
 
     def _emit(self, event: str, level: str, meeting: Meeting | None, message: str, data: dict) -> None:
         if self.journal is not None:
@@ -304,7 +371,8 @@ class DeliveryService:
                 z.writestr(fname, data)
         return [(name, "application/zip", buf.getvalue())]
 
-    async def _render_attachments(self, db: AsyncSession, meeting: Meeting, kinds: list[str], fmt: str, archive: bool = False) -> tuple[list[tuple[str, str, bytes]], list[Material]]:
+    async def _render_attachments(self, db: AsyncSession, meeting: Meeting, kinds: list[str], fmts: list[str] | str, archive: bool = False) -> tuple[list[tuple[str, str, bytes]], list[Material]]:
+        fmts = [fmts] if isinstance(fmts, str) else fmts
         files: list[tuple[str, str, bytes]] = []
         mats: list[Material] = []
         tz = await self.protocols._tz(db)  # noqa: SLF001
@@ -314,8 +382,12 @@ class DeliveryService:
             if m is None:
                 continue
             mats.append(m)
-            data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
-            files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.{fmt}", FORMAT_MIME[fmt], data))
+            if m.link_only:
+                continue
+            for fmt in fmts:
+                data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else to_html(m.md, m.title).encode("utf-8") if fmt == "html"
+                        else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
+                files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.{fmt}", FORMAT_MIME[fmt], data))
         if archive and files:
             files = self._zip(files, f"Материалы встречи - {safe_component(meeting.room.name)} - {date}.zip")
         return files, mats
@@ -335,18 +407,25 @@ class DeliveryService:
                 pol = await self.policy(db)
                 if meeting is None:
                     raise MailError("content", "встреча удалена — отправлять нечего")
-                files, mats = await self._render_attachments(db, meeting, list(row.kinds or []), pol.attach_format, bool((row.options or {}).get("archive")))
+                opts = row.options or {}
+                fmts = [f for f in (opts.get("formats") or [pol.attach_format]) if f in FORMAT_MIME] or [pol.attach_format]
+                files, mats = await self._render_attachments(db, meeting, list(row.kinds or []), fmts, bool(opts.get("archive")))
                 if not mats:
                     raise MailError("content", "выбранные материалы больше недоступны")
                 total = sum(len(f[2]) for f in files)
                 link = f"{self._public_url}/history/{meeting.id}"
                 big = total > pol.max_attachment_mb * 1024 * 1024
                 tz = await self.protocols._tz(db)  # noqa: SLF001
-                body = [f"Здравствуйте{', ' + row.recipient_name if row.recipient_name and ' ' in row.recipient_name else ''}!", "",
-                        f"Материалы встречи «{meeting.room.name}» от {meeting.started_at.astimezone(tz).strftime('%d.%m.%Y %H:%M')}:", ""]
+                if opts.get("body"):          # письмо по шаблону (его могли поправить перед отправкой): текст готов, ниже — только перечень и ссылка
+                    body = [str(opts["body"]), "", "Материалы:"]
+                else:
+                    body = [f"Здравствуйте{', ' + row.recipient_name if row.recipient_name and ' ' in row.recipient_name else ''}!", "",
+                            f"Материалы встречи «{meeting.room.name}» от {meeting.started_at.astimezone(tz).strftime('%d.%m.%Y %H:%M')}:", ""]
                 body += [f"  • {m.label}" for m in mats]
                 body.append("")
-                if big:
+                if not files:
+                    body += [f"Страница встречи (потребуется вход): {link}"]
+                elif big:
                     body += [f"Материалы большие (около {total // 1024 // 1024 or 1} МБ), поэтому не вложены в письмо. Откройте их на странице встречи (потребуется вход):", link]
                 else:
                     body += ["Документы — во вложении.", f"Страница встречи (потребуется вход): {link}"]

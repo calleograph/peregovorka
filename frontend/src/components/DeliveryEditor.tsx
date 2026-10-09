@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type ApiError, type DeliveryRecipient, type DirHit, type MailDeliverySpec } from "../api";
 
 export const MATERIAL_KINDS: { kind: string; label: string; help: string }[] = [
   { kind: "protocol", label: "Протокол", help: "Официальный протокол совещания (формирует языковая модель)." },
   { kind: "summary", label: "Резюме встречи", help: "Краткое резюме: суть, решения и поручения." },
   { kind: "transcript", label: "Стенограмма", help: "Полный текст реплик участников с временем." },
+  { kind: "map", label: "Карта разговора", help: "Ссылка на карту на странице встречи (файлом не вкладывается; при необходимости карта формируется перед отправкой)." },
 ];
+export const FORMAT_LABEL: Record<string, string> = { docx: "Word (.docx)", pdf: "PDF", html: "HTML", txt: "Текст (.txt)", md: "Markdown" };
 export const SOURCE_LABEL: Record<string, string> = { leader: "руководитель", participant: "участник", user: "выбран вручную", manual: "свой адрес" };
 export const PROBLEM_LABEL: Record<string, string> = { no_email: "в каталоге нет адреса электронной почты", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
@@ -39,6 +41,9 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId: str
   const [hint, setHint] = useState("");
   const [preview, setPreview] = useState<{ recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; participants_by_meeting: boolean } | null>(null);
   const [err, setErr] = useState("");
+  const [tpls, setTpls] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
+  const [fmts, setFmts] = useState<string[]>(["docx", "pdf", "html", "txt", "md"]);
+  useEffect(() => { void api.mailTemplateNames().then((r) => { setTpls(r.items); setFmts(r.formats); }).catch(() => undefined); }, []);
   const set = (patch: Partial<MailDeliverySpec>) => onChange({ ...spec, ...patch });
   const setRec = (patch: Partial<MailDeliverySpec["recipients"]>) => onChange({ ...spec, recipients: { ...spec.recipients, ...patch } });
   const toggleKind = (k: string) => set({ materials: spec.materials.includes(k) ? spec.materials.filter((x) => x !== k) : [...spec.materials, k] });
@@ -72,6 +77,24 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId: str
         <label className="check"><input type="checkbox" checked={!!spec.archive} onChange={(e) => set({ archive: e.target.checked })} disabled={spec.materials.length < 2} />
           <span className="check-body">Отправлять одним архивом (zip)<span className="help">Все выбранные документы кладутся в один файл — удобно, когда их несколько. {spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : ""}</span></span></label>
         <span className="help">Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа).</span>
+      </fieldset>
+
+      <fieldset className="group"><legend>Письмо и документы</legend>
+        <label>Шаблон письма
+          <select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
+            <option value="">По умолчанию{tpls.find((t) => t.is_default) ? ` («${tpls.find((t) => t.is_default)!.name}»)` : ""}</option>
+            {tpls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select><span className="help">Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</span></label>
+        <div><b className="small">Формат документов</b>
+          <div className="checks">{fmts.map((f) => (
+            <label key={f} className="check"><input type="checkbox" checked={(spec.formats ?? []).includes(f)}
+              onChange={(e) => set({ formats: e.target.checked ? [...(spec.formats ?? []), f] : (spec.formats ?? []).filter((x) => x !== f) })} /> {FORMAT_LABEL[f] ?? f}</label>))}</div>
+          <span className="help">Ничего не выбрано — формат по умолчанию из правил рассылки.</span></div>
+        <label>Если какой-то материал не готов (например, протокол завершился ошибкой)
+          <select value={spec.if_missing ?? "send"} onChange={(e) => set({ if_missing: e.target.value as "send" | "skip" })}>
+            <option value="send">Отправить то, что готово (событие записывается в журнал)</option>
+            <option value="skip">Не отправлять письмо (событие записывается в журнал)</option>
+          </select></label>
       </fieldset>
 
       <fieldset className="group"><legend>Кому отправлять</legend>

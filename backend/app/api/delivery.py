@@ -8,16 +8,27 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
-from ..models import Meeting
+from ..models import MailMessage, Meeting
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.mail import valid_email
-from ..services.mail_delivery import MATERIALS, Recipient, clean_spec, effective_delivery
+from ..services import mail_templates as mt
+from ..services.mail_delivery import FORMATS, MATERIALS, Recipient, clean_spec, effective_delivery
 
 router = APIRouter(prefix="/meetings/{meeting_id}/delivery", tags=["delivery"])
+templates_router = APIRouter(prefix="/mail-templates", tags=["delivery"])
+
+
+@templates_router.get("")
+async def template_names(su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Названия шаблонов писем (для выбора в настройках комнаты): без текстов, только имя и признак «по умолчанию»."""
+    items = [{"id": str(t.id), "name": t.name, "is_default": t.is_default} for t in await mt.list_templates(db)]
+    await db.commit()
+    return {"items": items, "formats": list(FORMATS)}
 
 
 async def _meeting(request: Request, db: AsyncSession, meeting_id: uuid.UUID, su: SessionUser) -> Meeting:
@@ -47,7 +58,33 @@ async def preview(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     plan = await request.app.state.delivery.plan(db, meeting, spec)
     plan["available_kinds"] = [{"kind": k, "label": d.label, "describe": d.describe} for k, d in MATERIALS.items()]
     plan["selected"] = spec["materials"]
+    # шаблоны писем с уже подставленными данными этой встречи: пользователь правит тему и текст только для этого письма, шаблон не меняется
+    delivery = request.app.state.delivery
+    tz = await delivery.protocols._tz(db)  # noqa: SLF001
+    ctx = await mt.meeting_context(db, meeting, tz)
+    templates = []
+    for t in await mt.list_templates(db):
+        subject, body = mt.compose(t, ctx)
+        templates.append({"id": str(t.id), "name": t.name, "is_default": t.is_default, "subject": subject, "body": body, "materials": list(t.materials or [])})
+    await db.commit()
+    plan["templates"] = templates
+    plan["template_id"] = spec.get("template_id") or next((t["id"] for t in templates if t["is_default"]), None)
+    plan["formats"] = list(FORMATS)
+    plan["selected_formats"] = spec.get("formats") or [plan["attach_format"]]
     return plan
+
+
+@router.get("/log")
+async def delivery_log(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Что и кому отправляли по этой встрече: когда, кем (человек или автоматически), шаблон, материалы, результат и ошибка. Тела писем и реквизиты SMTP не отдаются."""
+    meeting = await db.get(Meeting, meeting_id)
+    if meeting is None or not roles.can_manage_room(meeting.room, su):
+        raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
+    rows = (await db.execute(select(MailMessage).where(MailMessage.meeting_id == meeting_id).order_by(MailMessage.created_at.desc()).limit(300))).scalars().all()
+    return [{"id": str(r.id), "batch_id": str(r.batch_id) if r.batch_id else None, "at": r.created_at.isoformat(), "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+             "by": r.requested_by, "trigger": r.trigger, "recipient": r.recipient, "name": r.recipient_name, "state": r.state, "attempts": r.attempts, "error": r.last_error,
+             "kinds": list(r.kinds or []), "template": (r.options or {}).get("template"), "formats": (r.options or {}).get("formats"), "delivery": r.delivery,
+             "subject": r.subject} for r in rows]
 
 
 @router.post("/send")
@@ -86,9 +123,18 @@ async def send_materials(meeting_id: uuid.UUID, request: Request, body: dict[str
     available = [k for k in kinds if await MATERIALS[k].load(delivery, db, meeting) is not None]
     if not available:
         raise HTTPException(status_code=409, detail="Выбранные материалы ещё не сформированы.")
-    res = await delivery.enqueue(db, meeting, available, chosen, trigger="manual", by=su.display_name, archive=bool(body.get("archive", spec.get("archive"))))
+    formats = [f for f in dict.fromkeys(body.get("formats") or []) if f in FORMATS] or spec.get("formats") or [pol.attach_format]
+    tmpl = await mt.get_template(db, str(body.get("template_id") or "") or None)
+    subject = mt.one_line(str(body.get("subject") or ""))
+    text = str(body.get("body") or "").replace("\r\n", "\n").strip()
+    if len(text) > mt.MAX_BODY:
+        raise HTTPException(status_code=422, detail=f"Текст письма: не больше {mt.MAX_BODY} знаков")
+    if not subject or not text:                       # без правок пользователя — по шаблону
+        subject, text, _ = await delivery.compose_for(db, meeting, str(tmpl.id) if tmpl else None)
+    res = await delivery.enqueue(db, meeting, available, chosen, trigger="manual", by=su.display_name, archive=bool(body.get("archive", spec.get("archive"))),
+                                 subject=subject, body=text, formats=formats, template=tmpl.name if tmpl else None)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.materials.send", target_type="meeting", target_id=str(meeting.id),
-                      ip=client_ip(request), details={"room": meeting.room.slug, "kinds": available, "queued": res["queued"], "skipped": len(res["skipped"]),
+                      ip=client_ip(request), details={"room": meeting.room.slug, "kinds": available, "formats": formats, "template": tmpl.name if tmpl else None, "queued": res["queued"], "skipped": len(res["skipped"]),
                                                       "unavailable": [k for k in kinds if k not in available]})
     await db.commit()
     return {**res, "kinds": available, "unavailable": [k for k in kinds if k not in available]}

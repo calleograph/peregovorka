@@ -520,7 +520,7 @@ class MailPolicySettings(_Group):
     """Глобальные правила отправки материалов встреч (SMTP-реквизиты — в профилях почты). Руководитель комнаты выбирает только «что и кому»."""
 
     max_attachment_mb: int = Field(default=10, ge=1, le=50)       # крупнее — вместо вложения ссылка на материал в приложении
-    attach_format: Literal["docx", "pdf", "txt", "md"] = "docx"
+    attach_format: Literal["docx", "pdf", "html", "txt", "md"] = "docx"
     allowed_domains: str = ""                                      # через запятую; пусто — любые адреса
     max_attempts: int = Field(default=4, ge=1, le=10)
     retry_minutes: int = Field(default=5, ge=1, le=240)            # задержка до первого повтора (дальше удваивается)
@@ -565,7 +565,31 @@ class AutoUpdateSettings(_Group):
         return v
 
 
+class PrivacySettings(_Group):
+    """Тексты уведомления о cookie и страницы «Обработка данных» (открывается без входа). Заполняет администратор: юридический текст в приложении не зашит.
+    Сервис использует только технические cookie (сессия, защита от подделки запросов); категорий «маркетинг/реклама» нет."""
+
+    cookie_text: str = Field(default="Сервис использует технические cookie, необходимые для авторизации и работы системы. При использовании сервиса обрабатываются данные, "
+                                     "необходимые для организации видеовстреч и работы корпоративной системы.", max_length=1000)
+    operator: str = Field(default="", max_length=500)           # оператор / организация
+    purpose: str = Field(default="", max_length=4000)           # назначение системы
+    data_types: str = Field(default="", max_length=4000)        # какие типы информации обрабатываются
+    cookies: str = Field(default="Используются только технические cookie: идентификатор сессии и защита от подделки запросов. Аналитические и рекламные cookie не применяются.", max_length=2000)
+    retention: str = Field(default="", max_length=4000)         # сроки хранения
+    contact: str = Field(default="", max_length=1000)           # контакт для вопросов
+    policy_url: str = Field(default="", max_length=500)         # внутренняя политика / положение
+
+    @field_validator("policy_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^https?://[^\s]+$", v, re.I):
+            raise ValueError("Ссылка на политику: адрес вида https://… (или оставьте пустым)")
+        return v
+
+
 GROUPS: dict[str, type[_Group]] = {
+    "privacy": PrivacySettings,
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,
     "chat_files": ChatFilesSettings,

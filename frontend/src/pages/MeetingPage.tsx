@@ -7,6 +7,7 @@ import { Icon } from "../components/Icons";
 import Menu from "../components/Menu";
 import MapTab from "../components/MapTab";
 import MeetingAdminActions from "../components/MeetingAdminActions";
+import DeliveryLog from "../components/DeliveryLog";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
 import { docState, generationLine } from "../components/GenerationInfo";
@@ -43,6 +44,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [protocols, setProtocols] = useState<ProtocolItem[]>([]);
   const [recordings, setRecordings] = useState<MeetingRecording[]>([]);
   const [sendOpen, setSendOpen] = useState(false);
+  const [logKey, setLogKey] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
@@ -220,7 +222,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {sendOpen && <SendMaterialsDialog meetingId={meetingId} onClose={() => setSendOpen(false)} />}
+      {sendOpen && <SendMaterialsDialog meetingId={meetingId} onClose={() => { setSendOpen(false); setLogKey((k) => k + 1); }} />}
+      {finished && (isAdmin || meeting.can_send_materials) && tab === "docs" && <DeliveryLog meetingId={meetingId} refreshKey={logKey} />}
       {dialog && <ProtocolDialog meetingId={meetingId} kind={dialog.kind} isAdmin={isAdmin} initialInstruction={dialog.instruction} onClose={() => setDialog(null)} onStarted={onStarted} />}
       {toastNode}
     </section>
