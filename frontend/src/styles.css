@@ -677,8 +677,8 @@ table.recipients td { padding: 5px 8px; vertical-align: top; } table.recipients 
   .topbar .spacer { display: none; }
   .usermenu { order: 3; }
   .uname { display: none; }
-  .topnav { order: 4; flex-basis: 100%; flex-direction: column; align-items: stretch; display: none; padding-top: 6px; border-top: 1px solid var(--line); }
-  .burger-open .topnav { display: flex; }
+  .topbar .topnav { order: 4; flex-basis: 100%; flex-direction: column; align-items: stretch; display: none; padding-top: 6px; border-top: 1px solid var(--line); }
+  .topbar.burger-open .topnav { display: flex; }
   .topnav a, .topnav .dd-btn { padding: 10px 12px; }
   .topnav .dd-btn { width: 100%; justify-content: space-between; }
   .topnav .dd-panel { position: static; box-shadow: none; border: 0; padding: 0 0 0 10px; max-width: none; opacity: 1; transform: none; visibility: visible; pointer-events: auto; display: none; }

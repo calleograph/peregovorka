@@ -573,3 +573,7 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 @media (max-width: 700px) { .perm-callout.at-top-left, .perm-callout.at-top-center { top: 16px; left: 50%; margin-left: calc(min(380px, calc(100vw - 32px)) / -2); } .perm-pointer { display: none; } }
 .perm-nomic { margin-top: 6px; }
 .pj-nomic { margin: 0; }
+
+/* ---- 0.8.9: подпись плитки на узких экранах — имя в одну строку с многоточием (раньше «по букве в строке»), текст «камера выкл.» на телефоне скрыт (остаются значки) ---- */
+.tile-foot .tile-name { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+@media (max-width: 560px) { .tile-foot .state:not(.screen) { display: none; } }
