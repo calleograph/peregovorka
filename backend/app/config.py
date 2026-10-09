@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     app_public_url: str = "http://localhost:8080"
     log_level: str = "INFO"
     log_format: str = "json"  # json | console
-    docs_enabled: bool = True
+    docs_enabled: bool = False   # документация и схема внутреннего API по умолчанию закрыты (в compose было false, в коде — true: «открыто по умолчанию» не должно зависеть от окружения)
     data_dir: str = "/data"
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.

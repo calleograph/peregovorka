@@ -88,7 +88,8 @@ function TileMenu({ p, actions, pos, onClose }: { p: PView; actions: TileActions
   );
 }
 
-export function ParticipantTile({ p, compact, actions, onCard, meetingId }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string }) {
+export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatarUrl }: { p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string; avatarUrl?: string }) {
+  const [avFailed, setAvFailed] = useState(false);
   const { onContextMenu, node: ctxNode } = useContextMenu();
   const [flash, setFlash] = useState("");
   const say = (t: string) => { setFlash(t); window.setTimeout(() => setFlash(""), 2200); };
@@ -122,7 +123,7 @@ export function ParticipantTile({ p, compact, actions, onCard, meetingId }: { p:
          onKeyDown={onCard ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(p); } } : undefined}>
       {p.hand && <span className="tile-hand" title={p.handOrder ? `Поднял руку (в очереди: ${p.handOrder})` : "Поднял руку"} role="img" aria-label="Поднята рука"><Icon name="hand" size={16} />{p.handOrder ? <b>{p.handOrder}</b> : null}</span>}
       <VideoTile p={p.participant} source={Track.Source.Camera} />
-      {!p.cam && <div className="avatar" aria-hidden>{initials}</div>}
+      {!p.cam && <div className="avatar" aria-hidden>{avatarUrl && !avFailed ? <img src={avatarUrl} alt="" draggable={false} onError={() => setAvFailed(true)} /> : initials}</div>}
       {(p.floor || p.leader) && (
         <span className={`tile-role ${p.floor ? "floor" : "leader"}`} title={p.floor ? "Участнику дано слово" : "Руководитель комнаты"}>
           {p.floor ? <><Icon name="hand" size={14} /> Слово</> : "Руководитель"}

@@ -7,6 +7,8 @@
 Видео- и аудиовстречи для корпоративной сети: вход доменной учётной записью, распознавание речи каждого участника, чат, общая доска для схем, гостевой доступ по ссылке
 и протоколы встреч по вашей инструкции. Данные остаются на вашем сервере.
 
+**Self-hosted видеовстречи со стенограммой, протоколами и локальным ИИ:** [LiveKit](https://livekit.io) (WebRTC) · GigaAM (русская речь) · Qwen3 (локально, без отправки данных наружу) · общая доска · SIP · карта разговора.
+
 [![CI](https://github.com/calleograph/peregovorka/actions/workflows/ci.yml/badge.svg)](https://github.com/calleograph/peregovorka/actions)
 [![Версия](https://img.shields.io/github/v/release/calleograph/peregovorka?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/calleograph/peregovorka/releases)
 
@@ -146,4 +148,6 @@ sudo ./scripts/update.sh
 | [docs/STORAGE.md](docs/STORAGE.md) | хранилища файлов (SMB, каталог), вложения чата, сверка с хранилищем |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | устройство, безопасность, данные, состав репозитория, тесты, ограничения |
 | [docs/VERSIONING.md](docs/VERSIONING.md) | версии и выпуск релизов |
+| [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | аудит безопасности: что проверено, найдено, исправлено и оставлено |
+| [docs/UI_DENSITY.md](docs/UI_DENSITY.md) | правила плотности интерфейса и как это проверялось |
 | [.env.example](.env.example) | все параметры конфигурации |

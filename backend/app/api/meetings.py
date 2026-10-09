@@ -22,6 +22,7 @@ from ..services.settings import SettingsError
 from ..services.segments import segment_to_dict
 from ..services.reconcile import mark_missing
 from ..services.storage import StorageError, StorageNotFound
+from .profile import avatar_url
 from .schemas import MeetingOut, ParticipantOut, SegmentOut, TranscriptOut
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -110,6 +111,19 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
     ids = [m.id for m in meetings]
     counts, guests = await meeting_counts(db, ids), await meeting_guests(db, ids)
     return [meeting_out(m, counts.get(m.id), guests.get(m.id)) for m in meetings]
+
+
+@router.get("/{meeting_id}/avatars")
+async def meeting_avatars(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Аватарки участников встречи для плиток в комнате: {identity в LiveKit: адрес с версией}. Только у тех, у кого аватарка есть (у остальных — инициалы).
+    Адрес версионный: браузер кэширует картинку надолго, а при смене фото адрес меняется. Доступ — как к самой встрече."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    out: dict[str, str] = {}
+    for p in meeting.participants:
+        url = avatar_url(p.user)
+        if url:
+            out[p.user.livekit_identity] = url
+    return out
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)

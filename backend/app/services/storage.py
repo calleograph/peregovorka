@@ -63,6 +63,10 @@ def _check_rel(rel: str) -> PurePosixPath:
     p = PurePosixPath(rel)
     if p.is_absolute() or ".." in p.parts or not p.parts:
         raise StorageError("Недопустимый путь")
+    # На Linux обратная косая — обычный символ имени, а на SMB-сервере (Windows) — разделитель: компонент «..\..\x» вышел бы из каталога хранилища.
+    # Двоеточие — альтернативные потоки NTFS. Все наши компоненты проходят safe_component (он эти символы заменяет), так что нормальные пути не затрагиваются.
+    if any(("\\" in part or ":" in part or "\x00" in part) for part in p.parts):
+        raise StorageError("Недопустимый путь")
     return p
 
 

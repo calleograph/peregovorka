@@ -815,6 +815,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const myFloor = floorIds.has(join.identity);
   const listenerHint = "В презентационной комнате вы слушаете. Когда руководитель даст слово, кнопка станет доступна";
   const handOrder = new Map(hands.map((h, i) => [h.identity, i + 1] as const));
+  // Аватарки участников: один запрос при входе и ещё один, когда в комнате появляется кто-то новый (без постоянных опросов); сбой не мешает комнате — остаются инициалы
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
+  const avatarKey = participants.map((p) => p.identity).sort().join(",");
+  useEffect(() => {
+    if (guest || !join.meeting_id) return;
+    const t = window.setTimeout(() => { void api.meetingAvatars(join.meeting_id).then(setAvatars).catch(() => undefined); }, 600);
+    return () => window.clearTimeout(t);
+  }, [guest, join.meeting_id, avatarKey]);
   const viewParticipants: PView[] = participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity), hand: handOrder.has(p.identity), handOrder: handOrder.get(p.identity) }));
   const myHand = handOrder.has(join.identity);
   const toggleHand = () => { void api.hand(join.meeting_id, !myHand).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
@@ -900,7 +908,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           </div>
         )}
         <div className={`tiles n${n} ${sharer || boardOpen ? "strip" : ""}`}>
-          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
+          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} avatarUrl={avatars[p.identity]} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
           {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
         </div>
 

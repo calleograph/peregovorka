@@ -190,6 +190,12 @@ req_get() { sed -n "s/^$1=//p" "$CH/request.txt" 2>/dev/null | head -1 | tr -d '
 handle_request() {
   local f="$CH/request.txt" action rid force pull by at now repair
   [ -f "$f" ] || return 0
+  # Каталог обмена открыт на запись (1777: контейнер backend пишет туда от uid 10001), поэтому на общем сервере положить файл мог бы и любой локальный пользователь.
+  # Берём запрос только от своих: символьная ссылка отклоняется, владелец — root, сам исполнитель или пользователь контейнера backend.
+  local owner; owner="$(stat -c %u "$f" 2>/dev/null || echo -1)"
+  if [ -L "$f" ] || ! [[ "$owner" =~ ^(0|$(id -u)|${BACKEND_UID:-10001})$ ]]; then
+    warn "Запрос отклонён: файл — символьная ссылка или создан посторонним пользователем (uid $owner)"; rm -f "$f"; return 0
+  fi
   rid="$(req_get id)"; action="$(req_get action)"; force="$(req_get force_build)"; pull="$(req_get pull)"; by="$(req_get by)"; at="$(req_get at)"; repair="$(req_get repair)"
   rm -f "$f"   # запрос выполняется один раз (rm удаляет и symlink, не следуя за ним)
   [[ "$rid" =~ ^[a-f0-9]{8,32}$ ]] || { warn "Запрос отклонён: некорректный id"; return 0; }

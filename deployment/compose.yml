@@ -54,6 +54,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes", "--save", "60", "1000"]
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:?}
@@ -119,6 +121,8 @@ services:
         APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-backend:${IMAGE_TAG:?}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет
     depends_on:
       postgres:
         condition: service_healthy
@@ -327,6 +331,8 @@ services:
         APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-web:${IMAGE_TAG}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет
     depends_on:
       backend:
         condition: service_healthy

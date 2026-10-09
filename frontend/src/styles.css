@@ -177,7 +177,8 @@ main { max-width: 1900px; }
 .tiles.n2, .tiles.n3, .tiles.n4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tiles.n5, .tiles.n6, .tiles.n7, .tiles.n8, .tiles.n9 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tiles .tile { aspect-ratio: auto; min-height: 180px; }
-.tiles .avatar { width: 84px; height: 84px; font-size: 32px; }
+.tiles .avatar { width: 84px; height: 84px; font-size: 32px; overflow: hidden; }
+.tiles .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
 .tiles.strip { flex: none; display: flex; gap: 8px; min-height: 0; overflow-x: auto; padding-bottom: 4px; }
 .tiles.strip .tile { flex: 0 0 200px; min-height: 0; aspect-ratio: 16/9; }
 .tiles.strip .avatar { width: 44px; height: 44px; font-size: 18px; }
