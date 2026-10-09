@@ -307,3 +307,47 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .map-frame { display: block; width: 100%; border: 0; border-radius: var(--radius-lg); background: transparent; color-scheme: normal; }
 .badge.err { background: var(--danger-bg); color: var(--danger-text); }
 .utt.focus { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 8px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent); transition: background .4s; }
+
+
+/* ---------- правая панель комнаты: транскрипция сверху, чат снизу ---------- */
+.transcript.split { overflow: hidden; }
+.transcript.split .side-title { font-size: 14px; }
+.tp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
+.tp-pane { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.tp-head { display: flex; align-items: center; gap: 8px; padding: 4px 2px; min-height: 34px; flex: none; border-bottom: 1px solid var(--line); }
+.tp-head .spacer { flex: 1; }
+.tp-pane.min .tp-head { border-bottom: 0; }
+.tp-content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.tp-content[hidden] { display: none; }
+.tp-top .transcript-list { flex: 1; min-height: 0; overflow-y: auto; margin-top: 6px; }
+.tp-bottom .chat { flex: 1; min-height: 0; }
+.tp-bottom .chat-list { min-height: 0; }
+.pane-btns { display: inline-flex; gap: 2px; }
+.tp-divider { flex: none; height: 11px; margin: 2px 0; cursor: row-resize; touch-action: none; position: relative; border-radius: 6px; }
+.tp-divider::before { content: ""; position: absolute; left: 30%; right: 30%; top: 4px; height: 3px; border-radius: 3px; background: var(--line-strong); transition: background .15s, left .2s, right .2s; }
+.tp-divider:hover::before, .tp-divider:focus-visible::before { background: var(--accent); left: 20%; right: 20%; }
+.tp-divider:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.side-title { font-weight: 600; }
+
+/* ---------- индикатор микрофона: фиксированный контейнер, меняется только содержимое ---------- */
+.mic-ind { position: relative; display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; min-width: 28px; border-radius: 50%; overflow: hidden; contain: strict; box-sizing: border-box; }
+.mic-ind.on { background: rgba(47, 179, 90, .28); color: #d8f7e2; }
+.mic-ind.off { background: rgba(201, 73, 73, .55); color: #fff; }
+.mic-ind svg { position: relative; z-index: 1; }
+.mic-ring { position: absolute; inset: 0; border-radius: 50%; background: var(--ok); opacity: 0; transform: scale(.55); pointer-events: none; }
+.mic-ind.speaking .mic-ring { animation: micWave 1.1s ease-out infinite; }
+@keyframes micWave { 0% { opacity: .55; transform: scale(.55); } 100% { opacity: 0; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .mic-ind.speaking .mic-ring { animation: none; opacity: .35; transform: scale(.9); } }
+.tile-foot { flex-wrap: nowrap; }
+
+/* ---------- комнаты: компактный многоколоночный вид ---------- */
+.rooms-compact { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.rm { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card);
+  cursor: pointer; transition: border-color .2s, transform .25s var(--spring), box-shadow .2s; animation: rise .45s var(--ease) both; animation-delay: calc(var(--i, 0) * 20ms); }
+.rm:hover, .rm:focus-visible { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-lift); outline: none; }
+.rm-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.rm-name { font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; min-width: 0; }
+.rm-top .pill { flex: none; }
+.rm-sub { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; min-width: 0; }
+.rm-sub code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.rm-act { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }

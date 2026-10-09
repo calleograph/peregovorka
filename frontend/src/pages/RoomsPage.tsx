@@ -54,24 +54,27 @@ function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: stri
   );
 }
 
-function RoomRow({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
+/** Компактная карточка комнаты для режима «Компактно»: несколько колонок, длинное название — в две строки с подсказкой, вся карточка открывает комнату. */
+function RoomMini({ r, i, onCopy }: { r: Room; i: number; onCopy: (text: string, tone?: "ok" | "error") => void }) {
   const live = r.active_meeting;
-  const full = live && live.participants >= r.max_participants;
+  const full = !!live && live.participants >= r.max_participants;
+  const navigate = useNavigate();
+  const open = () => navigate(`/rooms/${r.slug}`);
   return (
-    <div className="rl-row" style={{ "--i": i } as CSSProperties}>
-      <div className="rl-name">
-        <Link to={`/rooms/${r.slug}`}><b>{r.name}</b></Link>
-        <code title="Технический идентификатор (адрес комнаты)">{r.slug}</code>
-        {r.lifetime === "temporary" && <span className="tag">Временная</span>}
+    <div className="rm" role="listitem" style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
+         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(); } }}>
+      <div className="rm-top">
+        <span className="rm-name" title={r.name}>{r.name}</span>
+        <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />{live ? `${live.participants}` : "Свободна"}</span>
       </div>
-      <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants}` : "Свободна"}</span>
-      <span className="rl-avail muted small">{full ? "мест нет" : `до ${r.max_participants} уч.`}{r.has_password ? " · пароль" : ""}{r.room_type === "presentation" ? " · презентация" : ""}</span>
-      <span className="rl-links small">
-        <span className="rl-link" title="Ссылка для зарегистрированных участников">{`/rooms/${r.slug}`}</span>
-        {r.guest_token && <span className="tag guest" title="Гостевой вход включён">гости</span>}
-      </span>
-      <CopyLinks r={r} onCopy={onCopy} compact={false} />
-      <Link to={`/rooms/${r.slug}`} className="btn mini primary rl-go">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"}</Link>
+      <div className="rm-sub small muted">
+        <code title="Технический идентификатор (адрес комнаты)">{r.slug}</code>
+        <span>{full ? "мест нет" : `до ${r.max_participants}`}{r.has_password ? " · пароль" : ""}{r.lifetime === "temporary" ? " · временная" : ""}</span>
+      </div>
+      <div className="rm-act" onClick={(e) => e.stopPropagation()}>
+        <CopyLinks r={r} onCopy={onCopy} compact={false} />
+        <Link to={`/rooms/${r.slug}`} className="btn mini primary">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"}</Link>
+      </div>
     </div>
   );
 }
@@ -168,7 +171,7 @@ export default function RoomsPage() {
           <label className="search"><Icon name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти комнату" aria-label="Найти комнату" /></label>
           <div className="seg viewseg" role="group" aria-label="Вид списка">
             <button type="button" aria-pressed={view === "tiles"} onClick={() => pickView("tiles")} title="Плитки"><Icon name="grid" size={15} /> Плитка</button>
-            <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Компактный список"><Icon name="list" size={15} /> Список</button>
+            <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Компактные карточки в несколько колонок"><Icon name="list" size={15} /> Компактно</button>
           </div>
           <div className="chips" role="group" aria-label="Фильтр комнат">
             {FILTERS.map(([id, label]) => <button key={id} type="button" className={`chip ${filter === id ? "on" : ""}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
@@ -186,7 +189,7 @@ export default function RoomsPage() {
       {rooms.length > 0 && shown.length === 0 && <p className="muted">По этому запросу комнат нет. Измените поиск или фильтр.</p>}
       {view === "tiles"
         ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} />)}</div>
-        : <div className="rooms-list" role="list">{shown.map((r, i) => <RoomRow key={r.id} r={r} i={i} onCopy={showToast} />)}</div>}
+        : <div className="rooms-compact" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} />)}</div>}
       {toast}
       {tempOpen && policy && <TempRoomDialog policy={policy} onClose={() => setTempOpen(false)} />}
     </section>

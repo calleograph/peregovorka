@@ -1,4 +1,6 @@
 /** Тихий короткий сигнал «рука поднята»: два мягких тона, ~0,35 с, громкость невысокая. Включается и выключается настройкой пользователя (хранится в браузере). */
+import { soundVolume } from "./chatSound";
+
 const KEY = "pg:handSound";
 
 export function handSoundEnabled(): boolean {
@@ -12,11 +14,11 @@ export function setHandSoundEnabled(on: boolean): void {
 let ctx: AudioContext | null = null;
 let last = 0;
 
-/** Один сигнал на событие; чаще раза в секунду не звучит (несколько рук подряд — один звук). */
-export function playHandSound(): void {
-  if (!handSoundEnabled()) return;
+/** Один сигнал на событие; чаще раза в две секунды не звучит (несколько рук подряд — один звук). */
+export function playHandSound(force = false): void {
+  if (!force && !handSoundEnabled()) return;
   const now = Date.now();
-  if (now - last < 1000) return;
+  if (!force && now - last < 2000) return;
   last = now;
   try {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -29,7 +31,7 @@ export function playHandSound(): void {
       const g = ctx.createGain();
       o.type = "sine"; o.frequency.value = freq;
       g.gain.setValueAtTime(0.0001, t + at);
-      g.gain.exponentialRampToValueAtTime(0.07, t + at + 0.03);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.12 * soundVolume()), t + at + 0.03);
       g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.2);
       o.connect(g).connect(ctx.destination);
       o.start(t + at); o.stop(t + at + 0.22);

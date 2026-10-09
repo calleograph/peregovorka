@@ -40,6 +40,17 @@ export function VideoTile({ p, source, className = "video", onSize }: {
 }
 
 /** Состояние устройства — текстом и цветом, а не только иконкой: видно издалека и без подсказок. */
+/** Индикатор микрофона: контейнер фиксированного размера (28×28), внутри меняется только состояние — размер строки при речи не меняется. */
+function MicIndicator({ on, speaking, name }: { on: boolean; speaking: boolean; name: string }) {
+  const text = on ? (speaking ? "говорит" : "микрофон включён") : "без звука";
+  return (
+    <span className={`mic-ind ${on ? "on" : "off"} ${on && speaking ? "speaking" : ""}`} role="img" aria-label={`${name}: ${text}`} title={text}>
+      <i className="mic-ring" aria-hidden />
+      <Icon name={on ? "mic" : "micOff"} size={15} />
+    </span>
+  );
+}
+
 function State({ on, onText, offText, kind }: { on: boolean; onText: string; offText: string; kind: "mic" | "cam" }) {
   return <span className={`state ${kind} ${on ? "on" : "off"}`} title={on ? onText : offText}><span aria-hidden>{kind === "mic" ? (on ? "🎙" : "🔇") : on ? "📷" : "🚫"}</span> {on ? onText : offText}</span>;
 }
@@ -109,7 +120,7 @@ export function ParticipantTile({ p, compact, actions, onCard }: { p: PView; com
       )}
       <div className="tile-foot">
         <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>
-        <State kind="mic" on={p.mic} onText="микрофон" offText="без звука" />
+        <MicIndicator on={p.mic} speaking={p.speaking} name={p.name} />
         {!compact && <State kind="cam" on={p.cam} onText="камера" offText="камера выкл." />}
         {p.screen && <span className="state screen on" title="Показывает экран">🖥 экран</span>}
       </div>

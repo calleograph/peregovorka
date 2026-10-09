@@ -1,3 +1,4 @@
+import { playChatSound } from "../chatSound";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { autoGrow } from "../autoGrow";
 import { fileTypeLabel, formatSize, pastedName } from "../attachments";
@@ -173,6 +174,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
       if (e.type !== "chat_message") return;
       merge([e.message]);
       tracker.current.event(e.message.author_id ?? "", e.message.author_name, false);          // сообщение пришло — автор больше не «печатает»
+      if (e.message.author_name !== selfName) playChatSound();            // чужое сообщение — один мягкий сигнал (серия сливается), своё — без звука
       if (!visibleRef.current && e.message.author_name !== selfName) { unread.current += 1; cb.current.onUnread?.(unread.current); }
     });
     const offSync = bus.onResync(() => {

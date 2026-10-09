@@ -3,7 +3,31 @@ import { api, type ApiError, type Profile } from "../api";
 import Avatar from "../components/Avatar";
 import AvatarCropper from "../components/AvatarCropper";
 import { Icon } from "../components/Icons";
+import { chatSoundEnabled, playChatSound, setChatSoundEnabled, setSoundVolume, soundVolume } from "../chatSound";
+import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import { fmt } from "../util";
+
+/** Личные звуковые уведомления комнаты (хранятся в браузере): сообщения чата, поднятая рука, общая громкость. */
+function SoundSettings() {
+  const [chat, setChat] = useState(chatSoundEnabled);
+  const [hand, setHand] = useState(handSoundEnabled);
+  const [vol, setVol] = useState(soundVolume);
+  return (
+    <div className="card">
+      <h2>Звуки уведомлений</h2>
+      <label className="check"><input type="checkbox" checked={chat} onChange={(e) => { setChatSoundEnabled(e.target.checked); setChat(e.target.checked); }} />
+        <span className="check-body">Звук новых сообщений чата<span className="help">Один короткий сигнал на сообщение другого участника; серия сообщений звучит один раз, своё сообщение — без звука.</span></span></label>
+      <label className="check"><input type="checkbox" checked={hand} onChange={(e) => { setHandSoundEnabled(e.target.checked); setHand(e.target.checked); }} />
+        <span className="check-body">Звук поднятой руки<span className="help">Другой сигнал (два тона), чтобы отличать его от чата.</span></span></label>
+      <label>Громкость уведомлений
+        <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setSoundVolume(v); setVol(v); }} aria-valuetext={`${Math.round(vol * 100)} %`} /></label>
+      <div className="row">
+        <button type="button" className="btn mini" onClick={() => playChatSound(true)}>Проверить: сообщение</button>
+        <button type="button" className="btn mini" onClick={() => playHandSound(true)}>Проверить: рука</button>
+      </div>
+    </div>
+  );
+}
 
 const FIELDS: [keyof Profile, string][] = [["display_name", "ФИО"], ["login", "Логин"], ["email", "E-mail"], ["title", "Должность"], ["department", "Подразделение"], ["phone", "Телефон"]];
 
@@ -59,6 +83,7 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
           {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
         </div>
       </div>
+      <SoundSettings />
       {file && <AvatarCropper file={file} onCancel={() => setFile(null)} onDone={async (blob) => { await api.uploadAvatar(blob).then((x) => { setP(x); onChanged(x); setMsg({ ok: true, text: "Аватарка сохранена." }); }); setFile(null); }} />}
     </section>
   );
