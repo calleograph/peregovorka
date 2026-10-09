@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import Meeting
+from ..services import changelog as chlog
 from ..services import updates as upd
 from ..services.audit import write_audit
 
@@ -23,6 +24,15 @@ CACHE_KEY, CACHE_TTL = "updates:components", 6 * 3600
 
 def channel(request: Request) -> upd.Channel:
     return upd.Channel(f"{request.app.state.settings.data_dir}/updater")
+
+
+def changes_of(remote: dict | None, installed: str | None) -> dict | None:
+    """«Что нового» между установленной и доступной версиями: из разделов CHANGELOG, которые собрал помощник, плюс факты репозитория."""
+    if not remote or not remote.get("ok") or int(remote.get("behind", 0)) <= 0:
+        return None
+    cur = remote.get("current_version") or installed
+    return chlog.build(str(remote.get("changelog") or ""), cur, remote.get("remote_version") or None,
+                       migrations_changed=int(remote.get("migrations_changed") or 0), env_changed=bool(remote.get("env_example_changed")))
 
 
 def helper_info(st: dict) -> dict:
@@ -60,7 +70,7 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
         "updater": {k: st.get(k) for k in ("available", "heartbeat_age_s", "state", "action", "repair_id", "request_id", "step_no", "step_total", "step_name",
                                            "started_at", "finished_at", "exit_code", "result", "request_pending", "project", "by", "stale")},
         "outcome": upd.outcome_summary(st), "helper": helper_info(st),
-        "remote": remote, "active_meetings": active, "history": history, "last_success": last_ok,
+        "remote": remote, "changes": changes_of(remote, s.app_version), "active_meetings": active, "history": history, "last_success": last_ok,
         "can_update": not reasons, "reasons": reasons,
         "up_to_date": bool(remote and remote.get("ok") and int(remote.get("behind", 0)) == 0),
         "commands": {"install": "sudo ./scripts/updater.sh install --yes", "foreground": "sudo ./scripts/updater.sh run", "manual": "sudo ./scripts/update.sh"},
@@ -96,6 +106,9 @@ async def run_update(request: Request, body: dict[str, Any] = Body(default_facto
         raise HTTPException(status_code=409, detail="Исполнитель обновлений на сервере не запущен — обновите командой ./scripts/update.sh на сервере")
     if st.get("state") in upd.BUSY_STATES or st["request_pending"]:
         raise HTTPException(status_code=409, detail="Обновление или исправление уже выполняется либо ожидает запуска")
+    ch_data = changes_of(ch.remote(), request.app.state.settings.app_version)
+    if ch_data and ch_data.get("installed") and ch_data.get("available"):
+        ch.save_changes(ch_data["installed"], ch_data["available"], {**ch_data, "saved_at": int(time.time()), "by": su.sam_account_name})      # для «Истории обновлений»
     try:
         rid = ch.request("update", by=su.sam_account_name, force_build=force_build, pull=pull)
     except OSError as exc:
@@ -108,6 +121,16 @@ async def run_update(request: Request, body: dict[str, Any] = Body(default_facto
                       ip=client_ip(request), details={"force_build": force_build, "pull": pull, "active_meetings": active, "request_id": rid})
     await db.commit()
     return {"request_id": rid}
+
+
+@router.get("/changes")
+async def saved_changes(request: Request, from_version: str = Query(max_length=20, alias="from"), to_version: str = Query(max_length=20, alias="to"),
+                        su: SessionUser = Depends(require_admin)):
+    """Что изменилось в конкретном переходе версий — запись, сохранённая при запуске обновления из веб-интерфейса."""
+    d = channel(request).load_changes(from_version, to_version)
+    if d is None:
+        raise HTTPException(status_code=404, detail="Для этого перехода описание не сохранено (обновление запускалось не из веб-интерфейса)")
+    return d
 
 
 @router.get("/log")

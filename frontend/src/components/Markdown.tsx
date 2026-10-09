@@ -44,3 +44,9 @@ function blocks(list: Block[]): ReactNode[] {
 export function Markdown({ source }: { source: string }) {
   return <div className="md">{blocks(parseMarkdown(source))}</div>;
 }
+
+/** Однострочный Markdown (жирный, код, ссылки) без блочной обёртки — для пунктов списков. */
+export function MarkdownInline({ source }: { source: string }) {
+  const first = parseMarkdown(source).find((b) => b.t === "p");
+  return <>{first && first.t === "p" ? inline(first.c) : source}</>;
+}

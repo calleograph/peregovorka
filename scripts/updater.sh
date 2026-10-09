@@ -100,7 +100,8 @@ do_check() {
   rem_ver="$(git -C "$REPO_ROOT" show "$remote:VERSION" 2>/dev/null | tr -d '[:space:]')"
   cltmp="$(mktemp)"
   if ver_valid "$cur_ver" && git -C "$REPO_ROOT" show "$remote:CHANGELOG.md" > "$cltmp" 2>/dev/null; then
-    chg="$(changelog_since "$cltmp" "$cur_ver" | head -c 6000)"
+    # полный текст разделов новее установленной версии (для окна «Что нового» и истории обновлений); оборванный на середине символ отбрасывается
+    chg="$(changelog_since "$cltmp" "$cur_ver" | head -c 60000 | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; })"
   fi
   rm -f "$cltmp"
   chg_esc="$(jesc "$chg" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')"

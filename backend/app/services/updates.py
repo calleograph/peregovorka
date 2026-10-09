@@ -40,6 +40,7 @@ BUSY_STATES = ("updating", "repairing")
 # Версии, с которыми проект проверен (зеркало deployment/compat.env; совпадение проверяется тестом).
 TESTED = {"livekit_server": "v1.13.7", "livekit_client_js": "2.22.3", "livekit_python_sdk": "1.1.20", "livekit_api_python": "1.2.1"}
 REPO = "leonheard/peregovorka"
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 class Channel:
@@ -74,7 +75,10 @@ class Channel:
             except ValueError:
                 continue
             if isinstance(d, dict) and d.get("result") in ("ok", "failed"):
-                out.append({k: d.get(k) for k in ("at", "started", "result", "stage", "from_version", "to_version", "from_commit", "to_commit", "source", "by")})
+                row = {k: d.get(k) for k in ("at", "started", "result", "stage", "from_version", "to_version", "from_commit", "to_commit", "source", "by")}
+                p = self._changes_path(str(d.get("from_version") or ""), str(d.get("to_version") or ""))
+                row["has_changes"] = bool(p and p.exists())
+                out.append(row)
             if len(out) >= limit:
                 break
         return out
@@ -84,6 +88,36 @@ class Channel:
         if r and r.get("checked_at"):
             r["age_s"] = int(time.time() - float(r["checked_at"]))
         return r
+
+    # ----------------------------------------------------------- «что изменилось» в конкретном переходе версий
+    def _changes_path(self, from_v: str, to_v: str) -> Path | None:
+        if not (VERSION_RE.match(from_v or "") and VERSION_RE.match(to_v or "")):
+            return None
+        return self.dir / "changes" / f"{from_v}__{to_v}.json"
+
+    def save_changes(self, from_v: str, to_v: str, data: dict) -> bool:
+        """Сохраняет описание перехода версий (то, что администратор видел перед обновлением), чтобы позже открыть его из истории."""
+        p = self._changes_path(from_v, to_v)
+        if p is None:
+            return False
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(p)
+            return True
+        except OSError:
+            return False
+
+    def load_changes(self, from_v: str, to_v: str) -> dict | None:
+        p = self._changes_path(from_v, to_v)
+        if p is None:
+            return None
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else None
+        except (OSError, ValueError):
+            return None
 
     def read_log(self, offset: int) -> dict:
         path = self.dir / "update.log"

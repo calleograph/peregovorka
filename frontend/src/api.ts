@@ -307,7 +307,7 @@ export interface UpdaterState {
   stale?: boolean;
 }
 export interface UpdateAttempt {
-  at: number; started: number; result: "ok" | "failed"; stage: string; from_version: string; to_version: string; from_commit: string; to_commit: string; source: "cli" | "web"; by: string;
+  at: number; started: number; result: "ok" | "failed"; stage: string; from_version: string; to_version: string; from_commit: string; to_commit: string; source: "cli" | "web"; by: string; has_changes?: boolean;
 }
 export interface RemoteCommit { sha: string; date: string; subject: string }
 export interface RemoteInfo {
@@ -340,7 +340,12 @@ export interface UpdatesOverview {
   installed: { version: string; commit: string; built_at: string }; updater: UpdaterState; remote: RemoteInfo | null; active_meetings: number;
   outcome: UpdateOutcome | null; helper: HelperInfo;
   can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
-  history: UpdateAttempt[]; last_success: UpdateAttempt | null;
+  history: UpdateAttempt[]; last_success: UpdateAttempt | null; changes?: UpdateChanges | null;
+}
+export interface UpdateChanges {
+  installed: string | null; available: string | null; versions: string[]; empty: boolean; saved_at?: number; by?: string;
+  groups: { id: string; title: string; items: { version: string; text: string; alerts: string[] }[] }[];
+  important: { version: string; kinds: string[]; text: string }[]; facts: { kind: string; text: string }[]; alert_text: Record<string, string>;
 }
 export interface UpdateLog {
   offset: number; size: number; text: string; reset: boolean; state: string | null; step_no: number | null; step_total: number | null; step_name: string | null;
@@ -593,6 +598,7 @@ export const api = {
 
     updates: () => request<UpdatesOverview>("GET", "/admin/updates"),
     updatesCheck: () => request<{ request_id: string }>("POST", "/admin/updates/check"),
+    updateChanges: (from: string, to: string) => request<UpdateChanges>("GET", `/admin/updates/changes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
     updatesRun: (body: { confirm: true; force_build: boolean; pull: boolean }) => request<{ request_id: string }>("POST", "/admin/updates/run", body),
     updatesLog: (offset: number) => request<UpdateLog>("GET", `/admin/updates/log?offset=${offset}`),
     updateComponents: (refresh = false) => request<ComponentsInfo>("GET", `/admin/updates/components${refresh ? "?refresh=true" : ""}`),

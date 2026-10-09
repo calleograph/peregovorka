@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.services import changelog as chlog
 from app.services import updates as upd
 
 from .conftest import login, make_settings, running_app
@@ -277,3 +278,62 @@ def test_no_history_file_is_fine(client):
     login(client, "root")
     o = client.get(U).json()
     assert o["history"] == [] and o["last_success"] is None
+
+
+# ------------------------------------------------------------------------------------------------ «Что нового»
+CHANGELOG = """## 0.6.1 (2026-10-10)
+- **Исправлена ошибка** в формировании протокола: оборванный ответ больше не выглядит готовым.
+- Новая страница «Доступ к системе» в разделе администрирования.
+- Добавлен порт UDP 7882 для LiveKit: откройте его в файрволе.
+- Изменена схема базы данных: добавлены таблицы временных переговорок.
+
+## 0.6.0 (2026-10-09)
+- Необязательная локальная модель Qwen3 1.7B.
+- Известное ограничение: на часовой встрече модель путает ответственных.
+
+## 0.5.2 (2026-10-08)
+- Старый раздел, который уже установлен.
+"""
+
+
+def test_changelog_between_installed_and_available_is_grouped_and_highlights_risky_changes():
+    d = chlog.build(CHANGELOG, "0.6.0", "0.6.1", migrations_changed=1, env_changed=True)
+    assert d["installed"] == "0.6.0" and d["available"] == "0.6.1" and d["versions"] == ["0.6.1"], "версия 0.6.0 уже установлена: в список она не попадает"
+    by = {g["id"]: [i["text"] for i in g["items"]] for g in d["groups"]}
+    assert any("оборванный ответ" in t for t in by["fixes"]) and any("Доступ к системе" in t for t in by["ui"])
+    assert any("Изменена схема" in t for t in by["db"]) and any("порт UDP 7882" in t for t in by["config"])
+    kinds = {k for x in d["important"] for k in x["kinds"]}
+    assert {"db", "port"} <= kinds and {f["kind"] for f in d["facts"]} == {"db", "config"} and d["empty"] is False
+    both = chlog.build(CHANGELOG, "0.5.2", "0.6.1")
+    assert both["versions"] == ["0.6.1", "0.6.0"] and any("Известное ограничение" in i["text"] for g in both["groups"] if g["id"] == "limits" for i in g["items"])
+    assert chlog.build(CHANGELOG, "0.6.1", "0.6.1")["empty"] is True and chlog.build("", "0.6.0", "0.6.1")["empty"] is True
+
+
+def test_changelog_subheadings_set_the_group_and_continuations_join():
+    text = ("## 0.7.0\n### Исправления\n- Поправлена подпись\n  в окне.\n"
+            "### Что потребуется от администратора\n- Один раз выполните: sudo ./scripts/updater.sh install --yes\n")
+    d = chlog.build(text, "0.6.0", "0.7.0")
+    by = {g["id"]: [i["text"] for i in g["items"]] for g in d["groups"]}
+    assert by["fixes"] == ["Поправлена подпись в окне."] and "admin" in by and "manual" in {k for x in d["important"] for k in x["kinds"]}
+
+
+def test_overview_has_changes_and_run_saves_them_for_the_history(client):
+    d = chan(client)
+    heartbeat(d)
+    remote(d, current_version="0.6.0", remote_version="0.6.1", changelog=CHANGELOG.split("## 0.6.0")[0])
+    login(client, "root")
+    o = client.get(U).json()
+    assert o["changes"]["installed"] == "0.6.0" and o["changes"]["available"] == "0.6.1" and o["changes"]["important"]
+    assert client.get(f"{U}/changes", params={"from": "0.6.0", "to": "0.6.1"}).status_code == 404
+    assert client.post(f"{U}/run", json={"confirm": True}).status_code == 200
+    saved = client.get(f"{U}/changes", params={"from": "0.6.0", "to": "0.6.1"}).json()
+    assert saved["by"] == "root" and saved["versions"] == ["0.6.1"] and saved["groups"]
+    row = {"at": time.time(), "started": time.time() - 60, "result": "ok", "stage": "", "from_version": "0.6.0", "to_version": "0.6.1",
+           "from_commit": "a", "to_commit": "b", "source": "web", "by": "root"}
+    (d / "history.ndjson").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    h = client.get(U).json()["history"][0]
+    assert h["has_changes"] is True
+    for bad in ("../x", "0.6", "a.b.c"):
+        assert client.get(f"{U}/changes", params={"from": bad, "to": "0.6.1"}).status_code == 404, "имя файла строится только из корректных версий"
+    remote(d, behind=0, commits=[])
+    assert client.get(U).json()["changes"] is None

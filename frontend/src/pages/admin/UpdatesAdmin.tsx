@@ -3,6 +3,7 @@ import { api, type ApiError, type UpdateAttempt, type UpdatesOverview } from "..
 import { ConfirmDialog } from "../../components/Dialogs";
 import { Markdown } from "../../components/Markdown";
 import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
+import ChangesDialog from "./ChangesDialog";
 import ComponentsTable from "./ComponentsTable";
 import RepairsPanel from "./RepairsPanel";
 
@@ -28,6 +29,8 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
   const [force, setForce] = useState(false);
   const [pull, setPull] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [histChanges, setHistChanges] = useState<{ from: string; to: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [ranHere, setRanHere] = useState(false);   // обновление запускали из этого окна: показываем его ход и после завершения
   const [follow, setFollow] = useState(true);
@@ -129,7 +132,13 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
         {rem?.ok && behind > 0 && (
           <div className="upd-available">
             <div className="alert info"><b>Доступно обновление{rem.remote_version && ov && rem.remote_version !== ov.installed.version ? `: версия ${ov.installed.version} → ${rem.remote_version}` : ""}</b>
-              {rem.changelog && <div className="changelog"><b>Что нового</b><Markdown source={rem.changelog} /></div>}
+              {ov?.changes && !ov.changes.empty && (
+                <div className="changelog small">
+                  {ov.changes.groups.map((g) => `${g.title}: ${g.items.length}`).join(" · ")}
+                  {(ov.changes.important.length > 0 || ov.changes.facts.length > 0) && <b className="field-err"> · есть важные изменения — откройте «Что нового»</b>}
+                </div>
+              )}
+              {!ov?.changes && rem.changelog && <div className="changelog"><b>Что нового</b><Markdown source={rem.changelog} /></div>}
               <details className="muted small"><summary>Технический список: {behind} {behind === 1 ? "изменение" : behind < 5 ? "изменения" : "изменений"} в репозитории</summary>
               <ul className="commits">{rem.commits.slice(0, 12).map((c) => <li key={c.sha}><code>{c.sha}</code> <span className="muted small">{c.date}</span> {c.subject}</li>)}{behind > 12 && <li className="muted">…и ещё {behind - 12}</li>}</ul></details></div>
             <div className="row chips-info">
@@ -159,6 +168,9 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
         </div>
         {(ov?.active_meetings ?? 0) > 0 && <div className="alert error">Сейчас идут встречи: {ov?.active_meetings}. Обновление их прервёт.</div>}
         <div className="row">
+          {behind > 0 && ov?.changes && (
+            <button className="btn" onClick={() => setChangesOpen(true)} title="Что изменится между установленной и доступной версиями">Что нового{ov.changes.important.length + ov.changes.facts.length > 0 ? " ⚠" : ""}</button>
+          )}
           <button className="btn primary" disabled={!ov?.can_update || !!busy} onClick={() => setConfirm(true)}
                   title={ov?.can_update ? "Запустить scripts/update.sh на сервере" : ov?.reasons.join(" ")}>⬆ Обновить проект{behind > 0 ? ` (${behind})` : ""}</button>
           {behind === 0 && rem?.ok && ov?.can_update && <span className="muted small">Новых изменений нет; обновление пересоберёт и проверит текущую редакцию.</span>}
@@ -223,7 +235,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
               return (
                 <tr key={`${h.at}-${i}`} className={superseded ? "muted" : undefined}>
                   <td>{fmt(new Date(h.at * 1000).toISOString())}</td>
-                  <td>{attemptRoute(h)}</td>
+                  <td>{attemptRoute(h)}{h.has_changes && h.from_version && h.to_version && <> <button className="btn mini ghost" onClick={() => setHistChanges({ from: h.from_version, to: h.to_version })}>что изменилось</button></>}</td>
                   <td>{h.source === "web" ? `веб-интерфейс${h.by ? ` (${h.by})` : ""}` : "терминал"}</td>
                   <td>{h.result === "ok" ? <span className="badge ok">успешно</span> : <><span className="badge warn">ошибка</span> <span className="small">{h.stage}</span>{superseded && <span className="small"> · устранено последующим успешным обновлением</span>}</>}</td>
                 </tr>);
@@ -238,6 +250,11 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
 
       <div className="card"><ComponentsTable /></div>
 
+      {changesOpen && ov?.changes && (
+        <ChangesDialog data={ov.changes} onClose={() => setChangesOpen(false)}
+          footer={<button className="btn primary" disabled={!ov.can_update || !!busy} onClick={() => { setChangesOpen(false); setConfirm(true); }}>⬆ Обновить проект</button>} />
+      )}
+      {histChanges && <ChangesDialog from={histChanges.from} to={histChanges.to} onClose={() => setHistChanges(null)} />}
       {confirm && (
         <ConfirmDialog title="Обновить проект на сервере?" confirmLabel="Обновить" danger={(ov?.active_meetings ?? 0) > 0} typed={(ov?.active_meetings ?? 0) > 0 ? "ОБНОВИТЬ" : undefined}
           onClose={() => setConfirm(false)}
