@@ -1006,7 +1006,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             </Ctl>
           )}
           <div className="spacer" />
-          {guest ? null : !confirmEnd
+          {guest || !join.client.can_control ? null : !confirmEnd
             ? <RoundButton icon="power" label="Завершить для всех" tone="neutral" title="Завершить встречу для всех участников" disabled={ended} onClick={() => setConfirmEnd(true)} />
             : <div className="confirm-end"><span className="muted small">Завершить встречу для всех?</span>
                 <div className="row tight"><button className="btn danger" onClick={endForAll}>Да, завершить</button>

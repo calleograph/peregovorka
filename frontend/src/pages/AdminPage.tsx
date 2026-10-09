@@ -139,7 +139,7 @@ export default function AdminPage({ version }: { version: string }) {
       <div className="row"><h1>Администрирование</h1><div className="spacer" /><span className="muted small">Версия: {version || "—"}</span></div>
       <div className="admin-layout">
         <nav className="admin-nav" aria-label="Разделы администрирования">
-          <input type="search" className="nav-search" placeholder="Найти раздел или настройку" aria-label="Поиск по разделам администрирования" value={q} onChange={(e) => setQ(e.target.value)}
+          <input type="search" className="nav-search" placeholder="Найти раздел…" aria-label="Поиск по разделам администрирования" value={q} onChange={(e) => setQ(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter" && found?.length) { pick(found[0].id); setQ(""); } if (e.key === "Escape") setQ(""); }} />
           {found && (
             <div className="nav-found" role="list">

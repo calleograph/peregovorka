@@ -298,3 +298,27 @@ def test_leader_changes_board_access_in_room_settings_and_participant_cannot(cli
     r = client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "private"})
     assert r.status_code == 200 and r.json()["board_access"] == "private" and r.json()["board_level"] == "private"
     assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "nobody"}).status_code == 422
+
+
+# ----------------------------------------------------------------------------------- завершение встречи для всех
+def test_only_controllers_can_end_the_meeting_for_everyone(client, lk_calls):
+    """Раньше завершить встречу для всех мог любой участник, даже слушатель презентационной комнаты."""
+    room = presentation(client)
+    carol = _join(client, "carol", room["id"])       # руководитель
+    alice = _join(client, "alice", room["id"])       # слушатель
+    assert carol["client"]["can_control"] is True and alice["client"]["can_control"] is False
+    mid = carol["meeting_id"]
+    login(client, "alice")
+    r = client.post(f"/api/v1/meetings/{mid}/end")
+    assert r.status_code == 403 and "руководител" in r.json()["detail"]
+    assert client.get(f"/api/v1/meetings/{mid}").json()["ended_at"] is None, "встреча продолжается"
+    login(client, "carol")
+    assert client.post(f"/api/v1/meetings/{mid}/end").status_code == 204
+
+
+def test_room_without_leaders_keeps_the_old_rule_any_participant_may_end(client, lk_calls):
+    room = make_room(client)                          # руководителей нет, комната обычная
+    a = _join(client, "alice", room["id"])
+    assert a["client"]["can_control"] is True
+    login(client, "alice")
+    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/end").status_code == 204

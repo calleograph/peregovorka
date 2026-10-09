@@ -151,6 +151,10 @@ async def release_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUs
 async def end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Завершить встречу для всех (кнопка «завершить запись беседы»)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    # как запись и транскрибация: руководитель комнаты и администратор (в комнате без руководителей, кроме презентационной, — любой участник, как раньше).
+    # Раньше завершить встречу для всех мог любой участник, даже слушатель презентационной комнаты.
+    if not roles.can_control_meeting(meeting.room, su):
+        raise HTTPException(status_code=403, detail="Завершить встречу для всех могут руководители комнаты и администраторы. Вы можете выйти из комнаты.")
     ended = await request.app.state.meetings.end(db, meeting, "manual", kick=True)
     if ended:
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.end",
