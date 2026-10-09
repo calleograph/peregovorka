@@ -19,7 +19,17 @@ t() { # t "описание" команда… — при провале печ�
 cleanup() { docker rm -f "$WEB" "pgci-backend-$$" "pgci-livekit-$$" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
 trap cleanup EXIT
 
-if [ -z "$IMG" ]; then IMG=peregovorka-web-ci; docker build -q -t "$IMG" "$ROOT/frontend" >/dev/null || { echo "FAIL: сборка образа web"; exit 1; }; fi
+if [ -z "$IMG" ]; then
+  IMG=peregovorka-web-ci
+  # вывод сборки сохраняем: при сбое показываем хвост (в CI — аннотацией), иначе причина («pull failed», ошибка tsc, git clone draw.io) остаётся невидимой
+  if ! BUILD_OUT="$(docker build -t "$IMG" "$ROOT/frontend" 2>&1)"; then
+    echo "FAIL: сборка образа web"; printf '%s
+' "$BUILD_OUT" | tail -30
+    [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=web-image: сборка образа web::$(printf '%s' "$BUILD_OUT" | tail -c 900 | tr '
+' ' ')"
+    exit 1
+  fi
+fi
 t "nginx -t в образе" docker run --rm --entrypoint nginx "$IMG" -t
 
 docker network create "$NET" >/dev/null || exit 1

@@ -26,6 +26,20 @@ s = Settings(database_url=f"sqlite+aiosqlite:///{DATA}/dev.db", redis_url="redis
              app_master_key=base64.b64encode(os.urandom(32)).decode(), internal_api_token="t", ldap_admin_group_dn=ADMIN_GROUP, data_dir=DATA,
              docs_enabled=False, log_level="WARNING", segment_consumer_block_ms=50, app_version="0.8.6", app_git_commit="abcdef012345")
 app = create_app(s, redis_factory=lambda _: FakeAsyncRedis(decode_responses=True), directory_factory=lambda _: d)
+# Только для стенда: подсунуть реплику стенограммы (вместо ASR) — так проверяются стенограмма, история и протоколы без распознавания речи
+from fastapi import Body
+@app.post("/__dev/segment")
+async def _dev_segment(body: dict = Body(...)):
+    import datetime as _dt, json as _json
+    now = _dt.datetime.now(_dt.timezone.utc)
+    start = now + _dt.timedelta(seconds=float(body.get("offset", 0)))
+    await app.state.redis.xadd("asr:segments", {
+        "segment_uid": str(uuid.uuid4()), "meeting_id": f"m-{uuid.UUID(body['meeting_id']).hex}", "identity": body["identity"], "started_at": start.isoformat(),
+        "ended_at": (start + _dt.timedelta(seconds=2)).isoformat(), "text": body["text"], "language": "ru",
+        "model": _json.dumps({"provider": "gigaam", "name": "stand", "device": "cpu"}), "duration_ms": "2000", "infer_ms": "100", "queue_ms": "5"})
+    return {"ok": True}
+
+
 eng = sa.create_engine(f"sqlite:///{DATA}/dev.db")
 Base.metadata.create_all(eng)
 FAM = ["Иванов", "Петрова", "Сидоренко", "Морозов", "Соколова", "Кузнецов", "Лебедева", "Орлов", "Крылова", "Мартынов"]
