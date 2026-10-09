@@ -382,7 +382,7 @@
 
   var lastH = 0;
   function sendHeight() {
-    var h = Math.ceil(document.documentElement.scrollHeight);
+    var h = Math.ceil(document.body.getBoundingClientRect().height);        // высота содержимого, а не окна: иначе после роста окно уже не уменьшалось бы
     if (h !== lastH) { lastH = h; post({ type: "height", height: h }); }
   }
 
@@ -409,7 +409,8 @@
       if (m.type === "data") load(m.payload);
       if (m.type === "select" && m.topicId) { STATE.selected = m.topicId; render(); }
     });
-    root.addEventListener("resize", function () { render(); });
+    var lastW = root.innerWidth;
+    root.addEventListener("resize", function () { if (root.innerWidth !== lastW) { lastW = root.innerWidth; render(); } });     // перерисовка только при смене ширины (не при смене высоты окна)
     if (typeof ResizeObserver !== "undefined") new ResizeObserver(sendHeight).observe(document.body);
     render();
     post({ type: "ready" });
