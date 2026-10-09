@@ -22,7 +22,14 @@ trap cleanup EXIT
 if [ -z "$IMG" ]; then
   IMG=peregovorka-web-ci
   # вывод сборки сохраняем: при сбое показываем хвост (в CI — аннотацией), иначе причина («pull failed», ошибка tsc, git clone draw.io) остаётся невидимой
-  if ! BUILD_OUT="$(docker build -t "$IMG" "$ROOT/frontend" 2>&1)"; then
+  # Docker Hub отвечает «429 Too Many Requests» на анонимные загрузки с общих раннеров CI: это не ошибка проекта, поэтому сборку повторяем с паузой
+  BUILD_OK=0
+  for try in 1 2 3 4; do
+    if BUILD_OUT="$(docker build -t "$IMG" "$ROOT/frontend" 2>&1)"; then BUILD_OK=1; break; fi
+    printf '%s' "$BUILD_OUT" | grep -qiE '429|toomanyrequests|too many requests|TLS handshake|i/o timeout|unexpected EOF' || break
+    echo "сборка образа web: временный сбой реестра (попытка $try/4), пауза"; sleep $((try * 40))
+  done
+  if [ "$BUILD_OK" != 1 ]; then
     echo "FAIL: сборка образа web"; printf '%s
 ' "$BUILD_OUT" | tail -30
     [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=web-image: сборка образа web::$(printf '%s' "$BUILD_OUT" | tail -c 900 | tr '

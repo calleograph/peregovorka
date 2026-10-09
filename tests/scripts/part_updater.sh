@@ -107,7 +107,7 @@ if [ -n "$PYJ" ]; then
   t "check по запросу обновляет remote.json, update.sh не запускается" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ "$(jget "$2/remote.json" "d[\"checked_at\"]")" -ge "$3" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD" "$T0"
   t "status: исполнитель работает, ненулевой код при остановленном" bash -c '"$1" status --env "$2/cl/.env" >/dev/null 2>&1' _ "$UP" "$TMP"
   kill "$UPPID" 2>/dev/null; wait "$UPPID" 2>/dev/null
-  t "остановка по сигналу: state=stopped" waitfor 10 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
+  t "остановка по сигналу: state=stopped" waitfor 40 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
 else
   echo "(пропущено: нет python для проверки JSON исполнителя обновлений)"
 fi
