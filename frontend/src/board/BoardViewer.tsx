@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiError } from "../api";
-import { reportEvent } from "../diagnostics";
 import BoardExportMenu from "./BoardExportMenu";
 import DrawioFrame, { type FrameHandle } from "./DrawioFrame";
 import { FrameRpc, type FrameMsg } from "./frameRpc";
@@ -49,7 +48,7 @@ export default function BoardViewer({ meetingId, fileBase, warm = false }: { mee
       marks.current.rendered_ms = now();
       marks.current.total_ms = marks.current.rendered_ms;
       setTotal(marks.current.total_ms);
-      reportEvent("board_history_ready", { meetingId, data: { ...marks.current, warm: warmRef.current } });     // в журнале видно, где теряется время при первом открытии
+      api.clientEvent({ event: "board_history_ready", meeting_id: meetingId, data: { ...marks.current, warm: warmRef.current } });   // только числа; diagnostics.ts не импортируем — он тянет livekit-client в основной бандл     // в журнале видно, где теряется время при первом открытии
     } else rpc.handle(m);
   }, [rpc, trySend]);
 
