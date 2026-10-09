@@ -28,7 +28,7 @@ EVENTS = {
     # диагностика оборудования, сети и входа (попадает в журнал событий)
     "join_attempt", "ice_failed", "ice_slow", "connect_retry", "connect_failed", "network_info", "device_inventory",
     "mic_busy", "mic_permission_denied", "mic_released", "join_without_mic", "camera_busy", "noise_suppression_changed",
-    "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator", "livekit_connection", "board_ready",
+    "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator", "livekit_connection", "board_ready", "board_history_ready",
 }
 # категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
 META: dict[str, tuple[str, str]] = {
@@ -44,7 +44,7 @@ META: dict[str, tuple[str, str]] = {
     "audio_output_error": ("device", "warn"), "autoplay_blocked": ("device", "warn"), "muted_by_moderator": ("room", "info"),
     "screen_share_started": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
     "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
-    "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"), "board_ready": ("client", "info"),
+    "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"), "board_ready": ("client", "info"), "board_history_ready": ("client", "info"),
 }
 LIFECYCLE = {"room_lifecycle", "screen_lifecycle"}
 COUNTERS_KEY, LIFECYCLE_KEY = "counters:realtime", "clientdiag:lifecycle"

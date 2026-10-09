@@ -306,6 +306,9 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .toast { max-width: calc(100vw - 24px); }
 
 /* ---------- карта разговора ---------- */
+/* редактор схемы истории, подгруженный за кадром: у него есть размеры (редактору нужны для вёрстки), но он не виден и не перехватывает ввод */
+.board-warm { position: fixed; left: -12000px; top: 0; width: 1100px; height: 700px; overflow: hidden; pointer-events: none; visibility: hidden; }
+.board-warm * { pointer-events: none; }
 .map-tab { display: flex; flex-direction: column; gap: 12px; max-width: 1240px; }
 .map-bar .btn { white-space: nowrap; }
 .map-frame { display: block; width: 100%; border: 0; border-radius: var(--radius-lg); background: transparent; color-scheme: normal; }

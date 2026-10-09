@@ -45,6 +45,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [recordings, setRecordings] = useState<MeetingRecording[]>([]);
   const [sendOpen, setSendOpen] = useState(false);
   const [logKey, setLogKey] = useState(0);
+  const [boardWarm, setBoardWarm] = useState(false);          // редактор схемы подгружается за кадром после открытия карточки (не мешая стенограмме и протоколам)
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
@@ -122,6 +123,13 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
     setOpenId(id); setTab("docs");
   };
   const afterDelete = (id: string) => { setOpenId((cur) => (cur === id ? null : cur)); void loadProtocols(); void loadMeeting(); };
+
+  const boardUsedEarly = (meeting?.whiteboard_shapes ?? 0) > 0 && !!meeting?.ended_at;
+  useEffect(() => {
+    if (!boardUsedEarly) return;
+    const t = window.setTimeout(() => setBoardWarm(true), 2500);      // сначала карточка и метаданные, тяжёлое — потом
+    return () => window.clearTimeout(t);
+  }, [boardUsedEarly]);
 
   if (error && !meeting) return <div className="alert error">{error}</div>;
   if (!meeting) return <div className="muted">Загрузка…</div>;
@@ -207,7 +215,11 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {tab === "board" && <BoardViewer meetingId={meetingId} fileBase={fileBase(meeting.room_name, meeting.started_at) + "_схема"} />}
+      {boardUsed && (tab === "board" || boardWarm) && (
+        <div className={tab === "board" ? undefined : "board-warm"} aria-hidden={tab !== "board"}>
+          <BoardViewer meetingId={meetingId} fileBase={fileBase(meeting.room_name, meeting.started_at) + "_схема"} warm={tab !== "board"} />
+        </div>
+      )}
 
       {tab === "audio" && isAdmin && (
         <div className="card">
