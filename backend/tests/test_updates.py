@@ -177,7 +177,7 @@ def external(handler=None, fail=False):
             return httpx.Response(200, json={"info": {"version": "1.1.99"}})
         if "pypi.org/pypi/" in u:
             return httpx.Response(200, json={"info": {"version": "99.0.0"}})
-        if "api.github.com/repos/leonheard/peregovorka/commits/main" in u:
+        if "api.github.com/repos/calleograph/peregovorka/commits/main" in u:
             return httpx.Response(200, json={"sha": "f" * 40})
         return httpx.Response(404)
     return httpx.MockTransport(h)

@@ -20,7 +20,7 @@
 **Заранее ничего устанавливать не нужно** — ни Docker, ни Compose, ни Buildx, ни nginx, ни git, ни утилиты.
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/leonheard/peregovorka/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/calleograph/peregovorka/main/install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -62,12 +62,12 @@ sudo ./install.sh
 Мастер shared-host спросит и параметры каталога (LDAPS, сервисная учётная запись, CA, группа администраторов) — они попадут в `.env` как прежняя настройка и будут работать сразу; позже их можно перенести в управляемые настройки кнопкой «Перенести настройки» (Администрирование → Подключения LDAP) и дальше менять в браузере.
 
 ```bash
-git clone --depth 1 --branch <версия> https://github.com/leonheard/peregovorka.git /var/www/projects/peregovorka
+git clone --depth 1 --branch <версия> https://github.com/calleograph/peregovorka.git /var/www/projects/peregovorka
 cd /var/www/projects/peregovorka
 scripts/setup.sh --profile shared-host
 ```
 
-`<версия>` — тег последнего релиза с [страницы релизов](https://github.com/leonheard/peregovorka/releases) (`vX.Y.Z`).
+`<версия>` — тег последнего релиза с [страницы релизов](https://github.com/calleograph/peregovorka/releases) (`vX.Y.Z`).
 Мастер сам: задаёт вопросы (имя экземпляра, DNS-имя, каталог данных), **подбирает и проверяет свободные порты**, **генерирует все секреты** (вручную `.env` править не нужно), готовит модель, запускает `preflight` и показывает план `install --dry-run`;
 **применяет только после вашего «y»**. Гарантии для соседних проектов: свой compose-проект и каталоги, один новый nginx-site с проверкой `nginx -t`, никаких `apt upgrade`, `docker prune`, перезапусков чужих контейнеров, правок Apache/PHP/Moodle и файрвола.
 Остановить можно в любой момент до «y». Подробности и этапы — раздел 2.
@@ -76,7 +76,7 @@ scripts/setup.sh --profile shared-host
 
 ## 1. GitHub: публикация, релизы и доступ сервера (для владельца репозитория)
 
-Репозиторий публичный: `https://github.com/leonheard/peregovorka` — серверу достаточно обычного `git clone` по HTTPS, deploy key не нужен. Ниже — как выпускать релизы; если репозиторий приватный, используйте deploy key (последний пункт).
+Репозиторий публичный: `https://github.com/calleograph/peregovorka` — серверу достаточно обычного `git clone` по HTTPS, deploy key не нужен. Ниже — как выпускать релизы; если репозиторий приватный, используйте deploy key (последний пункт).
 
 Секреты (`.env`), данные и `node_modules` в репозиторий **не попадают** (`.gitignore`). Если вы ведёте собственную копию проекта, не кладите в неё реальные адреса, учётные записи и пароли.
 
@@ -114,7 +114,7 @@ scripts/setup.sh --profile shared-host
 
 ```bash
 # 1) код: конкретная версия (тег последнего релиза), а не «что сейчас в main»
-git clone --depth 1 --branch <версия> https://github.com/leonheard/peregovorka.git /var/www/projects/peregovorka
+git clone --depth 1 --branch <версия> https://github.com/calleograph/peregovorka.git /var/www/projects/peregovorka
 cd /var/www/projects/peregovorka
 
 # 2) конфигурация: мастер задаёт вопросы, подбирает порты и ГЕНЕРИРУЕТ секреты; .env получает права 600

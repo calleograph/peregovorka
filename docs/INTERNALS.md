@@ -190,7 +190,7 @@ VAD режет речь на сегменты → очередь → GigaAM → 
 ## Быстрая установка
 
 ```bash
-git clone --depth 1 https://github.com/leonheard/peregovorka.git /var/www/projects/peregovorka \
+git clone --depth 1 https://github.com/calleograph/peregovorka.git /var/www/projects/peregovorka \
   && cd /var/www/projects/peregovorka \
   && scripts/setup.sh --profile shared-host
 ```

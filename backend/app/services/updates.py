@@ -39,7 +39,7 @@ BUSY_STATES = ("updating", "repairing")
 
 # Версии, с которыми проект проверен (зеркало deployment/compat.env; совпадение проверяется тестом).
 TESTED = {"livekit_server": "v1.13.7", "livekit_client_js": "2.22.3", "livekit_python_sdk": "1.1.20", "livekit_api_python": "1.2.1"}
-REPO = "leonheard/peregovorka"
+REPO = "calleograph/peregovorka"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 

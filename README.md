@@ -7,8 +7,8 @@
 Видео- и аудиовстречи для корпоративной сети: вход доменной учётной записью, распознавание речи каждого участника, чат, общая доска для схем, гостевой доступ по ссылке
 и протоколы встреч по вашей инструкции. Данные остаются на вашем сервере.
 
-[![CI](https://github.com/leonheard/peregovorka/actions/workflows/ci.yml/badge.svg)](https://github.com/leonheard/peregovorka/actions)
-[![Версия](https://img.shields.io/github/v/release/leonheard/peregovorka?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/leonheard/peregovorka/releases)
+[![CI](https://github.com/calleograph/peregovorka/actions/workflows/ci.yml/badge.svg)](https://github.com/calleograph/peregovorka/actions)
+[![Версия](https://img.shields.io/github/v/release/calleograph/peregovorka?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/calleograph/peregovorka/releases)
 
 <img src="docs/img/room.png" alt="Презентационная комната: плитки участников, чат с картинкой и файлом" width="900">
 
@@ -31,7 +31,7 @@ Peregovorka — собственный сервис видеовстреч дл�
 Подключитесь к серверу по SSH и выполните:
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/leonheard/peregovorka/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/calleograph/peregovorka/main/install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```

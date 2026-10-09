@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Peregovorka — установка одной командой.
 #
-#   wget -O install.sh https://raw.githubusercontent.com/leonheard/peregovorka/main/install.sh
+#   wget -O install.sh https://raw.githubusercontent.com/calleograph/peregovorka/main/install.sh
 #   chmod +x install.sh
 #   sudo ./install.sh
 #
@@ -24,7 +24,7 @@
 # Повторный запуск безопасен: уже установленный экземпляр не затрагивается — скрипт подскажет, как обновиться.
 set -euo pipefail
 
-REPO_URL="${PEREGOVORKA_REPO:-https://github.com/leonheard/peregovorka.git}"
+REPO_URL="${PEREGOVORKA_REPO:-https://github.com/calleograph/peregovorka.git}"
 DIR="/opt/peregovorka"; DATA=""; HOST=""; PORT="443"; REF=""; SKIP_MODELS=0; YES=0
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; O=$'\033[0m'; else B=''; G=''; Y=''; R=''; O=''; fi
