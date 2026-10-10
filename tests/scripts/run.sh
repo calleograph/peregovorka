@@ -98,6 +98,8 @@ source "$ROOT/tests/scripts/part_diag.sh"
 source "$ROOT/tests/scripts/part_update.sh"
 # shellcheck source=part_updater.sh
 source "$ROOT/tests/scripts/part_updater.sh"
+# shellcheck source=part_updater_race.sh
+source "$ROOT/tests/scripts/part_updater_race.sh"
 # shellcheck source=part_fixes.sh
 source "$ROOT/tests/scripts/part_fixes.sh"
 # shellcheck source=part_version.sh

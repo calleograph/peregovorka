@@ -152,6 +152,7 @@ sudo ./scripts/update.sh
 | [docs/BITRIX24.md](docs/BITRIX24.md) | Bitrix24 как дополнительный источник профиля (должность, подразделение, фото): настройка, приоритеты, отказоустойчивость |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | устройство, безопасность, данные, состав репозитория, тесты, ограничения |
 | [docs/VERSIONING.md](docs/VERSIONING.md) | версии и выпуск релизов |
+| [docs/HTTPS_AND_HSTS.md](docs/HTTPS_AND_HSTS.md) | проверка цепочки HTTPS и поэтапное безопасное включение HSTS (по умолчанию выключен) |
 | [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | аудит безопасности: что проверено, найдено, исправлено и оставлено |
 | [docs/UI_DENSITY.md](docs/UI_DENSITY.md) | правила плотности интерфейса и как это проверялось |
 | [.env.example](.env.example) | все параметры конфигурации |
