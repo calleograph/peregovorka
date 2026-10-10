@@ -175,6 +175,8 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 | `backend/app/models/entities.py`, `backend/migrations/versions/` | схема (миграции 0001–0005: 0005 — `room_moderators`, `mute_on_join`, `welcome_message`; 0004 — `api_profiles`, `event_log`, поля комнаты для ИИ; 0003: + `history_access`, шаблоны, `meeting_grants`, поля экспорта записей и протоколов) |
 | `backend/app/services/` | `meetings`, `access`, `protocols`, `export_docs` (md→docx/pdf), `storage`, `recordings`, `settings` (группы: storage, audio_storage, anonymizer, llm, protocol, screen, general), `diagnostics`, `timings`, `livekit` |
 | `backend/app/api/` | `meetings`, `templates`, `client`, `admin`, `admin_system`, `internal` (webhook, diag, smoke), `ws`, `health` |
+| `backend/app/services/stage.py`, `api/moderation.py` | общая сцена ведущего (Redis `stage:<встреча>`, событие `stage_changed`), остановка/запрет показа экрана, выключение камеры |
+| `frontend/src/stage/`, `components/room/StageView.tsx` | сцена встречи: чистая модель и геометрия (`stageModel.ts`, тесты), хук `useMeetingStage` (личные закрепления в localStorage по встрече), контейнер с абсолютными координатами и FLIP |
 | `asr-service/app/` | каталог моделей и менеджер переключения (`catalog`, `runtimes`, `model_manager`, `scoring`, `assets/selftest_ru.wav`), GigaAM-провайдер (потоки torch: `ASR_CPU_THREADS`, `ASR_INTEROP_THREADS`), VAD, очередь (тайминги каждого сегмента в журнале), воркер комнаты, `bench.py` |
 | `frontend/src/` | `pages/RoomPage` (этапы входа, плитки, показ экрана, ресайз панели), `MeetingPage`/`HistoryPage`, админка (`pages/admin/*`, поля с примерами в `fields.ts`), `markdown.ts` (безопасный разбор), `diagnostics.ts`, `mediaErrors.ts`, `liveSocket.ts`, `screenZoom.ts` (масштаб/сдвиг чужого экрана: колесо к курсору, перетаскивание, щипок, пределы), `components/room/Tiles.tsx` (ScreenStage) |
 | `scripts/` | `setup`, `install` (первая установка/repair), **`update`** (штатное обновление), `check-updates`, `preflight`, `smoke-test` (таблица), `verify`, `diag`, `tune-kernel`, `asr-bench`, `collect-metrics`, `ctl`, `backup/restore`, `rollback` (с проверкой ревизии БД), `deploy` (обёртка над `update`); `lib/updatelib.sh` (обновление/откат), `lib/mask.sh` (маскирование секретов) |
@@ -207,6 +209,8 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 7. Известные ограничения и непроверенное
 
+- **Сцена встречи (0.11.0)** проверена живым сценарием `tests/live/scenario_stage.py` (3 браузера, настоящий LiveKit, 60 из 60) на локальном стенде; не проверялась на реальном сервере с десятками участников и на настоящих телефонах (только эмуляция 390×844). Плитки при событиях «говорит» по-прежнему перерисовываются React (DOM и `<video>` при этом не пересоздаются — измерено). Принудительная общая сцена («участник не может смотреть своё») не реализована: личная раскладка всегда важнее.
+
 - **Качество Qwen3 1.7B и нового структурного конвейера** измерено только на синтетических встречах (HISTORY.md: 3, 20 и 60 минут), не на реальных записях и не в Docker на сервере. Модель остаётся небольшой: пропускает часть поручений, помечает настоящие решения как предложения; код предпочитает «не указан» / «ответственный не определён» выдумке. Время на CPU заметное (60 минут — десятки минут в фоне).
 - **SIP-телефония не запускалась на реальном сервере:** контейнер `livekit/sip` (ключи `SIP_CONFIG_BODY`, `rtp_port: a-b`, `nat_1_to_1_ip`, совместимость с LiveKit server v1.13.7), Asterisk/PJSIP, звук в обе стороны, формат идентичности входящего участника (`sip_…`) и атрибута `sip.phoneNumber`, источник аудиодорожки SIP-участника для ASR — проверены только по документации и на подставном API LiveKit.
 
@@ -236,3 +240,4 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 2. Пересобрать образ ASR (`update.sh --force-build`) и проверить полную модель на серверных CPU.
 3. Публикация релизного тега; удаление `legacy/php/` по решению владельца.
 4. Метрики Prometheus; E2E-тесты UI (Playwright) в CI; серверное принуждение «один показывающий»; контроль места под записи.
+5. Сцена: список запретов показа экрана после перезагрузки страницы руководителя (сейчас известен по событиям встречи), принудительная общая сцена по настройке комнаты, мемоизация плиток при частых событиях «говорит».

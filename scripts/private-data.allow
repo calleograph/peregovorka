@@ -25,6 +25,11 @@ me.local
 out.local
 options.local
 self.local
+a.local
+b.local
+c.local
+s.local
+top.local
 st.plan.local
 
 # --- публичная инфраструктура, на которую ссылается проект (источники пакетов, образов, моделей, документации)

@@ -146,6 +146,8 @@ async def main():
             check(f"{c.label}: входящее аудио идёт по WebRTC (пакеты)", s["ain"] > 50, str(s))
             check(f"{c.label}: исходящее аудио идёт (микрофон)", s["aout"] > 50)
         # --- камера: Боб включает → видео у остальных, аватар скрыт; выключает → аватар возвращается
+        # фото запрашиваются одним запросом через 0,6 с после смены состава — ждём его, а не снимаем состояние мгновенно
+        await C.wait_for("[...document.querySelectorAll('.tile')].some(t=>(t.getAttribute('title')||'').includes('Алиса')&&!!t.querySelector('.avatar img'))", 10)
         pre_av = await C.js("[...document.querySelectorAll('.tile')].map(t=>({n:t.getAttribute('title'),img:!!t.querySelector('.avatar img'),av:!!t.querySelector('.avatar')}))")
         print("avatars on root view:", json.dumps(pre_av, ensure_ascii=False))
         check("аватар Алисы (без видео) показан картинкой в плитке у Администратора", any(t["n"] and "Алиса" in t["n"] and t["img"] for t in pre_av), str(pre_av))

@@ -392,10 +392,11 @@ fieldset.group { border-color: var(--line); background: var(--surface); }
 .rbtn.rec { background: var(--danger); color: #fff; border-color: var(--danger); animation: rbtn-rec 1.8s ease-in-out infinite; }
 .rbtn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .rbtn.danger:hover:not(:disabled) { background: var(--danger-text); border-color: var(--danger-text); box-shadow: 0 8px 18px color-mix(in srgb, var(--danger) 35%, transparent), 0 0 0 5px color-mix(in srgb, var(--danger) 18%, transparent); }
-.rbtn.pulse { animation: rbtn-speak 1.5s ease-out infinite; }
+/* «говорит» — свой класс: общий .pulse (точка 8×8 в design.css) сжимал кнопку микрофона до точки во время речи */
+.rbtn.speak { animation: rbtn-speak 1.5s ease-out infinite; }
 @keyframes rbtn-speak { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }
 @keyframes rbtn-rec { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 50%, transparent); } 50% { box-shadow: 0 0 0 9px transparent; } }
-@media (prefers-reduced-motion: reduce) { .rbtn, .rbtn svg { transition: none; } .rbtn.pulse, .rbtn.rec { animation: none; } .rbtn:hover:not(:disabled) { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rbtn, .rbtn svg { transition: none; } .rbtn.speak, .rbtn.rec { animation: none; } .rbtn:hover:not(:disabled) { transform: none; } }
 .rbtn-label { font-size: 12px; line-height: 1.2; color: var(--muted); text-align: center; max-width: 100px; font-weight: 500; }
 .rbtn-wrap .check { margin: 0; justify-content: center; }
 .confirm-end { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }

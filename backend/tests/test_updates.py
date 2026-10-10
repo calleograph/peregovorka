@@ -337,3 +337,28 @@ def test_overview_has_changes_and_run_saves_them_for_the_history(client):
         assert client.get(f"{U}/changes", params={"from": bad, "to": "0.6.1"}).status_code == 404, "имя файла строится только из корректных версий"
     remote(d, behind=0, commits=[])
     assert client.get(U).json()["changes"] is None
+
+
+def test_user_changelog_format_groups_by_release_headings():
+    """Пользовательский формат CHANGELOG (docs/VERSIONING.md): подзаголовки релиза раскладываются по группам окна «Что нового» без угадывания по словам."""
+    text = """## 0.11.0 (2026-10-10)
+
+### Новые возможности
+- Можно закреплять участников на своей сцене.
+
+### Улучшения
+- Переключение раскладки стало плавным.
+
+### Исправления
+- Исправлено зависание.
+
+### Для администраторов
+- Новых портов нет; миграций нет.
+"""
+    d = chlog.build(text, "0.10.1", "0.11.0")
+    by = {g["id"]: [i["text"] for i in g["items"]] for g in d["groups"]}
+    assert by["features"] == ["Можно закреплять участников на своей сцене."]
+    assert by["improvements"] == ["Переключение раскладки стало плавным."]
+    assert by["fixes"] == ["Исправлено зависание."]
+    assert by["admin"] == ["Новых портов нет; миграций нет."]
+    assert [g["title"] for g in d["groups"]][:2] == ["Новые возможности", "Улучшения"]

@@ -617,7 +617,7 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 .st-scroll.v { transform: rotate(90deg); }
 .st-scroll:disabled { opacity: .3; cursor: default; }
 .st-view .hands-bar { position: absolute; top: 10px; left: 10px; right: auto; max-width: calc(100% - 20px); z-index: 6; margin: 0; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
-.st-spotbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 5px 8px 5px 12px; border-radius: 999px;
+.st-spotbar { position: absolute; top: 10px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 5px 8px 5px 12px; border-radius: 999px;
   background: rgba(16, 24, 38, .9); color: #e7ecf3; border: 1px solid #2f4466; font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); white-space: nowrap; }
 .st-spotbar > span { overflow: hidden; text-overflow: ellipsis; }
 .st-spotbar .btn { margin: 0; }

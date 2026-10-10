@@ -14,7 +14,7 @@ export default function RoundButton({ icon, label, title, tone = "neutral", pres
 }) {
   return (
     <div className="rbtn-wrap">
-      <button type="button" className={`rbtn ${tone} ${pulse ? "pulse" : ""}`} onClick={onClick} disabled={disabled} aria-pressed={pressed} aria-label={label} title={title ?? label}>
+      <button type="button" className={`rbtn ${tone} ${pulse ? "speak" : ""}`} onClick={onClick} disabled={disabled} aria-pressed={pressed} aria-label={label} title={title ?? label}>
         <Icon name={icon} size={24} />
       </button>
       <span className="rbtn-label">{label}</span>
