@@ -7,6 +7,7 @@ import WebhooksAdmin from "./WebhooksAdmin";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU") : "—");
 const STATE: Record<PublicApiKey["state"], string> = { active: "действует", expired: "срок истёк", revoked: "отозван" };
+const TABS: ["clients" | "events" | "log" | "settings", string][] = [["clients", "Интеграции и ключи"], ["events", "События (webhooks)"], ["log", "Журнал обращений"], ["settings", "Настройки и ограничения"]];
 const empty = (): PublicApiClientIn => ({ name: "", description: null, enabled: true, scopes: [], rooms: null, ip_allowlist: null });
 
 /** Публичный API: настройки, интеграции (сервисные учётные записи) с ключами, журнал обращений. Секрет ключа показывается один раз. */
@@ -22,6 +23,7 @@ export default function PublicApiAdmin() {
   const [rotate, setRotate] = useState<PublicApiKey | null>(null);
   const [log, setLog] = useState<PublicApiLogRow[] | null>(null);
   const [onlyErrors, setOnlyErrors] = useState(false);
+  const [tab, setTab] = useState<"clients" | "events" | "log" | "settings">("clients");
 
   const load = useCallback(async () => {
     try {
@@ -55,8 +57,12 @@ export default function PublicApiAdmin() {
 
   return (
     <>
-      <SettingsForm key="api" group="api" title="Публичный API" fields={publicApiFields}
-        intro="Интеграции вызывают API по ключу: каждой интеграции выдаются только нужные права и, при необходимости, только некоторые комнаты. Описание методов — на странице документации." />
+      <div className="row" role="tablist" aria-label="Разделы публичного API">
+        {TABS.map(([id, label]) => <button key={id} role="tab" aria-selected={tab === id} className={`btn ${tab === id ? "primary" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
+      </div>
+      {tab === "settings" && <SettingsForm key="api" group="api" title="Публичный API" fields={publicApiFields}
+        intro="Интеграции вызывают API по ключу: каждой интеграции выдаются только нужные права и, при необходимости, только некоторые комнаты. Описание методов — на странице документации." />}
+      {tab === "clients" && (
       <div className="card form">
         <div className="row">
           <h2>Интеграции</h2><div className="spacer" />
@@ -94,9 +100,11 @@ export default function PublicApiAdmin() {
           </div>
         ))}
       </div>
+      )}
 
-      <WebhooksAdmin />
+      {tab === "events" && <WebhooksAdmin />}
 
+      {tab === "log" && (
       <div className="card form">
         <div className="row"><h2>Журнал обращений</h2><div className="spacer" />
           <label className="check"><input type="checkbox" checked={onlyErrors} onChange={(e) => { setOnlyErrors(e.target.checked); setLog(null); }} /> только ошибки</label>
@@ -112,6 +120,7 @@ export default function PublicApiAdmin() {
           </table></div>
         )}
       </div>
+      )}
 
       {edit && (
         <Modal title={edit.id ? "Изменить интеграцию" : "Новая интеграция"} onClose={() => setEdit(null)}>

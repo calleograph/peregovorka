@@ -46,6 +46,7 @@ EVENTS: dict[str, str] = {
 TOLERANCE_S = 300
 LEASE_S = 90                      # столько времени доставка «занята» воркером; при сбое процесса затем возвращается в очередь
 KEEP_ATTEMPTS = 10
+MAX_ADDRESSES = 3                 # сколько проверенных адресов пробовать при сбое соединения
 
 
 # ------------------------------------------------------------------------------------------------ подпись
@@ -214,8 +215,17 @@ class WebhookService:
                 verify_tls: bool | str = (self._ca or True) if getattr(cfg, "webhook_use_corporate_ca", False) else True
                 async with httpx.AsyncClient(timeout=httpx.Timeout(float(cfg.webhook_timeout_s), connect=min(5.0, float(cfg.webhook_timeout_s))),  # type: ignore[attr-defined]
                                              follow_redirects=False, trust_env=False, verify=verify_tls, transport=self._transport) as client:
-                    async with client.stream("POST", pinned_url(ep.url, ips[0]), content=body, headers=headers, extensions={"sni_hostname": host}) as r:
-                        status = r.status_code            # тело ответа не читаем: объём и содержимое чужого ответа нам не нужны
+                    last_conn: Exception | None = None
+                    for ip in ips[:MAX_ADDRESSES]:        # имя может вести на несколько ПРОВЕРЕННЫХ адресов (IPv6 и IPv4): если соединиться не удалось — пробуем следующий
+                        try:
+                            async with client.stream("POST", pinned_url(ep.url, ip), content=body, headers=headers, extensions={"sni_hostname": host}) as r:
+                                status = r.status_code        # тело ответа не читаем: объём и содержимое чужого ответа нам не нужны
+                            last_conn = None
+                            break
+                        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                            last_conn = exc               # только сбой соединения; ответ получателя (даже ошибочный) на другой адрес повторно не отправляется
+                    if last_conn is not None:
+                        raise last_conn
             except UrlRejected as exc:
                 err = f"адрес запрещён политикой: {exc}"[:280]
             except WebhookError as exc:

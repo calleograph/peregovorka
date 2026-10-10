@@ -997,3 +997,51 @@ def test_openapi_describes_stage2_and_every_scope_is_used(tmp_path, directory):
         from app.publicapi.scopes import SCOPES
         assert set(SCOPES) - used - {"protocols:read", "summaries:read"} == set(), "каждое объявленное право проверяется маршрутом"
         assert "webhooks" in spec and "meeting.ended" in json.dumps(spec["webhooks"]), "в OpenAPI описаны события webhook"
+
+
+def test_connection_failure_falls_back_to_the_next_checked_address_but_http_errors_do_not(tmp_path, directory):
+    """Реальная находка живого стенда: имя вело на ::1 и 127.0.0.1, а приёмник слушал только IPv4 — пробовался лишь первый адрес."""
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.host)
+        if req.url.host == "203.0.113.10":
+            raise httpx.ConnectError("refused")
+        return httpx.Response(200)
+    with running_app(make_settings(tmp_path), directory, transports={"webhook": httpx.MockTransport(handler)}) as c:
+        prepare(c, {"hooks.example.com": ["203.0.113.10", "203.0.113.11"]})
+        enable(c)
+        add_hook(c, events=["meeting.ended"])
+        room, mid = meeting_with_two(c)
+        end_by_alice(c, mid)
+        deliver(c)
+        assert seen == ["203.0.113.10", "203.0.113.11"] and deliveries(c)[0].status == "delivered", seen
+    seen.clear()
+
+    def http_500(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.host)
+        return httpx.Response(500)
+    (tmp_path / "b").mkdir()
+    with running_app(make_settings(tmp_path / "b"), directory, transports={"webhook": httpx.MockTransport(http_500)}) as c:
+        prepare(c, {"hooks.example.com": ["203.0.113.10", "203.0.113.11"]})
+        enable(c)
+        add_hook(c, events=["meeting.ended"])
+        room, mid = meeting_with_two(c)
+        end_by_alice(c, mid)
+        deliver(c)
+        assert seen == ["203.0.113.10"], "ответ получателя — не сбой соединения: на второй адрес то же событие не отправляется"
+    seen.clear()
+
+    def all_down(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.host)
+        raise httpx.ConnectError("refused")
+    (tmp_path / "c").mkdir()
+    with running_app(make_settings(tmp_path / "c"), directory, transports={"webhook": httpx.MockTransport(all_down)}) as c:
+        prepare(c, {"hooks.example.com": ["203.0.113.10", "203.0.113.11", "203.0.113.12", "203.0.113.13"]})
+        enable(c)
+        add_hook(c, events=["meeting.ended"])
+        room, mid = meeting_with_two(c)
+        end_by_alice(c, mid)
+        deliver(c)
+        d = deliveries(c)[0]
+        assert seen == ["203.0.113.10", "203.0.113.11", "203.0.113.12"] and d.status == "pending" and "сбой соединения" in d.last_error, "пробуется не более трёх адресов"

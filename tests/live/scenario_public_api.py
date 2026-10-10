@@ -30,10 +30,14 @@ async def main():
         S.check("до включения API отвечает «выключен»", True)
         await R.goto("/admin?tab=public_api", 2.5)
         S.check("страница «Публичный API» открылась", bool(await R.js("document.body.innerText.includes('Интеграции') && document.body.innerText.includes('Публичный API')")))
+        await click_text(R, "Настройки и ограничения", "button[role=tab]")
+        await asyncio.sleep(0.5)
         # включить API через форму настроек
         await R.js("(()=>{const cb=[...document.querySelectorAll('label')].find(l=>l.textContent.includes('Публичный API включён'))?.querySelector('input');if(cb&&!cb.checked)cb.click()})()")
         await click_text(R, "Сохранить")
         S.check("настройки сохранены", await R.wait_for("document.body.innerText.includes('Сохранено')", 10))
+        await click_text(R, "Интеграции и ключи", "button[role=tab]")
+        await asyncio.sleep(0.5)
         # создать интеграцию
         await click_text(R, "Новая интеграция")
         await asyncio.sleep(0.5)
@@ -80,10 +84,13 @@ async def main():
         S.check("OpenAPI 3.1 отдаётся", st == 200 and json.loads(body)["openapi"].startswith("3.1"))
 
         # --- журнал в админке и отзыв ключа
+        await click_text(R, "Журнал обращений", "button[role=tab]")
         await asyncio.sleep(3.5)                         # журнал обращений пишется пачками раз в ~2 с
         await R.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Показать')?.click()")
         S.check("запросы видны в журнале", await R.wait_for("document.body.innerText.includes('/api/public/v1/meetings')", 15))
         await R.shot("api-log")
+        await click_text(R, "Интеграции и ключи", "button[role=tab]")
+        await asyncio.sleep(0.5)
         await click_text(R, "Отозвать")
         await click_text(R, "Отозвать", "[role=dialog] button")
         await asyncio.sleep(1.5)
