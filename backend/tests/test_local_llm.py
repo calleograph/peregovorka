@@ -163,7 +163,7 @@ def test_protocol_via_local_model_keeps_data_inside_and_cleans_output(tmp_path, 
         put_settings(c, "llm", provider="local")
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         plan = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
         assert plan["llm_ready"] is True and plan["llm_local"] is True and plan["anonymize"] is False and plan["warnings"] == []
         r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "Кратко: решения, задачи, ответственные"})
@@ -189,7 +189,7 @@ def test_room_can_still_force_anonymization_for_local_model(tmp_path, directory)
         put_settings(c, "llm", provider="local")
         _room, mid = meeting_with_two(c, anonymize_mode="on")
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
         _drain(c)
         assert anon_calls, "явное «обезличивать» для переговорки сохраняется и для локальной модели"
@@ -201,7 +201,7 @@ def test_local_model_not_downloaded_blocks_generation_with_a_clear_message(tmp_p
         put_settings(c, "llm", provider="local")
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         plan = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
         assert plan["llm_ready"] is False and any("не загружена" in w for w in plan["warnings"])
         assert c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"}).status_code == 409
@@ -215,7 +215,7 @@ def test_long_transcript_warns_that_the_light_model_may_be_worse(tmp_path, direc
         put_settings(c, "llm", provider="local")
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         plan = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
         assert plan["llm_ready"] is True and plan["input_chars"] > 10
         assert any("облегч" in w and "качество" in w for w in plan["warnings"]), plan["warnings"]
@@ -234,7 +234,7 @@ def test_long_input_is_split_by_the_model_limit_not_the_global_one(tmp_path, dir
         from .test_transcripts import _feed_and_consume, _segment, _join  # noqa: F401
 
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
         _drain(c)
         passes = [b for b in rt.seen if "response_format" in b]
@@ -256,7 +256,7 @@ def test_external_provider_is_unchanged_and_never_uses_the_local_endpoint(tmp_pa
         put_settings(c, "llm", provider="external", type="openai", model="gpt-x", api_key="k")
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         plan = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
         assert plan["llm_local"] is False and plan["anonymize"] is True
         c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
@@ -400,7 +400,7 @@ def test_truncation_warning_reaches_the_saved_protocol_and_api(tmp_path, directo
         put_settings(c, "llm", provider="local")
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
         _drain(c)
         got = c.get(f"/api/v1/meetings/{mid}/protocols/{r.json()['protocol_id']}").json()

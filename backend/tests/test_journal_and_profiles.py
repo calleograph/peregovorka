@@ -59,7 +59,7 @@ def _app(tmp_path, directory):
     return calls, running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon), "llm": httpx.MockTransport(llm)}), None
 
 
-def _make_protocol(c, mid, who="bob"):
+def _make_protocol(c, mid, who="alice"):
     login(c, who)
     r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "кратко"})
     assert r.status_code == 202, r.text
@@ -73,7 +73,7 @@ def test_anonymizer_off_does_not_block_protocols(tmp_path, directory):
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")   # обезличивание не настроено вообще
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         plan = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
         assert plan["llm_ready"] and plan["anonymize"] is False
         got = _make_protocol(c, mid)
@@ -110,7 +110,7 @@ def test_room_requiring_anonymization_fails_closed_when_it_is_not_configured(tmp
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
         _room, mid = meeting_with_two(c, anonymize_mode="on")
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol"})
         assert r.status_code == 409 and "обезличивание" in r.json()["detail"].lower()
         assert calls["llm"] == []
