@@ -50,6 +50,13 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     d = result.decision
     journal.emit("auth", "login_ok", user=result.session.sam_account_name, ip=ip, client=ua,
                  data={"admin": bool(result.session.is_admin), **({"allowed_via": d.via[:5], "admin_via": d.admin_via[:5], "restricted": d.restricted} if d else {"local": True})})
+    # Дополнительные источники профиля (Bitrix24): пересчёт по сохранённым данным — без сети; обновление с портала — в фоне. Вход их не ждёт и от них не зависит.
+    try:
+        if result.user is not None and result.user.auth_source == "ad":
+            await request.app.state.enrichment.on_login(db, result.user)
+            request.app.state.enrichment.spawn(result.user.id)
+    except Exception:  # noqa: BLE001
+        pass
     response.set_cookie(
         settings.cookie_name, result.session_id, httponly=True, secure=settings.cookie_secure,
         samesite="lax", path="/",

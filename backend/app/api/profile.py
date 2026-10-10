@@ -59,6 +59,8 @@ async def refresh_profile(request: Request, su: SessionUser = Depends(require_us
         raise HTTPException(status_code=409, detail="В каталоге найдена другая учётная запись с таким логином.")
     u.display_name, u.email = ident.display_name or u.display_name, ident.email
     apply_profile(u, ident, clear_missing=True)
+    await request.app.state.enrichment.on_login(db, u)
+    request.app.state.enrichment.spawn(u.id, force=True)
     await write_audit(db, actor_user_id=u.id, actor_name=u.display_name, action="profile.refresh", target_type="user", target_id=str(u.id), ip=client_ip(request), details={})
     await db.commit()
     return profile_out(u, su)
@@ -77,7 +79,7 @@ async def put_avatar(request: Request, su: SessionUser = Depends(require_user), 
         raise HTTPException(status_code=422, detail=str(exc)) from None
     u = await _me(db, su)
     request.app.state.avatars.save(u.id, webp)
-    u.avatar_mime, u.avatar_updated_at = avatars.MIME, utcnow()
+    u.avatar_mime, u.avatar_updated_at, u.avatar_source = avatars.MIME, utcnow(), "manual"      # своё фото портал не заменяет
     await db.commit()
     return profile_out(u, su)
 
@@ -86,7 +88,7 @@ async def put_avatar(request: Request, su: SessionUser = Depends(require_user), 
 async def delete_avatar(request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     u = await _me(db, su)
     request.app.state.avatars.delete(u.id)
-    u.avatar_mime, u.avatar_updated_at = None, None
+    u.avatar_mime, u.avatar_updated_at, u.avatar_source = None, None, None
     await db.commit()
     return profile_out(u, su)
 

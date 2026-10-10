@@ -87,7 +87,9 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal";
+export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24";
+export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
+export interface BitrixSync { status: string; processed: number; result: Record<string, number> }
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -751,6 +753,8 @@ export const api = {
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
     asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),
     setAsrModel: (modelId: string) => request<{ ok: boolean; desired: string; note: string }>("PUT", "/admin/asr/active", { model_id: modelId }),
+    bitrixLookup: (email: string) => request<BitrixLookup>("POST", "/admin/bitrix24/lookup", { email }),
+    bitrixSync: () => request<BitrixSync>("POST", "/admin/bitrix24/sync"),
     asrTest: (modelId?: string, force = false) => request<AsrTestResult>("POST", "/admin/asr/test", { model_id: modelId, force }),
     asrCompare: (force = false) => request<AsrCompare>("POST", "/admin/asr/compare", { force }),
   },

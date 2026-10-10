@@ -124,6 +124,9 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         ext = cfg.model_copy(update={"provider": "external", "enabled": True})   # type: ignore[attr-defined]
         ok, msg, ms = await request.app.state.local_llm.client(ext, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
+    if group == "bitrix24":
+        ok, msg, ms = await request.app.state.enrichment.check()
+        return {"ok": ok, "message": msg, "ms": ms}
     raise HTTPException(status_code=404, detail="Для этой группы проверки нет")
 
 

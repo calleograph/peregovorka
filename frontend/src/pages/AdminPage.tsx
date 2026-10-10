@@ -6,6 +6,7 @@ import { Icon } from "../components/Icons";
 import AccessAdmin from "./admin/AccessAdmin";
 import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
+import Bitrix24Admin from "./admin/Bitrix24Admin";
 import CaAdmin from "./admin/CaAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
 import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
@@ -83,6 +84,7 @@ const GROUPS: Group[] = [
       </>) },
     { id: "llm", label: "Языковая модель (LLM)", render: () => <LlmAdmin /> },
     { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
+    { id: "bitrix24", label: "Bitrix24 (профили)", render: () => <Bitrix24Admin /> },
   ] },
   { title: "Журналы", pages: [
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
@@ -105,7 +107,7 @@ const KEYWORDS: Record<string, string> = {
   system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
   login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
-  sip: "телефония asterisk звонок", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
+  sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };
 
 export default function AdminPage({ version }: { version: string }) {

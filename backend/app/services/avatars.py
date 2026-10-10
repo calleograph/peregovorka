@@ -30,12 +30,12 @@ def sniff(data: bytes) -> str | None:
     return None
 
 
-def process(data: bytes) -> bytes:
+def process(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
     """Загруженный JPEG/PNG/WebP → WebP 256×256 (центральный квадрат). AvatarError с понятным текстом при отказе."""
     if not data:
         raise AvatarError("Файл пустой.")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise AvatarError(f"Файл больше {MAX_UPLOAD_BYTES // 1024} КБ: уменьшите картинку.")
+    if len(data) > max_bytes:
+        raise AvatarError(f"Файл больше {max_bytes // 1024} КБ: уменьшите картинку.")
     if sniff(data) is None:
         raise AvatarError("Допустимы только JPEG, PNG и WebP.")
     try:

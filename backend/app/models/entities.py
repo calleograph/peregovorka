@@ -47,6 +47,11 @@ class User(Base):
     profile_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     avatar_mime: Mapped[str | None] = mapped_column(String(20))       # есть аватарка — файл в DATA_DIR/avatars (см. services/avatars.py)
     avatar_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Откуда аватарка: manual — загрузил сам пользователь; bitrix — скачана с портала (обновляется по сроку); пусто с файлом — прежняя ручная.
+    avatar_source: Mapped[str | None] = mapped_column(String(10))
+    # Значения профиля по источникам {"ad": {...}, "bitrix": {..., "fetched_at": iso}} и внешние идентификаторы {"bitrix": "123"} — для слияния по приоритетам
+    profile_sources: Mapped[dict | None] = mapped_column(JSONType)
+    external_ids: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

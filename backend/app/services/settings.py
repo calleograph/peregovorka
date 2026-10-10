@@ -601,7 +601,61 @@ class PrivacySettings(_Group):
         return v
 
 
+class Bitrix24Settings(_Group):
+    """Bitrix24 как ДОПОЛНИТЕЛЬНЫЙ источник профиля (должность, подразделение, телефон, фото). Каталог (AD) остаётся основой входа; недоступность портала на вход и комнату не влияет.
+    Адрес webhook содержит секрет — хранится зашифрованным. Приоритеты — списки источников через запятую из: local, ad, bitrix."""
+
+    SECRETS: ClassVar[tuple[str, ...]] = ("webhook_url",)
+    enabled: bool = False
+    portal_url: str = ""
+    webhook_url: str = ""
+    allow_http: bool = False
+    timeout: int = Field(default=5, ge=1, le=30)
+    verify_tls: bool = True
+    use_corporate_ca: bool = True
+    use_title: bool = True
+    use_department: bool = True
+    use_phone: bool = True
+    use_photos: bool = True
+    cache_hours: int = Field(default=24, ge=1, le=24 * 30)       # как часто обновлять данные одного человека при входах
+    priority_display_name: str = "ad, bitrix, local"
+    priority_email: str = "ad, bitrix, local"
+    priority_title: str = "bitrix, ad, local"
+    priority_department: str = "bitrix, ad, local"
+    priority_phone: str = "bitrix, ad, local"
+    priority_avatar: str = "local, bitrix, ad"
+
+    @field_validator("portal_url")
+    @classmethod
+    def _portal(cls, v: str) -> str:
+        return v.strip().rstrip("/")
+
+    @field_validator("priority_display_name", "priority_email", "priority_title", "priority_department", "priority_phone", "priority_avatar")
+    @classmethod
+    def _prio(cls, v: str) -> str:
+        parts = [p.strip().lower() for p in (v or "").replace(";", ",").split(",") if p.strip()]
+        bad = [p for p in parts if p not in ("local", "ad", "bitrix")]
+        if bad or not parts:
+            raise ValueError("Приоритет: источники через запятую из «local, ad, bitrix»")
+        return ", ".join(dict.fromkeys(parts))
+
+    @model_validator(mode="after")
+    def _enabled_needs_addresses(self) -> "Bitrix24Settings":
+        if self.enabled:
+            from ..profiles.bitrix import webhook_ok  # noqa: PLC0415
+
+            if not self.portal_url or not self.webhook_url:
+                raise ValueError("Для включения укажите адрес портала и webhook")
+            if self.portal_url.startswith("http://") and not self.allow_http:
+                raise ValueError("Разрешён только https:// (http — лишь при явном «allow_http»)")
+            problem = webhook_ok(self.portal_url, self.webhook_url)
+            if problem:
+                raise ValueError(problem)
+        return self
+
+
 GROUPS: dict[str, type[_Group]] = {
+    "bitrix24": Bitrix24Settings,
     "privacy": PrivacySettings,
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,

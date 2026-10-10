@@ -277,3 +277,31 @@ export const llmTaskFields: Field[] = [
     help: "Ответ на один фрагмент стенограммы — несколько тем; обычно достаточно 700–1 000." },
 ];
 export const structuredFields: Field[] = protocolFields.filter((f) => f.name === "external_mode");
+
+const SOURCE_HELP = "Источники по порядку через запятую: ad — каталог, bitrix — портал Bitrix24, local — то, что человек указал сам. Берётся первый источник, у которого поле заполнено.";
+/** Bitrix24 — дополнительный источник профиля. Вход и комната от портала не зависят: при его недоступности остаются прежние данные. */
+export const bitrixFields: Field[] = [
+  { section: "Подключение", name: "enabled", label: "Брать данные профиля из Bitrix24", type: "bool",
+    help: "Каталог (AD) остаётся основой входа. Bitrix24 только дополняет карточку: должность, подразделение, телефон, фото. Если портал недоступен, вход и встречи работают как обычно." },
+  { section: "Подключение", name: "portal_url", label: "Адрес портала", type: "text", placeholder: "https://portal.example.com", example: "https://portal.example.com" },
+  { section: "Подключение", name: "webhook_url", label: "Входящий webhook", type: "secret",
+    help: "Полный адрес вида https://портал/rest/<номер>/<секрет>/. В Bitrix24 создаётся в «Разработчикам → Другое → Входящий вебхук». Нужны права «Пользователи (user_brief или user_basic)» и, для названий подразделений, «Подразделения (department)». Секрет хранится зашифрованно и не показывается. Только чтение." },
+  { section: "Что подтягивать", name: "use_title", label: "Должность", type: "bool" },
+  { section: "Что подтягивать", name: "use_department", label: "Подразделение", type: "bool" },
+  { section: "Что подтягивать", name: "use_phone", label: "Рабочий телефон", type: "bool" },
+  { section: "Что подтягивать", name: "use_photos", label: "Фото профиля", type: "bool",
+    help: "Фото скачивается один раз и хранится у нас (в формате WebP, до 5 МБ на входе). Фото, загруженное самим человеком, портал не заменяет, пока «local» стоит в приоритете раньше «bitrix»." },
+  { section: "Приоритеты полей", name: "priority_display_name", label: "ФИО", type: "text", help: SOURCE_HELP, example: "ad, bitrix, local" },
+  { section: "Приоритеты полей", name: "priority_email", label: "E-mail", type: "text", example: "ad, bitrix, local" },
+  { section: "Приоритеты полей", name: "priority_title", label: "Должность", type: "text", example: "bitrix, ad, local" },
+  { section: "Приоритеты полей", name: "priority_department", label: "Подразделение", type: "text", example: "bitrix, ad, local" },
+  { section: "Приоритеты полей", name: "priority_phone", label: "Телефон", type: "text", example: "bitrix, ad, local" },
+  { section: "Приоритеты полей", name: "priority_avatar", label: "Фото", type: "text", example: "local, bitrix, ad" },
+  { section: "Режим работы", name: "cache_hours", label: "Обновлять данные человека не чаще", unit: "часов", type: "number", min: 1, max: 720,
+    help: "Данные обновляются в фоне при входе, не чаще этого срока. После сбоя портала повтор — не раньше чем через 10 минут.", example: "24" },
+  { section: "Режим работы", name: "timeout", label: "Таймаут запроса к порталу", unit: "с", type: "number", min: 1, max: 30, example: "5" },
+  { section: "Безопасность соединения", name: "verify_tls", label: "Проверять сертификат портала", type: "bool" },
+  { section: "Безопасность соединения", name: "use_corporate_ca", label: "Доверять корпоративному удостоверяющему центру (LDAP_CA_FILE)", type: "bool",
+    help: "Включайте, если портал использует внутренний сертификат." },
+  { section: "Безопасность соединения", name: "allow_http", label: "Разрешить небезопасный http://", type: "bool", help: "Только для изолированных тестов: секрет webhook пойдёт без шифрования." },
+];

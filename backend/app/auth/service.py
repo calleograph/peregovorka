@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Settings
 from ..models import User, utcnow
+from ..profiles.service import record_ad
 from ..security.passwords import verify_room_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
 from .sessions import SessionData, SessionStore
@@ -37,10 +38,13 @@ def apply_profile(user: User, ident: DirectoryIdentity, *, clear_missing: bool =
     (каталог мог временно не вернуть необязательный атрибут). Очищать поля по отсутствующему атрибуту можно только при ручном «Обновить данные» (`clear_missing=True`)."""
     def cut(v: str | None, n: int) -> str | None:
         return (v or "").strip()[:n] or None
+    got: dict[str, str | None] = {}
     for field, raw, n in (("title", ident.title, 300), ("department", ident.department, 300), ("phone", ident.phone, 64)):
         val = cut(raw, n)
+        got[field] = val
         if val is not None or clear_missing:
             setattr(user, field, val)
+    record_ad(user, got, clear_missing=clear_missing)        # значения каталога запоминаются отдельно: итог карточки считается по приоритетам источников
     user.profile_synced_at = utcnow()
 
 
@@ -176,6 +180,7 @@ class AuthService:
         user.upn = ident.upn
         user.display_name = ident.display_name
         user.email = ident.email
+        record_ad(user, {"display_name": ident.display_name, "email": ident.email}, clear_missing=True)
         apply_profile(user, ident)
         user.last_is_admin = is_admin
         user.last_login_at = utcnow()
