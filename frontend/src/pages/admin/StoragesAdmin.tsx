@@ -1,16 +1,17 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type StorageProfile, type TestResult } from "../../api";
+import StorageTransferAdmin from "./StorageTransferAdmin";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
-  smb_domain: string; smb_username: string; secret: string; secret_set: boolean;
+  smb_domain: string; smb_username: string; secret: string; secret_set: boolean; external_volume: boolean;
 }
 
-const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false };
+const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false, external_volume: false };
 
 const toForm = (p: StorageProfile): Form => ({
   id: p.id, name: p.name, kind: p.kind, local_path: p.config.local_path ?? "/data/exports", smb_server: p.config.smb_server ?? "", smb_share: p.config.smb_share ?? "",
-  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set,
+  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set, external_volume: !!p.external_volume,
 });
 
 const FOLDER_HELP: [string, string][] = [
@@ -39,7 +40,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
     if (!form) return;
     setError(""); setNote("");
     if (!form.name.trim()) { setError("Укажите название хранилища, например «Файловый сервер №1»."); return; }
-    const config: Record<string, string> = form.kind === "local" ? { local_path: form.local_path } : {
+    const config: Record<string, string | boolean> = form.kind === "local" ? { local_path: form.local_path, external_volume: form.external_volume } : {
       smb_server: form.smb_server.trim(), smb_share: form.smb_share.trim(), smb_base_path: form.smb_base_path.trim(), smb_domain: form.smb_domain.trim(), smb_username: form.smb_username.trim() };
     setBusy(true);
     try {
@@ -85,6 +86,10 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
           {form.kind === "local" ? (
             <label>Каталог внутри контейнера<input value={form.local_path} onChange={(e) => set("local_path", e.target.value)} placeholder="/data/exports" />
               <span className="help">Абсолютный путь внутри контейнера приложения (лежит в разделе DATA_ROOT на сервере). Не путь Windows.</span></label>
+          ) : null}
+          {form.kind === "local" ? (
+            <label className="check"><input type="checkbox" checked={form.external_volume} onChange={(e) => set("external_volume", e.target.checked)} />
+              <span className="check-body">Внешний том: смонтированная сетевая папка или диск<span className="help">Включает защиту: кнопка «Проверить» ставит на том метку и запоминает, что он смонтирован, — если том отключится, запись, выгрузка и перенос в него остановятся, а не заполнят системный диск. Отмечайте, когда том сейчас подключён (проверка откажет, если каталог лежит на системном диске). Для переноса записей в папку отметка обязательна; обычная папка на диске сервера работает без неё.</span></span></label>
           ) : (
             <fieldset className="group"><legend>Сетевой ресурс SMB</legend>
               <div className="cols">
@@ -133,6 +138,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
         </table>
       )}</div>
       {onOpen && items.length > 0 && <p className="muted small">Выбрать хранилище: «Хранилище протоколов», «Хранилище записей», «Вложения чата», «Хранение журнала».</p>}
+      {items.length > 0 && <StorageTransferAdmin />}
     </section>
   );
 }

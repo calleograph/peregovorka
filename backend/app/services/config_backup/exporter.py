@@ -20,6 +20,9 @@ from . import coverage
 from . import registry as R
 
 
+VOLUME_STATE = ("volume_marker", "volume_mount")      # защита внешнего тома: ставится заново кнопкой «Проверить» на новом сервере
+
+
 class ExportError(Exception):
     pass
 
@@ -124,6 +127,8 @@ async def build_payload(db: AsyncSession, settings_svc: SettingsService, *, app_
                             val = ""
                     else:
                         val = ""
+                if name == "storage_profiles" and col == "config" and isinstance(val, dict):
+                    val = {k: v for k, v in val.items() if k not in VOLUME_STATE}      # метка тома и запомненное монтирование — состояние сервера
                 row[col] = ser(val)
             out.append(row)
         tables[name] = out

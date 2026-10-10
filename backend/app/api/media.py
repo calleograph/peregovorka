@@ -155,7 +155,18 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.download" if download else "recording.play",
                           target_type="recording", target_id=str(rec.id), ip=client_ip(request), details={"kind": rec.kind, "meeting_id": str(meeting.id)})
         await db.commit()
-    body = iterate_in_threadpool(reader(start, end))
+    ps = request.app.state.protocols
+    ps.touch_read(rec.id)                                    # пока читают (и 2 минуты после), перенос между хранилищами не удаляет файл-источник
+
+    async def tracked():
+        ps.read_begin(rec.id)
+        try:
+            async for chunk in iterate_in_threadpool(reader(start, end)):
+                yield chunk
+        finally:
+            ps.read_end(rec.id)
+
+    body = tracked()
     return StreamingResponse(body, status_code=206 if rng else 200, media_type=mime, headers=headers)
 
 

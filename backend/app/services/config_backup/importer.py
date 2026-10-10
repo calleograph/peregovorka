@@ -194,6 +194,9 @@ async def preview(payload: dict, db: AsyncSession, *, current_version: str, curr
             hint = _scan_hint(v)
             if hint:
                 warn(hint, f"{gp.title or g} — {f}", v, "похоже на адрес или путь старого сервера — проверьте")
+    ext = [r.get("name") for r in payload["tables"].get("storage_profiles", []) if isinstance(r.get("config"), dict) and r["config"].get("external_volume")]
+    if ext:
+        warn(R.BOUND_PATH, "Файловые хранилища", ", ".join(map(str, ext)), "отмечены как внешний том: после восстановления смонтируйте том на новом сервере и нажмите «Проверить» — метка тома и защита от записи на системный диск ставятся заново")
     sips = len(payload["tables"].get("sip_profiles", []))
     if sips:
         warn(R.BOUND_LIVEKIT, "SIP-телефония", None, f"подключений: {sips}. Идентификаторы транков LiveKit старого сервера не переносятся — после импорта синхронизируйте SIP в разделе «SIP-телефония»")
@@ -279,6 +282,8 @@ async def apply(payload: dict, db: AsyncSession, settings_svc: SettingsService, 
                 if col not in row:
                     continue
                 v = deser(row[col], table.columns[col])
+                if name == "storage_profiles" and col == "config" and isinstance(v, dict):
+                    v = {k: x for k, x in v.items() if k not in ("volume_marker", "volume_mount")}
                 if policy == R.SECRET:
                     if v:
                         if box is None:

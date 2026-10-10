@@ -4,6 +4,7 @@ import { api, type ApiError, type JournalStats, type SystemStatus } from "../../
 import { bytes, downloadText, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
 import RepairsPanel from "./RepairsPanel";
+import StorageStatsCard from "./StorageStatsCard";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
   join_backend_ms: ["Обработка входа на сервере", "Время работы backend над запросом «Войти» (БД и выдача пропуска) без сети и прокси."],
@@ -86,6 +87,7 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
         {tech && <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{versionLabel(s.version, s.commit)}</div><div className="l">{s.built_at ?? ""}</div></div>}
       </div>
 
+      {tech && <StorageStatsCard />}
       <h3>Сервисы</h3>
       <div className="grid">
         {Object.entries(s.checks).map(([k, v]) => (

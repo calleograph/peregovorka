@@ -14,8 +14,23 @@ jobs:
         with: { python-version: "3.12" }
       - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg
       - run: pip install -r backend/requirements-dev.txt
-      - run: pytest -q
+      - run: pytest -q --junitxml=junit.xml
         working-directory: backend
+      # при падении тестов их имена и первая строка ошибки выводятся аннотациями (видны и через API, без доступа к журналу задания)
+      - if: failure()
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          try:
+              for tc in ET.parse("junit.xml").getroot().iter("testcase"):
+                  for k in ("failure", "error"):
+                      for f in tc.findall(k):
+                          msg = " ".join((f.get("message") or "").split())[:300]
+                          print(f"::error title=pytest {tc.get('classname')}.{tc.get('name')}::{msg}")
+          except Exception as exc:
+              print(f"::warning::не удалось разобрать junit.xml: {exc}")
+          PY
 
   asr:
     runs-on: ubuntu-24.04

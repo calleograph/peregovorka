@@ -36,6 +36,7 @@ FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS)
 # какая группа настроек выбирает профиль
 FUNCTION_GROUPS = {"audio_storage": "Записи аудио", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
 _CONFIG_KEYS = ("local_path", "smb_server", "smb_share", "smb_base_path", "smb_username", "smb_domain")
+_EXTRA_KEYS = ("external_volume",)          # отметка администратора: каталог — смонтированный внешний том (сетевая папка, диск): включает защиту от записи на системный диск при отключении
 
 
 class PrefixedStorage:
@@ -125,14 +126,16 @@ class FileStore:
 
     def build(self, row: StorageProfile) -> StorageBackend:
         cfg = self._target(row.kind, row.config or {}, self._decrypt(row))
-        backend = build_storage(cfg, self._data_dir)
+        c = row.config or {}
+        backend = build_storage(cfg, self._data_dir, c.get("volume_marker") if row.kind == "local" else None, c.get("volume_mount") if row.kind == "local" else None)
         assert backend is not None
         return backend
 
     def _public(self, row: StorageProfile, usage: list[str]) -> dict:
         cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS}
         return {"id": str(row.id), "name": row.name, "kind": row.kind, "config": cfg, "secret_set": bool(row.secret_enc), "used_by": usage,
-                "address": self.address(row.kind, cfg)}
+                "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker")),
+                "external_volume": bool((row.config or {}).get("external_volume")), "volume_mount": (row.config or {}).get("volume_mount")}
 
     @staticmethod
     def address(kind: str, cfg: dict) -> str:
@@ -176,7 +179,7 @@ class FileStore:
             raise SettingsError("Хранилище с таким названием уже есть")
         self._check(kind, config, secret)
         pid = uuid.uuid4()
-        row = StorageProfile(id=pid, name=name, kind=kind, config={k: v for k, v in config.items() if k in _CONFIG_KEYS},
+        row = StorageProfile(id=pid, name=name, kind=kind, config={k: v for k, v in config.items() if k in _CONFIG_KEYS or k in _EXTRA_KEYS},
                              secret_enc=self._encrypt(pid, secret))
         db.add(row)
         await db.commit()
@@ -198,7 +201,13 @@ class FileStore:
                 raise SettingsError("Хранилище с таким названием уже есть")
         cfg = dict(row.config or {})
         for k, v in (patch.get("config") or {}).items():
-            if k in _CONFIG_KEYS:
+            if k in _CONFIG_KEYS or k in _EXTRA_KEYS:
+                if k == "local_path" and cfg.get(k) != v:
+                    cfg.pop("volume_marker", None)                        # другой каталог — другая метка и другое монтирование (ставятся при «Проверить»)
+                    cfg.pop("volume_mount", None)
+                if k == "external_volume" and not v:
+                    cfg.pop("volume_marker", None)                        # отметку «внешний том» сняли — защита отключается
+                    cfg.pop("volume_mount", None)
                 cfg[k] = v
         secret = self._decrypt(row)
         if patch.get("secret") is not None:    # None = не менять, "" = очистить
@@ -279,12 +288,30 @@ class FileStore:
         """Пробная запись и создание подпапок (Audio/, Protocols/ …) — так права и пути проверяются сразу, а не при первой выгрузке."""
         row = await self.row(db, profile_id)
         backend = await asyncio.to_thread(self.build, row)
+        note = ""
+        c = row.config or {}
+        if row.kind == "local" and isinstance(backend, LocalStorage) and c.get("external_volume") and not c.get("volume_marker"):
+            # Защита включается только для папок, которые администратор отметил как внешний том (смонтированная сетевая папка, внешний диск): обычная локальная папка на диске
+            # сервера работает как раньше. Метку нельзя ставить «вслепую»: если том не смонтирован, метка легла бы в пустой каталог на системном диске и защита потеряла бы смысл.
+            from . import mounts  # noqa: PLC0415
+
+            info = await asyncio.to_thread(mounts.describe, str(c.get("local_path", "")))
+            if info is not None and info["on_root"]:
+                raise SettingsError("Каталог отмечен как внешний том, но лежит на системном диске сервера: том не смонтирован. Подключите сетевую папку или диск и повторите проверку "
+                                    "(метка тома на системном диске не ставится, чтобы запись не заполнила его).")
+            marker = await asyncio.to_thread(backend.mark_volume)           # метка тома: без неё запись в каталог, потерявший монтирование, не отличить от обычной
+            row.config = {**c, "volume_marker": marker}
+            if info is not None:
+                row.config["volume_mount"] = {"mountpoint": info["mountpoint"], "fstype": info["fstype"], "source": info["source"]}
+            await db.commit()
+            backend = await asyncio.to_thread(self.build, row)
+            note = " На том поставлена метка и запомнено, что он смонтирован: если том отключится, запись в него остановится, а не пойдёт на локальный диск."
 
         def run() -> str:
             for folder in FOLDERS:
                 probe = f"{folder}/.peregovorka-write-test-{uuid.uuid4().hex[:8]}"
                 backend.write_bytes(probe, b"ok")
                 backend.delete(probe)
-            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}"
+            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}" + note
 
         return await asyncio.to_thread(run)

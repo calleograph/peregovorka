@@ -614,3 +614,33 @@ def test_environment_of_the_source_server_is_reported_without_secrets_and_compar
         assert names["LDAP_ACCESS_GROUP_DN"]["source"] == "cn=old-staff,dc=old,dc=test" and names["LDAP_ACCESS_GROUP_DN"]["here"] == "" and "допуска" in names["LDAP_ACCESS_GROUP_DN"]["note"]
         assert "DEFAULT_AUDIO_RETENTION_DAYS" in names and "APP_PUBLIC_URL" in names
         assert "APP_MASTER_KEY" not in names, "ключи шифрования у серверов разные по определению — это не отличие, которое нужно сверять"
+
+
+# ----------------------------------------------------------------------------------------------------- защита внешнего тома не переезжает вместе с настройками
+def test_volume_marker_and_mount_state_are_not_carried_over_and_the_external_volume_flag_is(tmp_path, directory, monkeypatch):
+    from app.services import mounts
+
+    monkeypatch.setattr(mounts, "describe", lambda path, text=None: {"mountpoint": "/mnt/old", "fstype": "cifs", "source": "//old/rec", "on_root": False})
+    sa, sb = make_settings(tmp_path / "a"), make_settings(tmp_path / "b")
+    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
+    with running_app(sa, directory) as ca:
+        login(ca, "root")
+        p = ca.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(Path(sa.data_dir) / "fs"), "external_volume": True}}).json()
+        assert ca.post(f"/api/v1/admin/storages/{p['id']}/test").json()["ok"] is True
+        listed = {x["id"]: x for x in ca.get("/api/v1/admin/storages").json()["items"]}[p["id"]]
+        assert listed["volume_marked"] is True and listed["volume_mount"]["fstype"] == "cifs"
+        blob, pw = export(ca)
+    header, payload = K.open_(blob, pw)
+    cfg = payload["tables"]["storage_profiles"][0]["config"]
+    assert cfg["external_volume"] is True and "volume_marker" not in cfg and "volume_mount" not in cfg, "метка и монтирование — состояние исходного сервера"
+    with running_app(sb, directory) as c:
+        login(c, "root")
+        prev = upload(c, "/api/v1/admin/config/import/preview", blob, pw).json()
+        assert any("внешний том" in (w["note"] or "") for w in prev["warnings"]), "администратору напоминают проверить том на новом сервере"
+        assert upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"}).status_code == 200
+        item = c.get("/api/v1/admin/storages").json()["items"][0]
+        assert item["external_volume"] is True and item["volume_marked"] is False and item["volume_mount"] is None
+        # после импорта защита включается заново обычной кнопкой «Проверить» (метка нового сервера)
+        assert c.patch(f"/api/v1/admin/storages/{item['id']}", json={"config": {"local_path": str(Path(sb.data_dir) / "fs")}}).status_code == 200, "путь старого сервера исправляют на путь нового"
+        assert c.post(f"/api/v1/admin/storages/{item['id']}/test").json()["ok"] is True
+        assert c.get("/api/v1/admin/storages").json()["items"][0]["volume_marked"] is True

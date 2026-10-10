@@ -44,6 +44,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [protocols, setProtocols] = useState<ProtocolItem[]>([]);
   const [recordings, setRecordings] = useState<MeetingRecording[]>([]);
+  const [xfer, setXfer] = useState("");
   const [sendOpen, setSendOpen] = useState(false);
   const [logKey, setLogKey] = useState(0);
   const [boardWarm, setBoardWarm] = useState(false);          // редактор схемы подгружается за кадром после открытия карточки (не мешая стенограмме и протоколам)
@@ -71,6 +72,12 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   }, [meetingId]);
 
   const loadMeeting = useCallback(() => api.meeting(meetingId).then(setMeeting).catch((e) => setError((e as ApiError).message)), [meetingId]);
+  const moveRecordings = async (direction: "to_external" | "to_local") => {
+    const q = direction === "to_external" ? "Перенести записи этой встречи во внешнее хранилище? Файлы проверяются и только затем удаляются с локального диска." : "Вернуть записи этой встречи на локальный диск? Файлы проверяются и только затем удаляются из внешнего хранилища.";
+    if (!window.confirm(q)) return;
+    try { await api.admin.startTransfer({ direction, meeting_id: meetingId }); setXfer("Перенос запущен в фоне; ход — «Администрирование → Файловые хранилища → Перенос данных»."); }
+    catch (e) { setXfer((e as ApiError).message); }
+  };
   const loadRecordings = useCallback(() => { if (isAdmin) void api.meetingRecordings(meetingId).then(setRecordings).catch(() => setRecordings([])); }, [meetingId, isAdmin]);
 
   useEffect(() => {
@@ -232,6 +239,11 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       {tab === "audio" && isAdmin && (
         <div className="card">
           <p className="muted">Аудиозаписи участников. Скачивание доступно только администраторам и записывается в аудит. Статус выгрузки показывает, сохранена ли копия во внешнем хранилище записей.</p>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <button className="btn mini" onClick={() => void moveRecordings("to_external")} title="Копирование с проверкой контрольной суммы; ссылки и права не меняются">Перенести во внешнее хранилище</button>
+            <button className="btn mini" onClick={() => void moveRecordings("to_local")}>Вернуть на локальный диск</button>
+            {xfer && <span className="muted small" role="status">{xfer}</span>}
+          </div>
           <table className="table"><thead><tr><th>Участник</th><th>Файл</th><th>Длительность</th><th>Размер</th><th>Выгрузка</th><th /></tr></thead><tbody>
             {recordings.length === 0 && <tr><td colSpan={6} className="muted">Записей нет.</td></tr>}
             {recordings.map((r) => (

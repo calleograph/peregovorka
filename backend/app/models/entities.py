@@ -648,6 +648,45 @@ class MailMessage(Base):
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+class StorageTransfer(Base):
+    """Задание переноса записей между локальным диском и внешним хранилищем (фоновое, возобновляемое)."""
+
+    __tablename__ = "storage_transfers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    direction: Mapped[str] = mapped_column(String(12), nullable=False)               # to_external | to_local
+    scope: Mapped[str] = mapped_column(String(10), default="all", server_default="all", nullable=False)   # all | meeting
+    meeting_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("meetings.id", ondelete="SET NULL"))
+    state: Mapped[str] = mapped_column(String(12), default="queued", server_default="queued", index=True, nullable=False)   # queued | running | done | failed | cancelled
+    total: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    done: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    skipped: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    failed: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    bytes_total: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    bytes_done: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    error: Mapped[str | None] = mapped_column(String(500))
+    created_by: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class StorageTransferItem(Base):
+    """Один файл задания переноса: его состояние хранится в базе, поэтому после перезапуска сервера перенос продолжается с оставшихся."""
+
+    __tablename__ = "storage_transfer_items"
+    __table_args__ = (Index("ix_storage_transfer_items_state", "transfer_id", "state"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    transfer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("storage_transfers.id", ondelete="CASCADE"), index=True, nullable=False)
+    recording_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    state: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending", nullable=False)   # pending | done | skipped | failed
+    error: Mapped[str | None] = mapped_column(String(500))
+    bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    # Файл-источник удаляется не сразу после переключения, а после «отсрочки» (пока не оборвутся уже идущие воспроизведения) и только если копия на месте
+    cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
 class StorageSyncRun(Base):
     """Запуск сверки метаданных базы с реальным содержимым хранилищ (отчёт для администратора)."""
 
