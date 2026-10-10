@@ -138,14 +138,14 @@ stage_preflight() {
 }
 
 stage_dirs() {
-  for d in postgres redis models/gigaam models/llm recordings exports backups state updater ca chat-files; do
+  for d in postgres redis models/gigaam models/llm recordings exports backups state updater ca chat-files avatars branding; do
     if [ -d "$DATA_ROOT/$d" ]; then info "есть: $DATA_ROOT/$d"; else run mkdir -p "$DATA_ROOT/$d"; fi
   done
   [ "$DRY_RUN" = "1" ] || chmod 750 "$DATA_ROOT" 2>/dev/null || true
   # каталог обмена с исполнителем обновлений: backend (uid 10001) пишет запросы, исполнитель на хосте — статус и журнал
   [ "$DRY_RUN" = "1" ] || chmod 1777 "$DATA_ROOT/updater" 2>/dev/null || true
   # Контейнеры backend и asr работают от uid 10001: каталоги записей и выгрузок (и только они) должны быть им доступны на запись.
-  for d in recordings exports ca chat-files; do
+  for d in recordings exports ca chat-files avatars branding; do
     if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then as_root chown 10001:10001 "$DATA_ROOT/$d"; fi
   done
 }

@@ -40,7 +40,7 @@ _repair_dir_mode() { stat -c '%a' "$1" 2>/dev/null || echo x; }
 repair_detect_data_dirs() {
   local d bad=() base="${DATA_ROOT:-}"
   [ -n "$base" ] || return 1
-  for d in recordings exports ca chat-files; do
+  for d in recordings exports ca chat-files avatars branding; do
     if [ ! -d "$base/$d" ]; then bad+=("$d: нет каталога")
     elif [ "$(_repair_dir_owner "$base/$d")" != "$BACKEND_UID" ]; then bad+=("$d: чужой владелец"); fi
   done
@@ -182,15 +182,15 @@ repair_json() { # печатает JSON последнего repair_scan
 # ---- исправления. Каждое идемпотентно, меняет только объекты проекта, печатает ход работы (попадает в журнал окна). Код 0 — исправлено.
 repair_apply_data_dirs() {
   local base="$DATA_ROOT" d rc=0
-  for d in postgres redis models/gigaam recordings exports backups state updater ca chat-files; do
+  for d in postgres redis models/gigaam recordings exports backups state updater ca chat-files avatars branding; do
     [ -d "$base/$d" ] || mkdir -p "$base/$d" || { fail "Не удалось создать $base/$d"; rc=1; }
   done
-  for d in recordings exports ca chat-files; do
+  for d in recordings exports ca chat-files avatars branding; do
     chown "$BACKEND_UID:$BACKEND_UID" "$base/$d" || { fail "Не удалось назначить владельца $base/$d"; rc=1; }
   done
   chmod 1777 "$base/updater" || rc=1
   # содержимое тоже должно принадлежать сервису: каталог мог быть создан от root вместе с файлами внутри
-  for d in ca chat-files; do chown -R "$BACKEND_UID:$BACKEND_UID" "$base/$d" 2>/dev/null || true; done
+  for d in ca chat-files avatars branding; do chown -R "$BACKEND_UID:$BACKEND_UID" "$base/$d" 2>/dev/null || true; done
   [ "$rc" -eq 0 ] && ok "Каталоги данных приведены в порядок" || return 1
   # Перезапускаем ТОЛЬКО затронутые сервисы (не весь стек): backend перечитывает сертификаты и каталог; asr — только если ему нужна запись в recordings.
   if command -v docker >/dev/null 2>&1 && [ -n "$(dc ps -q backend 2>/dev/null | head -1)" ]; then

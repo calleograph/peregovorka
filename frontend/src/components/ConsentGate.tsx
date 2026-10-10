@@ -24,7 +24,7 @@ export default function ConsentGate({ items, onDone, onLogout }: { items: { kind
         {items.map((i) => (
           <label key={i.kind} className="check">
             <input type="checkbox" checked={on.has(i.kind)} onChange={(e) => setOn((s) => { const n = new Set(s); if (e.target.checked) n.add(i.kind); else n.delete(i.kind); return n; })} />
-            <span className="check-body">Я ознакомился(лась) с документом «<Link to={`/legal/${i.kind}`} target="_blank" rel="noopener noreferrer">{i.title}</Link>» (редакция {i.version})</span>
+            <span className="check-body"><span>Я ознакомился(лась) с документом «<Link to={`/legal/${i.kind}`} target="_blank" rel="noopener noreferrer">{i.title}</Link>» (редакция {i.version})</span></span>
           </label>
         ))}
         {err && <div className="alert error" role="alert">{err}</div>}

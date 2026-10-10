@@ -816,7 +816,7 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 /* ---- 0.13.0: экран входа в «пиксельном» стиле (Press Start 2P, лежит на сервере): одна рамка со срезанными углами, слева бренд, справа форма. Интерактивный фон прежний ---- */
 .login-px .login-center { padding: 28px 18px 12px; }
 .px-shell { --px-edge: #4a63e8; position: relative; width: min(920px, 100%); display: grid; grid-template-columns: minmax(250px, 36%) minmax(0, 1fr); align-items: stretch;
-  background: rgba(12, 16, 38, .82); color: #e8ecfb; padding: 26px 26px 26px 20px; gap: 14px;
+  background: rgba(10, 14, 34, .95); color: #e8ecfb; padding: 26px 26px 26px 20px; gap: 14px;
   clip-path: polygon(0 28px, 28px 0, calc(100% - 44px) 0, 100% 44px, 100% calc(100% - 28px), calc(100% - 28px) 100%, 44px 100%, 0 calc(100% - 44px));
   box-shadow: inset 0 0 0 1px var(--px-edge); }
 .px-shell::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;

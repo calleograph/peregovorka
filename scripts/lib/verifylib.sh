@@ -300,7 +300,7 @@ verify_deployment() {
 }
 
 # ---- запись в каталоги данных от имени сервисов. Владелец каталога на хосте — лишь косвенный признак: решает, может ли записать ПРОЦЕСС контейнера (uid 10001).
-WRITABLE_BACKEND_DIRS=(/data/ca /data/chat-files /data/exports /data/recordings /data/updater)
+WRITABLE_BACKEND_DIRS=(/data/ca /data/chat-files /data/avatars /data/branding /data/exports /data/recordings /data/updater)
 WRITABLE_ASR_DIRS=(/data/recordings)
 # writable_probe СЕРВИС КАТАЛОГ… — печатает каталоги, в которые процесс сервиса записать не смог (пробный файл создаётся и сразу удаляется).
 # Остановленный сервис не считается нарушением (проверять нечем): такие каталоги не печатаются.

@@ -189,6 +189,9 @@ services:
       - ${LDAP_CA_FILE:-/dev/null}:/run/secrets/ldap-ca.pem:ro
       - ${DATA_ROOT}/ca:/data/ca
       - ${DATA_ROOT}/chat-files:/data/chat-files
+      # фото профилей и изображения оформления («Настройки сайта»): без постоянного тома пропадали бы при пересоздании контейнера
+      - ${DATA_ROOT}/avatars:/data/avatars
+      - ${DATA_ROOT}/branding:/data/branding
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления

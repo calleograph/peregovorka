@@ -214,7 +214,7 @@ upd_ensure_updater_dir() {
 # От root исправляется молча; не от root — через `sudo -n`, а если нельзя — понятное предупреждение (помощник обновлений, работающий от root, исправит сам).
 upd_ensure_data_dirs() {
   local d p rc=0
-  for d in recordings exports ca chat-files; do
+  for d in recordings exports ca chat-files avatars branding; do
     p="$DATA_ROOT/$d"
     [ -d "$p" ] || mkdir -p "$p" 2>/dev/null || sudo -n mkdir -p "$p" 2>/dev/null || { warn "Не удалось создать $p"; rc=1; continue; }
     if [ "$(stat -c '%u' "$p" 2>/dev/null || echo x)" != "10001" ] || [ -n "$(find "$p" -not -uid 10001 -print -quit 2>/dev/null)" ]; then

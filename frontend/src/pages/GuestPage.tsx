@@ -107,7 +107,7 @@ export default function GuestPage() {
       <PreJoinCheck cameraAllowed={info.camera_allowed} onChange={onHw} />
       {consentDocs.map((d) => (
         <label key={d.kind} className="check"><input type="checkbox" checked={agreed.has(d.kind)} onChange={(e) => setAgreed((s) => { const n = new Set(s); if (e.target.checked) n.add(d.kind); else n.delete(d.kind); return n; })} />
-          <span className="check-body">Я ознакомился(лась) с документом «<Link to={`/legal/${d.kind}`} target="_blank" rel="noopener noreferrer">{d.title}</Link>»</span></label>
+          <span className="check-body"><span>Я ознакомился(лась) с документом «<Link to={`/legal/${d.kind}`} target="_blank" rel="noopener noreferrer">{d.title}</Link>»</span></span></label>
       ))}
       {error && <div className="alert error" role="alert">{error}</div>}
       <div className="row">
