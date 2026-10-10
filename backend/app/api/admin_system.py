@@ -64,6 +64,8 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
             except StorageError as exc:
                 raise SettingsError(str(exc)) from None
         changed = await svc.update(db, group, body, actor=su.display_name)
+        if group == "api":
+            request.app.state.api_cfg_cache = None      # публичный API читает настройки с коротким кэшем; изменение действует сразу
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     secrets = set(GROUPS[group].SECRETS)

@@ -672,3 +672,61 @@ class SipProfile(Base):
     last_check_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ApiClient(Base):
+    """Сервисная учётная запись публичного API (интеграция): права (scopes), область комнат и сетевые ограничения. Ключи — отдельно (ApiKey)."""
+
+    __tablename__ = "api_clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    scopes: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    rooms: Mapped[list | None] = mapped_column(JSONType)         # None — все комнаты; иначе список id комнат (UUID строкой): переименование адреса комнаты доступ не меняет
+    ip_allowlist: Mapped[list | None] = mapped_column(JSONType)  # None/пусто — без ограничения; иначе адреса и сети CIDR
+    created_by: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    keys: Mapped[list["ApiKey"]] = relationship(back_populates="client", cascade="all, delete-orphan", lazy="selectin")
+
+
+class ApiKey(Base):
+    """Ключ публичного API. Секрет показывается один раз; в базе — только SHA-256 секрета и открытый идентификатор ключа."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("api_clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    key_id: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)      # открытая часть: pgk_<key_id>_<секрет>
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    last4: Mapped[str] = mapped_column(String(4), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(120))
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # None — бессрочно; при ротации у старого ключа — конец «окна совместимости»
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_used_ip: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    client: Mapped[ApiClient] = relationship(back_populates="keys", lazy="joined")
+
+
+class ApiRequestLog(Base):
+    """Журнал обращений к публичному API (без заголовков и тел запросов). Пишется пачками в фоне, а не на каждый запрос."""
+
+    __tablename__ = "api_request_log"
+    __table_args__ = (Index("ix_api_request_log_client_at", "client_id", "at"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    key_id: Mapped[str | None] = mapped_column(String(16))
+    method: Mapped[str] = mapped_column(String(8), nullable=False)
+    path: Mapped[str] = mapped_column(String(200), nullable=False)    # шаблон маршрута, без идентификаторов
+    status: Mapped[int] = mapped_column(Integer, nullable=False)
+    ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    request_id: Mapped[str | None] = mapped_column(String(40))
+    error_code: Mapped[str | None] = mapped_column(String(60))

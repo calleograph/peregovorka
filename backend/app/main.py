@@ -15,7 +15,9 @@ from redis.asyncio import Redis
 
 from .services.avatars import AvatarStore
 from .profiles.service import ProfileEnrichment
-from .api import admin, admin_bitrix, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .publicapi.requestlog import RequestLogWriter
+from .publicapi.routes import router as public_router
+from .api import admin, admin_bitrix, admin_public_api, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -108,6 +110,8 @@ def create_app(
         app.state.avatars = AvatarStore(settings.data_dir)
         app.state.enrichment = ProfileEnrichment(session_maker, settings_svc, app.state.avatars, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
         app.state.local_llm = protocols.local_llm
+        app.state.api_log = RequestLogWriter(session_maker, settings_svc)
+        app.state.api_log.start()
         # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
         app.state.autoupdate = AutoUpdater(session_maker, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
@@ -184,6 +188,7 @@ def create_app(
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
             await protocols.shutdown()
+            await app.state.api_log.stop()
             await journal.stop()
             with contextlib.suppress(Exception):
                 await redis.aclose()
@@ -220,9 +225,10 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (auth.router, admin_bitrix.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (auth.router, admin_bitrix.router, admin_public_api.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
+    app.include_router(public_router)     # публичный API: /api/public/v1 (свой формат ошибок, ключи вместо cookie-сессии)
     return app
 
 

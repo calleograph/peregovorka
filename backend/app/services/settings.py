@@ -654,7 +654,20 @@ class Bitrix24Settings(_Group):
         return self
 
 
+class ApiSettings(_Group):
+    """Публичный API для интеграций (`/api/public/v1`): выключен, пока администратор его не включит; ограничения частоты — запросов в минуту на сервисную учётную запись."""
+
+    enabled: bool = False
+    rate_read: int = Field(default=600, ge=1, le=100000)          # чтение (GET)
+    rate_write: int = Field(default=120, ge=1, le=100000)         # изменения (POST/PATCH/DELETE)
+    rate_ai: int = Field(default=10, ge=1, le=10000)              # запуск генерации протоколов, резюме и карт
+    rate_download: int = Field(default=30, ge=1, le=10000)        # выдача ссылок и скачивание файлов
+    log_retention_days: int = Field(default=30, ge=1, le=3650)
+    max_page_size: int = Field(default=200, ge=10, le=1000)
+
+
 GROUPS: dict[str, type[_Group]] = {
+    "api": ApiSettings,
     "bitrix24": Bitrix24Settings,
     "privacy": PrivacySettings,
     "storage": StorageSettings,

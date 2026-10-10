@@ -1,6 +1,9 @@
 from .base import Base, utcnow
 from .entities import (
+    ApiClient,
+    ApiKey,
     ApiProfile,
+    ApiRequestLog,
     ChatAttachment,
     AppSetting,
     AuditLog,
@@ -31,6 +34,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]
