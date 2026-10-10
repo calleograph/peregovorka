@@ -58,7 +58,7 @@ async def main():
     original = root.call("GET", stream, raw=True)
     # внешнее хранилище: папка-профиль под каталогом данных, с меткой тома (кнопка «Проверить»)
     fs = os.path.join(LIVE, "fs")
-    p = root.call("POST", "/admin/storages", {"name": "Файловый сервер", "kind": "local", "config": {"local_path": fs, "system_disk_ok": True}})
+    p = root.call("POST", "/admin/storages", {"name": "Файловый сервер", "kind": "local", "config": {"local_path": fs, "external_volume": True}})
     t = root.call("POST", f"/admin/storages/{p['id']}/test")
     S.check("хранилище создано и проверено (метка тома поставлена)", t.get("ok") and os.path.exists(os.path.join(fs, ".peregovorka-volume")), str(t))
     root.call("PUT", "/admin/settings/audio_storage", {"enabled": True, "profile_id": p["id"], "keep_local_copy": False})

@@ -260,7 +260,7 @@ class TransferService:
             raise Unavailable("Внешнее хранилище записей недоступно или выключено.")
         base = getattr(storage, "_base", storage)
         if isinstance(base, LocalStorage) and not getattr(base, "_marker", None):
-            raise Unavailable("Хранилище-папка не отмечено как подключённый том: нажмите «Проверить» у хранилища (ставится метка), иначе при отключении сетевой папки файлы попали бы на локальный диск.")
+            raise Unavailable("Хранилище-папка не отмечено как внешний том: отметьте «внешний том» в настройках хранилища и нажмите «Проверить» (ставится метка), иначе при отключении сетевой папки файлы попали бы на локальный диск.")
         try:
             await asyncio.to_thread(storage.probe)
         except StorageError as exc:

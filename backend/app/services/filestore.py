@@ -36,7 +36,7 @@ FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS)
 # какая группа настроек выбирает профиль
 FUNCTION_GROUPS = {"audio_storage": "Записи аудио", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
 _CONFIG_KEYS = ("local_path", "smb_server", "smb_share", "smb_base_path", "smb_username", "smb_domain")
-_EXTRA_KEYS = ("system_disk_ok",)          # подтверждение администратора: каталог — подключённый том, хотя система не распознала в нём сетевую файловую систему
+_EXTRA_KEYS = ("external_volume",)          # отметка администратора: каталог — смонтированный внешний том (сетевая папка, диск): включает защиту от записи на системный диск при отключении
 
 
 class PrefixedStorage:
@@ -135,7 +135,7 @@ class FileStore:
         cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS}
         return {"id": str(row.id), "name": row.name, "kind": row.kind, "config": cfg, "secret_set": bool(row.secret_enc), "used_by": usage,
                 "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker")),
-                "system_disk_ok": bool((row.config or {}).get("system_disk_ok")), "volume_mount": (row.config or {}).get("volume_mount")}
+                "external_volume": bool((row.config or {}).get("external_volume")), "volume_mount": (row.config or {}).get("volume_mount")}
 
     @staticmethod
     def address(kind: str, cfg: dict) -> str:
@@ -204,6 +204,9 @@ class FileStore:
             if k in _CONFIG_KEYS or k in _EXTRA_KEYS:
                 if k == "local_path" and cfg.get(k) != v:
                     cfg.pop("volume_marker", None)                        # другой каталог — другая метка и другое монтирование (ставятся при «Проверить»)
+                    cfg.pop("volume_mount", None)
+                if k == "external_volume" and not v:
+                    cfg.pop("volume_marker", None)                        # отметку «внешний том» сняли — защита отключается
                     cfg.pop("volume_mount", None)
                 cfg[k] = v
         secret = self._decrypt(row)
@@ -286,26 +289,23 @@ class FileStore:
         row = await self.row(db, profile_id)
         backend = await asyncio.to_thread(self.build, row)
         note = ""
-        if row.kind == "local" and isinstance(backend, LocalStorage) and not (row.config or {}).get("volume_marker"):
+        c = row.config or {}
+        if row.kind == "local" and isinstance(backend, LocalStorage) and c.get("external_volume") and not c.get("volume_marker"):
+            # Защита включается только для папок, которые администратор отметил как внешний том (смонтированная сетевая папка, внешний диск): обычная локальная папка на диске
+            # сервера работает как раньше. Метку нельзя ставить «вслепую»: если том не смонтирован, метка легла бы в пустой каталог на системном диске и защита потеряла бы смысл.
             from . import mounts  # noqa: PLC0415
 
-            ack = bool((row.config or {}).get("system_disk_ok"))
-            info = await asyncio.to_thread(mounts.describe, str((row.config or {}).get("local_path", "")))
-            if info is not None and not ack:
-                # Метку нельзя ставить «вслепую»: если шара не смонтирована, метка легла бы в пустой каталог на системном диске и защита потеряла бы смысл.
-                if info["on_root"]:
-                    raise SettingsError("Каталог лежит на системном диске сервера, а не на подключённом томе (сетевая папка не смонтирована?). Подключите том и повторите проверку. "
-                                        "Если это сознательно обычная локальная папка, отметьте «каталог — подключённый том».")
-                if info["fstype"] not in mounts.NETWORK_FS:
-                    raise SettingsError(f"Каталог смонтирован как «{info['fstype']}» — не сетевая файловая система. Если сетевая шара подключена на сервере-хозяине и пробрасывается в контейнер, "
-                                        "убедитесь, что она сейчас подключена, и отметьте «каталог — подключённый том».")
+            info = await asyncio.to_thread(mounts.describe, str(c.get("local_path", "")))
+            if info is not None and info["on_root"]:
+                raise SettingsError("Каталог отмечен как внешний том, но лежит на системном диске сервера: том не смонтирован. Подключите сетевую папку или диск и повторите проверку "
+                                    "(метка тома на системном диске не ставится, чтобы запись не заполнила его).")
             marker = await asyncio.to_thread(backend.mark_volume)           # метка тома: без неё запись в каталог, потерявший монтирование, не отличить от обычной
-            row.config = {**(row.config or {}), "volume_marker": marker}
-            if info is not None and not info["on_root"]:
+            row.config = {**c, "volume_marker": marker}
+            if info is not None:
                 row.config["volume_mount"] = {"mountpoint": info["mountpoint"], "fstype": info["fstype"], "source": info["source"]}
             await db.commit()
             backend = await asyncio.to_thread(self.build, row)
-            note = " На том поставлена метка: если сетевая папка отключится, запись в неё остановится, а не пойдёт на локальный диск."
+            note = " На том поставлена метка и запомнено, что он смонтирован: если том отключится, запись в него остановится, а не пойдёт на локальный диск."
 
         def run() -> str:
             for folder in FOLDERS:

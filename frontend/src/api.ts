@@ -194,7 +194,7 @@ export interface StorageProfile {
   id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
   /** Для хранилища-папки: на том поставлена метка (запись в отключённый том блокируется). */
   volume_marked?: boolean;
-  system_disk_ok?: boolean;
+  external_volume?: boolean;
   volume_mount?: { mountpoint: string; fstype: string; source: string } | null;
 }
 export interface StorageVolume {

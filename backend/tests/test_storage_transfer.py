@@ -78,7 +78,7 @@ def world(c, s, *, mix: bool = False):
     """Встреча с записями на локальном диске; затем подключается внешнее хранилище (папка-профиль, проверенная кнопкой «Проверить»)."""
     mid = _meeting_with_recordings(c, s)
     login(c, "root")
-    p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(Path(s.data_dir) / "fs"), "system_disk_ok": True}}).json()
+    p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(Path(s.data_dir) / "fs"), "external_volume": True}}).json()
     t = c.post(f"/api/v1/admin/storages/{p['id']}/test")
     assert t.status_code == 200, t.text
     put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
@@ -218,7 +218,7 @@ def test_export_on_meeting_end_does_not_write_to_an_unmounted_folder(tmp_path, d
     with running_app(s, directory) as c:
         login(c, "root")
         fs = Path(s.data_dir) / "fs"
-        p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(fs), "system_disk_ok": True}}).json()
+        p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(fs), "external_volume": True}}).json()
         assert c.post(f"/api/v1/admin/storages/{p['id']}/test").status_code == 200
         put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
         shutil.rmtree(fs)
@@ -569,24 +569,40 @@ def _fake_describe(monkeypatch, state: dict):
     monkeypatch.setattr(mounts, "describe", lambda path, text=None: dict(state) if state else None)
 
 
-def test_marker_is_not_created_on_an_unmounted_folder_unless_the_admin_confirms(tmp_path, directory, monkeypatch):
+def test_protection_is_opt_in_a_plain_folder_works_as_before_and_an_external_volume_gets_a_marker_only_when_mounted(tmp_path, directory, monkeypatch):
     s = make_settings(tmp_path, meeting_mix_enabled=False)
     with running_app(s, directory) as c:
         login(c, "root")
         fs = Path(s.data_dir) / "fs"
         p = c.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(fs)}}).json()
-        _fake_describe(monkeypatch, {"mountpoint": "/", "fstype": "ext4", "source": "/dev/sda1", "on_root": True})      # шара не смонтирована: каталог на системном диске
-        r = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()
+        _fake_describe(monkeypatch, {"mountpoint": "/", "fstype": "ext4", "source": "/dev/sda1", "on_root": True})
+        plain = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()
+        assert plain["ok"] is True and not (fs / ".peregovorka-volume").exists(), "обычная папка на диске сервера работает как раньше: без метки и сверки монтирования"
+        item = lambda: {x["id"]: x for x in c.get("/api/v1/admin/storages").json()["items"]}[p["id"]]
+        assert item()["volume_marked"] is False and item()["external_volume"] is False
+        assert c.patch(f"/api/v1/admin/storages/{p['id']}", json={"config": {"external_volume": True}}).status_code == 200
+        r = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()                 # отмечен как внешний том, но лежит на системном диске → том не смонтирован
         assert r["ok"] is False and "системном диске" in r["message"]
         assert not (fs / ".peregovorka-volume").exists(), "метка в пустом каталоге на системном диске не поставлена"
-        _fake_describe(monkeypatch, {"mountpoint": "/srv/bind", "fstype": "ext4", "source": "/dev/sdb1", "on_root": False})        # проброшенный каталог: тип не сетевой
-        assert "не сетевая" in c.post(f"/api/v1/admin/storages/{p['id']}/test").json()["message"]
-        assert not (fs / ".peregovorka-volume").exists()
-        _fake_describe(monkeypatch, {"mountpoint": "/srv/share", "fstype": "cifs", "source": "//srv/rec", "on_root": False})       # настоящая сетевая шара
+        _fake_describe(monkeypatch, {"mountpoint": "/srv/share", "fstype": "cifs", "source": "//srv/rec", "on_root": False})       # том смонтирован
         ok = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()
         assert ok["ok"] is True and (fs / ".peregovorka-volume").exists()
-        listed = {x["id"]: x for x in c.get("/api/v1/admin/storages").json()["items"]}[p["id"]]
-        assert listed["volume_marked"] is True and listed["volume_mount"]["fstype"] == "cifs"
+        assert item()["volume_marked"] is True and item()["volume_mount"]["fstype"] == "cifs"
+        assert c.patch(f"/api/v1/admin/storages/{p['id']}", json={"config": {"external_volume": False}}).status_code == 200
+        assert item()["volume_marked"] is False and item()["volume_mount"] is None, "снятая отметка отключает защиту"
+
+
+def test_transfer_into_a_folder_that_is_not_marked_as_an_external_volume_does_not_start(tmp_path, directory):
+    s = make_settings(tmp_path, meeting_mix_enabled=False)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)
+        login(c, "root")
+        p = c.post("/api/v1/admin/storages", json={"name": "Папка", "kind": "local", "config": {"local_path": str(Path(s.data_dir) / "fs")}}).json()
+        assert c.post(f"/api/v1/admin/storages/{p['id']}/test").json()["ok"] is True
+        put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
+        job = process(c, start(c, "to_external"))
+        assert job["state"] == "failed" and "внешний том" in job["error"], job
+        assert len(local_files(s)) == 2 and not ext_files(Path(s.data_dir) / "fs")
 
 
 def test_a_share_that_is_no_longer_mounted_is_refused_even_though_the_marker_file_exists(tmp_path, directory, monkeypatch):
@@ -595,7 +611,7 @@ def test_a_share_that_is_no_longer_mounted_is_refused_even_though_the_marker_fil
         mid = _meeting_with_recordings(c, s)                                  # записи лежат на локальном диске
         login(c, "root")
         fs = Path(s.data_dir) / "fs"
-        p = c.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(fs)}}).json()
+        p = c.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(fs), "external_volume": True}}).json()
         mounted = {"mountpoint": "/srv/share", "fstype": "cifs", "source": "//srv/rec", "on_root": False}
         state = dict(mounted)
         _fake_describe(monkeypatch, state)
