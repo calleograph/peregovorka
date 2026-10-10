@@ -28,7 +28,12 @@ def meeting_with_two(client, **room_over):
 
 def end_by_alice(client, mid):
     login(client, "alice")
-    assert client.post(f"/api/v1/meetings/{mid}/end").status_code == 204
+    r = client.post(f"/api/v1/meetings/{mid}/end")
+    if r.status_code == 403:                 # в комнате с руководителями встречу для всех завершают руководитель и администратор (не любой участник)
+        login(client, "root")
+        r = client.post(f"/api/v1/meetings/{mid}/end")
+        login(client, "alice")               # дальше тесты продолжают от имени Алисы, как и раньше
+    assert r.status_code == 204
 
 
 def can_read(client, user, mid) -> bool:

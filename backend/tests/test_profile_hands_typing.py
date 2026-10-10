@@ -149,6 +149,7 @@ def test_raise_hand_queue_order_repeat_lower_and_leader_lowering(client):
     assert c["identity"]
     login(client, "alice")
     client.post(f"{API}/meetings/{mid}/hand", json={"raised": True})
+    login(client, "carol")                                   # завершить встречу для всех может руководитель комнаты (раньше — любой участник)
     assert client.post(f"{API}/meetings/{mid}/end").status_code == 204
     assert client.post(f"{API}/meetings/{mid}/hand", json={"raised": False}).status_code in (403, 409)
 

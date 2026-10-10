@@ -64,6 +64,9 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
     return () => { document.removeEventListener("fullscreenchange", onFs); window.removeEventListener("keydown", onKey); };
   }, [full]);
   useEffect(() => { if (!open && full) setFull(false); }, [open, full]);
+  // Скрытая (заранее загруженная) доска не должна перехватывать фокус клавиатуры: редактор внутри iframe при старте может сам взять фокус — тогда Enter в чате «уходит» в него
+  // (найдено живым прогоном). Атрибут `inert` делает поддерево недоступным для фокуса и ввода, пока доска закрыта.
+  useEffect(() => { stage.current?.toggleAttribute("inert", !open); }, [open]);
   useEffect(() => { if (!full && document.fullscreenElement && document.fullscreenElement === stage.current) void document.exitFullscreen().catch(() => undefined); }, [full]);
   const toggleFull = () => {
     if (full) { setFull(false); return; }

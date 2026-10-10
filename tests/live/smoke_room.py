@@ -204,6 +204,12 @@ async def main():
         await A.send("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter", windowsVirtualKeyCode=13, nativeVirtualKeyCode=13)
         ok = await B.wait_for("document.body.innerText.includes('Проверка чата "+RUN_ID+"')", 12)
         check("сообщение Алисы дошло до Боба", ok)
+        if not ok:      # диагностика: что видят Алиса и Боб, пока сообщение не дошло
+            print("A: ошибка в чате:", await A.js("[...document.querySelectorAll('.chat .alert, .chat .field-err, .chat-error, .chat [role=alert]')].map(e=>e.innerText).join(' | ')"), "| значение:", await A.js("document.querySelector('.chat textarea')?.value"), "| фокус:", await A.js("document.activeElement?.tagName"), "| видимость:", await A.js("document.visibilityState + ' ' + document.hasFocus()"))
+            print("A: ошибки страницы:", (await A.state())["errs"][:3])
+            for c in (A, B):
+                await c.shot("chat-fail")
+                print(c.label, "чат:", (await c.js("(document.querySelector('.chat-history, .chat, aside')||document.body).innerText.slice(-350).replace(/\n/g,' | ')")) or "")
         await asyncio.sleep(1.0)
         oscb1 = await B.js("window.__osc")
         check("звук сообщения: у Боба созданы тоны", oscb1 - oscb0 >= 3, f"{oscb0}->{oscb1}")
