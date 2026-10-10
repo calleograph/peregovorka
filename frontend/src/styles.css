@@ -399,6 +399,21 @@ fieldset.group { border-color: var(--line); background: var(--surface); }
 .rbtn-label { font-size: 12px; line-height: 1.2; color: var(--muted); text-align: center; max-width: 100px; font-weight: 500; }
 .rbtn-wrap .check { margin: 0; justify-content: center; }
 .confirm-end { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+/* Панель управления встречей: одна сетка с ячейками ФИКСИРОВАННОЙ ширины. Подписи («Микрофон»/«Микрофон выкл.», «Поднять руку»/«Опустить руку»), ошибки и состояния кнопок
+   не меняют ширину ячеек, а потому ничего не «прыгает». Основные действия — одним блоком; завершающие («Завершить для всех», «Выйти») — отдельная подгруппа справа. */
+.controls.rbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 24px; padding: 14px 4px 4px; }
+.rbar-main { display: grid; grid-template-columns: repeat(auto-fill, 88px); gap: 10px 8px; flex: 1 1 520px; align-content: start; }
+.rbar-end { display: grid; grid-template-columns: repeat(2, 88px); gap: 10px 8px; flex: none; margin-left: auto; padding-left: 20px; border-left: 1px solid var(--line); }
+.rbar-slot { width: 88px; }
+.rbar .ctl { position: relative; max-width: none; align-items: center; }
+.rbar .rbtn-wrap { width: 88px; min-width: 0; }
+.rbar .rbtn-label { max-width: 88px; min-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+/* «со звуком» занимает место всегда (прячется, когда показ идёт) — высота панели не меняется при старте и остановке показа */
+.rbar .rbtn-wrap .check.keep { min-height: 20px; }
+.rbar .rbtn-wrap .check.keep.gone { visibility: hidden; }
+/* ошибки и подсказки под кнопкой — всплывающей плашкой поверх, а не вставкой в раскладку */
+.rbar .ctl > .ctl-err, .rbar .ctl > .row.tight { position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 280px; z-index: 30; box-shadow: var(--shadow-sm, 0 4px 14px rgba(0,0,0,.18)); }
+@media (max-width: 760px) { .rbar-main { grid-template-columns: repeat(auto-fill, 72px); gap: 8px 6px; flex-basis: 100%; } .rbar .rbtn-wrap, .rbar-slot { width: 72px; } .rbar .rbtn-label { max-width: 72px; font-size: 11px; } .rbar-end { grid-template-columns: repeat(2, 72px); gap: 8px 6px; padding-left: 12px; } .controls.rbar { gap: 10px 12px; } }
 @media (max-width: 600px) { .controls.rbar { gap: 10px 8px; } .rbtn-wrap { min-width: 64px; } .rbtn { width: 50px; height: 50px; } .controls .btn { flex: 0 1 auto; } }
 .mic-prefs { border: 1px solid var(--line); border-radius: var(--radius); margin: 12px 0 0; padding: 8px 14px 4px; }
 .mic-prefs legend { padding: 0 6px; font-weight: 600; font-size: 13px; }

@@ -26,7 +26,7 @@ declare -A PREREQ_PKG=(
   [cat]=coreutils [cp]=coreutils [mv]=coreutils [rm]=coreutils [mkdir]=coreutils [ln]=coreutils [chmod]=coreutils [chown]=coreutils [mktemp]=coreutils
   [stat]=coreutils [df]=coreutils [du]=coreutils [head]=coreutils [tail]=coreutils [sort]=coreutils [uniq]=coreutils [cut]=coreutils [tr]=coreutils
   [wc]=coreutils [ls]=coreutils [seq]=coreutils [tac]=coreutils [tee]=coreutils [date]=coreutils [sleep]=coreutils [basename]=coreutils [dirname]=coreutils [readlink]=coreutils
-  [base64]=coreutils [sha256sum]=coreutils [nproc]=coreutils [id]=coreutils [uname]=coreutils [env]=coreutils [timeout]=coreutils [install]=coreutils
+  [base64]=coreutils [sha256sum]=coreutils [nproc]=coreutils [id]=coreutils [uname]=coreutils [env]=coreutils [timeout]=coreutils [install]=coreutils [od]=coreutils [readlink]=coreutils
   # система
   [flock]=util-linux [findmnt]=util-linux [mountpoint]=util-linux
   [free]=procps [ps]=procps [sysctl]=procps
@@ -38,7 +38,7 @@ declare -A PREREQ_PKG=(
 PREREQ_STANDALONE_ONLY=(docker nginx)
 # Программы, которые скрипты используют, но они не нужны на хосте: выполняются в контейнерах или необязательны.
 # systemctl: в скриптах всегда под проверкой `command -v systemctl`; без systemd не работает только служба-помощник (его ставят вручную: updater.sh run)
-PREREQ_NOT_HOST=(pg_dump redis-cli psql alembic python pip livekit-server ufw sudo journalctl systemctl)
+PREREQ_NOT_HOST=(pg_dump redis-cli psql alembic python pip livekit-server ufw sudo journalctl systemctl systemd-run)
 
 prereq_os_detect() {
   local f="${PREREQ_OS_RELEASE:-/etc/os-release}"

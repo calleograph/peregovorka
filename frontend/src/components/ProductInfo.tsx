@@ -34,13 +34,20 @@ export function AboutDialog({ info, onClose }: { info: BuildInfo | null; onClose
   );
 }
 
-/** Ненавязчивая строка внизу рабочих страниц: «Peregovorka 0.7.0»; по нажатию — окно «О сервисе». */
+/** Спокойный подвал рабочих страниц: слева — продукт, версия и ссылка на проект (по названию открывается окно «О сервисе»), справа — второстепенное («Что нового»). */
 export function AppFooter({ info }: { info: BuildInfo | null }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <footer className="app-foot">
-        <button type="button" onClick={() => setOpen(true)} title="О сервисе">Peregovorka{info?.version ? ` ${info.version}` : ""}</button>
+        <div className="app-foot-in">
+          <span>
+            <button type="button" onClick={() => setOpen(true)} title="О сервисе">Peregovorka{info?.version ? ` ${info.version}` : ""}</button>
+            <span className="sep" aria-hidden>·</span>
+            <a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Проект на GitHub</a>
+          </span>
+          <a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer">Что нового</a>
+        </div>
       </footer>
       {open && <AboutDialog info={info} onClose={() => setOpen(false)} />}
     </>

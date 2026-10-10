@@ -13,6 +13,7 @@ import DebugPanel from "../components/room/DebugPanel";
 import { ParticipantTile, ScreenStage, type PView, type TileActions } from "../components/room/Tiles";
 import { Icon } from "../components/Icons";
 import RoundButton from "../components/room/RoundButton";
+import { ConfirmDialog } from "../components/Dialogs";
 import DevicePanel from "../components/DevicePanel";
 import TranscriptPanel from "../components/TranscriptPanel";
 import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
@@ -941,7 +942,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
         {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
         {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
-        <div className="controls rbar">
+        <div className="controls rbar" role="toolbar" aria-label="Управление встречей">
+         <div className="rbar-main">
           <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
             <RoundButton icon={me?.mic ? "mic" : "micOff"} label={!canMic ? "Слушаете" : me?.mic ? "Микрофон" : "Микрофон выкл."} tone={me?.mic ? "on" : "off"} pressed={!!me?.mic} pulse={!!me?.mic && !!me?.speaking}
                          title={!canMic ? listenerHint : me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready" || !canMic} onClick={() => { setMicFail(null); void toggle("mic"); }} />
@@ -969,8 +971,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <Ctl error={ctlErr.screen} onClose={() => setErr("screen")}>
               <RoundButton icon={me?.screen ? "screenStop" : "screen"} label={me?.screen ? "Остановить показ" : "Показать экран"} tone={me?.screen ? "live" : "neutral"} pressed={!!me?.screen}
                            title={!canScreen ? listenerHint : "Выберите экран, окно или вкладку — трансляция начнётся сразу"} disabled={ended || stage !== "ready" || !canScreen} onClick={() => toggle("screen")}>
-                {join.client.screen_share_audio && !me?.screen && (
-                  <label className="check small"><input type="checkbox" checked={withAudio} onChange={(e) => setWithAudio(e.target.checked)} /> со звуком</label>
+                {join.client.screen_share_audio && (
+                  <label className={`check small keep ${me?.screen ? "gone" : ""}`}><input type="checkbox" checked={withAudio} disabled={!!me?.screen} tabIndex={me?.screen ? -1 : 0} onChange={(e) => setWithAudio(e.target.checked)} /> со звуком</label>
                 )}
               </RoundButton>
             </Ctl>
@@ -1005,14 +1007,16 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                            disabled={ended || stage !== "ready"} onClick={() => void moderate()} />
             </Ctl>
           )}
-          <div className="spacer" />
-          {guest || !join.client.can_control ? null : !confirmEnd
-            ? <RoundButton icon="power" label="Завершить для всех" tone="neutral" title="Завершить встречу для всех участников" disabled={ended} onClick={() => setConfirmEnd(true)} />
-            : <div className="confirm-end"><span className="muted small">Завершить встречу для всех?</span>
-                <div className="row tight"><button className="btn danger" onClick={endForAll}>Да, завершить</button>
-                <button className="btn ghost" onClick={() => setConfirmEnd(false)}>Отмена</button></div></div>}
+         </div>
+         <div className="rbar-end">{/* завершающие действия — отдельная подгруппа; подтверждение — окном, а не вставкой в панель, чтобы раскладка не прыгала */}
+          {guest || !join.client.can_control
+            ? <div className="rbar-slot" aria-hidden />
+            : <RoundButton icon="power" label="Завершить для всех" tone="neutral" title="Завершить встречу для всех участников" disabled={ended} onClick={() => setConfirmEnd(true)} />}
           <RoundButton icon="hangup" label="Выйти" tone="danger" title="Выйти из комнаты (встреча продолжится у остальных)" onClick={leave} />
+         </div>
         </div>
+        {confirmEnd && <ConfirmDialog title="Завершить встречу для всех?" confirmLabel="Да, завершить" onClose={() => setConfirmEnd(false)}
+                                      body={<p>Встреча закончится у всех участников. Стенограмма и материалы сохранятся.</p>} onConfirm={endForAll} />}
         {ctlErr.device && <div className="alert error" role="alert">Устройство: {ctlErr.device} <button className="btn mini" onClick={() => setErr("device")}>Закрыть</button></div>}
         {roomRef.current && <DevicePanel room={roomRef.current} prefs={micPrefs} onPrefs={applyMicPrefs} />}
         {debug && <DebugPanel snapshot={snapshot} join={tl.metrics()} connection={`${state}${rejoin ? ` · повторный вход ${rejoin.attempt}` : ""}`} socket={socket} asrReady={asrReady} log={log} instance={instance} roomsCreated={roomsCreated} />}
