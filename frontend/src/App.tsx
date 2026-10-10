@@ -4,6 +4,11 @@ import { api, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./a
 import Avatar from "./components/Avatar";
 import { AppFooter, CookieNotice, type BuildInfo } from "./components/ProductInfo";
 import PrivacyPage from "./pages/PrivacyPage";
+import LegalPage from "./pages/LegalPage";
+import ConsentGate from "./components/ConsentGate";
+import HelpDialog from "./components/HelpDialog";
+import { Brand } from "./components/Brand";
+import { loadSite, useSite } from "./site";
 import { versionLabel } from "./util";
 import { applyFavicon, pageTitle } from "./pageTitle";
 import NavMenu from "./components/NavMenu";
@@ -33,12 +38,15 @@ function StaffApp() {
   const [version, setVersion] = useState("");
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [wizard, setWizard] = useState(false);
+  const site = useSite();
+  const [help, setHelp] = useState(false);
+  const [pending, setPending] = useState<{ kind: string; title: string; version: number }[]>([]);
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [burger, setBurger] = useState(false);
   const inMeeting = useActiveMeeting() !== null;
   useEffect(() => setBurger(false), [pathname]);
-  useEffect(() => { document.title = pageTitle(pathname, me !== null); }, [pathname, me]);
+  useEffect(() => { document.title = pageTitle(pathname, me !== null, site.name); }, [pathname, me, site.name]);
   useEffect(() => { applyFavicon(inMeeting); return () => applyFavicon(false); }, [inMeeting]);   // во время встречи у значка вкладки красная точка   // на малых экранах меню закрывается при переходе
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);        // аватарка в верхнем меню; хуки — до любых ранних return
   const myId = me ? me.user.id : null;
@@ -49,6 +57,14 @@ function StaffApp() {
     api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }).catch(() => setMe(null));
     api.version().then((v) => { setVersion(versionLabel(v.version, v.commit)); setBuild({ version: v.version, commit: v.commit }); }).catch(() => undefined);
   }, []);
+
+  // подтверждение документов организации (если включено): после входа и при выходе новой редакции; контакты поддержки зависят от входа — перечитываем оформление
+  const myUid = me ? me.user.id : null;
+  useEffect(() => {
+    if (!myUid) { setPending([]); return; }
+    void loadSite();
+    void api.legal.pending().then((r) => setPending(r.items)).catch(() => undefined);
+  }, [myUid]);
 
   useEffect(() => { setUnauthorizedHandler(() => { setCsrf(""); setMe(null); }); return () => setUnauthorizedHandler(null); }, []);
 
@@ -68,6 +84,7 @@ function StaffApp() {
 
   if (me === undefined) return <div className="center muted">Загрузка…</div>;
   if (me === null) return <LoginPage onLogin={onLogin} info={build} />;
+  if (pending.length > 0 && !me.must_change_password) return <ConsentGate items={pending} onDone={() => setPending([])} onLogout={logout} />;
   if (me.must_change_password) return <ChangePasswordPage onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
 
   // Верхнее меню — для повседневной работы; полный список разделов администрирования остаётся в левом меню самой админки
@@ -80,6 +97,7 @@ function StaffApp() {
     { kind: "text", key: "who", label: me.user.is_admin ? "Администратор системы" : "Пользователь" },
     { kind: "link", key: "profile", label: "Личный кабинет", to: "/profile", hint: "профиль, аватарка, данные из AD" },
     { kind: "link", key: "hist", label: "История моих встреч", to: "/history" },
+    ...(site.support || site.documents.length > 0 ? [{ kind: "action" as const, key: "help", label: "Помощь и поддержка", hint: "контакты, документы организации", onSelect: () => setHelp(true) }] : []),
     { kind: "divider", key: "sep" },
     ...(version ? [{ kind: "text" as const, key: "ver", label: `Версия ${version}` }] : []),
     { kind: "action", key: "out", label: "Выйти", danger: true, disabled: inMeeting, hint: inMeeting ? "сначала выйдите из комнаты" : undefined, onSelect: () => void logout() },
@@ -89,8 +107,8 @@ function StaffApp() {
     <div className="shell">
       <header className={`topbar ${burger ? "burger-open" : ""}`}>
         {inMeeting
-          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке">Peregovorka ↗</a>
-          : <Link to="/" className="brand">Peregovorka</Link>}
+          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке"><Brand suffix=" ↗" /></a>
+          : <Link to="/" className="brand"><Brand /></Link>}
         <button type="button" className="burger" aria-label="Меню" aria-expanded={burger} onClick={() => setBurger((b) => !b)}><span /><span /><span /></button>
         <nav aria-label="Основная навигация" className="topnav">
           <NavItem to="/" end newTab={inMeeting}>Переговорки</NavItem>
@@ -116,6 +134,7 @@ function StaffApp() {
         </Suspense>
       </main>
       {!pathname.startsWith("/rooms/") && <AppFooter info={build} />}
+      {help && <HelpDialog onClose={() => setHelp(false)} />}
       <CookieNotice />
     </div>
   );
@@ -125,7 +144,7 @@ function StaffApp() {
 function GuestApp() {
   return (
     <div className="shell guest-shell">
-      <header className="topbar"><span className="brand">Peregovorka</span><span className="muted">Гостевой доступ</span></header>
+      <header className="topbar"><span className="brand"><Brand /></span><span className="muted">Гостевой доступ</span></header>
       <main>
         <Routes>
           <Route path="/guest/:token" element={<GuestPage />} />
@@ -138,7 +157,9 @@ function GuestApp() {
 
 export default function App() {
   const { pathname } = useLocation();
-  useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false); }, [pathname]);
+  const site = useSite();
+  useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
+  if (pathname.startsWith("/legal/")) return <><Routes><Route path="/legal/:kind" element={<LegalPage />} /></Routes><CookieNotice /></>;       // документы организации открываются без входа
   if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;
 }

@@ -34,10 +34,12 @@ interface Props {
   fields: Field[];
   testable?: boolean;
   note?: string;
+  /** Вызывается после успешного сохранения (например, перечитать оформление сайта). */
+  onSaved?: () => void;
 }
 
 /** Универсальная форма настроек группы. Секреты никогда не приходят с сервера: показывается только «задан/не задан». */
-export default function SettingsForm({ group, title, intro, fields, testable, note }: Props) {
+export default function SettingsForm({ group, title, intro, fields, testable, note, onSaved }: Props) {
   const [values, setValues] = useState<SettingsValues | null>(null);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [headers, setHeaders] = useState<HeaderRow[]>([]);
@@ -66,7 +68,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
       else if (f.type === "secret") { if (f.name in secrets) body[f.name] = secrets[f.name]; }
       else body[f.name] = values[f.name] as string | number | boolean | null;
     }
-    try { const saved = await api.admin.saveSettings(group, body); setValues(saved); setSecrets({}); setHeaders(headersFromValues(saved)); setMsg({ ok: true, text: "Сохранено" }); }
+    try { const saved = await api.admin.saveSettings(group, body); setValues(saved); setSecrets({}); setHeaders(headersFromValues(saved)); setMsg({ ok: true, text: "Сохранено" }); onSaved?.(); }
     catch (err) { setMsg({ ok: false, text: (err as ApiError).message }); }
     finally { setBusy(false); }
   };

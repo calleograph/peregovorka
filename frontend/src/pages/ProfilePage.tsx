@@ -6,8 +6,29 @@ import { Icon } from "../components/Icons";
 import { chatSoundEnabled, playChatSound, setChatSoundEnabled, setSoundVolume, soundVolume } from "../chatSound";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import { fmt } from "../util";
+import { THEMES, getUserTheme, setUserTheme, type ThemeId } from "../site";
 
 /** Личные звуковые уведомления комнаты (хранятся в браузере): сообщения чата, поднятая рука, общая громкость. */
+/** Тема оформления этого пользователя (хранится в браузере, как и звуки): «как в системе» по умолчанию, светлая, тёмная и три пастельные. */
+function ThemeSettings() {
+  const [cur, setCur] = useState<ThemeId>(getUserTheme);
+  return (
+    <div className="card">
+      <h2>Оформление</h2>
+      <p className="muted small" style={{ margin: "0 0 6px" }}>Тема интерфейса — только для вас, на этом устройстве. По умолчанию используется тема устройства.</p>
+      <div className="theme-grid" role="group" aria-label="Тема оформления">
+        {THEMES.map((t) => (
+          <button key={t.id} type="button" className="theme-opt" aria-pressed={cur === t.id} onClick={() => { setUserTheme(t.id); setCur(t.id); }} title={t.hint}>
+            <span className="sw" aria-hidden>{t.swatch.map((c, i) => <i key={i} style={{ background: c }} />)}</span>
+            <b>{t.label}</b><small>{t.hint}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Личные звуковые уведомления комнаты (хранятся в браузере): сообщения чата, поднятая рука. */
 function SoundSettings() {
   const [chat, setChat] = useState(chatSoundEnabled);
   const [hand, setHand] = useState(handSoundEnabled);
@@ -84,6 +105,7 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
           {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
         </div>
       </div>
+      <ThemeSettings />
       <SoundSettings />
       {file && <AvatarCropper file={file} onCancel={() => setFile(null)} onDone={async (blob) => { await api.uploadAvatar(blob).then((x) => { setP(x); onChanged(x); setMsg({ ok: true, text: "Аватарка сохранена." }); }); setFile(null); }} />}
     </section>

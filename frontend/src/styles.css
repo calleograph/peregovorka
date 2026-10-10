@@ -26,7 +26,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
     --text: #e9edf3; --muted: #9ba6b8;
     --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
@@ -36,6 +36,17 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
     color-scheme: dark;
   }
+}
+/* тема, закреплённая администратором («Настройки сайта → Тема»): те же значения без зависимости от системной настройки */
+:root[data-theme="dark"] {
+    --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
+  --text: #e9edf3; --muted: #9ba6b8;
+  --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
+  --ok: #3cc477; --ok-bg: #16301f; --ok-text: #8fdca9;
+  --danger: #e0605a; --danger-bg: #3a1f1d; --danger-text: #f4a9a3;
+  --warn: #e0b04a; --warn-bg: #352c16; --warn-text: #e3cd8f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }

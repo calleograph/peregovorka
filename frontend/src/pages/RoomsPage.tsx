@@ -1,6 +1,7 @@
 import { type CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type ApiError, type Room, type TempRoomPolicy } from "../api";
+import { useSite } from "../site";
 import { Icon } from "../components/Icons";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { useToast } from "../components/Toast";
@@ -143,6 +144,7 @@ function RoomCard({ r, i, onCopy, isAdmin }: { r: Room; i: number; onCopy: Toast
 }
 
 export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
+  const site = useSite();
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [error, setError] = useState("");
   const [policy, setPolicy] = useState<TempRoomPolicy | null>(null);
@@ -178,7 +180,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     <section className="rooms-page">
       <header className="rooms-hero">
         <div>
-          <p className="eyebrow">Peregovorka</p>
+          <p className="eyebrow">{site.org.short || site.name}</p>
           <h1>Переговорки</h1>
           <p className="lead">
             {rooms.length === 0 ? "Для вас пока нет доступных комнат." : liveCount > 0 ? `Сейчас идут встречи: ${liveCount}. Выберите комнату, чтобы присоединиться или начать новую.` : "Выберите комнату, чтобы начать встречу. Речь будет записана в стенограмму и станет протоколом."}

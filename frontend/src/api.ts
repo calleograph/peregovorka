@@ -89,7 +89,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api";
+export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -265,6 +265,9 @@ export interface ParticipantCard {
   title?: string | null; department?: string | null; avatar_url?: string | null; email?: string | null; phone?: string | null; login?: string | null;
 }
 export interface StageState { items: { type: "camera" | "screen" | "board"; identity?: string }[]; by: string | null; at: number | null }
+export interface LegalPublic { kind: string; title: string; content_md: string; version: number; published_at: string | null; require_consent: boolean }
+export interface LegalAdminDoc { kind: string; label: string; title: string; draft_md: string; content_md: string; version: number; published: boolean; require_consent: boolean; published_at: string | null; updated_at: string; updated_by: string | null; has_changes: boolean }
+export interface LegalRevisionRow { version: number; title: string; content_md: string; published_at: string; published_by: string | null; unpublished_at: string | null }
 export interface HandInfo { identity: string; name: string; at: number }
 export interface LlmChoices {
   local: { id: string; title: string; installed: boolean }[];
@@ -672,13 +675,30 @@ export const api = {
 
   guest: {
     room: (token: string) => request<GuestRoomInfo>("GET", `/guest/room/${encodeURIComponent(token)}`),
-    join: (token: string, displayName: string, password?: string) =>
-      request<GuestJoinInfo>("POST", `/guest/room/${encodeURIComponent(token)}/join`, { display_name: displayName, password: password || null }),
+    join: (token: string, displayName: string, password?: string, acceptedDocuments: string[] = []) =>
+      request<GuestJoinInfo>("POST", `/guest/room/${encodeURIComponent(token)}/join`, { display_name: displayName, password: password || null, accepted_documents: acceptedDocuments }),
     rejoin: () => request<GuestJoinInfo>("POST", "/guest/session/rejoin"),
     leave: () => request<void>("POST", "/guest/session/leave"),
   },
 
+  legal: {
+    doc: (kind: string) => request<LegalPublic>("GET", `/public/legal/${kind}`),
+    pending: () => request<{ items: { kind: string; title: string; version: number }[] }>("GET", "/legal/pending"),
+    consent: (kinds: string[]) => request<{ ok: boolean }>("POST", "/legal/consent", { kinds }),
+  },
   admin: {
+    site: {
+      legal: () => request<{ items: LegalAdminDoc[] }>("GET", "/admin/site/legal"),
+      saveLegal: (kind: string, body: { title?: string; draft_md?: string; require_consent?: boolean }) => request<LegalAdminDoc>("PUT", `/admin/site/legal/${kind}`, body),
+      publish: (kind: string) => request<LegalAdminDoc>("POST", `/admin/site/legal/${kind}/publish`),
+      unpublish: (kind: string) => request<LegalAdminDoc>("POST", `/admin/site/legal/${kind}/unpublish`),
+      revisions: (kind: string) => request<{ items: LegalRevisionRow[] }>("GET", `/admin/site/legal/${kind}/revisions`),
+      consents: (kind: string) => request<{ total: number; items: { subject_type: string; subject_name: string | null; version: number; accepted_at: string; ip: string | null }[] }>("GET", `/admin/site/legal/${kind}/consents`),
+      uploadAsset: (kind: string, blob: Blob) => putBlob<{ kind: string; url: string }>(`/admin/site/assets/${kind}`, blob),
+      deleteAsset: (kind: string) => request<void>("DELETE", `/admin/site/assets/${kind}`),
+      reset: (group: string) => request<{ ok: boolean }>("POST", "/admin/site/reset", { group }),
+      importZip: (blob: Blob) => putBlob<{ ok: boolean; assets: string[]; documents: string[] }>("/admin/site/import", blob),
+    },
     rooms: (includeClosed = false) => request<RoomAdmin[]>("GET", `/admin/rooms${includeClosed ? "?include_closed=true" : ""}`),
     guestLink: (id: string, action: "rotate" | "revoke") => request<RoomAdmin>("POST", `/admin/rooms/${id}/guest-link/${action}`),
     createRoom: (body: Record<string, unknown>) => request<RoomAdmin>("POST", "/admin/rooms", body),

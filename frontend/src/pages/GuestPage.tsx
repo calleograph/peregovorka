@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { useSite } from "../site";
 import { api, ApiError, setGuestToken, setUnauthorizedHandler, type GuestJoinInfo, type GuestRoomInfo } from "../api";
 import PreJoinCheck from "../components/PreJoinCheck";
 import { setPreJoin, type PreJoin } from "../prejoin";
@@ -28,6 +29,10 @@ export default function GuestPage() {
   const [phase, setPhase] = useState<Phase>("check");
   const [session, setSession] = useState<GuestJoinInfo | null>(null);
   const hw = useRef<PreJoin & { micOk: boolean }>({ camOn: false, micOk: false });
+  const site = useSite();
+  const consentDocs = site.documents.filter((d) => d.require_consent);       // документы организации, которые гость должен явно подтвердить
+  const [agreed, setAgreed] = useState<Set<string>>(() => new Set());
+  const consentOk = consentDocs.every((d) => agreed.has(d.kind));
 
   const loadInfo = useCallback(() => api.guest.room(token).then((r) => { setInfo(r); setFatal(""); })
     .catch((e) => { if ((e as ApiError).status === 404) setFatal("Гостевая ссылка недействительна или отозвана. Попросите организатора прислать новую."); else setError((e as ApiError).message); }), [token]);
@@ -49,7 +54,7 @@ export default function GuestPage() {
   const enter = async () => {
     setBusy(true); setError("");
     try {
-      const r = await api.guest.join(token, name.trim(), needPw ? password : undefined);
+      const r = await api.guest.join(token, name.trim(), needPw ? password : undefined, consentDocs.map((d) => d.kind).filter((k) => agreed.has(k)));
       ssSet(NAME_KEY, name.trim());
       setGuestToken(r.guest_token);
       const { micOk: _ok, ...pre } = hw.current; void _ok;
@@ -87,6 +92,7 @@ export default function GuestPage() {
       <h1>{info.room_name}</h1>
       <p className="muted">Вы входите как гость. Укажите, как вас называть, и проверьте оборудование.</p>
       {info.description && <p className="small">{info.description}</p>}
+      {site.guest_text && <div className="alert info" role="note" style={{ whiteSpace: "pre-wrap" }}>{site.guest_text}</div>}
       {!info.meeting_active && <div className="alert info" role="status">Встреча ещё не началась. Дождитесь, пока сотрудник откроет комнату — страница обновится сама.</div>}
       <label>Ваше имя
         <input value={name} maxLength={60} autoFocus autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="Например, Иван Иванов"
@@ -99,12 +105,17 @@ export default function GuestPage() {
         </label>
       )}
       <PreJoinCheck cameraAllowed={info.camera_allowed} onChange={onHw} />
+      {consentDocs.map((d) => (
+        <label key={d.kind} className="check"><input type="checkbox" checked={agreed.has(d.kind)} onChange={(e) => setAgreed((s) => { const n = new Set(s); if (e.target.checked) n.add(d.kind); else n.delete(d.kind); return n; })} />
+          <span className="check-body">Я ознакомился(лась) с документом «<Link to={`/legal/${d.kind}`} target="_blank" rel="noopener noreferrer">{d.title}</Link>»</span></label>
+      ))}
       {error && <div className="alert error" role="alert">{error}</div>}
       <div className="row">
-        <button className="btn primary" disabled={busy || !nameOk || !info.meeting_active || ((info.has_password || needPw) && !password)} onClick={() => void enter()}>
+        <button className="btn primary" disabled={busy || !nameOk || !consentOk || !info.meeting_active || ((info.has_password || needPw) && !password)} onClick={() => void enter()}>
           {busy ? "Входим…" : "Войти в комнату"}
         </button>
       </div>
+      {site.recording_text && <p className="small" style={{ whiteSpace: "pre-wrap" }}>{site.recording_text}</p>}
       <p className="muted small">Запись и транскрибация встречи могут вестись. Чат и общая доска доступны внутри комнаты.</p>
     </section>
   );

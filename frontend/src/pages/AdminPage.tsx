@@ -9,6 +9,7 @@ import AsrModelsAdmin from "./admin/AsrModelsAdmin";
 import Bitrix24Admin from "./admin/Bitrix24Admin";
 import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
+import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
 import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
@@ -97,6 +98,7 @@ const GROUPS: Group[] = [
   ] },
   { title: "Система", pages: [
     { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
+    { id: "site", label: "Настройки сайта", render: () => <SiteAdmin /> },
     { id: "privacy", label: "Конфиденциальность и cookie", render: () => (
       <SettingsForm key="privacy" group="privacy" title="Конфиденциальность и cookie" fields={privacyFields}
         intro="Тексты для страницы входа и страницы «Обработка данных» (открывается без входа и по ссылке «Подробнее»). Юридические формулировки в приложении не зашиты — заполните их по правилам вашей организации. Используются только технические cookie." /> ) },
@@ -109,7 +111,7 @@ const KEYWORDS: Record<string, string> = {
   system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
   login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
-  public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
+  public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };
 
 export default function AdminPage({ version }: { version: string }) {

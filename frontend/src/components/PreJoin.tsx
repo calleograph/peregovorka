@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import type { Room } from "../api";
 import { initials, magnet, tint } from "../fx";
+import { useSite } from "../site";
 import { Icon } from "./Icons";
 import PreJoinCheck from "./PreJoinCheck";
 import type { PreJoin as PreJoinHw } from "../prejoin";
@@ -22,6 +23,7 @@ interface Props {
 /** Экран перед входом в комнату: что за комната, кто уже там и что произойдёт после входа (микрофон, стенограмма, запись). */
 export default function PreJoin({ room, needPassword, password, onPassword, error, busy, onJoin, onBack, progress, onHw }: Props) {
   const [previewHost, setPreviewHost] = useState<HTMLDivElement | null>(null);       // область крупного предпросмотра камеры слева
+  const site = useSite();
   const [micDenied, setMicDenied] = useState(false);          // микрофон заблокирован в браузере: входить можно, но без возможности говорить
   const name = room?.name ?? "Комната";
   const t = tint(name);
@@ -59,6 +61,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
               ))}
             </ul>
             {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
+            {site.recording_text && <div className="alert info pj-rec" role="note" style={{ whiteSpace: "pre-wrap" }}>{site.recording_text}</div>}
           </div>
           {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} previewHost={previewHost} onChange={(p) => { setMicDenied(p.micDenied); onHw(p); }} /></div>}
         </div>

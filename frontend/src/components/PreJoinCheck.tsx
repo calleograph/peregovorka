@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { describeMediaError } from "../mediaErrors";
 import { levelFromTimeDomain, toneWav, type PreJoin } from "../prejoin";
 import { copyText } from "../util";
+import { reportEvent } from "../diagnostics";
 import { deniedText, HINT_DELAY_MS, planFor, type HintPlan } from "../permissionHint";
 
 type Perm = PermissionState | "unknown";
@@ -51,7 +52,12 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
   const [micId, setMicId] = useState("");
   const [speakerId, setSpeakerId] = useState("");
   const [camId, setCamId] = useState("");
-  const [camOn, setCamOn] = useState(false);
+  const [camOn, setCamOn] = useState(false);          // поток получен
+  const [camStarting, setCamStarting] = useState(false);    // идёт включение: кнопка отвечает сразу, повторные нажатия не создают параллельных запросов
+  const [camReady, setCamReady] = useState(false);        // пришёл первый реальный кадр
+  const [camMs, setCamMs] = useState<{ gum: number; frame: number } | null>(null);
+  const camTicket = useRef(0);                           // номер актуальной операции: устаревший ответ getUserMedia отбрасывается, а его поток освобождается
+  const camT0 = useRef(0);
   const [level, setLevel] = useState(0);
   const [micErr, setMicErr] = useState("");
   const [camErr, setCamErr] = useState("");
@@ -115,20 +121,50 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
     }
   }, [listDevices, stopMic, track]);
 
+  /** Включить (или переключить) камеру. Каждая операция получает номер: пока идёт запрос, новое нажатие/выбор отменяет предыдущую, а запоздавший ответ освобождается — потоки не копятся,
+   *  и индикатор камеры гаснет. При переключении прежняя камера работает, пока новая не запустилась; если новая недоступна — остаётся прежняя и показывается причина. */
   const startCam = useCallback(async (id?: string) => {
-    camStream.current?.getTracks().forEach((t) => t.stop()); camStream.current = null;
-    setCamErr("");
+    const ticket = ++camTicket.current;
+    camT0.current = performance.now();
+    setCamStarting(true); setCamErr(""); setCamMs(null);
+    const prevId = camStream.current?.getVideoTracks()[0]?.getSettings().deviceId;
     try {
-      const stream = await track(() => navigator.mediaDevices.getUserMedia({ video: id ? { deviceId: { exact: id } } : true }));
+      const video: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, ...(id ? { deviceId: { exact: id } } : {}) };
+      const stream = await track(() => navigator.mediaDevices.getUserMedia({ video }));
+      const gum = Math.round(performance.now() - camT0.current);
+      if (ticket !== camTicket.current) { stream.getTracks().forEach((t) => t.stop()); return; }       // нажали «выключить» или выбрали другую — этот ответ уже не нужен
+      const old = camStream.current;
       camStream.current = stream;
+      old?.getTracks().forEach((t) => t.stop());
       const used = stream.getVideoTracks()[0]?.getSettings().deviceId;
-      if (used && !id) setCamId(used);
-      setCamOn(true);
-      await listDevices();
-    } catch (e) { setCamOn(false); setCamErr(describeMediaError(e, "camera").message); }
+      if (used) setCamId(used);
+      setCamReady(false); setCamOn(true);
+      setCamMs({ gum, frame: 0 });
+      void listDevices();
+    } catch (e) {
+      if (ticket !== camTicket.current) return;
+      setCamErr(describeMediaError(e, "camera").message);
+      if (camStream.current && prevId) setCamId(prevId);        // прежняя камера продолжает работать — интерфейс остаётся в рабочем состоянии
+      else { setCamOn(false); setCamReady(false); }
+    } finally {
+      if (ticket === camTicket.current) setCamStarting(false);
+    }
   }, [listDevices, track]);
 
-  const stopCam = useCallback(() => { camStream.current?.getTracks().forEach((t) => t.stop()); camStream.current = null; setCamOn(false); }, []);
+  const stopCam = useCallback(() => {
+    camTicket.current++;                                         // отменяет возможный незавершённый запрос
+    camStream.current?.getTracks().forEach((t) => { t.onended = null; t.stop(); }); camStream.current = null;
+    if (video.current) video.current.srcObject = null;
+    setCamOn(false); setCamReady(false); setCamStarting(false); setCamMs(null);
+  }, []);
+  const onFirstFrame = useCallback(() => {
+    if (camReady) return;
+    const frame = Math.round(performance.now() - camT0.current);
+    setCamReady(true);
+    const gum = camMs?.gum ?? frame;
+    setCamMs({ gum, frame });
+    reportEvent("camera_preview", { reason: "first_frame", data: { gum_ms: gum, first_frame_ms: frame } });       // в журнал: сколько заняли getUserMedia и первый кадр
+  }, [camReady, camMs]);
 
   // Состояние разрешений браузера: «запрещено» — повторно getUserMedia не вызываем (браузер всё равно не покажет запрос), даём инструкцию
   useEffect(() => {
@@ -149,7 +185,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
   const requestAll = async () => {
     setAsked(true);
     if (perm.mic !== "denied") await startMic(micId || undefined);
-    if (cameraAllowed && perm.cam !== "denied" && !camOn) {
+    if (cameraAllowed && perm.cam !== "denied" && !camOn && !camStarting) {
       try { const s = await track(() => navigator.mediaDevices.getUserMedia({ video: true })); s.getTracks().forEach((t) => t.stop()); setCamErr(""); await listDevices(); }
       catch (e) { setCamErr(describeMediaError(e, "camera").message); }
     }
@@ -164,7 +200,20 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
     await requestAll();
   };
 
-  useEffect(() => { void listDevices(); return () => { stopMic(); camStream.current?.getTracks().forEach((t) => t.stop()); }; }, [listDevices, stopMic]);
+  useEffect(() => { void listDevices(); return () => { stopMic(); camTicket.current++; camStream.current?.getTracks().forEach((t) => t.stop()); camStream.current = null; }; }, [listDevices, stopMic]);
+  // подключили или отключили устройство: список обновляется; если пропала камера, которая сейчас включена, — выключаем её и говорим об этом
+  useEffect(() => {
+    const md = navigator.mediaDevices;
+    if (!md?.addEventListener) return;
+    const on = async () => {
+      const all = await md.enumerateDevices().catch(() => [] as MediaDeviceInfo[]);
+      setDevices({ audioinput: all.filter((d) => d.kind === "audioinput"), audiooutput: all.filter((d) => d.kind === "audiooutput"), videoinput: all.filter((d) => d.kind === "videoinput") });
+      const used = camStream.current?.getVideoTracks()[0]?.getSettings().deviceId;
+      if (used && !all.some((d) => d.kind === "videoinput" && d.deviceId === used)) { stopCam(); setCamErr("Камера отключена от компьютера. Выберите другую или включите снова."); }
+    };
+    md.addEventListener("devicechange", on);
+    return () => md.removeEventListener("devicechange", on);
+  }, [stopCam]);
   useEffect(() => { if (video.current) video.current.srcObject = camOn ? camStream.current : null; }, [camOn, camId, previewHost]);
   useEffect(() => { onChange({ micId: micId || undefined, speakerId: speakerId || undefined, camId: camId || undefined, camOn, micOk, micDenied: perm.mic === "denied" }); }, [micId, speakerId, camId, camOn, micOk, perm.mic, onChange]);
 
@@ -229,15 +278,18 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
 
       {cameraAllowed && (
         <div className="pc-card">
-          <div className="pc-h"><b>{NAMES.videoinput}</b>{camOn && <span className="badge ok">включена</span>}</div>
-          <select aria-label={NAMES.videoinput} title={devices.videoinput.find((d) => d.deviceId === camId)?.label} value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
+          <div className="pc-h"><b>{NAMES.videoinput}</b>{camStarting ? <span className="badge warn">включаем…</span> : camOn && camReady ? <span className="badge ok">включена{camMs?.frame ? ` · ${(camMs.frame / 1000).toFixed(1)} с` : ""}</span> : camOn ? <span className="badge warn">ждём кадр…</span> : <span className="badge">выключена</span>}</div>
+          <select aria-label={NAMES.videoinput} title={devices.videoinput.find((d) => d.deviceId === camId)?.label} value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn || camStarting) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
             {!devices.videoinput.length && <option value="">Камера не обнаружена</option>}
             {devices.videoinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.videoinput} ${i + 1}`}</option>)}
           </select>
           <div className="pc-btns">
-            {camOn
-              ? <button type="button" className="btn mini" onClick={stopCam}>Выключить камеру</button>
-              : <button type="button" className="btn mini" disabled={!devices.videoinput.length} onClick={() => void startCam(camId || undefined)}>Проверить камеру</button>}
+            {camStarting && !camOn
+              ? <><button type="button" className="btn mini" disabled aria-busy="true"><i className="spin" aria-hidden /> Включаем камеру…</button>
+                  <button type="button" className="btn mini ghost" onClick={stopCam}>Отмена</button></>
+              : camOn
+                ? <button type="button" className="btn mini" onClick={stopCam}>Выключить камеру</button>
+                : <button type="button" className="btn mini" disabled={!devices.videoinput.length} onClick={() => void startCam(camId || undefined)}>Проверить камеру</button>}
             {!devices.videoinput.length && <span className="pc-hint">Камера не обнаружена. Войти можно без видео.</span>}
           </div>
           {camErr && <div className="alert error small" role="alert">{camErr}</div>}
@@ -258,12 +310,12 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
 
       {pending && <PermissionCallout plan={plan} />}
       {previewHost && cameraAllowed && createPortal(
-        <div className={`pj-video ${camOn ? "on" : "off"}`}>
-          <video ref={video} className="pj-video-el" autoPlay playsInline muted aria-label="Предпросмотр камеры" hidden={!camOn} />
-          {!camOn && (
+        <div className={`pj-video ${camReady ? "on" : "off"}`}>
+          <video ref={video} className="pj-video-el" autoPlay playsInline muted aria-label="Предпросмотр камеры" hidden={!camOn} onPlaying={onFirstFrame} onLoadedData={onFirstFrame} />
+          {!camReady && (
             <div className="pj-video-ph" role="status">
-              <b>{perm.cam === "denied" ? "Доступ к камере запрещён" : !devices.videoinput.length ? "Камера не обнаружена" : "Камера выключена"}</b>
-              <span>{perm.cam === "denied" ? "Разрешите камеру в настройках сайта в браузере — войти можно и без видео." : !devices.videoinput.length ? "Войти можно без видео." : "Нажмите «Проверить камеру», чтобы увидеть себя до входа."}</span>
+              <b role="status">{camStarting || camOn ? "Включаем камеру…" : perm.cam === "denied" ? "Доступ к камере запрещён" : !devices.videoinput.length ? "Камера не обнаружена" : "Камера выключена"}</b>
+              <span>{camStarting || camOn ? "Первый кадр появится через мгновение." : perm.cam === "denied" ? "Разрешите камеру в настройках сайта в браузере — войти можно и без видео." : !devices.videoinput.length ? "Войти можно без видео." : "Нажмите «Проверить камеру», чтобы увидеть себя до входа."}</span>
             </div>
           )}
         </div>, previewHost)}
