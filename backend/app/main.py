@@ -160,6 +160,8 @@ def create_app(
 
         reconciler = Reconciler(session_maker, protocols.files, settings.recordings_path, journal, _sync_audit)
         app.state.reconciler = reconciler
+        from .services.waveforms import WaveformService  # noqa: PLC0415
+        protocols.waveforms = app.state.waveforms = WaveformService(session_maker, protocols)
         app.state.mail = mail
         app.state.delivery = delivery
         app.state.ca = ca

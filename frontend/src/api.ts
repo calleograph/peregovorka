@@ -150,6 +150,9 @@ export interface ConfigReport {
   ok: boolean; applied: { tables: Record<string, number>; settings: Record<string, number>; files: string[]; replaced: string[] }; files_problems: string[]; refresh_problems: string[];
   checks: ConfigCheck[]; summary: { restored: number; needs_attention: number; failed: number };
 }
+export interface WaveformData { status: "ready" | "processing" | "failed"; bucket_ms?: number; peaks?: string; error?: string | null }
+export interface SubtitleCue { id: number; start: number; end: number; speaker: string; text: string }
+export interface SubtitleData { available: boolean; reason: string | null; message: string | null; scope: "meeting" | "participant"; segments: SubtitleCue[] }
 export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; recording_mode: "audio" | "audio_video" | "off" }
 export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
@@ -705,6 +708,8 @@ export const api = {
   deleteTemplate: (id: string) => request<void>("DELETE", `/protocol-templates/${id}`),
 
   meetingRecordings: (id: string) => request<MeetingRecording[]>("GET", `/meetings/${id}/recordings`),
+  mediaWaveform: (meetingId: string, recId: string) => request<WaveformData>("GET", `/meetings/${meetingId}/media/${recId}/waveform`),
+  mediaSubtitles: (meetingId: string, recId: string) => request<SubtitleData>("GET", `/meetings/${meetingId}/media/${recId}/subtitles`),
   meetingMedia: (id: string) => request<MeetingMedia>("GET", `/meetings/${id}/media`),
   recordingUrl: (meetingId: string, recId: string) => `/api/v1/meetings/${meetingId}/recordings/${recId}`,
   deleteRecordings: (id: string) => request<void>("DELETE", `/meetings/${id}/recordings`),

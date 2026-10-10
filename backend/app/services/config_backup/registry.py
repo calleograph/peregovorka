@@ -115,7 +115,7 @@ TABLES: dict[str, TablePolicy] = {
     "guest_participants": TablePolicy(False, "данные встреч"), "meetings": TablePolicy(False, "данные встреч"), "meeting_participants": TablePolicy(False, "данные встреч"),
     "meeting_grants": TablePolicy(False, "данные встреч"), "meeting_chat_messages": TablePolicy(False, "переписка встреч"), "meeting_chat_attachments": TablePolicy(False, "вложения чата"),
     "meeting_whiteboards": TablePolicy(False, "схемы встреч"), "transcript_segments": TablePolicy(False, "стенограммы"), "protocols": TablePolicy(False, "протоколы и резюме встреч"),
-    "conversation_maps": TablePolicy(False, "карты разговора"), "recordings": TablePolicy(False, "записи встреч"),
+    "conversation_maps": TablePolicy(False, "карты разговора"), "recordings": TablePolicy(False, "записи встреч"), "recording_waveforms": TablePolicy(False, "волновые формы записей: производные данные, строятся заново по запросу"),
     "storage_sync_runs": TablePolicy(False, "отчёты сверки хранилища"),
     "audit_log": TablePolicy(False, "журнал аудита"), "event_log": TablePolicy(False, "журнал событий"),
     "mail_messages": TablePolicy(False, "очередь и история отправленных писем"), "legal_consents": TablePolicy(False, "подтверждения документов пользователями"),

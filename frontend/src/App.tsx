@@ -26,6 +26,7 @@ import RoomsPage from "./pages/RoomsPage";
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
+const PlayerHost = lazy(() => import("./player/PlayerHost"));
 
 /** Раздел верхней панели. Пока в этой вкладке идёт встреча, раздел открывается в НОВОЙ вкладке: уход со страницы комнаты оборвал бы звонок. */
 function NavItem({ to, end, newTab, children }: { to: string; end?: boolean; newTab: boolean; children: ReactNode }) {
@@ -133,6 +134,7 @@ function StaffApp() {
         </Routes>
         </Suspense>
       </main>
+      <Suspense fallback={null}><PlayerHost /></Suspense>
       {!pathname.startsWith("/rooms/") && <AppFooter info={build} />}
       {help && <HelpDialog onClose={() => setHelp(false)} />}
       <CookieNotice />

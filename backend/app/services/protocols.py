@@ -224,6 +224,7 @@ class ProtocolService:
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
         self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
+        self.waveforms = None                      # WaveformService (подключается в main.py)
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
     def spawn(self, coro, name: str) -> asyncio.Task:
@@ -374,7 +375,8 @@ class ProtocolService:
             uid = parse_user_identity(f.identity)
             user = await db.get(User, uid) if uid else None
             rec = Recording(meeting_id=meeting.id, room_id=meeting.room_id, user_id=user.id if user else None,
-                            participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s, kind="participant", mime="audio/wav")
+                            participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s, kind="participant", mime="audio/wav",
+                            started_at=datetime.fromtimestamp(f.t0, tz=timezone.utc) if f.t0 else None)   # 0:00 файла участника — по нему реплики стенограммы привязываются к записи
             db.add(rec)
             recs.append(rec)
         await db.commit()
@@ -387,8 +389,13 @@ class ProtocolService:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
             return
+        await self._build_waveforms([r.id for r in recs])
         for rec in recs:
             await self.export_recording(db, rec)
+
+    async def _build_waveforms(self, rec_ids) -> None:
+        if self.waveforms is not None and rec_ids:
+            await self.waveforms.build_many(rec_ids)                  # пока файлы ещё на локальном диске: быстро и без обращения к хранилищу
 
     async def _mix_then_export(self, meeting_id: uuid.UUID, tracks: list[tuple[uuid.UUID, float | None]], mode: str) -> None:
         mix_id: uuid.UUID | None = None
@@ -420,6 +427,7 @@ class ProtocolService:
                     if self.journal is not None:
                         self.journal.emit("storage", "meeting_mix_failed", level="error", meeting_id=str(meeting_id), message=str(exc)[:300])
                 await db.commit()
+                await self._build_waveforms(([mix_rec.id] if mix_rec.status == "ready" else []) + [r.id for r in recs.values()])
                 if mix_rec.status == "ready":
                     await self.export_recording(db, mix_rec)
                 for rec in recs.values():
@@ -514,6 +522,11 @@ class ProtocolService:
     async def delete_recording(self, db: AsyncSession, rec: Recording) -> None:
         """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается."""
         await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+        from ..models import RecordingWaveform  # noqa: PLC0415
+
+        w = await db.get(RecordingWaveform, rec.id)
+        if w is not None:
+            await db.delete(w)
         if rec.export_status == "exported":
             storage = await self._audio_storage(db)
             if storage is not None:
