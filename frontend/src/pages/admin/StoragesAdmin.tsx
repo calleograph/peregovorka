@@ -4,14 +4,14 @@ import StorageTransferAdmin from "./StorageTransferAdmin";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
-  smb_domain: string; smb_username: string; secret: string; secret_set: boolean;
+  smb_domain: string; smb_username: string; secret: string; secret_set: boolean; system_disk_ok: boolean;
 }
 
-const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false };
+const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false, system_disk_ok: false };
 
 const toForm = (p: StorageProfile): Form => ({
   id: p.id, name: p.name, kind: p.kind, local_path: p.config.local_path ?? "/data/exports", smb_server: p.config.smb_server ?? "", smb_share: p.config.smb_share ?? "",
-  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set,
+  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set, system_disk_ok: !!p.system_disk_ok,
 });
 
 const FOLDER_HELP: [string, string][] = [
@@ -40,7 +40,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
     if (!form) return;
     setError(""); setNote("");
     if (!form.name.trim()) { setError("Укажите название хранилища, например «Файловый сервер №1»."); return; }
-    const config: Record<string, string> = form.kind === "local" ? { local_path: form.local_path } : {
+    const config: Record<string, string | boolean> = form.kind === "local" ? { local_path: form.local_path, system_disk_ok: form.system_disk_ok } : {
       smb_server: form.smb_server.trim(), smb_share: form.smb_share.trim(), smb_base_path: form.smb_base_path.trim(), smb_domain: form.smb_domain.trim(), smb_username: form.smb_username.trim() };
     setBusy(true);
     try {
@@ -86,6 +86,10 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
           {form.kind === "local" ? (
             <label>Каталог внутри контейнера<input value={form.local_path} onChange={(e) => set("local_path", e.target.value)} placeholder="/data/exports" />
               <span className="help">Абсолютный путь внутри контейнера приложения (лежит в разделе DATA_ROOT на сервере). Не путь Windows.</span></label>
+          ) : null}
+          {form.kind === "local" ? (
+            <label className="check"><input type="checkbox" checked={form.system_disk_ok} onChange={(e) => set("system_disk_ok", e.target.checked)} />
+              <span className="check-body">Каталог — подключённый том, я проверил, что он смонтирован<span className="help">Кнопка «Проверить» ставит на том метку и запоминает, какая файловая система смонтирована, — тогда запись в отключившуюся сетевую папку блокируется, а не идёт на системный диск. Если система не распознала в каталоге сетевую файловую систему (например, шара смонтирована на сервере-хозяине и пробрасывается в контейнер), метка ставится только после этого подтверждения: отметьте его, когда шара точно подключена.</span></span></label>
           ) : (
             <fieldset className="group"><legend>Сетевой ресурс SMB</legend>
               <div className="cols">

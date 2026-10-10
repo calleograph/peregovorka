@@ -36,6 +36,7 @@ FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS)
 # какая группа настроек выбирает профиль
 FUNCTION_GROUPS = {"audio_storage": "Записи аудио", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
 _CONFIG_KEYS = ("local_path", "smb_server", "smb_share", "smb_base_path", "smb_username", "smb_domain")
+_EXTRA_KEYS = ("system_disk_ok",)          # подтверждение администратора: каталог — подключённый том, хотя система не распознала в нём сетевую файловую систему
 
 
 class PrefixedStorage:
@@ -125,14 +126,16 @@ class FileStore:
 
     def build(self, row: StorageProfile) -> StorageBackend:
         cfg = self._target(row.kind, row.config or {}, self._decrypt(row))
-        backend = build_storage(cfg, self._data_dir, (row.config or {}).get("volume_marker") if row.kind == "local" else None)
+        c = row.config or {}
+        backend = build_storage(cfg, self._data_dir, c.get("volume_marker") if row.kind == "local" else None, c.get("volume_mount") if row.kind == "local" else None)
         assert backend is not None
         return backend
 
     def _public(self, row: StorageProfile, usage: list[str]) -> dict:
         cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS}
         return {"id": str(row.id), "name": row.name, "kind": row.kind, "config": cfg, "secret_set": bool(row.secret_enc), "used_by": usage,
-                "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker"))}
+                "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker")),
+                "system_disk_ok": bool((row.config or {}).get("system_disk_ok")), "volume_mount": (row.config or {}).get("volume_mount")}
 
     @staticmethod
     def address(kind: str, cfg: dict) -> str:
@@ -176,7 +179,7 @@ class FileStore:
             raise SettingsError("Хранилище с таким названием уже есть")
         self._check(kind, config, secret)
         pid = uuid.uuid4()
-        row = StorageProfile(id=pid, name=name, kind=kind, config={k: v for k, v in config.items() if k in _CONFIG_KEYS},
+        row = StorageProfile(id=pid, name=name, kind=kind, config={k: v for k, v in config.items() if k in _CONFIG_KEYS or k in _EXTRA_KEYS},
                              secret_enc=self._encrypt(pid, secret))
         db.add(row)
         await db.commit()
@@ -198,9 +201,10 @@ class FileStore:
                 raise SettingsError("Хранилище с таким названием уже есть")
         cfg = dict(row.config or {})
         for k, v in (patch.get("config") or {}).items():
-            if k in _CONFIG_KEYS:
+            if k in _CONFIG_KEYS or k in _EXTRA_KEYS:
                 if k == "local_path" and cfg.get(k) != v:
-                    cfg.pop("volume_marker", None)                        # другой каталог — другая метка (ставится при «Проверить»)
+                    cfg.pop("volume_marker", None)                        # другой каталог — другая метка и другое монтирование (ставятся при «Проверить»)
+                    cfg.pop("volume_mount", None)
                 cfg[k] = v
         secret = self._decrypt(row)
         if patch.get("secret") is not None:    # None = не менять, "" = очистить
@@ -283,8 +287,22 @@ class FileStore:
         backend = await asyncio.to_thread(self.build, row)
         note = ""
         if row.kind == "local" and isinstance(backend, LocalStorage) and not (row.config or {}).get("volume_marker"):
+            from . import mounts  # noqa: PLC0415
+
+            ack = bool((row.config or {}).get("system_disk_ok"))
+            info = await asyncio.to_thread(mounts.describe, str((row.config or {}).get("local_path", "")))
+            if info is not None and not ack:
+                # Метку нельзя ставить «вслепую»: если шара не смонтирована, метка легла бы в пустой каталог на системном диске и защита потеряла бы смысл.
+                if info["on_root"]:
+                    raise SettingsError("Каталог лежит на системном диске сервера, а не на подключённом томе (сетевая папка не смонтирована?). Подключите том и повторите проверку. "
+                                        "Если это сознательно обычная локальная папка, отметьте «каталог — подключённый том».")
+                if info["fstype"] not in mounts.NETWORK_FS:
+                    raise SettingsError(f"Каталог смонтирован как «{info['fstype']}» — не сетевая файловая система. Если сетевая шара подключена на сервере-хозяине и пробрасывается в контейнер, "
+                                        "убедитесь, что она сейчас подключена, и отметьте «каталог — подключённый том».")
             marker = await asyncio.to_thread(backend.mark_volume)           # метка тома: без неё запись в каталог, потерявший монтирование, не отличить от обычной
             row.config = {**(row.config or {}), "volume_marker": marker}
+            if info is not None and not info["on_root"]:
+                row.config["volume_mount"] = {"mountpoint": info["mountpoint"], "fstype": info["fstype"], "source": info["source"]}
             await db.commit()
             backend = await asyncio.to_thread(self.build, row)
             note = " На том поставлена метка: если сетевая папка отключится, запись в неё остановится, а не пойдёт на локальный диск."

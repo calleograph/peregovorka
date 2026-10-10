@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.models import Meeting, Recording, StorageTransferItem, utcnow
-from app.services import transfer as tr
+from app.services import mounts, transfer as tr
 from app.services.storage import LocalStorage, StorageError
 
 from .conftest import login, make_settings, put_settings, running_app
@@ -78,7 +78,7 @@ def world(c, s, *, mix: bool = False):
     """Встреча с записями на локальном диске; затем подключается внешнее хранилище (папка-профиль, проверенная кнопкой «Проверить»)."""
     mid = _meeting_with_recordings(c, s)
     login(c, "root")
-    p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(Path(s.data_dir) / "fs")}}).json()
+    p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(Path(s.data_dir) / "fs"), "system_disk_ok": True}}).json()
     t = c.post(f"/api/v1/admin/storages/{p['id']}/test")
     assert t.status_code == 200, t.text
     put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
@@ -218,7 +218,7 @@ def test_export_on_meeting_end_does_not_write_to_an_unmounted_folder(tmp_path, d
     with running_app(s, directory) as c:
         login(c, "root")
         fs = Path(s.data_dir) / "fs"
-        p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(fs)}}).json()
+        p = c.post("/api/v1/admin/storages", json={"name": "Файловый сервер", "kind": "local", "config": {"local_path": str(fs), "system_disk_ok": True}}).json()
         assert c.post(f"/api/v1/admin/storages/{p['id']}/test").status_code == 200
         put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
         shutil.rmtree(fs)
@@ -329,12 +329,38 @@ def test_cleanup_never_removes_the_source_if_the_new_copy_is_not_intact(tmp_path
         mid, fs, _ = world(c, s)
         monkeypatch.setattr(tr, "GRACE_S", 3600)
         process(c, start(c, "to_external"))
-        victim = ext_files(fs)[0]
-        victim.write_bytes(victim.read_bytes()[:10])                       # копию во внешнем хранилище кто-то испортил
+        a, b = ext_files(fs)
+        a.write_bytes(a.read_bytes()[:10])                                # копию испортили: другой размер
+        raw = bytearray(b.read_bytes())
+        raw[len(raw) // 2] ^= 0xFF
+        b.write_bytes(bytes(raw))                                         # и копию того же размера, но с другим содержимым — размером это не поймать
         make_due(c)
         removed = c.portal.call(lambda: svc(c).sweep())
-        assert removed == 1, "удалён только источник той записи, чья копия цела"
-        assert len(local_files(s)) == 1, "источник испорченной копии остался"
+        assert removed == 0, "ни один источник не удалён: обе внешние копии не прошли проверку"
+        assert len(local_files(s)) == 2
+        assert {r.export_status for r in recs(c)} == {"local"}, "запись в базе возвращена на проверенную локальную копию"
+        fixed(c, s)
+
+
+def test_cleanup_waits_while_the_file_is_being_listened_to(tmp_path, directory, monkeypatch):
+    s = make_settings(tmp_path, meeting_mix_enabled=False)
+    with running_app(s, directory) as c:
+        mid, fs, _ = world(c, s)
+        monkeypatch.setattr(tr, "GRACE_S", 3600)
+        process(c, start(c, "to_external"))
+        ps = c.app_obj.state.protocols
+        rid = recs(c)[0].id
+        ps.read_begin(rid)                                                # кто-то слушает запись
+        make_due(c)
+        assert c.portal.call(lambda: svc(c).sweep()) == 1, "второй файл никто не слушает — его источник убран"
+        assert len(local_files(s)) == 1
+        ps.read_end(rid)
+        make_due(c)
+        assert c.portal.call(lambda: svc(c).sweep()) == 0, "после остановки воспроизведения ещё две минуты тишины не прошло"
+        ps._last_read[rid] -= 1000
+        make_due(c)
+        assert c.portal.call(lambda: svc(c).sweep()) == 1 and not local_files(s)
+        fixed(c, s)
 
 
 def test_crash_while_copying_back_after_replace_before_the_switch(tmp_path, directory, monkeypatch):
@@ -518,3 +544,74 @@ def test_stats_keep_old_numbers_marked_stale_when_the_storage_is_unavailable(tmp
         bad = {v["id"]: v for v in c.get("/api/v1/admin/storage/stats").json()["volumes"]}["external"]
         assert bad["state"] == "unavailable" and bad["stale"] is True and bad["total"] == ok["total"] and bad["last_ok_at"] == ok["last_ok_at"]
         assert c.post("/api/v1/admin/storage/stats/refresh").status_code == 202
+
+
+# ----------------------------------------------------------------------------------------------------- фактическое монтирование
+ROOT = "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"
+
+
+def test_mountinfo_parsing_and_lookup(monkeypatch):
+    text = ROOT + "40 1 0:41 / /mnt/share rw,relatime - cifs //fileserver/rec rw,vers=3.0\n41 1 0:42 / /mnt/with\\040space rw - nfs4 srv:/x rw\n"
+    ms = mounts.parse_mountinfo(text)
+    assert [(m.mountpoint, m.fstype) for m in ms] == [("/", "ext4"), ("/mnt/share", "cifs"), ("/mnt/with space", "nfs4")]
+    monkeypatch.setattr(mounts.os.path, "realpath", lambda p: p)
+    assert mounts.describe("/mnt/share/Audio/x", text) == {"mountpoint": "/mnt/share", "fstype": "cifs", "source": "//fileserver/rec", "on_root": False}
+    assert mounts.describe("/data/exports", text)["on_root"] is True, "каталог вне смонтированных томов лежит на системном диске"
+    assert mounts.describe("/mnt/sharex/y", text)["on_root"] is True, "«/mnt/sharex» — не внутри «/mnt/share»"
+    assert mounts.describe("/x", "") is None
+    exp = {"mountpoint": "/mnt/share", "fstype": "cifs"}
+    assert mounts.same_mount(exp, {"mountpoint": "/mnt/share", "fstype": "cifs", "on_root": False})
+    assert not mounts.same_mount(exp, {"mountpoint": "/", "fstype": "ext4", "on_root": True})
+    assert mounts.same_mount(exp, None), "нет /proc — полагаемся на метку"
+
+
+def _fake_describe(monkeypatch, state: dict):
+    monkeypatch.setattr(mounts, "describe", lambda path, text=None: dict(state) if state else None)
+
+
+def test_marker_is_not_created_on_an_unmounted_folder_unless_the_admin_confirms(tmp_path, directory, monkeypatch):
+    s = make_settings(tmp_path, meeting_mix_enabled=False)
+    with running_app(s, directory) as c:
+        login(c, "root")
+        fs = Path(s.data_dir) / "fs"
+        p = c.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(fs)}}).json()
+        _fake_describe(monkeypatch, {"mountpoint": "/", "fstype": "ext4", "source": "/dev/sda1", "on_root": True})      # шара не смонтирована: каталог на системном диске
+        r = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()
+        assert r["ok"] is False and "системном диске" in r["message"]
+        assert not (fs / ".peregovorka-volume").exists(), "метка в пустом каталоге на системном диске не поставлена"
+        _fake_describe(monkeypatch, {"mountpoint": "/srv/bind", "fstype": "ext4", "source": "/dev/sdb1", "on_root": False})        # проброшенный каталог: тип не сетевой
+        assert "не сетевая" in c.post(f"/api/v1/admin/storages/{p['id']}/test").json()["message"]
+        assert not (fs / ".peregovorka-volume").exists()
+        _fake_describe(monkeypatch, {"mountpoint": "/srv/share", "fstype": "cifs", "source": "//srv/rec", "on_root": False})       # настоящая сетевая шара
+        ok = c.post(f"/api/v1/admin/storages/{p['id']}/test").json()
+        assert ok["ok"] is True and (fs / ".peregovorka-volume").exists()
+        listed = {x["id"]: x for x in c.get("/api/v1/admin/storages").json()["items"]}[p["id"]]
+        assert listed["volume_marked"] is True and listed["volume_mount"]["fstype"] == "cifs"
+
+
+def test_a_share_that_is_no_longer_mounted_is_refused_even_though_the_marker_file_exists(tmp_path, directory, monkeypatch):
+    s = make_settings(tmp_path, meeting_mix_enabled=False)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)                                  # записи лежат на локальном диске
+        login(c, "root")
+        fs = Path(s.data_dir) / "fs"
+        p = c.post("/api/v1/admin/storages", json={"name": "Шара", "kind": "local", "config": {"local_path": str(fs)}}).json()
+        mounted = {"mountpoint": "/srv/share", "fstype": "cifs", "source": "//srv/rec", "on_root": False}
+        state = dict(mounted)
+        _fake_describe(monkeypatch, state)
+        assert c.post(f"/api/v1/admin/storages/{p['id']}/test").json()["ok"] is True
+        put_settings(c, "audio_storage", enabled=True, profile_id=p["id"], keep_local_copy=False)
+        state.clear()
+        state.update({"mountpoint": "/", "fstype": "ext4", "source": "/dev/sda1", "on_root": True})                  # шара отвалилась; метка (файл) осталась лежать в каталоге
+        assert (fs / ".peregovorka-volume").exists()
+        before = sorted(str(x) for x in fs.rglob("*"))
+        job = process(c, start(c, "to_external"))
+        assert job["state"] == "failed" and "не смонтирован" in job["error"]
+        assert sorted(str(x) for x in fs.rglob("*")) == before, "ничего не записано"
+        assert {r.export_status for r in recs(c)} == {"local"} and len(local_files(s)) == 2
+        state.clear()
+        state.update(mounted)                                                                                         # шара подключена снова
+        assert c.post(f"/api/v1/admin/storage/transfers/{job['id']}/resume").status_code == 200
+        done = process(c, job["id"])
+        assert done["state"] == "done" and done["done"] == 2
+        fixed(c, s)

@@ -191,6 +191,8 @@ export interface StorageProfile {
   id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
   /** Для хранилища-папки: на том поставлена метка (запись в отключённый том блокируется). */
   volume_marked?: boolean;
+  system_disk_ok?: boolean;
+  volume_mount?: { mountpoint: string; fstype: string; source: string } | null;
 }
 export interface StorageVolume {
   id: "local" | "external"; title: string; kind: string; address: string; state: "ok" | "unavailable" | "not_configured"; error?: string;
@@ -817,8 +819,8 @@ export const api = {
     syncRun: (force = false) => request<{ run_id: string }>("POST", "/admin/storage-sync/run", { force }),
     syncDetail: (id: string) => request<SyncRun>("GET", `/admin/storage-sync/runs/${id}`),
     storages: () => request<{ items: StorageProfile[]; folders: string[] }>("GET", "/admin/storages"),
-    createStorage: (body: { name: string; kind: "local" | "smb"; config: Record<string, string>; secret?: string }) => request<StorageProfile>("POST", "/admin/storages", body),
-    updateStorage: (id: string, body: { name?: string; config?: Record<string, string>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
+    createStorage: (body: { name: string; kind: "local" | "smb"; config: Record<string, string | boolean>; secret?: string }) => request<StorageProfile>("POST", "/admin/storages", body),
+    updateStorage: (id: string, body: { name?: string; config?: Record<string, string | boolean>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     storageStats: () => request<StorageStats>("GET", "/admin/storage/stats"),

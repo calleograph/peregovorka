@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import re
@@ -84,13 +85,20 @@ class LocalStorage:
     """Локальный каталог. Если задана метка тома (`marker`), запись и проверка доступности разрешены, только когда в каталоге лежит файл-метка с тем же значением:
     так отключившаяся сетевая папка (пустая точка монтирования на системном диске) не принимается за хранилище и не заполняется файлами."""
 
-    def __init__(self, root: str, marker: str | None = None):
+    def __init__(self, root: str, marker: str | None = None, mount: dict | None = None):
         self._root = Path(root)
         self._marker = marker
+        self._mount = mount                       # какая файловая система должна быть смонтирована по этому пути (запоминается при первой проверке; см. mounts.py)
 
     def _require_marker(self) -> None:
         if not self._marker:
             return
+        if self._mount:
+            from . import mounts  # noqa: PLC0415
+
+            if not mounts.same_mount(self._mount, mounts.describe(str(self._root))):
+                raise StorageError(f"Том хранилища {self._root} не смонтирован: по этому пути сейчас другая файловая система (ожидалась {self._mount.get('fstype')} "
+                                   f"в {self._mount.get('mountpoint')}). Запись остановлена, чтобы не заполнять локальный диск.")
         try:
             ok = (self._root / MARKER).read_text(encoding="utf-8").strip() == self._marker
         except OSError:
@@ -234,11 +242,26 @@ class LocalStorage:
         return f"Запись в {self._root} возможна"
 
 
+class _Kw:
+    """Подставляет одни и те же параметры соединения (например, порт) во все вызовы smbclient."""
+
+    def __init__(self, mod, kw: dict):
+        self._m, self._kw = mod, kw
+
+    def __getattr__(self, name):
+        attr = getattr(self._m, name)
+        if name == "path":
+            return _Kw(attr, self._kw)
+        return functools.partial(attr, **self._kw) if callable(attr) and self._kw else attr
+
+
 class SmbStorage:
-    """Запись на SMB-ресурс от имени сервисной учётки (NTLM/Kerberos — как согласует сервер)."""
+    """Запись на SMB-ресурс от имени сервисной учётки (NTLM/Kerberos — как согласует сервер). Адрес сервера — имя или «имя:порт» (нестандартный порт)."""
 
     def __init__(self, server: str, share: str, base_path: str, username: str, password: str, domain: str = ""):
-        self._server, self._share = server, share
+        host, _, port = server.rpartition(":") if server.count(":") == 1 and server.rsplit(":", 1)[1].isdigit() else (server, "", "")
+        self._server, self._share = host or server, share
+        self._kw = {"port": int(port)} if port else {}
         self._base = [p for p in re.split(r"[\\/]", base_path) if p]
         self._user = f"{domain}\\{username}" if domain and username else username
         self._password = password
@@ -252,10 +275,25 @@ class SmbStorage:
 
         try:
             smbclient.register_session(self._server, username=self._user or None, password=self._password or None,
-                                       connection_timeout=10, encrypt=False)
+                                       connection_timeout=10, encrypt=False, **self._kw)
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: не удалось подключиться/авторизоваться ({type(exc).__name__})") from None
-        return smbclient
+        return _Kw(smbclient, {**self._kw, "username": self._user or None, "password": self._password or None} if self._kw else {})
+
+    @staticmethod
+    def _mkdirs(smb, path: str) -> None:
+        """Создать каталог со всеми родителями. Сначала обычным способом; если сервер на «нет родителя» отвечает нестандартным кодом (так делают не все серверы),
+        создаём по одному уровню от корня ресурса."""
+        try:
+            smb.makedirs(path, exist_ok=True)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+        parts = path.split("\\")                                   # ['', '', server, share, a, b …]
+        for i in range(5, len(parts) + 1):
+            cur = "\\".join(parts[:i])
+            if not smb.path.isdir(cur):
+                smb.mkdir(cur)
 
     def exists(self, rel: str) -> bool:
         smb = self._session()
@@ -269,7 +307,7 @@ class SmbStorage:
         path = self._unc(rel)
         parent = path.rsplit("\\", 1)[0]
         try:
-            smb.makedirs(parent, exist_ok=True)
+            self._mkdirs(smb, parent)
             with smb.open_file(path, mode="wb") as fh:
                 fh.write(data)
         except Exception as exc:  # noqa: BLE001
@@ -321,16 +359,14 @@ class SmbStorage:
         path = self._unc(rel)
         tmp = path + f".{uuid.uuid4().hex[:8]}.tmp"
         try:
-            smb.makedirs(path.rsplit("\\", 1)[0], exist_ok=True)
+            self._mkdirs(smb, path.rsplit("\\", 1)[0])
             with open(src_path, "rb") as src, smb.open_file(tmp, mode="wb") as dst:
                 while True:
                     chunk = src.read(CHUNK)
                     if not chunk:
                         break
                     dst.write(chunk)
-            if smb.path.exists(path):
-                smb.remove(path)
-            smb.rename(tmp, path)
+            smb.replace(tmp, path)                       # атомарная подмена: готовый файл не пропадает, даже если на месте уже лежит старый
         except Exception as exc:  # noqa: BLE001
             try:
                 if smb.path.exists(tmp):
@@ -412,7 +448,7 @@ class SmbStorage:
         return f"Запись на {self._unc()} возможна"
 
 
-def build_storage(cfg: StorageSettings, allowed_root: str | None = None, marker: str | None = None) -> StorageBackend | None:
+def build_storage(cfg: StorageSettings, allowed_root: str | None = None, marker: str | None = None, mount: dict | None = None) -> StorageBackend | None:
     """allowed_root — локальный каталог должен лежать внутри него (смонтированные тома контейнера, DATA_DIR)."""
     if not cfg.enabled:
         return None
@@ -421,7 +457,7 @@ def build_storage(cfg: StorageSettings, allowed_root: str | None = None, marker:
             root, want = Path(allowed_root).resolve(), Path(cfg.local_path).resolve()
             if want != root and root not in want.parents:
                 raise StorageError(f"Каталог должен находиться внутри {allowed_root} (смонтированный том)")
-        return LocalStorage(cfg.local_path, marker)
+        return LocalStorage(cfg.local_path, marker, mount)
     return SmbStorage(cfg.smb_server, cfg.smb_share, cfg.smb_base_path, cfg.smb_username, cfg.smb_password, cfg.smb_domain)
 
 

@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import Meeting, Recording, StorageTransfer, StorageTransferItem, utcnow
 from .recordings import delete_recording_file
-from .storage import CHUNK, LocalStorage, StorageError
+from .storage import CHUNK, LocalStorage, StorageError, StorageNotFound
 
 log = logging.getLogger("app.transfer")
 
@@ -355,8 +355,10 @@ class TransferService:
             for item, direction in due:
                 rec = await db.get(Recording, item.recording_id)
                 try:
-                    if rec is None or self._ps.is_busy(rec.meeting_id):
-                        item.cleanup_at = None if rec is None else utcnow() + timedelta(seconds=60)
+                    if rec is None:
+                        item.cleanup_at = None
+                    elif self._ps.is_busy(rec.meeting_id) or self._ps.is_read(rec.id):
+                        item.cleanup_at = utcnow() + timedelta(seconds=60)     # файл читают (слушают запись) или обрабатывают — повторим позже
                     elif await self._clean_one(db, rec, direction):
                         removed += 1
                         item.cleanup_at = None
@@ -371,18 +373,35 @@ class TransferService:
         return removed
 
     async def _clean_one(self, db: AsyncSession, rec: Recording, direction: str) -> bool:
+        """Удалить источник, ТОЛЬКО убедившись заново (размер и SHA-256), что копия на новом месте цела. Если копия испорчена, а источник цел — запись в базе возвращается на источник:
+        проверенная копия остаётся всегда."""
         local = self._root / rec.path
         if direction == "to_external":
             if rec.export_status != "exported" or not rec.sha256 or not local.is_file():
                 return False
             storage = await self._storage(db)
-            if await asyncio.to_thread(storage.size_of, rec.path) != rec.size_bytes:
-                raise Unavailable("копия во внешнем хранилище не совпала по размеру")
+            ok = False
+            try:
+                ok = await asyncio.to_thread(storage.size_of, rec.path) == rec.size_bytes and await asyncio.to_thread(sha256_storage, storage, rec.path, rec.size_bytes) == rec.sha256
+            except StorageNotFound:
+                ok = False
+            if not ok:
+                if local.stat().st_size == rec.size_bytes and await asyncio.to_thread(sha256_file, local) == rec.sha256:
+                    rec.export_status, rec.export_location, rec.exported_at = "local", None, None          # внешняя копия испорчена или пропала — «живая» копия локальная
+                    rec.export_error = "перенос отменён: копия во внешнем хранилище не прошла проверку"
+                    self._emit("storage_transfer_copy_corrupt", "Копия во внешнем хранилище не прошла проверку контрольной суммы — запись возвращена на локальный диск", rec=str(rec.id))
+                    return False
+                raise Unavailable("копия во внешнем хранилище не прошла проверку, а локальный файл изменился — ничего не удалено")
             await asyncio.to_thread(delete_recording_file, self._ps._s.recordings_path, rec.path)
             return True
-        if rec.export_status != "local" or not local.is_file() or local.stat().st_size != rec.size_bytes:
+        if rec.export_status != "local" or not local.is_file():
             return False
         storage = await self._storage(db)
+        if local.stat().st_size != rec.size_bytes or await asyncio.to_thread(sha256_file, local) != rec.sha256:
+            if await asyncio.to_thread(storage.exists, rec.path):
+                rec.export_status, rec.export_error = "exported", "перенос отменён: локальная копия не прошла проверку"       # локальная копия испорчена — «живая» внешняя
+                self._emit("storage_transfer_copy_corrupt", "Локальная копия не прошла проверку контрольной суммы — запись оставлена во внешнем хранилище", rec=str(rec.id))
+            return False
         if not await asyncio.to_thread(storage.exists, rec.path):
             return False
         await asyncio.to_thread(storage.delete, rec.path)

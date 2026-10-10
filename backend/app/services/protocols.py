@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -224,6 +225,8 @@ class ProtocolService:
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
         self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
+        self._reads: dict[uuid.UUID, int] = {}
+        self._last_read: dict[uuid.UUID, float] = {}
         self._busy: dict[uuid.UUID, int] = {}      # встречи, чьи файлы сейчас обрабатываются (финализация, сведение, выгрузка): их нельзя переносить между хранилищами
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
@@ -292,6 +295,30 @@ class ProtocolService:
         return self._s.ldap_ca_file or None
 
     # --------------------------------------------------------------- завершение встречи
+    # --- активные чтения файла записи (воспроизведение): перенос не удаляет источник, пока кто-то читает файл
+    def read_begin(self, rec_id: uuid.UUID) -> None:
+        self._reads[rec_id] = self._reads.get(rec_id, 0) + 1
+        self._last_read[rec_id] = time.monotonic()
+
+    def touch_read(self, rec_id: uuid.UUID) -> None:
+        self._last_read[rec_id] = time.monotonic()
+
+    def read_end(self, rec_id: uuid.UUID) -> None:
+        n = self._reads.get(rec_id, 0) - 1
+        if n > 0:
+            self._reads[rec_id] = n
+        else:
+            self._reads.pop(rec_id, None)
+        now = time.monotonic()
+        self._last_read[rec_id] = now
+        if len(self._last_read) > 2000:                              # забываем давно закрытые, чтобы словарь не рос
+            for k in [k for k, t in self._last_read.items() if now - t > 3600 and k not in self._reads]:
+                self._last_read.pop(k, None)
+
+    def is_read(self, rec_id: uuid.UUID, quiet_s: float = 120.0) -> bool:
+        """Файл читают сейчас или читали недавно (пауза в воспроизведении между запросами диапазонов не должна приводить к удалению файла)."""
+        return rec_id in self._reads or (time.monotonic() - self._last_read.get(rec_id, -1e9)) < quiet_s
+
     def hold(self, meeting_id: uuid.UUID) -> None:
         self._busy[meeting_id] = self._busy.get(meeting_id, 0) + 1
 
