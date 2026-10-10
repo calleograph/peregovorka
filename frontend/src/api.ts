@@ -134,6 +134,22 @@ export interface MediaItem {
   id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; error: string | null; size_bytes: number; duration_s: number | null;
   has_video: boolean; started_at: string | null; created_at: string; file_state?: "ok" | "missing"; can_download: boolean; name?: string; identity?: string | null;
 }
+export interface ConfigInfo {
+  included: { name: string; title: string; count: number; note: string }[]; settings_groups: { name: string; title: string }[]; hashed: { what: string; count: number; how: string }[];
+  files: { name: string; title: string }[]; excluded: { name: string; reason: string }[]; environment: string; schema: number; format: number; password_length: number;
+}
+export interface ConfigHeader { app_version: string | null; created_at: string | null; schema: number; format: number; size_bytes: number }
+export interface ConfigPreview {
+  manifest: { app_version: string | null; created_at: string | null; schema: number; source_url: string | null }; compat: { ok: boolean; notes: string[] };
+  components: { tables: { name: string; title: string; count: number }[]; settings: { name: string; title: string; fields: number }[]; files: { name: string; title: string }[] };
+  warnings: { kind: string; title: string; where: string; value: string | null; note: string }[]; notes: string[]; hashed: { what: string; count: number; how: string }[];
+  conflicts: string[]; replace: Record<string, number>; excluded: Record<string, string>; manifest_warnings: string[]; target_clean: boolean; needs_ack: boolean;
+}
+export interface ConfigCheck { component: string; item: string; status: "restored" | "needs_attention" | "failed"; message: string }
+export interface ConfigReport {
+  ok: boolean; applied: { tables: Record<string, number>; settings: Record<string, number>; files: string[]; replaced: string[] }; files_problems: string[]; refresh_problems: string[];
+  checks: ConfigCheck[]; summary: { restored: number; needs_attention: number; failed: number };
+}
 export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; recording_mode: "audio" | "audio_video" | "off" }
 export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
@@ -516,6 +532,25 @@ async function putBlob<T>(path: string, blob: Blob): Promise<T> {
   return data as T;
 }
 
+/** Запросы раздела «Резервная копия конфигурации»: архив — тело запроса (байты), пароли — в заголовках (не в адресе). Ошибки сервера приходят понятным текстом. */
+async function configRequest<T>(path: string, body: BodyInit | undefined, headers: Record<string, string>, asJson = true): Promise<{ data: T; res: Response }> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { method: body === undefined ? "GET" : "POST", headers: { ...authHeaders("POST"), Accept: asJson ? "application/json" : "*/*", ...headers }, credentials: "same-origin", body });
+  } catch {
+    throw new ApiError(0, "network", "Нет связи с сервером");
+  }
+  if (res.status === 401) onUnauthorized?.();
+  if (!res.ok) {
+    const d = await res.json().catch(() => null);
+    const det = d?.detail;
+    const message = typeof det === "string" ? det : det?.message ?? `Ошибка ${res.status}`;
+    const extra = Array.isArray(det?.details) && det.details.length ? `\n${det.details.join("\n")}` : "";
+    throw new ApiError(res.status, (typeof det === "object" && det?.code) || "error", message + extra, Number(res.headers.get("Retry-After")) || undefined);
+  }
+  return { data: (asJson ? await res.json() : (await res.blob())) as T, res };
+}
+
 /** Загрузка файла «как есть» (тело запроса — байты). Ошибки сервера (тип, размер, хранилище) приходят понятным текстом. */
 async function uploadBytes<T>(path: string, file: File): Promise<T> {
   let res: Response;
@@ -801,6 +836,16 @@ export const api = {
     updateStorage: (id: string, body: { name?: string; config?: Record<string, string>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
+    configInfo: () => request<ConfigInfo>("GET", "/admin/config/info"),
+    configExport: async (adminPassword: string): Promise<{ blob: Blob; password: string; filename: string }> => {
+      const { data, res } = await configRequest<Blob>("/admin/config/export", JSON.stringify({ password: adminPassword }), { "Content-Type": "application/json" }, false);
+      const cd = res.headers.get("Content-Disposition") ?? "";
+      return { blob: data, password: res.headers.get("X-Archive-Password") ?? "", filename: /filename="([^"]+)"/.exec(cd)?.[1] ?? "peregovorka-config.pgcfg" };
+    },
+    configInspect: (file: Blob) => configRequest<ConfigHeader>("/admin/config/import/inspect", file, { "Content-Type": "application/octet-stream" }).then((r) => r.data),
+    configPreview: (file: Blob, archivePassword: string) => configRequest<ConfigPreview>("/admin/config/import/preview", file, { "Content-Type": "application/octet-stream", "X-Archive-Password": archivePassword }).then((r) => r.data),
+    configApply: (file: Blob, archivePassword: string, adminPassword: string) =>
+      configRequest<ConfigReport>("/admin/config/import/apply", file, { "Content-Type": "application/octet-stream", "X-Archive-Password": archivePassword, "X-Admin-Password": adminPassword, "X-Import-Confirm": "yes" }).then((r) => r.data),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     meetingDiagnostics: (meetingId: string) => request<{ meeting: { id: string; room: string; started_at: string; ended_at: string | null; end_reason: string | null }; events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[]; retention_note: string }>("GET", `/admin/meetings/${meetingId}/diagnostics`),
