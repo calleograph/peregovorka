@@ -264,6 +264,7 @@ export interface ParticipantCard {
   identity: string; name: string; guest: boolean; card: "full" | "minimal";
   title?: string | null; department?: string | null; avatar_url?: string | null; email?: string | null; phone?: string | null; login?: string | null;
 }
+export interface StageState { items: { type: "camera" | "screen" | "board"; identity?: string }[]; by: string | null; at: number | null }
 export interface HandInfo { identity: string; name: string; at: number }
 export interface LlmChoices {
   local: { id: string; title: string; installed: boolean }[];
@@ -561,6 +562,13 @@ export const api = {
   /** Руководитель комнаты: выключить микрофоны у всех участников (кроме себя) или у одного. */
   muteAll: (meetingId: string) => request<{ muted: number }>("POST", `/meetings/${meetingId}/moderation/mute-all`),
   muteOne: (meetingId: string, identity: string) => request<{ muted: number }>("POST", `/meetings/${meetingId}/moderation/mute`, { identity }),
+  /** Сцена ведущего: что показано крупно всем участникам; задать может руководитель (до четырёх элементов, пустой список — очистить). */
+  getStage: (meetingId: string) => request<StageState>("GET", `/meetings/${meetingId}/stage`),
+  setStage: (meetingId: string, items: StageState["items"]) => request<StageState>("PUT", `/meetings/${meetingId}/stage`, { items }),
+  /** Остановить показ экрана участника; block — и запретить повторный показ до конца встречи (руководитель). */
+  stopShare: (meetingId: string, identity: string, block = false) => request<{ identity: string; stopped: boolean; blocked: boolean }>("POST", `/meetings/${meetingId}/moderation/stop-share`, { identity, block }),
+  allowShare: (meetingId: string, identity: string) => request<{ identity: string; blocked: boolean }>("POST", `/meetings/${meetingId}/moderation/allow-share`, { identity }),
+  stopCamera: (meetingId: string, identity: string) => request<{ identity: string; stopped: boolean }>("POST", `/meetings/${meetingId}/moderation/stop-camera`, { identity }),
   endMeeting: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/end`),
   meetings: (roomId?: string, offset = 0) => request<Meeting[]>("GET", `/meetings?limit=30&offset=${offset}${roomId ? `&room_id=${roomId}` : ""}`),
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),

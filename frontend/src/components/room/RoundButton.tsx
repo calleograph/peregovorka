@@ -10,7 +10,7 @@ export type Tone = "neutral" | "on" | "off" | "danger" | "live" | "rec";
  * `pressed` передаётся скринридеру (aria-pressed); подпись и подсказка всегда есть.
  */
 export default function RoundButton({ icon, label, title, tone = "neutral", pressed, disabled, onClick, pulse, children }: {
-  icon: IconName; label: string; title?: string; tone?: Tone; pressed?: boolean; disabled?: boolean; pulse?: boolean; onClick?: () => void; children?: ReactNode;
+  icon: IconName; label: string; title?: string; tone?: Tone; pressed?: boolean; disabled?: boolean; pulse?: boolean; onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void; children?: ReactNode;
 }) {
   return (
     <div className="rbtn-wrap">

@@ -10,7 +10,11 @@ import { applyLocalMute, loadLocalMuted, saveLocalMuted, toggleLocalMute } from 
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
 import DebugPanel from "../components/room/DebugPanel";
-import { ParticipantTile, ScreenStage, type PView, type TileActions } from "../components/room/Tiles";
+import { ParticipantTile, ScreenStage, moderationItems, pipSupported, toggleFullscreen, togglePip, type PView, type TileActions } from "../components/room/Tiles";
+import StageView from "../components/room/StageView";
+import { useContextMenu, type MenuItem } from "../components/ContextMenu";
+import { useMeetingStage, type StageSource } from "../stage/useMeetingStage";
+import { LAYOUTS, MAX_PINS, MOBILE_W, type StageItem } from "../stage/stageModel";
 import { Icon } from "../components/Icons";
 import RoundButton from "../components/room/RoundButton";
 import { ConfirmDialog } from "../components/Dialogs";
@@ -144,6 +148,20 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [welcome, setWelcome] = useState<string | null>(null);
   const lastMicToggle = useRef(0);
   const [connectTry, setConnectTry] = useState<{ attempt: number; max: number } | null>(null);
+  // Сцена встречи: раскладка отделена от медиа (LiveKit) и от модерации (сервер); см. stage/stageModel.ts
+  const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(`(max-width: ${MOBILE_W}px)`).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(`(max-width: ${MOBILE_W}px)`);
+    const on = () => setMobile(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const stageSources: StageSource[] = participants.map((p) => ({ identity: p.identity, name: p.name, local: p.local, screen: p.screen, speaking: p.speaking }));
+  const st = useMeetingStage({ meetingId, sources: stageSources, boardOpen, canViewBoard, mobile });
+  const [shareBlocked, setShareBlocked] = useState<Set<string>>(() => new Set());
+  const menu = useContextMenu();         // меню «Макет» и плитки доски (то же единое меню, что и у плиток участников)
+  useEffect(() => { if (st.boardItem) setBoardMounted(true); }, [st.boardItem]);     // ведущий показал доску всем — редактор нужен и тем, кто её не открывал
 
   const roomRef = useRef<LkRoom | null>(null);
   const audioBox = useRef<HTMLDivElement>(null);
@@ -718,6 +736,28 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     try { await api.kick(join.meeting_id, who.identity); setNotice({ kind: "ok", text: `${who.name} удалён из встречи.` }); }
     catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось удалить участника." }); }
   };
+  /** Модерация показа экрана и камеры: сервер проверяет права и то, что участник — из этой встречи; остальные показы продолжаются. */
+  const stopShare = async (who: PView, block: boolean) => {
+    if (!join) return;
+    try {
+      const r = await api.stopShare(join.meeting_id, who.identity, block);
+      if (block) setShareBlocked((cur) => new Set(cur).add(who.identity));
+      setNotice({ kind: "ok", text: `${r.stopped ? `Показ экрана остановлен: ${who.name}.` : `${who.name} сейчас не показывает экран.`}${block ? " Повторный показ запрещён до конца встречи." : ""}` });
+    } catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось остановить показ экрана." }); }
+  };
+  const allowShare = async (who: PView) => {
+    if (!join) return;
+    try {
+      await api.allowShare(join.meeting_id, who.identity);
+      setShareBlocked((cur) => { const n = new Set(cur); n.delete(who.identity); return n; });
+      setNotice({ kind: "ok", text: `${who.name} снова может показывать экран.` });
+    } catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось вернуть право показа." }); }
+  };
+  const stopCamera = async (who: PView) => {
+    if (!join) return;
+    try { const r = await api.stopCamera(join.meeting_id, who.identity); setNotice({ kind: "ok", text: r.stopped ? `Камера выключена: ${who.name}.` : `У участника ${who.name} камера уже выключена.` }); }
+    catch (e) { setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось выключить камеру." }); }
+  };
 
   /** Слово дали или забрали у НАС: права обновляются сразу (сервер уже изменил разрешения в звонке), забранное — выключаем. */
   const onMyFloor = useCallback((granted: boolean) => {
@@ -766,13 +806,42 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       setFloorIds((cur) => { const n = new Set(cur); if (e.granted) n.add(e.identity); else n.delete(e.identity); return n; });
       if (e.identity === infoRef.current?.identity) onMyFloor(e.granted);
     }
-  }, [loadFloor, onMyFloor]);
+    else if (e.type === "stage_changed") st.applyServer(e);
+    else if (e.type === "share_stopped" || e.type === "share_permission") {
+      const blocked = e.type === "share_stopped" ? e.blocked : !e.allowed;
+      if (e.type === "share_permission" || e.blocked) setShareBlocked((cur) => { const n = new Set(cur); if (blocked) n.add(e.identity); else n.delete(e.identity); return n; });
+      if (e.identity !== infoRef.current?.identity) return;
+      if (e.type === "share_stopped") {
+        // сервер звонков уже выключил дорожку; прекращаем захват у себя, чтобы браузер перестал показывать «идёт трансляция»
+        const lp = roomRef.current?.localParticipant;
+        if (lp?.getTrackPublication(Track.Source.ScreenShare)) { userStopRef.current = true; void lp.setScreenShareEnabled(false).catch(() => undefined).then(() => { stopScreenBookkeeping("user_button"); refresh(); }); }
+        if (e.blocked) setSources((s) => s.filter((x) => x !== "screen_share" && x !== "screen_share_audio"));
+        setNotice({ kind: "warn", text: `${e.by || "Руководитель"} остановил ваш показ экрана.${e.blocked ? " Повторный показ в этой встрече запрещён — его может разрешить руководитель." : " Его можно начать снова."}` });
+        reportEvent("screen_share_stopped", { meetingId: meetingRef.current ?? undefined, reason: e.blocked ? "moderator_block" : "moderator" });
+      } else {
+        const info = infoRef.current;
+        if (info && info.room.screen_share_allowed && !guestRef.current) setSources((s) => (s.includes("microphone") || !info.client.presentation ? [...new Set([...s, "screen_share", "screen_share_audio"])] : s));
+        setNotice({ kind: "ok", text: "Руководитель снова разрешил вам показывать экран." });
+      }
+    }
+    else if (e.type === "camera_stopped" && e.identity === infoRef.current?.identity) {
+      void roomRef.current?.localParticipant.setCameraEnabled(false).catch(() => undefined).then(refresh);
+      setNotice({ kind: "warn", text: `${e.by || "Руководитель"} выключил вашу камеру. Её можно включить снова кнопкой «Камера».` });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadFloor, onMyFloor, st.applyServer, refresh, stopScreenBookkeeping]);
 
   // после переподключения канала событий состояние слова могло измениться — читаем заново
   useEffect(() => {
     if (!join) return;
-    return bus.onResync(() => { if (meetingRef.current) loadFloor(meetingRef.current); });
-  }, [bus, join, loadFloor]);
+    return bus.onResync(() => {
+      const mid = meetingRef.current;
+      if (!mid) return;
+      loadFloor(mid);
+      api.getStage(mid).then(st.applyServer).catch(() => undefined);       // общую сцену могли сменить, пока канал событий был разорван
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bus, join, loadFloor, st.applyServer]);
   const leave = async () => { await teardown(true); if (guest) guest.onLeft("left"); else navigate("/"); };
   const endForAll = async () => {
     if (meetingRef.current) await api.endMeeting(meetingRef.current).catch((e) => setErr("general", (e as ApiError).message));
@@ -855,14 +924,82 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const toggleHand = () => { void api.hand(join.meeting_id, !myHand).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
   const lowerHand = (identity: string) => { void api.hand(join.meeting_id, false, identity).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
   const tileActions: TileActions | undefined = join.client.can_moderate || isLeader
-    ? { presentation, onMute: moderate, onFloor: isLeader ? giveFloor : undefined, onKick: isLeader ? removeParticipant : undefined, onLowerHand: isLeader ? (v) => lowerHand(v.identity) : undefined } : undefined;
+    ? { presentation, onMute: moderate, onFloor: isLeader ? giveFloor : undefined, onKick: isLeader ? removeParticipant : undefined, onLowerHand: isLeader ? (v) => lowerHand(v.identity) : undefined,
+        onStopCamera: (v) => void stopCamera(v), onStopShare: (v, block) => void stopShare(v, block), onAllowShare: (v) => void allowShare(v), shareBlocked } : undefined;
   const me = participants.find((p) => p.local);
-  const sharer = participants.find((p) => p.screen);
+
+  // ------------------------------------------------------------------ сцена: меню, отметки, общая сцена ведущего
+  const pv = new Map(viewParticipants.map((p) => [p.identity, p] as const));
+  const canSpot = !!join.client.can_moderate && !guest;
+  const pinSet = new Set(st.personal.pins);
+  const spotSet = new Set(st.spotIgnored ? [] : st.spot);
+  const mainSet = new Set(st.choice.main);
+  const titleOf = (k: string) => st.items.find((i) => i.key === k)?.title;
+  const spotTitles = st.spot.map(titleOf).filter(Boolean) as string[];
+  const cellOf = (k: string) => document.querySelector<HTMLElement>(`.st-cell[data-key="${CSS.escape(k)}"]`);
+  const spotlight = (keys: string[]) => {
+    void st.setSpot(keys).then(() => setNotice({ kind: "ok", text: keys.length ? `Показано всем: ${keys.map(titleOf).filter(Boolean).join(", ")}.` : "Общая сцена очищена: каждый видит свою раскладку." }))
+      .catch((e) => setNotice({ kind: "warn", text: (e as ApiError).message || "Не удалось изменить общую сцену." }));
+  };
+  const onlyMine = (k: string) => st.choice.reason === "pins" && st.choice.main.length === 1 && mainSet.has(k);
+  const openOrBack = (k: string) => (onlyMine(k) ? st.resetPins() : st.openLarge(k));
+  const closeBoard = () => { setBoardOpen(false); st.unpin("board"); if (st.spot.includes("board") && !st.spotIgnored) st.ignoreSpot(); };
+  /** Пункты сцены для любой плитки: локальные (видно только мне) — сверху, «для всех» (руководитель) — ниже. */
+  const stageMenu = (it: StageItem): MenuItem[] => {
+    const k = it.key, pinned = pinSet.has(k), spotted = st.spot.includes(k);
+    return [
+      { id: "large", label: onlyMine(k) ? "Вернуть общую раскладку" : "Открыть крупно", icon: "expand", onSelect: () => openOrBack(k) },
+      { id: "pin", label: pinned ? "Убрать с моей сцены" : "Закрепить для себя", icon: pinned ? "unpin" : "pin", hint: pinned ? undefined : `Видно только вам; до ${MAX_PINS} элементов`, onSelect: () => st.togglePin(k) },
+      { id: "fs", label: "Во весь экран", icon: "expand", hidden: it.type === "board", onSelect: () => toggleFullscreen(cellOf(k)?.firstElementChild) },
+      { id: "pip", label: "Картинка в картинке", icon: "pip", hidden: it.type === "board" || !pipSupported(), onSelect: () => togglePip(cellOf(k)?.querySelector("video")) },
+      { id: "spot", label: "Показать всем", icon: "spot", hidden: !canSpot || (spotted && st.spot.length === 1), onSelect: () => spotlight([k]) },
+      { id: "spotadd", label: "Добавить на общую сцену", icon: "spot", hidden: !canSpot || spotted || !st.spot.length || st.spot.length >= MAX_PINS, onSelect: () => spotlight([...st.spot, k]) },
+      { id: "spotdel", label: "Убрать с общей сцены", icon: "eyeOff", hidden: !canSpot || !spotted, onSelect: () => spotlight(st.spot.filter((x) => x !== k)) },
+    ];
+  };
+  const boardItems = (): MenuItem[] => [...stageMenu({ key: "board", type: "board", title: "Доска", since: 0 }), { id: "closeboard", label: "Скрыть доску", icon: "close", onSelect: closeBoard }];
+  const renderItem = (it: StageItem, s: { big: boolean }) => {
+    if (it.type === "board") {
+      return s.big ? null : (
+        <div className="board-tile" role="button" tabIndex={0} aria-label="Доска. Enter — открыть крупно" onClick={() => st.openLarge("board")} onContextMenu={menu.onContextMenu(boardItems)}
+             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); st.openLarge("board"); } }}>
+          <Icon name="board" size={28} /><span>Доска{boardNews ? " · обновлена" : ""}</span>
+        </div>
+      );
+    }
+    const p = pv.get(it.identity ?? "");
+    if (!p) return null;
+    if (it.type === "screen") {
+      const own: MenuItem[] = p.local ? [{ id: "ownstop", label: "Остановить мой показ", icon: "screenStop", onSelect: () => void toggle("screen") }] : [];
+      return <ScreenStage p={p} big={s.big} items={() => [...stageMenu(it), ...own, ...moderationItems(p, tileActions, "screen")]} onOpen={() => st.openLarge(it.key)} />;
+    }
+    return <ParticipantTile p={p} compact={!s.big && st.choice.mode !== "grid"} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} avatarUrl={avatars[p.identity]}
+                            localMuted={localMuted.has(p.identity)} onLocalMute={toggleLocalMuted} stageItems={() => stageMenu(it)} onOpen={() => openOrBack(it.key)}
+                            onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />;
+  };
+  const badges = (it: StageItem) => (
+    <>
+      {pinSet.has(it.key) && <span className="st-badge pin" title="Закреплено у вас (видно только вам)" role="img" aria-label="Закреплено у вас"><Icon name="pin" size={13} /></span>}
+      {spotSet.has(it.key) && <span className="st-badge spot" title={`Ведущий показывает всем${st.spotBy ? `: ${st.spotBy}` : ""}`}><Icon name="spot" size={13} /> Всем</span>}
+    </>
+  );
+  const layoutItems = (): MenuItem[] => [
+    ...LAYOUTS.map((l) => ({ id: `l-${l.id}`, label: `${st.personal.layout === l.id ? "✓ " : "  "}${l.label}`, hint: l.hint, onSelect: () => st.setLayout(l.id) })),
+    { id: "reset", label: "Сбросить мои закрепления", icon: "unpin" as const, hidden: !st.personal.pins.length, onSelect: st.resetPins },
+    { id: "follow", label: "Смотреть общую сцену", icon: "spot" as const, hidden: !(spotTitles.length && st.choice.reason !== "spotlight"), onSelect: st.follow },
+    { id: "clearspot", label: "Очистить общую сцену", icon: "eyeOff" as const, hidden: !canSpot || !st.spot.length, onSelect: () => spotlight([]) },
+  ];
+  const swipe = (dir: 1 | -1) => {
+    const keys = st.items.map((i) => i.key);
+    if (!keys.length) return;
+    const at = Math.max(0, keys.indexOf(st.choice.main[0] ?? keys[0]));
+    st.openLarge(keys[(at + dir + keys.length) % keys.length]);
+  };
+  const boardVisible = st.choice.main.includes("board") && st.choice.mode !== "grid";
   const connLabel = rejoin ? `Переподключение (попытка ${rejoin.attempt} из ${MAX_REJOIN})…`
     : stage !== "ready" ? "Подключение…"
     : state === ConnectionState.Connected ? "Подключено" : state === ConnectionState.Reconnecting ? "Переподключение…" : "Нет соединения";
   const connOk = stage === "ready" && !rejoin && state === ConnectionState.Connected;
-  const n = Math.min(participants.length, 9);
   const style = { "--tw": `${tCollapsed ? 44 : tw}px` } as CSSProperties;
 
   return (
@@ -916,32 +1053,49 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
 
         {stage !== "ready" && !ended && <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done} />}
 
-        {sharer && <ScreenStage key={sharer.identity} p={sharer} />}
-        {boardMounted && !ended && canViewBoard && (
-          <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardOpen} readOnly={!canBoard} fileBase={fileBaseName(room.name, new Date().toISOString())}
-                      onClose={() => setBoardOpen(false)} onRemoteChange={(by) => setBoardNews(by || "участник")} />
-        )}
-        {hands.length > 0 && (
-          <div className="hands-bar" role="status" aria-live="polite">
-            <span className="hands-title"><Icon name="hand" size={15} /> Подняли руку</span>
-            <ol>
-              {hands.map((h) => (
-                <li key={h.identity}><b>{h.name || participants.find((p) => p.identity === h.identity)?.name || "Участник"}</b>
-                  {(isLeader || join.client.can_moderate) && !guest && <button type="button" className="hands-x" onClick={() => lowerHand(h.identity)} aria-label="Опустить руку" title="Опустить руку">✕</button>}</li>
-              ))}
-            </ol>
-            <button type="button" className="btn mini ghost" onClick={() => { setHandSoundEnabled(!handSound); setHandSound(!handSound); }}
-                    title="Звуковое уведомление, когда кто-то поднимает руку" aria-pressed={handSound}>{handSound ? "🔔 Звук включён" : "🔕 Звук выключен"}</button>
-          </div>
-        )}
-        <div className={`tiles n${n} ${sharer || boardOpen ? "strip" : ""}`}>
-          {viewParticipants.map((p) => <ParticipantTile key={p.identity} p={p} compact={!!sharer} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} avatarUrl={avatars[p.identity]} localMuted={localMuted.has(p.identity)} onLocalMute={toggleLocalMuted} onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />)}
-          {participants.length === 0 && stage === "ready" && <div className="muted">Участники появятся здесь.</div>}
-        </div>
-
-        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
-        {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
-        {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
+        {/* Сцена: высота постоянна, всё всплывающее (руки, уведомления, баннер общей сцены) — поверх неё, поэтому панель управления не прыгает */}
+        <StageView items={st.items} choice={st.choice} rest={st.rest} mobile={mobile} render={renderItem} badges={badges} label="Сцена встречи"
+                   onSwipe={swipe} onEscape={st.personal.pins.length ? st.resetPins : undefined}
+                   board={boardMounted && !ended && canViewBoard ? () => (
+                     <Whiteboard meetingId={join.meeting_id} bus={bus} open={boardVisible} readOnly={!canBoard} fileBase={fileBaseName(room.name, new Date().toISOString())}
+                                 onClose={closeBoard} onRemoteChange={(by) => setBoardNews(by || "участник")}
+                                 headExtra={<>
+                                   <button className="btn mini" onClick={() => st.togglePin("board")} title="Закрепить доску на своей сцене (видно только вам)">{pinSet.has("board") ? "Открепить" : "Закрепить"}</button>
+                                   {canSpot && <button className="btn mini" onClick={() => spotlight(st.spot.includes("board") ? st.spot.filter((k) => k !== "board") : ["board"])}
+                                                       title="Показать доску крупно всем участникам">{st.spot.includes("board") ? "Убрать с общей сцены" : "Показать всем"}</button>}
+                                 </>} />
+                   ) : undefined}
+                   overlay={<>
+                     {hands.length > 0 && (
+                       <div className="hands-bar" role="status" aria-live="polite">
+                         <span className="hands-title"><Icon name="hand" size={15} /> Подняли руку</span>
+                         <ol>
+                           {hands.map((h) => (
+                             <li key={h.identity}><b>{h.name || participants.find((p) => p.identity === h.identity)?.name || "Участник"}</b>
+                               {(isLeader || join.client.can_moderate) && !guest && <button type="button" className="hands-x" onClick={() => lowerHand(h.identity)} aria-label="Опустить руку" title="Опустить руку">✕</button>}</li>
+                           ))}
+                         </ol>
+                         <button type="button" className="btn mini ghost" onClick={() => { setHandSoundEnabled(!handSound); setHandSound(!handSound); }}
+                                 title="Звуковое уведомление, когда кто-то поднимает руку" aria-pressed={handSound}>{handSound ? "🔔 Звук включён" : "🔕 Звук выключен"}</button>
+                       </div>
+                     )}
+                     {spotTitles.length > 0 && (
+                       <div className={`st-spotbar ${st.choice.reason === "spotlight" ? "following" : "own"}`} role="status">
+                         <Icon name="spot" size={14} /> <span>{st.spotBy || "Ведущий"} показывает всем: <b>{spotTitles.join(", ")}</b></span>
+                         {st.choice.reason === "spotlight"
+                           ? (canSpot ? <button className="btn mini ghost" onClick={() => spotlight([])}>Очистить</button>
+                                      : <button className="btn mini ghost" onClick={st.ignoreSpot} title="Смотреть свою раскладку; вернуться можно кнопкой «Макет»">Смотреть своё</button>)
+                           : <button className="btn mini" onClick={st.follow} title="Сбросить свои закрепления и смотреть то же, что все">Смотреть</button>}
+                       </div>
+                     )}
+                     {participants.length === 0 && stage === "ready" && <div className="st-empty muted">Участники появятся здесь.</div>}
+                     <div className="st-toasts">
+                       {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
+                       {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
+                       {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
+                     </div>
+                   </>} />
+        {menu.node}
         <div className="controls rbar" role="toolbar" aria-label="Управление встречей">
          <div className="rbar-main">
           <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
@@ -978,10 +1132,15 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             </Ctl>
           )}
           {canViewBoard && <Ctl onClose={() => undefined}>
-            <RoundButton icon="board" label={boardNews && !boardOpen ? "Доска · обновлена" : "Доска"} tone={boardOpen ? "on" : "neutral"} pressed={boardOpen} disabled={ended}
+            <RoundButton icon="board" label={boardNews && !boardVisible ? "Доска · обновлена" : "Доска"} tone={boardVisible ? "on" : "neutral"} pressed={boardVisible} disabled={ended}
                          title={canBoard ? "Общая доска для схем: рисуют участники, схема сохраняется со встречей" : "Общая доска: вы можете смотреть. Править — руководитель или тот, кому дали слово"}
-                         onClick={() => { setBoardMounted(true); setBoardOpen((o) => !o); setBoardNews(null); }} />
+                         onClick={() => { setBoardMounted(true); setBoardNews(null); if (boardVisible) closeBoard(); else { setBoardOpen(true); st.openLarge("board"); } }} />
           </Ctl>}
+          <Ctl onClose={() => undefined}>
+            <RoundButton icon="layout" label="Макет" tone={st.personal.layout !== "auto" || st.personal.pins.length ? "on" : "neutral"} disabled={ended}
+                         title="Раскладка сцены: авто, сетка, сцена, рядом; сбросить закрепления. Меняет вид только у вас"
+                         onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, layoutItems()); }} />
+          </Ctl>
           <Ctl onClose={() => undefined}>
             <RoundButton icon="hand" label={myHand ? "Опустить руку" : "Поднять руку"} tone={myHand ? "on" : "neutral"} pressed={myHand} disabled={ended}
                          title={myHand ? "Опустить руку" : "Поднять руку: все увидят отметку, а вы встанете в очередь"} onClick={toggleHand} />

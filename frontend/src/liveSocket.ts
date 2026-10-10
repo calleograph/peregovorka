@@ -1,5 +1,7 @@
 import type { ChatMessage, Segment, WhiteboardPatch } from "./api";
 
+/** Тип элемента общей сцены ведущего (camera | screen | board) — см. stage/stageModel.ts. */
+type StageKind = "camera" | "screen" | "board";
 export type LiveEvent =
   | { type: "segment"; segment: Segment }
   | { type: "participant_joined"; user_id?: string; guest_id?: string; participant_type?: string; display_name: string }
@@ -12,9 +14,13 @@ export type LiveEvent =
   | { type: "chat_typing"; id: string; name: string; typing: boolean }
   | { type: "hand_changed"; identity: string; name: string; raised: boolean; by_leader: boolean; queue: { identity: string; name: string; at: number }[] }
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
-  | { type: "whiteboard_saved"; seq: number; shapes: number; by: string };
+  | { type: "whiteboard_saved"; seq: number; shapes: number; by: string }
+  | { type: "stage_changed"; items: { type: StageKind; identity?: string }[]; by: string | null; at: number | null }
+  | { type: "share_stopped"; identity: string; by: string; blocked: boolean; was_sharing: boolean }
+  | { type: "share_permission"; identity: string; allowed: boolean; by: string }
+  | { type: "camera_stopped"; identity: string; by: string };
 
-export const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved"]);
+export const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved", "stage_changed", "share_stopped", "share_permission", "camera_stopped"]);
 // Каждый тип из LiveEvent обязан быть здесь, иначе событие молча отбрасывается (так «рука» и «печатает» годами не доходили до остальных; охрана — liveEvents.test.ts)
 
 /** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */

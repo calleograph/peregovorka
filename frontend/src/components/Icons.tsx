@@ -45,6 +45,13 @@ const PATHS: Record<string, ReactNode> = {
   expandAll: <><path d="m7 5.5 5 5 5-5M7 13.5l5 5 5-5" /></>,
   collapseAll: <><path d="m7 10.5 5-5 5 5M7 18.5l5-5 5 5" /></>,
   sliders: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
+  user: <><circle cx="12" cy="8.5" r="3.6" /><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6" /></>,
+  pin: <><path d="M9 4h6l-1 5 3 3v1.5H7V12l3-3-1-5ZM12 13.5V20" /></>,
+  unpin: <><path d="M9 4h6l-1 5 3 3v1.5H7V12l3-3-1-5ZM12 13.5V20M4 4l16 16" /></>,
+  layout: <><rect x="3.5" y="4" width="17" height="16" rx="2.4" /><path d="M3.5 14.5h17M9.2 14.5V20M14.8 14.5V20" /></>,
+  expand: <><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></>,
+  spot: <><circle cx="12" cy="12" r="3.2" /><path d="M12 3v2.6M12 18.4V21M3 12h2.6M18.4 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></>,
+  pip: <><rect x="3" y="5" width="18" height="14" rx="2.4" /><rect x="12" y="11.5" width="6.5" height="5" rx="1.2" /></>,
 };
 
 export type IconName = keyof typeof PATHS;

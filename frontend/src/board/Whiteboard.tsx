@@ -18,10 +18,12 @@ interface Props {
   onClose: () => void;
   /** Кто-то изменил схему, пока доска была закрыта. */
   onRemoteChange?: (by: string) => void;
+  /** Дополнительные кнопки в заголовке (например, «Показать всем» у руководителя). */
+  headExtra?: React.ReactNode;
 }
 
 /** Общая доска: один холст draw.io на всех участников встречи; правки синхронизируются, схема сохраняется вместе со встречей. */
-export default function Whiteboard({ meetingId, bus, open, readOnly = false, fileBase, onClose, onRemoteChange }: Props) {
+export default function Whiteboard({ meetingId, bus, open, readOnly = false, fileBase, onClose, onRemoteChange, headExtra }: Props) {
   const frame = useRef<FrameHandle>(null);
   const stage = useRef<HTMLElement>(null);
   const [full, setFull] = useState(false);
@@ -102,6 +104,7 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
             <button className="btn mini primary" onClick={() => void syncRef.current?.resync()}>Обновить схему</button>
           </>
         )}
+        {headExtra}
         <BoardExportMenu request={request} fileBase={fileBase} />
         <button className="btn mini" onClick={toggleFull} aria-pressed={full} title={full ? "Вернуть доску в окно (Esc)" : "Развернуть доску на весь экран"}>{full ? "⤡ Свернуть" : "⤢ На весь экран"}</button>
         <button className="btn mini" onClick={onClose} title="Скрыть доску — вы остаётесь в звонке, правки продолжат приходить">Скрыть доску</button>
