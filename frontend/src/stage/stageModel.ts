@@ -124,7 +124,7 @@ export interface Geometry {
  * Раскладка: все плитки — в одном контейнере с абсолютными координатами. Переход между режимами меняет только координаты, а не родителя элемента:
  * видео и окно доски не пересоздаются и не переподписываются. Лента прокручивается смещением `offset` (px), без отдельного прокручиваемого контейнера.
  */
-export function layoutStage(o: { main: string[]; rest: string[]; mode: "grid" | "stage" | "side"; w: number; h: number; offset?: number; gap?: number; mobile?: boolean }): Geometry {
+export function layoutStage(o: { main: string[]; rest: string[]; mode: "grid" | "stage" | "side"; w: number; h: number; offset?: number; gap?: number; mobile?: boolean; dense?: boolean }): Geometry {
   const gap = o.gap ?? (o.mobile ? 6 : 10);
   const rects: Record<string, Rect> = {};
   const hidden: string[] = [];
@@ -138,7 +138,7 @@ export function layoutStage(o: { main: string[]; rest: string[]; mode: "grid" | 
   }
   if (o.mobile) mode = "stage";
   const vertical = mode === "side" && w >= 760;
-  const stripSize = !rest.length ? 0 : vertical ? clamp(Math.round(w * 0.2), 170, 260) : o.mobile ? clamp(Math.round(h * 0.16), 64, 96) : clamp(Math.round(h * 0.17), 92, 150);
+  const stripSize = !rest.length ? 0 : vertical ? clamp(Math.round(w * 0.2), 170, 260) : o.dense ? clamp(Math.round(h * 0.1), 52, 68) : o.mobile ? clamp(Math.round(h * 0.16), 64, 96) : clamp(Math.round(h * 0.17), 92, 150);
   const mainBox: Rect = vertical ? { x: 0, y: 0, w: w - (stripSize ? stripSize + gap : 0), h } : { x: 0, y: 0, w, h: h - (stripSize ? stripSize + gap : 0) };
   gridRects(main.length, mainBox, gap).forEach((r, i) => { rects[main[i]] = r; });
   if (!rest.length) return { rects, hidden, strip: null };

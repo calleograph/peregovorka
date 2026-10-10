@@ -1,6 +1,6 @@
 """Ручная отправка материалов завершённой встречи: «Отправить материалы» → экран предварительного просмотра (получатели и документы) → подтверждение.
 
-Доступно руководителям комнаты и администраторам. Повторная отправка допускается и каждый раз пишется в аудит. SMTP-реквизиты здесь не видны.
+Доступно руководителям комнаты, организатору встречи и администраторам. Повторная отправка допускается и каждый раз пишется в аудит. SMTP-реквизиты здесь не видны.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ async def template_names(su: SessionUser = Depends(require_user), db: AsyncSessi
 async def _meeting(request: Request, db: AsyncSession, meeting_id: uuid.UUID, su: SessionUser) -> Meeting:
     meeting = await db.get(Meeting, meeting_id)
     # руководителю комнаты доступ к материалам её встреч не требует участия в них; остальным встреча не раскрывается
-    if meeting is None or not roles.can_manage_room(meeting.room, su):
+    if meeting is None or not (roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id):
         raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
     if meeting.ended_at is None:
         raise HTTPException(status_code=409, detail="Встреча ещё идёт — материалы можно отправить после её завершения")

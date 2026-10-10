@@ -130,7 +130,8 @@ async def meeting_avatars(meeting_id: uuid.UUID, request: Request, su: SessionUs
 async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
     out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
-    out.can_send_materials = roles.can_manage_room(m.room, su)
+    out.can_generate = can_edit_protocol(m, su)           # формировать документы и отправлять материалы: администратор, руководитель комнаты, организатор встречи
+    out.can_send_materials = out.can_generate
     return out
 
 
@@ -276,6 +277,8 @@ async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str
     """Инструкция по умолчанию для окна «Сформировать протокол» (общая + дополнения переговорки), план (какая модель, прогноз времени) и,
     для руководителей, список моделей для разового выбора (`llm` — выбранная модель: прогноз пересчитывается под неё)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Формировать документы и отправлять материалы могут администратор, руководитель комнаты и организатор встречи")
     ps = request.app.state.protocols
     can_override = roles.can_manage_room(meeting.room, su)
     try:
@@ -294,6 +297,8 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
     """Сформировать протокол/резюме. Инструкцию подтверждает пользователь (окно перед отправкой). Текст сначала
     обезличивается по API, затем уходит в LLM; выполняется в фоне — клиент опрашивает статус."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Формировать документы и отправлять материалы могут администратор, руководитель комнаты и организатор встречи")
     kind = body.get("kind", "protocol")
     instruction = body.get("instruction")
     if kind not in KINDS:

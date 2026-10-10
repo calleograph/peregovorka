@@ -53,13 +53,21 @@ async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
     maps = request.app.state.maps
     rec = await maps.refresh(db, await maps.get(db, meeting_id))
-    return _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
+    from .meetings import can_edit_protocol  # noqa: PLC0415
+
+    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
+    st["can_generate"] = can_edit_protocol(meeting, su)
+    return st
 
 
 @router.post("", status_code=202)
 async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Сформировать (или пересоздать) карту. Выполняется в фоне и в очереди: клиент опрашивает состояние."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    from .meetings import can_edit_protocol  # noqa: PLC0415
+
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Формировать документы и отправлять материалы могут администратор, руководитель комнаты и организатор встречи")
     if meeting.ended_at is None:
         raise HTTPException(status_code=409, detail="Карта разговора формируется после завершения встречи")
     ps = request.app.state.protocols
@@ -108,7 +116,9 @@ async def edit_topic(meeting_id: uuid.UUID, topic_id: str, request: Request, bod
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.edit_topic", target_type="meeting", target_id=str(meeting_id),
                       ip=client_ip(request), details={"topic_id": topic_id, "fields": sorted(patch)})
     await db.commit()
-    return _state(rec, meeting, await _plan(request, db, meeting), True)
+    st = _state(rec, meeting, await _plan(request, db, meeting), True)
+    st["can_generate"] = True
+    return st
 
 
 @router.post("/export", status_code=204)

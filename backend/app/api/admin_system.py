@@ -297,6 +297,36 @@ async def client_diagnostics(request: Request, su: SessionUser = Depends(require
     return {"events": ev, "metrics": mt, "lifecycle": lc}
 
 
+@router.get("/meetings/{meeting_id}/diagnostics")
+async def meeting_diagnostics(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Диагностика одной встречи (текущей или завершённой): события, фазы подключения и замеры качества, присланные браузерами именно этой встречи.
+    Источник — те же списки, что у «Диагностики клиентов» (последние события, хранятся сутки): для давно завершённой встречи данных может не остаться — это видно в ответе."""
+    import json as _json
+
+    meeting = await db.get(Meeting, meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Встреча не найдена")
+    mid = str(meeting.id)
+    r = request.app.state.redis
+
+    async def pick(key: str, count: int) -> list[dict]:
+        out = []
+        for raw in await r.lrange(key, 0, count - 1):
+            try:
+                item = _json.loads(raw)
+            except ValueError:
+                continue
+            if item.get("meeting_id") == mid:
+                out.append(item)
+        return out
+
+    events, metrics, lifecycle = await pick("clientdiag:events", 400), await pick("clientdiag:metrics", 400), await pick("clientdiag:lifecycle", 800)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.diagnostics_view", target_type="meeting", target_id=mid, ip=client_ip(request), details={})
+    await db.commit()
+    return {"meeting": {"id": mid, "room": meeting.livekit_room, "started_at": meeting.started_at, "ended_at": meeting.ended_at, "end_reason": meeting.end_reason},
+            "events": events, "metrics": metrics, "lifecycle": lifecycle, "retention_note": "События и замеры хранятся сутки, до 200–800 последних записей на все встречи сразу."}
+
+
 _host_stats = diagnostics.host_stats
 
 

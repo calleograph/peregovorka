@@ -99,9 +99,9 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
           {st.status !== "none" && st.updated_at && <span className="muted small">{new Date(st.updated_at).toLocaleString("ru-RU")}</span>}
           <span style={{ flex: 1 }} />
           {st.status === "ready" && <button className="btn" onClick={download} title="Один файл: открывается без сервера, внутри данные карты, стили и скрипт">Скачать HTML</button>}
-          <button className="btn primary" disabled={busy || working || !st.finished || !hasMaterials || !st.plan.ready} onClick={generate}
+          {(st.can_generate ?? true) && <button className="btn primary" disabled={busy || working || !st.finished || !hasMaterials || !st.plan.ready} onClick={generate}
                   title={!st.finished ? "Карта формируется после завершения встречи" : !hasMaterials ? "В стенограмме нет реплик" : !st.plan.ready ? st.plan.reason ?? "" : ""}>
-            {working ? "Формируется…" : st.status === "ready" || st.status === "failed" ? "Пересоздать" : "Сформировать карту"}</button>
+            {working ? "Формируется…" : st.status === "ready" || st.status === "failed" ? "Пересоздать" : "Сформировать карту"}</button>}
         </div>
         <p className="muted small" style={{ margin: "6px 0 0" }}>
           Темы встречи, их порядок и длительность, участники и ссылки на реплики. Карту строит {st.plan.model ? <b>{st.plan.model}</b> : "языковая модель"}

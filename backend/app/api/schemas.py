@@ -123,6 +123,7 @@ class MeetingOut(BaseModel):
     chat_messages: int = 0
     whiteboard_shapes: int = 0       # 0 — доска не использовалась
     guests: int = 0
+    can_generate: bool = False         # формировать протокол, резюме и карту: администратор, руководитель комнаты, организатор встречи
     can_send_materials: bool = False   # руководитель комнаты / администратор: «Отправить материалы» по почте
 
 

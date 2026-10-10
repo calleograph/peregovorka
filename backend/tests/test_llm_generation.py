@@ -179,7 +179,7 @@ def test_document_records_timing_model_and_generation_details(tmp_path, director
         configure(c)
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         pid = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "Коротко"}).json()["protocol_id"]
         _drain(c)
         got = c.get(f"/api/v1/meetings/{mid}/protocols/{pid}").json()
@@ -204,7 +204,7 @@ def test_truncated_answer_is_marked_and_counted(tmp_path, directory):
         configure(c)
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         pid = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"}).json()["protocol_id"]
         _drain(c)
         got = c.get(f"/api/v1/meetings/{mid}/protocols/{pid}").json()
@@ -222,7 +222,7 @@ def test_failed_attempt_keeps_model_and_time_and_is_counted_as_an_error(tmp_path
         configure(c)
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         pid = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"}).json()["protocol_id"]
         _drain(c)
         got = c.get(f"/api/v1/meetings/{mid}/protocols/{pid}").json()
@@ -282,7 +282,7 @@ def test_dialog_plan_shows_forecast_limit_and_one_time_model_only_to_managers(tm
                                                    "config": {"type": "openai_compatible", "base_url": "https://alt.example.local/v1", "model": "alt-model"}}).json()
         _room, mid = meeting_with_two(c)
         end_by_alice(c, mid)
-        login(c, "bob")
+        login(c, "alice")
         d = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction", params={"kind": "protocol"}).json()
         assert d["can_override"] is False and "llm_choices" not in d
         assert d["plan"]["forecast"]["basis"] == "estimate" and d["plan"]["forecast"]["text"] and d["plan"]["max_output_tokens"] == 7000

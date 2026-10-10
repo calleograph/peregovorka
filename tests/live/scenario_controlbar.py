@@ -14,6 +14,15 @@ GEOM = """(()=>{const bar=document.querySelector('.rbar');if(!bar)return null;co
    hasMain:!!bar.querySelector('.rbar-main'),hasEnd:!!bar.querySelector('.rbar-end'),pos:out}})()"""
 
 
+MORE_JS = """(async(label)=>{document.querySelector('button[aria-label="Ещё"]').click();await new Promise(r=>setTimeout(r,250));
+ const b=[...document.querySelectorAll('.ctx-menu .ctx-item')].find(x=>x.textContent.includes(label));if(!b){window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));return false}b.click();return true})"""
+
+
+async def more(c, label):
+    """Действия «Ещё»: запись, транскрибация и др. вынесены из панели в меню (0.12.0)."""
+    return await c.js(f"({MORE_JS})({json.dumps(label, ensure_ascii=False)})")
+
+
 def key_of(label: str) -> str:
     """Кнопка меняет подпись при смене состояния: сравниваем по порядку, а не по названию."""
     return label
@@ -43,7 +52,7 @@ async def main():
             S.check(f"{who}: все ячейки одной ширины (ритм сетки)", len(set(g0["cells"])) == 1, str(set(g0["cells"])))
         ga = await geom(A)
         gr = await geom(R)
-        S.check("у администратора есть «Выключить у всех» ВНУТРИ основного блока (не особняком)", "Выключить у всех" in gr["main"] and "Выключить у всех" not in gr["end"], str(gr["main"])[:200])
+        S.check("у администратора «Выключить у всех» — в меню «Ещё», панель не растёт", "Ещё" in gr["main"] and "Выключить у всех" not in gr["end"], str(gr["main"])[:200])
         S.check("«Завершить для всех» у администратора — в завершающей подгруппе вместе с «Выйти»", "Завершить для всех" in gr["end"])
         await R.shot("bar-admin-default"); await A.shot("bar-participant-default")
 
@@ -66,11 +75,11 @@ async def main():
         await R.shot("bar-admin-hand")
         await stable(A, "микрофон выкл → вкл", lambda: A.click_btn("Микрофон выкл.") or A.click_btn("Микрофон"), "участник")
         await stable(A, "камера", lambda: A.click_btn("Камера выкл.") or A.click_btn("Камера"), "участник")
-        await stable(R, "запись: начать", lambda: R.click_btn("Начать запись"), "администратор")
+        await stable(R, "запись: начать", lambda: more(R, "Начать запись"), "администратор")
         await R.shot("bar-admin-recording")
-        await stable(R, "запись: остановить", lambda: R.click_btn("Остановить запись"), "администратор")
-        await stable(R, "транскрибация: остановить", lambda: R.click_btn("Остановить транскрибацию"), "администратор")
-        await stable(R, "транскрибация: возобновить", lambda: R.click_btn("Возобновить транскрибацию"), "администратор")
+        await stable(R, "запись: остановить", lambda: more(R, "Остановить запись"), "администратор")
+        await stable(R, "транскрибация: остановить", lambda: more(R, "Остановить транскрибацию"), "администратор")
+        await stable(R, "транскрибация: возобновить", lambda: more(R, "Возобновить транскрибацию"), "администратор")
         # показ экрана: на стенде вместо экрана подставляется холст (см. README) — кнопка меняет подпись и «со звуком» скрывается
         await stable(A, "показ экрана: начать", lambda: A.click_btn("Показать экран"), "участник")
         await A.shot("bar-participant-screen")

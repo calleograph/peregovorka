@@ -197,8 +197,8 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                             placeholder="Например: фиксируй решения и сроки по проектам, не выделяй обсуждение погоды" />
                   <span className="help">Добавляется к общей инструкции организации и показывается в окне «Сформировать протокол» — участник видит и может изменить её перед отправкой.</span></label>
               </fieldset>
-              <h3 style={{ margin: "14px 0 4px" }}>Рассылка протоколов</h3>
-              <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} />
+              <h3 style={{ margin: "14px 0 4px" }}>Рассылка протокола участникам</h3>
+              <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} localModel={form.llm.mode === "local" || (form.llm.mode === "inherit" && room.llm_options?.system.provider === "local")} />
               <p className="help">Эти значения действуют для каждой встречи этой комнаты по умолчанию. Для конкретной встречи руководитель может изменить их кнопкой «Эта встреча» в комнате.</p>
             </div>
           )}

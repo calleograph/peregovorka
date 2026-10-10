@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, type AdminUser, type ApiError, type AuditRow, type Meeting, type RecordingRow } from "../../api";
 import MeetingAdminActions from "../../components/MeetingAdminActions";
 import { ConfirmDialog } from "../../components/Dialogs";
+import ClientDiagAdmin from "./ClientDiagAdmin";
 import { ListFooter, useInfinite } from "../../useInfinite";
 import { bytes, fmt } from "../../util";
 
@@ -41,6 +42,8 @@ export function MeetingsAdmin() {
   const [active, setActive] = useState(true);
   const [err, setErr] = useState("");
   const [forceEnd, setForceEnd] = useState<Meeting | null>(null);
+  const [diag, setDiag] = useState<Meeting | null>(null);
+  useEffect(() => { if (!diag) return; const prev = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = prev; }; }, [diag]);       // фон не прокручивается под окном
   const list = useInfinite<Meeting>(async (offset) => { const r = await api.admin.meetings(active ? true : undefined, offset); return { rows: r, more: r.length >= 50 }; }, [active]);
   // идущие встречи — короткий список: обновляем целиком; полная история не перезагружается (иначе прокрутка сбрасывалась бы)
   useEffect(() => { if (!active) return; const t = window.setInterval(list.reload, 10000); return () => window.clearInterval(t); }, [active, list.reload]);
@@ -58,6 +61,7 @@ export function MeetingsAdmin() {
             <td>{m.participants.filter((p) => p.online || m.ended_at).map((p) => p.display_name).join(", ")}</td>
             <td className="small muted">реплик {m.segments} · документов {m.protocols} · записей {m.recordings}</td>
             <td className="actions">
+              <button className="btn mini diag-btn" onClick={() => setDiag(m)} title="Диагностика встречи" aria-label={`Диагностика встречи: ${m.room_name}`}>Д</button>{" "}
               {!m.ended_at && <button className="btn mini ghost danger" onClick={() => setForceEnd(m)}>Завершить</button>}{" "}
               <Link className="btn mini" to={`/history/${m.id}`}>Открыть</Link>{" "}
               {m.ended_at && <MeetingAdminActions meeting={m} onChanged={list.reload} />}
@@ -65,6 +69,13 @@ export function MeetingsAdmin() {
           </tr>))}</tbody>
       </table></div>
       <ListFooter loading={list.loading} done={list.done} error={list.error} sentinel={list.sentinel} count={list.items.length} empty={active ? "Сейчас нет идущих встреч." : "Встреч пока не было."} />
+      {diag && (
+        <div className="diag-full" role="dialog" aria-modal="true" aria-label={`Диагностика встречи: ${diag.room_name}`} tabIndex={-1} ref={(el) => el?.focus()} onKeyDown={(e) => { if (e.key === "Escape") setDiag(null); }}>
+          <div className="row diag-head"><h2>Диагностика · {diag.room_name} · {fmt(diag.started_at)}{diag.ended_at ? "" : " · идёт"}</h2><div className="spacer" />
+            <button className="btn mini" onClick={() => setDiag(null)} aria-label="Закрыть диагностику">✕ Закрыть</button></div>
+          <div className="diag-body"><ClientDiagAdmin meetingId={diag.id} /></div>
+        </div>
+      )}
       {forceEnd && (
         <ConfirmDialog title="Завершить встречу принудительно?" confirmLabel="Завершить" onClose={() => setForceEnd(null)}
           body={<p>Встреча в «{forceEnd.room_name}» будет завершена, все участники отключены. Действие записывается в журнал аудита.</p>}

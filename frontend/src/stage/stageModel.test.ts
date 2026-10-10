@@ -107,6 +107,13 @@ describe("геометрия", () => {
     expect(g.strip).not.toBeNull();
     expect(Object.keys(g.rects)).toHaveLength(GRID_MAX + 4);
   });
+  it("«Развернуть доску»: лента участников узкая (≤ 68px), главному элементу остаётся почти вся высота", () => {
+    const g = layoutStage({ main: ["board"], rest: ["camera:a", "camera:b", "camera:c"], mode: "stage", w: 1366, h: 700, dense: true });
+    expect(g.strip!.h).toBeLessThanOrEqual(68);
+    expect(g.rects.board.h).toBeGreaterThanOrEqual(700 - 68 - 12);
+    const normal = layoutStage({ main: ["board"], rest: ["camera:a", "camera:b", "camera:c"], mode: "stage", w: 1366, h: 700 });
+    expect(g.rects.board.h).toBeGreaterThan(normal.rects.board.h);
+  });
   it("нулевой размер контейнера (вкладка скрыта) — пустая раскладка без ошибок", () => {
     expect(layoutStage({ main: ["a"], rest: ["b"], mode: "stage", w: 0, h: 0 }).rects).toEqual({});
   });

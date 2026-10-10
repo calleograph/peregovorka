@@ -14,16 +14,18 @@ const t = (ts: number) => new Date(ts * 1000).toLocaleTimeString("ru-RU");
 const n = (v: unknown, unit = "") => (typeof v === "number" ? `${Math.round(v * 10) / 10}${unit}` : "—");
 
 /** События и метрики, присланные браузерами участников: причины остановки показа экрана, ошибки устройств, качество связи. */
-export default function ClientDiagAdmin() {
+export default function ClientDiagAdmin({ meetingId }: { meetingId?: string } = {}) {
   const [events, setEvents] = useState<ClientEventRow[]>([]);
   const [metrics, setMetrics] = useState<ClientMetricRow[]>([]);
   const [lifecycle, setLifecycle] = useState<ClientEventRow[]>([]);
   const [err, setErr] = useState("");
-  const load = useCallback(() => api.admin.clientDiagnostics().then((d) => { setEvents(d.events); setMetrics(d.metrics); setLifecycle(d.lifecycle ?? []); setErr(""); }).catch((e) => setErr((e as ApiError).message)), []);
+  const [note, setNote] = useState("");
+  const load = useCallback(() => (meetingId ? api.admin.meetingDiagnostics(meetingId) : api.admin.clientDiagnostics()).then((d) => { setEvents(d.events); setMetrics(d.metrics); setLifecycle(d.lifecycle ?? []); setNote((d as { retention_note?: string }).retention_note ?? ""); setErr(""); }).catch((e) => setErr((e as ApiError).message)), []);
   useEffect(() => { void load(); const i = window.setInterval(load, 10000); return () => window.clearInterval(i); }, [load]);
   return (
     <section>
-      <div className="row"><h2>Диагностика клиентов</h2><div className="spacer" /><button className="btn" onClick={load}>Обновить</button></div>
+      <div className="row">{meetingId ? <h3 style={{ margin: 0 }}>Подключение, сигнализация, ICE/WebRTC, задержки и ошибки</h3> : <h2>Диагностика клиентов</h2>}<div className="spacer" /><button className="btn mini" onClick={load}>Обновить</button></div>
+      {meetingId && <p className="muted small">{note || "Данные браузеров участников этой встречи."}{events.length + metrics.length + lifecycle.length === 0 ? " Сведений об этой встрече нет: участники ещё не присылали данные, либо они уже удалены по сроку хранения." : ""}</p>}
       <p className="muted">События и замеры качества из браузеров участников (последние 200, хранятся сутки). Содержимого разговоров и секретов здесь нет. Помогает отличить проблемы сети и браузера от проблем сервера: например, причины остановки показа экрана, потери пакетов и FPS.</p>
       {err && <div className="alert error">{err}</div>}
       <h3>События</h3>

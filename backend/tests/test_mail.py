@@ -321,7 +321,7 @@ def test_manual_send_preview_confirm_audit_and_resend(client, fake_smtp):
     login(client, "root")
     audit = [a for a in client.get("/api/v1/admin/audit").json() if a["action"] == "meeting.materials.send"]
     assert len(audit) == 2
-    login(client, "alice")                                                       # обычный участник отправлять не может
+    login(client, "bob")                                                         # обычный участник (не организатор и не руководитель) отправлять не может
     assert client.get(f"/api/v1/meetings/{mid}/delivery").status_code in (403, 404)
     assert client.post(f"/api/v1/meetings/{mid}/delivery/send", json={"kinds": ["protocol"], "emails": ["alice@corp.test"]}).status_code in (403, 404)
 

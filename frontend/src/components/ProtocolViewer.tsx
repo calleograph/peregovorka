@@ -13,6 +13,8 @@ interface Props {
   isAdmin: boolean;
   onChanged: (p: ProtocolItem) => void;
   onRegenerate: (p: ProtocolItem) => void;
+  /** Формировать заново могут администратор, руководитель и организатор; остальные только читают. */
+  canGenerate?: boolean;
   onDeleted: (id: string) => void;
 }
 
@@ -20,7 +22,7 @@ const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summa
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["html", "Веб-страница (.html)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
 
 /** Просмотр протокола: отрисованный Markdown / исходник, правка вручную, копирование, скачивание, повторное формирование. */
-export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, onRegenerate, onDeleted }: Props) {
+export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, onRegenerate, onDeleted, canGenerate = true }: Props) {
   const [mode, setMode] = useState<"view" | "source" | "edit">("view");
   const [draft, setDraft] = useState(item.content ?? "");
   const [title, setTitle] = useState(item.title ?? "");
@@ -55,7 +57,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         <div className="alert error" role="alert">Не удалось сформировать: {item.error ?? "неизвестная ошибка"}</div>
         {generationLine(item) && <p className="muted small">{generationLine(item)}</p>}
         <GenerationInfo item={item} />
-        <div className="row"><button className="btn primary" onClick={() => onRegenerate(item)}>Сформировать заново</button>
+        <div className="row">{canGenerate && <button className="btn primary" onClick={() => onRegenerate(item)}>Сформировать заново</button>}
           {isAdmin && <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Удалить</button>}</div>
         {confirmDelete && <DeleteProtocol meetingId={meetingId} id={item.id} onDeleted={onDeleted} onClose={() => setConfirmDelete(false)} />}
       </div>
@@ -96,7 +98,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
           {FORMATS.map(([f, l]) => <a key={f} href={api.protocolExportUrl(meetingId, item.id, f)} download>{l}</a>)}
         </Menu>
         {mode !== "edit" && item.can_edit && <button className="btn" onClick={() => { setDraft(content); setMode("edit"); }}>Редактировать</button>}
-        <button className="btn" onClick={() => onRegenerate(item)} title="Открыть окно инструкции и создать новую версию">Сформировать заново</button>
+        {canGenerate && <button className="btn" onClick={() => onRegenerate(item)} title="Открыть окно инструкции и создать новую версию">Сформировать заново</button>}
         {isAdmin && <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Удалить</button>}
       </div>
       {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}

@@ -9,7 +9,7 @@ const LABELS: Record<Kind, string> = { audioinput: "Микрофон", audiooutp
 const ACTION: Record<Kind, "mic" | "camera" | "device"> = { audioinput: "mic", videoinput: "camera", audiooutput: "device" };
 
 /** Выбор устройств во время встречи: микрофон, динамики (где поддерживается), камера. Ошибка показывается у самого списка. */
-export default function DevicePanel({ room, prefs, onPrefs }: { room: LkRoom; prefs?: MicPrefs; onPrefs?: (p: MicPrefs, changed: string) => void }) {
+export default function DevicePanel({ room, prefs, onPrefs, inline = false }: { room: LkRoom; prefs?: MicPrefs; onPrefs?: (p: MicPrefs, changed: string) => void; inline?: boolean }) {
   const [devices, setDevices] = useState<Record<Kind, MediaDeviceInfo[]>>({ audioinput: [], audiooutput: [], videoinput: [] });
   const [active, setActive] = useState<Partial<Record<Kind, string>>>({});
   const [errs, setErrs] = useState<Partial<Record<Kind, string>>>({});
@@ -38,9 +38,10 @@ export default function DevicePanel({ room, prefs, onPrefs }: { room: LkRoom; pr
   };
 
   const kinds = (Object.keys(LABELS) as Kind[]).filter((k) => devices[k].length > 0 && (k !== "audiooutput" || "setSinkId" in HTMLMediaElement.prototype));
+  const Wrap = inline ? "div" : "details";
   return (
-    <details className="devices">
-      <summary>Устройства и микрофон</summary>
+    <Wrap className="devices">
+      {!inline && <summary>Устройства и микрофон</summary>}
       <div className="cols">
         {kinds.map((k) => (
           <label key={k}>{LABELS[k]}
@@ -64,6 +65,6 @@ export default function DevicePanel({ room, prefs, onPrefs }: { room: LkRoom; pr
             <span className="check-body">Освобождать микрофон, когда он выключен<span className="help">Выключенный микрофон полностью отпускается, и им могут пользоваться другие программы. Включение чуть медленнее; на Bluetooth-гарнитурах звук может на мгновение переключаться. Применяется при следующем входе в комнату.</span></span></label>
         </fieldset>
       )}
-    </details>
+    </Wrap>
   );
 }

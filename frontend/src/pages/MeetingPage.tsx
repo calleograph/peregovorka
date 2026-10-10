@@ -137,6 +137,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const finished = !!meeting.ended_at;
   const chatCount = meeting.chat_messages ?? 0;
   const boardUsed = (meeting.whiteboard_shapes ?? 0) > 0;
+  const canGen = isAdmin || !!meeting?.can_generate;      // формировать документы: администратор, руководитель комнаты, организатор (сервер проверяет так же)
   const canMake = finished && (segments.length > 0 || chatCount > 0 || boardUsed); // протокол строится по речи, чату и схеме вместе
 
   return (
@@ -151,9 +152,9 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       {finished && isAdmin && <div className="alert info small">Участники видят материалы, пока открыта эта страница; после выхода доступ закрывается (если не разрешено иначе). Вы как администратор видите всё всегда.</div>}
 
       <div className="row" style={{ margin: "10px 0" }}>
-        <button className="btn primary" disabled={!canMake} onClick={() => setDialog({ kind: "protocol" })}
+        {canGen && <><button className="btn primary" disabled={!canMake} onClick={() => setDialog({ kind: "protocol" })}
                 title={!finished ? "Протокол формируется после завершения встречи" : !canMake ? "Нет ни реплик, ни чата, ни схемы" : "Окно с инструкцией для модели. Материалы: стенограмма, чат и схема с доски"}>Сформировать протокол</button>
-        <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button>
+        <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button></>}
         <Menu label="Ещё" title="Скачать стенограмму, отправить материалы, действия администратора">
           <span className="menu-h">Скачать стенограмму</span>
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
@@ -188,7 +189,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           <div style={{ minWidth: 0 }}>
             {opened ? <ProtocolViewer key={opened.id} meetingId={meetingId} item={opened} isAdmin={isAdmin}
                 onChanged={(p) => { setOpened(p); void loadProtocols(); }} onDeleted={afterDelete}
-                onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
+                canGenerate={canGen} onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
               : <div className="card muted">Выберите документ слева.</div>}
           </div>
         </div>

@@ -11,8 +11,10 @@ const FLIP_MS = 200;
  * приёмом FLIP (transform, 200 мс) и отключается при «уменьшении движения» в системе. Лента прокручивается колесом и кнопками без
  * прокручиваемого контейнера; ушедшие за край плитки скрываются (visibility) — адаптивный поток LiveKit перестаёт их грузить.
  */
-export default function StageView({ items, choice, rest, mobile, render, badges, board, overlay, onSwipe, onEscape, label }: {
+export default function StageView({ items, choice, rest, mobile, dense = false, render, badges, board, overlay, onSwipe, onEscape, label }: {
   items: StageItem[]; choice: Choice; rest: string[]; mobile: boolean;
+  /** Узкая лента участников (режим «Развернуть доску»): главному элементу остаётся почти вся высота. */
+  dense?: boolean;
   render: (it: StageItem, s: CellState) => ReactNode;
   badges?: (it: StageItem) => ReactNode;
   /** Окно доски: стоит на месте крупной плитки «доска», иначе спрятано (но не размонтировано — прогретый редактор не грузится заново). */
@@ -33,12 +35,13 @@ export default function StageView({ items, choice, rest, mobile, render, badges,
     if (!el) return;
     const measure = () => setSize((s) => (s.w === el.clientWidth && s.h === el.clientHeight ? s : { w: el.clientWidth, h: el.clientHeight }));
     measure();
-    const ro = new ResizeObserver(measure);
+    let raf = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); });       // не в самом колбэке: иначе «ResizeObserver loop completed with undelivered notifications»
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
   }, []);
 
-  const geo = useMemo(() => layoutStage({ main: choice.main, rest, mode: choice.mode, w: size.w, h: size.h, offset, mobile }), [choice, rest, size, offset, mobile]);
+  const geo = useMemo(() => layoutStage({ main: choice.main, rest, mode: choice.mode, w: size.w, h: size.h, offset, mobile, dense }), [choice, rest, size, offset, mobile, dense]);
   const max = geo.strip?.max ?? 0;
   useEffect(() => { if (offset > max) setOffset(max); }, [offset, max]);
   const hidden = useMemo(() => new Set(geo.hidden), [geo]);

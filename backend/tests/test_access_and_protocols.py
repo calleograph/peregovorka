@@ -129,7 +129,7 @@ def test_participant_formats_protocol_with_own_instruction_edits_and_exports(tmp
         _room, mid = meeting_with_two(c, protocol_instructions="ТОЛЬКО ДЛЯ ЭТОЙ КОМНАТЫ")
         end_by_alice(c, mid)
 
-        login(c, "bob")  # обычный участник, не администратор
+        login(c, "alice")  # организатор встречи (начала её), не администратор; обычный участник документы не формирует
         d = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction", params={"kind": "protocol"}).json()["instruction"]
         assert "ОБЩАЯ ИНСТРУКЦИЯ ОРГАНИЗАЦИИ" in d and "ТОЛЬКО ДЛЯ ЭТОЙ КОМНАТЫ" in d
         r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "МОЯ ИНСТРУКЦИЯ: только решения"})
@@ -144,6 +144,7 @@ def test_participant_formats_protocol_with_own_instruction_edits_and_exports(tmp
 
         # ручная правка и повторная генерация с другой инструкцией
         # править готовый документ обычному участнику нельзя (он контролируемый): это может администратор, руководитель комнаты или организатор встречи
+        login(c, "bob")          # обычный участник: не организатор и не руководитель
         denied = c.patch(f"/api/v1/meetings/{mid}/protocols/{pid}", json={"content": "# Подмена"})
         assert denied.status_code == 403 and c.get(f"/api/v1/meetings/{mid}/protocols/{pid}").json()["can_edit"] is False
         assert all(p["can_edit"] is False for p in c.get(f"/api/v1/meetings/{mid}/protocols").json())
@@ -151,7 +152,7 @@ def test_participant_formats_protocol_with_own_instruction_edits_and_exports(tmp
         e = c.patch(f"/api/v1/meetings/{mid}/protocols/{pid}", json={"content": "# Мой протокол\n\n- пункт", "title": "Бюджет"})
         assert e.status_code == 200 and e.json()["edited_by"] == "Root Admin" and e.json()["title"] == "Бюджет" and e.json()["can_edit"] is True
         assert "protocol.edit" in [a["action"] for a in c.get("/api/v1/admin/audit").json()]
-        login(c, "bob")
+        login(c, "alice")
         r2 = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "Одна строка"})
         _drain(c)
         items = c.get(f"/api/v1/meetings/{mid}/protocols").json()

@@ -12,7 +12,7 @@ export const SOURCE_LABEL: Record<string, string> = { leader: "руководи�
 export const PROBLEM_LABEL: Record<string, string> = { no_email: "в каталоге нет адреса электронной почты", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
-export const emptySpec = (): MailDeliverySpec => ({ enabled: false, archive: false, materials: ["protocol", "summary"], recipients: { leaders: true, participants: true, users: [], emails: [] } });
+export const emptySpec = (): MailDeliverySpec => ({ enabled: false, archive: false, materials: ["protocol"], recipients: { leaders: false, participants: true, users: [], emails: [] } });
 
 /** Таблица получателей с пометками: у кого нет адреса или он запрещён политикой — видно сразу, а не «молчаливой ошибкой». */
 export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRecipient[]; selected?: Set<string>; onToggle?: (email: string) => void }) {
@@ -34,7 +34,7 @@ export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRec
  * «Уведомления и доставка материалов» для руководителя комнаты: что отправлять после встречи и кому. Реквизиты почтового сервера здесь не видны и не меняются —
  * это настройка администратора системы.
  */
-export default function DeliveryEditor({ roomId, spec, onChange }: { roomId: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void }) {
+export default function DeliveryEditor({ roomId, spec, onChange, localModel = false }: { roomId: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void; localModel?: boolean }) {
   const [emailsText, setEmailsText] = useState(spec.recipients.emails.join("\n"));
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<DirHit[]>([]);
@@ -68,7 +68,8 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId: str
   return (
     <div role="tabpanel">
       <label className="check"><input type="checkbox" checked={spec.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-        <span className="check-body">Автоматически отправлять материалы после завершения встречи<span className="help">Письма уходят выбранным получателям один раз после каждой встречи. Вручную — кнопка «Отправить материалы» на странице завершённой встречи.</span></span></label>
+        <span className="check-body">Автоматически отправлять протокол участникам после его формирования<span className="help">После завершения встречи система формирует протокол и, когда он готов, один раз отправляет его на почту всем, кто был на встрече и у кого в профиле указан адрес. Повторяющиеся адреса отбрасываются, гостям без подтверждённого адреса письма не уходят, пустой или неготовый документ не отправляется. Выключено — вручную: «Отправить материалы» на странице встречи (организатор или руководитель).</span></span></label>
+      {spec.enabled && localModel && <div className="alert warn" role="status">Протокол этой комнаты формирует встроенная локальная модель. Она небольшая и может ошибаться: документ уйдёт участникам <b>без предварительной проверки человеком</b>. Для важных встреч лучше отправлять вручную после просмотра.</div>}
 
       <fieldset className="group"><legend>Что отправлять</legend>
         {MATERIAL_KINDS.map((m) => (

@@ -138,7 +138,7 @@ export interface Meeting {
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
   /** Сообщений в чате встречи; доска «использовалась», если whiteboard_shapes > 0. */
-  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean;
+  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean; can_generate?: boolean;
 }
 export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
@@ -147,7 +147,7 @@ export interface Segment {
 /** Карта разговора: ответ сервера (данные карты — проверенный JSON, показывает окно /mapview). */
 export interface MapState {
   status: "none" | "pending" | "running" | "ready" | "failed";
-  finished: boolean; can_edit: boolean;
+  finished: boolean; can_edit: boolean; can_generate?: boolean;
   plan: { ready: boolean; reason: string | null; model: string | null; profile: string; local: boolean; source: string };
   categories: { id: string; label: string }[];
   data?: unknown; meta?: Record<string, unknown> | null; error?: string | null; created_by?: string | null; updated_at?: string;
@@ -776,6 +776,7 @@ export const api = {
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
+    meetingDiagnostics: (meetingId: string) => request<{ meeting: { id: string; room: string; started_at: string; ended_at: string | null; end_reason: string | null }; events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[]; retention_note: string }>("GET", `/admin/meetings/${meetingId}/diagnostics`),
     clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[] }>("GET", "/admin/client-diagnostics"),
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
     asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),

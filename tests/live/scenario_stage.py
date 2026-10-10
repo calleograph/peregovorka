@@ -45,8 +45,8 @@ def more_js(key: str) -> str:
 
 
 def layout_js(label: str) -> str:
-    """«Макет» → пункт; время от выбора пункта до второго кадра после перестройки."""
-    return f"""(async()=>{{document.querySelector('button[aria-label="Макет"]').click();await new Promise(r=>setTimeout(r,150));
+    """«Вид» → пункт; время от выбора пункта до второго кадра после перестройки."""
+    return f"""(async()=>{{document.querySelector('button[aria-label="Вид"]').click();await new Promise(r=>setTimeout(r,150));
   const b=[...document.querySelectorAll('.ctx-menu .ctx-item')].find(x=>x.textContent.trim().replace(/^✓\\s*/,'')==={json.dumps(label)});if(!b)return -1;
   const t0=performance.now();b.click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return Math.round((performance.now()-t0)*10)/10}})()"""
 
@@ -108,12 +108,12 @@ async def main():
         S.check("6. у C декодируются видеокадры", s["vin"] > 20, str(s))
         # «⋯» даёт те же пункты, что и правая кнопка
         menu = await C.js(more_js(bCam))
-        S.check("меню «⋯» на плитке участника — те же пункты (закрепить, крупно, заглушить для себя)", bool(menu) and "Закрепить для себя" in menu and "Открыть крупно" in menu and "Заглушить для себя" in menu, str(menu))
+        S.check("меню «⋯» на плитке участника — те же пункты (закрепить, крупно, заглушить для себя)", bool(menu) and "Закрепить у себя" in menu and "Открыть крупно" in menu and "Заглушить для себя" in menu, str(menu))
         S.check("у наблюдателя нет пунктов модерации и «Показать всем»", bool(menu) and not any(x in menu for x in ("Показать всем", "Выключить камеру", "Удалить из встречи")), str(menu))
 
         # 7. C закрепляет B для себя
         await mark_videos(C)
-        S.check("7. C: «Закрепить для себя» на камере B", await C.js(ctx_js(bCam, "Закрепить для себя")) == "ok")
+        S.check("7. C: «Закрепить у себя» на камере B", await C.js(ctx_js(bCam, "Закрепить у себя")) == "ok")
         await asyncio.sleep(0.6)
         v = await view(C)
         S.check("7. у C крупно камера B (личное закрепление)", v and v["main"] == bCam and v["reason"] == "pins", str(v))
@@ -145,7 +145,7 @@ async def main():
             perf["layout_ms"][lay] = await C.js(layout_js(lay))
             await asyncio.sleep(0.5)
             sane = await C.js(SANE)
-            S.check(f"«Макет» → {lay}: раскладка без перекрытий и выходов за край", not sane["bad"], str(sane))
+            S.check(f"«Вид» → {lay}: раскладка без перекрытий и выходов за край", not sane["bad"], str(sane))
         kept = await videos_kept(C)
         S.check("смена четырёх раскладок: ни одного нового <video>, srcObject не переназначался", kept["fresh"] == 0 and kept["srcSets"] == 0, str(kept))
         await C.shot("09-own-choice")
@@ -225,7 +225,7 @@ async def main():
         dev_segment(mid, ident, f"Реплика стенограммы {S.RUN_ID}")
         S.check("17. стенограмма: реплика доходит до C во время показа экрана", await C.wait_for(f"document.body.innerText.includes('Реплика стенограммы {S.RUN_ID}')", 12))
         # очистить общую сцену
-        S.check("A: «Макет» → «Очистить общую сцену»", await A.js("""(async()=>{document.querySelector('button[aria-label="Макет"]').click();await new Promise(r=>setTimeout(r,150));
+        S.check("A: «Вид» → «Очистить общую сцену»", await A.js("""(async()=>{document.querySelector('button[aria-label="Вид"]').click();await new Promise(r=>setTimeout(r,150));
           const b=[...document.querySelectorAll('.ctx-menu .ctx-item')].find(x=>x.textContent.trim()==='Очистить общую сцену');if(!b)return false;b.click();return true})()"""))
         S.check("после очистки у B снова своя раскладка", await B.wait_for("document.querySelector('.st-view')?.dataset.reason!=='spotlight' && !document.querySelector('.st-spotbar')", 10), str(await view(B)))
         # телефон: один главный элемент и лента
