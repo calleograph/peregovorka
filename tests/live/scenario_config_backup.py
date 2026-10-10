@@ -25,7 +25,9 @@ class Api:
 
 
 def restart():
-    subprocess.run(["pwsh", "-NoProfile", "-File", RESTART], check=True, capture_output=True)
+    """Новый чистый сервер: скрипт перезапуска запускается без каналов (иначе поднятый им backend наследует их и вызов не возвращается)."""
+    subprocess.Popen(["pwsh", "-NoProfile", "-File", RESTART, "-Clean"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(8)
 
 
 async def open_page(label, port, dl):
@@ -35,8 +37,9 @@ async def open_page(label, port, dl):
     await c.send("Page.setDownloadBehavior", behavior="allow", downloadPath=dl)
     await c.goto("/admin", 3)
     await c.js("window.confirm = () => true")                       # подтверждение применения — внутри страницы; в headless диалог не нужен
-    await c.js("[...document.querySelectorAll('.nav-group-title, .nav-group > button')].forEach(b=>{if(/Сервер/.test(b.textContent)) b.click()})")
-    await asyncio.sleep(0.5)
+    await c.wait_for("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Сервер')", 15)
+    await c.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Сервер')?.click()")
+    await c.wait_for("[...document.querySelectorAll('button')].some(b=>b.textContent.trim().startsWith('Резервная копия конфигурации'))", 10)
     await c.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim().startsWith('Резервная копия конфигурации'))?.click()")
     ok = await c.wait_for("!!document.querySelector('[aria-label=\"Резервная копия конфигурации\"]')", 10)
     return c, ok
@@ -50,9 +53,9 @@ async def main():
     S.check("сервер А: настройки языковой модели сохранены", "_status" not in r, str(r))
     root.call("POST", "/admin/storages", {"name": "Файловый сервер", "kind": "smb", "config": {"smb_server": "files.old-corp.test", "smb_share": "rec", "smb_username": "svc"}, "secret": "SMB-LIVE-PASS"})
     rooms = {x["slug"]: x for x in root.call("GET", "/rooms")}
-    A, ok = await open_page("CFG-A", 9641, dl)
+    A, ok = await open_page("CFG-A", 9691, dl)
     S.check("раздел «Сервер → Резервная копия конфигурации» открывается", ok)
-    S.check("перед скачиванием видно, что входит и что нет", await A.js("document.body.innerText.includes('Что войдёт в архив и что нет')"))
+    S.check("перед скачиванием видно, что входит и что нет", await A.wait_for("document.body.innerText.includes('Что войдёт в архив и что нет')", 15))
     await A.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Скачать конфигурацию').click()")
     await asyncio.sleep(0.4)
     await A.js("(()=>{const i=document.querySelector('input[type=password]');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'неверный');i.dispatchEvent(new Event('input',{bubbles:true}))})()")
@@ -89,7 +92,7 @@ async def main():
             time.sleep(1)
     root2 = Api("root", "root-pass")
     S.check("сервер Б чистый: настроек А нет", root2.call("GET", "/admin/settings/llm").get("base_url") in (None, ""), str(root2.call("GET", "/admin/settings/llm"))[:120])
-    Bp, ok = await open_page("CFG-B", 9642, dl)
+    Bp, ok = await open_page("CFG-B", 9692, dl)
     S.check("на сервере Б раздел открывается", ok)
     await Bp.send("DOM.enable")
     doc = await Bp.send("DOM.getDocument", depth=-1)
@@ -102,14 +105,16 @@ async def main():
     await Bp.js("(()=>{const i=[...document.querySelectorAll('input')].find(x=>x.placeholder&&x.placeholder.includes('xxxx'));const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'" + pw + "');i.dispatchEvent(new Event('input',{bubbles:true}))})()")
     await Bp.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Проверить архив').click()")
     S.check("предпросмотр: что будет восстановлено и предупреждения о привязке к старому серверу", await Bp.wait_for("document.body.innerText.includes('Что будет восстановлено') && document.body.innerText.includes('привязанные к старому серверу')", 20))
-    S.check("в предпросмотре виден адрес старого сервера, а сам секрет — нет", "old-corp" in await Bp.js("document.body.innerText") and "LLM-KEY-LIVE" not in await Bp.js("document.body.innerText"))
+    body_text = await Bp.js("document.body.textContent")
+    S.check("в предпросмотре виден адрес старого сервера, а сам секрет — нет", "old-corp" in body_text and "LLM-KEY-LIVE" not in body_text and "SMB-LIVE-PASS" not in body_text)
     await Bp.shot("config-preview")
     S.check("«Применить» недоступно без подтверждения предупреждений и пароля администратора", await Bp.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Применить конфигурацию').disabled"))
     await Bp.js("[...document.querySelectorAll('input[type=checkbox]')].find(c=>c.parentElement.innerText.includes('прочитал')).click()")
     await Bp.js("(()=>{const i=[...document.querySelectorAll('input[type=password]')].pop();const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'root-pass');i.dispatchEvent(new Event('input',{bubbles:true}))})()")
     await asyncio.sleep(0.3)
     await Bp.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Применить конфигурацию').click()")
-    S.check("конфигурация применена, показан отчёт", await Bp.wait_for("document.body.innerText.includes('Конфигурация применена')", 60))
+    applied = await Bp.wait_for("document.body.innerText.includes('Конфигурация применена') || !!document.querySelector('.alert.error')", 60)
+    S.check("конфигурация применена, показан отчёт", applied and "Конфигурация применена" in await Bp.js("document.body.innerText"), str(await Bp.js("[...document.querySelectorAll('.alert.error')].map(e=>e.innerText).join(' | ')")))
     await Bp.shot("config-report")
     S.check("отчёт честно показывает, что хранилище старого сервера не отвечает", "требует внимания" in await Bp.js("document.body.innerText"))
     llm = root2.call("GET", "/admin/settings/llm")
