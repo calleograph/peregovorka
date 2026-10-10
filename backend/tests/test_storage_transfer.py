@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -20,8 +22,28 @@ from .conftest import login, make_settings, put_settings, running_app
 from .test_meeting_media import _meeting_with_recordings, needs_ffmpeg
 
 
-class Crash(BaseException):
-    """«Падение процесса»: не перехватывается обычными обработчиками, задание остаётся в состоянии «выполняется»."""
+class Gate:
+    """«Падение процесса» в заданной точке: поток доходит до ворот и ждёт, тест отменяет задачу переноса (как будто процесс умер: коммита не будет,
+    задание остаётся в состоянии «выполняется»), затем ворота открываются, чтобы поток завершился."""
+
+    def __init__(self):
+        self.reached, self.release, self.armed = threading.Event(), threading.Event(), True
+
+    def hit(self):
+        if self.armed:
+            self.armed = False
+            self.reached.set()
+            self.release.wait(15)
+
+
+def crash(c, job_id: str, gate: Gate) -> None:
+    import uuid
+
+    fut = c.portal.start_task_soon(lambda: svc(c).process(uuid.UUID(job_id)))
+    assert gate.reached.wait(20), "задание не дошло до заданной точки"
+    fut.cancel()
+    gate.release.set()
+    time.sleep(0.5)
 
 
 @pytest.fixture(autouse=True)
@@ -238,21 +260,22 @@ def test_crash_in_the_middle_of_copying_leaves_the_source_and_the_job_resumes(tm
     s = make_settings(tmp_path, meeting_mix_enabled=False)
     with running_app(s, directory) as c:
         mid, fs, _ = world(c, s)
-        real = LocalStorage.copy_in
+        real, gate = LocalStorage.copy_in, Gate()
 
         def torn(self, rel, src):
+            if not gate.armed:
+                return real(self, rel, src)
             full = self._full(rel)
             full.parent.mkdir(parents=True, exist_ok=True)
             full.with_name(full.name + ".part.tmp").write_bytes(Path(src).read_bytes()[:100])      # недокопированный файл
-            raise Crash()
+            gate.hit()
+            raise StorageError("обрыв")
 
         monkeypatch.setattr(LocalStorage, "copy_in", torn)
         job_id = start(c, "to_external")
-        with pytest.raises(Crash):
-            process(c, job_id, sweep=False)
+        crash(c, job_id, gate)
         assert {r.export_status for r in recs(c)} == {"local"} and len(local_files(s)) == 2, "источник цел, база указывает на него"
         fixed(c, s)
-        monkeypatch.setattr(LocalStorage, "copy_in", real)
         restart(c)
         done = process(c, job_id)
         assert done["state"] == "done" and done["done"] == 2
@@ -264,19 +287,18 @@ def test_crash_after_copy_but_before_switching_the_db_keeps_both_and_resume_fini
     s = make_settings(tmp_path, meeting_mix_enabled=False)
     with running_app(s, directory) as c:
         mid, fs, _ = world(c, s)
-        real = tr.sha256_storage
+        real, gate = tr.sha256_storage, Gate()
 
-        def crash_after_verify(storage, rel, size):
-            real(storage, rel, size)
-            raise Crash()                                                  # копия записана и проверена, база ещё не переключена
+        def hook(storage, rel, size):
+            out = real(storage, rel, size)
+            gate.hit()                                                     # копия записана и проверена, база ещё не переключена
+            return out
 
-        monkeypatch.setattr(tr, "sha256_storage", crash_after_verify)
+        monkeypatch.setattr(tr, "sha256_storage", hook)
         job_id = start(c, "to_external")
-        with pytest.raises(Crash):
-            process(c, job_id, sweep=False)
+        crash(c, job_id, gate)
         assert {r.export_status for r in recs(c)} == {"local"} and len(local_files(s)) == 2 and len(ext_files(fs)) == 1
         fixed(c, s)
-        monkeypatch.setattr(tr, "sha256_storage", real)
         restart(c)
         done = process(c, job_id)
         assert done["state"] == "done" and done["done"] == 2 and len(ext_files(fs)) == 2 and not local_files(s)
@@ -315,25 +337,23 @@ def test_cleanup_never_removes_the_source_if_the_new_copy_is_not_intact(tmp_path
         assert len(local_files(s)) == 1, "источник испорченной копии остался"
 
 
-def test_crash_while_copying_back_and_after_replace_before_the_switch(tmp_path, directory, monkeypatch):
+def test_crash_while_copying_back_after_replace_before_the_switch(tmp_path, directory, monkeypatch):
     s = make_settings(tmp_path, meeting_mix_enabled=False)
     with running_app(s, directory) as c:
         mid, fs, _ = world(c, s)
         process(c, start(c, "to_external"))
         assert not local_files(s)
-        real_replace = tr.os.replace
+        real, gate = tr.os.replace, Gate()
 
-        def replace_then_crash(a, b):
-            real_replace(a, b)
-            raise Crash()                                                  # локальный файл уже на месте, база ещё указывает на внешнее хранилище
+        def replace_then_hang(a, b):
+            real(a, b)
+            gate.hit()                                                     # локальный файл уже на месте, база ещё указывает на внешнее хранилище
 
-        monkeypatch.setattr(tr.os, "replace", replace_then_crash)
+        monkeypatch.setattr(tr.os, "replace", replace_then_hang)
         job_id = start(c, "to_local")
-        with pytest.raises(Crash):
-            process(c, job_id, sweep=False)
+        crash(c, job_id, gate)
         assert {r.export_status for r in recs(c)} == {"exported"} and len(ext_files(fs)) == 2
         fixed(c, s)
-        monkeypatch.setattr(tr.os, "replace", real_replace)
         restart(c)
         done = process(c, job_id)
         assert done["state"] == "done" and {r.export_status for r in recs(c)} == {"local"} and len(local_files(s)) == 2 and not ext_files(fs)
@@ -344,19 +364,19 @@ def test_job_survives_restart_and_does_not_copy_finished_files_again(tmp_path, d
     s = make_settings(tmp_path, meeting_mix_enabled=False)
     with running_app(s, directory) as c:
         mid, fs, _ = world(c, s)
-        calls = []
+        calls, gate = [], Gate()
         real = LocalStorage.copy_in
 
         def counting(self, rel, src):
             calls.append(rel)
             if len(calls) == 2:
-                raise Crash()
+                gate.hit()                                                 # «падение» на втором файле
+                raise StorageError("обрыв")
             return real(self, rel, src)
 
         monkeypatch.setattr(LocalStorage, "copy_in", counting)
         job_id = start(c, "to_external")
-        with pytest.raises(Crash):
-            process(c, job_id, sweep=False)
+        crash(c, job_id, gate)
         restart(c)
         done = process(c, job_id)
         assert done["state"] == "done" and done["done"] == 2

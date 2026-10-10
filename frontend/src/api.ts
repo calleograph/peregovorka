@@ -189,7 +189,27 @@ export interface JournalStats {
 export type RoomType = "regular" | "presentation";
 export interface StorageProfile {
   id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
+  /** Для хранилища-папки: на том поставлена метка (запись в отключённый том блокируется). */
+  volume_marked?: boolean;
 }
+export interface StorageVolume {
+  id: "local" | "external"; title: string; kind: string; address: string; state: "ok" | "unavailable" | "not_configured"; error?: string;
+  total: number | null; free: number | null; used_percent: number | null; files: Record<string, { count: number; bytes: number }>;
+  measured_at: string; last_ok_at: string | null; stale: boolean;
+  /** Сумма размеров файлов по базе и фактически занятое место файлов на диске (null — не считается: SMB); расхождение — осиротевшие или недокопированные файлы. */
+  db_bytes: number; disk_bytes: number | null; disk_files: number | null; scan_truncated: boolean; mismatch: boolean;
+}
+export interface StorageStats {
+  measured_at: string | null; refreshing: boolean; note?: string; volumes: StorageVolume[];
+  other?: { title: string; count: number; bytes: number; note: string };
+  sync?: { at: string | null; status: string; orphans: number; missing: number } | null;
+}
+export interface TransferJob {
+  id: string; direction: "to_external" | "to_local"; scope: "all" | "meeting"; meeting_id: string | null; state: "queued" | "running" | "done" | "failed" | "cancelled";
+  total: number; done: number; skipped: number; failed: number; pending: number; cleanup_pending: number; bytes_total: number; bytes_done: number; error: string | null;
+  created_by: string; created_at: string; started_at: string | null; finished_at: string | null;
+}
+export interface TransferDetail extends TransferJob { problems: { recording_id: string; state: string; error: string | null }[] }
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
@@ -801,6 +821,13 @@ export const api = {
     updateStorage: (id: string, body: { name?: string; config?: Record<string, string>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
+    storageStats: () => request<StorageStats>("GET", "/admin/storage/stats"),
+    storageStatsRefresh: () => request<{ started: boolean }>("POST", "/admin/storage/stats/refresh"),
+    transfers: () => request<TransferJob[]>("GET", "/admin/storage/transfers"),
+    startTransfer: (body: { direction: TransferJob["direction"]; meeting_id?: string }) => request<TransferJob>("POST", "/admin/storage/transfers", body),
+    transfer: (id: string) => request<TransferDetail>("GET", `/admin/storage/transfers/${id}`),
+    cancelTransfer: (id: string) => request<TransferJob>("POST", `/admin/storage/transfers/${id}/cancel`),
+    resumeTransfer: (id: string) => request<TransferJob>("POST", `/admin/storage/transfers/${id}/resume`),
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     meetingDiagnostics: (meetingId: string) => request<{ meeting: { id: string; room: string; started_at: string; ended_at: string | null; end_reason: string | null }; events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[]; retention_note: string }>("GET", `/admin/meetings/${meetingId}/diagnostics`),

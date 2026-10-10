@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type StorageProfile, type TestResult } from "../../api";
+import StorageTransferAdmin from "./StorageTransferAdmin";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
@@ -133,6 +134,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
         </table>
       )}</div>
       {onOpen && items.length > 0 && <p className="muted small">Выбрать хранилище: «Хранилище протоколов», «Хранилище записей», «Вложения чата», «Хранение журнала».</p>}
+      {items.length > 0 && <StorageTransferAdmin />}
     </section>
   );
 }

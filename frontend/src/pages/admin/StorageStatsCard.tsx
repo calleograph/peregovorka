@@ -30,6 +30,13 @@ function Volume({ v }: { v: StorageVolume }) {
           {Object.keys(KIND_TITLE).map((k) => <tr key={k}><td>{KIND_TITLE[k]}</td><td>{v.files[k]?.count ?? 0}</td><td>{bytes(v.files[k]?.bytes ?? 0)}</td></tr>)}
         </tbody></table>
       )}
+      {v.state !== "not_configured" && (
+        <div className="small" style={{ marginTop: 6 }}>
+          <div>По данным базы: <b>{bytes(v.db_bytes)}</b>{v.disk_bytes != null ? <> · фактически файлов на диске: <b>{bytes(v.disk_bytes)}</b>{v.scan_truncated ? " (подсчёт неполный)" : ""}</> : <span className="muted"> · фактический подсчёт для SMB делает «Сверка хранилища»</span>}</div>
+          {v.total != null && v.free != null && <div className="muted">Занято на томе всего: {bytes(v.total - v.free)} (включая данные, не относящиеся к записям).</div>}
+          {v.mismatch && <div className="alert warn small" role="status">Размеры расходятся: на диске лежат файлы, которых нет в базе (осиротевшие или недокопированные), либо часть файлов пропала. Запустите «Сверку хранилища».</div>}
+        </div>
+      )}
       <div className="muted small" style={{ marginTop: 4 }}>Замер: {fmtDate(v.measured_at)}</div>
     </div>
   );
@@ -52,6 +59,7 @@ export default function StorageStatsCard() {
       {err && <div className="alert error" role="alert">{err}</div>}
       {data && !data.volumes.length && <p className="muted">{data.note ?? "Нет данных."}</p>}
       <div className="grid-2">{data?.volumes.map((v) => <Volume key={v.id} v={v} />)}</div>
+      {data?.sync && <p className="muted small">Последняя сверка{data.sync.at ? ` (${fmtDate(data.sync.at)})` : ""}: {data.sync.status === "ok" ? "расхождений нет" : data.sync.status}; неизвестных файлов в хранилище: {data.sync.orphans}, пропавших: {data.sync.missing}.</p>}
       {data?.other && <p className="muted small">{data.other.title}: {data.other.count} файлов, {bytes(data.other.bytes)}. {data.other.note}</p>}
     </section>
   );

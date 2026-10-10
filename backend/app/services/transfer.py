@@ -325,7 +325,7 @@ class TransferService:
             want = rec.sha256 or await asyncio.to_thread(sha256_storage, storage, rec.path, size)
             if digest != want:
                 raise TransferError("контрольная сумма на назначении не совпала с источником")
-            os.replace(tmp, dst)
+            await asyncio.to_thread(os.replace, tmp, dst)
         except StorageError as exc:
             tmp.unlink(missing_ok=True)
             raise Unavailable(f"Не удалось прочитать из внешнего хранилища: {exc}") from None

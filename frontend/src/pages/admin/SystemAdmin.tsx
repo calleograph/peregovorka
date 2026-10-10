@@ -4,6 +4,7 @@ import { api, type ApiError, type JournalStats, type SystemStatus } from "../../
 import { bytes, downloadText, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
 import RepairsPanel from "./RepairsPanel";
+import StorageStatsCard from "./StorageStatsCard";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
   join_backend_ms: ["Обработка входа на сервере", "Время работы backend над запросом «Войти» (БД и выдача пропуска) без сети и прокси."],
@@ -116,6 +117,7 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
       )}
       {tech && (
         <>
+      <StorageStatsCard />
       <h3>Время входа в комнату (последние измерения)</h3>
       <p className="muted small">Сравнение строк показывает, где теряется время: backend, прокси, сигналинг, ICE, микрофон или ASR. Данные присылают браузеры участников и ASR; хранятся сутки.</p>
       <table className="table compact"><thead><tr><th>Этап</th><th>Среднее</th><th>p95</th><th>Максимум</th><th>Измерений</th></tr></thead><tbody>
