@@ -207,8 +207,14 @@ class Journal:
                 pass
             self._task = None
         try:
-            while self._q:
+            for _ in range(10):                  # не бесконечно: при сбое БД (например, «database is locked») остановка приложения не должна зависеть от журнала
+                if not self._q:
+                    break
                 await self.flush()
+                if self._q:
+                    await asyncio.sleep(0.2)
+            if self._q:
+                log.warning("Журнал остановлен с недописанными событиями: %d", len(self._q))
             await self.flush_external()
         except Exception:  # noqa: BLE001
             log.exception("Не удалось дописать журнал при остановке")

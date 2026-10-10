@@ -59,12 +59,15 @@ class RequestLogWriter:
                 await self.cleanup()
 
     def start(self) -> None:
-        self._task = asyncio.get_running_loop().create_task(self._run(), name="api-request-log")
+        loop = asyncio.get_running_loop()
+        self._last_cleanup = loop.time()          # первая очистка — через час, а не сразу после запуска
+        self._task = loop.create_task(self._run(), name="api-request-log")
 
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._task
-        while await self.flush():
-            pass
+                await asyncio.wait_for(asyncio.shield(self._task), 3)     # остановка не должна зависеть от БД
+        for _ in range(20):                       # дописать остаток очереди; не бесконечно
+            if not await self.flush():
+                break
