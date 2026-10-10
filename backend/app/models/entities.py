@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -409,6 +410,19 @@ class Recording(Base):
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)    # момент, которому соответствует 0:00 записи: по нему реплики стенограммы связываются с плеером
     sha256: Mapped[str | None] = mapped_column(String(64))              # контрольная сумма (заполняется при переносе между хранилищами)
     has_video: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+
+
+class RecordingWaveform(Base):
+    """Волновая форма записи: массив пиков громкости (1 байт на 100 мс), строится один раз. Привязана к записи, а не к файлу — при переносе между хранилищами не пересчитывается."""
+
+    __tablename__ = "recording_waveforms"
+
+    recording_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("recordings.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(12), default="processing", server_default="processing", nullable=False)   # processing | ready | failed
+    bucket_ms: Mapped[int] = mapped_column(Integer, default=100, server_default="100", nullable=False)
+    peaks: Mapped[bytes] = mapped_column(LargeBinary, default=b"", nullable=False)
+    error: Mapped[str | None] = mapped_column(String(300))
+    built_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Protocol(Base):

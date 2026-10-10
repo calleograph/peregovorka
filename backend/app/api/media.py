@@ -10,13 +10,14 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import iterate_in_threadpool
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
-from ..models import Recording
+from ..models import Recording, TranscriptSegment
+from ..services.segments import segment_to_dict
 from ..services.audit import write_audit
 from ..services.reconcile import mark_missing
 from ..services.storage import StorageError, StorageNotFound
@@ -65,9 +66,8 @@ async def list_media(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     return out
 
 
-@router.get("/{meeting_id}/media/{recording_id}/stream")
-async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, download: bool = False, su: SessionUser = Depends(require_user),
-                       db: AsyncSession = Depends(get_db)):
+async def _load(request: Request, db: AsyncSession, meeting_id: uuid.UUID, recording_id: uuid.UUID, su: SessionUser):
+    """Встреча и запись с проверкой прав: те же правила, что у воспроизведения (общая запись — всем с доступом к встрече, файлы участников — администратору)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
     rec = await db.get(Recording, recording_id)
     # чужая запись и запись другой встречи неотличимы от несуществующей (защита от подстановки идентификаторов)
@@ -75,6 +75,56 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
         raise HTTPException(status_code=404, detail="Запись не найдена")
     if rec.kind == "participant" and not su.is_admin:
         raise HTTPException(status_code=404, detail="Запись не найдена")
+    return meeting, rec
+
+
+@router.get("/{meeting_id}/media/{recording_id}/waveform")
+async def waveform(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Волновая форма записи: массив пиков (base64, 1 байт на `bucket_ms` мс). Если ещё не построена (старая запись) — запускается построение в фоне и возвращается
+    `{"status": "processing"}` (код 202): плеер пока показывает обычную шкалу и спрашивает снова."""
+    _, rec = await _load(request, db, meeting_id, recording_id, su)
+    if rec.status != "ready" or rec.file_state == "missing":
+        raise HTTPException(status_code=409, detail="Запись недоступна")
+    svc = request.app.state.waveforms
+    w = await svc.get(db, rec.id)
+    if w is not None and w.status in ("ready", "failed"):
+        return svc.payload(w)
+    svc.ensure(rec.id)
+    return JSONResponse({"status": "processing"}, status_code=202)
+
+
+@router.get("/{meeting_id}/media/{recording_id}/subtitles")
+async def subtitles(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Реплики стенограммы на шкале времени ЭТОЙ записи (секунды от её начала): для общей записи — все участники с именами, для записи участника — только его реплики.
+    Время реплики (настенное, от ASR) пересчитывается в положение в записи по моменту её начала (`started_at`); нет момента начала или реплик — `available=false` с причиной."""
+    meeting, rec = await _load(request, db, meeting_id, recording_id, su)
+    scope = "participant" if rec.kind == "participant" else "meeting"
+    if rec.started_at is None:
+        return {"available": False, "reason": "no_timeline", "message": "Субтитры недоступны: у этой записи нет привязки ко времени встречи (запись сделана до её появления).", "scope": scope, "segments": []}
+    stmt = select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting.id)
+    if scope == "participant":
+        stmt = stmt.where(TranscriptSegment.participant_identity == rec.participant_identity)
+    rows = (await db.execute(stmt.order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
+    if not rows:
+        return {"available": False, "reason": "no_transcript", "message": "Субтитры недоступны: для этой записи нет стенограммы.", "scope": scope, "segments": []}
+    limit = float(rec.duration_s or 0) + 5.0
+    out = []
+    for s in rows:
+        a = (s.started_at - rec.started_at).total_seconds()
+        b = (s.ended_at - rec.started_at).total_seconds()
+        if b <= 0 or (limit > 5.0 and a > limit):
+            continue                                                 # реплика вне этой записи
+        d = segment_to_dict(s)
+        out.append({"id": d["id"], "start": round(max(a, 0.0), 2), "end": round(max(b, a + 0.2), 2), "speaker": d["display_name"], "text": s.text})
+    if not out:
+        return {"available": False, "reason": "no_overlap", "message": "Субтитры недоступны: реплики стенограммы не попадают на шкалу этой записи.", "scope": scope, "segments": []}
+    return {"available": True, "reason": None, "message": None, "scope": scope, "segments": out}
+
+
+@router.get("/{meeting_id}/media/{recording_id}/stream")
+async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, download: bool = False, su: SessionUser = Depends(require_user),
+                       db: AsyncSession = Depends(get_db)):
+    meeting, rec = await _load(request, db, meeting_id, recording_id, su)
     if download and not can_edit_protocol(meeting, su):
         raise HTTPException(status_code=403, detail="Скачивать записи могут администратор, руководитель комнаты и организатор встречи")
     if rec.status == "processing":

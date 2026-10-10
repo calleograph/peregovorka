@@ -21,6 +21,7 @@ from .entities import (
     Protocol,
     ProtocolTemplate,
     Recording,
+    RecordingWaveform,
     LdapProfile,
     LegalConsent,
     LegalDocument,

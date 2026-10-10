@@ -52,8 +52,21 @@ async def _dev_pcm(body: dict = Body(...)):
     os.makedirs(d, exist_ok=True)
     sec, freq = float(body.get("seconds", 10)), float(body.get("freq", 440))
     smp = array.array("h", (int(9000 * math.sin(2 * math.pi * freq * i / 16000)) for i in range(int(sec * 16000))))
+    for a_, b_ in body.get("silence", []):                           # участки тишины [от, до) в секундах — чтобы волна и пауза были различимы
+        for i in range(int(a_ * 16000), min(len(smp), int(b_ * 16000))):
+            smp[i] = 0
     open(os.path.join(d, body["identity"] + ".pcm"), "wb").write(smp.tobytes())
     open(os.path.join(d, body["identity"] + ".t0"), "w").write(repr(_t.time() + float(body.get("start_offset", 0))))
+    return {"ok": True}
+
+
+@app.post("/__dev/forget_waveforms")
+async def _dev_forget_waveforms():
+    """Только для стенда: забыть построенные волны — так проверяется «старая запись без волны»."""
+    from app.models import RecordingWaveform
+    async with app.state.session_maker() as db:
+        await db.execute(RecordingWaveform.__table__.delete())
+        await db.commit()
     return {"ok": True}
 
 

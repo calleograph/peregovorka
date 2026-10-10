@@ -164,6 +164,8 @@ def create_app(
         from .services.transfer import TransferService  # noqa: PLC0415
         app.state.storage_stats = StorageStats(session_maker, protocols, redis)
         app.state.transfers = TransferService(session_maker, protocols, journal, _sync_audit)
+        from .services.waveforms import WaveformService  # noqa: PLC0415
+        protocols.waveforms = app.state.waveforms = WaveformService(session_maker, protocols)
         app.state.mail = mail
         app.state.delivery = delivery
         app.state.ca = ca
