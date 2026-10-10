@@ -6,6 +6,8 @@ LiveKit-комнате (= одна встреча).
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime
 import logging
 import uuid
@@ -140,6 +142,50 @@ async def set_publish_permission(settings: Settings, room_name: str, identity: s
     except Exception as exc:  # noqa: BLE001
         log.warning("Не удалось изменить права участника", extra={"room": room_name, "error": type(exc).__name__})
         return False
+
+
+async def enforce_sources(settings: Settings, room_name: str, identity: str, allowed: list[str], *, tries: int = 4, pause: float = 0.4) -> dict:
+    """Убедиться, что после смены прав у участника не осталось опубликованных дорожек запрещённых источников («забрать слово»).
+
+    Сервер звонков при смене разрешений обычно сам прекращает такие дорожки; здесь это проверяется, а не предполагается: оставшиеся дорожки
+    выключаются (mute), а если запрещённая дорожка не исчезла за ~1,5 с (модифицированный клиент, версия сервера не снимает дорожку) —
+    участник отключается от комнаты, и вернуться с прежними правами он не может: новый токен выдаётся по текущему состоянию слова.
+    Остальные участники и трансляция выступающего не затрагиваются. Результат: {"stopped": [источники], "removed": bool, "checked": bool}."""
+    from livekit.protocol import models as lkmodels  # noqa: PLC0415
+
+    names = {lkmodels.TrackSource.MICROPHONE: "microphone", lkmodels.TrackSource.CAMERA: "camera",
+             lkmodels.TrackSource.SCREEN_SHARE: "screen_share", lkmodels.TrackSource.SCREEN_SHARE_AUDIO: "screen_share_audio"}
+    out: dict = {"stopped": [], "removed": False, "checked": False}
+    allow = set(allowed)
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            for attempt in range(tries):
+                try:
+                    p = await lk.room.get_participant(lkapi.RoomParticipantIdentity(room=room_name, identity=identity))
+                except Exception as exc:  # noqa: BLE001
+                    text = str(exc).lower()
+                    if "not_found" in text or "not found" in text or "does not exist" in text:
+                        out["checked"] = True            # участника уже нет — публиковать нечего
+                        return out
+                    raise
+                bad = [t for t in p.tracks if names.get(t.source, "unknown") not in allow]
+                out["checked"] = True
+                if not bad:
+                    return out
+                for t in bad:
+                    out["stopped"].append(names.get(t.source, "unknown"))
+                    if not t.muted:
+                        with contextlib.suppress(Exception):
+                            await lk.room.mute_published_track(lkapi.MuteRoomTrackRequest(room=room_name, identity=identity, track_sid=t.sid, muted=True))
+                if attempt < tries - 1:
+                    await asyncio.sleep(pause)
+            await lk.room.remove_participant(lkapi.RoomParticipantIdentity(room=room_name, identity=identity))
+            out["removed"] = True
+            log.warning("Запрещённые дорожки не исчезли после смены прав — участник отключён", extra={"room": room_name})
+            return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось проверить дорожки участника", extra={"room": room_name, "error": type(exc).__name__})
+        return out
 
 
 def webhook_receiver(settings: Settings) -> lkapi.WebhookReceiver:

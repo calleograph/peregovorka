@@ -33,6 +33,7 @@ from .logging_setup import configure_logging, request_id_var
 from .services.api_profiles import ProfileService
 from .services.asr_bridge import AsrBridge
 from .services.audit import set_journal_sink
+from .services.events import EventHub
 from .services.chat_files import ChatFilesService
 from .services.journal import Journal, run_journal_retention
 from .security.secretbox import SecretBox, SecretBoxError
@@ -104,6 +105,8 @@ def create_app(
         app.state.engine = engine
         app.state.session_maker = session_maker
         app.state.redis = redis
+        app.state.event_hub = EventHub(redis)             # единый подписчик Redis для всех WebSocket (services/events.py)
+        app.state.event_hub.start()
         app.state.directory = directory
         app.state.bridge = bridge
         app.state.meetings = meetings_svc
@@ -224,6 +227,7 @@ def create_app(
             for t in tasks:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
+            await app.state.event_hub.stop()
             await protocols.shutdown()
             await app.state.jobs.stop()
             await app.state.webhooks.stop()

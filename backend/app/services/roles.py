@@ -57,12 +57,13 @@ def _participant_sources(room: Room, *, guest: bool) -> list[str]:
 
 
 def publish_sources(room: Room, su: SessionUser | None, *, guest: bool = False, has_floor: bool = False) -> list[str]:
-    """Что может публиковать участник сейчас. Руководители и администраторы — всё; остальные — по правам комнаты, а в презентационной
-    комнате — только пока у них есть слово."""
+    """Что может публиковать участник сейчас. Руководители и администраторы — всё; в презентационной комнате остальные — ничего (зрители),
+    а пока им дано слово — полный набор выступающего (микрофон, камера, экран) независимо от настроек «камера/экран разрешены» обычной
+    комнаты: слово даёт все возможности сразу, отдельно разрешения не выдаются. В обычной комнате — по правам комнаты."""
     if su is not None and (su.is_admin or is_room_leader(room, su)):
         return list(ALL_SOURCES)
-    if is_presentation(room) and not has_floor:
-        return []
+    if is_presentation(room):
+        return list(ALL_SOURCES) if has_floor else []
     return _participant_sources(room, guest=guest)
 
 
@@ -70,13 +71,14 @@ BOARD_LEVELS = ("everyone", "speakers", "leaders", "private")
 
 
 def board_level(room: Room) -> str:
-    """Действующий уровень доступа к доске. `auto` (по умолчанию): в презентационной комнате доска у руководителей, в обычной — у всех, если
-    доска не отключена для участников (`board_allowed`); явно выбранный уровень это правило заменяет."""
+    """Действующий уровень доступа к доске. `auto` (по умолчанию): в презентационной комнате правят руководители и те, кому дано слово
+    (остальные зрители доску читают), в обычной — все, если доска не отключена для участников (`board_allowed`); явно выбранный уровень
+    это правило заменяет."""
     lvl = getattr(room, "board_access", "auto") or "auto"
     if lvl in BOARD_LEVELS:
         return lvl
     if is_presentation(room):
-        return "leaders"
+        return "speakers"
     return "everyone" if room.board_allowed else "leaders"
 
 

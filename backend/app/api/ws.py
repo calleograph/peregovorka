@@ -82,28 +82,17 @@ async def ws_endpoint(ws: WebSocket):
         su = SessionUser.from_session(sid, data)
         await ws.accept()
 
-    pubsub = app.state.redis.pubsub()
+    hub = app.state.event_hub
+    sub = hub.new_subscriber()
     subscribed: dict[str, uuid.UUID] = {}
-    leader_channels: set[str] = set()      # каналы, где подписчик — руководитель (администратор)
 
     async def forward() -> None:
         while True:
-            if not pubsub.subscribed:
-                await asyncio.sleep(0.2)
-                continue
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if msg and msg.get("type") == "message":
-                raw = msg["data"]
-                text = raw.decode() if isinstance(raw, bytes) else raw
-                if "leaders_only" in text:      # закрытая доска: схема и её изменения не уходят никому, кроме руководителей
-                    ch = msg.get("channel")
-                    ch = ch.decode() if isinstance(ch, bytes) else ch
-                    try:
-                        if json.loads(text).get("leaders_only") and ch not in leader_channels:
-                            continue
-                    except ValueError:
-                        pass
-                await ws.send_text(text)
+            text = await sub.queue.get()
+            if text is None:        # получатель не успевал за потоком событий — отключаем, клиент переподключится и догрузит состояние
+                await ws.close(code=events.SLOW_CLOSE_CODE)
+                return
+            await ws.send_text(text)
 
     reader = asyncio.create_task(forward())
     try:
@@ -136,11 +125,8 @@ async def ws_endpoint(ws: WebSocket):
                     await ws.send_text(json.dumps({"type": "error", "message": "forbidden", "meeting_id": str(mid)}))
                     continue
                 ch = events.channel(mid)
-                if is_leader:
-                    leader_channels.add(ch)
-                if ch not in subscribed:
-                    await pubsub.subscribe(ch)
-                    subscribed[ch] = mid
+                await hub.subscribe(sub, ch, leader=is_leader)
+                subscribed[ch] = mid
                 await ws.send_text(json.dumps({"type": "subscribed", "meeting_id": str(mid)}))
             elif kind == "unsubscribe":
                 try:
@@ -148,7 +134,7 @@ async def ws_endpoint(ws: WebSocket):
                 except ValueError:
                     continue
                 if ch in subscribed:
-                    await pubsub.unsubscribe(ch)
+                    await hub.unsubscribe(sub, ch)
                     subscribed.pop(ch, None)
             else:
                 await ws.send_text(json.dumps({"type": "error", "message": "unknown_type"}))
@@ -159,4 +145,4 @@ async def ws_endpoint(ws: WebSocket):
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await reader
         with contextlib.suppress(Exception):
-            await pubsub.aclose()
+            await hub.release(sub)

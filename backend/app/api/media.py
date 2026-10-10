@@ -100,7 +100,7 @@ async def subtitles(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Req
     meeting, rec = await _load(request, db, meeting_id, recording_id, su)
     scope = "participant" if rec.kind == "participant" else "meeting"
     if rec.started_at is None:
-        return {"available": False, "reason": "no_timeline", "message": "Субтитры недоступны: у этой записи нет привязки ко времени встречи (запись сделана до её появления).", "scope": scope, "segments": []}
+        return {"available": False, "reason": "no_timeline", "message": "Субтитры недоступны: у этой записи не сохранена отметка начала, по ней реплики совмещаются со звуком. Обычно так бывает у записей, сделанных до версии 0.14.0; у новых записей отметка есть.", "scope": scope, "segments": []}
     stmt = select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting.id)
     if scope == "participant":
         stmt = stmt.where(TranscriptSegment.participant_identity == rec.participant_identity)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import shutil
 import struct
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ from .storage import safe_component
 SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2
 MIN_SECONDS = 1.0  # короче — не сохраняем (случайные щелчки)
+
+log = logging.getLogger("app.recordings")
 
 
 def wav_header(data_len: int) -> bytes:
@@ -49,6 +52,7 @@ def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, nam
             t0 = float(side.read_text(encoding="ascii").strip())
         except (OSError, ValueError):
             t0 = None
+            log.warning("У дорожки нет отметки начала (.t0): субтитры к этой записи недоступны", extra={"identity": identity, "room": livekit_room})
         if size < BYTES_PER_SEC * MIN_SECONDS:
             pcm.unlink(missing_ok=True)
             side.unlink(missing_ok=True)

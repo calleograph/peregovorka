@@ -27,6 +27,7 @@ from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
     delete_livekit_room,
+    enforce_sources,
     guest_identity,
     issue_guest_token,
     issue_user_token,
@@ -151,11 +152,12 @@ class MeetingService:
             if self.on_started is not None:
                 self.on_started(meeting.id)
             self._notify("meeting.started", meeting)
-        await events.publish(self._r, meeting.id, {"type": "participant_joined", "user_id": str(su.user_id),
-                                                   "display_name": su.display_name})
-
         identity = user_identity(su.user_id)
         privileged = roles.can_manage_room(room, su)
+        if privileged or not roles.is_presentation(room):
+            # В презентационной комнате приход рядового зрителя никому не рассылается: при сотне и тысяче зрителей это сотни тысяч сообщений
+            # и запросов (каждый зритель перечитывал бы состояние слова на каждый вход). Список и число зрителей клиенты берут у сервера звонков.
+            await events.publish(self._r, meeting.id, {"type": "participant_joined", "user_id": str(su.user_id), "display_name": su.display_name})
         floor = await self.floor_has(meeting.id, identity)
         sources = roles.publish_sources(room, su, has_floor=floor)
         if not roles.can_manage_room(room, su) and await self.share_blocked(meeting.id, identity):
@@ -190,8 +192,9 @@ class MeetingService:
         meeting.empty_since = None
         await db.commit()
         await self._sync_room(db, room, meeting)
-        await events.publish(self._r, meeting.id, {"type": "participant_joined", "guest_id": str(guest.id),
-                                                   "display_name": f"{display_name} (гость)", "participant_type": "guest"})
+        if not roles.is_presentation(room):
+            await events.publish(self._r, meeting.id, {"type": "participant_joined", "guest_id": str(guest.id),
+                                                       "display_name": f"{display_name} (гость)", "participant_type": "guest"})
         return self._guest_result(meeting, room, guest)
 
     def _guest_result(self, meeting: Meeting, room: Room, guest: GuestParticipant, *, floor: bool = False) -> JoinResult:
@@ -219,7 +222,8 @@ class MeetingService:
         if guest.left_at is None:
             guest.left_at = utcnow()
             await db.commit()
-            await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "phone" if guest.is_phone else "guest"})
+            if not await self._quiet_presence(db, meeting_id, guest_identity(guest_id)):
+                await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "phone" if guest.is_phone else "guest"})
         await self._update_emptiness(db, meeting_id)
 
     async def kick_guests(self, db: AsyncSession, room_id: uuid.UUID) -> int:
@@ -284,9 +288,14 @@ class MeetingService:
         for p in rows:
             p.left_at = now
         await db.commit()
-        if rows:
+        if rows and not await self._quiet_presence(db, meeting_id, user_identity(user_id)):
             await events.publish(self._r, meeting_id, {"type": "participant_left", "user_id": str(user_id)})
         await self._update_emptiness(db, meeting_id)
+
+    async def _quiet_presence(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str) -> bool:
+        """Приход/уход рядового зрителя презентационной комнаты не рассылается (см. join); руководителей это не касается."""
+        meeting = await db.get(Meeting, meeting_id)
+        return meeting is not None and roles.is_presentation(meeting.room) and not await self.is_privileged(meeting_id, identity)
 
     async def _update_emptiness(self, db: AsyncSession, meeting_id: uuid.UUID) -> None:
         meeting = await db.get(Meeting, meeting_id)
@@ -564,6 +573,12 @@ class MeetingService:
         else:
             await self._r.srem(self._floor_key(meeting.id), identity)
         await events.publish(self._r, meeting.id, {"type": "floor_changed", "identity": identity, "granted": granted, "by": by})
+        if not granted:
+            # Отзыв применяется на сервере, а не «надеждой на клиента»: запрещённые дорожки (микрофон, камера, показ экрана) должны исчезнуть;
+            # если участник их не снял (изменённый клиент), он отключается и вернуться с этими правами не может (токен выдаётся по текущему слову).
+            res = await enforce_sources(self._s, meeting.livekit_room, identity, sources)
+            if res.get("removed"):
+                await events.publish(self._r, meeting.id, {"type": "floor_revoke_enforced", "identity": identity})
         log.info("Слово изменено", extra={"meeting_id": str(meeting.id), "granted": granted})
         return granted
 
