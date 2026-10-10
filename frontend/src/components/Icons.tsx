@@ -56,6 +56,8 @@ const PATHS: Record<string, ReactNode> = {
   pause: <><path d="M8.5 5.5v13M15.5 5.5v13" /></>,
   volume: <><path d="M4 9.5v5h3.6l4.4 3.6V5.9L7.6 9.5H4Z" /><path d="M15.6 9a4.2 4.2 0 0 1 0 6M18 6.6a7.6 7.6 0 0 1 0 10.8" /></>,
   volumeOff: <><path d="M4 9.5v5h3.6l4.4 3.6V5.9L7.6 9.5H4Z" /><path d="m16 9.5 5 5M21 9.5l-5 5" /></>,
+  cc: <><rect x="3" y="5.5" width="18" height="13" rx="2.6" /><path d="M10.2 10.2a2.2 2.2 0 1 0 0 3.6M16.6 10.2a2.2 2.2 0 1 0 0 3.6" /></>,
+  mini: <><rect x="12" y="12" width="9" height="7" rx="1.6" /><path d="M3.5 3.5h9M3.5 3.5v9M3.5 3.5 10 10" /></>,
   download: <><path d="M12 4v11M7.5 10.8 12 15.3l4.5-4.5M5 19.5h14" /></>,
 };
 
