@@ -106,6 +106,8 @@ def create_app(
         app.state.directory = directory
         app.state.bridge = bridge
         app.state.meetings = meetings_svc
+        from .services.stage import StageService  # noqa: PLC0415
+        app.state.stage = StageService(redis, meetings_svc)                  # сцена ведущего (Spotlight) для всех участников встречи
         app.state.sessions = sessions
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc

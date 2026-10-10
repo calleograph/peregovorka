@@ -32,6 +32,7 @@ from .livekit import (
     issue_user_token,
     list_present_identities,
     meeting_room_name,
+    mute_sources,
     parse_guest_identity,
     parse_phone_identity,
     parse_user_identity,
@@ -157,6 +158,8 @@ class MeetingService:
         privileged = roles.can_manage_room(room, su)
         floor = await self.floor_has(meeting.id, identity)
         sources = roles.publish_sources(room, su, has_floor=floor)
+        if not roles.can_manage_room(room, su) and await self.share_blocked(meeting.id, identity):
+            sources = self.without_share(sources)          # ведущий запретил этому участнику показ экрана до конца встречи — действует и после переподключения
         if privileged:
             await self._r.sadd(self._priv_key(meeting.id), identity)
             await self._r.expire(self._priv_key(meeting.id), STATE_TTL)
@@ -456,7 +459,69 @@ class MeetingService:
         return bool(await self._r.sismember(self._priv_key(meeting_id), identity))
 
     async def _clear_state(self, meeting_id: uuid.UUID) -> None:
-        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id), f"hands:{meeting_id}")
+        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id), f"hands:{meeting_id}", self._share_block_key(meeting_id), f"stage:{meeting_id}")
+
+    # ------------------------------------------------------------ показ экрана и камера: модерация (сцена ведущего — services/stage.py)
+    @staticmethod
+    def _share_block_key(meeting_id: uuid.UUID | str) -> str:
+        return f"share_block:{meeting_id}"
+
+    async def share_blocked(self, meeting_id: uuid.UUID, identity: str) -> bool:
+        return bool(await self._r.sismember(self._share_block_key(meeting_id), identity))
+
+    @staticmethod
+    def without_share(sources: list[str]) -> list[str]:
+        return [s for s in sources if s not in ("screen_share", "screen_share_audio")]
+
+    async def _sources_now(self, db: AsyncSession, meeting: Meeting, identity: str, kind: str) -> list[str]:
+        """Права публикации участника сейчас: по комнате, слову и запрету показа экрана (руководителям — всё)."""
+        if await self.is_privileged(meeting.id, identity):
+            from .roles import ALL_SOURCES  # noqa: PLC0415
+
+            sources = list(ALL_SOURCES)
+        else:
+            sources = roles.publish_sources(meeting.room, None, guest=(kind == "guest"), has_floor=await self.floor_has(meeting.id, identity))
+        return self.without_share(sources) if await self.share_blocked(meeting.id, identity) else sources
+
+    async def stop_share(self, db: AsyncSession, meeting: Meeting, identity: str, *, block: bool, by: str) -> dict:
+        """Остановить показ экрана одного участника. Остальные показы не затрагиваются.
+        Без `block` — дорожка выключается на сервере звонков, а владелец получает событие и сам прекращает трансляцию (может начать снова).
+        С `block` — право показывать экран снимается до конца встречи: сервер звонков сам прекращает дорожку, повторный показ невозможен."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        kind, _ = await self._member_check(db, meeting, identity)
+        if block and await self.is_privileged(meeting.id, identity):
+            raise JoinError("privileged", "Руководителю комнаты запретить показ экрана нельзя — можно только остановить текущий показ.", 409)
+        muted = await mute_sources(self._s, meeting.livekit_room, {"screen_share", "screen_share_audio"}, only={identity})
+        if muted is None:
+            raise JoinError("livekit_unavailable", "Сервер звонков недоступен — показ не остановлен. Повторите.", 503)
+        if block:
+            await self._r.sadd(self._share_block_key(meeting.id), identity)
+            await self._r.expire(self._share_block_key(meeting.id), STATE_TTL)
+            if not await set_publish_permission(self._s, meeting.livekit_room, identity, await self._sources_now(db, meeting, identity, kind)):
+                raise JoinError("livekit_unavailable", "Сервер звонков недоступен — запрет показа не применён. Повторите.", 503)
+        await events.publish(self._r, meeting.id, {"type": "share_stopped", "identity": identity, "by": by, "blocked": block, "was_sharing": bool(muted)})
+        return {"identity": identity, "stopped": bool(muted), "blocked": block}
+
+    async def allow_share(self, db: AsyncSession, meeting: Meeting, identity: str, *, by: str) -> dict:
+        """Снять запрет показа экрана (вернуть право, которое даёт комната)."""
+        kind, _ = await self._member_check(db, meeting, identity)
+        await self._r.srem(self._share_block_key(meeting.id), identity)
+        if not await set_publish_permission(self._s, meeting.livekit_room, identity, await self._sources_now(db, meeting, identity, kind)):
+            raise JoinError("livekit_unavailable", "Сервер звонков недоступен — право не возвращено. Повторите.", 503)
+        await events.publish(self._r, meeting.id, {"type": "share_permission", "identity": identity, "allowed": True, "by": by})
+        return {"identity": identity, "blocked": False}
+
+    async def stop_camera(self, db: AsyncSession, meeting: Meeting, identity: str, *, by: str) -> dict:
+        """Выключить камеру участника на сервере звонков (он может включить её снова — как и с микрофоном)."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        await self._member_check(db, meeting, identity)
+        muted = await mute_sources(self._s, meeting.livekit_room, {"camera"}, only={identity})
+        if muted is None:
+            raise JoinError("livekit_unavailable", "Сервер звонков недоступен — камера не выключена. Повторите.", 503)
+        await events.publish(self._r, meeting.id, {"type": "camera_stopped", "identity": identity, "by": by})
+        return {"identity": identity, "stopped": bool(muted)}
 
     async def _member_check(self, db: AsyncSession, meeting: Meeting, identity: str) -> tuple[str, uuid.UUID]:
         """Идентичность должна принадлежать участнику ЭТОЙ встречи (человек или гость); иначе — отказ (чужие/выдуманные identity не принимаются)."""
@@ -488,6 +553,8 @@ class MeetingService:
         if had == granted:
             return granted
         sources = roles.publish_sources(meeting.room, None, guest=(kind == "guest"), has_floor=granted)
+        if await self.share_blocked(meeting.id, identity):
+            sources = self.without_share(sources)
         # сначала меняем права на сервере звонков: если он недоступен — состояние не меняется и руководитель получает понятную ошибку
         if not await set_publish_permission(self._s, meeting.livekit_room, identity, sources):
             raise JoinError("livekit_unavailable", "Сервер звонков недоступен — право не изменено. Повторите.", 503)

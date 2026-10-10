@@ -189,8 +189,17 @@ async def mute_microphones(settings: Settings, room_name: str, *, only: set[str]
     Возвращает идентичности, у которых микрофон был включён и теперь выключен; None — LiveKit недоступен.
     Участник может включить микрофон сам: это «выключить звук», а не запрет.
     """
+    return await mute_sources(settings, room_name, {"microphone"}, only=only, exclude=exclude)
+
+
+async def mute_sources(settings: Settings, room_name: str, sources: set[str], *, only: set[str] | None = None, exclude: set[str] | None = None) -> list[str] | None:
+    """Выключает на стороне сервера LiveKit дорожки указанных источников (microphone | camera | screen_share | screen_share_audio).
+    Остальные дорожки участника и другие участники не затрагиваются — например, остановка показа экрана одного не трогает показ другого."""
     from livekit.protocol import models as lkmodels  # noqa: PLC0415
 
+    smap = {"microphone": lkmodels.TrackSource.MICROPHONE, "camera": lkmodels.TrackSource.CAMERA,
+            "screen_share": lkmodels.TrackSource.SCREEN_SHARE, "screen_share_audio": lkmodels.TrackSource.SCREEN_SHARE_AUDIO}
+    wanted = {smap[s] for s in sources if s in smap}
     exclude = exclude or set()
     done: list[str] = []
     try:
@@ -201,12 +210,12 @@ async def mute_microphones(settings: Settings, room_name: str, *, only: set[str]
                     continue
                 hit = False
                 for t in p.tracks:
-                    if t.source == lkmodels.TrackSource.MICROPHONE and not t.muted:
+                    if t.source in wanted and not t.muted:
                         await lk.room.mute_published_track(lkapi.MuteRoomTrackRequest(room=room_name, identity=p.identity, track_sid=t.sid, muted=True))
                         hit = True
                 if hit:
                     done.append(p.identity)
         return done
     except Exception as exc:  # noqa: BLE001
-        log.warning("Не удалось выключить микрофоны", extra={"room": room_name, "error": type(exc).__name__})
+        log.warning("Не удалось выключить дорожки участников", extra={"room": room_name, "sources": sorted(sources), "error": type(exc).__name__})
         return None
