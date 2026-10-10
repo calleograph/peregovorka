@@ -36,12 +36,8 @@ def changes_of(remote: dict | None, installed: str | None) -> dict | None:
 
 
 def helper_info(st: dict) -> dict:
-    """Помощник обновлений на сервере: запущен ли и достаточно ли у него прав (служба от root). Прежние версии запускали его от обычного пользователя."""
-    available = bool(st.get("available"))
-    uid = st.get("uid")
-    privileged = available and uid == 0
-    return {"available": available, "privileged": privileged, "uid": uid,
-            "problem": None if privileged else ("not_installed" if not available else "no_privileges")}
+    """Состояние помощника обновлений для интерфейса: не просто «есть/нет», а что именно не так (см. services.updates.helper_state)."""
+    return upd.helper_state(st)
 
 
 @router.get("")
@@ -60,14 +56,14 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
     running = st.get("state") in upd.BUSY_STATES
     reasons = []
     if not st["available"]:
-        reasons.append("На сервере не запущен помощник обновлений. Его нужно установить один раз — команда ниже.")
+        reasons.append(helper_info(st)["message"])
     if running:
         reasons.append("Сейчас уже выполняется обновление или исправление.")
     if st["request_pending"]:
         reasons.append("Запрос уже передан исполнителю и ожидает выполнения.")
     return {
         "installed": {"version": s.app_version, "commit": s.app_git_commit, "built_at": s.app_built_at},
-        "updater": {k: st.get(k) for k in ("available", "heartbeat_age_s", "state", "action", "repair_id", "request_id", "step_no", "step_total", "step_name",
+        "updater": {k: st.get(k) for k in ("available", "heartbeat_age_s", "state", "action", "repair_id", "request_id", "ping_id", "ping_at", "step_no", "step_total", "step_name",
                                            "started_at", "finished_at", "exit_code", "result", "request_pending", "project", "by", "stale")},
         "outcome": upd.outcome_summary(st), "helper": helper_info(st),
         "remote": remote, "changes": changes_of(remote, s.app_version), "active_meetings": active, "history": history, "last_success": last_ok,
@@ -75,6 +71,24 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
         "up_to_date": bool(remote and remote.get("ok") and int(remote.get("behind", 0)) == 0),
         "commands": {"install": "sudo ./scripts/updater.sh install --yes", "foreground": "sudo ./scripts/updater.sh run", "manual": "sudo ./scripts/update.sh"},
     }
+
+
+@router.post("/ping")
+async def ping_helper(request: Request, su: SessionUser = Depends(require_admin)):
+    """«Проверить связь»: запрос исполнителю, который он только отмечает в status.json (`ping_id`/`ping_at`). Интерфейс ждёт ответа и отличает «запущен, но не отвечает»."""
+    ch = channel(request)
+    st = ch.status()
+    h = helper_info(st)
+    if not st["available"]:
+        raise HTTPException(status_code=409, detail=h["message"])
+    if st.get("state") in upd.BUSY_STATES:
+        raise HTTPException(status_code=409, detail="Идёт обновление или исправление: помощник занят, связь проверится после него")
+    if st["request_pending"]:
+        raise HTTPException(status_code=409, detail="Запрос уже передан помощнику и ожидает выполнения")
+    try:
+        return {"request_id": ch.request("ping", by=su.sam_account_name)}
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"Не удалось передать запрос помощнику ({exc.strerror or exc})") from None
 
 
 @router.post("/check")
@@ -204,12 +218,14 @@ def _items(request: Request, st: dict, rep: dict | None) -> list[dict]:
     for it in (rep or {}).get("items", []):
         if it.get("id") in upd.REPAIR_IDS:
             items.append({**{k: it.get(k) for k in ("id", "title", "meaning", "fix")}, "kind": "helper", "fixable": can_fix})
-    if helper["problem"]:
-        items.insert(0, {"id": "updater_helper", "kind": "manual", "fixable": False,
-                         "title": "Помощник обновлений не установлен" if helper["problem"] == "not_installed" else "У помощника обновлений недостаточно прав",
-                         "meaning": ("Без него кнопки «Обновить» и «Исправить автоматически» в браузере не могут изменить права на каталоги, настройки веб-сервера и параметры системы. "
-                                     "Это исправляется один раз на самом сервере — дальше всё делается из браузера."),
-                         "fix": "Один раз выполнить на сервере от администратора системы:", "command": "sudo ./scripts/updater.sh install --yes"})
+    if helper["state"] != "ok":
+        titles = {"not_installed": "Помощник обновлений не установлен", "installed_inactive": "Помощник обновлений установлен, но не запущен",
+                  "failed": "Служба помощника обновлений остановилась с ошибкой", "wrong_user": "У помощника обновлений недостаточно прав (работает не от root)",
+                  "unresponsive": "Помощник обновлений запущен, но не отвечает", "stale_unit": "Служба помощника обновлений устарела",
+                  "manual_process": "Помощник обновлений запущен вручную, а не как служба"}
+        items.insert(0, {"id": "updater_helper", "kind": "manual", "fixable": False, "state": helper["state"], "title": titles.get(helper["state"], "Помощник обновлений требует внимания"),
+                         "meaning": helper["message"] + " Без работающего помощника кнопки «Обновить» и «Исправить автоматически» в браузере не могут изменить права на каталоги, настройки веб-сервера и параметры системы.",
+                         "fix": "Выполнить на сервере от администратора системы (команда идемпотентна — повторный запуск безопасен):", "command": helper.get("fix") or "sudo ./scripts/updater.sh install --yes"})
     boot = getattr(request.app.state, "boot_errors", {}) or {}
     if boot.get("ca") and not any(i["id"] == "data_dirs" for i in items):
         items.append({"id": "data_dirs", "kind": "helper", "fixable": can_fix, "title": "Не удалось записать сертификаты (CA)",
@@ -260,9 +276,9 @@ async def repairs_fix(repair_id: str, request: Request, su: SessionUser = Depend
     st = ch.status()
     helper = helper_info(st)
     if not helper["available"]:
-        raise HTTPException(status_code=409, detail="Помощник обновлений не запущен — установите его один раз (см. «Помощник обновлений»)")
+        raise HTTPException(status_code=409, detail=helper["message"])
     if not helper["privileged"]:
-        raise HTTPException(status_code=409, detail="У помощника недостаточно прав — переустановите его от администратора системы (см. «Помощник обновлений»)")
+        raise HTTPException(status_code=409, detail=helper["message"])
     if st.get("state") in upd.BUSY_STATES or st["request_pending"]:
         raise HTTPException(status_code=409, detail="Сейчас уже выполняется обновление или исправление")
     rep = ch.repairs() or {}

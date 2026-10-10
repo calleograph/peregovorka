@@ -31,7 +31,7 @@ set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-STAGES=(prerequisites preflight dirs kernel models pull build database migrations services healthcheck nginx firewall verify report)
+STAGES=(prerequisites preflight dirs kernel models pull build database migrations services healthcheck nginx firewall verify helper report)
 PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""
 FORCE_BUILD=0; ADOPT=0
 while [ $# -gt 0 ]; do
@@ -315,6 +315,13 @@ stage_verify() {
   repair_verify_record pass      # метка «проверка выполнена для этой версии кода» — иначе помощник сочтёт, что нужна повторная проверка
 }
 
+# Помощник обновлений (кнопки «Обновить» и «Исправить автоматически» в браузере): ставится автоматически и проверяется по факту — не по наличию файла, а по
+# состоянию службы, процессу (PID/пользователь) и ответу на запрос связи. Сбой установки не отменяет развёртывание: приложение уже работает, выводится диагностика.
+stage_helper() {
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] будет установлена и проверена служба помощника обновлений (scripts/updater.sh install --yes)"; return 0; fi
+  upd_ensure_helper
+}
+
 stage_report() {
   [ "$DRY_RUN" = "1" ] && return 0
   local model="${DATA_ROOT}/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" w
@@ -354,6 +361,7 @@ run_stage healthcheck   stage_healthcheck
 run_stage nginx         stage_nginx
 run_stage firewall      stage_firewall
 run_stage verify        stage_verify
+run_stage helper        stage_helper
 
 if [ "$DRY_RUN" != "1" ]; then
   mkdir -p "$DATA_ROOT/state"

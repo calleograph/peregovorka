@@ -10,7 +10,7 @@ UPD_NEW_SAFE=(); UPD_NEW_DECIDE=(); UPD_NEW_EMPTY=()
 UPD_FULL_OK=0; UPD_UNHEALTHY=()
 
 fsize() { stat -c '%s' "$1" 2>/dev/null || wc -c < "$1"; }
-upd_as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+upd_as_root() { if [ "$(id -u)" -eq 0 ] || [ -n "${UPDATER_NO_SUDO:-}" ]; then "$@"; else sudo "$@"; fi; }   # UPDATER_NO_SUDO — только для тестов (без root и без sudo)
 
 # ------------------------------------------------------------------------------------------------ .env
 # Имена переменных файла (комментарии и пустые строки игнорируются).
@@ -257,38 +257,39 @@ upd_history_append() {
 }
 
 # ------------------------------------------------------------------------------- служба-помощник обновлений
-# Помощник обновлений (scripts/updater.sh) должен работать от root: без пароля sudo он иначе не может выдать права на каталоги данных,
+# Помощник обновлений (scripts/updater.sh) должен работать от root службой systemd: без пароля sudo он иначе не может выдать права на каталоги данных,
 # обновить собственный nginx-site и применить параметры ядра (реальный сбой 0.3.0: «sudo: a terminal is required to read the password»).
-# Службы, созданные прежними версиями, работали от обычного пользователя. Ручное обновление от root (sudo ./scripts/update.sh) исправляет это само;
-# если служба ещё не установлена, на standalone она ставится автоматически. Из веб-интерфейса службу не перезапустить (она сама выполняет обновление).
-upd_self_heal_updater() {
+# upd_ensure_helper вызывают install.sh (чистая установка) и update.sh (после каждого обновления из терминала): команда `updater.sh install --yes` ИДЕМПОТЕНТНА —
+# уже работающий помощник не трогается, отсутствующий ставится, устаревший/упавший/запущенный не тем пользователем восстанавливается, а результат ПРОВЕРЯЕТСЯ по факту
+# (служба включена и активна, процесс существует и принадлежит root, пульс идёт, на запрос связи он отвечает). Из веб-интерфейса службу приводит в порядок сам помощник
+# (`updater.sh sync-unit` после обновления), поэтому здесь для UPDATE_SOURCE=web ничего не делается: перезапуск службы изнутри убил бы само обновление.
+# Сбой установки обновление НЕ ломает — выводится диагностика с точной командой.
+upd_ensure_helper() {
   [ "${DRY_RUN:-0}" = "1" ] && return 0
   [ "${UPDATE_SOURCE:-}" = web ] && return 0
-  command -v systemctl >/dev/null 2>&1 || return 0
-  local unit="/etc/systemd/system/peregovorka-updater-${COMPOSE_PROJECT_NAME}.service" want
-  if [ "$(id -u)" -ne 0 ]; then
-    if [ -f "$unit" ] && ! grep -qx 'User=root' "$unit" 2>/dev/null; then
-      warn "Помощник обновлений работает без прав администратора, поэтому кнопки «Обновить» и «Исправить автоматически» в браузере смогут не всё. Один раз выполните от root: sudo ./scripts/updater.sh install --yes"
-    fi
-    return 0
+  if ! command -v systemctl >/dev/null 2>&1; then
+    info "systemd не найден: помощник обновлений запускайте вручную (nohup $REPO_ROOT/scripts/updater.sh run &) — кнопки в браузере работают только пока он запущен"; return 0
   fi
-  want="$("$REPO_ROOT/scripts/updater.sh" print-unit --env "$ENV_FILE" 2>/dev/null)"
-  [ -n "$want" ] || return 0
-  if [ ! -f "$unit" ]; then
-    if [ "${INSTALL_PROFILE:-}" = standalone ]; then
-      info "Устанавливаю службу-помощник обновлений (кнопки «Обновить» и «Исправить автоматически» в браузере)…"
-      "$REPO_ROOT/scripts/updater.sh" install --env "$ENV_FILE" --yes >/dev/null 2>&1 && ok "Помощник обновлений установлен и запущен" || warn "Не удалось установить помощник обновлений: sudo ./scripts/updater.sh install --yes"
-    fi
-    return 0
+  local up="$REPO_ROOT/scripts/updater.sh" unit="${UPDATER_UNIT_DIR:-/etc/systemd/system}/peregovorka-updater-${COMPOSE_PROJECT_NAME}.service" out rc=0
+  # общий сервер: ничего нового в системе без решения администратора (см. docs/INSTALL_AND_UPDATE.md); уже установленную службу при этом поддерживаем
+  if [ "${INSTALL_PROFILE:-}" = shared-host ] && [ ! -f "$unit" ]; then
+    info "Профиль shared-host: служба помощника обновлений не устанавливается автоматически. Если нужны кнопки «Обновить» в браузере: sudo ./scripts/updater.sh install --yes"; return 0
   fi
-  if [ "$(cat "$unit")" = "$want" ]; then
-    systemctl is-active --quiet "$(basename "$unit")" 2>/dev/null || systemctl restart "$(basename "$unit")" >/dev/null 2>&1 || true
-    return 0
+  if [ "$(id -u)" -eq 0 ] || [ -n "${UPDATER_NO_SUDO:-}" ]; then
+    out="$("$up" install --env "$ENV_FILE" --yes --quiet 2>&1)" || rc=$?
+  elif sudo -n true 2>/dev/null; then
+    out="$(sudo -n "$up" install --env "$ENV_FILE" --yes --quiet 2>&1)" || rc=$?
+  else
+    "$up" verify --env "$ENV_FILE" --quiet >/dev/null 2>&1 && { ok "Помощник обновлений работает"; return 0; }
+    warn "Помощник обновлений не в порядке, а прав root для его восстановления у этого запуска нет. Проверка: $("$up" verify --env "$ENV_FILE" 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g')"
+    warn "Выполните один раз: sudo ./scripts/updater.sh install --yes"; return 0
   fi
-  info "Обновляю службу-помощник обновлений (теперь она работает от root и умеет исправлять права и настройки)…"
-  printf '%s\n' "$want" > "$unit" && systemctl daemon-reload && systemctl enable "$(basename "$unit")" >/dev/null 2>&1
-  systemctl restart "$(basename "$unit")" >/dev/null 2>&1 && ok "Служба-помощник обновлена и перезапущена" || warn "Не удалось перезапустить службу-помощник: sudo systemctl restart $(basename "$unit")"
+  if [ "$rc" -eq 0 ]; then ok "Помощник обновлений установлен и работает (служба systemd от root, связь проверена)"; return 0; fi
+  warn "Помощник обновлений не удалось привести в рабочее состояние:"; printf '%s\n' "$out" | tail -8 | sed 's/^/    /' >&2
+  warn "Повторите вручную: sudo ./scripts/updater.sh install --yes   (диагностика: ./scripts/updater.sh verify)"
+  return 0
 }
+upd_self_heal_updater() { upd_ensure_helper "$@"; }     # прежнее имя (вызывается из update.sh)
 
 # Четыре независимых итога после обновления. upd_classify_outcome VERIFY_FAILS SMOKE_RC SMOKE_LABEL → H_ST (ok|fail), I_ST (ok|fail|skipped|unknown).
 # Работоспособность (health) — verify без ошибок и smoke без сбоя САМОЙ системы (код 1 = сервисы, БД, ASR, LiveKit, web).

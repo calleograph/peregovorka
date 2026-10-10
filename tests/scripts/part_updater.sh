@@ -19,8 +19,8 @@ mkupdater() { # репозиторий с ПОДСТАВНЫМ update.sh: печ
 #!/usr/bin/env bash
 echo "args: $*" >> "${FAKE_ARGS_FILE:-/dev/null}"
 printenv | grep -E '^(ASR_|NGINX_|LIVEKIT_|STRAY_VAR_TEST|ENV_FILE=|UPDATE_SOURCE=|UPDATE_BY=)' | sort >> "${FAKE_ENV_FILE:-/dev/null}"
-echo "Обновление (подставное)"; echo "[1/3] Проверка"; echo "  \033[32mпорядок\033[0m"; sleep 1
-echo "[2/3] Сборка образов"; sleep 1; echo "[3/3] Запуск"
+echo "Обновление (подставное)"; echo "[1/3] Проверка"; echo "  \033[32mпорядок\033[0m"; sleep "${FAKE_SLEEP:-1}"
+echo "[2/3] Сборка образов"; sleep "${FAKE_SLEEP:-1}"; echo "[3/3] Запуск"
 exit "$(cat "${FAKE_RC_FILE:-/dev/null}" 2>/dev/null || echo 0)"
 FAKE
     chmod +x scripts/update.sh; git add -A; git commit -qm "подставной update.sh"; git push -q origin main 2>/dev/null )
@@ -28,7 +28,7 @@ FAKE
   rm -rf "$TMP/upd-data"; mkdir -p "$TMP/upd-data"
   UP="$TMP/cl/scripts/updater.sh"; CHD="$TMP/upd-data/updater"
   export FAKE_ARGS_FILE="$TMP/fake-args" FAKE_RC_FILE="$TMP/fake-rc" FAKE_ENV_FILE="$TMP/fake-env"; : > "$FAKE_ARGS_FILE"; : > "$FAKE_ENV_FILE"; echo 0 > "$FAKE_RC_FILE"
-  export UPDATER_PASS_ENV="FAKE_ARGS_FILE FAKE_RC_FILE FAKE_ENV_FILE"
+  export UPDATER_PASS_ENV="FAKE_ARGS_FILE FAKE_RC_FILE FAKE_ENV_FILE FAKE_SLEEP"
 }
 mkreq() { # mkreq ID ДЕЙСТВИЕ FORCE PULL ВОЗРАСТ_С [BY]
   printf 'id=%s\naction=%s\nforce_build=%s\npull=%s\nby=%s\nat=%s\n' "$1" "$2" "$3" "$4" "${6:-admin}" "$(( $(date +%s) - $5 ))" > "$CHD/request.txt"

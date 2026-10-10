@@ -362,7 +362,7 @@ export interface AsrCompare { ok: boolean; error?: string; audio_s?: number; ref
 
 export interface UpdaterState {
   available: boolean; heartbeat_age_s: number | null; state: string | null; action?: string; repair_id?: string; request_id?: string; step_no?: number; step_total?: number; step_name?: string;
-  started_at?: number; finished_at?: number; exit_code?: number | null; result?: string; request_pending?: boolean; project?: string; by?: string;
+  started_at?: number; finished_at?: number; exit_code?: number | null; result?: string; request_pending?: boolean; project?: string; by?: string; ping_id?: string; ping_at?: number;
   /** Результат прежнего запуска из веб-интерфейса, после которого уже было успешное обновление: текущим не считается. */
   stale?: boolean;
 }
@@ -379,7 +379,9 @@ export interface UpdateOutcome {
   update: string; deployment: string; health: string; integrations: string; integration_issues: string; needs_attention: boolean;
 }
 /** Помощник обновлений на сервере (служба от root). problem: not_installed — не запущен; no_privileges — запущен без прав (служба прежней версии). */
-export interface HelperInfo { available: boolean; privileged: boolean; uid: number | null; problem: null | "not_installed" | "no_privileges" }
+export type HelperState = "ok" | "manual_process" | "wrong_user" | "unresponsive" | "installed_inactive" | "failed" | "stale_unit" | "not_installed";
+/** Состояние помощника: не просто «есть/нет». fix — точная команда; details — факты проверки на сервере (служба, процесс, пользователь). */
+export interface HelperInfo { state: HelperState; available: boolean; privileged: boolean; uid: number | null; message: string; fix: string | null; details?: Record<string, unknown> | null; heartbeat_age_s?: number | null; problem: null | string }
 export interface LocalLlmStatus {
   enabled_by_install: boolean; provider: "local" | "external" | "off"; ready: boolean; endpoint: string;
   model: { id: string; title: string; runtime: string; light: boolean; context_tokens: number; tasks: string[]; note: string; source: string; warn_input_chars: number };
@@ -387,7 +389,7 @@ export interface LocalLlmStatus {
   runtime: { reachable: boolean; ready: boolean; detail: string };
   catalog: { id: string; title: string; runtime: string; light: boolean; source: string }[];
 }
-export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string }
+export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string; state?: string }
 export interface RepairsInfo {
   items: RepairItem[]; checked_at: number | null; age_s?: number | null; helper: HelperInfo; busy: boolean;
   current: { repair_id: string | null; state: string | null; result: string | null; finished_at: number | null } | null;
@@ -699,6 +701,7 @@ export const api = {
 
     updates: () => request<UpdatesOverview>("GET", "/admin/updates"),
     updatesCheck: () => request<{ request_id: string }>("POST", "/admin/updates/check"),
+    updatesPing: () => request<{ request_id: string }>("POST", "/admin/updates/ping"),
     updateChanges: (from: string, to: string) => request<UpdateChanges>("GET", `/admin/updates/changes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
     updatesRun: (body: { confirm: true; force_build: boolean; pull: boolean }) => request<{ request_id: string }>("POST", "/admin/updates/run", body),
     updatesLog: (offset: number) => request<UpdateLog>("GET", `/admin/updates/log?offset=${offset}`),

@@ -6,6 +6,7 @@ import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
 import AutoUpdatePanel from "./AutoUpdatePanel";
 import ChangesDialog from "./ChangesDialog";
 import ComponentsTable from "./ComponentsTable";
+import { HelperAlert, HelperBadge } from "./HelperStatus";
 import RepairsPanel from "./RepairsPanel";
 
 const MAX_LOG = 600_000;
@@ -102,7 +103,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
           <div><div className="l">Опубликовано на GitHub (ветка main)</div><div className="v small-v">{rem?.ok ? (rem.remote_version ? versionLabel(rem.remote_version, rem.remote) : shortCommit(rem.remote)) : "—"}</div>
             <div className="l">{rem ? `проверено ${ago(rem.age_s)}` : "проверка ещё не выполнялась"}</div></div>
           <div><div className="l">Помощник обновлений</div>
-            <div className="v small-v">{u?.available ? (ov?.helper.privileged ? <span className="badge ok">работает</span> : <span className="badge warn" title="Служба прежней версии работает без прав администратора сервера">работает без прав</span>) : <span className="badge warn">не установлен</span>}</div>
+            <div className="v small-v"><HelperBadge h={ov?.helper} /></div>
             <div className="l">{u?.heartbeat_age_s != null ? `пульс ${ago(u.heartbeat_age_s)}` : "нет данных"}</div></div>
         </div>
 
@@ -113,21 +114,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
             <div className="row" style={{ marginTop: 6 }}>{!force && <button className="btn mini primary" onClick={() => setForce(true)}>Отметить полную пересборку</button>}{force && <span className="badge ok">полная пересборка отмечена</span>}</div>
           </div>
         )}
-        {!u?.available && ov && (
-          <div className="alert error updater-missing" role="alert">
-            <b>Кнопка «Обновить проект» пока недоступна: нужно один раз установить помощник обновлений на сервере.</b>
-            При обычной установке («sudo ./install.sh») он ставится сам; здесь он не найден — например, сервер установлен прежней версией. Выполните один раз от администратора сервера:
-            <pre className="cmd">cd каталог_проекта{"\n"}sudo ./scripts/updater.sh install --yes</pre>
-            Помощник работает от root, но выполняет только фиксированный набор действий (обновление, исправление известных проблем, проверки); произвольные команды из веб-интерфейса выполнить нельзя.
-            Пока он не установлен, обновляйте командой <code>sudo ./scripts/update.sh</code> на сервере — результат тот же, а помощник при этом установится сам.
-          </div>
-        )}
-        {u?.available && ov && !ov.helper.privileged && (
-          <div className="alert error updater-missing" role="alert">
-            <b>Помощник обновлений работает без прав администратора сервера</b> (так его устанавливали прежние версии), поэтому «Исправить автоматически» и часть обновления (права на каталоги, настройки веб-сервера) из браузера недоступны.
-            Один раз выполните от администратора сервера: <pre className="cmd">sudo ./scripts/updater.sh install --yes</pre> Либо просто обновите проект командой <code>sudo ./scripts/update.sh</code> — служба обновится сама.
-          </div>
-        )}
+        {ov && <HelperAlert h={ov.helper} onReload={loadOverview} />}
         {rem && !rem.ok && <div className="alert error">Не удалось проверить GitHub: {rem.error || "нет данных"}. Возможно, у сервера нет выхода в интернет — тогда обновляйте на сервере командой <code>./scripts/update.sh --env ...</code> из заранее полученного репозитория.</div>}
         {rem?.ok && behind === 0 && <div className="alert ok">Установлена актуальная редакция проекта{ov ? ` (версия ${ov.installed.version})` : ""}.</div>}
         {rem?.ok && behind > 0 && (

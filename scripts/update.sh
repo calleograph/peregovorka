@@ -268,7 +268,7 @@ phase2() {
   repair_verify_record "$([ "$H_ST" = ok ] && { [ "$I_ST" = fail ] && echo integration || echo pass; } || echo fail)"
   summary "$VF" "$SM" "$WARN_N" "$H_ST" "$I_ST" "$SMISS"
   rm -f "$(upd_marker_file)"
-  upd_self_heal_updater
+  upd_ensure_helper
   if [ "$H_ST" = ok ]; then
     upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok
     [ "$I_ST" = fail ] && exit 3
