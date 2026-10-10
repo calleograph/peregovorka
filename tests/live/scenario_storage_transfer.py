@@ -31,6 +31,13 @@ def dev(path, body):
 def sha(b): return hashlib.sha256(b).hexdigest()
 
 
+async def nav(c, label, exact=False):
+    """Пункт левого меню админки: дождаться появления и нажать (меню рисуется не мгновенно)."""
+    cond = f"(()=>{{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim(){'===' if exact else '.startsWith('}{json.dumps(label)}{'' if exact else ')'});return !!b}})()"
+    await c.wait_for(cond, 15)
+    await c.js(f"[...document.querySelectorAll('button')].find(b=>b.textContent.trim(){'===' if exact else '.startsWith('}{json.dumps(label)}{'' if exact else ')'}).click()")
+
+
 async def main():
     root, alice, bob = Api("root", "root-pass"), Api("alice", "alice-pass"), Api("bob", "bob-pass")
     rooms = {x["slug"]: x for x in root.call("GET", "/rooms")}
@@ -56,23 +63,24 @@ async def main():
     S.check("хранилище создано и проверено (метка тома поставлена)", t.get("ok") and os.path.exists(os.path.join(fs, ".peregovorka-volume")), str(t))
     root.call("PUT", "/admin/settings/audio_storage", {"enabled": True, "profile_id": p["id"], "keep_local_copy": False})
 
-    A = S.Client("ST-root", "root", "root-pass", 9651)
+    A = S.Client("ST-root", "root", "root-pass", 9671)
     await A.start()
     await A.send("Emulation.setDeviceMetricsOverride", width=1366, height=900, deviceScaleFactor=1, mobile=False)
     await A.js("window.confirm = () => true")
     # --- показатели
     await A.goto("/admin", 3)
     await A.js("window.confirm = () => true")
-    await A.js("[...document.querySelectorAll('.nav-group-title, .nav-group > button, button')].find(b=>b.textContent.trim().startsWith('Технические показатели'))?.click()")
+    await nav(A, "Технические показатели")
     S.check("в «Технических показателях» есть блок «Хранилище записей»", await A.wait_for("document.body.innerText.includes('Хранилище записей')", 15))
     await A.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Обновить' && b.closest('section[aria-label=\"Хранилище записей\"]'))?.click()")
     ok = await A.wait_for("document.querySelectorAll('.storage-volume').length>=2 && document.body.innerText.includes('Локальный диск сервера')", 30)
     S.check("показаны локальный диск и внешнее хранилище", ok)
     txt = await A.js("document.querySelector('section[aria-label=\"Хранилище записей\"]').innerText")
     S.check("на локальном диске: 1 общее аудио и 2 индивидуальных файла; у внешнего — 0", "Индивидуальное аудио участников\n2" in txt.replace("\t", "\n") or "Индивидуальное аудио участников" in txt, txt[:300])
+    await A.js("document.querySelector('section[aria-label=\"Хранилище записей\"]')?.scrollIntoView()"); await asyncio.sleep(0.3)
     await A.shot("transfer-stats-before")
     # --- массовый перенос на внешнее
-    await A.js("[...document.querySelectorAll('.nav-group-title, .nav-group > button, button')].find(b=>b.textContent.trim()==='Файловые хранилища')?.click()")
+    await nav(A, "Файловые хранилища", exact=True)
     S.check("раздел «Перенос данных» открыт", await A.wait_for("document.body.innerText.includes('Перенос данных')", 10))
     await A.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Перенести на внешнее хранилище').click()")
     S.check("задание переноса завершилось: перенесено 3 из 3", await A.wait_for("document.body.innerText.includes('Перенесено 3 из 3')", 60), (await A.js("document.body.innerText")).split("Перенос данных")[-1][:300])
@@ -88,6 +96,7 @@ async def main():
     S.check("запись воспроизводится по той же ссылке (те же байты)", root.call("GET", stream, raw=True) == original)
     # --- плеер играет перенесённую запись
     await A.goto(f"/history/{mid}", 3)
+    await A.js("window.confirm = () => true")
     await A.js("[...document.querySelectorAll('.rec-block button')].find(b=>b.textContent.trim()==='Слушать').click()")
     S.check("плеер открывает перенесённую запись", await A.wait_for("(()=>{const a=document.querySelector('.plr audio');return a&&a.readyState>=1&&a.duration>5})()", 20))
     await A.js("document.querySelector('.plr button[aria-label=\"Закрыть плеер (Esc)\"]')?.click()")
@@ -108,7 +117,7 @@ async def main():
     root.call("POST", "/admin/storage/transfers", {"direction": "to_external"})
     await asyncio.sleep(6)
     shutil.move(fs, fs + "-away")
-    await A.js("[...document.querySelectorAll('.nav-group-title, .nav-group > button, button')].find(b=>b.textContent.trim().startsWith('Технические показатели'))?.click()")
+    await nav(A, "Технические показатели")
     await asyncio.sleep(1)
     await A.js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Обновить' && b.closest('section[aria-label=\"Хранилище записей\"]'))?.click()")
     S.check("при недоступном хранилище показатели помечены «недоступно» и «устарело»", await A.wait_for("document.body.innerText.includes('недоступно') && document.body.innerText.includes('устарел')", 30))

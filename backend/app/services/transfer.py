@@ -39,6 +39,7 @@ RESERVE = 64 << 20          # запас свободного места на н
 RECENT_S = 120              # файл, изменённый позже, считается «ещё записывается»
 SETTLE_S = 300              # встреча должна быть завершена не менее стольких секунд назад (финализация, сведение и выгрузка успевают закончиться)
 GRACE_S = 300               # через сколько после переключения удалять источник
+READ_QUIET_S = 120          # сколько секунд после последнего чтения файл считается «слушаемым» и источник не удаляется
 DIRECTIONS = ("to_external", "to_local")
 
 
@@ -357,7 +358,7 @@ class TransferService:
                 try:
                     if rec is None:
                         item.cleanup_at = None
-                    elif self._ps.is_busy(rec.meeting_id) or self._ps.is_read(rec.id):
+                    elif self._ps.is_busy(rec.meeting_id) or self._ps.is_read(rec.id, READ_QUIET_S):
                         item.cleanup_at = utcnow() + timedelta(seconds=60)     # файл читают (слушают запись) или обрабатывают — повторим позже
                     elif await self._clean_one(db, rec, direction):
                         removed += 1

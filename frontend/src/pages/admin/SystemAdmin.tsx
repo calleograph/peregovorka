@@ -87,6 +87,7 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
         {tech && <div className="card"><div className="l">Версия · commit · сборка</div><div className="v" style={{ fontSize: 15 }}>{versionLabel(s.version, s.commit)}</div><div className="l">{s.built_at ?? ""}</div></div>}
       </div>
 
+      {tech && <StorageStatsCard />}
       <h3>Сервисы</h3>
       <div className="grid">
         {Object.entries(s.checks).map(([k, v]) => (
@@ -117,7 +118,6 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
       )}
       {tech && (
         <>
-      <StorageStatsCard />
       <h3>Время входа в комнату (последние измерения)</h3>
       <p className="muted small">Сравнение строк показывает, где теряется время: backend, прокси, сигналинг, ICE, микрофон или ASR. Данные присылают браузеры участников и ASR; хранятся сутки.</p>
       <table className="table compact"><thead><tr><th>Этап</th><th>Среднее</th><th>p95</th><th>Максимум</th><th>Измерений</th></tr></thead><tbody>
