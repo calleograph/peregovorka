@@ -13,7 +13,7 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import User, utcnow
@@ -226,18 +226,77 @@ class ProfileEnrichment:
             return {"ok": False, "message": "Сотрудник не найден или найдено несколько совпадений по e-mail."}
         return {"ok": True, "message": "Найден", "fields": prof.fields, "external_id": prof.external_id, "has_photo": bool(prof.photo)}
 
-    async def check(self) -> tuple[bool, str, int]:
+    async def diagnose(self) -> dict:
+        """Пошаговая диагностика соединения для администратора (см. Bitrix24Provider.diagnose)."""
         async with self._sm() as db:
             cfg = await self.config(db)
         if cfg is None or not cfg.portal_url or not cfg.webhook_url:
-            return False, "Укажите адрес портала и webhook и сохраните настройки.", 0
+            return {"ok": False, "who": None, "scopes": None, "will_use": {}, "ms": 0,
+                    "steps": [{"name": "Настройки", "ok": False, "message": "Укажите адрес портала и webhook и сохраните настройки."}]}
         loop = asyncio.get_running_loop()
         t0 = loop.time()
         try:
-            msg = await self.provider(cfg).check()
-            return True, msg, int((loop.time() - t0) * 1000)
+            res = await asyncio.wait_for(self.provider(cfg).diagnose(), timeout=cfg.timeout * 6 + 5)
+        except asyncio.TimeoutError:
+            res = {"ok": False, "who": None, "scopes": None, "will_use": {}, "steps": [{"name": "Соединение и авторизация", "ok": False, "message": "Проверка заняла слишком много времени"}]}
+        res["ms"] = int((loop.time() - t0) * 1000)
+        return res
+
+    async def check(self) -> tuple[bool, str, int]:
+        d = await self.diagnose()
+        first = d["steps"][0] if d["steps"] else {"ok": False, "message": "нет данных"}
+        if not first["ok"]:
+            return False, f"Ошибка: {first['message']}", d["ms"]
+        if not d["ok"]:
+            bad = next((s for s in d["steps"] if not s["ok"]), first)
+            return False, f"Соединение есть, но интеграция не готова: {bad['message']}", d["ms"]
+        return True, f"Соединение установлено. {first['message']}", d["ms"]
+
+    async def sync_user(self, ident: str, *, apply: bool) -> dict:
+        """Проверка на одном человеке. Без `apply` — только показать, что изменится (ничего не сохраняется); с `apply` — обновить его карточку сейчас."""
+        key = ident.strip().lower()
+        async with self._sm() as db:
+            cfg = await self.config(db)
+            if cfg is None or not cfg.enabled:
+                return {"ok": False, "message": "Интеграция выключена: включите и сохраните настройки."}
+            user = (await db.execute(select(User).where(User.auth_source == "ad", (func.lower(User.sam_account_name) == key) | (func.lower(User.email) == key)))).scalars().first()
+            if user is None:
+                return {"ok": False, "message": "Такого пользователя нет среди вошедших в систему (укажите логин или e-mail). Карточка создаётся при первом входе человека."}
+            if not user.email and not (user.external_ids or {}).get("bitrix"):
+                return {"ok": False, "message": "У пользователя нет e-mail в каталоге — сопоставить с Bitrix24 нечем."}
+            before = {f: getattr(user, f) for f in FIELDS}
+            had_avatar, avatar_src = bool(user.avatar_mime), user.avatar_source
+            email, ext = user.email, (user.external_ids or {}).get("bitrix")
+            src_snapshot = _seed_ad(user)
+        if apply:
+            res = await self.enrich(user.id, force=True)
+            async with self._sm() as db:
+                u2 = await db.get(User, user.id)
+                after = {f: getattr(u2, f) for f in FIELDS}
+                avatar_now = u2.avatar_source
+            if res.get("status") == "error":
+                return {"ok": False, "message": res.get("message") or "Ошибка запроса к порталу", "applied": True}
+            if res.get("status") == "not_found":
+                return {"ok": False, "message": "Сотрудник на портале не найден, не активен или найдено несколько совпадений по e-mail.", "applied": True}
+            changed = {f: {"from": before[f], "to": after[f]} for f in FIELDS if before[f] != after[f]}
+            return {"ok": True, "applied": True, "message": "Карточка обновлена" if changed or res.get("avatar") else "Данные уже актуальны", "changed": changed,
+                    "avatar": "обновлено фото с портала" if res.get("avatar") else ("без изменений" if had_avatar else "нет фото"), "avatar_source": avatar_now}
+        provider = self.provider(cfg)
+        try:
+            prof = await provider.fetch(email=email, external_id=ext)
         except ProviderError as exc:
-            return False, f"Ошибка: {exc}", int((loop.time() - t0) * 1000)
+            return {"ok": False, "message": f"Ошибка запроса к порталу: {exc}", "applied": False}
+        if prof is None:
+            why = {"ambiguous": "На портале несколько активных сотрудников с таким e-mail — данные не используются, исправьте дубль.",
+                   "inactive": "На портале найден только неактивный сотрудник.", "not_found": "На портале нет сотрудника с таким e-mail."}.get(provider.last_match, "Сотрудник не найден.")
+            return {"ok": False, "message": why, "applied": False, "match": provider.last_match}
+        src_snapshot["bitrix"] = dict(prof.fields)
+        eff = effective(src_snapshot, priorities_from(cfg))
+        changed = {f: {"from": before[f], "to": eff[f]} for f in FIELDS if f in eff and eff[f] != before[f]}
+        decision = avatar_source(has_avatar=had_avatar, current=avatar_src, priority=priorities_from(cfg)["avatar"], bitrix_available=bool(prof.photo and cfg.use_photos))
+        avatar = ("будет заменено фото с портала" if decision == "bitrix" else "фото останется прежним (приоритет у своего или у каталога)") if prof.photo else "на портале фото нет"
+        return {"ok": True, "applied": False, "match": "found", "message": "Что изменится при обновлении" if changed or decision == "bitrix" else "Изменений не будет: данные уже совпадают",
+                "portal": prof.fields, "changed": changed, "avatar": avatar, "external_id": prof.external_id}
 
     async def sync_all(self, *, limit: int = 200, force: bool = True) -> dict:
         """Ручная синхронизация: пользователи с e-mail (по давности последнего входа), ограниченное число за запуск, параллельно ≤ concurrency."""

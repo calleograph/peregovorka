@@ -95,7 +95,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         <Menu label="Скачать">
           {FORMATS.map(([f, l]) => <a key={f} href={api.protocolExportUrl(meetingId, item.id, f)} download>{l}</a>)}
         </Menu>
-        {mode !== "edit" && <button className="btn" onClick={() => { setDraft(content); setMode("edit"); }}>Редактировать</button>}
+        {mode !== "edit" && item.can_edit && <button className="btn" onClick={() => { setDraft(content); setMode("edit"); }}>Редактировать</button>}
         <button className="btn" onClick={() => onRegenerate(item)} title="Открыть окно инструкции и создать новую версию">Сформировать заново</button>
         {isAdmin && <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Удалить</button>}
       </div>

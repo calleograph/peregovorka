@@ -72,6 +72,8 @@ export interface ProtocolItem {
   id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
   created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
   title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
+  /** Править документ может администратор, руководитель комнаты и организатор встречи; остальные участники — только читать. */
+  can_edit?: boolean;
   /** Предупреждения при формировании: например, локальная модель не смогла полностью обработать стенограмму (truncated). */
   warnings?: string[]; truncated?: boolean;
   /** Времена этапов (ISO) и длительности в секундах: нажатие → начало обработки → начало работы модели → готово; очередь, подготовка, модель, всего. */
@@ -89,6 +91,9 @@ export interface AdminUser {
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
 export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
+export interface BitrixStep { name: string; ok: boolean; message: string }
+export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
+export interface BitrixUserSync { ok: boolean; message: string; applied?: boolean; match?: string; portal?: Record<string, string>; changed?: Record<string, { from: string | null; to: string }>; avatar?: string }
 export interface BitrixSync { status: string; processed: number; result: Record<string, number> }
 export interface PublicApiKey { id: string; key: string; key_id: string; label: string | null; state: "active" | "expired" | "revoked"; expires_at: string | null; revoked_at: string | null; last_used_at: string | null; last_used_ip: string | null; created_at: string }
 export interface PublicApiClient { id: string; name: string; description: string | null; enabled: boolean; scopes: string[]; rooms: string[] | null; ip_allowlist: string[] | null; created_by: string | null; created_at: string; updated_at: string; keys: PublicApiKey[] }
@@ -772,6 +777,8 @@ export const api = {
     },
     bitrixLookup: (email: string) => request<BitrixLookup>("POST", "/admin/bitrix24/lookup", { email }),
     bitrixSync: () => request<BitrixSync>("POST", "/admin/bitrix24/sync"),
+    bitrixDiagnose: () => request<BitrixDiagnose>("POST", "/admin/bitrix24/diagnose"),
+    bitrixSyncUser: (user: string, apply: boolean) => request<BitrixUserSync>("POST", "/admin/bitrix24/sync-user", { user, apply }),
     asrTest: (modelId?: string, force = false) => request<AsrTestResult>("POST", "/admin/asr/test", { model_id: modelId, force }),
     asrCompare: (force = false) => request<AsrCompare>("POST", "/admin/asr/compare", { force }),
   },

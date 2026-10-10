@@ -143,8 +143,15 @@ def test_participant_formats_protocol_with_own_instruction_edits_and_exports(tmp
         assert "Alice A" not in sent and "Bob B" not in sent
 
         # ручная правка и повторная генерация с другой инструкцией
+        # править готовый документ обычному участнику нельзя (он контролируемый): это может администратор, руководитель комнаты или организатор встречи
+        denied = c.patch(f"/api/v1/meetings/{mid}/protocols/{pid}", json={"content": "# Подмена"})
+        assert denied.status_code == 403 and c.get(f"/api/v1/meetings/{mid}/protocols/{pid}").json()["can_edit"] is False
+        assert all(p["can_edit"] is False for p in c.get(f"/api/v1/meetings/{mid}/protocols").json())
+        login(c, "root")
         e = c.patch(f"/api/v1/meetings/{mid}/protocols/{pid}", json={"content": "# Мой протокол\n\n- пункт", "title": "Бюджет"})
-        assert e.status_code == 200 and e.json()["edited_by"] == "Bob B" and e.json()["title"] == "Бюджет"
+        assert e.status_code == 200 and e.json()["edited_by"] == "Root Admin" and e.json()["title"] == "Бюджет" and e.json()["can_edit"] is True
+        assert "protocol.edit" in [a["action"] for a in c.get("/api/v1/admin/audit").json()]
+        login(c, "bob")
         r2 = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "Одна строка"})
         _drain(c)
         items = c.get(f"/api/v1/meetings/{mid}/protocols").json()

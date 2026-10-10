@@ -41,6 +41,8 @@ def portal(rows=None, *, photo: bytes | None = None, calls=None, fail=None, dela
         if fail is not None:
             raise fail
         p = req.url.path
+        if p.endswith("/scope.json"):
+            return httpx.Response(200, json={"result": (state or {}).get("scopes", ["user_brief", "department", "task"])})
         if p.endswith("/user.current.json"):
             return httpx.Response(200, json={"result": {"ID": "7", "NAME": "Сервис", "LAST_NAME": "Интеграция"}})
         if p.endswith("/user.get.json"):
@@ -229,3 +231,96 @@ def test_admin_checks_and_sync_work_and_hide_the_secret(tmp_path, directory):
         assert s["status"] == "done" and s["processed"] >= 1
         login(c, "alice")
         assert c.post("/api/v1/admin/bitrix24/sync").status_code == 403, "только администратор"
+
+
+# ------------------------------------------------------------------------------------------------ диагностика и проверка одного человека
+def test_diagnose_reports_scopes_and_what_will_be_used():
+    d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=portal()).diagnose())
+    assert d["ok"] and d["who"] == "Интеграция Сервис" and d["scopes"] == ["department", "task", "user_brief"]
+    assert [s["ok"] for s in d["steps"]] == [True, True, True, True] and d["will_use"] == {"department": True, "users": True}
+    assert "s3cr3tTOKEN" not in json.dumps(d, ensure_ascii=False)
+
+
+def test_diagnose_names_the_missing_scope():
+    d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=portal(state={"scopes": ["task", "crm"]})).diagnose())
+    scope_step = next(s for s in d["steps"] if s["name"].startswith("Права"))
+    assert scope_step["ok"] is False and "Пользователи" in scope_step["message"] and "task" in scope_step["message"]
+
+
+def test_api_errors_are_explained_without_leaking_the_secret():
+    def api_err(code, desc=""):
+        def h(req):
+            if req.url.path.endswith("/user.current.json"):
+                return httpx.Response(200, json={"result": {"NAME": "A", "LAST_NAME": "B"}})
+            return httpx.Response(200, json={"error": code, "error_description": desc})
+        return httpx.MockTransport(h)
+
+    def msg(transport):
+        d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=transport).diagnose())
+        return " | ".join(s["message"] for s in d["steps"] if not s["ok"])
+    assert "нет права" in msg(api_err("ACCESS_DENIED"))
+    assert "лимит запросов" in msg(api_err("QUERY_LIMIT_EXCEEDED"))
+    leak = msg(api_err("SOMETHING_NEW", f"bad call to {HOOK}user.get"))
+    assert "s3cr3tTOKEN" not in leak and "SOMETHING_NEW" in leak
+
+    def http(status, content=b"{}", headers=None):
+        return httpx.MockTransport(lambda req: httpx.Response(status, content=content, headers=headers or {}))
+    for status, word in ((401, "отказал в доступе"), (403, "отказал в доступе"), (404, "не найден"), (429, "ограничил частоту"), (503, "временно недоступен")):
+        d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=http(status)).diagnose())
+        assert not d["ok"] and word in d["steps"][0]["message"], (status, d["steps"][0])
+    d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=http(200, b"<html>captcha</html>")).diagnose())
+    assert "не JSON" in d["steps"][0]["message"]
+    d = asyncio.run(Bitrix24Provider(cfg(), HOOK, transport=http(302, headers={"location": "https://elsewhere.example.net/"})).diagnose())
+    assert "перенаправляет" in d["steps"][0]["message"] and "elsewhere" not in d["steps"][0]["message"]
+
+
+def test_network_reasons_are_distinguished():
+    from app.profiles.bitrix import net_reason
+    assert "сертификат" in net_reason(httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+    assert "DNS" in net_reason(httpx.ConnectError("[Errno -2] Name or service not known"))
+    assert "отклонено" in net_reason(httpx.ConnectError("Connection refused"))
+    assert "s3cr3t" not in net_reason(httpx.ConnectError("boom " + HOOK))
+
+
+def test_admin_diagnose_endpoint_and_single_user_dry_run_then_apply(tmp_path, directory):
+    with running_app(make_settings(tmp_path), directory, transports={"bitrix24": portal()}) as c:
+        login(c, "alice")                                   # человек уже входил — карточка существует
+        enable(c)
+        d = c.post("/api/v1/admin/bitrix24/diagnose").json()
+        assert d["ok"] and d["steps"][0]["ok"] and "s3cr3tTOKEN" not in json.dumps(d)
+        before = user_row(c)
+        assert before.title is None
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "ALICE@corp.test"}).json()
+        assert r["ok"] and r["applied"] is False and r["changed"]["title"]["to"] == "Системный архитектор" and "фото" in r["avatar"]
+        assert user_row(c).title is None, "режим «показать» ничего не сохраняет"
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "alice", "apply": True}).json()
+        assert r["ok"] and r["applied"] is True and r["changed"]["title"] == {"from": None, "to": "Системный архитектор"}
+        assert user_row(c).title == "Системный архитектор"
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "nobody"}).json()
+        assert not r["ok"] and "нет среди вошедших" in r["message"]
+        assert c.post("/api/v1/admin/bitrix24/sync-user", json={"user": ""}).status_code == 422
+        actions = [a["action"] for a in c.get("/api/v1/admin/audit").json()]
+        assert "bitrix24.sync_user" in actions
+        login(c, "alice")
+        assert c.post("/api/v1/admin/bitrix24/diagnose").status_code == 403 and c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "alice"}).status_code == 403
+
+
+def test_single_user_explains_ambiguous_and_missing_matches(tmp_path, directory):
+    two = [{"ID": "1", "ACTIVE": "Y", "EMAIL": "alice@corp.test"}, {"ID": "2", "ACTIVE": "Y", "EMAIL": "alice@corp.test"}]
+    with running_app(make_settings(tmp_path), directory, transports={"bitrix24": portal(two)}) as c:
+        login(c, "alice")
+        enable(c)
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "alice"}).json()
+        assert not r["ok"] and r["match"] == "ambiguous" and "несколько" in r["message"]
+    (tmp_path / "b").mkdir()
+    (tmp_path / "c").mkdir()
+    with running_app(make_settings(tmp_path / "b"), directory, transports={"bitrix24": portal([])}) as c:
+        login(c, "alice")
+        enable(c)
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "alice"}).json()
+        assert not r["ok"] and r["match"] == "not_found"
+    with running_app(make_settings(tmp_path / "c"), directory, transports={"bitrix24": portal()}) as c:
+        login(c, "alice")
+        login(c, "root")
+        r = c.post("/api/v1/admin/bitrix24/sync-user", json={"user": "alice"}).json()
+        assert not r["ok"] and "выключена" in r["message"]

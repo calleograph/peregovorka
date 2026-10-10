@@ -235,10 +235,17 @@ async def toggle_recording(meeting_id: uuid.UUID, request: Request, body: dict =
 
 
 # -------------------------------------------------------------------------------- протоколы и резюме (LLM)
-def _protocol_dict(p: Protocol, with_content: bool = False) -> dict:
+def can_edit_protocol(meeting: Meeting | None, su: SessionUser) -> bool:
+    """Править сформированный документ: администратор, руководитель комнаты, организатор встречи (тот, кто её начал)."""
+    if meeting is None:
+        return False
+    return roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id
+
+
+def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = False) -> dict:
     d = {"id": str(p.id), "meeting_id": str(p.meeting_id), "kind": p.kind, "status": p.status, "error": p.error,
          "created_by": p.created_by, "created_at": p.created_at, "updated_at": p.updated_at, "title": p.title,
-         "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"),
+         "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"), "can_edit": can_edit,
          # предупреждения конвейера (обрезка ответа по лимиту, упрощённая инструкция, длинная стенограмма) — их видно рядом с документом
          "warnings": (p.meta or {}).get("warnings") or [], "truncated": bool((p.meta or {}).get("truncated")),
          # ссылка на выгруженный файл отдаётся, только пока файл есть (по сверке с хранилищем); сам текст всегда в базе
@@ -256,10 +263,11 @@ def _protocol_dict(p: Protocol, with_content: bool = False) -> dict:
 
 @router.get("/{meeting_id}/protocols")
 async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    await get_meeting_for_user(request, db, meeting_id, su)
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
     rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, Protocol.kind.in_(KINDS))
                              .order_by(Protocol.created_at.desc()))).scalars().all()
-    return [_protocol_dict(p) for p in rows]
+    can = can_edit_protocol(meeting, su)
+    return [_protocol_dict(p, can_edit=can) for p in rows]
 
 
 @router.get("/{meeting_id}/protocols/default-instruction")
@@ -331,14 +339,19 @@ async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUI
 @router.get("/{meeting_id}/protocols/{protocol_id}")
 async def get_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user),
                        db: AsyncSession = Depends(get_db)):
-    return _protocol_dict(await _get_protocol(request, db, meeting_id, protocol_id, su), with_content=True)
+    p = await _get_protocol(request, db, meeting_id, protocol_id, su)
+    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su))
 
 
 @router.patch("/{meeting_id}/protocols/{protocol_id}")
 async def edit_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...),
                         su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """Ручное редактирование результата (исходный Markdown) и заголовка."""
+    """Ручное редактирование результата (исходный Markdown) и заголовка. Сформированный протокол — контролируемый документ: править его могут
+    администратор, руководитель комнаты и организатор встречи, но не любой участник (замечания остальных — отдельным механизмом в будущем)."""
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
+    meeting = await db.get(Meeting, meeting_id)
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Править протокол могут администратор, руководитель комнаты и организатор встречи")
     if p.status == "pending":
         raise HTTPException(status_code=409, detail="Протокол ещё формируется")
     from ..models import utcnow
@@ -352,8 +365,10 @@ async def edit_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: 
             raise HTTPException(status_code=422, detail="title: до 300 символов")
         p.title = body["title"] or None
     p.edited_at, p.edited_by = utcnow(), su.display_name
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.edit", target_type="meeting", target_id=str(meeting_id),
+                      details={"protocol_id": str(protocol_id), "content_changed": "content" in body, "title_changed": "title" in body})
     await db.commit()
-    return _protocol_dict(p, with_content=True)
+    return _protocol_dict(p, with_content=True, can_edit=True)
 
 
 @router.delete("/{meeting_id}/protocols/{protocol_id}", status_code=204)
