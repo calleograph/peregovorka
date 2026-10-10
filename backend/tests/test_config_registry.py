@@ -79,3 +79,28 @@ def test_every_old_schema_version_has_a_transform_chain_to_the_current_one():
     assert R.upgrade_payload({"a": 1}, R.SCHEMA_VERSION) == {"a": 1}
     for v in range(1, R.SCHEMA_VERSION):
         assert v in R.TRANSFORMS, f"нет правила преобразования архива версии {v}"
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_every_persistent_volume_and_env_file_key_has_a_policy():
+    assert C.volume_problems(ROOT / "deployment" / "compose.yml") == []
+    assert C.env_file_problems(ROOT / ".env.example") == []
+
+
+def test_a_new_volume_or_env_key_without_a_policy_is_detected(tmp_path):
+    compose = tmp_path / "compose.yml"
+    compose.write_text("      - ${DATA_ROOT}/brand_new_volume:/data/x\n      - ${DATA_ROOT:?DATA_ROOT is required}/postgres:/var/lib/postgresql/data\n", encoding="utf-8")
+    assert any("brand_new_volume" in p for p in C.volume_problems(compose))
+    env = tmp_path / ".env.example"
+    env.write_text("APP_PUBLIC_URL=x\nBRAND_NEW_KEY=1\n# ASR_NEW_SETTING=2\n", encoding="utf-8")
+    msgs = C.env_file_problems(env)
+    assert any("BRAND_NEW_KEY" in m for m in msgs) and not any("ASR_NEW_SETTING" in m or "APP_PUBLIC_URL" in m for m in msgs)
+
+
+def test_secret_environment_values_are_recognised_by_name():
+    for n in ("postgres_password", "app_master_key", "internal_api_token", "livekit_api_secret", "database_url", "ldap_bind_password"):
+        assert R.is_secret_env(n), n
+    for n in ("app_public_url", "ldap_admin_group_dn", "default_audio_retention_days"):
+        assert not R.is_secret_env(n), n

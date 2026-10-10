@@ -19,6 +19,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..auth.service import AuthError
 from ..services.audit import write_audit
 from ..services.config_backup import checks, container, exporter, importer
+from ..services.config_backup import files as cfiles
 from ..services.config_backup import registry as R
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
@@ -86,7 +87,7 @@ async def export(body: ExportIn, request: Request, su: SessionUser = Depends(req
     await _reauth(request, db, su, body.password)
     s = request.app.state
     try:
-        payload = await exporter.build_payload(db, s.settings_svc, app_version=s.settings.app_version, public_url=s.settings.app_public_url, branding=s.branding)
+        payload = await exporter.build_payload(db, s.settings_svc, app_version=s.settings.app_version, public_url=s.settings.app_public_url, branding=s.branding, env_settings=s.settings)
     except exporter.ExportError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from None
     password = container.generate_password()
@@ -121,7 +122,7 @@ async def import_preview(request: Request, su: SessionUser = Depends(require_adm
     except importer.ImportError_ as exc:
         raise HTTPException(status_code=422, detail={"code": "invalid", "message": exc.message, "details": exc.details}) from None
     s = request.app.state
-    return await importer.preview(payload, db, current_version=s.settings.app_version, current_url=s.settings.app_public_url)
+    return await importer.preview(payload, db, current_version=s.settings.app_version, current_url=s.settings.app_public_url, current_env=s.settings)
 
 
 @router.post("/import/apply")
@@ -139,22 +140,32 @@ async def import_apply(request: Request, su: SessionUser = Depends(require_admin
     if _lock.locked():
         raise HTTPException(status_code=409, detail="Импорт уже выполняется.")
     async with _lock:
+        staged: list = []
+        promo = None
         try:
             res = await importer.apply(payload, db, s.settings_svc, branding=s.branding)
-            await db.commit()
+            staged = await importer.stage_files(res.pop("_files"), s.branding, s.ca, db)         # файлы готовятся до фиксации базы
+            promo = cfiles.promote(staged)                                                         # подмена с резервными копиями прежних
+            try:
+                await db.commit()
+            except BaseException:
+                cfiles.undo(promo)                                                                # база не зафиксирована — прежние файлы возвращаются
+                raise
+            cfiles.finish(promo)
         except importer.ImportError_ as exc:
             await db.rollback()
+            cfiles.discard(staged)
             await _audit_fail(request, su, db, exc.message)
             raise HTTPException(status_code=422, detail={"code": "apply_failed", "message": exc.message, "details": exc.details}) from None
         except Exception as exc:  # noqa: BLE001
             await db.rollback()
+            cfiles.discard(staged)
             await _audit_fail(request, su, db, type(exc).__name__)
             raise HTTPException(status_code=500, detail={"code": "apply_failed", "message": "Импорт не выполнен: ошибка при записи настроек. Все изменения отменены, сервер остался в прежнем состоянии.", "details": [type(exc).__name__]}) from None
-        file_problems = importer.write_files(res.pop("_files"), s.branding)
-        # перечитать то, что приложение держит в памяти: набор CA и подключения к каталогу
+        file_problems: list[str] = []
+        # перечитать то, что приложение держит в памяти: подключения к каталогу (набор сертификатов уже подменён вместе с фиксацией базы)
         refresh: list[str] = []
         try:
-            await s.ca.rebuild(db)
             if hasattr(s.directory, "reload"):
                 await s.directory.reload(db)
         except Exception as exc:  # noqa: BLE001

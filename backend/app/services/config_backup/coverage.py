@@ -88,3 +88,24 @@ def all_problems() -> list[str]:
 
     return (table_problems(Base.metadata) + group_problems(GROUPS) + env_problems(set(Settings.model_fields))
             + env_read_problems(Path(__file__).resolve().parents[2]))
+
+
+_MOUNT = re.compile(r"\$\{DATA_ROOT(?::\?[^}]*)?\}/([A-Za-z0-9_\-]+)(?:/[A-Za-z0-9_\-]+)?:")
+
+
+def volume_problems(compose: Path) -> list[str]:
+    """Каждый постоянный том из compose должен иметь политику (VOLUMES)."""
+    found = set(_MOUNT.findall(compose.read_text(encoding="utf-8", errors="ignore")))
+    out = [f"постоянный том «{v}» из compose не описан в реестре конфигурации (VOLUMES)" for v in sorted(found - set(R.VOLUMES))]
+    out += [f"в реестре описан том «{v}», которого нет в compose" for v in sorted(set(R.VOLUMES) - found)]
+    return out
+
+
+def env_file_problems(example: Path) -> list[str]:
+    """Каждый ключ .env.example должен быть отнесён к группе (ENV_FILE_PREFIX): новый ключ без группы — осознанное решение, а не забытый параметр."""
+    out: list[str] = []
+    for line in example.read_text(encoding="utf-8", errors="ignore").splitlines():
+        m = re.match(r"^#?\s*([A-Z][A-Z0-9_]+)=", line)
+        if m and R.env_file_reason(m.group(1)) is None:
+            out.append(f"ключ «{m.group(1)}» из .env.example не описан в реестре конфигурации (ENV_FILE_PREFIX)")
+    return sorted(set(out))

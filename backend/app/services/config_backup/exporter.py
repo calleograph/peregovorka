@@ -74,7 +74,21 @@ async def _exported_room_ids(db: AsyncSession, models: dict[str, type]) -> set:
     return set((await db.execute(select(room.id).where(room.lifetime == "permanent"))).scalars().all())
 
 
-async def build_payload(db: AsyncSession, settings_svc: SettingsService, *, app_version: str, public_url: str, branding=None) -> dict:
+def environment_snapshot(env_settings) -> dict[str, str]:
+    """Параметры окружения исходного сервера для сравнения при импорте. Секреты не передаются даже в шифрованном виде — только «задан»/«не задан»."""
+    out: dict[str, str] = {}
+    if env_settings is None:
+        return out
+    for name in R.ENV:
+        val = getattr(env_settings, name, None)
+        if R.is_secret_env(name):
+            out[name] = "задан" if val else "не задан"
+        else:
+            out[name] = "" if val is None else str(val)[:200]
+    return out
+
+
+async def build_payload(db: AsyncSession, settings_svc: SettingsService, *, app_version: str, public_url: str, branding=None, env_settings=None) -> dict:
     problems = coverage.all_problems()
     if problems:
         raise ExportError("Реестр конфигурации неполон — копия не создаётся, чтобы не потерять настройки молча:\n" + "\n".join(problems[:10]))
@@ -151,7 +165,7 @@ async def build_payload(db: AsyncSession, settings_svc: SettingsService, *, app_
                 files[f"branding/{kind}"] = base64.b64encode(data).decode("ascii")
     manifest = {
         "kind": "peregovorka-config", "schema": R.SCHEMA_VERSION, "format": R.FORMAT_VERSION, "app_version": app_version, "created_at": datetime.utcnow().isoformat() + "Z",
-        "source_url": public_url,
+        "source_url": public_url, "environment": environment_snapshot(env_settings),
         "components": {"tables": {n: len(v) for n, v in tables.items()}, "settings": {g: len(v) for g, v in settings.items()}, "files": sorted(files)},
         "excluded_tables": {n: p.reason for n, p in R.TABLES.items() if not p.export},
         "warnings": warnings + ([f"в базе есть настройки неизвестных групп/полей, они не вошли в копию: {', '.join(sorted(skipped_unknown)[:10])}"] if skipped_unknown else []),

@@ -127,7 +127,38 @@ def _scan_hint(val: Any) -> str | None:
     return None
 
 
-async def preview(payload: dict, db: AsyncSession, *, current_version: str, current_url: str, local_ids_note: bool = True) -> dict:
+# параметры окружения, отличия которых заметно меняют поведение (остальные — просто считаются)
+ENV_IMPORTANT = {
+    "ldap_admin_group_dn": "группа администраторов каталога из .env действует вместе с настройками «Доступ к системе» — без неё администраторов из каталога не будет",
+    "ldap_access_group_dn": "группа допуска из .env действует вместе с настройками «Кто может входить»",
+    "app_public_url": "внешний адрес: от него строятся ссылки в письмах и приглашениях", "livekit_public_url": "адрес сервера звонков, который получают браузеры",
+    "default_text_retention_days": "срок хранения текста по умолчанию", "default_audio_retention_days": "срок хранения аудио по умолчанию",
+    "trusted_proxy_hops": "доверенные прокси: определение адреса клиента", "trusted_proxy_cidrs": "доверенные прокси: определение адреса клиента",
+    "cookie_secure": "защищённые cookie (нужен HTTPS)", "local_llm_enabled": "встроенная локальная модель", "sip_enabled": "SIP-телефония",
+}
+
+
+def environment_diff(source: dict, current) -> dict:
+    """Чем окружение исходного сервера отличается от этого. Переносить значения автоматически нельзя (.env задаёт администратор при развёртывании) — их нужно сверить вручную."""
+    important, other = [], 0
+    for name, src in (source or {}).items():
+        if current is None or not hasattr(current, name):
+            continue
+        here = getattr(current, name)
+        if R.is_secret_env(name):
+            now = "задан" if here else "не задан"
+        else:
+            now = "" if here is None else str(here)[:200]
+        if str(src) == now:
+            continue
+        if name in ENV_IMPORTANT:
+            important.append({"name": name.upper(), "source": src, "here": now, "note": ENV_IMPORTANT[name]})
+        else:
+            other += 1
+    return {"important": important, "other_differences": other}
+
+
+async def preview(payload: dict, db: AsyncSession, *, current_version: str, current_url: str, current_env=None, local_ids_note: bool = True) -> dict:
     man = payload["manifest"]
     models = models_by_table()
     warnings: list[dict] = []
@@ -209,7 +240,7 @@ async def preview(payload: dict, db: AsyncSession, *, current_version: str, curr
                        "settings": [{"name": g, "title": R.GROUPS_POLICY[g].title or g, "fields": len(v)} for g, v in payload["settings"].items()],
                        "files": [{"name": k, "title": R.FILES[k]} for k in payload["files"]]},
         "warnings": warnings, "notes": notes, "hashed": hashed, "conflicts": conflicts, "replace": replace, "excluded": man.get("excluded_tables", {}), "manifest_warnings": man.get("warnings", []),
-        "target_clean": existing_settings == 0, "needs_ack": bool(warnings or conflicts or replace),
+        "target_clean": existing_settings == 0, "needs_ack": bool(warnings or conflicts or replace), "environment": environment_diff(man.get("environment", {}), current_env),
     }
 
 
@@ -310,17 +341,28 @@ async def apply(payload: dict, db: AsyncSession, settings_svc: SettingsService, 
     return {"tables": counts, "settings": set_counts, "files": sorted(files), "replaced": replaced, "_files": files}
 
 
-def write_files(files: dict[str, bytes], branding) -> list[str]:
-    """Файлы оформления — после успешной фиксации в базе. Возвращает проблемы (пусто — всё записано)."""
-    problems: list[str] = []
-    if branding is None:
-        return problems
+async def stage_files(files: dict[str, bytes], branding, ca, db: AsyncSession) -> list:
+    """Подготовить файлы (изображения оформления и набор сертификатов) рядом с боевыми — до фиксации базы. Ошибка здесь отменяет импорт целиком."""
     from ..branding import BrandingError, process  # noqa: PLC0415
+    from .files import Staged, discard  # noqa: PLC0415
 
-    for k, data in files.items():
-        kind = k.split("/", 1)[1]
-        try:
-            branding.save(kind, process(kind, data))
-        except (BrandingError, OSError) as exc:
-            problems.append(f"{R.FILES.get(k, k)}: {exc}")
-    return problems
+    staged: list = []
+    try:
+        if branding is not None:
+            for k, data in files.items():
+                kind = k.split("/", 1)[1]
+                try:
+                    tmp, final = branding.stage(kind, process(kind, data))
+                except (BrandingError, OSError) as exc:
+                    raise ImportError_(f"Не удалось подготовить изображение «{R.FILES.get(k, k)}»: {exc}") from None
+                staged.append(Staged(final=final, tmp=tmp, label=R.FILES.get(k, k)))
+        if ca is not None:
+            try:
+                tmp, final = await ca.stage(db)
+            except OSError as exc:
+                raise ImportError_(f"Не удалось подготовить набор сертификатов: {exc}") from None
+            staged.append(Staged(final=final, tmp=tmp, remove=tmp is None, label="набор доверенных сертификатов"))
+    except Exception:
+        discard(staged)
+        raise
+    return staged

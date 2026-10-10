@@ -429,3 +429,188 @@ def test_certificates_documents_sip_templates_branding_roles_and_what_must_not_m
 
 async def _users(db):
     return (await db.execute(select(User))).scalars().all()
+
+
+# ----------------------------------------------------------------------------------------------------- права переговорок без переноса пользователей
+def test_room_permissions_work_on_the_new_server_without_any_users_being_transferred(tmp_path, directory):
+    from .conftest import STAFF_GROUP
+
+    sa, sb = make_settings(tmp_path / "a"), make_settings(tmp_path / "b")
+    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
+    alice_guid = directory.users["alice"][1].ad_guid
+    with running_app(sa, directory) as ca:
+        login(ca, "root")
+        room = make_room(ca, name="Закрытая", acl=[{"subject_type": "group", "subject_ref": STAFF_GROUP}],
+                         moderators=[{"subject_type": "user", "subject_ref": alice_guid, "display_name": "Алиса"}])
+        make_room(ca, name="Только администраторы", acl=[{"subject_type": "group", "subject_ref": "cn=admins,dc=corp,dc=test"}])
+        blob, pw = export(ca)
+    with running_app(sb, directory) as c:
+        login(c, "root")
+        assert db_run(c, lambda db: _names_users(db)) == ["root"], "на новом сервере пользователей каталога ещё нет"
+        r = upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"})
+        assert r.status_code == 200, r.text
+        assert db_run(c, lambda db: _names_users(db)) == ["root"], "импорт не создал и не удалил пользователей"
+        # первый вход Алисы после импорта: доступ по группе и роль руководителя по идентификатору каталога — без какого-либо переноса пользователей
+        login(c, "alice")
+        visible = {x["name"] for x in c.get("/api/v1/rooms").json()}
+        assert "Закрытая" in visible and "Только администраторы" not in visible
+        assert c.get(f"/api/v1/rooms/{room['id']}/manage").status_code == 200, "Алиса — руководитель по идентификатору каталога"
+        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"welcome_message": "Привет"}).status_code == 200
+        login(c, "bob")                                                       # тот же допуск по группе, но не руководитель
+        assert "Закрытая" in {x["name"] for x in c.get("/api/v1/rooms").json()}
+        assert c.get(f"/api/v1/rooms/{room['id']}/manage").status_code == 403
+        login(c, "carol")                                                     # чужая группа
+        assert "Закрытая" not in {x["name"] for x in c.get("/api/v1/rooms").json()}
+
+
+async def _names_users(db):
+    return sorted(u.sam_account_name for u in (await db.execute(select(User))).scalars().all())
+
+
+# ----------------------------------------------------------------------------------------------------- откат файлов и сертификатов
+def _cert_pem() -> str:
+    import datetime as dt
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "УЦ " + uuid.uuid4().hex[:6])])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).not_valid_after(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True).sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def _png(color) -> bytes:
+    import io
+
+    from PIL import Image
+
+    b = io.BytesIO()
+    Image.new("RGBA", (32, 32), color).save(b, "PNG")
+    return b.getvalue()
+
+
+def _prepare_pair(tmp_path, directory):
+    """Сервер А с логотипом и сертификатом; архив; возвращает настройки Б и архив."""
+    sa, sb = make_settings(tmp_path / "a"), make_settings(tmp_path / "b")
+    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
+    with running_app(sa, directory) as ca:
+        login(ca, "root")
+        make_room(ca, name="Комната А")
+        assert ca.post("/api/v1/admin/ca", json={"pem": _cert_pem(), "label": "УЦ из архива"}).status_code in (200, 201)
+        ca.app_obj.state.branding.save("logo", _png((200, 0, 0, 255)))
+        blob, pw = export(ca)
+    return sb, blob, pw
+
+
+def _state_of_files(s) -> dict:
+    data = Path(s.data_dir)
+    out = {}
+    for rel in ("branding/logo.png", "ca/bundle.pem"):
+        p = data / rel
+        out[rel] = hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
+    out["leftovers"] = sorted(str(p.relative_to(data)) for p in data.rglob("*") if p.is_file() and (".import-" in p.name))
+    return out
+
+
+def _prepare_target_with_existing_files(c):
+    login(c, "root")
+    assert c.post("/api/v1/admin/ca", json={"pem": _cert_pem(), "label": "Свой УЦ"}).status_code in (200, 201)
+    c.app_obj.state.branding.save("logo", _png((0, 0, 200, 255)))
+
+
+def test_failure_while_preparing_files_leaves_database_and_files_untouched(tmp_path, directory, monkeypatch):
+    sb, blob, pw = _prepare_pair(tmp_path, directory)
+    with running_app(sb, directory) as c:
+        _prepare_target_with_existing_files(c)
+        before_files, before_db = _state_of_files(sb), db_run(c, lambda db: _snapshot(db))
+        from app.services.branding import BrandingStore
+
+        monkeypatch.setattr(BrandingStore, "stage", lambda self, kind, png: (_ for _ in ()).throw(OSError("нет места на диске")))
+        r = upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"})
+        assert r.status_code == 422 and "изображение" in json.dumps(r.json(), ensure_ascii=False)
+        assert _state_of_files(sb) == before_files and db_run(c, lambda db: _snapshot(db)) == before_db
+        assert db_run(c, lambda db: _count(db, Room)) == 0
+
+
+def test_failure_at_the_final_commit_returns_the_previous_logo_and_certificate_bundle(tmp_path, directory, monkeypatch):
+    sb, blob, pw = _prepare_pair(tmp_path, directory)
+    with running_app(sb, directory) as c:
+        _prepare_target_with_existing_files(c)
+        before_files, before_db = _state_of_files(sb), db_run(c, lambda db: _snapshot(db))
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        real = AsyncSession.commit
+        state = {"armed": False}
+        from app.services.config_backup import files as cf
+
+        real_promote = cf.promote
+
+        def promote_then_arm(staged):
+            promo = real_promote(staged)
+            state["armed"] = True                                                   # файлы уже подменены; следующая фиксация базы (импорта) упадёт
+            return promo
+
+        async def boom(self):
+            if state["armed"]:
+                state["armed"] = False
+                raise RuntimeError("сбой при фиксации")
+            return await real(self)
+
+        monkeypatch.setattr(cf, "promote", promote_then_arm)
+        monkeypatch.setattr(AsyncSession, "commit", boom)
+        r = upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"})
+        assert r.status_code == 500 and "отменены" in json.dumps(r.json(), ensure_ascii=False)
+        assert _state_of_files(sb) == before_files, "логотип и набор сертификатов вернулись к прежним, временных и резервных файлов не осталось"
+        assert db_run(c, lambda db: _snapshot(db)) == before_db
+        assert c.app_obj.state.branding.read("logo") == _png((0, 0, 200, 255))
+        monkeypatch.setattr(cf, "promote", real_promote)
+        monkeypatch.setattr(AsyncSession, "commit", real)
+        ok = upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"})
+        assert ok.status_code == 200, "после устранения причины импорт проходит"
+        after = _state_of_files(sb)
+        assert after["branding/logo.png"] != before_files["branding/logo.png"] and after["ca/bundle.pem"] != before_files["ca/bundle.pem"] and after["leftovers"] == []
+
+
+def test_success_replaces_files_and_the_bundle_matches_the_database(tmp_path, directory):
+    sb, blob, pw = _prepare_pair(tmp_path, directory)
+    with running_app(sb, directory) as c:
+        _prepare_target_with_existing_files(c)
+        r = upload(c, "/api/v1/admin/config/import/apply", blob, pw, **{"x-admin-password": "root-pass", "x-import-confirm": "yes"})
+        assert r.status_code == 200, r.text
+        bundle = (Path(sb.data_dir) / "ca" / "bundle.pem").read_text(encoding="ascii")
+        from app.models import CaCertificate
+
+        pems = [x.pem for x in db_run(c, lambda db: _all(db, CaCertificate))]
+        assert len(pems) == 2 and all(p.strip() in bundle for p in pems), "набор доверенных сертификатов соответствует базе: и свой УЦ, и УЦ из архива"
+        assert _state_of_files(sb)["leftovers"] == []
+
+
+async def _all(db, model):
+    return (await db.execute(select(model))).scalars().all()
+
+
+# ----------------------------------------------------------------------------------------------------- окружение
+def test_environment_of_the_source_server_is_reported_without_secrets_and_compared_with_the_new_one(tmp_path, directory):
+    sa = make_settings(tmp_path / "a", ldap_access_group_dn="cn=old-staff,dc=old,dc=test", default_audio_retention_days=90, app_public_url="https://old.example.test")
+    sb = make_settings(tmp_path / "b", ldap_access_group_dn="", default_audio_retention_days=30, app_public_url="https://new.example.test")
+    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
+    with running_app(sa, directory) as ca:
+        login(ca, "root")
+        blob, pw = export(ca)
+    header, payload = K.open_(blob, pw)
+    env = payload["manifest"]["environment"]
+    assert env["ldap_access_group_dn"] == "cn=old-staff,dc=old,dc=test" and env["default_audio_retention_days"] == "90"
+    assert env["app_master_key"] in ("задан", "не задан") and sa.app_master_key not in json.dumps(payload) and "internal-test-token" not in json.dumps(payload)
+    assert env["postgres_password"] in ("задан", "не задан") and env["database_url"] in ("задан", "не задан")
+    with running_app(sb, directory) as c:
+        login(c, "root")
+        p = upload(c, "/api/v1/admin/config/import/preview", blob, pw).json()
+        names = {x["name"]: x for x in p["environment"]["important"]}
+        assert names["LDAP_ACCESS_GROUP_DN"]["source"] == "cn=old-staff,dc=old,dc=test" and names["LDAP_ACCESS_GROUP_DN"]["here"] == "" and "допуска" in names["LDAP_ACCESS_GROUP_DN"]["note"]
+        assert "DEFAULT_AUDIO_RETENTION_DAYS" in names and "APP_PUBLIC_URL" in names
+        assert "APP_MASTER_KEY" not in names, "ключи шифрования у серверов разные по определению — это не отличие, которое нужно сверять"
