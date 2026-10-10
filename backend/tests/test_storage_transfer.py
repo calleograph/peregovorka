@@ -46,6 +46,16 @@ def crash(c, job_id: str, gate: Gate) -> None:
     time.sleep(0.5)
 
 
+_REAL_DESCRIBE = mounts.describe
+
+
+@pytest.fixture(autouse=True)
+def _external_volume_is_mounted(monkeypatch):
+    """Каталоги тестов лежат на системном диске раннера, а «внешний том» по определению — отдельная смонтированная файловая система: подставляем её (на Windows /proc нет, на Linux CI он есть —
+    именно поэтому без подмены тесты там вели себя иначе). Тесты, которым нужна другая картина монтирования, переопределяют её сами."""
+    monkeypatch.setattr(mounts, "describe", lambda path, text=None: {"mountpoint": "/mnt/external", "fstype": "cifs", "source": "//srv/rec", "on_root": False})
+
+
 @pytest.fixture(autouse=True)
 def _fast(monkeypatch):
     monkeypatch.setattr(tr, "SETTLE_S", 0)
@@ -555,6 +565,7 @@ def test_mountinfo_parsing_and_lookup(monkeypatch):
     ms = mounts.parse_mountinfo(text)
     assert [(m.mountpoint, m.fstype) for m in ms] == [("/", "ext4"), ("/mnt/share", "cifs"), ("/mnt/with space", "nfs4")]
     monkeypatch.setattr(mounts.os.path, "realpath", lambda p: p)
+    monkeypatch.setattr(mounts, "describe", _REAL_DESCRIBE)                  # здесь проверяется сам разбор, а не подставленная картина монтирования
     assert mounts.describe("/mnt/share/Audio/x", text) == {"mountpoint": "/mnt/share", "fstype": "cifs", "source": "//fileserver/rec", "on_root": False}
     assert mounts.describe("/data/exports", text)["on_root"] is True, "каталог вне смонтированных томов лежит на системном диске"
     assert mounts.describe("/mnt/sharex/y", text)["on_root"] is True, "«/mnt/sharex» — не внутри «/mnt/share»"
