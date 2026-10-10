@@ -129,7 +129,13 @@ export interface RecordingRow {
   id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
   export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing";
 }
-export interface MeetingRecording { id: string; identity: string; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
+/** Запись из блока «Записи»: общая (mix_audio / mix_video) или файл участника (только администратору). */
+export interface MediaItem {
+  id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; error: string | null; size_bytes: number; duration_s: number | null;
+  has_video: boolean; started_at: string | null; created_at: string; file_state?: "ok" | "missing"; can_download: boolean; name?: string; identity?: string | null;
+}
+export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; recording_mode: "audio" | "audio_video" | "off" }
+export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
   user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; role?: "organizer" | "leader" | null; display_name: string; joined_at: string; left_at: string | null; online: boolean;
 }
@@ -187,7 +193,7 @@ export interface StorageProfile {
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
-  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; record_audio: boolean;
+  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
@@ -664,6 +670,7 @@ export const api = {
   deleteTemplate: (id: string) => request<void>("DELETE", `/protocol-templates/${id}`),
 
   meetingRecordings: (id: string) => request<MeetingRecording[]>("GET", `/meetings/${id}/recordings`),
+  meetingMedia: (id: string) => request<MeetingMedia>("GET", `/meetings/${id}/media`),
   recordingUrl: (meetingId: string, recId: string) => `/api/v1/meetings/${meetingId}/recordings/${recId}`,
   deleteRecordings: (id: string) => request<void>("DELETE", `/meetings/${id}/recordings`),
   deleteMeeting: (id: string) => request<void>("DELETE", `/meetings/${id}`),

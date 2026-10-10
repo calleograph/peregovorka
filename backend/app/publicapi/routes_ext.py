@@ -157,7 +157,7 @@ async def cancel_job(job_id: str, request: Request, p: Principal = Depends(Acces
 async def download_url(meeting_id: str, recording_id: str, request: Request, p: Principal = Depends(Access("recordings:download", "download")), db: AsyncSession = Depends(get_db)):
     m = await load_meeting(db, p, meeting_id)
     rec = await db.get(Recording, _pid("recording", recording_id, "Запись"))
-    if rec is None or rec.meeting_id != m.id:
+    if rec is None or rec.meeting_id != m.id or rec.kind != "participant":      # общая запись в публичный API пока не отдаётся
         raise not_found("Запись")
     if rec.file_state == "missing":
         raise ApiError(410, "file_missing", "Файл записи удалён из хранилища.")
@@ -192,7 +192,7 @@ async def download(token: str, request: Request, db: AsyncSession = Depends(get_
     if not p.has("recordings:download"):
         raise ApiError(403, "insufficient_scope", "Не хватает права «recordings:download».", extra={"required_scope": "recordings:download"})
     rec = await db.get(Recording, uuid.UUID(data["r"]))
-    if rec is None or not p.allows_room(rec.room_id):
+    if rec is None or rec.kind != "participant" or not p.allows_room(rec.room_id):
         raise not_found("Запись")
     await _rate(request, cfg, p, "download")
     if rec.file_state == "missing":

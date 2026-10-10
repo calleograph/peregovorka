@@ -35,7 +35,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode")
+                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -56,6 +56,7 @@ class RoomManageOut(BaseModel):
     room_type: str
     auto_record: bool
     record_audio: bool
+    recording_mode: str = "audio"
     transcription_enabled: bool
     mute_on_join: bool
     welcome_message: str | None
@@ -97,6 +98,7 @@ class RoomManagePatch(BaseModel):
     room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
     auto_record: bool | None = None
     record_audio: bool | None = None
+    recording_mode: str | None = Field(default=None, pattern="^(audio|audio_video|off)$")
     mute_on_join: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
     guest_access_enabled: bool | None = None
@@ -146,7 +148,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio,
+        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio, recording_mode=room.recording_mode,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
@@ -221,6 +223,8 @@ async def get_manage(room_id: uuid.UUID, request: Request, su: SessionUser = Dep
 async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     room = await _room_for_leader(request, db, room_id, su)
     fields = body.model_dump(exclude_unset=True)
+    if fields.get("recording_mode") == "audio_video" and room.recording_mode != "audio_video":
+        raise HTTPException(409, "Запись видео пока в разработке: выберите «Только аудио» или «Без общей записи».")   # не принимаем режим, который не выполняется
     if room.lifetime == "temporary" and fields.get("guest_access_enabled") and not room.guest_access_enabled:
         await _require_temp_guest_policy(request, db)
     changed: dict = {}

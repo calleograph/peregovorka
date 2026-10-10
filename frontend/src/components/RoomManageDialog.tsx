@@ -17,14 +17,14 @@ const days = (d: number | null | undefined) => (d == null ? "бессрочно"
 
 interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
-  room_type: RoomType; record_audio: boolean; auto_record: boolean; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
+  room_type: RoomType; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off"; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
 }
 
 const toForm = (r: RoomManage): Form => ({
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, password: "", clearPassword: false,
-  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record,
+  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",
@@ -62,7 +62,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
       const r = await api.manage.patch(roomId, {
         name: form.name.trim(), description: form.description.trim() || null, max_participants: form.max_participants,
         welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, room_type: form.room_type,
-        record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, camera_allowed: form.camera_allowed,
+        record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, recording_mode: form.recording_mode, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, board_access: form.board_access, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
         protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, llm_summary: form.llm_summary, sip: form.sip, auto_map_mode: form.auto_map_mode,
@@ -132,6 +132,14 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                   <span className="check-body">Разрешить запись аудио<span className="help">Руководитель сможет включать и выключать запись кнопкой во время встречи.</span></span></label>
                 <label className="check"><input type="checkbox" checked={form.auto_record} onChange={(e) => set("auto_record", e.target.checked)} />
                   <span className="check-body">Начинать запись автоматически<span className="help">Запись начинается вместе со встречей. Если выключено — руководитель включает её вручную.</span></span></label>
+                <label>Общая запись встречи
+                  <select value={form.recording_mode} onChange={(e) => set("recording_mode", e.target.value as Form["recording_mode"])}>
+                    <option value="audio">Только аудио</option>
+                    <option value="audio_video" disabled>Аудио и видео — в разработке</option>
+                    <option value="off">Без общей записи</option>
+                  </select>
+                  <span className="help">После встречи в «Истории» появится одна общая запись всех участников с сохранением пауз и одновременной речи. Запись видео (камеры и показ экрана) в разработке и пока недоступна.{form.recording_mode === "off" && " Файлы участников для расшифровки сохраняются в любом случае."}</span>
+                </label>
               </fieldset>
               <fieldset className="group"><legend>Карта разговора</legend>
                 <label>После завершения встречи

@@ -235,6 +235,7 @@ def test_delete_only_recording_vs_whole_meeting_with_audit(tmp_path, directory):
         wav = Path(s.recordings_path) / next(Path(s.recordings_path).rglob("*.wav")).relative_to(s.recordings_path)
         assert wav.exists()
         assert c.delete(f"/api/v1/meetings/{mid}/recordings").status_code == 204
+        assert not list(Path(s.recordings_path).rglob("*.m4a")), "вместе с файлами участников удаляется и общая запись"
         assert not wav.exists() and c.get(f"/api/v1/meetings/{mid}/recordings").json() == []
         assert len(c.get(f"/api/v1/meetings/{mid}/transcript").json()["segments"]) == 1, "стенограмма сохраняется"
         assert c.delete(f"/api/v1/meetings/{mid}").status_code == 204
@@ -261,7 +262,7 @@ def _record_meeting(c, s, name="Запись"):
 
 
 def test_recordings_are_exported_to_audio_storage_and_survive_unavailability(tmp_path, directory):
-    s = make_settings(tmp_path)
+    s = make_settings(tmp_path, meeting_mix_enabled=False)         # здесь проверяются файлы участников; общая запись — в test_meeting_media.py
     with running_app(s, directory) as c:
         put_settings(c, "audio_storage", enabled=True, local_path=str(tmp_path / "arch"), keep_local_copy=True)
         mid = _record_meeting(c, s)
@@ -271,7 +272,7 @@ def test_recordings_are_exported_to_audio_storage_and_survive_unavailability(tmp
         assert any(p.suffix == ".wav" for p in (tmp_path / "arch").rglob("*"))
 
     # хранилище недоступно: запись НЕ теряется, остаётся локально и выгружается позже
-    s2 = make_settings(tmp_path / "second")
+    s2 = make_settings(tmp_path / "second", meeting_mix_enabled=False)
     (tmp_path / "second").mkdir()
     blocker = tmp_path / "second" / "blocked"
     blocker.write_text("файл вместо каталога")

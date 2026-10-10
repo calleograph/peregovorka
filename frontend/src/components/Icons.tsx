@@ -52,6 +52,11 @@ const PATHS: Record<string, ReactNode> = {
   expand: <><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></>,
   spot: <><circle cx="12" cy="12" r="3.2" /><path d="M12 3v2.6M12 18.4V21M3 12h2.6M18.4 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></>,
   pip: <><rect x="3" y="5" width="18" height="14" rx="2.4" /><rect x="12" y="11.5" width="6.5" height="5" rx="1.2" /></>,
+  play: <><path d="M8 5.5v13l10.5-6.5L8 5.5Z" /></>,
+  pause: <><path d="M8.5 5.5v13M15.5 5.5v13" /></>,
+  volume: <><path d="M4 9.5v5h3.6l4.4 3.6V5.9L7.6 9.5H4Z" /><path d="M15.6 9a4.2 4.2 0 0 1 0 6M18 6.6a7.6 7.6 0 0 1 0 10.8" /></>,
+  volumeOff: <><path d="M4 9.5v5h3.6l4.4 3.6V5.9L7.6 9.5H4Z" /><path d="m16 9.5 5 5M21 9.5l-5 5" /></>,
+  download: <><path d="M12 4v11M7.5 10.8 12 15.3l4.5-4.5M5 19.5h14" /></>,
 };
 
 export type IconName = keyof typeof PATHS;

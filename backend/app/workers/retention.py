@@ -21,6 +21,7 @@ from ..services.protocols import ProtocolService
 
 log = logging.getLogger("app.retention")
 RETENTION_GRACE = timedelta(minutes=15)
+MIX_STALE = timedelta(hours=6)
 
 
 async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService) -> dict[str, int]:
@@ -31,6 +32,14 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
             await protocols.retry_pending_exports(db)  # повтор выгрузки записей, не дошедших до внешнего хранилища
         except Exception:  # noqa: BLE001
             log.exception("Ошибка повторной выгрузки записей")
+        # Сведение, прерванное перезапуском сервера, не должно блокировать очистку навсегда: старше MIX_STALE — считаем неудавшимся.
+        stuck = (await db.execute(select(Recording).where(Recording.kind == "mix_audio", Recording.status == "processing"))).scalars().all()
+        mixing: set = set()
+        for mix in stuck:
+            if mix.created_at < now - MIX_STALE:
+                mix.status, mix.error = "failed", "Сведение прервано (перезапуск сервера)"
+            else:
+                mixing.add(mix.meeting_id)
         rooms = (await db.execute(select(Room))).scalars().all()
         for room in rooms:
             if room.text_retention_days is not None:
@@ -50,6 +59,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 cutoff = now - (RETENTION_GRACE if room.audio_retention_days == 0 else timedelta(days=room.audio_retention_days))
                 recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, Recording.created_at < cutoff))).scalars().all()
                 for rec in recs:
+                    if rec.meeting_id in mixing:
+                        continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
                     await protocols.purge_recording(db, rec)
                     stats["recordings"] += 1
         if protocols.chat_files is not None:

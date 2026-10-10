@@ -15,12 +15,13 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Iterator, Protocol
 
 from .settings import _StorageTarget as StorageSettings
 
 log = logging.getLogger("app.storage")
 
+CHUNK = 1 << 20          # размер куска при потоковом чтении/записи файлов
 WEEKDAYS_RU = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 _BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -57,6 +58,12 @@ class StorageBackend(Protocol):
     def delete_dir(self, rel: str) -> None: ...
     def test(self) -> str: ...
     def probe(self) -> None: ...   # лёгкая проверка доступности хранилища (без записи); StorageError — недоступно
+    # Потоковые операции для больших файлов (записи встреч): файл целиком в память не читается и не собирается
+    def size_of(self, rel: str) -> int: ...
+    def read_range(self, rel: str, start: int, end: int) -> Iterator[bytes]: ...      # байты start…end включительно, кусками
+    def copy_in(self, rel: str, src_path: str) -> str: ...                              # локальный файл → хранилище (через временное имя, затем переименование)
+    def copy_out(self, rel: str, dst_path: str) -> None: ...                            # хранилище → локальный файл
+    def volume(self) -> tuple[int, int]: ...                                            # (всего, свободно) байт тома хранилища
 
 
 def _check_rel(rel: str) -> PurePosixPath:
@@ -105,6 +112,63 @@ class LocalStorage:
     def probe(self) -> None:
         if not self._root.is_dir():
             raise StorageError(f"Каталог хранилища {self._root} не найден (том не подключён?)")
+
+    def size_of(self, rel: str) -> int:
+        try:
+            return self._full(rel).stat().st_size
+        except FileNotFoundError:
+            raise StorageNotFound("Файл не найден в хранилище") from None
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать файл: {exc.strerror or exc}") from None
+
+    def read_range(self, rel: str, start: int, end: int) -> Iterator[bytes]:
+        full = self._full(rel)
+        try:
+            with open(full, "rb") as fh:
+                fh.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = fh.read(min(CHUNK, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    yield chunk
+        except FileNotFoundError:
+            raise StorageNotFound("Файл не найден в хранилище") from None
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать файл: {exc.strerror or exc}") from None
+
+    def copy_in(self, rel: str, src_path: str) -> str:
+        import shutil  # noqa: PLC0415
+
+        full = self._full(rel)
+        try:
+            full.parent.mkdir(parents=True, exist_ok=True)
+            tmp = full.with_name(full.name + f".{uuid.uuid4().hex[:8]}.tmp")
+            shutil.copyfile(src_path, tmp)
+            os.replace(tmp, full)
+        except OSError as exc:
+            raise StorageError(f"Не удалось записать в {self._root}: {exc.strerror or exc}") from None
+        return str(full)
+
+    def copy_out(self, rel: str, dst_path: str) -> None:
+        import shutil  # noqa: PLC0415
+
+        try:
+            shutil.copyfile(self._full(rel), dst_path)
+        except FileNotFoundError:
+            raise StorageNotFound("Файл не найден в хранилище") from None
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать файл: {exc.strerror or exc}") from None
+
+    def volume(self) -> tuple[int, int]:
+        import shutil  # noqa: PLC0415
+
+        try:
+            u = shutil.disk_usage(self._root)
+        except OSError as exc:
+            raise StorageError(f"Не удалось узнать свободное место: {exc.strerror or exc}") from None
+        return u.total, u.free
 
     def delete(self, rel: str) -> None:
         try:
@@ -188,6 +252,79 @@ class SmbStorage:
             if isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == 2 or "object_name_not_found" in text or "object_path_not_found" in text or "no such file" in text:
                 raise StorageNotFound("Файл не найден в хранилище") from None
             raise StorageError(f"SMB: не удалось прочитать файл ({type(exc).__name__})") from None
+
+    def size_of(self, rel: str) -> int:
+        smb = self._session()
+        try:
+            return int(smb.stat(self._unc(rel)).st_size)
+        except Exception as exc:  # noqa: BLE001
+            raise self._read_error(exc) from None
+
+    @staticmethod
+    def _read_error(exc: Exception) -> StorageError:
+        text = f"{type(exc).__name__} {exc}".lower()
+        if isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == 2 or "object_name_not_found" in text or "object_path_not_found" in text or "no such file" in text:
+            return StorageNotFound("Файл не найден в хранилище")
+        return StorageError(f"SMB: не удалось прочитать файл ({type(exc).__name__})")
+
+    def read_range(self, rel: str, start: int, end: int) -> Iterator[bytes]:
+        smb = self._session()
+        try:
+            with smb.open_file(self._unc(rel), mode="rb") as fh:
+                fh.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = fh.read(min(CHUNK, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    yield chunk
+        except Exception as exc:  # noqa: BLE001
+            raise self._read_error(exc) from None
+
+    def copy_in(self, rel: str, src_path: str) -> str:
+        smb = self._session()
+        path = self._unc(rel)
+        tmp = path + f".{uuid.uuid4().hex[:8]}.tmp"
+        try:
+            smb.makedirs(path.rsplit("\\", 1)[0], exist_ok=True)
+            with open(src_path, "rb") as src, smb.open_file(tmp, mode="wb") as dst:
+                while True:
+                    chunk = src.read(CHUNK)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+            if smb.path.exists(path):
+                smb.remove(path)
+            smb.rename(tmp, path)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                if smb.path.exists(tmp):
+                    smb.remove(tmp)
+            except Exception:  # noqa: BLE001
+                pass
+            raise StorageError(f"SMB: не удалось записать файл ({type(exc).__name__})") from None
+        return path
+
+    def copy_out(self, rel: str, dst_path: str) -> None:
+        smb = self._session()
+        try:
+            with smb.open_file(self._unc(rel), mode="rb") as src, open(dst_path, "wb") as dst:
+                while True:
+                    chunk = src.read(CHUNK)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+        except Exception as exc:  # noqa: BLE001
+            raise self._read_error(exc) from None
+
+    def volume(self) -> tuple[int, int]:
+        smb = self._session()
+        try:
+            v = smb.stat_volume("\\\\" + self._server + "\\" + self._share)
+            return int(v.total_size), int(v.actual_available_size)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось узнать свободное место ({type(exc).__name__})") from None
 
     def probe(self) -> None:
         smb = self._session()

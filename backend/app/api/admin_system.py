@@ -249,7 +249,7 @@ async def list_recordings(room_id: uuid.UUID | None = None, limit: int = Query(1
             .limit(limit).offset(offset))
     if room_id:
         stmt = stmt.where(Recording.room_id == room_id)
-    return [{"id": str(r.id), "meeting_id": str(r.meeting_id), "room": name, "identity": r.participant_identity, "path": r.path,
+    return [{"id": str(r.id), "meeting_id": str(r.meeting_id), "room": name, "identity": r.participant_identity, "kind": r.kind, "path": r.path,
              "size_bytes": r.size_bytes, "duration_s": r.duration_s, "created_at": r.created_at,
              "export_status": r.export_status, "export_location": r.export_location, "export_error": r.export_error, "file_state": r.file_state}
             for r, name in (await db.execute(stmt)).all()]

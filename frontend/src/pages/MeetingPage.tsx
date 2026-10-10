@@ -5,6 +5,7 @@ import BoardViewer from "../board/BoardViewer";
 import ChatPanel from "../components/ChatPanel";
 import { Icon } from "../components/Icons";
 import Menu from "../components/Menu";
+import RecordingsBlock from "../components/RecordingsBlock";
 import MapTab from "../components/MapTab";
 import { useMeetingAdmin } from "../components/MeetingAdminActions";
 import DeliveryLog from "../components/DeliveryLog";
@@ -165,13 +166,15 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         {adminActs.dialogs}
       </div>
 
+      {finished && <RecordingsBlock meetingId={meetingId} />}
+
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "docs"} className={`tab ${tab === "docs" ? "active" : ""}`} onClick={() => setTab("docs")}>Протоколы и резюме{protocols.length ? ` (${protocols.length})` : ""}</button>
         <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Стенограмма ({segments.length})</button>
         {finished && <button role="tab" aria-selected={tab === "map"} className={`tab ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}>Карта разговора</button>}
         {chatCount > 0 && <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Чат ({chatCount})</button>}
         {boardUsed && <button role="tab" aria-selected={tab === "board"} className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>Доска</button>}
-        {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Записи ({recordings.length})</button>}
+        {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Файлы участников ({recordings.length})</button>}
       </div>
 
       {tab === "docs" && (
@@ -232,7 +235,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           <table className="table"><thead><tr><th>Участник</th><th>Файл</th><th>Длительность</th><th>Размер</th><th>Выгрузка</th><th /></tr></thead><tbody>
             {recordings.length === 0 && <tr><td colSpan={6} className="muted">Записей нет.</td></tr>}
             {recordings.map((r) => (
-              <tr key={r.id}><td>{r.identity}</td><td>{r.name}</td><td>{r.duration_s ? `${Math.floor(r.duration_s / 60)}:${String(r.duration_s % 60).padStart(2, "0")}` : "—"}</td><td>{bytes(r.size_bytes)}</td>
+              <tr key={r.id}><td>{r.identity ?? "Общая запись"}</td><td>{r.name}</td><td>{r.duration_s ? `${Math.floor(r.duration_s / 60)}:${String(r.duration_s % 60).padStart(2, "0")}` : "—"}</td><td>{bytes(r.size_bytes)}</td>
                 <td>{r.export_status}{r.export_error && <span className="small" style={{ color: "var(--danger-text)" }}> {r.export_error}</span>}</td>
                 <td>{r.file_state === "missing" ? <span className="badge warn" title="Файл удалён из хранилища (обнаружено при сверке)">файл удалён</span> : <a href={api.recordingUrl(meetingId, r.id)} download>Скачать</a>}</td></tr>))}
           </tbody></table>

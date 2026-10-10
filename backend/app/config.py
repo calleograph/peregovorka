@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     log_format: str = "json"  # json | console
     docs_enabled: bool = False   # документация и схема внутреннего API по умолчанию закрыты (в compose было false, в коде — true: «открыто по умолчанию» не должно зависеть от окружения)
     data_dir: str = "/data"
+    meeting_mix_enabled: bool = True          # общая запись встречи (сведение дорожек участников); выключатель на случай проблем с ffmpeg
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
     trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"

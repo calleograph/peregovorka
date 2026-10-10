@@ -402,7 +402,7 @@ async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
 @router.get("/{meeting_id}/recordings")
 async def meeting_recordings(meeting_id: uuid.UUID, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Аудиозаписи встречи — только администраторам."""
-    rows = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id).order_by(Recording.created_at))).scalars().all()
+    rows = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id, Recording.kind == "participant").order_by(Recording.created_at))).scalars().all()
     return [{"id": str(r.id), "identity": r.participant_identity, "size_bytes": r.size_bytes, "duration_s": r.duration_s,
              "name": r.path.rsplit("/", 1)[-1], "export_status": r.export_status, "export_error": r.export_error, "file_state": r.file_state} for r in rows]
 
@@ -426,7 +426,7 @@ async def download_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, req
                       target_type="recording", target_id=str(recording_id))
     await db.commit()
     name = rec.path.rsplit("/", 1)[-1].encode("ascii", "ignore").decode() or "recording.wav"
-    return Response(data, media_type="audio/wav", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(data, media_type=rec.mime or "audio/wav", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.delete("/{meeting_id}/recordings", status_code=204)

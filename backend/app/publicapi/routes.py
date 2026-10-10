@@ -487,7 +487,7 @@ async def get_map(meeting_id: str, p: Principal = Depends(Access("maps:read")), 
             description="Скачивание файлов в этой версии API не предоставляется.")
 async def list_recordings(meeting_id: str, p: Principal = Depends(Access("recordings:read")), db: AsyncSession = Depends(get_db)):
     m = await load_meeting(db, p, meeting_id)
-    rows = (await db.execute(select(Recording).where(Recording.meeting_id == m.id).order_by(Recording.created_at, Recording.id))).scalars().all()
+    rows = (await db.execute(select(Recording).where(Recording.meeting_id == m.id, Recording.kind == "participant").order_by(Recording.created_at, Recording.id))).scalars().all()
     names = {}
     uids = [r.user_id for r in rows if r.user_id]
     if uids:

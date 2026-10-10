@@ -160,3 +160,18 @@ def test_provider_has_no_dead_lock_and_documents_thread_safety():
 @pytest.mark.parametrize("concurrent,threads,cpus,warn", [(2, 6, 8, True), (1, 6, 8, False), (2, 3, 8, False)])
 def test_threads_times_concurrency_oversubscription_rule(concurrent, threads, cpus, warn):
     assert (threads * concurrent > cpus) is warn
+
+
+def test_recorder_keeps_a_continuous_timeline_with_silence_for_gaps_and_a_start_marker(tmp_path):
+    """Общая запись встречи совмещает файлы участников по времени: пропуск (микрофон выключали) заполняется тишиной, а начало файла записано в `<identity>.t0`."""
+    rec = PcmRecorder(str(tmp_path), "m-room", "u-carol")
+    one = np.full(16000, 1000, dtype=np.int16)                 # 1 с звука
+    rec.write(one, 100.0)                                      # покрывает 99.0 … 100.0
+    rec.write(one, 105.0)                                      # пауза 4 с (с 100.0 до 104.0), затем ещё 1 с
+    rec.write(one[:160], 105.01)                               # кадр без пропуска — тишина не добавляется
+    rec.close()
+    data = (tmp_path / "m-room" / "u-carol.pcm").read_bytes()
+    assert len(data) == (16000 + 4 * 16000 + 16000 + 160) * 2, "1 с + 4 с тишины + 1 с + кадр"
+    pcm = np.frombuffer(data, dtype="<i2")
+    assert pcm[:16000].min() == 1000 and not pcm[16000:16000 + 4 * 16000].any() and pcm[5 * 16000:6 * 16000].min() == 1000
+    assert abs(float((tmp_path / "m-room" / "u-carol.t0").read_text()) - 99.0) < 0.01

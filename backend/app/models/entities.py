@@ -97,6 +97,8 @@ class Room(Base):
     room_type: Mapped[str] = mapped_column(String(16), default="regular", server_default="regular", nullable=False)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Общая запись всей встречи: audio — единая аудиозапись; audio_video — видеозапись со звуком (нужна служба LiveKit Egress); off — общая запись не создаётся.
+    recording_mode: Mapped[str] = mapped_column(String(12), default="audio", server_default="audio", nullable=False)
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Кто работает с общей доской: auto — по типу комнаты (обычная: все, если board_allowed; презентация: только руководитель); everyone — все правят;
@@ -398,6 +400,15 @@ class Recording(Base):
     file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
     file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    # participant — файл одного участника (для транскрибации и разбора); mix_audio / mix_video — общая запись ВСЕЙ встречи (основной материал для просмотра в браузере)
+    kind: Mapped[str] = mapped_column(String(12), default="participant", server_default="participant", nullable=False)
+    mime: Mapped[str | None] = mapped_column(String(60))
+    # ready — файл готов; processing — общая запись формируется в фоне; failed — не удалось (причина в error)
+    status: Mapped[str] = mapped_column(String(12), default="ready", server_default="ready", nullable=False)
+    error: Mapped[str | None] = mapped_column(String(300))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)    # момент, которому соответствует 0:00 записи: по нему реплики стенограммы связываются с плеером
+    sha256: Mapped[str | None] = mapped_column(String(64))              # контрольная сумма (заполняется при переносе между хранилищами)
+    has_video: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
 
 
 class Protocol(Base):

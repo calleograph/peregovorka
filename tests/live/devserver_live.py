@@ -40,6 +40,21 @@ async def _dev_segment(body: dict = Body(...)):
     return {"ok": True}
 
 
+@app.post("/__dev/pcm")
+async def _dev_pcm(body: dict = Body(...)):
+    """Только для стенда: положить «запись ASR» участника (синус заданной частоты) как это делает ASR-сервис: <recordings>/<livekit_room>/<identity>.pcm + .t0 (отметка начала)."""
+    import array, math, time as _t
+    async with app.state.session_maker() as db:
+        m = await db.get(Meeting, uuid.UUID(body["meeting_id"]))
+    d = os.path.join(s.recordings_path, m.livekit_room)
+    os.makedirs(d, exist_ok=True)
+    sec, freq = float(body.get("seconds", 10)), float(body.get("freq", 440))
+    smp = array.array("h", (int(9000 * math.sin(2 * math.pi * freq * i / 16000)) for i in range(int(sec * 16000))))
+    open(os.path.join(d, body["identity"] + ".pcm"), "wb").write(smp.tobytes())
+    open(os.path.join(d, body["identity"] + ".t0"), "w").write(repr(_t.time() + float(body.get("start_offset", 0))))
+    return {"ok": True}
+
+
 eng = sa.create_engine(f"sqlite:///{DATA}/dev.db")
 Base.metadata.create_all(eng)
 FAM = ["Иванов", "Петрова", "Сидоренко", "Морозов", "Соколова", "Кузнецов", "Лебедева", "Орлов", "Крылова", "Мартынов"]

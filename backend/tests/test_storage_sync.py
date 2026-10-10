@@ -12,9 +12,15 @@ from app.models import ChatAttachment, Meeting, StorageSyncRun
 from app.services.storage import LocalStorage
 from app.workers.storage_sync import due, run_if_due
 
-from .conftest import login, make_room, put_settings
+from .conftest import login, make_room, make_settings, put_settings
 from .test_admin_features import _drain
 from .test_transcripts import _join
+
+@pytest.fixture
+def settings(tmp_path):
+    """Здесь проверяется сверка файлов участников; сведение общей записи (отдельная строка) выключено — оно проверяется в test_meeting_media.py."""
+    return make_settings(tmp_path, meeting_mix_enabled=False)
+
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 

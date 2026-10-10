@@ -71,6 +71,21 @@ class PrefixedStorage:
     def probe(self) -> None:
         self._base.probe()
 
+    def size_of(self, rel: str) -> int:
+        return self._base.size_of(self._p(rel))
+
+    def read_range(self, rel: str, start: int, end: int):
+        return self._base.read_range(self._p(rel), start, end)
+
+    def copy_in(self, rel: str, src_path: str) -> str:
+        return self._base.copy_in(self._p(rel), src_path)
+
+    def copy_out(self, rel: str, dst_path: str) -> None:
+        self._base.copy_out(self._p(rel), dst_path)
+
+    def volume(self) -> tuple[int, int]:
+        return self._base.volume()
+
 
 class FileStore:
     def __init__(self, svc: SettingsService, data_dir: str):

@@ -5,9 +5,9 @@ FROM python:${PYTHON_VERSION}-slim
 # Сетевые операции (apt, pip) повторяются при временных сбоях сети/зеркал.
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_RETRIES=5 PIP_DEFAULT_TIMEOUT=60
 
-# Шрифт с кириллицей для экспорта протоколов в PDF
+# Шрифт с кириллицей для экспорта протоколов в PDF; ffmpeg — сведение общей аудиозаписи встречи
 RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-dejavu-core \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-dejavu-core ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app

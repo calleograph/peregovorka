@@ -30,6 +30,7 @@ class FinishedRecording:
     rel_path: str  # относительно каталога записей
     size_bytes: int
     duration_s: int
+    t0: float | None = None   # настенное время начала дорожки (из `<identity>.t0` рекордера) — по нему строится общая запись встречи
 
 
 def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, names: dict[str, str]) -> list[FinishedRecording]:
@@ -42,8 +43,15 @@ def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, nam
     for pcm in sorted(src_dir.glob("*.pcm")):
         size = pcm.stat().st_size - (pcm.stat().st_size % 2)
         identity = pcm.stem
+        side = pcm.with_suffix(".t0")
+        t0: float | None = None
+        try:
+            t0 = float(side.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            t0 = None
         if size < BYTES_PER_SEC * MIN_SECONDS:
             pcm.unlink(missing_ok=True)
+            side.unlink(missing_ok=True)
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
         base = safe_component(names.get(identity, identity), identity)
@@ -62,8 +70,9 @@ def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, nam
                 remaining -= len(chunk)
         os.replace(tmp, target)
         pcm.unlink(missing_ok=True)
+        side.unlink(missing_ok=True)
         done.append(FinishedRecording(identity, str(target.relative_to(recordings_dir)).replace("\\", "/"),
-                                      target.stat().st_size, int(size / BYTES_PER_SEC)))
+                                      target.stat().st_size, int(size / BYTES_PER_SEC), t0))
     try:
         src_dir.rmdir()
     except OSError:

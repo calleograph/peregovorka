@@ -11,8 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -29,6 +31,7 @@ from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Rec
 from .api_profiles import ProfileService
 from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
 from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_messages, render_chat
+from . import mixdown
 from .recordings import delete_recording_file, finalize_pcm_files
 from .segments import author_name
 from .settings import DEFAULT_PROTOCOL_INSTRUCTION, DEFAULT_SUMMARY_INSTRUCTION, SettingsError, SettingsService
@@ -371,12 +374,58 @@ class ProtocolService:
             uid = parse_user_identity(f.identity)
             user = await db.get(User, uid) if uid else None
             rec = Recording(meeting_id=meeting.id, room_id=meeting.room_id, user_id=user.id if user else None,
-                            participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s)
+                            participant_identity=f.identity, path=f.rel_path, size_bytes=f.size_bytes, duration_s=f.duration_s, kind="participant", mime="audio/wav")
             db.add(rec)
             recs.append(rec)
         await db.commit()
+        mode = getattr(meeting.room, "recording_mode", "audio") or "audio"
+        if recs and mode != "off" and self._s.meeting_mix_enabled:
+            # Общая запись всей встречи — в фоне: завершение встречи и протокол не ждут. Выгрузка файлов участников откладывается до конца сведения (иначе локальные файлы,
+            # если копию не хранят, исчезли бы раньше, чем из них соберут общую запись).
+            tracks = [(r.id, f.t0) for r, f in zip(recs, finished)]
+            task = asyncio.create_task(self._mix_then_export(meeting.id, tracks, mode))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            return
         for rec in recs:
             await self.export_recording(db, rec)
+
+    async def _mix_then_export(self, meeting_id: uuid.UUID, tracks: list[tuple[uuid.UUID, float | None]], mode: str) -> None:
+        mix_id: uuid.UUID | None = None
+        try:
+            async with self._sm() as db:
+                recs = {r.id: r for r in (await db.execute(select(Recording).where(Recording.id.in_([t[0] for t in tracks])))).scalars()}
+                if not recs:
+                    return
+                first = next(iter(recs.values()))
+                folder = first.path.rsplit("/", 1)[0] if "/" in first.path else ""
+                name = "Общая запись встречи" + mixdown.EXT
+                rel = f"{folder}/{name}" if folder else name
+                mix_rec = Recording(meeting_id=meeting_id, room_id=first.room_id, participant_identity="meeting", path=rel, size_bytes=0, kind="mix_audio",
+                                    mime=mixdown.MIME, status="processing")
+                db.add(mix_rec)
+                await db.commit()
+                mix_id = mix_rec.id
+                root = Path(self._s.recordings_path)
+                items = [mixdown.Track(root / recs[rid].path, t0) for rid, t0 in tracks if rid in recs and (root / recs[rid].path).is_file()]
+                out = root / rel
+                try:
+                    plan, dur = await asyncio.to_thread(mixdown.mix, items, out)
+                    mix_rec.size_bytes, mix_rec.duration_s, mix_rec.status, mix_rec.error = out.stat().st_size, dur, "ready", None
+                    if any(t[1] is not None for t in tracks):
+                        mix_rec.started_at = datetime.fromtimestamp(plan.start, tz=timezone.utc)
+                except mixdown.MixError as exc:
+                    mix_rec.status, mix_rec.error = "failed", str(exc)[:290]
+                    log.error("Общая запись не сформирована", extra={"meeting_id": str(meeting_id), "error": str(exc)})
+                    if self.journal is not None:
+                        self.journal.emit("storage", "meeting_mix_failed", level="error", meeting_id=str(meeting_id), message=str(exc)[:300])
+                await db.commit()
+                if mix_rec.status == "ready":
+                    await self.export_recording(db, mix_rec)
+                for rec in recs.values():
+                    await self.export_recording(db, rec)
+        except Exception:  # noqa: BLE001 — фоновая задача не должна ронять приложение; файлы участников остаются локально и выгружаются повторно
+            log.exception("Ошибка фоновой сборки общей записи", extra={"meeting_id": str(meeting_id), "mix": str(mix_id)})
 
     async def _audio_storage(self, db: AsyncSession):
         """Записи аудио: профиль → Audio/…; старые настройки → audio/… (как раньше)."""
@@ -401,8 +450,7 @@ class ProtocolService:
         try:
             if storage is None:
                 raise StorageError("хранилище записей недоступно или настроено некорректно")
-            data = await asyncio.to_thread(src.read_bytes)
-            loc = await asyncio.to_thread(storage.write_bytes, rec.path, data)
+            loc = await asyncio.to_thread(storage.copy_in, rec.path, str(src))      # потоком: запись встречи может быть большой
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
             if not cfg.keep_local_copy:  # type: ignore[attr-defined]
                 await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
@@ -439,6 +487,29 @@ class ProtocolService:
         if storage is None:
             raise StorageError("Файл записи недоступен")
         return await asyncio.to_thread(storage.read_bytes, rec.path)
+
+    async def media_source(self, db: AsyncSession, rec: Recording) -> tuple[int, "Callable[[int, int], Iterator[bytes]]"]:
+        """Источник для воспроизведения: (размер, чтение диапазона). Локальный файл или внешнее хранилище; физические пути наружу не выдаются.
+        Файл читается потоком (по диапазону) — целиком в память backend не попадает."""
+        root = Path(self._s.recordings_path).resolve()
+        full = (root / rec.path).resolve()
+        if root in full.parents and full.is_file():
+            def local(start: int, end: int):
+                with open(full, "rb") as fh:
+                    fh.seek(start)
+                    left = end - start + 1
+                    while left > 0:
+                        chunk = fh.read(min(1 << 20, left))
+                        if not chunk:
+                            break
+                        left -= len(chunk)
+                        yield chunk
+            return full.stat().st_size, local
+        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
+        if storage is None:
+            raise StorageError("Файл записи недоступен")
+        size = await asyncio.to_thread(storage.size_of, rec.path)
+        return size, lambda s, e: storage.read_range(rec.path, s, e)
 
     async def delete_recording(self, db: AsyncSession, rec: Recording) -> None:
         """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается."""

@@ -83,6 +83,8 @@ class PcmRecorder:
     """
 
     FLUSH_BYTES = 16000 * 2 // 2  # ~0,5 с
+    GAP_PAD_S = 0.25              # пропуск между кадрами длиннее — заполняется тишиной (микрофон выключали, DTX): файл остаётся непрерывной временной шкалой
+    MAX_PAD_S = 6 * 3600
     QUEUE_CHUNKS = 240            # ~2 минуты аудио на один микрофон
 
     def __init__(self, root: str, room_name: str, identity: str):
@@ -92,6 +94,8 @@ class PcmRecorder:
         self._thread: threading.Thread | None = None
         self._warned = False
         self.bytes_written = 0
+        self.t0: float | None = None          # настенное время первого отсчёта: по нему backend совмещает файлы участников в общую запись
+        self._last_end: float | None = None
 
     def _ensure_thread(self) -> None:
         if self._thread is None:
@@ -109,6 +113,7 @@ class PcmRecorder:
                     if fh is None:
                         self._path.parent.mkdir(parents=True, exist_ok=True)
                         fh = open(self._path, "ab", buffering=1 << 16)
+                        self._write_t0()
                     fh.write(chunk)
                 except OSError as exc:
                     log.error("Ошибка записи аудио", extra={"path": str(self._path), "error": str(exc)})
@@ -119,6 +124,15 @@ class PcmRecorder:
                     fh.close()
                 except OSError:
                     pass
+
+    def _write_t0(self) -> None:
+        """Рядом с файлом — отметка времени его начала (`<identity>.t0`); пишется один раз, до первых данных."""
+        side = self._path.with_suffix(".t0")
+        if self.t0 is not None and not side.exists():
+            try:
+                side.write_text(f"{self.t0:.3f}", encoding="ascii")
+            except OSError as exc:
+                log.error("Не удалось записать отметку времени записи", extra={"path": str(side), "error": str(exc)})
 
     def _enqueue(self, chunk: bytes) -> None:
         self._ensure_thread()
@@ -131,8 +145,18 @@ class PcmRecorder:
                 self._warned = True
                 log.error("Очередь записи аудио переполнена — часть записи потеряна (диск не успевает)", extra={"path": str(self._path)})
 
-    def write(self, samples: np.ndarray) -> None:
+    def write(self, samples: np.ndarray, t_end: float | None = None) -> None:
+        """t_end — настенное время последнего отсчёта кадра. По нему фиксируется начало файла и заполняются пропуски тишиной, чтобы общая запись шла в реальном времени."""
         data = samples.astype("<i2", copy=False).tobytes()
+        if t_end is not None:
+            start = t_end - samples.size / 16000
+            if self.t0 is None:
+                self.t0 = start
+            elif self._last_end is not None and start - self._last_end > self.GAP_PAD_S:
+                pad = int(min(start - self._last_end, self.MAX_PAD_S) * 16000) * 2
+                self._buf += bytes(pad)
+                self.bytes_written += pad
+            self._last_end = max(t_end, self._last_end or t_end)
         self.bytes_written += len(data)
         self._buf += data
         if len(self._buf) >= self.FLUSH_BYTES:
@@ -173,7 +197,7 @@ class ParticipantPipeline:
             async for samples, t_end in frames:
                 f = self._flags
                 if f.record_audio and self._recorder is not None:
-                    self._recorder.write(samples)
+                    self._recorder.write(samples, t_end)
                 if f.transcribe:
                     self._transcribing = True
                     for seg in self._segmenter.feed(samples, t_end):
