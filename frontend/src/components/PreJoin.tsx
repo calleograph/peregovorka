@@ -21,6 +21,7 @@ interface Props {
 
 /** Экран перед входом в комнату: что за комната, кто уже там и что произойдёт после входа (микрофон, стенограмма, запись). */
 export default function PreJoin({ room, needPassword, password, onPassword, error, busy, onJoin, onBack, progress, onHw }: Props) {
+  const [previewHost, setPreviewHost] = useState<HTMLDivElement | null>(null);       // область крупного предпросмотра камеры слева
   const [micDenied, setMicDenied] = useState(false);          // микрофон заблокирован в браузере: входить можно, но без возможности говорить
   const name = room?.name ?? "Комната";
   const t = tint(name);
@@ -46,6 +47,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
         </div>
         <div className="pj-body">
           <div className="pj-col pj-info">
+            {onHw && !busy && room?.camera_allowed !== false && <div className="pj-preview" ref={setPreviewHost} />}
             {room?.description && <p className="pj-desc">{room.description}</p>}
             <h2 className="pj-h">Перед входом</h2>
             <ul className="pj-facts" aria-label="Что произойдёт после входа">
@@ -58,7 +60,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
             </ul>
             {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
           </div>
-          {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} onChange={(p) => { setMicDenied(p.micDenied); onHw(p); }} /></div>}
+          {onHw && !busy && <div className="pj-col pj-hw"><PreJoinCheck cameraAllowed={room?.camera_allowed !== false} previewHost={previewHost} onChange={(p) => { setMicDenied(p.micDenied); onHw(p); }} /></div>}
         </div>
         <div className="pj-foot">
           {needPassword && (

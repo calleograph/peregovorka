@@ -46,7 +46,7 @@ const NAMES: Record<Kind, string> = { audioinput: "Микрофон", audiooutpu
  * Проверка оборудования перед входом: выбор микрофона с живым индикатором уровня, проверка динамиков (короткий тон), выбор камеры с превью.
  * Ничего не отправляется на сервер; выбранные устройства передаются комнате. Вход возможен и без микрофона/камеры (с понятным пояснением).
  */
-export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowed: boolean; onChange: (p: PreJoin & { micOk: boolean; micDenied: boolean }) => void }) {
+export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: { cameraAllowed: boolean; /** Крупная область предпросмотра слева (создаёт PreJoin): картинка камеры выводится туда, а не в маленькое окно карточки. */ previewHost?: HTMLElement | null; onChange: (p: PreJoin & { micOk: boolean; micDenied: boolean }) => void }) {
   const [devices, setDevices] = useState<Record<Kind, MediaDeviceInfo[]>>({ audioinput: [], audiooutput: [], videoinput: [] });
   const [micId, setMicId] = useState("");
   const [speakerId, setSpeakerId] = useState("");
@@ -165,7 +165,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
   };
 
   useEffect(() => { void listDevices(); return () => { stopMic(); camStream.current?.getTracks().forEach((t) => t.stop()); }; }, [listDevices, stopMic]);
-  useEffect(() => { if (video.current) video.current.srcObject = camOn ? camStream.current : null; }, [camOn, camId]);
+  useEffect(() => { if (video.current) video.current.srcObject = camOn ? camStream.current : null; }, [camOn, camId, previewHost]);
   useEffect(() => { onChange({ micId: micId || undefined, speakerId: speakerId || undefined, camId: camId || undefined, camOn, micOk, micDenied: perm.mic === "denied" }); }, [micId, speakerId, camId, camOn, micOk, perm.mic, onChange]);
 
   const playTone = async () => {
@@ -230,11 +230,10 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
       {cameraAllowed && (
         <div className="pc-card">
           <div className="pc-h"><b>{NAMES.videoinput}</b>{camOn && <span className="badge ok">включена</span>}</div>
-          <select aria-label={NAMES.videoinput} value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
+          <select aria-label={NAMES.videoinput} title={devices.videoinput.find((d) => d.deviceId === camId)?.label} value={camId} onChange={(e) => { setCamId(e.target.value); if (camOn) void startCam(e.target.value); }} disabled={!devices.videoinput.length}>
             {!devices.videoinput.length && <option value="">Камера не обнаружена</option>}
             {devices.videoinput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.videoinput} ${i + 1}`}</option>)}
           </select>
-          {camOn && <video ref={video} className="precheck-video" autoPlay playsInline muted />}
           <div className="pc-btns">
             {camOn
               ? <button type="button" className="btn mini" onClick={stopCam}>Выключить камеру</button>
@@ -247,7 +246,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
 
       <div className="pc-card">
         <div className="pc-h"><b>{NAMES.audiooutput}</b></div>
-        <select aria-label={NAMES.audiooutput} value={speakerId} onChange={(e) => setSpeakerId(e.target.value)} disabled={!canSink || !devices.audiooutput.length}>
+        <select aria-label={NAMES.audiooutput} title={devices.audiooutput.find((d) => d.deviceId === speakerId)?.label} value={speakerId} onChange={(e) => setSpeakerId(e.target.value)} disabled={!canSink || !devices.audiooutput.length}>
           {(!canSink || !devices.audiooutput.length) && <option value="">По умолчанию</option>}
           {canSink && devices.audiooutput.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${NAMES.audiooutput} ${i + 1}`}</option>)}
         </select>
@@ -258,6 +257,16 @@ export default function PreJoinCheck({ cameraAllowed, onChange }: { cameraAllowe
       </div>
 
       {pending && <PermissionCallout plan={plan} />}
+      {previewHost && cameraAllowed && createPortal(
+        <div className={`pj-video ${camOn ? "on" : "off"}`}>
+          <video ref={video} className="pj-video-el" autoPlay playsInline muted aria-label="Предпросмотр камеры" hidden={!camOn} />
+          {!camOn && (
+            <div className="pj-video-ph" role="status">
+              <b>{perm.cam === "denied" ? "Доступ к камере запрещён" : !devices.videoinput.length ? "Камера не обнаружена" : "Камера выключена"}</b>
+              <span>{perm.cam === "denied" ? "Разрешите камеру в настройках сайта в браузере — войти можно и без видео." : !devices.videoinput.length ? "Войти можно без видео." : "Нажмите «Проверить камеру», чтобы увидеть себя до входа."}</span>
+            </div>
+          )}
+        </div>, previewHost)}
     </div>
   );
 }
