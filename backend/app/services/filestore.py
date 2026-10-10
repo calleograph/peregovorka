@@ -125,14 +125,14 @@ class FileStore:
 
     def build(self, row: StorageProfile) -> StorageBackend:
         cfg = self._target(row.kind, row.config or {}, self._decrypt(row))
-        backend = build_storage(cfg, self._data_dir)
+        backend = build_storage(cfg, self._data_dir, (row.config or {}).get("volume_marker") if row.kind == "local" else None)
         assert backend is not None
         return backend
 
     def _public(self, row: StorageProfile, usage: list[str]) -> dict:
         cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS}
         return {"id": str(row.id), "name": row.name, "kind": row.kind, "config": cfg, "secret_set": bool(row.secret_enc), "used_by": usage,
-                "address": self.address(row.kind, cfg)}
+                "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker"))}
 
     @staticmethod
     def address(kind: str, cfg: dict) -> str:
@@ -199,6 +199,8 @@ class FileStore:
         cfg = dict(row.config or {})
         for k, v in (patch.get("config") or {}).items():
             if k in _CONFIG_KEYS:
+                if k == "local_path" and cfg.get(k) != v:
+                    cfg.pop("volume_marker", None)                        # другой каталог — другая метка (ставится при «Проверить»)
                 cfg[k] = v
         secret = self._decrypt(row)
         if patch.get("secret") is not None:    # None = не менять, "" = очистить
@@ -279,12 +281,19 @@ class FileStore:
         """Пробная запись и создание подпапок (Audio/, Protocols/ …) — так права и пути проверяются сразу, а не при первой выгрузке."""
         row = await self.row(db, profile_id)
         backend = await asyncio.to_thread(self.build, row)
+        note = ""
+        if row.kind == "local" and isinstance(backend, LocalStorage) and not (row.config or {}).get("volume_marker"):
+            marker = await asyncio.to_thread(backend.mark_volume)           # метка тома: без неё запись в каталог, потерявший монтирование, не отличить от обычной
+            row.config = {**(row.config or {}), "volume_marker": marker}
+            await db.commit()
+            backend = await asyncio.to_thread(self.build, row)
+            note = " На том поставлена метка: если сетевая папка отключится, запись в неё остановится, а не пойдёт на локальный диск."
 
         def run() -> str:
             for folder in FOLDERS:
                 probe = f"{folder}/.peregovorka-write-test-{uuid.uuid4().hex[:8]}"
                 backend.write_bytes(probe, b"ok")
                 backend.delete(probe)
-            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}"
+            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}" + note
 
         return await asyncio.to_thread(run)

@@ -77,9 +77,40 @@ def _check_rel(rel: str) -> PurePosixPath:
     return p
 
 
+MARKER = ".peregovorka-volume"
+
+
 class LocalStorage:
-    def __init__(self, root: str):
+    """Локальный каталог. Если задана метка тома (`marker`), запись и проверка доступности разрешены, только когда в каталоге лежит файл-метка с тем же значением:
+    так отключившаяся сетевая папка (пустая точка монтирования на системном диске) не принимается за хранилище и не заполняется файлами."""
+
+    def __init__(self, root: str, marker: str | None = None):
         self._root = Path(root)
+        self._marker = marker
+
+    def _require_marker(self) -> None:
+        if not self._marker:
+            return
+        try:
+            ok = (self._root / MARKER).read_text(encoding="utf-8").strip() == self._marker
+        except OSError:
+            ok = False
+        if not ok:
+            raise StorageError(f"Том хранилища {self._root} не подключён: в каталоге нет метки тома (сетевая папка не смонтирована?). "
+                               "Запись остановлена, чтобы не заполнять локальный диск; после подключения тома нажмите «Проверить» у хранилища.")
+
+    def mark_volume(self) -> str:
+        """Поставить метку тома (при первой проверке хранилища) и вернуть её значение; уже стоящая метка не меняется."""
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+            p = self._root / MARKER
+            if p.is_file() and p.read_text(encoding="utf-8").strip():
+                return p.read_text(encoding="utf-8").strip()
+            value = uuid.uuid4().hex
+            p.write_text(value, encoding="utf-8")
+            return value
+        except OSError as exc:
+            raise StorageError(f"Не удалось поставить метку тома в {self._root}: {exc.strerror or exc}") from None
 
     def _full(self, rel: str) -> Path:
         full = (self._root / _check_rel(rel)).resolve()
@@ -92,6 +123,7 @@ class LocalStorage:
 
     def write_bytes(self, rel: str, data: bytes) -> str:
         full = self._full(rel)
+        self._require_marker()
         try:
             full.parent.mkdir(parents=True, exist_ok=True)
             tmp = full.with_name(full.name + f".{uuid.uuid4().hex[:8]}.tmp")
@@ -112,6 +144,7 @@ class LocalStorage:
     def probe(self) -> None:
         if not self._root.is_dir():
             raise StorageError(f"Каталог хранилища {self._root} не найден (том не подключён?)")
+        self._require_marker()
 
     def size_of(self, rel: str) -> int:
         try:
@@ -142,6 +175,7 @@ class LocalStorage:
         import shutil  # noqa: PLC0415
 
         full = self._full(rel)
+        self._require_marker()
         try:
             full.parent.mkdir(parents=True, exist_ok=True)
             tmp = full.with_name(full.name + f".{uuid.uuid4().hex[:8]}.tmp")
@@ -378,7 +412,7 @@ class SmbStorage:
         return f"Запись на {self._unc()} возможна"
 
 
-def build_storage(cfg: StorageSettings, allowed_root: str | None = None) -> StorageBackend | None:
+def build_storage(cfg: StorageSettings, allowed_root: str | None = None, marker: str | None = None) -> StorageBackend | None:
     """allowed_root — локальный каталог должен лежать внутри него (смонтированные тома контейнера, DATA_DIR)."""
     if not cfg.enabled:
         return None
@@ -387,7 +421,7 @@ def build_storage(cfg: StorageSettings, allowed_root: str | None = None) -> Stor
             root, want = Path(allowed_root).resolve(), Path(cfg.local_path).resolve()
             if want != root and root not in want.parents:
                 raise StorageError(f"Каталог должен находиться внутри {allowed_root} (смонтированный том)")
-        return LocalStorage(cfg.local_path)
+        return LocalStorage(cfg.local_path, marker)
     return SmbStorage(cfg.smb_server, cfg.smb_share, cfg.smb_base_path, cfg.smb_username, cfg.smb_password, cfg.smb_domain)
 
 

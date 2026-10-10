@@ -21,7 +21,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import media as media_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -160,6 +160,10 @@ def create_app(
 
         reconciler = Reconciler(session_maker, protocols.files, settings.recordings_path, journal, _sync_audit)
         app.state.reconciler = reconciler
+        from .services.storage_stats import StorageStats  # noqa: PLC0415
+        from .services.transfer import TransferService  # noqa: PLC0415
+        app.state.storage_stats = StorageStats(session_maker, protocols, redis)
+        app.state.transfers = TransferService(session_maker, protocols, journal, _sync_audit)
         app.state.mail = mail
         app.state.delivery = delivery
         app.state.ca = ca
@@ -206,6 +210,8 @@ def create_app(
             webhooks.start()
             app.state.jobs.start()
             tasks.append(asyncio.create_task(run_storage_sync(session_maker, settings_svc, reconciler, redis), name="storage-sync"))
+            tasks.append(asyncio.create_task(app.state.storage_stats.run(), name="storage-stats"))
+            tasks.append(asyncio.create_task(app.state.transfers.run(), name="storage-transfer"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
         journal.emit("system", "app_started", message=f"Версия {settings.app_version}, commit {settings.app_git_commit}")
         try:
@@ -256,7 +262,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (site_api.router, media_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (site_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(public_router)     # публичный API: /api/public/v1 (свой формат ошибок, ключи вместо cookie-сессии)

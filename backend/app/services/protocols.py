@@ -224,6 +224,7 @@ class ProtocolService:
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
         self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
+        self._busy: dict[uuid.UUID, int] = {}      # встречи, чьи файлы сейчас обрабатываются (финализация, сведение, выгрузка): их нельзя переносить между хранилищами
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
     def spawn(self, coro, name: str) -> asyncio.Task:
@@ -291,7 +292,27 @@ class ProtocolService:
         return self._s.ldap_ca_file or None
 
     # --------------------------------------------------------------- завершение встречи
+    def hold(self, meeting_id: uuid.UUID) -> None:
+        self._busy[meeting_id] = self._busy.get(meeting_id, 0) + 1
+
+    def release(self, meeting_id: uuid.UUID) -> None:
+        n = self._busy.get(meeting_id, 0) - 1
+        if n > 0:
+            self._busy[meeting_id] = n
+        else:
+            self._busy.pop(meeting_id, None)
+
+    def is_busy(self, meeting_id: uuid.UUID) -> bool:
+        return meeting_id in self._busy
+
     async def finalize(self, meeting_id: uuid.UUID) -> None:
+        self.hold(meeting_id)
+        try:
+            await self._finalize(meeting_id)
+        finally:
+            self.release(meeting_id)
+
+    async def _finalize(self, meeting_id: uuid.UUID) -> None:
         """Выполняется после завершения встречи; каждый шаг изолирован — сбой одного не отменяет остальные."""
         try:
             async with self._sm() as db:
@@ -383,7 +404,9 @@ class ProtocolService:
             # Общая запись всей встречи — в фоне: завершение встречи и протокол не ждут. Выгрузка файлов участников откладывается до конца сведения (иначе локальные файлы,
             # если копию не хранят, исчезли бы раньше, чем из них соберут общую запись).
             tracks = [(r.id, f.t0) for r, f in zip(recs, finished)]
+            self.hold(meeting.id)                              # снимается по окончании сведения и выгрузки (не по концу финализации)
             task = asyncio.create_task(self._mix_then_export(meeting.id, tracks, mode))
+            task.add_done_callback(lambda _t, mid=meeting.id: self.release(mid))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
             return
@@ -493,9 +516,18 @@ class ProtocolService:
         Файл читается потоком (по диапазону) — целиком в память backend не попадает."""
         root = Path(self._s.recordings_path).resolve()
         full = (root / rec.path).resolve()
+        # Внешнее хранилище готовим заранее: если пока запрос идёт, файл переносят и локальный источник исчезает, чтение продолжится оттуда (ссылка и права не меняются)
+        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
         if root in full.parents and full.is_file():
             def local(start: int, end: int):
-                with open(full, "rb") as fh:
+                try:
+                    fh = open(full, "rb")
+                except FileNotFoundError:
+                    if storage is None:
+                        raise
+                    yield from storage.read_range(rec.path, start, end)
+                    return
+                with fh:
                     fh.seek(start)
                     left = end - start + 1
                     while left > 0:
@@ -505,7 +537,6 @@ class ProtocolService:
                         left -= len(chunk)
                         yield chunk
             return full.stat().st_size, local
-        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
         if storage is None:
             raise StorageError("Файл записи недоступен")
         size = await asyncio.to_thread(storage.size_of, rec.path)
