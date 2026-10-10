@@ -87,9 +87,14 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24";
+export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixSync { status: string; processed: number; result: Record<string, number> }
+export interface PublicApiKey { id: string; key: string; key_id: string; label: string | null; state: "active" | "expired" | "revoked"; expires_at: string | null; revoked_at: string | null; last_used_at: string | null; last_used_ip: string | null; created_at: string }
+export interface PublicApiClient { id: string; name: string; description: string | null; enabled: boolean; scopes: string[]; rooms: string[] | null; ip_allowlist: string[] | null; created_by: string | null; created_at: string; updated_at: string; keys: PublicApiKey[] }
+export interface PublicApiClientIn { name: string; description: string | null; enabled: boolean; scopes: string[]; rooms: string[] | null; ip_allowlist: string[] | null }
+export interface PublicApiIssued extends PublicApiKey { secret: string; note: string }
+export interface PublicApiLogRow { id: number; at: string; client_id: string | null; key_id: string | null; method: string; path: string; status: number; ms: number; ip: string | null; request_id: string | null; error_code: string | null }
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
@@ -753,6 +758,18 @@ export const api = {
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
     asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),
     setAsrModel: (modelId: string) => request<{ ok: boolean; desired: string; note: string }>("PUT", "/admin/asr/active", { model_id: modelId }),
+    apiScopes: () => request<{ scopes: { name: string; description: string }[]; rate_classes: string[] }>("GET", "/admin/public-api/scopes"),
+    apiClients: () => request<PublicApiClient[]>("GET", "/admin/public-api/clients"),
+    apiCreateClient: (b: PublicApiClientIn) => request<PublicApiClient>("POST", "/admin/public-api/clients", b),
+    apiUpdateClient: (id: string, b: PublicApiClientIn) => request<PublicApiClient>("PATCH", `/admin/public-api/clients/${id}`, b),
+    apiDeleteClient: (id: string) => request<void>("DELETE", `/admin/public-api/clients/${id}`),
+    apiCreateKey: (clientId: string, b: { label?: string | null; expires_in_days?: number | null }) => request<PublicApiIssued>("POST", `/admin/public-api/clients/${clientId}/keys`, b),
+    apiRotateKey: (keyPk: string, b: { grace_hours: number; expires_in_days?: number | null }) => request<PublicApiIssued>("POST", `/admin/public-api/keys/${keyPk}/rotate`, b),
+    apiRevokeKey: (keyPk: string) => request<void>("POST", `/admin/public-api/keys/${keyPk}/revoke`),
+    apiLog: (p: { client_id?: string; status_from?: number; before_id?: number; limit?: number }) => {
+      const q = new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
+      return request<PublicApiLogRow[]>("GET", `/admin/public-api/log?${q}`);
+    },
     bitrixLookup: (email: string) => request<BitrixLookup>("POST", "/admin/bitrix24/lookup", { email }),
     bitrixSync: () => request<BitrixSync>("POST", "/admin/bitrix24/sync"),
     asrTest: (modelId?: string, force = false) => request<AsrTestResult>("POST", "/admin/asr/test", { model_id: modelId, force }),

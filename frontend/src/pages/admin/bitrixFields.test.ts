@@ -22,3 +22,12 @@ describe("Bitrix24: поля настроек", () => {
     expect(text).not.toMatch(/https?:\/\/(?!portal\.example\.com)[a-z0-9][a-z0-9.-]*\.[a-z]{2,}/i);
   });
 });
+
+describe("Публичный API: поля настроек", () => {
+  it("совпадают с группой настроек на сервере", async () => {
+    const { publicApiFields } = await import("./fields");
+    const names = publicApiFields.map((f) => f.name);
+    for (const n of ["enabled", "rate_read", "rate_write", "rate_ai", "rate_download", "log_retention_days", "max_page_size"]) expect(names).toContain(n);
+    expect(publicApiFields.find((f) => f.name === "enabled")?.type).toBe("bool");
+  });
+});
