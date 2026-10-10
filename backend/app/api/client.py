@@ -137,7 +137,7 @@ async def client_metrics(request: Request, body: dict[str, Any] = Body(...), su:
     item = {
         "ts": time.time(), "user": su.sam_account_name, "meeting_id": _str(body.get("meeting_id"), 40),
         "join_ms": _num(body.get("join_ms"), 0, 600000), "signal_ms": _num(body.get("signal_ms"), 0, 600000),
-        "rtt_ms": _num(body.get("rtt_ms"), 0, 60000), "packet_loss_pct": _num(body.get("packet_loss_pct"), 0, 100),
+        "rtt_ms": _num(body.get("rtt_ms"), 0, 60000), "packet_loss_pct": _num(body.get("packet_loss_pct"), 0, 100), "jitter_ms": _num(body.get("jitter_ms"), 0, 60000),
         "bitrate_out_kbps": _num(body.get("bitrate_out_kbps"), 0, 1e6), "bitrate_in_kbps": _num(body.get("bitrate_in_kbps"), 0, 1e6),
         "candidate": _str(body.get("candidate"), 20), "quality": _str(body.get("quality"), 20),
         "join_api_ms": _num(body.get("join_api_ms"), 0, 600000), "signaling_connect_ms": _num(body.get("signaling_connect_ms"), 0, 600000),

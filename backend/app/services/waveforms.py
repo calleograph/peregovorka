@@ -139,7 +139,8 @@ class WaveformService:
                 os.close(fd)
                 await asyncio.to_thread(storage.copy_out, path, tmp)
                 src = tmp
-            peaks = await asyncio.to_thread(compute_peaks, src)
+            async with self._ps.heavy("waveform"):
+                peaks = await asyncio.to_thread(compute_peaks, src)
             err, status = None, "ready"
             if not peaks:
                 err, status = "в записи нет звука", "failed"

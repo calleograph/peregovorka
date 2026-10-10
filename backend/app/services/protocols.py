@@ -9,6 +9,7 @@ API (LLM и обезличивания) выбирается по профилю
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -229,7 +230,12 @@ class ProtocolService:
         self._last_read: dict[uuid.UUID, float] = {}
         self._busy: dict[uuid.UUID, int] = {}      # встречи, чьи файлы сейчас обрабатываются (финализация, сведение, выгрузка): их нельзя переносить между хранилищами
         self.waveforms = None                      # WaveformService (подключается в main.py)
+        self.gate = None                           # perf.HeavyGate: очередь тяжёлых фоновых задач, уступающая звонку (подключается в main.py)
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
+
+    def heavy(self, kind: str, **kw):
+        """Контекст «тяжёлая фоновая задача»: ограничивает число одновременных и откладывает запуск, пока идёт встреча и сервер перегружен."""
+        return self.gate.slot(kind, **kw) if self.gate is not None else contextlib.nullcontext()
 
     def spawn(self, coro, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -467,7 +473,8 @@ class ProtocolService:
                 items = [mixdown.Track(root / recs[rid].path, t0) for rid, t0 in tracks if rid in recs and (root / recs[rid].path).is_file()]
                 out = root / rel
                 try:
-                    plan, dur = await asyncio.to_thread(mixdown.mix, items, out)
+                    async with self.heavy("mix"):
+                        plan, dur = await asyncio.to_thread(mixdown.mix, items, out)
                     mix_rec.size_bytes, mix_rec.duration_s, mix_rec.status, mix_rec.error = out.stat().st_size, dur, "ready", None
                     if any(t[1] is not None for t in tracks):
                         mix_rec.started_at = datetime.fromtimestamp(plan.start, tz=timezone.utc)
@@ -624,7 +631,8 @@ class ProtocolService:
             once = (rec.meta or {}).get("llm_once")
             info: dict = {"requested": rec.created_at, "started": started}      # времена этапов и сведения о модели (заполняет _generate)
             try:
-                text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info)
+                async with self.heavy("protocol", defer_at="overloaded", max_defer=600):      # во время перегрузки при идущих встречах документ ждёт до 10 минут
+                    text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info)
                 meta.update(self._timing_meta(info, datetime.now(timezone.utc)))
                 if once:
                     meta["llm_once"] = once

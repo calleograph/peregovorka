@@ -62,6 +62,7 @@ async def _rate(request: Request, kind: str, actor: Actor, meeting_id: uuid.UUID
 
 TYPING_RATE = (14, 10)        # событий «печатает» / секунд на одного участника (клиент шлёт не чаще раза в 3 с)
 HAND_RATE = (12, 10)
+HAND_EVENT_QUEUE_MAX = 40       # до такого размера очередь рук рассылается целиком; больше — только изменение
 HAND_TTL = 3 * 24 * 3600
 
 
@@ -78,8 +79,10 @@ def _identity_of(actor: Actor) -> str:
 async def chat_typing(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(default_factory=dict), actor: Actor = Depends(require_actor),
                       db: AsyncSession = Depends(get_db)):
     """Признак «участник печатает». Ничего не хранится: событие уходит подписчикам встречи и забывается (клиент гасит индикатор сам через несколько секунд)."""
-    await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
     await _rate(request, "typing", actor, meeting_id, TYPING_RATE)
+    if roles.is_presentation(meeting.room):
+        return              # в презентации «печатает…» никому не рассылается: при сотнях зрителей это шум и лишняя нагрузка на каждый клик
     await events.publish(request.app.state.redis, meeting_id, {"type": "chat_typing", "id": str(actor.id), "name": actor.label, "typing": bool(body.get("typing", True))})
 
 
@@ -140,7 +143,14 @@ async def hand_set(meeting_id: uuid.UUID, request: Request, body: dict[str, Any]
         changed = bool(await redis.hdel(key, target))
     queue = await _hands(request, meeting_id)
     if changed:
-        await events.publish(redis, meeting_id, {"type": "hand_changed", "identity": target, "name": name, "raised": raised, "by_leader": by_leader, "queue": queue})
+        # Всем подписчикам уходит событие ограниченного размера: при сотне поднятых рук полная очередь в каждом сообщении
+        # (× тысячи получателей) — десятки мегабайт. Для малых очередей — как раньше (`queue`), для больших — изменение (`at`, `total`):
+        # клиент применяет его к своему списку, а после обрыва связи перечитывает очередь целиком.
+        event = {"type": "hand_changed", "identity": target, "name": name, "raised": raised, "by_leader": by_leader, "total": len(queue)}
+        if raised:
+            event["at"] = next((h["at"] for h in queue if h["identity"] == target), 0.0)
+        event["queue"] = queue if len(queue) <= HAND_EVENT_QUEUE_MAX else None
+        await events.publish(redis, meeting_id, event)
     return {"raised": raised, "queue": queue}
 
 

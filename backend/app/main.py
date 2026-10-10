@@ -21,7 +21,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -34,6 +34,7 @@ from .services.api_profiles import ProfileService
 from .services.asr_bridge import AsrBridge
 from .services.audit import set_journal_sink
 from .services.events import EventHub
+from .services.perf import PerfHub
 from .services.chat_files import ChatFilesService
 from .services.journal import Journal, run_journal_retention
 from .security.secretbox import SecretBox, SecretBoxError
@@ -107,6 +108,7 @@ def create_app(
         app.state.redis = redis
         app.state.event_hub = EventHub(redis)             # единый подписчик Redis для всех WebSocket (services/events.py)
         app.state.event_hub.start()
+        app.state.perf = PerfHub(settings, redis, session_maker)          # показатели нагрузки и очередь тяжёлых фоновых задач (services/perf.py)
         app.state.directory = directory
         app.state.bridge = bridge
         app.state.meetings = meetings_svc
@@ -116,6 +118,7 @@ def create_app(
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc
         app.state.protocols = protocols
+        protocols.gate = app.state.perf.gate
         app.state.avatars = AvatarStore(settings.data_dir)
         app.state.branding = BrandingStore(settings.data_dir)
         app.state.enrichment = ProfileEnrichment(session_maker, settings_svc, app.state.avatars, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
@@ -268,7 +271,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (site_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (site_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(public_router)     # публичный API: /api/public/v1 (свой формат ошибок, ключи вместо cookie-сессии)

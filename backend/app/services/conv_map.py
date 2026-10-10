@@ -536,7 +536,8 @@ class MapService:
     # ------------------------------------------------------------------ выполнение
     async def run(self, map_id: uuid.UUID) -> None:
         try:
-            await self._run(map_id)
+            async with self.ps.heavy("map"):
+                await self._run(map_id)
         finally:
             self._active.discard(map_id)
         await self._notify(map_id)
