@@ -10,6 +10,8 @@ from app.config import Settings
 from app.main import create_app
 from app.models import Base, Meeting, MeetingParticipant, Room, RoomAcl, TranscriptSegment, User, utcnow
 from conftest import FakeDirectory, ADMIN_GROUP, STAFF_GROUP
+from app.services import transfer as _tr
+_tr.SETTLE_S, _tr.RECENT_S, _tr.GRACE_S = 0, 0, 3          # стенд: перенос без ожидания «устоявшейся» встречи, отсрочка удаления источника — секунды
 
 DATA = os.environ.get("LIVE_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 os.makedirs(DATA, exist_ok=True)
