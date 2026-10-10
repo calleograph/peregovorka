@@ -114,4 +114,4 @@ def test_room_leader_sees_and_opens_meetings_of_own_room_only(client):
     assert got["can_send_materials"] is True
     assert client.get(f"/api/v1/meetings/{oid}").status_code == 404
     login(client, "alice")
-    assert client.get(f"/api/v1/meetings/{mid}").json()["can_send_materials"] is False
+    assert client.get(f"/api/v1/meetings/{mid}").json()["can_send_materials"] is True        # организатор встречи (начала её) отправлять материалы тоже может
