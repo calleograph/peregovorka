@@ -106,8 +106,10 @@ if [ -n "$PYJ" ]; then
   mkreq ffffffffffffffff check 0 0 5
   t "check по запросу обновляет remote.json, update.sh не запускается" waitfor 20 bash -c '[ ! -f "$2/request.txt" ] && [ "$(jget "$2/remote.json" "d[\"checked_at\"]")" -ge "$3" ] && [ ! -s "$1" ]' _ "$FAKE_ARGS_FILE" "$CHD" "$T0"
   t "status: исполнитель работает, ненулевой код при остановленном" bash -c '"$1" status --env "$2/cl/.env" >/dev/null 2>&1' _ "$UP" "$TMP"
+  waitfor 60 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = idle ]' _ "$CHD"      # сигнал — в покое, а не посреди проверки/сканирования (обработчик ждёт конца дочерней команды)
   kill "$UPPID" 2>/dev/null; wait "$UPPID" 2>/dev/null
-  t "остановка по сигналу: state=stopped" waitfor 40 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
+  t "остановка по сигналу: state=stopped" waitfor 90 bash -c '[ "$(jget "$1/status.json" "d[\"state\"]")" = stopped ]' _ "$CHD"
+  [ "$(jget "$CHD/status.json" "d[\"state\"]")" = stopped ] || { echo "--- диагностика: состояние после сигнала: $(jget "$CHD/status.json" "d[\"state\"]"); хвост updater.out:"; tail -n 25 "$TMP/updater.out"; }
 else
   echo "(пропущено: нет python для проверки JSON исполнителя обновлений)"
 fi
