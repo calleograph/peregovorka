@@ -601,6 +601,77 @@ class PrivacySettings(_Group):
         return v
 
 
+class SiteSettings(_Group):
+    """Оформление и сведения конкретной установки: название, цвета, организация, поддержка, тексты. Хранится в базе (переживает обновления и пересоздание контейнеров);
+    чистая установка использует стандартное оформление Peregovorka. Публично отдаются только опубликованные значения (api/site.py). Не конструктор CSS: безопасный набор параметров."""
+
+    name: str = Field(default="Peregovorka", min_length=1, max_length=60)
+    short_name: str = Field(default="", max_length=24)             # пусто — как название
+    subtitle: str = Field(default="Видеовстречи с автоматической стенограммой и протоколом", max_length=160)
+    description: str = Field(default="", max_length=400)
+    primary_color: str = Field(default="", max_length=7)           # пусто — стандартный акцент
+    accent2_color: str = Field(default="", max_length=7)
+    theme: str = Field(default="system", pattern="^(system|light|dark)$")
+    logo_v: str = Field(default="", max_length=16)                  # версии загруженных изображений (служебные: меняются при загрузке/удалении)
+    logo_compact_v: str = Field(default="", max_length=16)
+    favicon_v: str = Field(default="", max_length=16)
+    org_full: str = Field(default="", max_length=300)
+    org_short: str = Field(default="", max_length=80)
+    org_url: str = Field(default="", max_length=300)
+    org_unit: str = Field(default="", max_length=300)
+    org_legal_name: str = Field(default="", max_length=300)
+    org_address: str = Field(default="", max_length=500)
+    footer_text: str = Field(default="", max_length=500)
+    support_mode: str = Field(default="all", pattern="^(all|auth|off)$")       # кому показывать контакты поддержки
+    support_email: str = Field(default="", max_length=200)
+    support_phone: str = Field(default="", max_length=60)
+    support_url: str = Field(default="", max_length=300)
+    portal_url: str = Field(default="", max_length=300)
+    support_text: str = Field(default="", max_length=2000)
+    welcome_text: str = Field(default="", max_length=1000)         # страница входа / личный кабинет
+    guest_text: str = Field(default="", max_length=2000)           # перед подключением гостя
+    recording_text: str = Field(default="", max_length=1000)       # справочный текст о записи и транскрипции (индикаторы остаются фактическими)
+
+    @field_validator("primary_color", "accent2_color")
+    @classmethod
+    def _color(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^#[0-9a-fA-F]{6}$", v):
+            raise ValueError("Цвет: вид #1a56db (шесть шестнадцатеричных цифр) или пусто — стандартный")
+        return v.lower()
+
+    @field_validator("org_url", "support_url", "portal_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^https?://[^\s<>\"']+$", v, re.I):
+            raise ValueError("Ссылка: адрес вида https://… (или оставьте пустым)")
+        return v
+
+    @field_validator("support_email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$", v):
+            raise ValueError("Адрес поддержки: вид name@example.com (или пусто). Это не адрес отправителя почты")
+        return v
+
+    @field_validator("support_phone")
+    @classmethod
+    def _phone(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^[0-9+()\-\s,.доб]{3,60}$", v):
+            raise ValueError("Телефон: цифры, пробелы и знаки + ( ) -")
+        return v
+
+    @field_validator("logo_v", "logo_compact_v", "favicon_v")
+    @classmethod
+    def _ver(cls, v: str) -> str:
+        if v and not re.match(r"^[0-9a-f]{1,16}$", v):
+            raise ValueError("служебное поле")
+        return v
+
+
 class Bitrix24Settings(_Group):
     """Bitrix24 как ДОПОЛНИТЕЛЬНЫЙ источник профиля (должность, подразделение, телефон, фото). Каталог (AD) остаётся основой входа; недоступность портала на вход и комнату не влияет.
     Адрес webhook содержит секрет — хранится зашифрованным. Приоритеты — списки источников через запятую из: local, ad, bitrix."""
@@ -697,6 +768,7 @@ GROUPS: dict[str, type[_Group]] = {
     "api": ApiSettings,
     "bitrix24": Bitrix24Settings,
     "privacy": PrivacySettings,
+    "site": SiteSettings,
     "storage": StorageSettings,
     "audio_storage": AudioStorageSettings,
     "chat_files": ChatFilesSettings,

@@ -22,6 +22,9 @@ from .entities import (
     ProtocolTemplate,
     Recording,
     LdapProfile,
+    LegalConsent,
+    LegalDocument,
+    LegalRevision,
     MailMessage,
     MailTemplate,
     MailProfile,
@@ -38,6 +41,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]

@@ -812,3 +812,54 @@ class ApiIdempotency(Base):
     response_status: Mapped[int | None] = mapped_column(Integer)
     response_body: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+
+
+class LegalDocument(Base):
+    """Документ организации (политика ПДн, согласие, соглашение, правила): черновик и опубликованная редакция. Текст и необходимость согласия определяет организация."""
+
+    __tablename__ = "legal_documents"
+
+    kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    draft_md: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)       # опубликованный текст
+    published_title: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)  # номер действующей редакции; 0 — не публиковался
+    published: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    require_consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(300))
+
+
+class LegalRevision(Base):
+    """Опубликованная редакция документа — остаётся навсегда: видно, какой текст действовал ранее."""
+
+    __tablename__ = "legal_revisions"
+    __table_args__ = (Index("ix_legal_revisions_kind_version", "kind", "version"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    published_by: Mapped[str | None] = mapped_column(String(300))
+    unpublished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class LegalConsent(Base):
+    """Подтверждение документа: кто (пользователь или гость), какая версия, когда. Посещение сайта согласием не считается."""
+
+    __tablename__ = "legal_consents"
+    __table_args__ = (Index("ix_legal_consents_subject", "subject_type", "subject_id", "kind"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    subject_type: Mapped[str] = mapped_column(String(8), nullable=False)          # user | guest
+    subject_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_name: Mapped[str | None] = mapped_column(String(300))
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(300))

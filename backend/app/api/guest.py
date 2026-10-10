@@ -34,6 +34,7 @@ PASSWORD_FAILS, PASSWORD_WINDOW = 8, 600   # неверных паролей к�
 class GuestJoinIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     password: str | None = Field(default=None, max_length=256, repr=False)
+    accepted_documents: list[str] = Field(default_factory=list, max_length=8)      # подтверждённые гостем документы (если организация требует подтверждения)
 
 
 class GuestRoomInfo(BaseModel):
@@ -120,6 +121,13 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     name = clean_display_name(body.display_name)
     ip, client = client_ip(request), parse_client(request.headers.get("user-agent"))
     journal = request.app.state.journal
+    from .site import required_documents  # noqa: PLC0415
+
+    need = await required_documents(db)             # документы организации, подтверждение которых требуется перед входом гостя
+    missing = [d for d in need if d.kind not in body.accepted_documents]
+    if missing:
+        raise HTTPException(status_code=422, detail={"code": "consent_required", "message": "Подтвердите ознакомление с документами организации.",
+                                                      "documents": [{"kind": d.kind, "title": d.published_title, "version": d.version} for d in missing]})
 
     if room.password_hash:  # пароль комнаты действует и для гостей; подбор ограничен по IP
         await _throttle(request, "guest:pwfail", PASSWORD_FAILS, PASSWORD_WINDOW, hit=False)
@@ -138,6 +146,11 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
                      message=exc.message, data={"code": exc.code})
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from None
 
+    if need:
+        from .site import record_consents  # noqa: PLC0415
+
+        await record_consents(db, request, "guest", str(result.guest.id), name, need)
+        await db.commit()
     guest_token = await request.app.state.guest_sessions.create(
         guest_id=result.guest.id, meeting_id=result.meeting.id, room_id=room.id, display_name=name)
     screen = await request.app.state.settings_svc.get(db, "screen")

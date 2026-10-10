@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import uuid
 
@@ -18,7 +19,7 @@ VARIABLES: list[tuple[str, str]] = [
     ("meeting_title", "Название встречи (переговорной)"), ("meeting_date", "Дата встречи, ДД.ММ.ГГГГ"), ("meeting_start", "Время начала, ЧЧ:ММ"),
     ("meeting_end", "Время окончания, ЧЧ:ММ"), ("room_name", "Название виртуальной переговорной"), ("organizer_name", "Кто начал встречу"),
     ("participants", "Участники встречи через запятую"), ("protocol_name", "Название протокола (если сформирован)"),
-    ("summary_name", "Название резюме (если сформировано)"), ("project_name", "Проект (появится вместе с проектами; пока пусто)"),
+    ("summary_name", "Название резюме (если сформировано)"), ("project_name", "Название системы из «Настроек сайта»"),
 ]
 NAMES = {n for n, _ in VARIABLES}
 _VAR = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
@@ -100,6 +101,17 @@ async def get_template(db: AsyncSession, template_id: str | None) -> MailTemplat
         await db.execute(select(MailTemplate).limit(1))).scalars().first()
 
 
+async def _site_name(db: AsyncSession) -> str:
+    """Название системы из «Настроек сайта» (переменная {{project_name}} в шаблонах писем); при отсутствии — стандартное."""
+    from ..models import AppSetting  # noqa: PLC0415
+
+    row = await db.get(AppSetting, "site.name")
+    try:
+        return str(json.loads(row.value)) if row else "Peregovorka"
+    except ValueError:
+        return "Peregovorka"
+
+
 async def meeting_context(db: AsyncSession, meeting: Meeting, tz) -> dict[str, str]:
     start = meeting.started_at.astimezone(tz)
     end = meeting.ended_at.astimezone(tz) if meeting.ended_at else None
@@ -116,7 +128,7 @@ async def meeting_context(db: AsyncSession, meeting: Meeting, tz) -> dict[str, s
         titles[kind] = (p.title or ("Протокол совещания" if kind == "protocol" else "Краткое резюме")) if p else ""
     return {"meeting_title": meeting.room.name, "meeting_date": start.strftime("%d.%m.%Y"), "meeting_start": start.strftime("%H:%M"),
             "meeting_end": end.strftime("%H:%M") if end else "", "room_name": meeting.room.name, "organizer_name": organizer.display_name if organizer else "",
-            "participants": ", ".join(names), "protocol_name": titles["protocol"], "summary_name": titles["summary"], "project_name": ""}
+            "participants": ", ".join(names), "protocol_name": titles["protocol"], "summary_name": titles["summary"], "project_name": await _site_name(db)}
 
 
 def compose(t: MailTemplate | dict, ctx: dict[str, str]) -> tuple[str, str]:

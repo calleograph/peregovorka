@@ -751,3 +751,10 @@ body.in-room.board-focus .room-wrap { height: calc(100dvh - 8px); }
   .pj-body { grid-template-columns: minmax(0, 1fr); padding: 10px 12px; }
   .pj-video { max-height: 38dvh; }
 }
+
+/* ---- 0.13.0: пиксельный шрифт Press Start 2P (лежит на сервере, OFL; public/fonts) — вход, журнал событий, консоль обновления ---- */
+:root { --pixel: "Press Start 2P", "Courier New", ui-monospace, monospace; }
+.journal-table tbody td, .journal-table tbody .detail-grid, .journal-table .debug-log, .journal-scroll .table tbody td { font-family: var(--pixel); font-size: 9px; line-height: 1.75; letter-spacing: 0; }
+.journal-scroll.dense .table td { font-size: 8px; padding-top: 4px; padding-bottom: 4px; }
+.journal-table .lvl, .journal-table .badge, .journal-table button, .journal-table a { font-family: inherit; font-size: inherit; }
+pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; letter-spacing: 0; }
