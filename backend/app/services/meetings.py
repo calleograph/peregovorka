@@ -74,6 +74,7 @@ class MeetingService:
         self.on_ended: Callable[[uuid.UUID], None] | None = None  # запуск финализации (экспорт, протокол)
         self.on_started: Callable[[uuid.UUID], None] | None = None      # встреча началась (например, подготовка входящих телефонных звонков)
         self.on_ended_extra: Callable[[uuid.UUID], None] | None = None  # встреча закончилась (например, снять правило входящих звонков)
+        self.on_event: Callable[[str, Meeting], None] | None = None     # события для публичного API: ("meeting.started" | "meeting.ended", встреча)
         self.settings_svc = None  # SettingsService (срок «аренды» доступа после завершения), назначается в main
 
     # ------------------------------------------------------------------ вход
@@ -148,6 +149,7 @@ class MeetingService:
             log.info("Встреча начата", extra={"meeting_id": str(meeting.id), "room": room.slug})
             if self.on_started is not None:
                 self.on_started(meeting.id)
+            self._notify("meeting.started", meeting)
         await events.publish(self._r, meeting.id, {"type": "participant_joined", "user_id": str(su.user_id),
                                                    "display_name": su.display_name})
 
@@ -298,6 +300,15 @@ class MeetingService:
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
 
     # ------------------------------------------------------------ завершение
+    def _notify(self, event: str, meeting: Meeting) -> None:
+        """Событие для подписчиков публичного API; сбой подписчиков не должен влиять на встречу."""
+        if self.on_event is None:
+            return
+        try:
+            self.on_event(event, meeting)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось передать событие встречи", extra={"event": event})
+
     async def end(self, db: AsyncSession, meeting: Meeting, reason: str, *, kick: bool = False) -> bool:
         if meeting.ended_at is not None:
             return False
@@ -329,6 +340,7 @@ class MeetingService:
             self.on_ended(meeting.id)
         if self.on_ended_extra is not None:
             self.on_ended_extra(meeting.id)
+        self._notify("meeting.ended", meeting)
         log.info("Встреча завершена", extra={"meeting_id": str(meeting.id), "reason": reason})
         return True
 

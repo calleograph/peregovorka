@@ -3,6 +3,7 @@ import { api, type ApiError, type PublicApiClient, type PublicApiClientIn, type 
 import { ConfirmDialog, Modal } from "../../components/Dialogs";
 import { publicApiFields } from "./fields";
 import SettingsForm from "./SettingsForm";
+import WebhooksAdmin from "./WebhooksAdmin";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU") : "—");
 const STATE: Record<PublicApiKey["state"], string> = { active: "действует", expired: "срок истёк", revoked: "отозван" };
@@ -93,6 +94,8 @@ export default function PublicApiAdmin() {
           </div>
         ))}
       </div>
+
+      <WebhooksAdmin />
 
       <div className="card form">
         <div className="row"><h2>Журнал обращений</h2><div className="spacer" />

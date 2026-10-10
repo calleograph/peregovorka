@@ -99,6 +99,12 @@ export interface PublicApiKey { id: string; key: string; key_id: string; label: 
 export interface PublicApiClient { id: string; name: string; description: string | null; enabled: boolean; scopes: string[]; rooms: string[] | null; ip_allowlist: string[] | null; created_by: string | null; created_at: string; updated_at: string; keys: PublicApiKey[] }
 export interface PublicApiClientIn { name: string; description: string | null; enabled: boolean; scopes: string[]; rooms: string[] | null; ip_allowlist: string[] | null }
 export interface PublicApiIssued extends PublicApiKey { secret: string; note: string }
+export interface WebhookEndpointItem { id: string; name: string; url: string; enabled: boolean; status: "active" | "degraded" | "disabled"; events: string[]; rooms: string[] | null; consecutive_failures: number;
+  last_success_at: string | null; last_failure_at: string | null; last_error: string | null; disabled_reason: string | null; secret_set: boolean; previous_secret_until: string | null; created_by: string | null; created_at: string }
+export interface WebhookEndpointIn { name: string; url: string; enabled: boolean; events: string[]; rooms: string[] | null }
+export interface WebhookIssued extends WebhookEndpointItem { secret: string; note: string }
+export interface WebhookDeliveryItem { id: string; event_id: string; event_type: string; status: "pending" | "delivered" | "failed"; attempts: number; manual_retries: number; next_attempt_at: string | null; last_status: number | null;
+  last_error: string | null; attempt_log: { at: string; status: number | null; ms: number; error: string | null }[]; created_at: string; delivered_at: string | null }
 export interface PublicApiLogRow { id: number; at: string; client_id: string | null; key_id: string | null; method: string; path: string; status: number; ms: number; ip: string | null; request_id: string | null; error_code: string | null }
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
@@ -771,6 +777,16 @@ export const api = {
     apiCreateKey: (clientId: string, b: { label?: string | null; expires_in_days?: number | null }) => request<PublicApiIssued>("POST", `/admin/public-api/clients/${clientId}/keys`, b),
     apiRotateKey: (keyPk: string, b: { grace_hours: number; expires_in_days?: number | null }) => request<PublicApiIssued>("POST", `/admin/public-api/keys/${keyPk}/rotate`, b),
     apiRevokeKey: (keyPk: string) => request<void>("POST", `/admin/public-api/keys/${keyPk}/revoke`),
+    webhookEvents: () => request<{ name: string; description: string }[]>("GET", "/admin/public-api/webhook-events"),
+    webhooks: () => request<WebhookEndpointItem[]>("GET", "/admin/public-api/webhooks"),
+    webhookCreate: (b: WebhookEndpointIn) => request<WebhookIssued>("POST", "/admin/public-api/webhooks", b),
+    webhookUpdate: (id: string, b: WebhookEndpointIn) => request<WebhookEndpointItem>("PATCH", `/admin/public-api/webhooks/${id}`, b),
+    webhookDelete: (id: string) => request<void>("DELETE", `/admin/public-api/webhooks/${id}`),
+    webhookRotate: (id: string, graceHours: number) => request<WebhookIssued>("POST", `/admin/public-api/webhooks/${id}/rotate-secret`, { grace_hours: graceHours }),
+    webhookEnable: (id: string) => request<WebhookEndpointItem>("POST", `/admin/public-api/webhooks/${id}/enable`),
+    webhookTest: (id: string) => request<{ ok: boolean; status: number | null; error: string | null }>("POST", `/admin/public-api/webhooks/${id}/test`),
+    webhookDeliveries: (id: string, status?: string) => request<WebhookDeliveryItem[]>("GET", `/admin/public-api/webhooks/${id}/deliveries${status ? `?status=${status}` : ""}`),
+    webhookRetry: (deliveryId: string) => request<{ ok: boolean }>("POST", `/admin/public-api/webhooks/deliveries/${deliveryId}/retry`),
     apiLog: (p: { client_id?: string; status_from?: number; before_id?: number; limit?: number }) => {
       const q = new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
       return request<PublicApiLogRow[]>("GET", `/admin/public-api/log?${q}`);

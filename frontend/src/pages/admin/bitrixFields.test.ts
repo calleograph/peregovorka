@@ -27,7 +27,7 @@ describe("Публичный API: поля настроек", () => {
   it("совпадают с группой настроек на сервере", async () => {
     const { publicApiFields } = await import("./fields");
     const names = publicApiFields.map((f) => f.name);
-    for (const n of ["enabled", "rate_read", "rate_write", "rate_ai", "rate_download", "log_retention_days", "max_page_size"]) expect(names).toContain(n);
+    for (const n of ["enabled", "rate_read", "rate_write", "rate_ai", "rate_download", "log_retention_days", "max_page_size", "jobs_concurrency", "download_url_ttl_s", "idempotency_ttl_hours", "webhook_max_attempts", "webhook_timeout_s", "webhook_degraded_after", "webhook_disable_after", "webhook_retention_days", "webhook_allow_hosts", "webhook_allow_http", "webhook_use_corporate_ca"]) expect(names).toContain(n);
     expect(publicApiFields.find((f) => f.name === "enabled")?.type).toBe("bool");
   });
 });

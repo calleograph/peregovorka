@@ -664,6 +664,33 @@ class ApiSettings(_Group):
     rate_download: int = Field(default=30, ge=1, le=10000)        # выдача ссылок и скачивание файлов
     log_retention_days: int = Field(default=30, ge=1, le=3650)
     max_page_size: int = Field(default=200, ge=10, le=1000)
+    # события (webhooks)
+    webhook_max_attempts: int = Field(default=8, ge=1, le=20)             # попыток доставки одного события, затем «не доставлено» (вручную можно повторить)
+    webhook_timeout_s: int = Field(default=10, ge=1, le=60)
+    webhook_degraded_after: int = Field(default=5, ge=1, le=100)          # подряд неудачных попыток → статус «деградация»
+    webhook_disable_after: int = Field(default=20, ge=2, le=1000)         # подряд неудачных попыток → получатель отключается до ручного включения
+    webhook_use_corporate_ca: bool = False                                # проверять сертификат получателя по корпоративному УЦ (LDAP_CA_FILE), если получатель во внутренней сети
+    webhook_allow_http: bool = False                                      # http:// у получателя (только для изолированных сетей)
+    webhook_allow_hosts: str = Field(default="", max_length=2000)         # политика on-prem: узлы и сети через запятую, куда внутренние адреса всё же разрешены (по умолчанию внутренние запрещены)
+    webhook_retention_days: int = Field(default=14, ge=1, le=365)
+    # задачи, ссылки, идемпотентность
+    jobs_concurrency: int = Field(default=1, ge=1, le=4)                  # одновременно выполняемых задач генерации (нагрузка на языковую модель)
+    download_url_ttl_s: int = Field(default=300, ge=30, le=3600)
+    idempotency_ttl_hours: int = Field(default=24, ge=1, le=168)
+
+    @field_validator("webhook_allow_hosts")
+    @classmethod
+    def _allow_hosts(cls, v: str) -> str:
+        from ..publicapi.ssrf import parse_allow  # noqa: PLC0415
+
+        parse_allow(v)                    # некорректная запись — ошибка сохранения, а не молчаливый пропуск
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _thresholds(self) -> "ApiSettings":
+        if self.webhook_disable_after <= self.webhook_degraded_after:
+            raise ValueError("Отключение получателя должно наступать позже, чем «деградация»: увеличьте порог отключения")
+        return self
 
 
 GROUPS: dict[str, type[_Group]] = {

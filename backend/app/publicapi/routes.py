@@ -513,6 +513,9 @@ async def list_messages(meeting_id: str, request: Request, limit: int | None = Q
                        next_cursor=cursor.encode(page[-1].id) if len(rows) > n else None)
 
 
+from . import routes_ext  # noqa: E402,F401 — маршруты этапа 2 (задачи, скачивание); подключаются до маршрута-ловушки ниже
+
+
 # ------------------------------------------------------------------------------------------------ описание API
 @router.get("/openapi.json", include_in_schema=False)
 async def openapi_json(request: Request):

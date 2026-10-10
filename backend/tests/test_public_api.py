@@ -461,7 +461,7 @@ def test_admin_endpoints_are_admin_only_and_validate_input(tmp_path, directory):
 def test_every_declared_scope_is_used_by_some_route(tmp_path, directory):
     with setup(tmp_path, directory) as c:
         spec = c.get(f"{P}/openapi.json").json()
-        used = {op.get("x-required-scope") for item in spec["paths"].values() for op in item.values()}
+        used = {op.get("x-required-scope") for item in spec["paths"].values() for op in item.values()} | {s for item in spec["paths"].values() for op in item.values() for s in op.get("x-required-scopes") or []}
         from app.publicapi.scopes import SCOPES
         unused = set(SCOPES) - used - {"protocols:read", "summaries:read"}      # эти два проверяются внутри маршрута документов по виду документа
         assert not unused, f"scope без маршрута: {unused}"

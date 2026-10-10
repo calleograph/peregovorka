@@ -53,8 +53,26 @@ def build_spec(request: Request) -> dict:
             scope, rate = by_op.get((path, method), (None, None))
             op["x-required-scope"] = scope
             op["x-rate-class"] = rate
+            many = op.get("x-required-scopes")
             if scope:
                 op["description"] = f"**Требуется право:** `{scope}`.\n\n" + (op.get("description") or "")
+            elif many:
+                op["x-required-scope"] = many[0] if len(many) == 1 else None
+                op["description"] = "**Требуется право:** " + " или ".join(f"`{s}`" for s in many) + " (по виду документа).\n\n" + (op.get("description") or "")
+                op["x-rate-class"] = "ai"
+    from .webhooks import EVENTS  # noqa: PLC0415
+
+    spec["components"].setdefault("schemas", {})["WebhookEvent"] = {
+        "type": "object", "required": ["id", "type", "api_version", "created", "data"],
+        "properties": {"id": {"type": "string", "example": "evt_0123456789abcdef01234567", "description": "Уникальный идентификатор события; у повторов доставки он тот же — отбрасывайте дубли."},
+                       "type": {"type": "string", "enum": [e for e in EVENTS if e != "webhook.test"] + ["webhook.test"]},
+                       "api_version": {"type": "string", "example": "1"}, "created": {"type": "string", "format": "date-time"},
+                       "data": {"type": "object", "description": "Только идентификаторы (без персональных данных и текстов); содержимое запрашивается методами API."}}}
+    spec["webhooks"] = {name: {"post": {
+        "summary": text, "description": "Отправляется на адрес получателя. Подпись: заголовок `X-Peregovorka-Signature: v1=<hex>` = HMAC-SHA256(секрет, \"<X-Peregovorka-Timestamp>.<тело>\"); "
+        "отвергайте запросы с меткой времени старше 5 минут и уже обработанные `X-Peregovorka-Event-Id`. Успех — любой ответ 2xx; иначе доставка повторяется с нарастающей задержкой.",
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WebhookEvent"}}}}, "responses": {"200": {"description": "Принято"}}}}
+        for name, text in EVENTS.items()}
     request.app.state.api_spec = spec
     return spec
 

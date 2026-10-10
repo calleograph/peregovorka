@@ -730,3 +730,85 @@ class ApiRequestLog(Base):
     ip: Mapped[str | None] = mapped_column(String(64))
     request_id: Mapped[str | None] = mapped_column(String(40))
     error_code: Mapped[str | None] = mapped_column(String(60))
+
+
+class WebhookEndpoint(Base):
+    """Подписка на события публичного API: адрес получателя, события, область комнат и секрет подписи (хранится зашифрованным)."""
+
+    __tablename__ = "webhook_endpoints"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="active", server_default="active", nullable=False)     # active | degraded | disabled
+    events: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)       # пусто — все события
+    rooms: Mapped[list | None] = mapped_column(JSONType)                                # None — все комнаты; иначе id комнат (UUID строкой)
+    secret_enc: Mapped[str | None] = mapped_column(Text)
+    previous_secret_enc: Mapped[str | None] = mapped_column(Text)                       # прежний секрет действует до previous_until (подписываем обоими)
+    previous_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_failure_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    disabled_reason: Mapped[str | None] = mapped_column(String(200))
+    created_by: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class WebhookDelivery(Base):
+    """Одна доставка события одному получателю: очередь с повторами (экспоненциальная задержка) и история попыток."""
+
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (Index("ix_webhook_deliveries_due", "status", "next_attempt_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("webhook_endpoints.id", ondelete="CASCADE"), index=True, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="pending", nullable=False)   # pending | delivered | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    manual_retries: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    last_status: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    attempt_log: Mapped[list | None] = mapped_column(JSONType)       # последние попытки: [{at, status, ms, error}]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ApiJob(Base):
+    """Долгая операция публичного API (формирование протокола, резюме, карты): queued → processing → completed | failed | cancelled."""
+
+    __tablename__ = "api_jobs"
+    __table_args__ = (Index("ix_api_jobs_client_created", "client_id", "created_at"), Index("ix_api_jobs_status_created", "status", "created_at"))
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("api_clients.id", ondelete="CASCADE"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)                  # protocol | summary | map
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="queued", nullable=False)
+    params: Mapped[dict | None] = mapped_column(JSONType)
+    result: Mapped[dict | None] = mapped_column(JSONType)
+    error: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ApiIdempotency(Base):
+    """Ключи идемпотентности (`Idempotency-Key`): повтор того же запроса возвращает прежний ответ, а не создаёт дубль."""
+
+    __tablename__ = "api_idempotency"
+    __table_args__ = (UniqueConstraint("client_id", "key", name="uq_api_idempotency_client_key"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("api_clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(12), default="in_progress", nullable=False)     # in_progress | done
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[dict | None] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)

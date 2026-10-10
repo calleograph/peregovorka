@@ -1,6 +1,8 @@
 from .base import Base, utcnow
 from .entities import (
     ApiClient,
+    ApiIdempotency,
+    ApiJob,
     ApiKey,
     ApiProfile,
     ApiRequestLog,
@@ -24,6 +26,8 @@ from .entities import (
     MailTemplate,
     MailProfile,
     Room,
+    WebhookDelivery,
+    WebhookEndpoint,
     SipProfile,
     StorageProfile,
     StorageSyncRun,
@@ -34,6 +38,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]

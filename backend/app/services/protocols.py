@@ -219,6 +219,7 @@ class ProtocolService:
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
+        self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
         self.flush_delay = 5.0  # даём ASR-воркеру закрыть файлы записи после команды stop
 
@@ -510,6 +511,20 @@ class ProtocolService:
                 rec.meta = self._failure_meta(info, once, "internal")
                 await db.commit()
                 self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "internal"})
+        await self._notify_document(protocol_id)
+
+    async def _notify_document(self, protocol_id: uuid.UUID) -> None:
+        """Готовность документа для подписчиков публичного API (события document.ready / document.failed). Сбой уведомления документ не затрагивает."""
+        if self.on_document is None:
+            return
+        try:
+            async with self._sm() as db:
+                rec = await db.get(Protocol, protocol_id)
+                meeting = await db.get(Meeting, rec.meeting_id) if rec else None
+                if rec is not None and meeting is not None and rec.status in ("ready", "failed"):
+                    self.on_document(rec.kind, rec.id, meeting.id, meeting.room_id, rec.status, rec.error)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось передать событие документа")
 
     @staticmethod
     def _aware(d: datetime | None) -> datetime | None:

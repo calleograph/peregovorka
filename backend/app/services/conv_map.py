@@ -539,6 +539,21 @@ class MapService:
             await self._run(map_id)
         finally:
             self._active.discard(map_id)
+        await self._notify(map_id)
+
+    async def _notify(self, map_id: uuid.UUID) -> None:
+        """События document.ready / document.failed для подписчиков публичного API; сбой уведомления карту не затрагивает."""
+        hook = self.ps.on_document
+        if hook is None:
+            return
+        try:
+            async with self.ps._sm() as db:
+                rec = await db.get(ConversationMap, map_id)
+                meeting = await db.get(Meeting, rec.meeting_id) if rec else None
+                if rec is not None and meeting is not None and rec.status in ("ready", "failed"):
+                    hook("map", rec.id, meeting.id, meeting.room_id, rec.status, rec.error)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось передать событие карты")
 
     async def _run(self, map_id: uuid.UUID) -> None:
         async with self.ps._sm() as db:
