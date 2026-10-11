@@ -96,7 +96,7 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
             ("north", "Переговорная «Север»", "Большой зал: совещания руководителей, показ экрана и доска", {"max_participants": 30, "auto_record": True, "record_audio": True}, 0),
             ("sec", "Безопасность", "Закрытые разборы инцидентов", {"password_hash": "x", "max_participants": 8}, 0),
             ("town", "Общее собрание", "Презентационная комната: говорят только руководители", {"room_type": "presentation", "max_participants": 100}, 12),
-            ("stage", "Презентация без встречи", "Пустая презентационная комната: встреча создаётся входом (webhook LiveKit разбирает её как настоящую)", {"room_type": "presentation", "max_participants": 2000}, 0),
+            ("stage", "Презентация без встречи", "Пустая презентационная комната: встреча создаётся входом (webhook LiveKit разбирает её как настоящую)", {"room_type": "presentation", "max_participants": 2000, "guest_access_enabled": True, "guest_token": "devguesttokenstage00001"}, 0),
             ("tmp-k7f3p2", "Разбор инцидента", None, {"lifetime": "temporary"}, 0),
             ("sales", "Продажи", None, {}, 0),
             ("hr", "HR и подбор персонала с очень длинным названием комнаты для проверки обрезки", "Интервью и собеседования кандидатов", {}, 0),

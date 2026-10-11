@@ -7,14 +7,15 @@ import asyncio, json, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import smoke_room as S
 from livekit import api as lkapi, rtc
+from lk_helpers import lk_state, LK_URL, LK_KEY, LK_SECRET
 
 S.ROOM = "/rooms/stage"
-LK_URL, LK_KEY, LK_SECRET = "http://127.0.0.1:7880", "devkey", "s" * 40
+from lk_helpers import INIT_HOOKS
+S.INIT += INIT_HOOKS
 S.INIT += r"""
-window.__gum = 0; window.__gdm = 0; window.__tokens = []; window.__join = null;
+window.__gdm = 0;
 (() => {
   const md = navigator.mediaDevices; if (!md) return;
-  const g = md.getUserMedia.bind(md); md.getUserMedia = function (...a) { window.__gum++; return g(...a); };
   md.getDisplayMedia = async function () {                       // «экран» 1920×1080 15 к/с: заведомо крупнее профиля «Экономный 720p»
     window.__gdm++;
     const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const x = c.getContext('2d'); let n = 0;
@@ -22,29 +23,8 @@ window.__gum = 0; window.__gdm = 0; window.__tokens = []; window.__join = null;
       for (let i = 0; i < 14; i++) x.fillText('Слайд ' + n + ' строка ' + i + ' ' + Math.random().toString(36).slice(2), 80, 90 + i * 70); n++; }, 66);
     return c.captureStream(15);
   };
-  const f = window.fetch; window.fetch = async function (...a) {
-    const r = await f.apply(this, a);
-    try { const u = String((a[0] && a[0].url) || a[0]); if (/\/rooms\/[^/]+\/join$/.test(u)) r.clone().json().then((j) => { window.__join = j; window.__tokens.push(j.token); }).catch(() => {}); } catch (e) {}
-    return r;
-  };
 })();
 """
-
-
-async def lk_state(room_name):
-    """Что видит сам сервер звонков: участники, их права и опубликованные дорожки."""
-    async with lkapi.LiveKitAPI(LK_URL, LK_KEY, LK_SECRET) as lk:
-        resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
-    out = {}
-    for p in resp.participants:
-        out[p.identity] = {"tracks": sorted(rtc_name(t.source) for t in p.tracks), "can_publish": p.permission.can_publish,
-                           "sources": sorted(rtc_name(s) for s in p.permission.can_publish_sources), "name": p.name}
-    return out
-
-
-def rtc_name(src):
-    from livekit.protocol import models as m
-    return {m.TrackSource.MICROPHONE: "mic", m.TrackSource.CAMERA: "cam", m.TrackSource.SCREEN_SHARE: "screen", m.TrackSource.SCREEN_SHARE_AUDIO: "screen_audio"}.get(src, str(src))
 
 
 async def try_publish(token, what="mic"):
