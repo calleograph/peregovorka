@@ -174,6 +174,9 @@ services:
       DEFAULT_TEXT_RETENTION_DAYS: ${DEFAULT_TEXT_RETENTION_DAYS:-365}
       DEFAULT_AUDIO_RETENTION_DAYS: ${DEFAULT_AUDIO_RETENTION_DAYS:-30}
       MEETING_END_GRACE_SECONDS: ${MEETING_END_GRACE_SECONDS:-30}
+      HEAVY_CONCURRENCY: ${HEAVY_CONCURRENCY:-2}
+      HEAVY_MAX_DEFER_SECONDS: ${HEAVY_MAX_DEFER_SECONDS:-1800}
+      LIVEKIT_METRICS_URL: ${LIVEKIT_METRICS_URL:-}
       DATA_DIR: /data
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # локальная LLM (контейнер llm-local, профиль llm): внутренний адрес и каталог модели (только чтение — статус, размер, контрольная сумма)
