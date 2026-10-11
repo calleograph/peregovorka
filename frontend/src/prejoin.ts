@@ -1,6 +1,6 @@
 // Результат проверки оборудования перед входом (гость): выбранные устройства передаются комнате. Только в памяти вкладки.
 
-export interface PreJoin { micId?: string; speakerId?: string; camId?: string; camOn: boolean }
+export interface PreJoin { micId?: string; speakerId?: string; camId?: string; camOn: boolean; /** Руководитель презентации: выбранное состояние микрофона при входе (в других комнатах не задаётся). */ micOn?: boolean }
 
 let current: PreJoin | null = null;
 export const setPreJoin = (p: PreJoin | null): void => { current = p; };

@@ -537,6 +537,8 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 .pc-note, .pc-hint { color: var(--muted); font-size: 12px; }
 .pc-p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.4; }
 .pc-pills { display: flex; flex-wrap: wrap; gap: 6px; } .pc-pills .pill { font-size: 11.5px; }
+.pj-micstate { margin-bottom: 10px; }
+.pj-micstate .pc-p { margin: 0; }
 .pc-btns { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: auto; }
 .pc-card select { width: 100%; }
 .pc-wide { grid-column: 1 / -1; margin: 0; }

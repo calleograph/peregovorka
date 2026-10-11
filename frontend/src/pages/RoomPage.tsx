@@ -29,6 +29,7 @@ import { copyText, fileBase as fileBaseName } from "../util";
 import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
 import { setPreJoin, takePreJoin, type PreJoin as PreJoinHw } from "../prejoin";
+import { joinMode, wantMicOnJoin } from "../prejoinMode";
 import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
 import { PROFILE_LABELS, PROFILE_ORDER, applyProfileLive, ecoReport, loadProfile, measureScreen, saveProfile, screenShareOptions, type ScreenProfile } from "../screenShare";
 import AudiencePanel from "../components/room/AudiencePanel";
@@ -622,17 +623,19 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     setWelcome(info.client.welcome_message ?? null);
     setNotice(info.client.presentation && !(info.client.sources ?? []).length
       ? { kind: "info", text: "Это презентационная комната: вы слушаете. Микрофон, камера и показ экрана появятся, когда руководитель даст вам слово." }
-      : info.client.mute_on_join ? { kind: "info", text: "В этой переговорке микрофон по умолчанию выключен. Чтобы говорить, нажмите «Микрофон»." } : null);
+      : info.client.mute_on_join && !(info.client.presentation && info.client.can_manage) ? { kind: "info", text: "В этой переговорке микрофон по умолчанию выключен. Чтобы говорить, нажмите «Микрофон»." } : null);
     setJoin(info); // комната и канал событий открываются сразу — параллельно с подключением к LiveKit
     setActiveMeeting(info.meeting_id); // верхняя панель с этого момента открывает разделы в новых вкладках
     const pre = takePreJoin(); // устройства, выбранные на проверке оборудования (гость)
     setBusy(false);
     // Критический путь — Room.connect. Всё независимое идёт рядом: микрофон (getUserMedia, включая запрос разрешения) начинается
     // немедленно и не ждёт подключения; канал событий (WebSocket) открывает TranscriptPanel при появлении комнаты.
+    // микрофон при входе: руководитель презентации — как выбрал на экране входа (в том числе «выключен»); везде остальное — как раньше (по настройке комнаты)
+    const wantMic = wantMicOnJoin({ presentation: !!info.client.presentation, canManage: !!info.client.can_manage, muteOnJoin: !!info.client.mute_on_join, chosen: pre?.micOn });
     tl.mark("gumStart");
     // «микрофон по умолчанию выключен» (настройка переговорки): звук не запрашиваем и не включаем — пользователь включит сам
     const mayPublishMic = (info.client.sources ?? ALL_SOURCES).includes("microphone") && !(info.client.presentation && !info.client.can_manage);        // выступающему со словом микрофон сам не включается и не запрашивается: он решает сам
-    if (!info.client.mute_on_join && mayPublishMic) prepMicRef.current = createLocalAudioTrack({ ...captureOptions(loadMicPrefs()), ...(pre?.micId ? { deviceId: pre.micId } : {}) }).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
+    if (wantMic && mayPublishMic) prepMicRef.current = createLocalAudioTrack({ ...captureOptions(loadMicPrefs()), ...(pre?.micId ? { deviceId: pre.micId } : {}) }).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
     void collectAll().then((data) => reportEvent("join_attempt", { meetingId: info.meeting_id, room: info.room.name, data }));
     try {
       // Первое подключение переживает кратковременные сбои сети/ICE: до MAX_CONNECT_TRIES попыток с нарастающей паузой и свежим токеном
@@ -655,7 +658,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         }
       }
       setConnectTry(null);
-      if (!info.client.mute_on_join && mayPublishMic) void enableMic();
+      if (wantMic && mayPublishMic) void enableMic();
       const lk = roomRef.current;
       if (lk && pre?.speakerId) void lk.switchActiveDevice("audiooutput", pre.speakerId).catch(() => undefined);
       if (lk && pre?.camOn && info.room.camera_allowed && (info.client.sources ?? ALL_SOURCES).includes("camera")) void lk.localParticipant.setCameraEnabled(true, pre.camId ? { deviceId: pre.camId } : undefined).then(refresh).catch((e) => fail("camera", "cam", "camera_failed", e));
@@ -987,7 +990,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const toggleCollapsed = () => setTCollapsed((c) => { lsSet("room.tcollapsed", c ? "0" : "1"); return !c; });
 
   // ---------------------------------------------------------------------- вид «до входа»
-  const onHw = (p: PreJoinHw & { micOk: boolean }) => setPreJoin({ micId: p.micId, speakerId: p.speakerId, camId: p.camId, camOn: p.camOn });
+  const onHw = (p: PreJoinHw & { micOk: boolean }) => setPreJoin({ micId: p.micId, speakerId: p.speakerId, camId: p.camId, camOn: p.camOn, micOn: p.micOn });
   const tl = timeline.current;
   const done = { prepare: tl.metrics().join_api_ms, server: tl.metrics().signaling_connect_ms, media: tl.metrics().ice_connect_ms };
   if (!join && guest) {
@@ -1003,7 +1006,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }
   if (!join) {
     return (
-      <PreJoin onHw={roomInfo?.room_type === "presentation" && !roomInfo.can_manage ? undefined : onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
+      <PreJoin mode={joinMode(roomInfo)} onHw={joinMode(roomInfo) === "viewer" ? undefined : onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
                onJoin={() => void connect(needPassword || roomInfo?.has_password ? password : undefined)} onBack={() => navigate("/")}
                progress={busy ? <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} /> : null} />
     );

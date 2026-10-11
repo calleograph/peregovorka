@@ -35,7 +35,7 @@ async def main():
         await G.goto("/guest/devguesttokenstage00001", 3.0)
         await G.wait_for("document.body.innerText.includes('Вы входите как гость')", 30)
         txt = (await G.js("document.body.innerText")) or ""
-        S.check("страница гостя: сказано, что это презентация и микрофон не понадобится", "Это презентация" in txt, txt[:160].replace(chr(10), " | "))
+        S.check("страница гостя: «Вы входите в режиме зрителя. Микрофон и камера выключены»", "Вы входите в режиме зрителя" in txt and "Микрофон и камера выключены" in txt, txt[:160].replace(chr(10), " | "))
         S.check("страница гостя: проверки оборудования нет", not await G.js("!!document.querySelector('.precheck')") and "Проверить микрофон" not in txt)
         await G.js("""(()=>{const i=document.querySelector('input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'Гость Тестовый');i.dispatchEvent(new Event('input',{bubbles:true}))})()""")
         await asyncio.sleep(0.5)

@@ -23,7 +23,7 @@ router = APIRouter(prefix="/rooms", tags=["rooms"])
 async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, participants: int = 0, su: SessionUser | None = None) -> RoomOut:
     manage = bool(su and roles.can_manage_room(room, su))
     return RoomOut(
-        can_manage=manage, guest_token=room.guest_token if (manage and room.guest_access_enabled and room.guest_token) else None,
+        can_manage=manage, mute_on_join=room.mute_on_join, guest_token=room.guest_token if (manage and room.guest_access_enabled and room.guest_token) else None,
         id=room.id, slug=room.slug, name=room.name, description=room.description,
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
@@ -63,7 +63,7 @@ async def resolve_room(ref: str, su: SessionUser = Depends(require_user), db: As
     if active is not None:
         people = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(
             MeetingParticipant.meeting_id == active.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
-    info = (await room_out(db, room, active, people)).model_dump(mode="json")      # для страницы «перед входом»: описание, возможности, кто уже в комнате
+    info = (await room_out(db, room, active, people, su)).model_dump(mode="json")      # для страницы «перед входом»: описание, возможности, кто уже в комнате
     return {"id": str(room.id), "slug": room.slug, "name": room.name, "canonical": canonical, "lifetime": room.lifetime, "lifecycle": room.lifecycle, "room": info}
 
 

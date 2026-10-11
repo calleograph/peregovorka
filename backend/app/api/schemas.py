@@ -56,6 +56,7 @@ class RoomOut(BaseModel):
     auto_close_at: datetime | None = None
     created_by_name: str | None = None
     can_manage: bool = False                  # вошедший — руководитель комнаты или администратор (только список комнат)
+    mute_on_join: bool = False                # участники входят с выключенным микрофоном (экран входа показывает это руководителю презентации)
     guest_token: str | None = None            # секрет гостевой ссылки: отдаётся ТОЛЬКО руководителям и администраторам, и только если гостевой вход включён
     active_meeting: ActiveMeetingOut | None = None
 

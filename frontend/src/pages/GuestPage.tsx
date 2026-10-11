@@ -105,7 +105,7 @@ export default function GuestPage() {
         </label>
       )}
       {info.presentation
-        ? <p className="muted small">Это презентация: вы будете смотреть и слушать. Микрофон и камера не понадобятся, браузер их не запросит. Если руководитель даст вам слово, они станут доступны.</p>
+        ? <p className="muted small">Вы входите в режиме зрителя. Микрофон и камера выключены, браузер их не запросит. Руководитель может предоставить вам слово — тогда вы сами сможете включить микрофон, камеру и другие разрешённые функции.</p>
         : <PreJoinCheck cameraAllowed={info.camera_allowed} onChange={onHw} />}
       {consentDocs.map((d) => (
         <label key={d.kind} className="check"><input type="checkbox" checked={agreed.has(d.kind)} onChange={(e) => setAgreed((s) => { const n = new Set(s); if (e.target.checked) n.add(d.kind); else n.delete(d.kind); return n; })} />

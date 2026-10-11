@@ -12,6 +12,7 @@ export interface Room {
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
   /** Только в списке комнат: вошедший — руководитель/администратор; секрет гостевой ссылки отдаётся только им и только при включённом гостевом входе. */
   can_manage?: boolean; guest_token?: string | null;
+  mute_on_join?: boolean;
 }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
