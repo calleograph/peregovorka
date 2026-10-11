@@ -88,6 +88,8 @@ services:
       LIVEKIT_CONFIG: |
         port: 7880
         log_level: info
+        # Метрики для «Администрирование → Производительность» (трафик, число потоков). Порт слушает только внутри сети проекта и наружу не публикуется.
+        prometheus_port: 6789
         rtc:
           tcp_port: ${LIVEKIT_TCP_PORT}
           udp_port: ${LIVEKIT_UDP_PORT}
@@ -104,6 +106,13 @@ services:
           api_key: ${LIVEKIT_API_KEY}
           urls:
             - http://backend:8000/internal/v1/livekit/webhook
+    # Приоритет звонка при нехватке процессора: вес (не лимит!) выше обычного — при свободном процессоре ничего не меняется, а при конкуренции с распознаванием
+    # речи и языковой моделью LiveKit получает долю в первую очередь. Много открытых соединений зрителей: запас дескрипторов файлов.
+    cpu_shares: 2048
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7880/ || exit 1"]
       interval: 10s
@@ -254,6 +263,7 @@ services:
       retries: 5
       start_period: 120s
     stop_grace_period: 20s
+    cpu_shares: 512       # вес при конкуренции за процессор (не лимит): звонок важнее распознавания, но распознавание во время встречи не отключается
     logging: *default-logging
 
   # SIP-телефония: LiveKit SIP Service (профиль `sip`, по умолчанию не запускается и порты не публикуются). Связан с LiveKit через общий Redis (db 1).
@@ -322,6 +332,7 @@ services:
     networks:
       - llm_internal
     mem_limit: ${LLM_LOCAL_MEM:-3500m}
+    cpu_shares: 256       # вес при конкуренции за процессор (не лимит): протоколы и резюме уступают звонку и распознаванию, а без конкуренции идут на полной скорости
     stop_grace_period: 10s
     logging: *default-logging
 

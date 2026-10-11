@@ -25,6 +25,7 @@ import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
+import PerformanceAdmin from "./admin/PerformanceAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
 
@@ -36,6 +37,7 @@ const GROUPS: Group[] = [
   { title: "Состояние", pages: [
     { id: "system", label: "Обзор", render: (go) => <SystemAdmin onOpen={go} /> },
     { id: "system_tech", label: "Технические показатели", render: (go) => <SystemAdmin onOpen={go} view="tech" /> },
+    { id: "performance", label: "Производительность", render: () => <PerformanceAdmin /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
     { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
   ] },

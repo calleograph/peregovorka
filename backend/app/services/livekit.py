@@ -144,6 +144,18 @@ async def set_publish_permission(settings: Settings, room_name: str, identity: s
         return False
 
 
+def permission_sources(permission) -> set[str]:
+    """Что разрешено публиковать по ParticipantPermission сервера звонков (пустое множество — публиковать нельзя)."""
+    from livekit.protocol import models as lkmodels  # noqa: PLC0415
+
+    if permission is None or not getattr(permission, "can_publish", False):
+        return set()
+    names = {lkmodels.TrackSource.MICROPHONE: "microphone", lkmodels.TrackSource.CAMERA: "camera",
+             lkmodels.TrackSource.SCREEN_SHARE: "screen_share", lkmodels.TrackSource.SCREEN_SHARE_AUDIO: "screen_share_audio"}
+    listed = list(getattr(permission, "can_publish_sources", []) or [])
+    return {names[s] for s in listed if s in names} if listed else set(names.values())      # пустой список источников = можно любые
+
+
 async def enforce_sources(settings: Settings, room_name: str, identity: str, allowed: list[str], *, tries: int = 4, pause: float = 0.4) -> dict:
     """Убедиться, что после смены прав у участника не осталось опубликованных дорожек запрещённых источников («забрать слово»).
 

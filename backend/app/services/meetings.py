@@ -29,6 +29,7 @@ from .livekit import (
     delete_livekit_room,
     enforce_sources,
     guest_identity,
+    permission_sources,
     issue_guest_token,
     issue_user_token,
     list_present_identities,
@@ -374,6 +375,28 @@ class MeetingService:
         meeting.empty_since = None
         await db.commit()
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
+
+    async def enforce_on_join(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, permission) -> bool:
+        """Сверка прав только что подключившегося участника презентации с ТЕКУЩИМ состоянием слова.
+
+        Токен действует несколько минут: тот, у кого забрали слово, может подключиться со старым токеном и получить прежние права. Сервер звонков сообщает
+        права подключившегося в webhook; если они шире текущих (нет слова, не руководитель, показ экрана запрещён), права урезаются сразу, а уже
+        опубликованные дорожки снимаются (`enforce_sources`). Возвращает True, если права пришлось урезать."""
+        meeting = await db.get(Meeting, meeting_id)
+        if meeting is None or meeting.ended_at is not None or not roles.is_presentation(meeting.room):
+            return False
+        granted = permission_sources(permission)
+        if not granted or await self.is_privileged(meeting_id, identity):
+            return False
+        sources = roles.publish_sources(meeting.room, None, guest=identity.startswith("g-"), has_floor=await self.floor_has(meeting_id, identity))
+        if await self.share_blocked(meeting_id, identity):
+            sources = self.without_share(sources)
+        if not (granted - set(sources)):
+            return False
+        await set_publish_permission(self._s, meeting.livekit_room, identity, sources)
+        await enforce_sources(self._s, meeting.livekit_room, identity, sources)
+        log.warning("Права подключившегося урезаны: токен выдан до отзыва слова", extra={"meeting_id": str(meeting_id), "identity": identity[:8]})
+        return True
 
     async def on_participant_left(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await self._close_participant(db, meeting_id, user_id)

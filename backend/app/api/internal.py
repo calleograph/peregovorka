@@ -71,10 +71,12 @@ async def livekit_webhook(request: Request):
             if guest_id:
                 if event.event == "participant_joined":
                     await svc.on_guest_joined(db, meeting_id, guest_id)
+                    await svc.enforce_on_join(db, meeting_id, ident, event.participant.permission)
                 else:
                     await svc.on_guest_left(db, meeting_id, guest_id)
             elif event.event == "participant_joined":
                 await svc.on_participant_joined(db, meeting_id, user_id)
+                await svc.enforce_on_join(db, meeting_id, ident, event.participant.permission)
             else:
                 await svc.on_participant_left(db, meeting_id, user_id)
     elif event.event == "room_finished" and meeting_id:

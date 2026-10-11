@@ -352,3 +352,62 @@ def test_performance_endpoint_is_admin_only_and_degrades_to_nulls(client):
     login(client, "root")
     rooms = client.get(f"{API}/admin/performance").json()["rooms"]
     assert rooms["active_meetings"] == 1 and rooms["participants"] == 2 and rooms["presentations"] == 1 and rooms["top"][0]["participants"] == 2
+
+
+# ------------------------------------------------------------------------------------------ старый токен после отзыва слова
+def _joined_webhook(client, settings, room_name, identity, sources):
+    from .test_transcripts import _signed_webhook
+
+    perm = {"canPublish": True, "canPublishSources": sources} if sources is not None else {}
+    body, token = _signed_webhook(settings, {"event": "participant_joined", "room": {"name": room_name}, "participant": {"identity": identity, "permission": perm}})
+    return client.post("/internal/v1/livekit/webhook", content=body, headers={"Authorization": token}).status_code
+
+
+def test_reconnect_with_a_stale_token_after_the_floor_was_taken_is_cut_down(client, settings, lk_calls):  # noqa: F811
+    room = presentation(client)
+    carol = _join(client, "carol", room["id"])
+    alice = _join(client, "alice", room["id"])
+    mid, name = alice["meeting_id"], alice["livekit_room"]
+    login(client, "carol")
+    client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": True})
+    stale = ["MICROPHONE", "CAMERA", "SCREEN_SHARE", "SCREEN_SHARE_AUDIO"]       # токен, выданный пока было слово
+    lk_calls["perm"].clear(), lk_calls["enforce"].clear()
+    assert _joined_webhook(client, settings, name, alice["identity"], stale) == 200
+    assert not lk_calls["perm"], "слово есть — права не трогаем"
+    client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": False})
+    lk_calls["perm"].clear(), lk_calls["enforce"].clear()
+    assert _joined_webhook(client, settings, name, alice["identity"], stale) == 200
+    assert lk_calls["perm"] == [(alice["identity"], [])] and lk_calls["enforce"] == [(alice["identity"], [])], "слова больше нет, а токен старый — права урезаны, дорожки сняты"
+    lk_calls["perm"].clear(), lk_calls["enforce"].clear()
+    assert _joined_webhook(client, settings, name, carol["identity"], stale) == 200, "руководитель с полным токеном — норма"
+    assert _joined_webhook(client, settings, name, alice["identity"], None) == 200 and not lk_calls["perm"], "зритель с токеном зрителя — ничего не меняется"
+    reg = make_room(client)
+    r = _join(client, "bob", reg["id"])
+    assert _joined_webhook(client, settings, r["livekit_room"], r["identity"], stale) == 200 and not lk_calls["perm"], "обычная комната этой проверкой не затрагивается"
+
+
+# ------------------------------------------------------------------------------------------ профиль «Экономный 720p» и гость презентации
+def test_eco_profile_setting_reaches_clients_and_stays_within_500_900(client):
+    from .conftest import put_settings
+
+    put_settings(client, "screen", profile="eco", eco_bitrate_kbps=650)
+    room = make_room(client)
+    login(client, "alice")
+    c = client.post(f"{API}/rooms/{room['id']}/join", json={}).json()["client"]
+    assert c["screen_profile"] == "eco" and c["screen_eco_kbps"] == 650
+    login(client, "root")
+    for bad in (499, 901, 5000, 0):
+        assert client.put(f"{API}/admin/settings/screen", json={"profile": "eco", "eco_bitrate_kbps": bad}).status_code == 422, bad
+    assert client.put(f"{API}/admin/settings/screen", json={"profile": "ultra"}).status_code == 422, "неизвестный профиль не принимается"
+    put_settings(client, "screen", profile="sharp", eco_bitrate_kbps=800)
+    login(client, "alice")
+    assert client.post(f"{API}/rooms/{room['id']}/join", json={}).json()["client"]["screen_profile"] == "sharp", "прежние профили работают как раньше"
+
+
+def test_guest_link_info_tells_that_the_room_is_a_presentation(client, lk_calls):  # noqa: F811
+    from .test_collab_guests import guest_room
+
+    pres = guest_room(client, room_type="presentation", moderators=LEADERS)
+    reg = guest_room(client)
+    assert client.get(f"{API}/guest/room/{pres['guest_token']}").json()["presentation"] is True
+    assert client.get(f"{API}/guest/room/{reg['guest_token']}").json()["presentation"] is False

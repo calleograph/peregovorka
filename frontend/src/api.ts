@@ -828,6 +828,7 @@ export const api = {
     updateStorage: (id: string, body: { name?: string; config?: Record<string, string | boolean>; secret?: string | null }) => request<StorageProfile>("PATCH", `/admin/storages/${id}`, body),
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
+    performance: () => request<PerfData>("GET", "/admin/performance"),
     storageStats: () => request<StorageStats>("GET", "/admin/storage/stats"),
     storageStatsRefresh: () => request<{ started: boolean }>("POST", "/admin/storage/stats/refresh"),
     transfers: () => request<TransferJob[]>("GET", "/admin/storage/transfers"),
@@ -872,3 +873,22 @@ export const api = {
     asrCompare: (force = false) => request<AsrCompare>("POST", "/admin/asr/compare", { force }),
   },
 };
+
+export interface PerfAssessment { level: "ok" | "busy" | "overloaded"; reasons: string[]; active_meetings: number }
+export interface PerfData {
+  ts: number;
+  assessment: PerfAssessment;
+  host: { cpu_pct: number | null; cpus: number; load1: number | null; load5: number | null; load15: number | null; mem_total: number | null; mem_available: number | null; mem_used_pct: number | null;
+          container: { cpu_pct: number | null; mem_bytes: number | null; mem_limit: number | null } };
+  rooms: { active_meetings: number; participants: number; presentations: number; audience_in_presentations: number; top: { name: string; type: string; participants: number }[] };
+  livekit: { available: boolean; rooms: number | null; participants: number | null; publishers: number | null; audio_tracks: number | null; video_tracks: number | null;
+             in_kbps: number | null; out_kbps: number | null; dropped_pps: number | null; metrics: boolean; error?: string };
+  asr: { ok: boolean; queue_depth?: number | null; active_meetings?: number | null; avg_infer_ms?: number | null; avg_queue_ms?: number | null; rtf?: number | null; dropped?: number | null;
+         errors?: number | null; torch_threads?: number | null; torch_interop_threads?: number | null; recorder_queue?: number | null; recorder_dropped?: number | null };
+  jobs: { gate: { concurrency: number; running: number; waiting: number; started: number; deferred: number; deferred_seconds: number; forced: number };
+          protocols_pending: number; maps_pending: number; recordings_processing: number; storage_transfers_active: number };
+  events: { channels: number; subscribers: number; messages: number; delivered: number; slow_dropped: number; queued: number };
+  webrtc: { samples: number; rtt_ms: number | null; packet_loss_pct: number | null; jitter_ms: number | null; bitrate_in_kbps: number | null; bitrate_out_kbps: number | null; note: string };
+  kernel: { ok: boolean; note?: string; params: Record<string, { value: number | null; recommended: number; ok: boolean | null }> };
+  containers: { backend: { cpu_pct: number | null; mem_bytes: number | null; mem_limit: number | null }; note: string };
+}

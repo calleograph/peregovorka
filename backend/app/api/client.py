@@ -20,7 +20,7 @@ log = logging.getLogger("app.client")
 
 EVENTS = {
     "join_ok", "join_failed", "disconnected", "reconnecting", "reconnected",
-    "screen_share_started", "screen_share_stopped", "screen_share_failed", "screen_share_ended_by_browser",
+    "screen_share_started", "screen_eco_measured", "screen_share_stopped", "screen_share_failed", "screen_share_ended_by_browser",
     "device_error", "mic_failed", "camera_failed", "publish_failed", "autoplay_blocked",
     "screen_track_published", "screen_track_unpublished", "screen_track_ended", "screen_share_restarted",
     "backend_ws_connected", "backend_ws_reconnecting", "rejoin_started", "rejoin_failed",
