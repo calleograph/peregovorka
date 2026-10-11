@@ -76,7 +76,9 @@ def board_level(room: Room) -> str:
     это правило заменяет."""
     lvl = getattr(room, "board_access", "auto") or "auto"
     if lvl in BOARD_LEVELS:
-        return lvl
+        # Презентация: слово всегда даёт и доску — «рисуют только руководители» этому не противоречит (для зрителей это то же самое: правят руководители и те,
+        # кому дали слово). «Доска только у руководителей» (private) скрывает схему от всех, кроме руководителей, и остаётся в силе.
+        return "speakers" if lvl == "leaders" and is_presentation(room) else lvl
     if is_presentation(room):
         return "speakers"
     return "everyone" if room.board_allowed else "leaders"

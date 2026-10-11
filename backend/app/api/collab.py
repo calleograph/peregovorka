@@ -24,6 +24,7 @@ from ..auth.guests import Actor, require_actor
 from ..models import ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services import events, roles, whiteboard as wb
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
+from ..services.meetings import JoinError
 from ..services.materials import chat_files_map, render_chat
 from ..services.access import can_access_meeting_actor
 from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out
@@ -152,6 +153,18 @@ async def hand_set(meeting_id: uuid.UUID, request: Request, body: dict[str, Any]
         event["queue"] = queue if len(queue) <= HAND_EVENT_QUEUE_MAX else None
         await events.publish(redis, meeting_id, event)
     return {"raised": raised, "queue": queue}
+
+
+@router.post("/{meeting_id}/permissions/refresh")
+async def permissions_refresh(meeting_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """Заново определить МОИ права публикации в звонке по текущему состоянию встречи (после переподключения: токен зрителя презентации прав не даёт, слово
+    расширяет их у подключённого участника). Права вычисляет сервер, клиент ничего не указывает."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    await _rate(request, "perm", actor, meeting_id, (12, 60))
+    try:
+        return await request.app.state.meetings.refresh_rights(db, meeting, _identity_of(actor), "guest" if actor.is_guest else "user")
+    except JoinError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from None
 
 
 # ------------------------------------------------------------------------------------------------ карточка участника

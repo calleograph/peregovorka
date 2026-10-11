@@ -661,6 +661,7 @@ export const api = {
     request<{ saved: boolean; seq: number; shapes: number; used: boolean }>("PUT", `/meetings/${id}/whiteboard`, { xml, seq }),
   typing: (id: string, typing: boolean) => request<void>("POST", `/meetings/${id}/chat/typing`, { typing }),
   hand: (id: string, raised: boolean, identity?: string) => request<{ raised: boolean; queue: HandInfo[] }>("POST", `/meetings/${id}/hand`, { raised, ...(identity ? { identity } : {}) }),
+  refreshRights: (id: string) => request<{ sources: string[]; applied: boolean }>("POST", `/meetings/${id}/permissions/refresh`, {}),
   hands: (id: string) => request<{ hands: HandInfo[] }>("GET", `/meetings/${id}/hands`),
   meetingAvatars: (id: string) => request<Record<string, string>>("GET", `/meetings/${id}/avatars`),
   participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),

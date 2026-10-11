@@ -300,6 +300,17 @@ class RateTracker:
         return (value - prev[1]) / (now - prev[0])
 
 
+def metrics_url(settings) -> str:
+    """Адрес метрик LiveKit: задан явно (`LIVEKIT_METRICS_URL`) или выводится из внутреннего адреса LiveKit (порт 6789, только сеть проекта)."""
+    url = getattr(settings, "livekit_metrics_url", "") or ""
+    if url:
+        return url
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    u = urlsplit(settings.livekit_http_url)
+    return f"{u.scheme}://{u.hostname}:6789/metrics" if u.hostname else ""
+
+
 class PerfHub:
     """Состояние сбора показателей приложения: монитор хоста, очередь тяжёлых задач и кэш обращений к LiveKit (не чаще раза в `ttl` секунд)."""
 
@@ -395,12 +406,7 @@ class PerfHub:
         return out
 
     async def _metrics_text(self) -> str | None:
-        url = getattr(self._s, "livekit_metrics_url", "") or ""
-        if not url:
-            from urllib.parse import urlsplit  # noqa: PLC0415
-
-            u = urlsplit(self._s.livekit_http_url)
-            url = f"{u.scheme}://{u.hostname}:6789/metrics" if u.hostname else ""
+        url = metrics_url(self._s)
         if not url:
             return None
         try:

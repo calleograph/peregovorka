@@ -419,3 +419,107 @@ def test_livekit_metrics_with_uppercase_labels_are_understood():
     m = perf.parse_prometheus(text, {"livekit_track_published_total": "pub", "livekit_packet_bytes": "bytes"})
     assert sum(v for lab, v in m["pub"] if str(lab["kind"]).lower() == "audio") == 3 and sum(v for lab, v in m["pub"] if str(lab["kind"]).lower() == "video") == 2
     assert [v for lab, v in m["bytes"] if lab["direction"] == "outgoing"] == [4000.0]
+
+
+# ------------------------------------------------------------------------------------------ токен зрителя и права после (пере)подключения
+def test_every_ordinary_token_in_a_presentation_is_view_only_and_rights_come_from_the_server(client, settings, lk_calls):  # noqa: F811
+    room = presentation(client, guest_access_enabled=True)
+    carol = _join(client, "carol", room["id"])
+    alice = _join(client, "alice", room["id"])
+    mid, name = alice["meeting_id"], alice["livekit_room"]
+    assert grants(alice["token"]).can_publish is False
+    assert grants(carol["token"]).can_publish is True, "токен руководителя — полный"
+    login(client, "carol")
+    client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": True})
+    lk_calls["perm"].clear()
+    again = _join(client, "alice", room["id"])                     # переподключение со словом
+    assert again["client"]["floor"] is True and grants(again["token"]).can_publish is False, "токен без публикации даже при слове"
+    # сервер звонков сообщил, что подключился участник с токеном зрителя: права расширяются до слова (в обе стороны)
+    assert _joined_webhook(client, settings, name, alice["identity"], None) == 200
+    assert lk_calls["perm"] == [(alice["identity"], ["microphone", "camera", "screen_share", "screen_share_audio"])], "слово есть — права выданы у подключённого участника"
+    lk_calls["perm"].clear()
+    login(client, "alice")
+    r = client.post(f"{API}/meetings/{mid}/permissions/refresh")
+    assert r.status_code == 200 and r.json()["sources"] == ["microphone", "camera", "screen_share", "screen_share_audio"] and r.json()["applied"] is True
+    assert lk_calls["perm"][-1][1] == ["microphone", "camera", "screen_share", "screen_share_audio"]
+    login(client, "carol")
+    client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": False})
+    lk_calls["perm"].clear()
+    login(client, "alice")
+    r = client.post(f"{API}/meetings/{mid}/permissions/refresh")
+    assert r.json()["sources"] == [], "после отзыва «обновить права» ничего не возвращает: сервер считает по текущему слову"
+    assert lk_calls["perm"][-1] == (alice["identity"], [])
+    from .test_collab_guests import guest_join
+
+    g = guest_join(client, room["guest_token"]).json()
+    assert grants(g["token"]).can_publish is False, "гость презентации: токен без публикации"
+
+
+def test_permissions_refresh_is_rate_limited_and_closed_for_strangers(client, lk_calls):  # noqa: F811
+    room = presentation(client)
+    _join(client, "carol", room["id"])
+    a = _join(client, "alice", room["id"])
+    mid = a["meeting_id"]
+    login(client, "bob")
+    assert client.post(f"{API}/meetings/{mid}/permissions/refresh").status_code in (403, 404), "не участник встречи"
+    login(client, "alice")
+    codes = [client.post(f"{API}/meetings/{mid}/permissions/refresh").status_code for _ in range(14)]
+    assert codes[0] == 200 and 429 in codes, "частые обращения ограничены"
+
+
+# ------------------------------------------------------------------------------------------ общий подписчик: несколько получателей и очистка
+def test_two_websockets_get_the_same_events_and_the_hub_cleans_up_after_them(client, lk_calls):  # noqa: F811
+    room = presentation(client)
+    carol = _join(client, "carol", room["id"])
+    alice = _join(client, "alice", room["id"])
+    mid = carol["meeting_id"]
+    hub = client.app.state.event_hub
+    login(client, "alice")
+    with client.websocket_connect(f"{API}/ws") as ws1:
+        ws1.send_json({"type": "subscribe", "meeting_id": mid})
+        assert ws1.receive_json()["type"] == "subscribed"
+        login(client, "carol")
+        with client.websocket_connect(f"{API}/ws") as ws2:
+            ws2.send_json({"type": "subscribe", "meeting_id": mid})
+            assert ws2.receive_json()["type"] == "subscribed"
+            assert hub.snapshot()["subscribers"] == 2 and hub.snapshot()["channels"] == 1
+            client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": True})
+            e1, e2 = ws1.receive_json(), ws2.receive_json()
+            assert e1 == e2 and e1["type"] == "floor_changed" and e1["granted"] is True, "оба получателя получили одно и то же событие"
+            client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": False})
+            assert ws1.receive_json()["granted"] is False and ws2.receive_json()["granted"] is False
+        client.post(f"{API}/meetings/{mid}/moderation/floor", json={"identity": alice["identity"], "granted": True})     # второй ушёл — первый продолжает получать
+        assert ws1.receive_json()["type"] == "floor_changed"
+    deadline = time.time() + 5
+    while time.time() < deadline and hub.snapshot()["subscribers"]:
+        time.sleep(0.1)
+    assert hub.snapshot()["subscribers"] == 0 and hub.snapshot()["channels"] == 0, "после закрытия соединений подписки сняты"
+
+
+def test_hub_survives_a_redis_read_error_and_keeps_delivering():
+    async def run():
+        class Flaky(_FakePubSub):
+            fails = 1
+            queued: list = []
+
+            async def get_message(self, **kw):
+                if self.fails:
+                    self.fails -= 1
+                    raise ConnectionError("redis gone")
+                if self.queued:
+                    return self.queued.pop(0)
+                await asyncio.sleep(0.01)
+                return None
+
+        hub = events.EventHub(None, queue_max=5)
+        hub._pubsub = Flaky()
+        ch = "meeting:9:events"
+        sub = hub.new_subscriber()
+        await hub.subscribe(sub, ch)
+        hub._pubsub.queued = [{"type": "message", "channel": ch, "data": '{"type":"ok"}'}]
+        hub._task = asyncio.create_task(hub._run())
+        got = await asyncio.wait_for(sub.queue.get(), 5)
+        assert got == '{"type":"ok"}', "после сбоя чтения рассылка продолжилась"
+        await hub.stop()
+
+    asyncio.run(run())

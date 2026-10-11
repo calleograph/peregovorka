@@ -73,6 +73,20 @@ async def stale_token_attempt(token, room_name, identity):
     return out
 
 
+async def viewers(c):
+    t = await c.js("(()=>{const b=[...document.querySelectorAll('.rbtn')].find(b=>(b.getAttribute('aria-label')||'').startsWith('Зрители'));return b?b.getAttribute('aria-label'):null})()")
+    return int(t.split(":")[1]) if t else None
+
+
+async def wait_viewers(c, n, timeout=20):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if await viewers(c) == n:
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
 def api_js(method, path, body=None):
     b = "undefined" if body is None else f"JSON.stringify({json.dumps(body)})"
     return (f"(async()=>{{const me=await fetch('/api/v1/auth/me').then(r=>r.json());const r=await fetch('/api/v1'+{json.dumps(path)},"
@@ -219,11 +233,47 @@ async def main():
         S.check("после обновления страницы Алиса снова зритель (микрофон недоступен)", any(x.startswith("Слушаете") and x.endswith("[off]") for x in labels), str(labels[:4]))
         st = await lk_state(room_name)
         S.check("после обновления страницы права у сервера звонков прежние: зритель", not st[ident["alice"]]["can_publish"] and st[ident["alice"]]["tracks"] == [], str(st[ident["alice"]]))
+        # ----------------------------------------------------------------- счётчик зрителей: вход, выход, обновление страницы, слово
+        S.check("счётчик после обновления страницы Алисы: один зритель (повторный вход не задваивает)", await wait_viewers(R, 1))
+        B2 = S.Client("bob2", "bob", "bob-pass", 9544)
+        await B2.start()
+        S.check("Боб вошёл заново", await B2.join())
+        S.check("Боб вернулся: у руководителя «Зрители: 2»", await wait_viewers(R, 2))
+        S.check("и у самого Боба тот же счётчик", await wait_viewers(B2, 2))
+        S.check("список зрителей руководителя показывает обоих", await R.wait_for("document.querySelectorAll('.aud-row').length===2", 10))
+        await B2.close()
+        S.check("Боб вышел: счётчик у руководителя снова 1", await wait_viewers(R, 1, 30))
+        got = await R.js("(()=>{const r=[...document.querySelectorAll('.aud-row')].find(x=>x.textContent.includes('Алиса'));if(!r)return false;[...r.querySelectorAll('button')].find(b=>b.textContent.includes('Дать слово'))?.click();return true})()")
+        S.check("руководитель снова даёт слово Алисе (из списка зрителей)", got)
+        S.check("слово дано: у руководителя зрителей 0, Алиса на сцене", await wait_viewers(R, 0) and await R.wait_for("[...document.querySelectorAll('.tile')].some(x=>(x.getAttribute('title')||'').includes('Алиса'))", 10))
+        S.check("у Алисы кнопка микрофона доступна (право выдано у подключённого участника)", await A.wait_for("[...document.querySelectorAll('.rbtn')].some(b=>/^Микрофон/.test(b.getAttribute('aria-label')||'')&&!b.disabled)", 15))
+        # обновление страницы со словом: токен без публикации, права возвращает сервер, микрофон сам не включается
+        gum_before = await A.js("window.__gum")
+        await A.goto(S.ROOM, 2.0)
+        await A.join(navigate=False)
+        await A.wait_for("document.querySelectorAll('.rbtn').length>3", 30)
+        S.check("Алиса со словом после обновления: кнопки снова доступны (сервер вернул права подключившемуся)", await A.wait_for("[...document.querySelectorAll('.rbtn')].some(b=>/^Микрофон/.test(b.getAttribute('aria-label')||'')&&!b.disabled)", 20))
+        st = await lk_state(room_name)
+        S.check("сервер звонков: после обновления у Алисы права выступающего, дорожек нет (микрофон сам не включился)", st[ident["alice"]]["can_publish"] and st[ident["alice"]]["tracks"] == [], str(st[ident["alice"]]))
+        S.check("после обновления браузер Алисы не запрашивал микрофон", await A.js("window.__gum") == 0, str(await A.js("window.__gum")))
+        S.check("Алиса включила микрофон после обновления", await A.click_btn("Микрофон выкл."))
+        await asyncio.sleep(2.5)
+        S.check("сервер звонков: микрофон Алисы опубликован", "mic" in (await lk_state(room_name))[ident["alice"]]["tracks"])
+        S.check("после обновления у руководителя по-прежнему 0 зрителей (Алиса не раздвоилась)", await wait_viewers(R, 0))
+        await R.js("""(()=>{const t=[...document.querySelectorAll('.tile')].find(x=>(x.getAttribute('title')||'').includes('Алиса'));t.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:300,clientY:300}))})()""")
+        await asyncio.sleep(0.6)
+        await R.js("[...document.querySelectorAll('.ctx-item')].find(i=>i.textContent.includes('Забрать слово'))?.click()")
+        S.check("слово забрано: у руководителя снова 1 зритель", await wait_viewers(R, 1))
+        t0 = time.time()
+        while time.time() - t0 < 8 and (await lk_state(room_name))[ident["alice"]]["tracks"]:
+            await asyncio.sleep(0.4)
+        st = await lk_state(room_name)
+        S.check("и у сервера звонков дорожек Алисы нет, права отозваны", st[ident["alice"]]["tracks"] == [] and not st[ident["alice"]]["can_publish"], str(st[ident["alice"]]))
         await A.close()
+        # токен, выданный пока слово было, больше прав не даёт вообще: публикация отклоняется с первой же попытки (окна «старый токен» нет)
         res = await stale_token_attempt(floor_token, room_name, ident["alice"])
-        print("подключение со старым токеном выступающего:", res)
-        S.check("старый токен выступающего после отзыва: опубликовать удалось лишь до реакции сервера, затем права урезаны и дорожки сняты (или участник отключён)",
-                res["final"] is None or (res["final"]["tracks"] == [] and not res["final"]["can_publish"]), str(res))
+        print("подключение токеном, выданным пока было слово:", res)
+        S.check("токен, выданный пока было слово: опубликовать не удалось ни на миг, дорожек и прав нет", not res["published"] and res["final"] is not None and res["final"]["tracks"] == [] and not res["final"]["can_publish"], str(res))
 
         # ----------------------------------------------------------------- показатели для администратора
         perf = None

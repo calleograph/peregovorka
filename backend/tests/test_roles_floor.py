@@ -84,9 +84,10 @@ def test_leader_gives_and_takes_the_floor_and_rejoin_keeps_it(client, lk_calls):
     assert lk_calls["perm"][-1] == (a["identity"], ["microphone", "camera", "screen_share", "screen_share_audio"])
     assert client.get(f"/api/v1/meetings/{mid}/floor").json() == {"presentation": True, "floor": [a["identity"]], "leaders": [c["identity"]]}
     again = _join(client, "alice", room["id"])                       # переподключение (обрыв сети): слово сохраняется
-    assert grants(again["token"]).can_publish is True and again["client"]["floor"] is True and again["client"]["can_edit_board"] is True, \
+    assert again["client"]["floor"] is True and again["client"]["can_edit_board"] is True and set(again["client"]["sources"]) == {"microphone", "camera", "screen_share", "screen_share_audio"}, \
         "слово даёт полный набор выступающего, включая доску"
-    assert set(grants(again["token"]).can_publish_sources) == {"microphone", "camera", "screen_share", "screen_share_audio"}
+    assert grants(again["token"]).can_publish is False and list(grants(again["token"]).can_publish_sources) == [], \
+        "но токен у рядового участника презентации всегда без публикации: права выдаёт сервер звонков у подключённого — старый токен прав не даёт"
     login(client, "carol")
     assert client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": False}).json()["granted"] is False
     assert lk_calls["perm"][-1] == (a["identity"], [])
@@ -195,14 +196,31 @@ def test_board_rights_follow_room_type_floor_and_room_policy(client, lk_calls):
     assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 3}}).status_code == 403
     assert client.put(f"/api/v1/meetings/{mid}/whiteboard", json={"xml": BOARD, "seq": 3}).status_code == 403
     assert client.get(f"/api/v1/meetings/{mid}/whiteboard").json()["can_edit"] is False and client.get(f"/api/v1/meetings/{mid}/whiteboard").status_code == 200, "читать доску зритель может"
-    # руководитель может сознательно оставить доску только себе — тогда слово доску не даёт
+    # «Рисуют только руководители» в презентации слову не мешает: слово всегда даёт и доску; зрители без слова по-прежнему только смотрят
     login(client, "carol")
     assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "leaders"}).status_code == 200
     client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": True})
     login(client, "alice")
-    assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 4}}).status_code == 403
+    assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 4}}).status_code == 200, "слово = доска, даже при «рисуют только руководители»"
+    assert _join(client, "alice", room["id"])["client"]["can_edit_board"] is True
+    login(client, "carol")
+    client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": False})
+    login(client, "alice")
+    assert client.post(f"/api/v1/meetings/{mid}/whiteboard/patch", json={"patch": {"x": 5}}).status_code == 403
+    login(client, "carol")
+    assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "private"}).status_code == 200
+    client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": True})
+    login(client, "alice")
+    assert client.get(f"/api/v1/meetings/{mid}/whiteboard").status_code == 403, "«доска только у руководителей» остаётся в силе и для тех, кому дали слово"
+    login(client, "carol")
+    client.post(f"/api/v1/meetings/{mid}/moderation/floor", json={"identity": a["identity"], "granted": False})
     login(client, "carol")
     assert client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"board_access": "speakers"}).status_code == 200
+    login(client, "alice")
+    # обычная комната: «рисуют только руководители» действует как прежде
+    leaders_reg = make_room(client, moderators=LEADERS, board_access="leaders")
+    c3 = _join(client, "carol", leaders_reg["id"])
+    assert _join(client, "alice", leaders_reg["id"])["client"]["can_edit_board"] is False and c3["client"]["can_edit_board"] is True
     login(client, "alice")
     # обычная комната с запретом доски: участники читают, правят только руководители
     reg = make_room(client, moderators=LEADERS, board_allowed=False)

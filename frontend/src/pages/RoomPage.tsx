@@ -111,6 +111,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }, [meetingId]);
   const [cardOf, setCardOf] = useState<{ identity: string; name: string; role?: string } | null>(null);
   const [handSound, setHandSound] = useState(handSoundEnabled);
+  const [pubAllowed, setPubAllowed] = useState(true);      // у звонка есть право публикации (у зрителя презентации — нет; слово расширяет его на сервере, уже после подключения)
   const floorRevokedAt = useRef(0);        // когда у нас забрали слово: короткое отключение сервером звонков после этого — штатное, комната входит заново зрителем
   const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
@@ -470,6 +471,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         setAudioBlocked(blocked);
         if (blocked) reportEvent("autoplay_blocked", { meetingId: meetingRef.current ?? undefined });
       })
+      .on(RoomEvent.ParticipantPermissionsChanged, (_prev, p) => { if (p?.isLocal) setPubAllowed(!!p.permissions?.canPublish); })
       .on(RoomEvent.MediaDevicesError, (e) => { fail("device", "device", "device_error", e); })
       .on(RoomEvent.SignalConnected, () => { signalReachedRef.current = true; tl.mark("signalConnected"); setStage("media"); phase("SIGNALING_CONNECTED"); })
       .on(RoomEvent.ConnectionStateChanged, setState)
@@ -502,6 +504,19 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     tl.mark("active");
     tl.finish();
     setStage("ready");
+    // Токен зрителя презентации прав публикации не даёт; если у нас есть слово, сервер расширит права уже подключённого участника (webhook входа). Если право не пришло
+    // само — просим сервер определить его заново (он считает по текущему состоянию, клиент ничего не указывает).
+    const canPub = !!room.localParticipant.permissions?.canPublish;
+    setPubAllowed(canPub);
+    if (!canPub && (info.client.sources ?? []).length) {
+      void (async () => {
+        for (const wait of [600, 2000, 5000]) {
+          await sleep(wait);
+          if (roomRef.current !== room || room.localParticipant.permissions?.canPublish) return;
+          await api.refreshRights(info.meeting_id).catch(() => undefined);
+        }
+      })();
+    }
     phase("CONNECT_OK", `total=${tl.metrics().total_join_ms ?? "?"}ms`);
     // startAudio не должен задерживать публикацию микрофона и показ комнаты
     void room.startAudio().catch(() => undefined).then(() => setAudioBlocked(!room.canPlaybackAudio));
@@ -616,7 +631,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     // немедленно и не ждёт подключения; канал событий (WebSocket) открывает TranscriptPanel при появлении комнаты.
     tl.mark("gumStart");
     // «микрофон по умолчанию выключен» (настройка переговорки): звук не запрашиваем и не включаем — пользователь включит сам
-    const mayPublishMic = (info.client.sources ?? ALL_SOURCES).includes("microphone");
+    const mayPublishMic = (info.client.sources ?? ALL_SOURCES).includes("microphone") && !(info.client.presentation && !info.client.can_manage);        // выступающему со словом микрофон сам не включается и не запрашивается: он решает сам
     if (!info.client.mute_on_join && mayPublishMic) prepMicRef.current = createLocalAudioTrack({ ...captureOptions(loadMicPrefs()), ...(pre?.micId ? { deviceId: pre.micId } : {}) }).then((t) => { tl.mark("gumEnd"); return t; }, (e: unknown) => { tl.mark("gumEnd"); return e instanceof Error ? e : new Error(String(e)); });
     void collectAll().then((data) => reportEvent("join_attempt", { meetingId: info.meeting_id, room: info.room.name, data }));
     try {
@@ -997,9 +1012,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const room = join.room;
   const isLeader = !!join.client.can_manage && !guest;
   const presentation = !!join.client.presentation;
-  const canMic = sources.includes("microphone");
-  const canCam = sources.includes("camera");
-  const canScreen = sources.includes("screen_share") && !guest;
+  const pubOk = !presentation || pubAllowed;          // в презентации кнопки открываются, когда сервер звонков действительно выдал право (а не только по настройке)
+  const canMic = sources.includes("microphone") && pubOk;
+  const canCam = sources.includes("camera") && pubOk;
+  const canScreen = sources.includes("screen_share") && !guest && pubOk;
   const showCam = room.camera_allowed || canCam;
   const curProfile = profilePick ?? loadProfile(join.client.screen_profile);
   const showScreen = !guest && (room.screen_share_allowed || canScreen) && !!navigator.mediaDevices?.getDisplayMedia;       // на телефонах показа экрана из браузера нет — кнопка не занимает место

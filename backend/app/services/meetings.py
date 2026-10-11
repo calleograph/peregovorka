@@ -166,7 +166,11 @@ class MeetingService:
         if privileged:
             await self._r.sadd(self._priv_key(meeting.id), identity)
             await self._r.expire(self._priv_key(meeting.id), STATE_TTL)
-        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name, livekit_room=meeting.livekit_room, sources=sources)
+        # Токен рядового участника презентации ВСЕГДА без права публикации (даже если у него сейчас есть слово): права выступающего ему выдаёт
+        # сервер звонков по запросу backend (`update_participant`) уже у подключённого участника. Тогда токен, выданный до отзыва слова, прав не даёт:
+        # окна «старый токен позволил опубликовать звук» нет. Права после (пере)подключения определяются заново — webhook и `refresh_rights`.
+        token_sources = sources if (privileged or not roles.is_presentation(room)) else []
+        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name, livekit_room=meeting.livekit_room, sources=token_sources)
         return JoinResult(meeting, room, token, identity, sources=sources, privileged=privileged, floor=floor)
 
     # ------------------------------------------------------------ гость
@@ -200,7 +204,8 @@ class MeetingService:
 
     def _guest_result(self, meeting: Meeting, room: Room, guest: GuestParticipant, *, floor: bool = False) -> JoinResult:
         sources = roles.publish_sources(room, None, guest=True, has_floor=floor)
-        token = issue_guest_token(self._s, guest_id=guest.id, display_name=guest.display_name, livekit_room=meeting.livekit_room, sources=sources)
+        token = issue_guest_token(self._s, guest_id=guest.id, display_name=guest.display_name, livekit_room=meeting.livekit_room,
+                                  sources=[] if roles.is_presentation(room) else sources)      # презентация: токен гостя без публикации, слово расширяет права у подключённого
         return JoinResult(meeting, room, token, guest_identity(guest.id), guest, sources=sources, floor=floor)
 
     async def rejoin_guest(self, db: AsyncSession, guest: GuestParticipant) -> JoinResult:
@@ -376,27 +381,35 @@ class MeetingService:
         await db.commit()
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
 
-    async def enforce_on_join(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, permission) -> bool:
-        """Сверка прав только что подключившегося участника презентации с ТЕКУЩИМ состоянием слова.
+    async def sync_rights_on_join(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, permission) -> bool:
+        """Права только что подключившегося участника презентации приводятся к ТЕКУЩЕМУ состоянию слова — в обе стороны.
 
-        Токен действует несколько минут: тот, у кого забрали слово, может подключиться со старым токеном и получить прежние права. Сервер звонков сообщает
-        права подключившегося в webhook; если они шире текущих (нет слова, не руководитель, показ экрана запрещён), права урезаются сразу, а уже
-        опубликованные дорожки снимаются (`enforce_sources`). Возвращает True, если права пришлось урезать."""
+        Токен рядового участника презентации не даёт публикации, поэтому тот, у кого есть слово, после переподключения получает права здесь (webhook
+        `participant_joined`, дополнительно клиент вызывает `refresh_rights`); тот, у кого слова нет, не получит их ни при каком токене. Если права шире
+        нужных (токен выдан прежней версией приложения, показ экрана запрещён позже) — урезаются и опубликованные дорожки снимаются (`enforce_sources`).
+        Руководители пропускаются. Возвращает True, если права пришлось изменить."""
         meeting = await db.get(Meeting, meeting_id)
-        if meeting is None or meeting.ended_at is not None or not roles.is_presentation(meeting.room):
+        if meeting is None or meeting.ended_at is not None or not roles.is_presentation(meeting.room) or await self.is_privileged(meeting_id, identity):
             return False
         granted = permission_sources(permission)
-        if not granted or await self.is_privileged(meeting_id, identity):
-            return False
         sources = roles.publish_sources(meeting.room, None, guest=identity.startswith("g-"), has_floor=await self.floor_has(meeting_id, identity))
         if await self.share_blocked(meeting_id, identity):
             sources = self.without_share(sources)
-        if not (granted - set(sources)):
+        if granted == set(sources):
             return False
         await set_publish_permission(self._s, meeting.livekit_room, identity, sources)
-        await enforce_sources(self._s, meeting.livekit_room, identity, sources)
-        log.warning("Права подключившегося урезаны: токен выдан до отзыва слова", extra={"meeting_id": str(meeting_id), "identity": identity[:8]})
+        if granted - set(sources):
+            await enforce_sources(self._s, meeting.livekit_room, identity, sources)
+            log.warning("Права подключившегося урезаны до текущих", extra={"meeting_id": str(meeting_id), "identity": identity[:8]})
         return True
+
+    async def refresh_rights(self, db: AsyncSession, meeting: Meeting, identity: str, kind: str) -> dict:
+        """Участник просит сервер заново определить его права в звонке (после переподключения): backend считает их по текущему состоянию и применяет."""
+        if meeting.ended_at is not None:
+            raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        sources = await self._sources_now(db, meeting, identity, kind)
+        applied = await set_publish_permission(self._s, meeting.livekit_room, identity, sources)
+        return {"sources": sources, "applied": applied}
 
     async def on_participant_left(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await self._close_participant(db, meeting_id, user_id)
