@@ -386,7 +386,7 @@ class PerfHub:
                 r = self.rates.rate("lk_dropped", dropped, t)
                 out["dropped_pps"] = None if r is None else round(r, 1)
             for kind in ("audio", "video"):
-                vals = [v for lab, v in m.get("pub", []) if lab.get("kind") == kind]
+                vals = [v for lab, v in m.get("pub", []) if str(lab.get("kind", "")).lower() == kind]      # у LiveKit метки AUDIO / VIDEO
                 if vals:
                     out[f"{kind}_tracks"] = int(sum(vals))
             if m.get("jitter"):

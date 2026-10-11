@@ -27,6 +27,7 @@ const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const PlayerHost = lazy(() => import("./player/PlayerHost"));
+const AudienceDemo = import.meta.env.DEV ? lazy(() => import("./dev/AudienceDemo")) : null;      // только `npm run dev`: проверка списка зрителей на тысяче синтетических людей
 
 /** Раздел верхней панели. Пока в этой вкладке идёт встреча, раздел открывается в НОВОЙ вкладке: уход со страницы комнаты оборвал бы звонок. */
 function NavItem({ to, end, newTab, children }: { to: string; end?: boolean; newTab: boolean; children: ReactNode }) {
@@ -126,6 +127,7 @@ function StaffApp() {
         <Routes>
           <Route path="/" element={<RoomsPage isAdmin={me.user.is_admin} />} />
           <Route path="/rooms/:roomId" element={<RoomRoute selfName={me.user.display_name} />} />
+          {AudienceDemo && <Route path="/__dev/audience" element={<Suspense fallback={null}><AudienceDemo /></Suspense>} />}
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />

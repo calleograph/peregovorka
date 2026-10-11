@@ -411,3 +411,11 @@ def test_guest_link_info_tells_that_the_room_is_a_presentation(client, lk_calls)
     reg = guest_room(client)
     assert client.get(f"{API}/guest/room/{pres['guest_token']}").json()["presentation"] is True
     assert client.get(f"{API}/guest/room/{reg['guest_token']}").json()["presentation"] is False
+
+
+def test_livekit_metrics_with_uppercase_labels_are_understood():
+    text = ('livekit_track_published_total{kind="AUDIO",node_id="n"} 3\nlivekit_track_published_total{kind="VIDEO",node_id="n"} 2\n'
+            'livekit_packet_bytes{direction="incoming",transmission="initial"} 1000\nlivekit_packet_bytes{direction="outgoing",transmission="initial"} 4000\n')
+    m = perf.parse_prometheus(text, {"livekit_track_published_total": "pub", "livekit_packet_bytes": "bytes"})
+    assert sum(v for lab, v in m["pub"] if str(lab["kind"]).lower() == "audio") == 3 and sum(v for lab, v in m["pub"] if str(lab["kind"]).lower() == "video") == 2
+    assert [v for lab, v in m["bytes"] if lab["direction"] == "outgoing"] == [4000.0]
