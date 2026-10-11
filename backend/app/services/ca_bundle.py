@@ -154,6 +154,18 @@ class CaBundleService:
         os.replace(tmp, self.bundle_path)
         return self.bundle_path
 
+    async def stage(self, db: AsyncSession) -> tuple[Path | None, Path]:
+        """Подготовить новый набор рядом с боевым по строкам базы (в т.ч. ещё не зафиксированным в текущей транзакции): (временный файл или None, если набор должен исчезнуть; боевой)."""
+        rows = (await db.execute(select(CaCertificate).order_by(CaCertificate.created_at))).scalars().all()
+        pems = [r.pem for r in rows] + self._legacy_pems()
+        final = Path(self.bundle_path)
+        if not pems:
+            return None, final
+        self._dir.mkdir(parents=True, exist_ok=True)
+        tmp = final.with_name(f"{final.name}.import-{os.urandom(4).hex()}.tmp")
+        tmp.write_text("".join(p if p.endswith("\n") else p + "\n" for p in pems), encoding="ascii")
+        return tmp, final
+
     def current_path(self) -> str:
         """Путь к собранному файлу для синхронного кода (ldap3/ssl); пусто — набора нет."""
         p = Path(self.bundle_path)

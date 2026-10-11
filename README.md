@@ -105,6 +105,7 @@ sudo ./install.sh
 | [docs/ADMIN_SETUP.md](docs/ADMIN_SETUP.md) | первая настройка в браузере |
 | [docs/ROOMS_AND_ROLES.md](docs/ROOMS_AND_ROLES.md) | роли, комнаты, сцена встречи, модерация |
 | [docs/COLLABORATION.md](docs/COLLABORATION.md) | общая доска, чат, гостевой доступ |
+| [docs/CONFIG_BACKUP.md](docs/CONFIG_BACKUP.md) | резервная копия конфигурации: шифрованный экспорт и перенос на новый сервер |
 | [docs/RECORDINGS.md](docs/RECORDINGS.md) | общая запись встречи, плеер в истории, что не сделано (видео) |
 | [docs/LOCAL_LLM.md](docs/LOCAL_LLM.md) | локальная модель и протоколы |
 | [docs/MAPS_AND_KNOWLEDGE.md](docs/MAPS_AND_KNOWLEDGE.md) | карта разговора |

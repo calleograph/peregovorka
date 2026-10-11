@@ -24,6 +24,7 @@ import SipAdmin from "./admin/SipAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
+import ConfigBackupAdmin from "./admin/ConfigBackupAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import PerformanceAdmin from "./admin/PerformanceAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
@@ -98,6 +99,9 @@ const GROUPS: Group[] = [
         intro="Сколько хранить записи, нужно ли держать их в базе сервера и куда дублировать во внешнее хранилище (диск или сетевой ресурс), чтобы не занимать место на сервере." />) },
     { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
   ] },
+  { title: "Сервер", pages: [
+    { id: "config_backup", label: "Резервная копия конфигурации", render: () => <ConfigBackupAdmin /> },
+  ] },
   { title: "Система", pages: [
     { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
     { id: "site", label: "Настройки сайта", render: () => <SiteAdmin /> },
@@ -110,7 +114,7 @@ const GROUPS: Group[] = [
 
 /** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
 const KEYWORDS: Record<string, string> = {
-  system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
+  config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
   login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
   public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",

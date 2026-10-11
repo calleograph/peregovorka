@@ -74,57 +74,58 @@ eng = sa.create_engine(f"sqlite:///{DATA}/dev.db")
 Base.metadata.create_all(eng)
 FAM = ["Иванов", "Петрова", "Сидоренко", "Морозов", "Соколова", "Кузнецов", "Лебедева", "Орлов", "Крылова", "Мартынов"]
 NAM = ["Алексей", "Ирина", "Дмитрий", "Екатерина", "Сергей", "Мария", "Андрей", "Ольга", "Павел", "Наталья"]
-from PIL import Image
-import io
-from app.services.avatars import AvatarStore
-with Session(eng) as db:
-    alice = User(ad_guid=ALICE_GUID, sam_account_name="alice", display_name="Алиса Крылова", is_active=True, auth_source="ad")
-    db.add(alice); db.flush()
-    buf = io.BytesIO(); Image.new("RGB", (256, 256), (220, 80, 60)).save(buf, "WEBP")
-    AvatarStore(DATA).save(alice.id, buf.getvalue())
-    alice.avatar_mime, alice.avatar_updated_at = "image/webp", utcnow()
-    people = []
-    for i in range(130):
-        name = f"{FAM[i % 10]} {NAM[(i // 10) % 10]} {i}" if i % 17 else f"Верещагина-Подгорная Александра Константиновна-Мария {i}"
-        u = User(ad_guid=str(uuid.uuid4()), sam_account_name=f"u{i}", display_name=name, is_active=True)
-        db.add(u)
-        people.append(u)
-    db.flush()
-    specs = [
-        ("it-1", "ИТ-1 · Планёрка", "Еженедельная планёрка отдела разработки и эксплуатации", {"guest_access_enabled": True, "guest_token": "devguesttoken1234567890"}, 4),
-        ("north", "Переговорная «Север»", "Большой зал: совещания руководителей, показ экрана и доска", {"max_participants": 30, "auto_record": True, "record_audio": True}, 0),
-        ("sec", "Безопасность", "Закрытые разборы инцидентов", {"password_hash": "x", "max_participants": 8}, 0),
-        ("town", "Общее собрание", "Презентационная комната: говорят только руководители", {"room_type": "presentation", "max_participants": 100}, 12),
-        ("stage", "Презентация без встречи", "Пустая презентационная комната: встреча создаётся входом (webhook LiveKit разбирает её как настоящую)", {"room_type": "presentation", "max_participants": 2000}, 0),
-        ("tmp-k7f3p2", "Разбор инцидента", None, {"lifetime": "temporary"}, 0),
-        ("sales", "Продажи", None, {}, 0),
-        ("hr", "HR и подбор персонала с очень длинным названием комнаты для проверки обрезки", "Интервью и собеседования кандидатов", {}, 0),
-        ("fin", "Финансы", "Бюджетирование", {"guest_access_enabled": True, "guest_token": "devguesttoken0000000002"}, 0),
-        ("legal", "Юристы", None, {}, 0), ("ops", "Эксплуатация", "Дежурная смена", {}, 2), ("pm", "Проектный офис", None, {"max_participants": 50}, 0),
-        ("support", "Поддержка", "Разбор обращений", {}, 0), ("arch", "Архитектура", None, {}, 0), ("mkt", "Маркетинг", None, {}, 0),
-    ]
-    rooms = []
-    for slug, name, desc, extra, live_n in specs:
-        r = Room(slug=slug, name=name, description=desc, **extra)
-        r.acl = [RoomAcl(subject_type="group", subject_ref=STAFF_GROUP)]
-        db.add(r)
+if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чистая установка»: ни комнат, ни пользователей, ни встреч (проверка восстановления конфигурации)
+    from PIL import Image
+    import io
+    from app.services.avatars import AvatarStore
+    with Session(eng) as db:
+        alice = User(ad_guid=ALICE_GUID, sam_account_name="alice", display_name="Алиса Крылова", is_active=True, auth_source="ad")
+        db.add(alice); db.flush()
+        buf = io.BytesIO(); Image.new("RGB", (256, 256), (220, 80, 60)).save(buf, "WEBP")
+        AvatarStore(DATA).save(alice.id, buf.getvalue())
+        alice.avatar_mime, alice.avatar_updated_at = "image/webp", utcnow()
+        people = []
+        for i in range(130):
+            name = f"{FAM[i % 10]} {NAM[(i // 10) % 10]} {i}" if i % 17 else f"Верещагина-Подгорная Александра Константиновна-Мария {i}"
+            u = User(ad_guid=str(uuid.uuid4()), sam_account_name=f"u{i}", display_name=name, is_active=True)
+            db.add(u)
+            people.append(u)
         db.flush()
-        rooms.append(r)
-        if live_n:
-            m = Meeting(room_id=r.id, livekit_room="lk-" + slug, started_by_user_id=people[0].id)
+        specs = [
+            ("it-1", "ИТ-1 · Планёрка", "Еженедельная планёрка отдела разработки и эксплуатации", {"guest_access_enabled": True, "guest_token": "devguesttoken1234567890"}, 4),
+            ("north", "Переговорная «Север»", "Большой зал: совещания руководителей, показ экрана и доска", {"max_participants": 30, "auto_record": True, "record_audio": True}, 0),
+            ("sec", "Безопасность", "Закрытые разборы инцидентов", {"password_hash": "x", "max_participants": 8}, 0),
+            ("town", "Общее собрание", "Презентационная комната: говорят только руководители", {"room_type": "presentation", "max_participants": 100}, 12),
+            ("stage", "Презентация без встречи", "Пустая презентационная комната: встреча создаётся входом (webhook LiveKit разбирает её как настоящую)", {"room_type": "presentation", "max_participants": 2000}, 0),
+            ("tmp-k7f3p2", "Разбор инцидента", None, {"lifetime": "temporary"}, 0),
+            ("sales", "Продажи", None, {}, 0),
+            ("hr", "HR и подбор персонала с очень длинным названием комнаты для проверки обрезки", "Интервью и собеседования кандидатов", {}, 0),
+            ("fin", "Финансы", "Бюджетирование", {"guest_access_enabled": True, "guest_token": "devguesttoken0000000002"}, 0),
+            ("legal", "Юристы", None, {}, 0), ("ops", "Эксплуатация", "Дежурная смена", {}, 2), ("pm", "Проектный офис", None, {"max_participants": 50}, 0),
+            ("support", "Поддержка", "Разбор обращений", {}, 0), ("arch", "Архитектура", None, {}, 0), ("mkt", "Маркетинг", None, {}, 0),
+        ]
+        rooms = []
+        for slug, name, desc, extra, live_n in specs:
+            r = Room(slug=slug, name=name, description=desc, **extra)
+            r.acl = [RoomAcl(subject_type="group", subject_ref=STAFF_GROUP)]
+            db.add(r)
+            db.flush()
+            rooms.append(r)
+            if live_n:
+                m = Meeting(room_id=r.id, livekit_room="lk-" + slug, started_by_user_id=people[0].id)
+                db.add(m)
+                db.flush()
+                for p in people[:live_n]:
+                    db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id))
+        base = utcnow() - dt.timedelta(days=3)
+        for k, (room, n, org) in enumerate([(rooms[0], 1, 0), (rooms[1], 3, 0), (rooms[3], 10, 4), (rooms[2], 130, 7), (rooms[5], 34, 0), (rooms[6], 2, 1)]):
+            st = base + dt.timedelta(hours=k * 5)
+            m = Meeting(room_id=room.id, livekit_room=f"lk-old{k}", started_at=st, ended_at=st + dt.timedelta(minutes=55), end_reason="manual", started_by_user_id=people[org].id)
             db.add(m)
             db.flush()
-            for p in people[:live_n]:
-                db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id))
-    base = utcnow() - dt.timedelta(days=3)
-    for k, (room, n, org) in enumerate([(rooms[0], 1, 0), (rooms[1], 3, 0), (rooms[3], 10, 4), (rooms[2], 130, 7), (rooms[5], 34, 0), (rooms[6], 2, 1)]):
-        st = base + dt.timedelta(hours=k * 5)
-        m = Meeting(room_id=room.id, livekit_room=f"lk-old{k}", started_at=st, ended_at=st + dt.timedelta(minutes=55), end_reason="manual", started_by_user_id=people[org].id)
-        db.add(m)
-        db.flush()
-        for i, p in enumerate(people[:n]):
-            db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st + dt.timedelta(seconds=i * 20), left_at=st + dt.timedelta(minutes=55)))
-        db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=room.id, user_id=people[0].id, participant_identity="u0", started_at=st, ended_at=st + dt.timedelta(seconds=4), text="Начинаем."))
-    db.commit()
-eng.dispose()
+            for i, p in enumerate(people[:n]):
+                db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st + dt.timedelta(seconds=i * 20), left_at=st + dt.timedelta(minutes=55)))
+            db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=room.id, user_id=people[0].id, participant_identity="u0", started_at=st, ended_at=st + dt.timedelta(seconds=4), text="Начинаем."))
+        db.commit()
+    eng.dispose()
 uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

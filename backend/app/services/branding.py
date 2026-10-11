@@ -101,6 +101,14 @@ class BrandingStore:
         os.replace(tmp, p)
         return version_of(png)
 
+    def stage(self, kind: str, png: bytes) -> tuple[Path, Path]:
+        """Подготовить файл рядом с боевым (подмена — отдельным шагом): (временный, боевой)."""
+        p = self.path(kind)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"{p.name}.import-{os.urandom(4).hex()}.tmp")
+        tmp.write_bytes(png)
+        return tmp, p
+
     def read(self, kind: str) -> bytes | None:
         try:
             return self.path(kind).read_bytes()

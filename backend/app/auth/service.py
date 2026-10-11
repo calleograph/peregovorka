@@ -133,6 +133,33 @@ class AuthService:
         log.info("Вход выполнен", extra={"user_id": str(user.id), "is_admin": is_admin})
         return LoginResult(sid, data, user, decision)
 
+    async def verify_current(self, db: AsyncSession, su, password: str, ip: str) -> bool:
+        """Повторное подтверждение пароля уже вошедшего администратора (для опасных действий, например выгрузки секретов). Сессия не создаётся.
+        Локальный администратор — по хэшу; пользователь каталога — повторной проверкой пароля в каталоге и сверкой идентификатора. Неудачи считаются как неудачные входы (ограничение перебора)."""
+        norm = (su.sam_account_name or "").lower()
+        if not password or len(password) > 512:
+            return False
+        try:
+            await self._throttle.check(norm, ip)
+        except ThrottledError as exc:
+            raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
+        user = await db.get(User, su.user_id)
+        ok = False
+        if user is not None and user.is_active:
+            if user.auth_source == "local":
+                ok = bool(user.password_hash) and verify_room_password(user.password_hash, password)
+            else:
+                try:
+                    ident = await asyncio.to_thread(self._dir.authenticate, norm, password)
+                    ok = bool(ident.ad_guid) and ident.ad_guid == user.ad_guid
+                except DirectoryError:
+                    ok = False
+        if ok:
+            await self._throttle.record_success(norm)
+        else:
+            await self._throttle.record_failure(norm, ip)
+        return ok
+
     async def access_decision(self, db: AsyncSession, identity: DirectoryIdentity) -> AccessDecision:
         """Допуск пользователя каталога. Администраторы (по группам администраторов) допускаются всегда; локальный администратор
         сюда не попадает вовсе. Группы берутся из «LDAP и доступ» и из .env; читаются при каждом входе — перезапуск не нужен."""
