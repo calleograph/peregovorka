@@ -42,7 +42,7 @@ META: dict[str, tuple[str, str]] = {
     "mic_permission_denied": ("device", "warn"), "camera_busy": ("device", "warn"), "device_inventory": ("device", "info"),
     "mic_released": ("device", "info"), "join_without_mic": ("device", "info"), "noise_suppression_changed": ("device", "info"),
     "audio_output_error": ("device", "warn"), "autoplay_blocked": ("device", "warn"), "muted_by_moderator": ("room", "info"),
-    "screen_share_started": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
+    "screen_share_started": ("client", "info"), "screen_eco_measured": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
     "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
     "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"), "board_ready": ("client", "info"), "camera_preview": ("device", "info"), "board_history_ready": ("client", "info"),
 }

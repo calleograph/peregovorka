@@ -434,7 +434,8 @@ class ProtocolSettings(_Group):
 class ScreenSettings(_Group):
     """Профиль демонстрации экрана по умолчанию для всех комнат."""
 
-    profile: Literal["sharp", "balanced", "motion"] = "sharp"  # sharp: текст/слайды; motion: видео/анимация
+    profile: Literal["sharp", "balanced", "motion", "eco"] = "sharp"  # sharp: текст/слайды; motion: видео/анимация; eco: «Экономный 720p» (1280×720, 10 к/с)
+    eco_bitrate_kbps: int = Field(default=800, ge=500, le=900)         # цель битрейта профиля «Экономный 720p», кбит/с
     share_audio: bool = False
     one_sharer_at_a_time: bool = False
 

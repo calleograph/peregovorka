@@ -10,7 +10,7 @@ from .schemas import ClientConfig
 def build_client_config(room: Room, screen, result, *, su: SessionUser | None = None, guest: bool = False, attachments: bool = True) -> ClientConfig:
     sources = list(result.sources if result.sources is not None else roles.publish_sources(room, su, guest=guest))
     return ClientConfig(
-        screen_profile=screen.profile, screen_share_audio=False if guest else screen.share_audio, one_sharer_at_a_time=screen.one_sharer_at_a_time,
+        screen_profile=screen.profile, screen_eco_kbps=getattr(screen, "eco_bitrate_kbps", 800), screen_share_audio=False if guest else screen.share_audio, one_sharer_at_a_time=screen.one_sharer_at_a_time,
         can_moderate=bool(su and roles.can_manage_room(room, su)), is_guest=guest,
         can_manage=bool(su and roles.can_manage_room(room, su)), can_control=bool(su and roles.can_control_meeting(room, su)),
         presentation=roles.is_presentation(room), sources=sources, floor=bool(result.floor),

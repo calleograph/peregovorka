@@ -104,7 +104,9 @@ export default function GuestPage() {
           <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setNeedPw(true); }} autoComplete="off" />
         </label>
       )}
-      <PreJoinCheck cameraAllowed={info.camera_allowed} onChange={onHw} />
+      {info.presentation
+        ? <p className="muted small">Это презентация: вы будете смотреть и слушать. Микрофон и камера не понадобятся, браузер их не запросит. Если руководитель даст вам слово, они станут доступны.</p>
+        : <PreJoinCheck cameraAllowed={info.camera_allowed} onChange={onHw} />}
       {consentDocs.map((d) => (
         <label key={d.kind} className="check"><input type="checkbox" checked={agreed.has(d.kind)} onChange={(e) => setAgreed((s) => { const n = new Set(s); if (e.target.checked) n.add(d.kind); else n.delete(d.kind); return n; })} />
           <span className="check-body"><span>Я ознакомился(лась) с документом «<Link to={`/legal/${d.kind}`} target="_blank" rel="noopener noreferrer">{d.title}</Link>»</span></span></label>

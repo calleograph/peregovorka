@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack } from "livekit-client";
+import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
 import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room } from "../api";
 import Whiteboard from "../board/Whiteboard";
@@ -30,7 +30,9 @@ import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
 import { setPreJoin, takePreJoin, type PreJoin as PreJoinHw } from "../prejoin";
 import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_STOP_TEXT, type MediaAction, type ScreenStopReason } from "../mediaErrors";
-import { isScreenProfile, screenShareOptions } from "../screenShare";
+import { PROFILE_LABELS, PROFILE_ORDER, applyProfileLive, ecoReport, loadProfile, measureScreen, saveProfile, screenShareOptions, type ScreenProfile } from "../screenShare";
+import AudiencePanel from "../components/room/AudiencePanel";
+import { audienceLabel, sameList, splitStage } from "../presentation";
 
 // диалог настроек нужен только руководителю — грузится по требованию (вместе с общим для администрирования выбором доступа)
 const RoomManageDialog = lazy(() => import("../components/RoomManageDialog"));
@@ -45,6 +47,10 @@ setLogLevel(LogLevel.warn);
 
 const ALL_SOURCES = ["microphone", "camera", "screen_share", "screen_share_audio"];
 const MAX_REJOIN = 6;
+/** Корзина участника 0..19 по идентификатору: стабильна, не требует случайных чисел. */
+const statBucket = (identity: string): number => { let h = 0; for (let i = 0; i < identity.length; i++) h = (h * 31 + identity.charCodeAt(i)) >>> 0; return h % 20; };
+const REFRESH_MS = 60;         // события звонка (вход, выход, дорожки, говорящий) сливаются в одно обновление списка: при сотнях участников — не по перерисовке на каждое
+const PVIEW_KEYS = ["identity", "name", "local", "mic", "cam", "screen", "speaking", "participant"] as const;
 const MAX_CONNECT_TRIES = 3;   // первое подключение: до 3 попыток при сетевых/ICE-сбоях
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 const TW_MIN = 240, TW_MAX = 760, TW_DEFAULT = 300;
@@ -105,6 +111,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }, [meetingId]);
   const [cardOf, setCardOf] = useState<{ identity: string; name: string; role?: string } | null>(null);
   const [handSound, setHandSound] = useState(handSoundEnabled);
+  const floorRevokedAt = useRef(0);        // когда у нас забрали слово: короткое отключение сервером звонков после этого — штатное, комната входит заново зрителем
   const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
   const [canBoard, setCanBoard] = useState(true);
@@ -119,7 +126,17 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   // Аватарки участников: один запрос при входе и ещё один, когда в комнате появляется кто-то новый (без постоянных опросов); сбой не мешает комнате — остаются инициалы.
   // Все хуки комнаты обязаны стоять ВЫШЕ ранних return (join ещё null при первом рисовании), иначе React падает: «rendered more hooks than during the previous render».
   const [avatars, setAvatars] = useState<Record<string, string>>({});
-  const avatarKey = participants.map((p) => p.identity).sort().join(",");
+  const presentationRoom = !!join?.client.presentation;
+  const amLeader = !!join?.client.can_manage;
+  // Сцена и список зрителей: в презентационной комнате плитки только у руководителей, тех, кому дали слово, и у тех, кто публикует; остальные — строки списка.
+  const split = useMemo(() => splitStage(participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity) || (p.local && amLeader) })), presentationRoom),
+                        [participants, floorIds, leaderIds, presentationRoom, amLeader]);
+  const audienceView = useMemo(() => {
+    const order = new Map(hands.map((h, i) => [h.identity, i + 1] as const));
+    return split.audience.map((p) => ({ ...p, hand: order.has(p.identity), handOrder: order.get(p.identity) })) as PView[];
+  }, [split, hands]);
+  const [audOpen, setAudOpen] = useState(false);
+  const avatarKey = useMemo(() => split.stage.map((p) => p.identity).sort().join(","), [split]);        // аватарки нужны тем, у кого есть плитка: приход зрителя запрос не вызывает
   useEffect(() => {
     if (guest || !meetingId) return;
     const t = window.setTimeout(() => { void api.meetingAvatars(meetingId).then(setAvatars).catch(() => undefined); }, 600);
@@ -168,7 +185,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     if (hdr) ro?.observe(hdr);
     return () => { cancelAnimationFrame(raf); document.body.classList.remove("in-room"); document.documentElement.style.removeProperty("--hdr"); ro?.disconnect(); };
   }, [join]);
-  const stageSources: StageSource[] = participants.map((p) => ({ identity: p.identity, name: p.name, local: p.local, screen: p.screen, speaking: p.speaking }));
+  const stageSources: StageSource[] = useMemo(() => split.stage.map((p) => ({ identity: p.identity, name: p.name, local: p.local, screen: p.screen, speaking: p.speaking })), [split]);
   const st = useMeetingStage({ meetingId, sources: stageSources, boardOpen, canViewBoard, mobile });
   const focusOn = boardFocus && st.boardItem && !ended;
   useEffect(() => { document.body.classList.toggle("board-focus", focusOn); return () => document.body.classList.remove("board-focus"); }, [focusOn]);
@@ -211,15 +228,21 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     dlog(`[${ph}]${extra ? ` ${extra}` : ""}`);
   }, [dlog]);
 
-  const refresh = useCallback(() => {
+  const refreshNow = useCallback(() => {
     const r = roomRef.current;
     if (!r) return;
     const all: Participant[] = [r.localParticipant, ...Array.from(r.remoteParticipants.values())];
-    setParticipants(all.map((p) => ({
+    const next: PView[] = all.map((p) => ({
       identity: p.identity, name: tileName(p.identity, p.name, p.attributes), local: p.isLocal, mic: p.isMicrophoneEnabled, cam: p.isCameraEnabled,
       screen: p.isScreenShareEnabled, speaking: p.isSpeaking, participant: p,
-    })));
+    }));
+    setParticipants((prev) => (sameList(prev, next, PVIEW_KEYS) ? prev : next));        // ничего не изменилось — состояние прежнее, перерисовки нет
   }, []);
+  const refreshTimer = useRef<number | undefined>(undefined);
+  const refresh = useCallback(() => {
+    if (refreshTimer.current !== undefined) return;
+    refreshTimer.current = window.setTimeout(() => { refreshTimer.current = undefined; refreshNow(); }, REFRESH_MS);
+  }, [refreshNow]);
 
   /** Ошибка действия с устройством: конкретная причина у кнопки + запись в журнал сервера. */
   const fail = useCallback((action: MediaAction, key: CtlKey, event: string, e: unknown) => {
@@ -246,6 +269,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const teardown = useCallback(async (notify: boolean) => {
     leavingRef.current = true;
     window.clearTimeout(rejoinTimer.current);
+    window.clearTimeout(refreshTimer.current); refreshTimer.current = undefined;
+    window.clearTimeout(floorTimer.current); floorTimer.current = undefined;
     const r = roomRef.current;
     roomRef.current = null;
     const prep = prepMicRef.current;
@@ -463,6 +488,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         if (screenIntendedRef.current) stopScreenBookkeeping("connection_lost");
         if (leavingRef.current || endedRef.current || reason === DisconnectReason.CLIENT_INITIATED) return;
         if (reason === DisconnectReason.DUPLICATE_IDENTITY) { setErr("general", describeMediaError(new Error("DUPLICATE_IDENTITY"), "connect").message); return; }
+        if (reason === DisconnectReason.PARTICIPANT_REMOVED && Date.now() - floorRevokedAt.current < 30000) { scheduleRejoin(0); return; }       // слово забрали, а мы не успели снять дорожки: заходим зрителем
         if (reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED) {
           setErr("general", "Вас отключили от комнаты: встреча закрыта или вас удалил руководитель.");
           return;
@@ -495,6 +521,15 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const loadFloor = useCallback((mid: string) => {
     api.floor(mid).then((f) => { setFloorIds(new Set(f.floor)); setLeaderIds(new Set(f.leaders)); }).catch(() => undefined);
     api.hands(mid).then((r) => setHands(r.hands)).catch(() => undefined);
+  }, []);
+  /** Приход руководителя меняет список руководителей: перечитываем его не сразу и не чаще раза в несколько секунд (со случайной паузой, чтобы клиенты не били в сервер одновременно). */
+  const floorTimer = useRef<number | undefined>(undefined);
+  const floorSoon = useCallback((mid: string) => {
+    if (floorTimer.current !== undefined) return;
+    floorTimer.current = window.setTimeout(() => {
+      floorTimer.current = undefined;
+      if (meetingRef.current === mid) api.floor(mid).then((f) => { setFloorIds(new Set(f.floor)); setLeaderIds(new Set(f.leaders)); }).catch(() => undefined);
+    }, 1500 + Math.random() * 3500);
   }, []);
 
   const scheduleRejoin = useCallback((attempt: number) => {
@@ -652,6 +687,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const t = window.setInterval(async () => {
       const room = roomRef.current;
       if (!room || document.visibilityState !== "visible") return;
+      // Зритель презентации ничего не публикует: статистику (getStats по всем соединениям) собирает лишь каждый двадцатый — для диагностики хватает,
+      // а тысячи зрителей не шлют серверу тысячи отчётов.
+      const lp = room.localParticipant;
+      if (join.client.presentation && !join.client.can_manage && !(lp.isMicrophoneEnabled || lp.isCameraEnabled || lp.isScreenShareEnabled) && statBucket(join.identity) !== 0) return;
       const snap = await sampleRoom(room, meter.current, freezeRef.current);
       setSnapshot(snap);
       if (snap.screenFrozen) { dlog("показ экрана участника «завис»: framesDecoded не растёт"); reportEvent("screen_frozen", { meetingId: meetingRef.current ?? undefined, reason: "framesDecoded_stalled" }); }
@@ -681,13 +720,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           stopScreenBookkeeping("user_button");
         } else {
           if (join.client.one_sharer_at_a_time && someoneElseSharing) { setErr("screen", "Сейчас экран уже показывает другой участник."); return; }
-          const profile = isScreenProfile(join.client.screen_profile) ? join.client.screen_profile : "sharp";
-          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio);
+          const profile = loadProfile(join.client.screen_profile);
+          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps);
           userStopRef.current = false;
           screenPhase("SCREEN_CREATE", `profile=${profile} audio=${o.capture.audio ? "yes" : "no"}`);
           screenPhase("SCREEN_PUBLISH_START");
           await lp.setScreenShareEnabled(true, o.capture, o.publish);
           reportEvent(screenStoppedOnceRef.current ? "screen_share_restarted" : "screen_share_started", { meetingId: join.meeting_id, detail: `${profile}, audio=${o.capture.audio}` });
+          if (profile === "eco") void enforceEco(join.client.screen_eco_kbps);
         }
       }
     } catch (e) {
@@ -697,6 +737,37 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     }
     refresh();
   };
+
+  /** «Экономный 720p»: браузер мог захватить экран крупнее заказанного — прижимаем исходящий поток к 1280×720/10 к/с/потолку битрейта и честно сообщаем, что получилось (по getStats). */
+  const enforceEco = useCallback(async (kbps?: number) => {
+    const lp = roomRef.current?.localParticipant;
+    const track = lp?.getTrackPublication(Track.Source.ScreenShare)?.track as LocalVideoTrack | undefined;
+    if (!track) return;
+    await applyProfileLive(track, "eco", kbps);
+    await sleep(4000);
+    const live = roomRef.current?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track as LocalVideoTrack | undefined;
+    if (!live) return;
+    const stat = await measureScreen(live);
+    const rep = ecoReport(stat, kbps);
+    setNotice({ kind: rep.ok ? "info" : "warn", text: rep.text });
+    reportEvent("screen_eco_measured", { meetingId: meetingRef.current ?? undefined, reason: rep.ok ? "ok" : "off_target",
+      data: { width: stat?.frameWidth ?? null, height: stat?.frameHeight ?? null, fps: Math.round(stat?.framesPerSecond ?? 0), target_kbps: stat?.targetBitrate ? Math.round(stat.targetBitrate / 1000) : null, limit: stat?.qualityLimitationReason ?? null } });
+  }, []);
+  /** Выбор профиля показа экрана участником: запоминается; идущий показ не прерывается — применяется то, что браузер позволяет менять на лету. */
+  const [profilePick, setProfilePick] = useState<ScreenProfile | null>(null);
+  const chooseProfile = useCallback(async (pr: ScreenProfile) => {
+    saveProfile(pr);
+    setProfilePick(pr);
+    const lp = roomRef.current?.localParticipant;
+    const track = lp?.getTrackPublication(Track.Source.ScreenShare)?.track as LocalVideoTrack | undefined;
+    const kbps = infoRef.current?.client.screen_eco_kbps;
+    if (!track) { setNotice({ kind: "info", text: `Профиль показа экрана: «${PROFILE_LABELS[pr]}». Он применится при следующем показе.` }); return; }
+    const r = await applyProfileLive(track, pr, kbps);
+    setNotice({ kind: r === "none" ? "warn" : "info", text: r === "live" ? `Профиль «${PROFILE_LABELS[pr]}» применён к идущему показу без остановки.`
+      : r === "partial" ? `Профиль «${PROFILE_LABELS[pr]}»: разрешение, частота и битрейт применены сразу; кодек и число слоёв изменятся при следующем показе.`
+      : "Браузер не позволил изменить параметры идущего показа: профиль применится при следующем показе." });
+    if (pr === "eco") void enforceEco(kbps);
+  }, [enforceEco]);
 
   /** Применяет настройки микрофона: сохраняет в браузере и «на лету» перезапускает захват (без повторного входа в комнату). */
   const applyMicPrefs = useCallback(async (next: MicPrefs, changed: string) => {
@@ -776,15 +847,13 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const onMyFloor = useCallback((granted: boolean) => {
     const info = infoRef.current;
     if (!info || info.client.can_manage) return;
-    const r = info.room;
     if (granted) {
-      const src = ["microphone"];
-      if (r.camera_allowed) src.push("camera");
-      if (r.screen_share_allowed && !guestRef.current) src.push("screen_share", "screen_share_audio");
-      setSources(src);
-      setCanBoard(info.client.board_access === "speakers" || info.client.board_access === "everyone");     // слово даёт право рисовать только при выбранном уровне «и те, кому дали слово»
-      setNotice({ kind: "ok", text: "Вам дали слово: можно включить микрофон" + (r.camera_allowed ? ", камеру" : "") + (r.screen_share_allowed && !guestRef.current ? " и показ экрана" : "") + "." });
+      floorRevokedAt.current = 0;
+      setSources(ALL_SOURCES);          // слово даёт весь набор выступающего сразу: микрофон, камеру, показ экрана и доску (сервер выдал те же права в звонке)
+      setCanBoard(info.client.board_access !== "leaders" && info.client.board_access !== "private");     // доска у руководителей «только им» — явный выбор руководителя
+      setNotice({ kind: "ok", text: "Вам дали слово: можно включить микрофон, камеру, показ экрана и править доску. Микрофон и камера сами не включатся." });
     } else {
+      floorRevokedAt.current = Date.now();
       setSources([]);
       setCanBoard(info.client.board_access === "everyone");
       const lp = roomRef.current?.localParticipant;
@@ -810,9 +879,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const onLive = useCallback((e: LiveEvent) => {
     if (e.type === "recording_changed") setRecording(e.enabled);
     else if (e.type === "transcription_changed") setTranscribing(e.enabled);
-    else if (e.type === "participant_joined") { if (meetingRef.current) loadFloor(meetingRef.current); }
+    else if (e.type === "participant_joined") { if (meetingRef.current) floorSoon(meetingRef.current); }
     else if (e.type === "hand_changed") {
-      setHands(e.queue);
+      // небольшая очередь приходит целиком; большая — одним изменением (сервер не рассылает сотни имён каждому зрителю)
+      if (e.queue) setHands(e.queue);
+      else setHands((cur) => {
+        const rest = cur.filter((h) => h.identity !== e.identity);
+        return e.raised ? [...rest, { identity: e.identity, name: e.name, at: e.at ?? Date.now() / 1000 }].sort((a, b) => a.at - b.at) : rest;
+      });
       if (e.raised && e.identity !== infoRef.current?.identity) playHandSound();          // один тихий сигнал на событие; своя рука без звука
     }
     else if (e.type === "floor_changed") {
@@ -842,7 +916,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       setNotice({ kind: "warn", text: `${e.by || "Руководитель"} выключил вашу камеру. Её можно включить снова кнопкой «Камера».` });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadFloor, onMyFloor, st.applyServer, refresh, stopScreenBookkeeping]);
+  }, [floorSoon, onMyFloor, st.applyServer, refresh, stopScreenBookkeeping]);
 
   // после переподключения канала событий состояние слова могло измениться — читаем заново
   useEffect(() => {
@@ -914,7 +988,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }
   if (!join) {
     return (
-      <PreJoin onHw={onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
+      <PreJoin onHw={roomInfo?.room_type === "presentation" && !roomInfo.can_manage ? undefined : onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
                onJoin={() => void connect(needPassword || roomInfo?.has_password ? password : undefined)} onBack={() => navigate("/")}
                progress={busy ? <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} /> : null} />
     );
@@ -927,11 +1001,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const canCam = sources.includes("camera");
   const canScreen = sources.includes("screen_share") && !guest;
   const showCam = room.camera_allowed || canCam;
+  const curProfile = profilePick ?? loadProfile(join.client.screen_profile);
   const showScreen = !guest && (room.screen_share_allowed || canScreen) && !!navigator.mediaDevices?.getDisplayMedia;       // на телефонах показа экрана из браузера нет — кнопка не занимает место
   const myFloor = floorIds.has(join.identity);
   const listenerHint = "В презентационной комнате вы слушаете. Когда руководитель даст слово, кнопка станет доступна";
   const handOrder = new Map(hands.map((h, i) => [h.identity, i + 1] as const));
-  const viewParticipants: PView[] = participants.map((p) => ({ ...p, floor: floorIds.has(p.identity), leader: leaderIds.has(p.identity), hand: handOrder.has(p.identity), handOrder: handOrder.get(p.identity) }));
+  const viewParticipants: PView[] = split.stage.map((p) => ({ ...p, hand: handOrder.has(p.identity), handOrder: handOrder.get(p.identity) }));       // плитки — только у выступающих; зрители презентации — в списке
   const myHand = handOrder.has(join.identity);
   const toggleHand = () => { void api.hand(join.meeting_id, !myHand).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
   const lowerHand = (identity: string) => { void api.hand(join.meeting_id, false, identity).then((r) => setHands(r.queue)).catch((e) => setErr("general", (e as ApiError).message)); };
@@ -1021,6 +1096,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     { id: "devices", label: "Устройства…", icon: "sliders", hint: "Микрофон, динамики и камера", hidden: !roomRef.current, onSelect: () => setDevPop({ left: Math.max(8, window.innerWidth - 392), bottom: 96 }) },
     { id: "noise", label: `${micPrefs.noiseSuppression ? "✓ " : ""}Шумоподавление`, icon: micPrefs.noiseSuppression ? "noise" : "noiseOff", hint: "Убирает фоновый шум микрофона", hidden: !canMic, disabled: stage !== "ready", onSelect: toggleNoise },
     { id: "saudio", label: `${withAudio ? "✓ " : ""}Показ экрана со звуком`, icon: "screen", hint: "Звук вкладки или системы при следующем показе экрана", hidden: !(showScreen && join.client.screen_share_audio) || !!me?.screen, onSelect: () => setWithAudio((v) => !v) },
+    ...PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: `${curProfile === pr ? "✓ " : ""}Показ экрана: ${PROFILE_LABELS[pr]}`, icon: "screen" as const,
+      hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : "Профиль запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер",
+      hidden: !(showScreen && canScreen), onSelect: () => void chooseProfile(pr) })),
     { id: "rec", label: recording ? "Остановить запись" : "Начать запись", icon: recording ? "recordStop" : "record", hint: recording ? "Остановить запись звука встречи (транскрибация не меняется)" : "Начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
     { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: "Звонок и запись звука продолжаются", hidden: !(room.transcription_enabled && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
@@ -1041,6 +1119,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
+          {presentation && <span className="badge" title="Сколько зрителей сейчас в комнате (без выступающих)">{audienceLabel(audienceView.length)}</span>}
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</span>}
           {room.transcription_enabled && (
@@ -1125,6 +1204,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                        </div>
                      )}
                      {participants.length === 0 && stage === "ready" && <div className="st-empty muted">Участники появятся здесь.</div>}
+                     {presentation && stage === "ready" && participants.length > 0 && split.stage.length === 0 && !ended && <div className="st-wait muted">Ожидаем выступающего: руководитель ещё не в комнате.</div>}
+                     {audOpen && presentation && !ended && (
+                       <AudiencePanel people={audienceView} canManage={isLeader} onClose={() => setAudOpen(false)}
+                                      onGrant={(p) => void giveFloor(p, true)} onLowerHand={(p) => lowerHand(p.identity)}
+                                      onCard={(p) => { if (!p.local) setCardOf({ identity: p.identity, name: p.name, role: p.leader ? "Руководитель" : p.floor ? "Есть слово" : undefined }); }} />
+                     )}
                      <div className="st-toasts">
                        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
                        {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
@@ -1172,6 +1257,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <RoundButton icon="hand" label={myHand ? "Опустить руку" : "Поднять руку"} short="Рука" tone={myHand ? "on" : "neutral"} pressed={myHand} disabled={ended}
                          title={myHand ? "Опустить руку" : "Поднять руку: все увидят отметку, а вы встанете в очередь"} onClick={toggleHand} />
           </Ctl>
+          {presentation && (
+            <Ctl onClose={() => undefined}>
+              <RoundButton icon="users" label={`Зрители: ${audienceView.length}`} short="Зрители" tone={audOpen ? "on" : "neutral"} pressed={audOpen} disabled={ended}
+                           title="Список зрителей: число, поиск по имени, поднятые руки. Руководитель даёт слово отсюда" onClick={() => setAudOpen((o) => !o)} />
+            </Ctl>
+          )}
           <Ctl onClose={() => undefined}>
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
           </Ctl>

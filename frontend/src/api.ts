@@ -16,7 +16,7 @@ export interface Room {
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
-  screen_profile: string; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
+  screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
   can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
   /** Гость (вход по ссылке без AD): без административных функций, без показа экрана и стенограммы. */
@@ -45,7 +45,7 @@ export interface JoinInfo {
 }
 /** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
 export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }
-export interface GuestRoomInfo { room_name: string; description: string | null; meeting_active: boolean; has_password: boolean; camera_allowed: boolean }
+export interface GuestRoomInfo { room_name: string; description: string | null; meeting_active: boolean; has_password: boolean; camera_allowed: boolean; presentation?: boolean }
 export interface ChatAttachment { id: string; name: string; mime: string; size: number; kind: "image" | "file"; missing?: boolean }
 export interface ChatMessage {
   id: number; meeting_id: string; created_at: string; author_type: "user" | "guest" | "system"; author_id: string | null; author_name: string; text: string;

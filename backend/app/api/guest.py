@@ -19,6 +19,7 @@ from ..auth.deps import _origin_ok, client_ip, get_db
 from ..auth.guests import GUEST_HEADER, Actor, require_actor
 from ..models import GuestParticipant, Room
 from ..security.passwords import verify_room_password
+from ..services import roles
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
 from .rooms import room_out
@@ -43,6 +44,7 @@ class GuestRoomInfo(BaseModel):
     meeting_active: bool
     has_password: bool
     camera_allowed: bool
+    presentation: bool = False      # презентационная комната: гость — зритель, проверка микрофона и камеры ему не нужна
 
 
 class GuestJoinOut(JoinOut):
@@ -92,7 +94,8 @@ async def room_info(token: str, request: Request, db: AsyncSession = Depends(get
     room = await _room_by_token(db, token)
     active = await request.app.state.meetings._active_meeting(db, room.id)  # noqa: SLF001
     return GuestRoomInfo(room_name=room.name, description=room.description, meeting_active=active is not None,
-                         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed)
+                         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed,
+                         presentation=roles.is_presentation(room))
 
 
 def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str, display_name: str, asr_ready: bool) -> GuestJoinOut:

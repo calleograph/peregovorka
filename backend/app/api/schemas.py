@@ -66,6 +66,7 @@ class JoinIn(BaseModel):
 
 class ClientConfig(BaseModel):
     screen_profile: str = "sharp"
+    screen_eco_kbps: int = 800      # цель битрейта профиля «Экономный 720p» (500–900 кбит/с)
     screen_share_audio: bool = False
     one_sharer_at_a_time: bool = False
     can_moderate: bool = False      # руководитель комнаты / администратор: может выключать микрофоны участников

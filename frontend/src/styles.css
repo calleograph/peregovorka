@@ -813,3 +813,23 @@ details.group { margin: 8px 0; }
   .plr.mobile .plr-tr { flex: 1 1 36%; }
   .plr input[type=range].plr-vol { width: 64px; }
 }
+
+/* Список зрителей презентации: узкая панель справа над сценой, рисуются только видимые строки (виртуализация) */
+.aud-panel { position: absolute; z-index: 7; top: 10px; right: 10px; bottom: 10px; width: min(320px, calc(100% - 20px)); display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop); min-height: 0; }
+.aud-head { display: flex; align-items: center; gap: 10px; flex: none; }
+.aud-search { flex: none; width: 100%; box-sizing: border-box; }
+.aud-list { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; outline: none; border-top: 1px solid var(--line); }
+.aud-list ul { list-style: none; margin: 0; padding-left: 0; padding-right: 0; }
+.aud-row { display: flex; align-items: center; gap: 8px; box-sizing: border-box; padding: 0 2px; border-bottom: 1px solid var(--line); }
+.aud-row.me { font-weight: 600; }
+.aud-name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aud-name:hover { text-decoration: underline; }
+.aud-hand { display: inline-flex; align-items: center; gap: 3px; color: var(--warn-text); font-size: 12px; white-space: nowrap; }
+.aud-acts { display: inline-flex; gap: 4px; flex: none; }
+.aud-empty { padding: 12px 4px; }
+.aud-count-btn { font-variant-numeric: tabular-nums; }
+.st-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; pointer-events: none; }
+@media (max-width: 640px) {
+  .aud-panel { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 60%; }
+}
