@@ -186,7 +186,7 @@ ENV: dict[str, str] = {
     "cookie_secure": ENV_REASON_DEFAULT, "cookie_name": ENV_REASON_DEFAULT, "session_idle_timeout_seconds": ENV_REASON_DEFAULT, "session_absolute_timeout_seconds": ENV_REASON_DEFAULT,
     "login_max_failures_per_user": ENV_REASON_DEFAULT, "login_max_failures_per_ip": ENV_REASON_DEFAULT, "login_failure_window_seconds": ENV_REASON_DEFAULT, "login_lockout_seconds": ENV_REASON_DEFAULT,
     "app_master_key": "ключ шифрования этой установки: НЕ переносится — секреты в архиве перешифровываются ключом нового сервера", "internal_api_token": "секрет этой установки (не копируется)",
-    "meeting_end_grace_seconds": ENV_REASON_DEFAULT, "default_text_retention_days": ENV_REASON_DEFAULT, "default_audio_retention_days": ENV_REASON_DEFAULT, "segment_consumer_block_ms": ENV_REASON_DEFAULT,
+    "meeting_end_grace_seconds": ENV_REASON_DEFAULT, "heavy_concurrency": ENV_REASON_DEFAULT, "heavy_max_defer_seconds": ENV_REASON_DEFAULT, "livekit_metrics_url": "адрес метрик LiveKit этой установки", "default_text_retention_days": ENV_REASON_DEFAULT, "default_audio_retention_days": ENV_REASON_DEFAULT, "segment_consumer_block_ms": ENV_REASON_DEFAULT,
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
@@ -237,7 +237,7 @@ ENV_FILE_PREFIX: dict[str, str] = {
     "COOKIE_": "параметры сессии этой установки", "TRUSTED_": "топология сети этой установки", "SESSION_": "параметры сессии этой установки", "LOGIN_": "защита входа этой установки",
     "DEFAULT_": "значения по умолчанию установки (сроки хранения задаются в настройках и переносятся)", "MEETING_": "параметры встреч этой установки", "ASR_": "службы распознавания этой установки (выбор модели — в настройках, переносится)",
     "GIGAAM_": "источник модели распознавания этой установки", "LLM_": "локальная языковая модель этой установки", "SIP_": "сеть SIP этой установки (подключения — в настройках, переносятся)", "NGINX_": "веб-сервер этой установки",
-    "BACKUP_": "каталог резервных копий этого сервера", "MIN_": "пороги проверки ресурсов этого сервера",
+    "HEAVY_": "очередь тяжёлых фоновых задач этого сервера (по умолчанию подходит всем)", "BACKUP_": "каталог резервных копий этого сервера", "MIN_": "пороги проверки ресурсов этого сервера",
 }
 
 
