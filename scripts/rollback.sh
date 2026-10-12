@@ -87,4 +87,9 @@ upd_state_set result "rolled_back_to_${TAG}"
 upd_wait_healthy "$WAIT" || die "После отката сервисы не healthy: scripts/logs.sh"
 ok "Код и образы возвращены к ${TAG}."
 EB="$(upd_state_get env_backup)"; [ -n "$EB" ] && info ".env автоматически не менялся; резервная копия перед обновлением: $EB"
-warn "Рабочая копия теперь в состоянии detached HEAD. Чтобы снова получать обновления: git switch main && ./scripts/update.sh"
+RB_TAG="$(upd_head_release_tag)"
+if [ -n "$RB_TAG" ]; then
+  warn "Рабочая копия на релизном теге ${RB_TAG} (HEAD отсоединён — это штатно). ./scripts/update.sh снова пойдёт по релизам к самому новому; чтобы остаться на этой версии, обновление не запускайте."
+else
+  warn "Рабочая копия в состоянии detached HEAD на обычном commit. Чтобы снова получать обновления: ./scripts/update.sh --ref <тег|SHA> (или, для установки на ветке, git switch <ветка>)."
+fi

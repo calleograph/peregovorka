@@ -116,6 +116,8 @@ source "$ROOT/tests/scripts/part_prereq.sh"
 source "$ROOT/tests/scripts/part_llm.sh"
 # shellcheck source=part_sip.sh
 source "$ROOT/tests/scripts/part_sip.sh"
+# shellcheck source=part_release_channel.sh
+source "$ROOT/tests/scripts/part_release_channel.sh"
 
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

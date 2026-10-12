@@ -235,6 +235,30 @@ upd_git_fetch() {
   done
 }
 
+# Установщик ставит проект клоном релизного тега (git clone --branch vX.Y.Z): HEAD отсоединён, это штатный режим.
+# Такая установка обновляется по самому новому тегу vX.Y.Z, ветку не переключает.
+upd_release_tag() {
+  git -C "$REPO_ROOT" tag -l 'v*' --sort=-v:refname 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1
+}
+upd_release_target() {
+  local tag; tag="$(upd_release_tag)"
+  [ -n "$tag" ] && git -C "$REPO_ROOT" rev-parse --verify --quiet "${tag}^{commit}" 2>/dev/null
+}
+# Релизный тег vX.Y.Z, на котором стоит HEAD (пусто — HEAD на произвольном коммите, например после отката или установки по SHA:
+# канал такой установки неизвестен, и молча переводить её на тег нельзя).
+upd_head_release_tag() {
+  git -C "$REPO_ROOT" tag --points-at HEAD 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1
+}
+# Куда сравнивать установку: upstream ветки; HEAD на релизном теге — самый новый релизный тег; иначе — ничего (решать молча нельзя).
+upd_check_commit() {
+  local up
+  if up="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"; then
+    git -C "$REPO_ROOT" rev-parse --verify --quiet "${up}^{commit}" 2>/dev/null
+  elif [ -z "$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null)" ] && [ -n "$(upd_head_release_tag)" ]; then
+    upd_release_target
+  fi
+}
+
 # upd_history_append РЕЗУЛЬТАТ [ЭТАП] — строка в $DATA_ROOT/updater/history.ndjson для «Обновления и версии» (веб-интерфейс).
 # Пишется при ЛЮБОМ запуске update.sh (из терминала или из веб-интерфейса), поэтому интерфейс видит и успешные обновления из командной строки
 # и не принимает старую неудачную попытку за текущую. Секретов в записи нет. Хранятся последние 100 попыток.
@@ -244,13 +268,13 @@ upd_history_append() {
   [ -n "${DATA_ROOT:-}" ] && [ -d "$d" ] || return 0
   f="$d/history.ndjson"
   oldv="$(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT" show "${OLD:-HEAD}:VERSION" 2>/dev/null | tr -d '[:space:]')"
-  newv="$(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT" show "${TARGET:-HEAD}:VERSION" 2>/dev/null | tr -d '[:space:]')"
+  newv=""; [ -z "${TARGET:-}" ] || newv="$(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT" show "${TARGET}:VERSION" 2>/dev/null | tr -d '[:space:]')"
   by="$(printf '%s' "${UPDATE_BY:-}" | tr -cd 'A-Za-z0-9._-' | cut -c1-60)"
   case "${UPDATE_SOURCE:-cli}" in web) src=web ;; *) src=cli ;; esac
   stage="$(printf '%s' "$stage" | tr -d '"\\' | tr '\n\r\t' '   ' | cut -c1-90)"
   now="$(date +%s)"
   printf '{"at":%s,"started":%s,"result":"%s","stage":"%s","from_version":"%s","to_version":"%s","from_commit":"%s","to_commit":"%s","source":"%s","by":"%s"}\n' \
-    "$now" "${UPD_STARTED:-$now}" "$res" "$stage" "$oldv" "$newv" "${OLD:0:12}" "${TARGET:0:12}" "$src" "$by" >> "$f" 2>/dev/null || return 0
+    "$now" "${UPD_STARTED:-$now}" "$res" "$stage" "$oldv" "$newv" "$(printf '%.12s' "${OLD:-}")" "$(printf '%.12s' "${TARGET:-}")" "$src" "$by" >> "$f" 2>/dev/null || return 0
   chmod 644 "$f" 2>/dev/null || true
   if [ "$(wc -l < "$f" 2>/dev/null || echo 0)" -gt 100 ]; then tail -n 100 "$f" > "$f.tmp" 2>/dev/null && cat "$f.tmp" > "$f"; rm -f "$f.tmp"; fi
   return 0

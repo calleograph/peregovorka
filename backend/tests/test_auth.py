@@ -84,6 +84,41 @@ def test_foreign_origin_rejected_on_login(client):
     assert r.status_code == 403
 
 
+def test_origin_from_allowed_origins_is_accepted_on_login_and_others_are_not(client):
+    client.app.state.settings.allowed_origins = "https://Meet.Example.org/, https://192.0.2.10"
+    ok = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"}, headers={"Origin": "https://meet.example.org"})
+    assert ok.status_code == 200
+    assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"},
+                       headers={"Origin": "https://192.0.2.10"}).status_code == 200
+    bad = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"}, headers={"Origin": "https://evil.example"})
+    assert bad.status_code == 403 and bad.json()["detail"] == "Недопустимый Origin"
+
+
+def test_origin_list_is_normalized_and_never_matches_null_or_other_hosts():
+    from app.config import Settings, origin_allowed
+
+    s = Settings(app_public_url="https://Meet.Example.org/", allowed_origins="https://192.0.2.10:8443/")
+    assert origin_allowed("https://meet.example.org", s)
+    assert origin_allowed("https://192.0.2.10:8443", s)
+    assert not origin_allowed("https://192.0.2.10", s)
+    assert not origin_allowed("null", s)
+    assert not origin_allowed("https://meet.example.org.evil.example", s)
+
+
+@pytest.mark.parametrize("value", ["meet.example.org", "ftp://meet.example.org", "https://meet.example.org/path", "https://meet.example.org?x=1"])
+def test_allowed_origins_must_be_plain_scheme_and_host(value):
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="ALLOWED_ORIGINS"):
+        Settings(allowed_origins=value)
+
+
+def test_allowed_origins_accepts_a_list_of_plain_urls():
+    from app.config import Settings
+
+    assert Settings(allowed_origins="https://a.example, http://10.0.0.5:8080").allowed_origin_set >= {"https://a.example", "http://10.0.0.5:8080"}
+
+
 def test_access_group_restricts_login(tmp_path, directory):
     from fakeredis import FakeAsyncRedis
     from fastapi.testclient import TestClient

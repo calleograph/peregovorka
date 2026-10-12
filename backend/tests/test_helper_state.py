@@ -127,6 +127,22 @@ def test_pulse_alive_but_main_loop_stuck_is_unresponsive(client):
     assert h["state"] == "unresponsive" and h["available"] and "не отвечает" in h["message"]
 
 
+def test_unresponsive_helper_tells_the_real_unit_name_from_its_pulse(client):
+    d = chan(client)
+    status_file(d, age=400, state="idle")
+    pulse_file(d, age=2, unit="peregovorka-updater-prod")
+    h = state(client)
+    assert h["state"] == "unresponsive" and h["fix"] == "sudo systemctl restart peregovorka-updater-prod"
+
+
+def test_unit_name_from_pulse_that_looks_like_a_command_is_not_shown(client):
+    d = chan(client)
+    status_file(d, age=400, state="idle")
+    pulse_file(d, age=2, unit="x; rm -rf /")
+    h = state(client)
+    assert h["state"] == "unresponsive" and h["fix"] == "sudo systemctl restart peregovorka-updater-<проект>"
+
+
 def test_busy_helper_with_old_status_is_not_called_unresponsive(client):
     d = chan(client)
     status_file(d, age=400, state="repairing")

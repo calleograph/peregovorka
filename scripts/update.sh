@@ -76,12 +76,22 @@ phase1() {
   step "Проверка origin и новых commit'ов"
   upd_git_fetch >/dev/null 2>&1 || stop_update "git fetch не удался (нет доступа к GitHub?). Проверьте сеть/прокси и повторите."
   if [ -n "$REF" ]; then
+    CHANNEL=ref
     TARGET="$(git -C "$REPO_ROOT" rev-parse --verify "${REF}^{commit}" 2>/dev/null)" || stop_update "Не найден ref: $REF"
   else
     BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD || true)"
-    [ -n "$BRANCH" ] || stop_update "Detached HEAD: укажите --ref <SHA|tag> или вернитесь на ветку (git switch main)"
-    git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || stop_update "У ветки $BRANCH не задан upstream"
-    TARGET="$(git -C "$REPO_ROOT" rev-parse '@{u}')"
+    if [ -n "$BRANCH" ]; then
+      CHANNEL=branch
+      git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || stop_update "У ветки $BRANCH не задан upstream"
+      TARGET="$(git -C "$REPO_ROOT" rev-parse '@{u}')"
+    else
+      HEAD_TAG="$(upd_head_release_tag)"
+      [ -n "$HEAD_TAG" ] || stop_update "HEAD отсоединён и не стоит на релизном теге (так бывает после отката или установки по SHA), поэтому канал обновления неизвестен. Укажите --ref <тег|SHA> или вернитесь на ветку: git switch main. Ничего не изменено."
+      CHANNEL=release
+      TARGET="$(upd_release_target)"
+      [ -n "$TARGET" ] || stop_update "Установка на релизном теге $HEAD_TAG, но релизных тегов vX.Y.Z в origin не найдено. Укажите --ref <тег|SHA>."
+      info "Установка на релизном теге $HEAD_TAG (HEAD отсоединён — так ставит установщик). Канал обновления: релизные теги, самый новый — $(upd_release_tag)."
+    fi
     git -C "$REPO_ROOT" merge-base --is-ancestor "$OLD" "$TARGET" || stop_update "Обновление не является fast-forward (локальная история разошлась с origin) — автоматически не продолжаю."
   fi
   log "Текущий:  ${OLD:0:12}"; log "Целевой:  ${TARGET:0:12}"
@@ -136,7 +146,7 @@ phase1() {
   log "LiveKit: проверенная версия $(grep -E '^TESTED_LIVEKIT_SERVER=' "$REPO_ROOT/deployment/compat.env" 2>/dev/null | cut -d= -f2) (новая — из deployment/compat.env целевого commit)"
 
   if [ "$DRY_RUN" = "1" ]; then
-    log; info "[dry-run] дальше было бы: резервная копия .env → git merge --ff-only ${TARGET:0:12} → перезапуск скрипта новой версией →"
+    log; info "[dry-run] дальше было бы: резервная копия .env → переход на ${TARGET:0:12} (ветка: merge --ff-only, тег: checkout --detach) → перезапуск скрипта новой версией →"
     info "[dry-run] preflight → проверка моделей → backup БД → сборка образов → Alembic upgrade head → up -d + ожидание healthcheck → nginx-site → verify → smoke-test"
     exit 0
   fi
@@ -161,8 +171,11 @@ phase1() {
   fi
 
   step "Обновление кода (git merge --ff-only)"
-  if [ -n "$REF" ]; then git -C "$REPO_ROOT" checkout --detach "$TARGET" >/dev/null 2>&1 || stop_update "git checkout $REF не удался"
-  elif [ "$OLD" != "$TARGET" ]; then git -C "$REPO_ROOT" merge --ff-only "$TARGET" >/dev/null 2>&1 || stop_update "git merge --ff-only не удался (локальные изменения конфликтуют?)"; fi
+  if [ "$CHANNEL" = branch ]; then
+    [ "$OLD" = "$TARGET" ] || git -C "$REPO_ROOT" merge --ff-only "$TARGET" >/dev/null 2>&1 || stop_update "git merge --ff-only не удался (локальные изменения конфликтуют?)"
+  else
+    [ "$OLD" = "$TARGET" ] || git -C "$REPO_ROOT" checkout --detach "$TARGET" >/dev/null 2>&1 || stop_update "git checkout --detach ${TARGET:0:12} не удался"
+  fi
   ok "Код: ${OLD:0:12} → ${TARGET:0:12}"
   info "Продолжает уже НОВАЯ версия скрипта (чтобы использовать актуальные проверки)…"
   rm -f "$EXNEW"

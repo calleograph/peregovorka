@@ -129,9 +129,10 @@ do_check() {
   if ! git -C "$REPO_ROOT" fetch --tags --prune origin >/dev/null 2>"$ferr"; then ok=false; err="$(head -c 300 "$ferr" | tr '\n' ' ')"; fi
   rm -f "$ferr"
   cur="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
-  up="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null || echo origin/main)"
-  remote="$(git -C "$REPO_ROOT" rev-parse "$up" 2>/dev/null || echo "")"
-  [ -n "$remote" ] || { ok=false; [ -n "$err" ] || err="не найдена ветка $up"; remote="$cur"; }
+  up="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null || true)"
+  [ -n "$up" ] || { [ -z "$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null)" ] && [ -n "$(upd_head_release_tag)" ] && up="$(upd_release_tag)"; }
+  remote="$(upd_check_commit)"
+  [ -n "$remote" ] || { ok=false; [ -n "$err" ] || err="не с чем сравнивать: у ветки нет upstream, а HEAD не стоит на релизном теге vX.Y.Z (откат или установка по SHA). Укажите версию: ./scripts/update.sh --ref <тег> или git switch main"; remote="$cur"; }
   behind="$(git -C "$REPO_ROOT" rev-list --count "HEAD..$remote" 2>/dev/null || echo 0)"
   ahead="$(git -C "$REPO_ROOT" rev-list --count "$remote..HEAD" 2>/dev/null || echo 0)"
   if git -C "$REPO_ROOT" merge-base --is-ancestor HEAD "$remote" 2>/dev/null; then ff=true; else ff=false; fi

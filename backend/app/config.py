@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
     trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"
+    # Дополнительные адреса, с которых открывают приложение через внешний reverse proxy (через запятую, вида https://хост[:порт]).
+    # Основной адрес — APP_PUBLIC_URL; проверка Origin остаётся включённой, список лишь расширяет её.
+    allowed_origins: str = ""
 
     # --- PostgreSQL (database_url имеет приоритет — удобно для тестов)
     database_url: str | None = None
@@ -117,6 +120,15 @@ class Settings(BaseSettings):
                 raise ValueError("LDAP_URIS: разрешены только адреса ldaps:// (проверка сертификата обязательна)")
         return value
 
+    @field_validator("allowed_origins")
+    @classmethod
+    def _origins_are_plain_urls(cls, value: str) -> str:
+        for item in [o.strip() for o in value.split(",") if o.strip()]:
+            parts = urlsplit(item)
+            if parts.scheme not in ("http", "https") or not parts.hostname or parts.path not in ("", "/") or parts.query or parts.fragment:
+                raise ValueError("ALLOWED_ORIGINS: нужны адреса вида https://хост[:порт] через запятую, без пути")
+        return value
+
     @field_validator("default_text_retention_days", "default_audio_retention_days", mode="before")
     @classmethod
     def _empty_is_none(cls, value):  # '' в .env = бессрочно
@@ -157,6 +169,11 @@ class Settings(BaseSettings):
         return f"{parts.scheme}://{parts.netloc}"
 
     @property
+    def allowed_origin_set(self) -> frozenset[str]:
+        extra = [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+        return frozenset(normalize_origin(o) for o in [self.app_public_url, *extra])
+
+    @property
     def livekit_http_url(self) -> str:
         url = self.livekit_internal_url
         if url.startswith("wss://"):
@@ -164,6 +181,15 @@ class Settings(BaseSettings):
         if url.startswith("ws://"):
             return "http://" + url[len("ws://"):]
         return url
+
+
+def normalize_origin(url: str) -> str:
+    parts = urlsplit(url.strip())
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+
+
+def origin_allowed(origin: str, settings: Settings) -> bool:
+    return normalize_origin(origin) in settings.allowed_origin_set
 
 
 @lru_cache

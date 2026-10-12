@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..auth.directory import parse_login
+from ..config import origin_allowed
 from ..models import User
 from ..security.passwords import verify_room_password
 from ..services import local_admin as la
@@ -14,6 +17,7 @@ from ..services.journal import parse_client
 from .schemas import LoginIn, MeOut, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+log = logging.getLogger("app.auth")
 
 
 def _me(su: SessionUser) -> MeOut:
@@ -25,7 +29,8 @@ def _me(su: SessionUser) -> MeOut:
 async def login(body: LoginIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     settings = request.app.state.settings
     origin = request.headers.get("origin")
-    if origin is not None and origin.rstrip("/") != settings.public_origin:
+    if origin is not None and not origin_allowed(origin, settings):
+        log.warning("Origin отклонён", extra={"origin": origin[:200], "path": "/auth/login"})
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
     ip = client_ip(request)
     journal = request.app.state.journal

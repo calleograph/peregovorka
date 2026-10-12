@@ -26,8 +26,8 @@ verdict() { if [ "$3" = "?" ]; then echo "не удалось получить (
 if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   log "== Обновления приложения (git) =="
   HEAD12="$(git -C "$REPO_ROOT" rev-parse HEAD | cut -c1-12)"
-  if upd_git_fetch >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    UP="$(git -C "$REPO_ROOT" rev-parse '@{u}')"; N="$(git -C "$REPO_ROOT" rev-list --count "HEAD..$UP")"
+  if upd_git_fetch >/dev/null 2>&1 && UP="$(upd_check_commit)" && [ -n "$UP" ]; then
+    N="$(git -C "$REPO_ROOT" rev-list --count "HEAD..$UP")"
     if [ "$N" -eq 0 ]; then ok "Установка на актуальной версии (${HEAD12})"
     else
       warn "Доступно обновлений: $N (${HEAD12} → ${UP:0:12})"; git -C "$REPO_ROOT" log --oneline --no-decorate -n 15 "HEAD..$UP" | sed 's/^/  /'
@@ -40,7 +40,7 @@ if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
       git -C "$REPO_ROOT" diff --quiet "HEAD" "$UP" -- backend/migrations/versions 2>/dev/null || log "  Есть миграции БД (перед ними update.sh сделает backup)"
       info "Обновить:  ./scripts/update.sh   (сначала можно: ./scripts/update.sh --dry-run)"
     fi
-  else warn "Не удалось проверить origin (нет сети/доступа к GitHub или у ветки нет upstream)"; fi
+  else warn "Не удалось проверить origin (нет сети/доступа к GitHub, у ветки нет upstream и нет релизных тегов)"; fi
   log
 fi
 

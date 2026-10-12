@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -10,8 +11,10 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import Settings
+from ..config import Settings, origin_allowed
 from .sessions import SessionData, SessionStore
+
+log = logging.getLogger("app.auth")
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _ALLOWED_WHILE_CHANGING = {"/api/v1/auth/me", "/api/v1/auth/logout", "/api/v1/auth/change-password"}
@@ -102,7 +105,10 @@ def _origin_ok(request: Request) -> bool:
     origin = request.headers.get("origin")
     if origin is None:
         return True  # не браузерный запрос; CSRF-токен всё равно обязателен
-    return origin.rstrip("/") == settings.public_origin
+    if origin_allowed(origin, settings):
+        return True
+    log.warning("Origin отклонён", extra={"origin": origin[:200], "path": request.url.path})
+    return False
 
 
 async def current_session(request: Request) -> SessionUser | None:

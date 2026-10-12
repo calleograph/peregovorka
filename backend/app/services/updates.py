@@ -172,6 +172,12 @@ class Channel:
 
 INSTALL_FIX = "sudo ./scripts/updater.sh install --yes"
 UNRESPONSIVE_STATUS_AGE = 120      # с: пульс идёт, а status.json не меняется и обновления нет — основной цикл исполнителя завис
+UNIT_NAME_RE = re.compile(r"^peregovorka-updater-[A-Za-z0-9_.-]{1,64}$")
+
+
+def _unit_name(pulse: dict) -> str:
+    unit = pulse.get("unit")
+    return unit if isinstance(unit, str) and UNIT_NAME_RE.match(unit) else "peregovorka-updater-<проект>"
 
 
 def _ago(seconds: int | None) -> str:
@@ -206,7 +212,7 @@ def helper_state(st: dict) -> dict:
             return _h("manual_process", True, True, "Помощник работает, но запущен вручную, а не службой systemd: после перезагрузки сервера он не запустится.", INSTALL_FIX, details, st)
         sa = st.get("status_age_s")
         if st.get("pulse_fresh") and not st.get("status_fresh") and not busy and sa is not None and sa > UNRESPONSIVE_STATUS_AGE:
-            return _h("unresponsive", True, True, f"Помощник запущен и пишет пульс, но не отвечает на запросы уже {_ago(sa)}: основной цикл завис.", "sudo systemctl restart peregovorka-updater-<проект>", details, st)
+            return _h("unresponsive", True, True, f"Помощник запущен и пишет пульс, но не отвечает на запросы уже {_ago(sa)}: основной цикл завис.", f"sudo systemctl restart {_unit_name(pulse)}", details, st)
         return _h("ok", True, True, "Помощник работает." + (" Сейчас выполняет обновление или исправление." if busy else ""), None, details, st)
     # не отвечает: различаем по тому, что оставила установка и сама служба
     age = st.get("heartbeat_age_s")

@@ -13,6 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from ..auth.deps import SessionUser
+from ..config import origin_allowed
 from ..models import Meeting, MeetingParticipant
 from ..services import events, roles
 from ..services.access import can_access_meeting
@@ -51,7 +52,8 @@ async def ws_endpoint(ws: WebSocket):
     app = ws.app
     settings = app.state.settings
     origin = ws.headers.get("origin")
-    if origin is not None and origin.rstrip("/") != settings.public_origin:
+    if origin is not None and not origin_allowed(origin, settings):
+        log.warning("Origin отклонён", extra={"origin": origin[:200], "path": "/ws"})
         await ws.close(code=4403)
         return
     su: SessionUser | None = None
