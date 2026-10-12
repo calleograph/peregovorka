@@ -171,7 +171,7 @@ class Settings(BaseSettings):
     @property
     def allowed_origin_set(self) -> frozenset[str]:
         extra = [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
-        return frozenset(normalize_origin(o) for o in [self.app_public_url, *extra])
+        return frozenset(n for n in (normalize_origin(o) for o in [self.app_public_url, *extra]) if n)
 
     @property
     def livekit_http_url(self) -> str:
@@ -184,12 +184,29 @@ class Settings(BaseSettings):
 
 
 def normalize_origin(url: str) -> str:
+    """Адрес → `схема://хост[:порт]`: регистр, стандартные порты (443/80) и IPv6 приводятся к виду, в котором Origin присылает браузер.
+    Пустая строка — адрес непригоден (не http/https, нет хоста, есть логин или пароль, неверный порт); она ничему не равна."""
     parts = urlsplit(url.strip())
-    return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    scheme, host = parts.scheme.lower(), (parts.hostname or "").lower()
+    if scheme not in ("http", "https") or not host or parts.username or parts.password:
+        return ""
+    try:
+        port = parts.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and port != (443 if scheme == "https" else 80):
+        host = f"{host}:{port}"
+    return f"{scheme}://{host}"
 
 
 def origin_allowed(origin: str, settings: Settings) -> bool:
-    return normalize_origin(origin) in settings.allowed_origin_set
+    parts = urlsplit(origin.strip())
+    if parts.path not in ("", "/") or parts.query or parts.fragment:   # браузер присылает только схему, хост и порт
+        return False
+    normalized = normalize_origin(origin)
+    return bool(normalized) and normalized in settings.allowed_origin_set
 
 
 @lru_cache

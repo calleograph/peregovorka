@@ -105,6 +105,33 @@ def test_origin_list_is_normalized_and_never_matches_null_or_other_hosts():
     assert not origin_allowed("https://meet.example.org.evil.example", s)
 
 
+def test_default_ports_ipv6_and_trailing_slash_match_what_browsers_send():
+    from app.config import Settings, origin_allowed
+
+    s = Settings(app_public_url="https://meet.example.org:443/", allowed_origins="http://intranet.example:80, https://[2001:db8::1]:8443")
+    assert origin_allowed("https://meet.example.org", s) and origin_allowed("https://meet.example.org/", s)
+    assert origin_allowed("http://intranet.example", s)
+    assert origin_allowed("https://[2001:db8::1]:8443", s)
+    assert not origin_allowed("https://meet.example.org:444", s)
+    assert not origin_allowed("http://meet.example.org", s)          # схема тоже часть адреса
+
+
+@pytest.mark.parametrize("origin", ["null", "", "https://", "://", "https://meet.example.org/evil", "https://meet.example.org?x=1",
+                                    "https://user@meet.example.org", "https://meet.example.org:notaport"])
+def test_malformed_origin_is_never_allowed(origin):
+    from app.config import Settings, origin_allowed
+
+    assert not origin_allowed(origin, Settings(app_public_url="https://meet.example.org"))
+
+
+@pytest.mark.parametrize("public_url", ["meet.example.org", "", "ftp://meet.example.org", "https://"])
+def test_a_broken_public_url_does_not_turn_null_origin_into_an_allowed_one(public_url):
+    from app.config import Settings, origin_allowed
+
+    s = Settings(app_public_url=public_url)
+    assert not origin_allowed("null", s) and not origin_allowed("://", s) and not origin_allowed("", s)
+
+
 @pytest.mark.parametrize("value", ["meet.example.org", "ftp://meet.example.org", "https://meet.example.org/path", "https://meet.example.org?x=1"])
 def test_allowed_origins_must_be_plain_scheme_and_host(value):
     from app.config import Settings
