@@ -579,6 +579,27 @@ class AutoUpdateSettings(_Group):
         return v
 
 
+class AutoBackupSettings(_Group):
+    """Автоматическая копия настроек на сетевое хранилище: шифруется до отправки, ключ хранится только здесь (в зашифрованном виде) и на копию не попадает."""
+
+    SECRETS: ClassVar[tuple[str, ...]] = ("archive_key",)
+    enabled: bool = False
+    profile_id: str = ""                                      # профиль хранилища (SMB или папка), подпапка ConfigBackups
+    time: str = "02:00"                                       # ЧЧ:ММ по часовому поясу из «Общих настроек»
+    every_days: int = Field(default=1, ge=1, le=30)           # 1 — ежедневно, 7 — раз в неделю
+    keep: int = Field(default=14, ge=1, le=365)               # сколько последних копий хранить
+    stale_hours: int = Field(default=48, ge=1, le=720)        # через сколько часов без успешной копии показывать предупреждение
+    archive_key: str = ""                                     # пароль шифрования копий (показывается один раз при создании)
+
+    @field_validator("time")
+    @classmethod
+    def _time(cls, v: str) -> str:
+        v = v.strip()
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("Время копирования: ЧЧ:ММ, например 02:00")
+        return v
+
+
 class PrivacySettings(_Group):
     """Тексты уведомления о cookie и страницы «Обработка данных» (открывается без входа). Заполняет администратор: юридический текст в приложении не зашит.
     Сервис использует только технические cookie (сессия, защита от подделки запросов); категорий «маркетинг/реклама» нет."""
@@ -785,6 +806,7 @@ GROUPS: dict[str, type[_Group]] = {
     "mail_policy": MailPolicySettings,
     "storage_sync": StorageSyncSettings,
     "autoupdate": AutoUpdateSettings,
+    "auto_backup": AutoBackupSettings,
 }
 
 

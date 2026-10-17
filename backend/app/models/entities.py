@@ -711,6 +711,24 @@ class StorageSyncRun(Base):
     details: Mapped[dict | None] = mapped_column(JSONType)
 
 
+class ConfigBackupRun(Base):
+    """История заданий резервного копирования настроек на сетевое хранилище: создание, проверка копии."""
+
+    __tablename__ = "config_backup_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(10), default="backup", nullable=False)         # backup | verify
+    trigger: Mapped[str] = mapped_column(String(10), nullable=False)                         # manual | auto
+    actor: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(12), default="running", nullable=False)       # running | ok | failed
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    file_name: Mapped[str | None] = mapped_column(String(120))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    message: Mapped[str | None] = mapped_column(String(500))
+
+
 class SipProfile(Base):
     """Профиль SIP-телефонии (транк к АТС или провайдеру): общий для LiveKit SIP; Asterisk/PJSIP — первый проверенный вариант, но не единственный.
     Пароль зашифрован (AES-GCM, ключ APP_MASTER_KEY) и обратно не отдаётся. Идентификаторы транков LiveKit хранятся для обновления и удаления."""

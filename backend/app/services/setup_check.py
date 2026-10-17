@@ -178,10 +178,20 @@ async def check_master_key(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
     return [item("master_key", "Ключ шифрования настроек", OK, "Задан. Храните его копию отдельно: без него зашифрованные настройки не восстановить", "system")]
 
 
-HEALTH_CHECKS: list[Check] = [check_public_url, check_livekit, check_ldap, check_asr, check_llm, check_disk, check_master_key]
+async def check_backup(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
+    st = await app.state.auto_backup.status(db)
+    if not st["settings"]["enabled"]:
+        return [item("backup", "Резервная копия настроек", WARN, "Автоматическое копирование на сетевое хранилище выключено: при потере сервера настройки придётся вводить заново", "config_backup")]
+    last = st["last_ok"]
+    if st["stale"]:
+        return [item("backup", "Резервная копия настроек", FAIL, "Давно нет успешной копии" + (f" (последняя: {str(last['finished_at'])[:16]})" if last else "") + ": проверьте хранилище в истории заданий", "config_backup")]
+    return [item("backup", "Резервная копия настроек", OK, f"Последняя успешная копия: {str(last['finished_at'])[:16]} UTC", "config_backup")]
 
 
-DB_CHECKS = {check_llm}                                  # пользуются сессией БД: выполняются по одной, остальные — параллельно
+HEALTH_CHECKS: list[Check] = [check_public_url, check_livekit, check_ldap, check_asr, check_llm, check_disk, check_master_key, check_backup]
+
+
+DB_CHECKS = {check_llm, check_backup}                                  # пользуются сессией БД: выполняются по одной, остальные — параллельно
 
 
 async def run_health(app, db: AsyncSession) -> list[dict]:

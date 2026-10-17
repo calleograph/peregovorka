@@ -57,6 +57,9 @@ class PrefixedStorage:
     def read_bytes(self, rel: str) -> bytes:
         return self._base.read_bytes(self._p(rel))
 
+    def rename(self, src: str, dst: str) -> None:
+        self._base.rename(self._p(src), self._p(dst))
+
     def delete(self, rel: str) -> None:
         self._base.delete(self._p(rel))
 

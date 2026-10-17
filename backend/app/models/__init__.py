@@ -35,6 +35,7 @@ from .entities import (
     SipProfile,
     StorageProfile,
     StorageSyncRun,
+    ConfigBackupRun,
     StorageTransfer,
     StorageTransferItem,
     RoomAcl,
@@ -44,6 +45,6 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]

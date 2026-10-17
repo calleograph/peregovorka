@@ -132,6 +132,11 @@ export interface SystemStatus {
   };
 }
 export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null; actor_type?: string; result?: string; user_agent?: string | null; session_id?: string | null; request_id?: string | null; signed?: boolean }
+export interface AutoBackupRun { id: string; kind: "backup" | "verify"; trigger: string; actor: string | null; status: "running" | "ok" | "failed"; started_at: string; finished_at: string | null; file_name: string | null; size_bytes: number | null; sha256: string | null; message: string | null }
+export interface AutoBackupStatus {
+  settings: { enabled: boolean; profile_id: string; time: string; every_days: number; keep: number; stale_hours: number; archive_key_set: boolean };
+  stale: boolean; last_ok: AutoBackupRun | null; runs: AutoBackupRun[];
+}
 export type AuditFilter = { q?: string; actor?: string; action?: string; result?: string; actor_type?: string; object_type?: string; ip?: string; since?: string; until?: string }
 export interface AuditVerify { signed: boolean; checked: number; ok: number; unsigned: number; bad: number[]; gaps: number[][]; intact?: boolean; note: string }
 export interface RecordingRow {
@@ -885,6 +890,15 @@ export const api = {
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     performance: () => request<PerfData>("GET", "/admin/performance"),
+    autoBackup: () => request<AutoBackupStatus>("GET", "/admin/auto-backup"),
+    autoBackupSave: (body: Partial<Omit<AutoBackupStatus["settings"], "archive_key_set">>) => request<AutoBackupStatus>("PUT", "/admin/auto-backup/settings", body),
+    autoBackupKey: (password: string) => request<{ key: string }>("POST", "/admin/auto-backup/key", { password }),
+    autoBackupTest: () => request<{ message: string }>("POST", "/admin/auto-backup/test"),
+    autoBackupRun: () => request<AutoBackupRun>("POST", "/admin/auto-backup/run"),
+    autoBackupVerify: (name?: string) => request<AutoBackupRun>("POST", "/admin/auto-backup/verify", { name: name ?? null }),
+    autoBackupFiles: () => request<{ name: string; size_bytes: number | null }[]>("GET", "/admin/auto-backup/files"),
+    autoBackupDownload: (name: string, password: string) =>
+      configRequest<Blob>("/admin/auto-backup/download", JSON.stringify({ name, password }), { "Content-Type": "application/json" }, false).then((r) => r.data),
     configInfo: () => request<ConfigInfo>("GET", "/admin/config/info"),
     configExport: async (adminPassword: string): Promise<{ blob: Blob; password: string; filename: string }> => {
       const { data, res } = await configRequest<Blob>("/admin/config/export", JSON.stringify({ password: adminPassword }), { "Content-Type": "application/json" }, false);

@@ -55,6 +55,7 @@ class StorageBackend(Protocol):
     def write_bytes(self, rel: str, data: bytes) -> str: ...
     def read_bytes(self, rel: str) -> bytes: ...
     def delete(self, rel: str) -> None: ...
+    def rename(self, src: str, dst: str) -> None: ...
     def list_dir(self, rel: str) -> list[str]: ...
     def delete_dir(self, rel: str) -> None: ...
     def test(self) -> str: ...
@@ -211,6 +212,12 @@ class LocalStorage:
         except OSError as exc:
             raise StorageError(f"Не удалось узнать свободное место: {exc.strerror or exc}") from None
         return u.total, u.free
+
+    def rename(self, src: str, dst: str) -> None:
+        try:
+            os.replace(self._full(src), self._full(dst))
+        except OSError as exc:
+            raise StorageError(f"Не удалось переименовать файл: {exc.strerror or exc}") from None
 
     def delete(self, rel: str) -> None:
         try:
@@ -405,6 +412,13 @@ class SmbStorage:
             raise
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: ресурс недоступен ({type(exc).__name__})") from None
+
+    def rename(self, src: str, dst: str) -> None:
+        smb = self._session()
+        try:
+            smb.replace(self._unc(src), self._unc(dst))
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось переименовать файл ({type(exc).__name__})") from None
 
     def delete(self, rel: str) -> None:
         smb = self._session()

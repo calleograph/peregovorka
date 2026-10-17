@@ -21,7 +21,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
@@ -57,6 +57,7 @@ from .workers.mail_queue import run_mail_queue
 from .workers.storage_sync import run_storage_sync
 from .workers.reaper import run_reaper
 from .workers.autoupdate import run_autoupdate
+from .services.auto_backup import AutoBackup, run_auto_backup
 from .services.autoupdate import AutoUpdater
 from .workers.retention import run_retention
 from .workers.segment_consumer import run_consumer
@@ -147,6 +148,7 @@ def create_app(
         meetings_svc.on_event = _meeting_event
         protocols.on_document = _document_event
         # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
+        app.state.auto_backup = AutoBackup(app)
         app.state.autoupdate = AutoUpdater(session_maker, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
         app.state.sip_gateway = SipGateway(settings)
@@ -217,6 +219,7 @@ def create_app(
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
             tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc), name="meeting-reaper"))
             tasks.append(asyncio.create_task(run_autoupdate(app.state.autoupdate), name="auto-update"))
+            tasks.append(asyncio.create_task(run_auto_backup(app.state.auto_backup), name="auto-backup"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
             tasks.append(asyncio.create_task(run_asr_sync(session_maker, settings_svc, redis), name="asr-model-sync"))
             tasks.append(asyncio.create_task(run_journal_retention(journal), name="journal-retention"))
@@ -280,7 +283,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (site_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (site_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(public_router)     # публичный API: /api/public/v1 (свой формат ошибок, ключи вместо cookie-сессии)

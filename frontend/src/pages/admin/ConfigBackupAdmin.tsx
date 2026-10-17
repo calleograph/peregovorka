@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type ApiError, type ConfigHeader, type ConfigInfo, type ConfigPreview, type ConfigReport } from "../../api";
 import { archivePasswordComplete, backupFileName, canApply, groupPassword, groupWarnings, statusTitle, statusTone } from "../../configBackupMath";
 import { copyText } from "../../util";
+import AutoBackupPanel from "./AutoBackupPanel";
 
 /** «Сервер → Резервная копия конфигурации»: шифрованный экспорт и импорт настроек. Архив нигде не сохраняется на сервере; пароль архива показывается один раз. */
 export default function ConfigBackupAdmin() {
@@ -9,6 +10,7 @@ export default function ConfigBackupAdmin() {
     <section aria-label="Резервная копия конфигурации">
       <h2>Резервная копия конфигурации</h2>
       <p className="muted">Все настройки, подключения, сертификаты и секреты — одним зашифрованным файлом, чтобы восстановить работающую систему на новом сервере. Данные встреч (записи, стенограммы, протоколы, история, чат), журналы, сессии и фото не входят.</p>
+      <AutoBackupPanel />
       <ExportPanel />
       <ImportPanel />
     </section>
