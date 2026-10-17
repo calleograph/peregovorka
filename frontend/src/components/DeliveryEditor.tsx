@@ -5,7 +5,7 @@ export const MATERIAL_KINDS: { kind: string; label: string; help: string }[] = [
   { kind: "protocol", label: "Протокол", help: "Официальный протокол совещания (формирует языковая модель)." },
   { kind: "summary", label: "Резюме встречи", help: "Краткое резюме: суть, решения и поручения." },
   { kind: "transcript", label: "Стенограмма", help: "Полный текст реплик участников с временем." },
-  { kind: "map", label: "Карта разговора", help: "Ссылка на карту на странице встречи (файлом не вкладывается; при необходимости карта формируется перед отправкой)." },
+  { kind: "map", label: "Карта разговора", help: "Отправляется отдельным HTML-файлом независимо от выбранных форматов документов; при необходимости карта формируется перед отправкой." },
 ];
 export const FORMAT_LABEL: Record<string, string> = { docx: "Word (.docx)", pdf: "PDF", html: "HTML", txt: "Текст (.txt)", md: "Markdown" };
 export const SOURCE_LABEL: Record<string, string> = { leader: "руководитель", participant: "участник", user: "выбран вручную", manual: "свой адрес" };

@@ -44,7 +44,7 @@ class Material:
     label: str
     title: str
     md: str
-    link_only: bool = False      # не вкладывается файлом: в письме — ссылка на страницу встречи
+    html: bytes | None = None    # готовый автономный файл (карта разговора): вкладывается как есть, выбранные форматы документов на него не влияют
 
 
 @dataclass
@@ -81,18 +81,28 @@ async def _transcript(svc, db, meeting):
 
 
 async def _map(svc, db, meeting):
-    """Карта разговора: в письме ссылка на страницу встречи (вкладка «Карта разговора»); самостоятельный HTML собирает браузер, поэтому файлом её сервер не вкладывает."""
+    """Карта разговора: всегда отдельный автономный HTML-файл (открывается у получателя без входа в систему)."""
     from ..models import ConversationMap  # noqa: PLC0415
+    from .conv_map import apply_edits  # noqa: PLC0415
+    from .map_export import standalone_html  # noqa: PLC0415
 
     m = (await db.execute(select(ConversationMap).where(ConversationMap.meeting_id == meeting.id, ConversationMap.status == "ready"))).scalars().first()
-    return Material("map", "Карта разговора", f"Карта разговора: {meeting.room.name}", "", link_only=True) if m else None
+    if m is None or not m.data:
+        return None
+    title = f"Карта разговора: {meeting.room.name}"
+    return Material("map", "Карта разговора", title, "", html=standalone_html(title, apply_edits(m.data, m.edits), m.meta))
+
+
+def not_ready_reason(kind: str) -> str:
+    return {"protocol": "ещё не сформирован — создайте его на странице встречи", "summary": "ещё не сформировано — создайте его на странице встречи",
+            "map": "ещё не сформирована — создайте её на вкладке «Карта разговора»"}.get(kind, "в этой встрече нет реплик")
 
 
 MATERIALS: dict[str, MaterialDef] = {
     "protocol": MaterialDef("Протокол", "Официальный протокол совещания (формируется языковой моделью)", _protocol),
     "summary": MaterialDef("Резюме встречи", "Краткое резюме: суть, решения и поручения", _summary),
     "transcript": MaterialDef("Стенограмма", "Полный текст реплик участников с временем", _transcript),
-    "map": MaterialDef("Карта разговора", "Ссылка на карту разговора на странице встречи (файлом не вкладывается)", _map),
+    "map": MaterialDef("Карта разговора", "Отправляется отдельным HTML-файлом независимо от выбранных форматов документов; открывается без входа в систему", _map),
 }
 
 
@@ -236,7 +246,7 @@ class DeliveryService:
                 continue
             m = await d.load(self, db, meeting)
             mats.append({"kind": k, "label": d.label, "available": m is not None,
-                         "reason": None if m else ("ещё не сформирован — создайте его на странице встречи" if k in ("protocol", "summary") else "в этой встрече нет реплик")})
+                         "reason": None if m else not_ready_reason(k)})
         rec = await self.resolve(db, meeting.room, meeting, spec)
         prof = await self.mail.active(db)
         pol = await self.policy(db)
@@ -382,7 +392,8 @@ class DeliveryService:
             if m is None:
                 continue
             mats.append(m)
-            if m.link_only:
+            if m.html is not None:
+                files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.html", FORMAT_MIME["html"], m.html))
                 continue
             for fmt in fmts:
                 data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else to_html(m.md, m.title).encode("utf-8") if fmt == "html"

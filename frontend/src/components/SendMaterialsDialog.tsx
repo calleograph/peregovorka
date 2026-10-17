@@ -43,7 +43,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
   const toggle = (e: string) => setSelected((s) => { const n = new Set(s); if (n.has(e)) n.delete(e); else n.add(e); return n; });
   const toggleKind = (k: string) => setKinds((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
   const toggleFmt = (f: string) => setFormats((c) => (c.includes(f) ? c.filter((x) => x !== f) : [...c, f]));
-  const onlyLinks = kinds.length > 0 && kinds.every((k) => k === "map");
+  const onlyMap = kinds.length > 0 && kinds.every((k) => k === "map");
 
   const send = async () => {
     setBusy(true); setError("");
@@ -78,17 +78,17 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
           <fieldset className="group"><legend>Какие материалы</legend>
             {(plan.available_kinds ?? plan.materials).map((k) => {
               const m = plan.materials.find((x) => x.kind === k.kind);
-              const avail = m ? m.available : undefined;
+              const avail = m ? m.available : k.available;
               return (
                 <label key={k.kind} className="check"><input type="checkbox" checked={kinds.includes(k.kind)} disabled={avail === false} onChange={() => toggleKind(k.kind)} />
-                  <span className="check-body">{k.label}{avail === false && <span className="badge warn">не готов</span>}{avail === false && m?.reason && <span className="help">{m.reason}</span>}
+                  <span className="check-body">{k.label}{avail === false && <span className="badge warn">не готов</span>}{avail === false && (m?.reason ?? k.reason) && <span className="help">{m?.reason ?? k.reason}</span>}
                     {k.describe && avail !== false && <span className="help">{k.describe}</span>}</span></label>);
             })}
           </fieldset>
           <fieldset className="group"><legend>Формат документов</legend>
             <div className="checks">{(plan.formats ?? ["docx", "pdf", "html", "txt", "md"]).map((f) => (
               <label key={f} className="check"><input type="checkbox" checked={formats.includes(f)} onChange={() => toggleFmt(f)} /> {FORMAT_LABEL[f] ?? f}</label>))}</div>
-            <span className="help">Если документы вместе больше {plan.max_attachment_mb} МБ, они не вкладываются — в письме будет ссылка на страницу встречи.{onlyLinks ? " Карта разговора всегда уходит ссылкой." : ""}</span>
+            <span className="help">Если документы вместе больше {plan.max_attachment_mb} МБ, они не вкладываются — в письме будет ссылка на страницу встречи.{kinds.includes("map") ? " Карта разговора всегда вкладывается отдельным HTML-файлом." : ""}</span>
           </fieldset>
           <fieldset className="group"><legend>Письмо</legend>
             <label>Шаблон
@@ -99,7 +99,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
             <label>Текст письма<textarea rows={9} value={body} maxLength={8000} onChange={(e) => setBody(e.target.value)} /></label>
             <span className="help">Правки относятся только к этому письму — сам шаблон не меняется. Список материалов и ссылка на встречу добавляются под текстом автоматически.</span>
           </fieldset>
-          <div className="row"><button className="btn primary" disabled={busy || !plan.mail_configured || kinds.length === 0 || uniq.length === 0 || badExtra.length > 0 || !subject.trim() || !body.trim() || (!onlyLinks && formats.length === 0)} onClick={() => void send()}>
+          <div className="row"><button className="btn primary" disabled={busy || !plan.mail_configured || kinds.length === 0 || uniq.length === 0 || badExtra.length > 0 || !subject.trim() || !body.trim() || (!onlyMap && formats.length === 0)} onClick={() => void send()}>
             {busy ? "Отправка…" : `Отправить (${uniq.length})`}</button><button className="btn ghost" onClick={onClose}>Отмена</button></div>
         </div>
       )}

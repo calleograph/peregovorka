@@ -18,7 +18,7 @@ from ..services import roles
 from ..services.audit import write_audit
 from ..services.mail import valid_email
 from ..services import mail_templates as mt
-from ..services.mail_delivery import FORMATS, MATERIALS, Recipient, clean_spec, effective_delivery
+from ..services.mail_delivery import FORMATS, MATERIALS, Recipient, clean_spec, effective_delivery, not_ready_reason
 
 router = APIRouter(prefix="/meetings/{meeting_id}/delivery", tags=["delivery"])
 templates_router = APIRouter(prefix="/mail-templates", tags=["delivery"])
@@ -57,7 +57,11 @@ async def preview(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     if not spec["materials"]:
         spec["materials"] = ["protocol", "summary"]
     plan = await request.app.state.delivery.plan(db, meeting, spec)
-    plan["available_kinds"] = [{"kind": k, "label": d.label, "describe": d.describe} for k, d in MATERIALS.items()]
+    delivery = request.app.state.delivery
+    plan["available_kinds"] = []
+    for k, d in MATERIALS.items():      # готовность каждого вида: неготовый материал отметить нельзя, причина показана
+        ok = await d.load(delivery, db, meeting) is not None
+        plan["available_kinds"].append({"kind": k, "label": d.label, "describe": d.describe, "available": ok, "reason": None if ok else not_ready_reason(k)})
     plan["selected"] = spec["materials"]
     # шаблоны писем с уже подставленными данными этой встречи: пользователь правит тему и текст только для этого письма, шаблон не меняется
     delivery = request.app.state.delivery

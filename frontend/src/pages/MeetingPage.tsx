@@ -163,11 +163,11 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         {canGen && <><button className="btn primary" disabled={!canMake} onClick={() => setDialog({ kind: "protocol" })}
                 title={!finished ? "Протокол формируется после завершения встречи" : !canMake ? "Нет ни реплик, ни чата, ни схемы" : "Окно с инструкцией для модели. Материалы: стенограмма, чат и схема с доски"}>Сформировать протокол</button>
         <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button></>}
-        <Menu label="Ещё" title="Скачать стенограмму, отправить материалы, действия администратора">
+        {finished && (isAdmin || meeting.can_send_materials) && <button className="btn" onClick={() => setSendOpen(true)} title="Протокол, резюме, стенограмма и карта разговора — выбранным получателям по электронной почте">Отправить материалы</button>}
+        <Menu label="Ещё" title="Скачать стенограмму, действия администратора">
           <span className="menu-h">Скачать стенограмму</span>
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
           <button onClick={() => downloadText(text, `${fileBase(meeting.room_name, meeting.started_at)}.txt`)} disabled={!segments.length}>Как на этой странице (.txt)</button>
-          {finished && (isAdmin || meeting.can_send_materials) && <button onClick={() => setSendOpen(true)} title="Протокол, резюме и стенограмма — выбранным получателям по электронной почте">Отправить материалы…</button>}
           {isAdmin && <><span className="menu-h">Администратор</span>{adminActs.items}</>}
         </Menu>
         {adminActs.dialogs}

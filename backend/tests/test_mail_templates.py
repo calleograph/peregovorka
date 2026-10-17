@@ -81,7 +81,7 @@ def test_manual_send_uses_template_edited_subject_and_text_several_formats_and_i
     assert client.get(f"/api/v1/meetings/{mid}/delivery/log").status_code in (403, 404), "журнал отправок — только руководителям и администраторам"
 
 
-def test_map_is_sent_as_a_link_without_attachment(client, fake_smtp):  # noqa: F811
+def test_map_is_attached_as_standalone_html_next_to_the_documents(client, fake_smtp):  # noqa: F811
     add_profile(client)
     room = make_room(client, moderators=LEADERS)
     mid = finished_meeting(client, room)
@@ -99,7 +99,9 @@ def test_map_is_sent_as_a_link_without_attachment(client, fake_smtp):  # noqa: F
     assert client.post(f"/api/v1/meetings/{mid}/delivery/send", json={"kinds": ["map", "summary"], "emails": ["alice@corp.test"]}).status_code == 200
     run_queue(client)
     msg = fake_smtp.sent[-1]
-    assert len(list(msg.iter_attachments())) == 1 and "Карта разговора" in msg.get_body(("plain",)).get_content()
+    names = sorted(p.get_filename() for p in msg.iter_attachments())            # резюме — документом (docx по умолчанию), карта — всегда отдельным .html
+    assert len(names) == 2 and names[0].startswith("Карта разговора") and names[0].endswith(".html") and names[1].startswith("Резюме") and names[1].endswith(".docx")
+    assert "Карта разговора" in msg.get_body(("plain",)).get_content()
 
 
 # ------------------------------------------------------------------------------------------------ автоматическая рассылка
