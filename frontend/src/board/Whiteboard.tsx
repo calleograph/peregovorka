@@ -105,7 +105,7 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
           </>
         )}
         {headExtra}
-        <BoardExportMenu request={request} fileBase={fileBase} />
+        <BoardExportMenu request={request} fileBase={fileBase} meetingId={meetingId} />
         <button className="btn mini" onClick={toggleFull} aria-pressed={full} title={full ? "Вернуть доску в окно (Esc)" : "Развернуть доску на весь экран"}>{full ? "⤡ Свернуть" : "⤢ На весь экран"}</button>
         <button className="btn mini" onClick={onClose} title="Скрыть доску — вы остаётесь в звонке, правки продолжат приходить">Скрыть доску</button>
       </div>

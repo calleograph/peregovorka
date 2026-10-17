@@ -346,7 +346,10 @@ export interface ModelStat {
   retries: number; avg_s: number | null; median_s: number | null; avg_input_chars: number | null; avg_output_chars: number | null; tokens_per_s: number | null; last: string | null; archived?: boolean;
 }
 export interface SetupStep { id: string; title: string; done: boolean; page: string }
-export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean }
+export interface SetupCheck { id: string; title: string; status: "ok" | "warn" | "fail" | "todo"; detail: string; page: string }
+export interface SetupSummary { ok: number; warn: number; fail: number; todo: number; total: number; attention: number }
+/** Чек-лист: steps — что настроено; checks — результат последней проверки состояния (пусто, пока проверку не запускали); summary — итог по обоим спискам. */
+export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean; checks: SetupCheck[]; last_check_at: string | null; summary: SetupSummary }
 export interface MailProfile {
   id: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login"; username: string; secret_set: boolean;
   from_address: string; from_name: string; timeout_s: number; verify_cert: boolean; is_active: boolean;
@@ -718,6 +721,7 @@ export const api = {
   conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),
   createMap: (meetingId: string) => request<{ status: string }>("POST", `/meetings/${meetingId}/map`),
   editMapTopic: (meetingId: string, topicId: string, patch: MapTopicEdit) => request<MapState>("PATCH", `/meetings/${meetingId}/map/topics/${encodeURIComponent(topicId)}`, patch),
+  logBoardExport: (meetingId: string, format: string, pages: number) => request<void>("POST", `/meetings/${meetingId}/whiteboard/export`, { format, pages }),
   logMapExport: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/map/export`),
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
@@ -854,6 +858,7 @@ export const api = {
     accessStatus: () => request<AccessStatus>("GET", "/admin/access/status"),
     accessCheckUser: (login: string) => request<AccessCheck>("POST", "/admin/access/check-user", { login }),
     setupStatus: () => request<SetupStatus>("GET", "/admin/setup/status"),
+    setupCheck: () => request<SetupStatus>("POST", "/admin/setup/check"),
     setupComplete: (skipped: string[]) => request<{ completed: boolean }>("POST", "/admin/setup/complete", { skipped }),
     mailProfiles: () => request<{ items: MailProfile[] }>("GET", "/admin/mail/profiles"),
     createMail: (body: Record<string, unknown>) => request<MailProfile>("POST", "/admin/mail/profiles", body),

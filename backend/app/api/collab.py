@@ -19,10 +19,11 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.deps import SessionUser, get_db
+from ..auth.deps import SessionUser, client_ip, get_db
 from ..auth.guests import Actor, require_actor
 from ..models import ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services import events, roles, whiteboard as wb
+from ..services.audit import write_audit
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
 from ..services.meetings import JoinError
 from ..services.materials import chat_files_map, render_chat
@@ -486,6 +487,31 @@ async def board_save(meeting_id: uuid.UUID, request: Request, body: dict[str, An
     return {"saved": True, "seq": seq, **board_meta(row)}
 
 
+BOARD_EXPORT_FORMATS = ("png", "svg", "pdf", "drawio")
+
+
+async def _audit_board(db: AsyncSession, request: Request, actor: Actor, meeting_id: uuid.UUID, action: str, details: dict) -> None:
+    """Скачивание схемы — в журнал аудита: кто, когда, откуда, какой формат (содержимое схемы в журнал не попадает)."""
+    await write_audit(db, actor_user_id=None if actor.is_guest else actor.id, actor_name=actor.label, action=action, target_type="meeting", target_id=str(meeting_id),
+                      details=details, ip=client_ip(request))
+
+
+@router.post("/{meeting_id}/whiteboard/export", status_code=204)
+async def board_export_log(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """PNG, SVG и PDF формирует браузер из схемы, которую участник и так видит; здесь только запись в журнал аудита (формат и число страниц)."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor)
+    _require_board_view(meeting, actor)
+    fmt = body.get("format")
+    pages = body.get("pages", 1)
+    if fmt not in BOARD_EXPORT_FORMATS:
+        raise HTTPException(status_code=422, detail="format: png | svg | pdf | drawio")
+    if not isinstance(pages, int) or isinstance(pages, bool) or not 1 <= pages <= 500:
+        raise HTTPException(status_code=422, detail="pages: число от 1 до 500")
+    await _audit_board(db, request, actor, meeting_id, "board.export", {"format": fmt, "pages": pages, "source": "browser", "meeting_ended": meeting.ended_at is not None})
+    await db.commit()
+    return Response(status_code=204)
+
+
 @router.get("/{meeting_id}/whiteboard.drawio")
 async def board_download(meeting_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
     """Схема в формате draw.io (XML): открывается в draw.io / diagrams.net для дальнейшего редактирования."""
@@ -496,5 +522,7 @@ async def board_download(meeting_id: uuid.UUID, request: Request, actor: Actor =
     row = await db.get(MeetingWhiteboard, meeting_id)
     if row is None or not row.xml:
         raise HTTPException(status_code=404, detail="Доска в этой встрече не использовалась")
+    await _audit_board(db, request, actor, meeting_id, "board.download", {"format": "drawio", "source": "server", "meeting_ended": meeting.ended_at is not None})
+    await db.commit()
     return Response(row.xml.encode("utf-8"), media_type="application/vnd.jgraph.mxfile", headers={
         "Content-Disposition": f'attachment; filename="whiteboard-{str(meeting_id)[:8]}.drawio"', "Cache-Control": "no-store"})

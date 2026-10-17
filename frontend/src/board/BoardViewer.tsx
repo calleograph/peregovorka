@@ -57,7 +57,7 @@ export default function BoardViewer({ meetingId, fileBase, warm = false }: { mee
   return (
     <div className="card board-view">
       <div className="row">
-        <BoardExportMenu request={(f, extra) => rpc.request(f, extra)} fileBase={fileBase} />
+        <BoardExportMenu request={(f, extra) => rpc.request(f, extra)} fileBase={fileBase} meetingId={meetingId} />
         <a className="btn mini" href={api.whiteboardFileUrl(meetingId)} download>Скачать .drawio (исходный файл)</a>
         {state === "loading" || total === null ? <span className="muted small">Загрузка схемы…</span> : <span className="muted small">загружена за {(total / 1000).toFixed(1)} с</span>}
         <span className="muted small">Правки здесь не сохраняются в встречу — чтобы продолжить работу над схемой, скачайте файл .drawio и откройте его в draw.io.</span>

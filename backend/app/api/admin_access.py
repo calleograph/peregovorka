@@ -8,13 +8,12 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..auth.directory import DirectoryError
-from ..models import CaCertificate, LdapProfile, MailProfile, StorageProfile
 from ..services import local_admin as la
+from ..services import setup_check
 from ..services.audit import write_audit
 from ..services.ca_bundle import CertError, decode_upload, parse_certificates
 from ..services.legacy_ldap import LegacyImportError
@@ -223,34 +222,34 @@ async def access_check_user(request: Request, body: dict[str, Any] = Body(...), 
     return out
 
 
-async def _count(db: AsyncSession, model, *where) -> int:
-    return (await db.execute(select(func.count()).select_from(model).where(*where))).scalar_one()
+def _setup_payload(setup, su: SessionUser, steps: list[dict], last: dict) -> dict:
+    return {"completed": setup.completed, "skipped": setup.skipped, "steps": steps,                  # type: ignore[attr-defined]
+            "checks": last["checks"], "last_check_at": last["at"], "summary": setup_check.summarize(steps, last["checks"]),
+            "show": (not setup.completed) and su.local}                                              # type: ignore[attr-defined]
 
 
 @router.get("/setup/status")
 async def setup_status(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Шаги мастера первоначальной настройки: что уже сделано. Мастер показывается, пока не завершён или не пропущен."""
-    s = request.app.state.settings
-    svc = request.app.state.settings_svc
-    setup = await svc.get(db, "setup")
-    access = await svc.get(db, "access")
-    ldap_n = await _count(db, LdapProfile, LdapProfile.enabled.is_(True)) + (1 if s.ldap_uri_list else 0)
-    ca_n = await _count(db, CaCertificate) + (1 if s.ldap_ca_file else 0)
-    groups_n = len(access.admin_groups) + (1 if s.ldap_admin_group_dn else 0)   # type: ignore[attr-defined]
-    login_n = len(access.user_groups) + (1 if s.ldap_access_group_dn else 0)      # type: ignore[attr-defined]
-    storage_n = await _count(db, StorageProfile)
-    mail_n = await _count(db, MailProfile, MailProfile.is_active.is_(True))
-    steps = [
-        {"id": "ldap", "title": "Подключение к каталогу (LDAPS)", "done": ldap_n > 0, "page": "ldap"},
-        {"id": "ca", "title": "Сертификаты CA", "done": ca_n > 0, "page": "ca"},
-        {"id": "access", "title": "Группы администраторов", "done": groups_n > 0, "page": "access"},
-        {"id": "login_acl", "title": "Кто может входить в систему (группы допуска)", "done": login_n > 0, "page": "login_access"},
-        {"id": "storage", "title": "Файловое хранилище", "done": storage_n > 0, "page": "storages"},
-        {"id": "mail", "title": "Исходящая почта", "done": mail_n > 0, "page": "mail"},
-        {"id": "check", "title": "Проверка системы", "done": False, "page": "system"},
-    ]
-    return {"completed": setup.completed, "skipped": setup.skipped, "steps": steps,   # type: ignore[attr-defined]
-            "show": (not setup.completed) and su.local}                               # type: ignore[attr-defined]
+    """Чек-лист первоначальной настройки: что уже сделано (steps) и результат последней проверки состояния (checks, last_check_at, summary).
+    Мастер показывается автоматически, пока не завершён или не пропущен; сам чек-лист всегда доступен в «Состояние → Обзор»."""
+    setup = await request.app.state.settings_svc.get(db, "setup")
+    steps = await setup_check.config_steps(request.app, db)
+    steps.append({"id": "check", "title": "Проверка системы", "done": False, "page": "system"})
+    return _setup_payload(setup, su, steps, await setup_check.last_check(request.app))
+
+
+@router.post("/setup/check")
+async def setup_run_check(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Запустить проверку состояния заново (публичный адрес и TLS, звонки, порты, каталог, распознавание, языковая модель, диск, ключ) и сохранить результат."""
+    setup = await request.app.state.settings_svc.get(db, "setup")
+    steps = await setup_check.config_steps(request.app, db)
+    last = await setup_check.run_and_store(request.app, db)
+    summary = setup_check.summarize(steps, last["checks"])
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="setup.check", target_type="system", target_id="setup",
+                      ip=client_ip(request), details={k: summary[k] for k in ("ok", "warn", "fail", "todo", "total")})
+    await db.commit()
+    steps.append({"id": "check", "title": "Проверка системы", "done": True, "page": "system"})
+    return _setup_payload(setup, su, steps, last)
 
 
 @router.post("/setup/complete")

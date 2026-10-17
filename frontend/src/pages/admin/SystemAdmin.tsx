@@ -1,3 +1,4 @@
+import SetupChecklistCard from "./SetupChecklistCard";
 import { useCallback, useEffect, useState } from "react";
 import { version as lkClientVersion } from "livekit-client";
 import { api, type ApiError, type JournalStats, type SystemStatus } from "../../api";
@@ -66,6 +67,7 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
         <button className="btn primary" onClick={report} disabled={!!busy} title="Только чтение: формирует файл с диагностикой без секретов">{busy === "report" ? "Формирование…" : "Скачать диагностический отчёт"}</button></div>
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
       {problems && (problems.length ? <div className="alert error"><b>Найдено в отчёте:</b><ul style={{ margin: "4px 0 0" }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul></div> : <div className="alert ok">Диагностика не нашла проблем.</div>)}
+      {!tech && <SetupChecklistCard onOpen={onOpen} />}
       <RepairsPanel onOpen={onOpen} />
       {!s.master_key_ok && <div className="alert error">APP_MASTER_KEY не задан или некорректен — секретные настройки (пароли, токены, ключи) сохранить нельзя.</div>}
       {s.kernel && !s.kernel.ok && <div className="alert"><b>Параметры ядра ниже рекомендаций WebRTC.</b> {s.kernel.note} На общем сервере применяет администратор сервера.</div>}
