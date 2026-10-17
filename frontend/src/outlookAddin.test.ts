@@ -64,7 +64,7 @@ describe("надстройка Outlook: чистые функции", () => {
 
 describe("команда insertPeregovorkaMeeting на фиктивном Office.js", () => {
   type Handler = (e: { completed: (o: { allowEvent: boolean }) => void }) => void;
-  let handler: Handler;
+  let handlers: Record<string, Handler>;
   let body: string;
   let location: string;
   let props: Record<string, string>;
@@ -75,16 +75,18 @@ describe("команда insertPeregovorkaMeeting на фиктивном Office
   const ok = (fn: (cb: (r: unknown) => void) => void) => fn;
   beforeEach(async () => {
     vi.resetModules();
+    handlers = {};
     body = "<p>Повестка</p>"; location = ""; props = {}; notified = []; store = {};
     const mk = (value: unknown) => ({ getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).Office = {
-      AsyncResultStatus: { Succeeded: "succeeded" }, EventType: { DialogEventReceived: "e", DialogMessageReceived: "m" },
+      AsyncResultStatus: { Succeeded: "succeeded" }, MailboxEnums: { RestVersion: { v2_0: "v2.0" } }, EventType: { DialogEventReceived: "e", DialogMessageReceived: "m" },
       onReady: (cb: () => void) => cb(),
-      actions: { associate: (_n: string, f: Handler) => { handler = f; } },
+      actions: { associate: (n: string, f: Handler) => { handlers[n] = f; } },
       context: {
         ui: { displayDialogAsync: ok(() => { throw new Error("диалог не должен открываться при валидном токене"); }) },
-        mailbox: { item: {
+        mailbox: { userProfile: { emailAddress: "owner@example.org" }, convertToRestId: (id: string) => `rest-${id}`, item: {
+          getItemIdAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: "EWS-ITEM-ID-123" }),
           loadCustomPropertiesAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: { get: (k: string) => props[k], set: (k: string, v: string) => { props[k] = v; }, saveAsync: (cb2: (r: unknown) => void) => cb2({ status: "succeeded" }) } }),
           subject: mk("Планёрка"), start: mk(new Date("2026-10-20T10:00:00Z")), end: mk(new Date("2026-10-20T10:30:00Z")), recurrence: mk(null),
           body: { getAsync: (_t: string, cb: (r: unknown) => void) => cb({ status: "succeeded", value: body }), setAsync: (v: string, _o: unknown, cb: (r: unknown) => void) => { body = v; cb({ status: "succeeded" }); } },
@@ -102,7 +104,8 @@ describe("команда insertPeregovorkaMeeting на фиктивном Office
     load();
   });
 
-  const press = () => new Promise<boolean>((resolve) => handler({ completed: (o) => resolve(o.allowEvent) }));
+  const press = () => new Promise<boolean>((resolve) => handlers.insertPeregovorkaMeeting({ completed: (o) => resolve(o.allowEvent) }));
+  const send = () => new Promise<boolean>((resolve) => handlers.onAppointmentSendHandler({ completed: (o) => resolve(o.allowEvent) }));
 
   it("создаёт конференцию, вставляет блок и ссылку; повторное нажатие использует тот же ключ и не дублирует блок", async () => {
     expect(await press()).toBe(true);
@@ -121,5 +124,41 @@ describe("команда insertPeregovorkaMeeting на фиктивном Office
     expect(await press()).toBe(false);
     expect(notified[0]).toContain("не разрешено");
     expect(body).toBe("<p>Повестка</p>");
+  });
+
+  it("в запрос попадают организатор, часовой пояс и идентификаторы события для серверной сверки", async () => {
+    expect(await press()).toBe(true);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent).toMatchObject({ organizer: "owner@example.org", ews_id: "EWS-ITEM-ID-123", rest_id: "rest-EWS-ITEM-ID-123" });
+    expect(typeof sent.tz).toBe("string");
+  });
+
+  it("отправка приглашения: встреча с конференцией синхронизируется, без неё — нет; отправку не блокирует никогда", async () => {
+    expect(await send()).toBe(true);                                                     // нет pg_key — ничего не отправляется
+    expect(fetchMock).not.toHaveBeenCalled();
+    props.pg_key = "k".repeat(20);
+    expect(await send()).toBe(true);
+    const call = fetchMock.mock.calls[0];
+    expect(call[0]).toBe("/api/v1/outlook/meetings");
+    expect(JSON.parse(call[1].body)).toMatchObject({ key: props.pg_key, ews_id: "EWS-ITEM-ID-123" });
+  });
+
+  it("отправка: сбой сервера, истёкший вход или нет токена не мешают отправить; окно входа не открывается", async () => {
+    props.pg_key = "k".repeat(20);
+    fetchMock.mockResolvedValueOnce({ status: 500, json: async () => ({}) });
+    expect(await send()).toBe(true);
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect(await send()).toBe(true);
+    delete store["pg_outlook_token"];
+    fetchMock.mockClear();
+    expect(await send()).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();                                            // без токена — молча (displayDialogAsync в обработчиках запрещён)
+  });
+
+  it("ошибка вставки уходит и в журнал сервера", async () => {
+    fetchMock.mockResolvedValueOnce({ status: 403, json: async () => ({ detail: { message: "Нельзя" } }) });
+    expect(await press()).toBe(false);
+    const log = fetchMock.mock.calls.find((c) => c[0] === "/api/v1/outlook/log");
+    expect(log && JSON.parse(log[1].body).message).toBe("Нельзя");
   });
 });

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
@@ -48,6 +49,25 @@ def _dt(v, field: str) -> datetime:
     except ValueError:
         raise HTTPException(status_code=422, detail=f"Поле «{field}»: время в формате ISO 8601 (например, 2026-10-20T07:00:00Z)") from None
     return ol.aware(d)
+
+
+_EMAIL = re.compile(r"^[^@\s<>\"']{1,120}@[A-Za-z0-9.-]{1,120}$")
+_ITEM_ID = re.compile(r"^[A-Za-z0-9+/=_.%-]{8,700}$")
+
+
+def _link(room: Room, body: dict) -> None:
+    """Связь с событием календаря для серверной сверки: организатор, идентификаторы (EWS и REST), серия, часовой пояс. Неверные значения молча отбрасываются."""
+    org = str(body.get("organizer") or "").strip().lower()
+    if _EMAIL.match(org):
+        room.outlook_organizer = org
+    for field, key in (("outlook_ews_id", "ews_id"), ("outlook_rest_id", "rest_id"), ("outlook_series_id", "series_id")):
+        v = str(body.get(key) or "").strip()
+        if _ITEM_ID.match(v) and getattr(room, field) != v:
+            setattr(room, field, v)
+            room.outlook_synced_at = None                                     # новый идентификатор — сверить при ближайшем проходе
+    tz = str(body.get("tz") or "").strip()
+    if re.match(r"^[A-Za-z0-9_+./ -]{1,64}$", tz):
+        room.outlook_tz = tz
 
 
 def _fail(exc: TempRoomError):
@@ -94,10 +114,20 @@ async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSess
                                         encrypt_storage=se.default_for_new(await s.settings_svc.get(db, "general")))
     except TempRoomError as exc:
         _fail(exc)
+    _link(room, body)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.create" if created else "outlook.sync", target_type="room", target_id=str(room.id),
                       ip=client_ip(request), details={"start": room.scheduled_start.isoformat(), "end": room.scheduled_end.isoformat(), "recurring": room.recurring})
     await db.commit()
     return _out(room, ol.public_url(s.settings.app_public_url, cfg), cfg, created)
+
+
+@router.post("/log", status_code=204)
+async def addin_log(request: Request, body: dict = Body(...)):
+    """Ошибки надстройки (то, что пользователь видит в уведомлении) попадают в журнал событий: «Администрирование → Интеграции → Microsoft Outlook»."""
+    su = await _addin_user(request)
+    msg = " ".join(str(body.get("message") or "").split())[:300]
+    if msg:
+        request.app.state.journal.emit("outlook", "addin_error", level="warn", user=su.display_name, ip=client_ip(request), message=msg, data={"where": str(body.get("where") or "")[:40]})
 
 
 @router.get("/meetings/by-key/{key}")
@@ -169,4 +199,4 @@ async def manifest(request: Request, db: AsyncSession = Depends(get_db)):
     base = ol.public_url(s.app_public_url, cfg)
     if not cfg.enabled or not base.startswith("https://"):
         raise HTTPException(status_code=404, detail="Интеграция выключена или не задан публичный HTTPS-адрес.")
-    return Response(ol.manifest_xml(base, s.app_version), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})
+    return Response(ol.manifest_xml(base, s.app_version, sync_on_send=cfg.sync_on_send), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})

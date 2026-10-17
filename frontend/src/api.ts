@@ -309,6 +309,11 @@ export interface LdapProfile {
   use_for_users: boolean; use_for_admins: boolean; position: number; uri: string;
 }
 export interface DiagStage { stage: string; ok: boolean | null; message: string; ms?: number }
+export interface OutlookCheck { key: string; title: string; ok: boolean | null; message: string }
+export interface OutlookConference {
+  id: string; name: string; organizer: string | null; organizer_email: string | null; start: string; end: string; recurring: boolean; state: string; url: string;
+  sync_state: string | null; sync_error: string | null; synced_at: string | null; tracked: boolean; created_at: string;
+}
 export interface SipSummaryItem { key: string; title: string; ok: boolean | null; text: string; detail: string }
 export interface DiagResult { ok: boolean; stages: DiagStage[]; stage?: string; message?: string; summary?: SipSummaryItem[] }
 export interface SipGuide {
@@ -904,6 +909,10 @@ export const api = {
     deleteSip: (id: string) => request<void>("DELETE", `/admin/sip/profiles/${id}`),
     syncSip: (id: string) => request<{ ok: boolean | null; message: string }>("POST", `/admin/sip/profiles/${id}/sync`),
     checkSip: (id: string) => request<DiagResult>("POST", `/admin/sip/profiles/${id}/check`),
+    outlookStatus: () => request<{ checks: OutlookCheck[]; base: string; ok: boolean; conferences: number; enabled: boolean }>("GET", "/admin/outlook/status"),
+    outlookMeetings: () => request<{ items: OutlookConference[] }>("GET", "/admin/outlook/meetings"),
+    outlookSyncTest: (mailbox: string) => request<{ ok: boolean; message: string; ms: number }>("POST", "/admin/outlook/sync-test", { mailbox }),
+    outlookSyncRun: () => request<{ checked: number; cancelled: number; rescheduled: number; error: number; ok: number }>("POST", "/admin/outlook/sync-run"),
     sipGuide: (profileId?: string) => request<SipGuide>("GET", `/admin/sip/guide${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ""}`),
     sipCalls: (q: { direction?: string; result?: string; limit?: number } = {}) => request<{ items: SipCallRow[] }>("GET", `/admin/sip/calls?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]))}`),
     sipSummary: (id: string) => request<{ summary: SipSummaryItem[]; at: string | null }>("GET", `/admin/sip/profiles/${id}/summary`),

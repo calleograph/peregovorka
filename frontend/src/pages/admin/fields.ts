@@ -286,6 +286,21 @@ export const outlookFields: Field[] = [
     help: "Через этот срок Outlook снова откроет окно входа (с паролем и, если включена, двухфакторной защитой)." },
   { section: "Ограничения и вход надстройки", name: "guest_links", label: "Пускать гостей без учётной записи", type: "bool",
     help: "На странице конференции после открытия входа появляется кнопка «Войти гостем» (гостевые права: чат, звук, без показа экрана). Включайте, если во встречах участвуют внешние люди." },
+  { section: "Почтовая инфраструктура", name: "mail_kind", label: "Тип почтовой системы", type: "select", options: [["exchange", "Локальный Exchange (2016/2019)"], ["m365", "Microsoft 365 / Exchange Online"]],
+    help: "Определяет, какие инструкции по установке и какой способ сверки показывать. На работу надстройки не влияет." },
+  { section: "Почтовая инфраструктура", name: "sync_on_send", label: "Передавать изменения при отправке приглашения", type: "bool",
+    help: "Надстройка подписывается на отправку встречи (Smart Alerts): при «Отправить» и «Отправить обновление» время и тема уходят на сервер, а идентификаторы события — для серверной сверки. Нужен Outlook с Mailbox 1.12 (классический Outlook для Windows 2206+ с Exchange 2019 CU12+, Outlook в браузере, новый Outlook, Microsoft 365). После включения скачайте пакет заново и переустановите надстройку; отправку это никогда не блокирует." },
+  { section: "Серверная сверка календаря", name: "sync_mode", label: "Способ сверки", type: "select", options: [["off", "Выключена"], ["graph", "Microsoft Graph (Microsoft 365)"], ["ews", "EWS (локальный Exchange)"]],
+    help: "Раз в несколько минут сервер читает событие организатора (тема, время, отмена; без тела письма) и обновляет или отменяет конференцию, если встречу изменили в другом клиенте или удалили. Ошибки связи комнату никогда не отменяют." },
+  { section: "Серверная сверка календаря", name: "sync_interval_minutes", label: "Как часто сверять", unit: "минут", type: "number", min: 1, max: 1440, example: "10", showIf: (v) => v.sync_mode !== "off" },
+  { section: "Серверная сверка календаря", name: "graph_tenant_id", label: "Идентификатор каталога (Tenant ID)", type: "text", showIf: (v) => v.sync_mode === "graph", placeholder: "00000000-0000-0000-0000-000000000000" },
+  { section: "Серверная сверка календаря", name: "graph_client_id", label: "Идентификатор приложения (Client ID)", type: "text", showIf: (v) => v.sync_mode === "graph",
+    help: "Приложение в Microsoft Entra ID с правом приложения Calendars.ReadBasic.All (только чтение календарей, без содержимого писем) и согласием администратора." },
+  { section: "Серверная сверка календаря", name: "graph_client_secret", label: "Секрет приложения", type: "secret", showIf: (v) => v.sync_mode === "graph", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
+  { section: "Серверная сверка календаря", name: "ews_url", label: "Адрес EWS", type: "text", showIf: (v) => v.sync_mode === "ews", placeholder: "https://mail.example.org/EWS/Exchange.asmx" },
+  { section: "Серверная сверка календаря", name: "ews_user", label: "Учётная запись сверки", type: "text", showIf: (v) => v.sync_mode === "ews",
+    help: "Нужна роль ApplicationImpersonation (New-ManagementRoleAssignment) либо доступ «Рецензент» к календарям организаторов. Поддерживается только базовая аутентификация по HTTPS; NTLM и Kerberos не поддержаны — тогда используйте передачу при отправке." },
+  { section: "Серверная сверка календаря", name: "ews_password", label: "Пароль учётной записи сверки", type: "secret", showIf: (v) => v.sync_mode === "ews", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
 ]
 
 export const profilePolicyFields: Field[] = [

@@ -21,7 +21,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
@@ -50,6 +50,7 @@ from .services.mail_delivery import DeliveryService
 from .services.ldap_profiles import LdapService, ProfileDirectory
 from .services.legacy_ldap import LegacyLdapMigrator
 from .services.sip import SipGateway, SipRouting, SipService
+from .services.outlook_sync import SyncRunner
 from .util_errors import describe_error
 from .services.settings import SettingsService
 from .workers.asr_sync import run_asr_sync
@@ -151,6 +152,7 @@ def create_app(
         app.state.auto_backup = AutoBackup(app)
         app.state.autoupdate = AutoUpdater(session_maker, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
+        app.state.outlook_sync = SyncRunner(settings_svc, journal, getattr(app.state, "test_transports", {}).get("outlook_sync"))
         app.state.sip_gateway = SipGateway(settings)
         app.state.sip_routing = SipRouting(app.state.sip, app.state.sip_gateway, session_maker)
         app.state.files = protocols.files
@@ -229,7 +231,7 @@ def create_app(
         if start_workers:
             tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
-            tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc, sip=app.state.sip_routing), name="meeting-reaper"))
+            tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync), name="meeting-reaper"))
             tasks.append(asyncio.create_task(run_autoupdate(app.state.autoupdate), name="auto-update"))
             tasks.append(asyncio.create_task(run_auto_backup(app.state.auto_backup), name="auto-backup"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
@@ -295,7 +297,7 @@ def create_app(
         return response
 
     prefix = "/api/v1"
-    for r in (site_api.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(public_router)     # публичный API: /api/public/v1 (свой формат ошибок, ключи вместо cookie-сессии)

@@ -671,6 +671,7 @@ class ProfilePolicySettings(_Group):
 class OutlookSettings(_Group):
     """Надстройка Outlook (Office.js): запланированные временные комнаты из календаря. По умолчанию выключено."""
 
+    SECRETS: ClassVar[tuple[str, ...]] = ("graph_client_secret", "ews_password")
     enabled: bool = False
     public_url: str = ""                                                  # адрес, который попадёт в манифест и ссылки (пусто — публичный адрес приложения)
     allowed_groups: str = ""                                              # DN групп каталога через запятую, кому можно создавать; пусто — любому сотруднику
@@ -680,6 +681,16 @@ class OutlookSettings(_Group):
     token_ttl_hours: int = Field(default=168, ge=1, le=720)               # срок действия токена надстройки (потом — повторный вход в окне Outlook)
     max_active_per_user: int = Field(default=100, ge=1, le=1000)
     guest_links: bool = False                                             # пускать по ссылке гостей без учётной записи (в открывшееся окно входа)
+    mail_kind: str = "exchange"                                           # exchange (локальный Exchange) | m365 (Exchange Online) — подсказки и инструкции; на работу не влияет
+    sync_on_send: bool = False                                            # манифест подписывает надстройку на отправку приглашения (Smart Alerts): время и тема уходят на сервер. Нужен Mailbox 1.12
+    sync_mode: str = "off"                                                # серверная сверка календаря: off | graph | ews
+    sync_interval_minutes: int = Field(default=10, ge=1, le=1440)
+    graph_tenant_id: str = ""
+    graph_client_id: str = ""
+    graph_client_secret: str = ""                                         # секрет приложения Entra ID (только чтение календарей)
+    ews_url: str = ""                                                     # https://mail.example.org/EWS/Exchange.asmx
+    ews_user: str = ""                                                    # учётная запись сверки (роль ApplicationImpersonation либо доступ «Рецензент» к календарям)
+    ews_password: str = ""
 
     @field_validator("public_url")
     @classmethod
@@ -693,6 +704,28 @@ class OutlookSettings(_Group):
     @classmethod
     def _groups(cls, v: str) -> str:
         return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))
+
+    @field_validator("mail_kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in ("exchange", "m365"):
+            raise ValueError("Почтовая инфраструктура: локальный Exchange или Microsoft 365")
+        return v
+
+    @field_validator("sync_mode")
+    @classmethod
+    def _sync(cls, v: str) -> str:
+        if v not in ("off", "graph", "ews"):
+            raise ValueError("Серверная сверка: выключена, Microsoft Graph или EWS")
+        return v
+
+    @field_validator("ews_url")
+    @classmethod
+    def _ews(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^https://[^\s/]+(/[^\s]*)?$", v):
+            raise ValueError("Адрес EWS: https://сервер/EWS/Exchange.asmx")
+        return v
 
 
 class SipPolicySettings(_Group):

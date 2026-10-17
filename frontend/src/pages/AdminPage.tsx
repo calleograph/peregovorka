@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, sipPolicyFields, outlookFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -20,6 +20,7 @@ import MailTemplatesAdmin from "./admin/MailTemplatesAdmin";
 import LlmAdmin from "./admin/LlmAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
+import OutlookAdmin from "./admin/OutlookAdmin";
 import SipAdmin from "./admin/SipAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
@@ -48,12 +49,6 @@ const GROUPS: Group[] = [
     { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
     { id: "login_access", label: "Кто может входить", render: (go) => <LoginAccessAdmin onOpen={go} /> },
     { id: "crypto", label: "Шифрование хранилища", render: () => <CryptoAdmin /> },
-    { id: "outlook", label: "Надстройка Outlook", render: () => (
-      <>
-        <SettingsForm key="outlook" group="outlook" title="Интеграция с Outlook (календарь)" fields={outlookFields}
-          intro="Кнопка «Добавить конференцию» в окне встречи Outlook создаёт запланированную комнату и вставляет ссылку в приглашение. Установка: скачайте манифест и добавьте его администратором в Microsoft 365 или Exchange (инструкция — docs/OUTLOOK_ADDIN.md). Нужен публичный адрес с HTTPS." />
-        <p className="small"><a className="btn" href="/api/v1/outlook/manifest.xml" download>Скачать манифест надстройки</a> <span className="muted">Доступен при включённой интеграции и заданном HTTPS-адресе (сначала сохраните настройки).</span></p>
-      </>) },
     { id: "profile_policy", label: "Правка профиля", render: () => (
       <SettingsForm key="profile_policy" group="profile_policy" title="Что пользователь может изменить в личном кабинете" fields={profilePolicyFields}
         intro="Правка пользователя сильнее данных каталога: вход и «обновить из AD» её не перезаписывают, а кнопка «Восстановить из LDAP» возвращает значение каталога. Все правки записываются в журнал аудита." />) },
@@ -105,6 +100,7 @@ const GROUPS: Group[] = [
         <ApiProfilesAdmin key="anon-profiles" kind="anonymizer" fields={anonFields} />
       </>) },
     { id: "llm", label: "Языковая модель (LLM)", render: () => <LlmAdmin /> },
+    { id: "outlook", label: "Microsoft Outlook", render: () => <OutlookAdmin /> },
     { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
     { id: "sip_policy", label: "Политика телефонии", render: () => (
       <SettingsForm key="sip_policy" group="sip_policy" title="Политика телефонии: ограничения и журнал вызовов" fields={sipPolicyFields}

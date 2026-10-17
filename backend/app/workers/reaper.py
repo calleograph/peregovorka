@@ -11,13 +11,15 @@ from ..services.meetings import MeetingService
 log = logging.getLogger("app.reaper")
 
 
-async def run_reaper(session_maker: async_sessionmaker[AsyncSession], service: MeetingService, interval: float = 10.0, sip=None) -> None:
+async def run_reaper(session_maker: async_sessionmaker[AsyncSession], service: MeetingService, interval: float = 10.0, sip=None, outlook_sync=None) -> None:
     while True:
         try:
             async with session_maker() as db:
                 await service.reap_once(db)
                 if sip is not None:
                     await sip.sweep(db)
+                if outlook_sync is not None:
+                    await outlook_sync.tick(db)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

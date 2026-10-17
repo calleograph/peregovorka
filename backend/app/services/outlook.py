@@ -253,12 +253,28 @@ def public_view(room: Room, st: str, *, now: datetime, cfg: OutlookSettings) -> 
 
 
 # ------------------------------------------------------------------------------------------------ манифест
-def manifest_xml(base: str, version: str) -> str:
+def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
     """Манифест надстройки (add-in only manifest, поставщик онлайн-встреч). Идентификатор стабилен для адреса, поэтому обновление манифеста заменяет надстройку."""
     gid = str(uuid.uuid5(uuid.NAMESPACE_URL, "peregovorka-outlook:" + base))
     n = [int(x) for x in re.findall(r"\d+", version)[:3]] + [0, 0, 0]
     v = f"{n[0] + 1}.{n[1]}.{n[2]}.0"                 # Office требует версию манифеста не ниже 1.0: старшая часть увеличена на единицу (растёт вместе с версией приложения)
     b = escape(base)
+    # Smart Alerts (OnAppointmentSend, Mailbox 1.12): при отправке приглашения или обновления время и тема уходят на сервер. Подпись обработчика никогда не блокирует отправку.
+    rt = '''
+        <Runtimes>
+          <Runtime resid="residRuntime">
+            <Override type="javascript" resid="residScript"/>
+          </Runtime>
+        </Runtimes>''' if sync_on_send else ""
+    launch = '''
+            <ExtensionPoint xsi:type="LaunchEvent">
+              <LaunchEvents>
+                <LaunchEvent Type="OnAppointmentSend" FunctionName="onAppointmentSendHandler" SendMode="SoftBlock"/>
+              </LaunchEvents>
+              <SourceLocation resid="residRuntime"/>
+            </ExtensionPoint>''' if sync_on_send else ""
+    urls = f'\n          <bt:Url id="residRuntime" DefaultValue="{b}/outlook/commands.html"/>\n          <bt:Url id="residScript" DefaultValue="{b}/outlook/commands.js"/>' if sync_on_send else ""
+    min_set = "1.12" if sync_on_send else "1.3"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0" xsi:type="MailApp">
   <Id>{gid}</Id>
@@ -299,11 +315,11 @@ def manifest_xml(base: str, version: str) -> str:
       <Description resid="residDescription"/>
       <Requirements>
         <bt:Sets>
-          <bt:Set Name="Mailbox" MinVersion="1.3"/>
+          <bt:Set Name="Mailbox" MinVersion="{min_set}"/>
         </bt:Sets>
       </Requirements>
       <Hosts>
-        <Host xsi:type="MailHost">
+        <Host xsi:type="MailHost">{rt}
           <DesktopFormFactor>
             <FunctionFile resid="residFunctionFile"/>
             <ExtensionPoint xsi:type="AppointmentOrganizerCommandSurface">
@@ -328,7 +344,7 @@ def manifest_xml(base: str, version: str) -> str:
                   </Control>
                 </Group>
               </OfficeTab>
-            </ExtensionPoint>
+            </ExtensionPoint>{launch}
           </DesktopFormFactor>
         </Host>
       </Hosts>
@@ -340,7 +356,7 @@ def manifest_xml(base: str, version: str) -> str:
           <bt:Image id="icon-80" DefaultValue="{b}/outlook/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="residFunctionFile" DefaultValue="{b}/outlook/commands.html"/>
+          <bt:Url id="residFunctionFile" DefaultValue="{b}/outlook/commands.html"/>{urls}
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="residDescription" DefaultValue="Peregovorka"/>

@@ -111,26 +111,48 @@
     } catch (e) { /* уведомления не поддерживаются этим клиентом */ }
   }
 
+  /** Что серверу нужно знать о событии: время, тема, признак серии, организатор, часовой пояс и идентификаторы для серверной сверки (если встреча уже сохранена). */
+  function collect(item, key) {
+    var mb = Office.context.mailbox;
+    return Promise.all([
+      asyncCall(function (cb) { item.subject.getAsync(cb); }),
+      asyncCall(function (cb) { item.start.getAsync(cb); }),
+      asyncCall(function (cb) { item.end.getAsync(cb); }),
+      item.recurrence && item.recurrence.getAsync ? asyncCall(function (cb) { item.recurrence.getAsync(cb); }).catch(function () { return null; }) : Promise.resolve(null),
+      item.getItemIdAsync ? asyncCall(function (cb) { item.getItemIdAsync(cb); }).catch(function () { return null; }) : Promise.resolve(null),
+    ]).then(function (v) {
+      var ews = v[4] || null;
+      var rest = null;
+      try { if (ews && mb.convertToRestId) rest = mb.convertToRestId(ews, Office.MailboxEnums.RestVersion.v2_0); } catch (e) { rest = null; }
+      var tz = "";
+      try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { tz = ""; }
+      var payload = { key: key, subject: v[0], start: toIso(v[1]), end: toIso(v[2]), recurring: !!v[3], tz: tz };
+      try { if (mb.userProfile && mb.userProfile.emailAddress) payload.organizer = mb.userProfile.emailAddress; } catch (e) { /* не критично */ }
+      if (ews) payload.ews_id = ews;
+      if (rest) payload.rest_id = rest;
+      try { if (item.seriesId) payload.series_id = item.seriesId; } catch (e) { /* не критично */ }
+      return payload;
+    });
+  }
+
+  /** Сообщение об ошибке уходит в журнал сервера (Администрирование → Microsoft Outlook), чтобы администратор видел то же, что пользователь. Сбой самого отчёта молча игнорируется. */
+  function report(token, where, text) {
+    if (!token) return Promise.resolve();
+    return api("POST", "/log", token, { where: where, message: String(text) }).catch(function () { /* сервер недоступен */ });
+  }
+
   function run(event) {
     var item = Office.context.mailbox.item;
     var props;
     var key;
-    var recurring = false;
     return asyncCall(function (cb) { item.loadCustomPropertiesAsync(cb); })
       .then(function (p) {
         props = p;
         key = props.get("pg_key");
         if (!key) { key = newKey(); props.set("pg_key", key); }
-        return Promise.all([
-          asyncCall(function (cb) { item.subject.getAsync(cb); }),
-          asyncCall(function (cb) { item.start.getAsync(cb); }),
-          asyncCall(function (cb) { item.end.getAsync(cb); }),
-          item.recurrence && item.recurrence.getAsync ? asyncCall(function (cb) { item.recurrence.getAsync(cb); }).catch(function () { return null; }) : Promise.resolve(null),
-        ]);
+        return collect(item, key);
       })
-      .then(function (v) {
-        recurring = !!v[3];
-        var payload = { key: key, subject: v[0], start: toIso(v[1]), end: toIso(v[2]), recurring: recurring };
+      .then(function (payload) {
         var attempt = function (token) { return api("POST", "/meetings", token, payload); };
         var token = readToken(getStorage(), Date.now());
         var first = token ? attempt(token) : login().then(attempt);
@@ -149,18 +171,38 @@
       })
       .then(function () { event.completed({ allowEvent: true }); })
       .catch(function (e) {
-        notify(item, "Peregovorka: " + (e && e.message ? e.message : e));
-        event.completed({ allowEvent: false });
+        var text = e && e.message ? e.message : e;
+        notify(item, "Peregovorka: " + text);
+        report(readToken(getStorage(), Date.now()), "insert", text).then(function () { event.completed({ allowEvent: false }); });
       });
+  }
+
+  /** Отправка приглашения или обновления (Smart Alerts, OnAppointmentSend): время, тема и идентификаторы события уходят на сервер. Никогда не блокирует отправку и не показывает окон
+   *  (в обработчиках событий окна входа запрещены: без действующего токена ничего не делаем — токен появится при следующем нажатии кнопки). */
+  function onAppointmentSendHandler(event) {
+    var item = Office.context.mailbox.item;
+    var token = readToken(getStorage(), Date.now());
+    var done = function () { event.completed({ allowEvent: true }); };
+    if (!token) { done(); return; }
+    asyncCall(function (cb) { item.loadCustomPropertiesAsync(cb); })
+      .then(function (props) {
+        var key = props.get("pg_key");
+        if (!key) return null;                                         // встреча без конференции Peregovorka
+        return collect(item, key).then(function (payload) { return api("POST", "/meetings", token, payload); });
+      })
+      .then(function (res) { if (res && res.status !== 200 && res.status !== 401) return report(token, "send", errorText(res)); })
+      .then(done, function (e) { report(token, "send", e && e.message ? e.message : e).then(done); });
   }
 
   /* имя функции указано в манифесте (FunctionName) */
   function insertPeregovorkaMeeting(event) { run(event); }
 
-  var api_ = { newKey: newKey, wrapBlock: wrapBlock, replaceBlock: replaceBlock, hasBlock: hasBlock, toIso: toIso, readToken: readToken, saveToken: saveToken, errorText: errorText, START: START, END: END };
+  var api_ = { collect: collect, newKey: newKey, wrapBlock: wrapBlock, replaceBlock: replaceBlock, hasBlock: hasBlock, toIso: toIso, readToken: readToken, saveToken: saveToken, errorText: errorText, START: START, END: END };
   if (typeof module !== "undefined" && module.exports) module.exports = api_;
   root.PGOutlook = api_;
   if (typeof Office !== "undefined" && Office.actions && Office.actions.associate) {
-    Office.onReady(function () { Office.actions.associate("insertPeregovorkaMeeting", insertPeregovorkaMeeting); });
+    /* на верхнем уровне, а не в Office.onReady: в среде обработчиков событий (отправка встречи) onReady не вызывается */
+    Office.actions.associate("insertPeregovorkaMeeting", insertPeregovorkaMeeting);
+    Office.actions.associate("onAppointmentSendHandler", onAppointmentSendHandler);
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

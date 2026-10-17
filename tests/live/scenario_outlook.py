@@ -16,7 +16,7 @@ const ok = (v) => (cb) => cb({status: 'succeeded', value: v});
 window.Office = {
   AsyncResultStatus: {Succeeded: 'succeeded'}, EventType: {DialogEventReceived: 'e', DialogMessageReceived: 'm'},
   onReady: (cb) => cb(),
-  actions: {associate: (n, f) => { window.__handler = f; }},
+  actions: {associate: (n, f) => { if (n === 'insertPeregovorkaMeeting') window.__handler = f; }},
   context: {
     ui: {messageParent: (m) => { window.__parent = m; },
          displayDialogAsync: (url, o, cb) => { throw new Error('диалог: токен должен быть уже сохранён'); }},

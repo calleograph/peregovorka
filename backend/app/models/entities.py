@@ -113,6 +113,15 @@ class Room(Base):
     scheduled_end: Mapped[datetime | None] = mapped_column(UTCDateTime)
     join_opens_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     outlook_key: Mapped[str | None] = mapped_column(String(80))
+    # Связь с событием календаря для серверной сверки (Graph/EWS): организатор, идентификаторы события, серия, часовой пояс и итог последней сверки.
+    outlook_organizer: Mapped[str | None] = mapped_column(String(254))
+    outlook_ews_id: Mapped[str | None] = mapped_column(String(700))
+    outlook_rest_id: Mapped[str | None] = mapped_column(String(700))
+    outlook_series_id: Mapped[str | None] = mapped_column(String(700))
+    outlook_tz: Mapped[str | None] = mapped_column(String(64))
+    outlook_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    outlook_sync_state: Mapped[str | None] = mapped_column(String(12))      # ok | error | missing
+    outlook_sync_error: Mapped[str | None] = mapped_column(String(300))
     recurring: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).

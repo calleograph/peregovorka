@@ -95,7 +95,7 @@ TABLES: dict[str, TablePolicy] = {
                               "llm_mode", "llm_local_model", "llm_summary_mode", "llm_summary_profile_id", "llm_summary_local_model", "sip_mode", "sip_profile_id", "sip_extension",
                               "sip_allow_inbound", "sip_allow_outbound", "sip_contacts", "welcome_message", "auto_map_mode", "slug_history", "lifetime", "lifecycle",
                               "created_by_name", "created_at", "updated_at"],
-                       HASH: ["password_hash"], RESET: ["sip_dispatch_rule_id", "closed_at", "auto_close_at"], USER_REF: ["created_by_user_id"]}), bound={"sip_dispatch_rule_id": BOUND_LIVEKIT}),
+                       HASH: ["password_hash"], RESET: ["sip_dispatch_rule_id", "closed_at", "auto_close_at", "outlook_organizer", "outlook_ews_id", "outlook_rest_id", "outlook_series_id", "outlook_tz", "outlook_synced_at", "outlook_sync_state", "outlook_sync_error"], USER_REF: ["created_by_user_id"]}), bound={"sip_dispatch_rule_id": BOUND_LIVEKIT}),
     "room_acl": TablePolicy(True, "кому доступна переговорка (группы и пользователи каталога)", "Доступ к переговоркам", order=21,
         columns=_cols({DATA: ["id", "room_id", "subject_type", "subject_ref", "display_name"]})),
     "room_moderators": TablePolicy(True, "руководители переговорок", "Руководители переговорок", order=21,
