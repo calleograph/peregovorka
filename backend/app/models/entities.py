@@ -41,6 +41,11 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text)            # только для local (argon2id)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Двухфакторная аутентификация (TOTP): секрет зашифрован ключом APP_MASTER_KEY; последний принятый шаг — защита от повтора кода
+    totp_secret_enc: Mapped[str | None] = mapped_column(Text)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Профиль из каталога (только разрешённые атрибуты) и собственная аватарка. Обновляется при каждом входе и кнопкой «Обновить данные из AD».
     title: Mapped[str | None] = mapped_column(String(300))            # должность
     department: Mapped[str | None] = mapped_column(String(300))       # подразделение
@@ -709,6 +714,18 @@ class StorageSyncRun(Base):
     orphans: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # неизвестные файлы (не импортируются)
     unavailable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)   # не удалось проверить (хранилище недоступно)
     details: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class UserBackupCode(Base):
+    """Резервный код входа при потере устройства: хранится только хэш, каждый код действует один раз."""
+
+    __tablename__ = "user_backup_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class ConfigBackupRun(Base):

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services import captcha
 from ..services.audit import audit_now
 from ..auth.deps import _origin_ok, client_ip, get_db
 from ..auth.guests import GUEST_HEADER, Actor, require_actor
@@ -121,6 +122,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     if not _origin_ok(request):
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
     await _throttle(request, "guest:join", JOIN_LIMIT, JOIN_WINDOW)
+    await captcha.guard(request, "guest")
     room = await _room_by_token(db, token)
     name = clean_display_name(body.display_name)
     ip, client = client_ip(request), parse_client(request.headers.get("user-agent"))
@@ -139,6 +141,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
             raise HTTPException(status_code=403, detail={"code": "room_password_required", "message": "Требуется пароль комнаты."})
         if not verify_room_password(room.password_hash, body.password):
             await _throttle(request, "guest:pwfail", PASSWORD_FAILS, PASSWORD_WINDOW)
+            await captcha.note_failure(request, "guest")
             await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,
                             result="denied", actor_type="guest", details={"code": "room_password_invalid"})
             journal.emit("room", "guest_join_denied", level="warn", user=f"guest:{name}", room=room.name, ip=ip, client=client,

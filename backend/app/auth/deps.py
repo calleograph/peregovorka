@@ -33,11 +33,12 @@ class SessionUser:
     csrf: str
     local: bool = False
     must_change: bool = False
+    must_totp: bool = False
 
     @classmethod
     def from_session(cls, sid: str, data: SessionData) -> "SessionUser":
         return cls(sid, uuid.UUID(data.user_id), data.ad_guid, data.sam_account_name, data.display_name,
-                   data.is_admin, frozenset(data.groups), data.csrf, data.local, data.must_change)
+                   data.is_admin, frozenset(data.groups), data.csrf, data.local, data.must_change, data.must_totp)
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -131,6 +132,9 @@ async def require_user(request: Request) -> SessionUser:
     if su.must_change and request.url.path not in _ALLOWED_WHILE_CHANGING:
         # первичный/сброшенный пароль нужно сменить до любых других действий
         raise HTTPException(status_code=403, detail={"code": "password_change_required", "message": "Сначала смените пароль."})
+    if su.must_totp and request.url.path not in _ALLOWED_WHILE_CHANGING and not request.url.path.startswith("/api/v1/auth/totp/"):
+        # политика требует двухфакторную защиту: до её настройки сессия годится только для самой настройки
+        raise HTTPException(status_code=403, detail={"code": "totp_enrollment_required", "message": "Сначала настройте двухфакторную аутентификацию."})
     if request.method not in _SAFE_METHODS:
         if not _origin_ok(request):
             raise HTTPException(status_code=403, detail="Недопустимый Origin")

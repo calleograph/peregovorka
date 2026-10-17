@@ -30,6 +30,7 @@ class MeOut(BaseModel):
     csrf_token: str
     local: bool = False                 # локальный (аварийный) администратор
     must_change_password: bool = False  # первичный/сброшенный пароль нужно сменить до работы
+    must_enroll_totp: bool = False      # политика требует двухфакторную защиту: сначала её нужно настроить
 
 
 class ActiveMeetingOut(BaseModel):

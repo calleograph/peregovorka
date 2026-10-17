@@ -4,12 +4,15 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..auth.directory import parse_login
 from ..config import origin_allowed
+from ..services import captcha
 from ..services.audit import audit_now
 from ..models import User
 from ..security.passwords import verify_room_password
@@ -24,10 +27,10 @@ log = logging.getLogger("app.auth")
 
 def _me(su: SessionUser) -> MeOut:
     return MeOut(user=UserOut(id=su.user_id, sam_account_name=su.sam_account_name,
-                              display_name=su.display_name, is_admin=su.is_admin), csrf_token=su.csrf, local=su.local, must_change_password=su.must_change)
+                              display_name=su.display_name, is_admin=su.is_admin), csrf_token=su.csrf, local=su.local, must_change_password=su.must_change, must_enroll_totp=su.must_totp)
 
 
-@router.post("/login", response_model=MeOut)
+@router.post("/login", response_model=MeOut | dict)
 async def login(body: LoginIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     settings = request.app.state.settings
     origin = request.headers.get("origin")
@@ -35,6 +38,7 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
         log.warning("Origin отклонён", extra={"origin": origin[:200], "path": "/auth/login"})
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
     ip = client_ip(request)
+    await captcha.guard(request, "login")          # после порога неудач (или всегда) нужен решённый CAPTCHA-вызов
     journal = request.app.state.journal
     ua = parse_client(request.headers.get("user-agent"))
     try:  # в журнал — только корректный логин: в поле «логин» люди нередко по ошибке вводят пароль
@@ -44,6 +48,8 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     try:
         result = await request.app.state.auth.login(db, body.login, body.password, ip)
     except AuthError as exc:
+        if exc.code in ("invalid_credentials", "throttled"):
+            await captcha.note_failure(request, "login")
         denied = exc.code in ("access_denied", "throttled")
         await audit_now(request.app, actor_user_id=None, actor_name=login_shown, action="auth.login_locked" if exc.code == "throttled" else "auth.login_denied" if exc.code == "access_denied" else "auth.login_failed",
                         target_type="user", target_id=login_shown[:80], ip=ip, result="denied" if denied else "failure", actor_type="user",
@@ -58,12 +64,23 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
                          message=exc.message, data={"code": exc.code, "retry_after": exc.retry_after, "http": exc.status})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
+    await captcha.note_success(request, "login")
+    if result.challenge:                       # пароль верен, нужен второй фактор: сессию и cookie выдаст /auth/login/totp
+        response.headers["Cache-Control"] = "no-store"
+        return JSONResponse({"totp_required": True, "challenge": result.challenge}, headers={"Cache-Control": "no-store"})
+    return await _open_session(request, response, db, result, ip=ip, ua=ua)
+
+
+async def _open_session(request: Request, response: Response, db: AsyncSession, result, *, ip: str, ua, second_factor: str | None = None) -> MeOut:
+    settings = request.app.state.settings
+    journal = request.app.state.journal
     d = result.decision
     await audit_now(request.app, actor_user_id=uuid.UUID(result.session.user_id), actor_name=result.session.display_name or result.session.sam_account_name, action="auth.login",
                     target_type="user", target_id=str(result.session.user_id), ip=ip,
-                    details={"login": result.session.sam_account_name, "local": bool(getattr(result.session, "local", False)), "admin": bool(result.session.is_admin)})
+                    details={"login": result.session.sam_account_name, "local": bool(getattr(result.session, "local", False)), "admin": bool(result.session.is_admin),
+                             **({"second_factor": second_factor} if second_factor else {}), **({"totp_enrollment_required": True} if result.session.must_totp else {})})
     journal.emit("auth", "login_ok", user=result.session.sam_account_name, ip=ip, client=ua,
-                 data={"admin": bool(result.session.is_admin), **({"allowed_via": d.via[:5], "admin_via": d.admin_via[:5], "restricted": d.restricted} if d else {"local": True})})
+                 data={"admin": bool(result.session.is_admin), **({"allowed_via": d.via[:5], "admin_via": d.admin_via[:5], "restricted": d.restricted} if d else {"local": bool(result.session.local)})})
     # Дополнительные источники профиля (Bitrix24): пересчёт по сохранённым данным — без сети; обновление с портала — в фоне. Вход их не ждёт и от них не зависит.
     try:
         if result.user is not None and result.user.auth_source == "ad":
@@ -77,6 +94,33 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     )
     response.headers["Cache-Control"] = "no-store"
     return _me(SessionUser.from_session(result.session_id, result.session))
+
+
+class TotpLoginIn(BaseModel):
+    challenge: str = Field(min_length=10, max_length=100)
+    code: str = Field(min_length=6, max_length=32)
+
+
+@router.post("/login/totp", response_model=MeOut)
+async def login_totp(body: TotpLoginIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Второй шаг входа: код из приложения-аутентификатора или резервный код."""
+    origin = request.headers.get("origin")
+    if origin is not None and not origin_allowed(origin, request.app.state.settings):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    ip = client_ip(request)
+    ua = parse_client(request.headers.get("user-agent"))
+    try:
+        result = await request.app.state.auth.complete_totp(db, body.challenge, body.code, ip)
+    except AuthError as exc:
+        await audit_now(request.app, actor_user_id=None, actor_name="(2FA)", action="auth.totp_failed", target_type="user", target_id="-", ip=ip,
+                        result="denied" if exc.code in ("throttled", "totp_expired") else "failure", details={"code": exc.code})
+        request.app.state.journal.emit("auth", "totp_failed", level="warn", ip=ip, client=ua, message=exc.message, data={"code": exc.code})
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
+    if result.backup_used:
+        await audit_now(request.app, actor_user_id=result.user.id, actor_name=result.user.display_name, action="auth.backup_code_used", target_type="user",
+                        target_id=str(result.user.id), ip=ip)
+    return await _open_session(request, response, db, result, ip=ip, ua=ua, second_factor="backup_code" if result.backup_used else "totp")
 
 
 @router.post("/logout", status_code=204)

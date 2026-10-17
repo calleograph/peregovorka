@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type ApiError, type Profile } from "../api";
+import { api, type ApiError, type Profile, type TotpStatus } from "../api";
+import TotpSetup from "../components/TotpSetup";
 import Avatar from "../components/Avatar";
 import AvatarCropper from "../components/AvatarCropper";
 import { Icon } from "../components/Icons";
@@ -54,6 +55,19 @@ function SoundSettings() {
 const FIELDS: [keyof Profile, string][] = [["display_name", "ФИО"], ["login", "Логин"], ["email", "E-mail"], ["title", "Должность"], ["department", "Подразделение"], ["phone", "Телефон"]];
 
 /** Личный кабинет: данные из Active Directory (только разрешённые атрибуты), обновление из AD и собственная аватарка. */
+function TwoFactorSection() {
+  const [st, setSt] = useState<TotpStatus | null>(null);
+  const load = () => { api.totp.status().then(setSt).catch(() => setSt(null)); };
+  useEffect(load, []);
+  if (!st || !st.available) return null;
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <h2>Двухфакторная аутентификация</h2>
+      <TotpSetup status={st} onChanged={load} />
+    </div>
+  );
+}
+
 export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => void }) {
   const [p, setP] = useState<Profile | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -105,6 +119,7 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
           {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
         </div>
       </div>
+      <TwoFactorSection />
       <ThemeSettings />
       <SoundSettings />
       {file && <AvatarCropper file={file} onCancel={() => setFile(null)} onDone={async (blob) => { await api.uploadAvatar(blob).then((x) => { setP(x); onChanged(x); setMsg({ ok: true, text: "Аватарка сохранена." }); }); setFile(null); }} />}

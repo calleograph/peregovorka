@@ -13,6 +13,12 @@ export function UsersAdmin() {
   const [err, setErr] = useState("");
   useEffect(() => { const t = window.setTimeout(() => setQuery(q), 250); return () => window.clearTimeout(t); }, [q]);
   const list = useInfinite<AdminUser>(async (offset) => { const r = await api.admin.users(query, offset); return { rows: r, more: r.length >= 100 }; }, [query]);
+  const [reset, setReset] = useState<AdminUser | null>(null);
+  const [rpw, setRpw] = useState("");
+  const doReset = async () => {
+    if (!reset) return;
+    try { await api.admin.resetTotp(reset.id, rpw); setReset(null); setRpw(""); list.reload(); } catch (e) { setErr((e as ApiError).message); }
+  };
   const toggle = async (u: AdminUser) => {
     setErr("");
     try { await api.admin.setUserActive(u.id, !u.is_active); list.reload(); } catch (e) { setErr((e as ApiError).message); }
@@ -23,12 +29,19 @@ export function UsersAdmin() {
       <p className="muted">Локальное представление доменных пользователей: они появляются после первого входа. Отключённый пользователь теряет сессию и не может войти, пока не включён снова. Пароли в системе не хранятся. Права администратора определяются членством в группе AD (LDAP_ADMIN_GROUP_DN).</p>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск по имени или логину, например: иванов" style={{ maxWidth: 360 }} aria-label="Поиск пользователя" />
       {err && <div className="alert error">{err}</div>}
+      {reset && (
+        <form className="card form" onSubmit={(e) => { e.preventDefault(); void doReset(); }}>
+          <p>Сбросить двухфакторную защиту пользователя <b>{reset.display_name}</b>? Резервные коды тоже будут удалены; он настроит защиту заново при следующем входе (если политика её требует). Действие записывается в аудит.</p>
+          <label>Ваш пароль администратора<input type="password" value={rpw} onChange={(e) => setRpw(e.target.value)} autoComplete="current-password" autoFocus required /></label>
+          <div className="row"><button className="btn danger" disabled={!rpw}>Сбросить</button><button type="button" className="btn" onClick={() => { setReset(null); setRpw(""); }}>Отмена</button></div>
+        </form>)}
       <div className="table-scroll"><table className="table">
-        <thead><tr><th>Имя</th><th>Логин</th><th>Почта</th><th>Последний вход</th><th>Статус</th><th /></tr></thead>
+        <thead><tr><th>Имя</th><th>Логин</th><th>Почта</th><th>Последний вход</th><th>2FA</th><th>Статус</th><th /></tr></thead>
         <tbody>{list.items.map((u) => (
           <tr key={u.id}>
             <td>{u.display_name}{u.is_admin && <span className="badge"> админ</span>}</td><td>{u.sam_account_name}</td><td>{u.email ?? "—"}</td>
             <td>{u.last_login_at ? fmt(u.last_login_at) : "—"}</td>
+            <td>{u.totp_enabled ? <>включена <button className="btn mini ghost danger" onClick={() => setReset(u)} title="Пользователь потерял устройство: сбросить, чтобы он настроил 2FA заново">сбросить</button></> : <span className="muted">нет</span>}</td>
             <td>{u.is_active ? "активен" : <span className="badge warn">отключён</span>}</td>
             <td><button className={`btn ghost ${u.is_active ? "danger" : ""}`} onClick={() => toggle(u)}>{u.is_active ? "Отключить" : "Включить"}</button></td>
           </tr>))}</tbody>

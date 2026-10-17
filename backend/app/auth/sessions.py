@@ -30,6 +30,7 @@ class SessionData:
     last_seen: float
     local: bool = False            # локальный (аварийный) администратор
     must_change: bool = False      # нужно сменить первичный/сброшенный пароль
+    must_totp: bool = False        # политика требует 2FA, а пользователь её ещё не настроил: до настройки доступны только /auth/totp/*
 
 
 def _key(session_id: str) -> str:
@@ -42,11 +43,11 @@ class SessionStore:
         self._s = settings
 
     async def create(self, *, user_id: str, ad_guid: str, sam: str, display_name: str,
-                     is_admin: bool, groups: list[str], local: bool = False, must_change: bool = False) -> tuple[str, SessionData]:
+                     is_admin: bool, groups: list[str], local: bool = False, must_change: bool = False, must_totp: bool = False) -> tuple[str, SessionData]:
         sid = secrets.token_urlsafe(32)
         now = time.time()
         data = SessionData(user_id, ad_guid, sam, display_name, is_admin, groups,
-                           secrets.token_urlsafe(24), now, now, local=local, must_change=must_change)
+                           secrets.token_urlsafe(24), now, now, local=local, must_change=must_change, must_totp=must_totp)
         await self._r.set(_key(sid), json.dumps(asdict(data), ensure_ascii=False), ex=self._s.session_idle_timeout_seconds)
         if local:   # индекс сессий локального администратора: сброс пароля завершает их все
             await self._r.sadd(f"usess:{user_id}", _key(sid))

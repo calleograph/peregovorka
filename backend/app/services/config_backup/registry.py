@@ -117,7 +117,7 @@ TABLES: dict[str, TablePolicy] = {
     "meeting_whiteboards": TablePolicy(False, "схемы встреч"), "transcript_segments": TablePolicy(False, "стенограммы"), "protocols": TablePolicy(False, "протоколы и резюме встреч"),
     "conversation_maps": TablePolicy(False, "карты разговора"), "recordings": TablePolicy(False, "записи встреч"), "recording_waveforms": TablePolicy(False, "волновые формы записей: производные данные, строятся заново по запросу"),
     "storage_transfers": TablePolicy(False, "задания переноса записей между хранилищами: состояние выполнения"), "storage_transfer_items": TablePolicy(False, "задания переноса записей между хранилищами: состояние выполнения"),
-    "storage_sync_runs": TablePolicy(False, "отчёты сверки хранилища"), "config_backup_runs": TablePolicy(False, "история заданий копирования настроек"),
+    "storage_sync_runs": TablePolicy(False, "отчёты сверки хранилища"), "config_backup_runs": TablePolicy(False, "история заданий копирования настроек"), "user_backup_codes": TablePolicy(False, "резервные коды входа пользователей: личные данные безопасности, не переносятся"),
     "audit_log": TablePolicy(False, "журнал аудита"), "event_log": TablePolicy(False, "журнал событий"),
     "mail_messages": TablePolicy(False, "очередь и история отправленных писем"), "legal_consents": TablePolicy(False, "подтверждения документов пользователями"),
     "api_idempotency": TablePolicy(False, "служебные данные публичного API"), "api_jobs": TablePolicy(False, "задачи публичного API"), "api_request_log": TablePolicy(False, "журнал запросов публичного API"),
@@ -156,6 +156,8 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "setup": GroupPolicy(title="Мастер первой настройки"),
     "mail_policy": GroupPolicy(title="Политика отправки писем"),
     "storage_sync": GroupPolicy(title="Сверка хранилища"),
+    "captcha": GroupPolicy(title="CAPTCHA"),
+    "auth_security": GroupPolicy(title="Двухфакторная аутентификация (политика)"),
     "auto_backup": GroupPolicy(title="Автоматическая копия настроек", skip={"archive_key": "ключ шифрования копий не кладётся в саму копию: на новом сервере создаётся новый"}),
     "autoupdate": GroupPolicy(title="Автообновление", reason="расписание обновлений относится к серверу, но безопасно переносится как настройка"),
 }

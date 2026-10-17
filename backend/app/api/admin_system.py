@@ -142,7 +142,7 @@ async def list_users(q: str = Query("", max_length=100), limit: int = Query(100,
         stmt = stmt.where(func.lower(User.display_name).like(like) | func.lower(User.sam_account_name).like(like))
     rows = (await db.execute(stmt)).scalars().all()
     return [{"id": str(u.id), "sam_account_name": u.sam_account_name, "display_name": u.display_name, "email": u.email,
-             "is_active": u.is_active, "is_admin": u.last_is_admin, "last_login_at": u.last_login_at, "ad_guid": u.ad_guid}
+             "is_active": u.is_active, "is_admin": u.last_is_admin, "last_login_at": u.last_login_at, "ad_guid": u.ad_guid, "totp_enabled": u.totp_enabled}
             for u in rows]
 
 

@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, chatFilesFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -46,6 +46,12 @@ const GROUPS: Group[] = [
     { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
     { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
     { id: "login_access", label: "Кто может входить", render: (go) => <LoginAccessAdmin onOpen={go} /> },
+    { id: "captcha", label: "CAPTCHA", render: () => (
+      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (защита от перебора)" fields={captchaFields}
+        intro="Локальная проверка без внешних сервисов: браузер решает небольшую вычислительную задачу (доли секунды). Защищает вход, вход гостя по ссылке и создание временной переговорки." />) },
+    { id: "auth_security", label: "Двухфакторная аутентификация", render: () => (
+      <SettingsForm key="auth_security" group="auth_security" title="Двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
+        intro="Одноразовые коды из приложения-аутентификатора. Если защита обязательна, пользователь при первом входе настраивает её сам (QR-код и резервные коды). Потерянное устройство — «Пользователи → сбросить» или консольная команда admin-reset для локального администратора." />) },
     { id: "access", label: "Администраторы", render: () => <AccessAdmin /> },
   ] },
   { title: "Хранилища", pages: [
@@ -115,7 +121,7 @@ const GROUPS: Group[] = [
 /** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
 const KEYWORDS: Record<string, string> = {
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
-  login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
+  captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
   public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };

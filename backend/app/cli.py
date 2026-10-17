@@ -20,10 +20,12 @@ import asyncio
 import sys
 
 from redis.asyncio import Redis
+from sqlalchemy import delete as sa_delete
 
 from .auth.throttle import _h
 from .config import Settings
 from .db import create_engine, create_session_maker
+from .models import UserBackupCode
 from .services import local_admin as la
 
 
@@ -68,6 +70,8 @@ async def _run(args: argparse.Namespace) -> int:
                     action = "local_admin.create_by_console"
                 else:
                     await la.set_password(db, user, password, must_change=True)
+                    user.totp_enabled, user.totp_secret_enc, user.totp_last_step = False, None, None      # утерянное устройство 2FA не должно закрывать доступ навсегда
+                    await db.execute(sa_delete(UserBackupCode).where(UserBackupCode.user_id == user.id))
                     action = "local_admin.reset_by_console"
                 la.audit(db, f"console:{args.actor or 'server'}", action, str(user.id), {"user": user.sam_account_name})
                 await db.commit()

@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, Suspense, lazy, useState } from "react";
-import { api, ApiError, type Me } from "../api";
+import { api, ApiError, type Me, type TotpChallenge } from "../api";
 import { CookieNotice, LoginFooter, type BuildInfo } from "../components/ProductInfo";
 import { Icon } from "../components/Icons";
 import { magnet } from "../fx";
@@ -18,6 +18,8 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
   const [caps, setCaps] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState("");
+  const [code, setCode] = useState("");
   const valid = isValidLogin(login);
 
   const submit = async (e: FormEvent) => {
@@ -25,7 +27,8 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
     setBusy(true);
     setError("");
     try {
-      onLogin(await api.login(login.trim(), password));
+      const r = await api.login(login.trim(), password);
+      if ((r as TotpChallenge).totp_required) { setChallenge((r as TotpChallenge).challenge); setPassword(""); } else onLogin(r as Me);
     } catch (err) {
       const ae = err as ApiError;
       setError(ae.status === 429 && ae.retryAfter ? `Слишком много неудачных попыток. Повторите через ${Math.max(1, Math.ceil(ae.retryAfter / 60))} мин.` : ae.message);
@@ -33,6 +36,18 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
     } finally {
       setBusy(false);
     }
+  };
+  const submitCode = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try { onLogin(await api.loginTotp(challenge, code.trim())); }
+    catch (err) {
+      const ae = err as ApiError;
+      setError(ae.message);
+      setCode("");
+      if (ae.code === "totp_expired") { setChallenge(""); }
+    } finally { setBusy(false); }
   };
   const checkCaps = (e: KeyboardEvent<HTMLInputElement>) => setCaps(e.getModifierState?.("CapsLock") ?? false);
 
@@ -47,6 +62,17 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
               : <><span className="px-mark" aria-hidden><Icon name="video" size={34} /></span><div className="px-name">{site.name}</div></>}
             <p className="px-tag">{site.subtitle}</p>
           </div>
+          {challenge ? (
+            <form className="login-card px-form" onSubmit={submitCode} aria-label="Подтверждение входа">
+              <p className="px-welcome">Введите шестизначный код из приложения-аутентификатора или резервный код.</p>
+              <label>Код подтверждения
+                <input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" inputMode="text" autoFocus required maxLength={32} autoCapitalize="none" spellCheck={false} placeholder="123456" />
+              </label>
+              {error && <div className="alert error" role="alert">{error}</div>}
+              <button className="btn primary cta wide px-cta" disabled={busy || code.trim().length < 6}>{busy ? <><i className="spin" aria-hidden /> Проверка…</> : <>Подтвердить <Icon name="arrowR" size={17} /></>}</button>
+              <button type="button" className="btn ghost" onClick={() => { setChallenge(""); setCode(""); setError(""); }}>Назад</button>
+            </form>
+          ) : (
           <form className="login-card px-form" onSubmit={submit} aria-label="Вход">
             {site.welcome_text && <p className="px-welcome">{site.welcome_text}</p>}
             <label>Логин
@@ -71,6 +97,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
               {busy ? <><i className="spin" aria-hidden /> Проверка…</> : <>Войти <Icon name="arrowR" size={17} /></>}
             </button>
           </form>
+          )}
         </div>
       </main>
       <LoginFooter info={info} />

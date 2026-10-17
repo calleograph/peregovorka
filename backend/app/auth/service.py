@@ -2,19 +2,26 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import secrets
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Settings
-from ..models import User, utcnow
+from ..models import User, UserBackupCode, utcnow
 from ..profiles.service import record_ad
 from ..security.passwords import verify_room_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
 from .sessions import SessionData, SessionStore
 from .throttle import LoginThrottle, ThrottledError
+from ..services import totp
+
+CHALLENGE_TTL_S = 300
+CHALLENGE_ATTEMPTS = 5
 
 log = logging.getLogger("app.auth")
 
@@ -55,6 +62,16 @@ class AuthError(Exception):
         self.reason = ""
 
 
+def _th(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def uuid_of(v: str):
+    import uuid  # noqa: PLC0415
+
+    return uuid.UUID(v)
+
+
 @dataclass
 class AccessDecision:
     """Решение о допуске после успешной проверки пароля: пустой список групп допуска — ограничения нет (вход всем)."""
@@ -70,9 +87,17 @@ class AccessDecision:
 @dataclass
 class LoginResult:
     session_id: str
-    session: SessionData
+    session: SessionData | None
     user: User
     decision: AccessDecision | None = None
+    challenge: str | None = None        # пароль верен, но нужен код 2FA: сессии ещё нет, её откроет /auth/login/totp
+    backup_used: bool = False
+
+
+def totp_required(cfg, *, is_admin: bool, groups) -> bool:
+    """Обязательна ли двухфакторная защита этому пользователю по политике (для off и optional — нет)."""
+    p = cfg.totp_policy
+    return p == "all" or (p == "admins" and is_admin) or (p == "groups" and bool(cfg.group_set() & {g.lower() for g in groups}))
 
 
 class AuthService:
@@ -126,12 +151,96 @@ class AuthService:
         user = await self._upsert_user(db, identity, is_admin)
         if not user.is_active:  # отключён администратором в системе (независимо от AD)
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
-        sid, data = await self._sessions.create(
-            user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name,
-            display_name=user.display_name, is_admin=is_admin, groups=sorted(identity.groups),
-        )
-        log.info("Вход выполнен", extra={"user_id": str(user.id), "is_admin": is_admin})
+        res = await self._open(db, user, is_admin=is_admin, groups=sorted(identity.groups), decision=decision, ip=ip)
+        log.info("Вход выполнен" if not res.challenge else "Пароль принят, ожидается код 2FA", extra={"user_id": str(user.id), "is_admin": is_admin})
+        return res
+
+    # ------------------------------------------------------------------------------ второй фактор
+    async def _totp_cfg(self, db: AsyncSession):
+        if self.settings_svc is None:
+            return None
+        cfg = await self.settings_svc.get(db, "auth_security")
+        await db.commit()          # закрыть читающую транзакцию: на SQLite она бы блокировала запись аудита из другого сеанса (ожидание 5 с)
+        return cfg
+
+    async def _open(self, db: AsyncSession, user: User, *, is_admin: bool, groups: list[str], ip: str, decision: AccessDecision | None = None,
+                    local: bool = False, must_change: bool = False) -> LoginResult:
+        """Пароль проверен: открыть сессию сразу, потребовать код 2FA (сессии пока нет) или открыть сессию «только для настройки 2FA»."""
+        cfg = await self._totp_cfg(db)
+        on = cfg is not None and cfg.totp_policy != "off"
+        if on and user.totp_enabled and user.totp_secret_enc:
+            token = secrets.token_urlsafe(24)
+            await self._sessions._r.set(f"totp:chal:{_th(token)}", json.dumps({"user_id": str(user.id), "is_admin": is_admin, "groups": groups, "local": local, "must_change": must_change,
+                                                                           "ip": ip}), ex=CHALLENGE_TTL_S)
+            return LoginResult("", None, user, decision, challenge=token)
+        must = bool(on and totp_required(cfg, is_admin=is_admin, groups=groups) and not user.totp_enabled)
+        sid, data = await self._sessions.create(user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name, display_name=user.display_name, is_admin=is_admin,
+                                                groups=groups, local=local, must_change=must_change, must_totp=must)
         return LoginResult(sid, data, user, decision)
+
+    async def complete_totp(self, db: AsyncSession, token: str, code: str, ip: str) -> LoginResult:
+        """Второй шаг входа: код из приложения или резервный код. Пять попыток на вход, общий счётчик неудач с паролем, повтор принятого кода отклоняется."""
+        r = self._sessions._r
+        key = f"totp:chal:{_th(token)}"
+        raw = await r.get(key)
+        if raw is None:
+            raise AuthError("totp_expired", "Время подтверждения истекло. Войдите заново.", 401)
+        ch = json.loads(raw)
+        user = await db.get(User, uuid_of(ch["user_id"]))
+        if user is None or not user.is_active or not user.totp_enabled or not user.totp_secret_enc:
+            await r.delete(key)
+            raise AuthError("totp_expired", "Время подтверждения истекло. Войдите заново.", 401)
+        norm = user.sam_account_name.lower()
+        try:
+            await self._throttle.check(norm, ip)
+        except ThrottledError as exc:
+            raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
+        attempts = await r.incr(f"totp:att:{_th(token)}")
+        if attempts == 1:
+            await r.expire(f"totp:att:{_th(token)}", CHALLENGE_TTL_S)
+        if attempts > CHALLENGE_ATTEMPTS:
+            await r.delete(key)
+            raise AuthError("totp_expired", "Слишком много неверных кодов. Войдите заново.", 429)
+        ok, used_backup = await self.check_code(db, user, code)
+        if not ok:
+            await self._throttle.record_failure(norm, ip)
+            raise AuthError("invalid_code", "Неверный код. Проверьте время на телефоне или используйте резервный код.", 401)
+        await r.delete(key, f"totp:att:{_th(token)}")
+        await self._throttle.record_success(norm)
+        user.last_login_at = utcnow()
+        await db.commit()
+        sid, data = await self._sessions.create(user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name, display_name=user.display_name, is_admin=ch["is_admin"],
+                                                groups=ch["groups"], local=ch["local"], must_change=ch["must_change"])
+        return LoginResult(sid, data, user, None, backup_used=used_backup)
+
+    async def check_code(self, db: AsyncSession, user: User, code: str) -> tuple[bool, bool]:
+        """Код из приложения (с защитой от повтора) или резервный код (гасится при использовании). Возвращает (принят, это_резервный_код)."""
+        if totp.looks_like_backup(code):
+            h = totp.hash_backup(str(user.id), code)
+            from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+            used = await db.execute(sa_update(UserBackupCode).where(UserBackupCode.user_id == user.id, UserBackupCode.code_hash == h, UserBackupCode.used_at.is_(None))
+                                    .values(used_at=utcnow()))               # погашение одним условным UPDATE: два одновременных входа с одним кодом не пройдут оба
+            await db.commit()
+            return used.rowcount == 1, used.rowcount == 1
+        secret = self._decrypt_totp(user)
+        step = totp.verify(secret, code, user.totp_last_step) if secret else None
+        if step is None:
+            return False, False
+        from sqlalchemy import update  # noqa: PLC0415
+
+        upd = await db.execute(update(User).where(User.id == user.id, (User.totp_last_step.is_(None)) | (User.totp_last_step < step)).values(totp_last_step=step))
+        await db.commit()
+        return upd.rowcount == 1, False                    # параллельный запрос с тем же кодом проиграет
+
+    def _decrypt_totp(self, user: User) -> str:
+        box = self.settings_svc.box if self.settings_svc is not None else None
+        if box is None or not user.totp_secret_enc:
+            return ""
+        try:
+            return box.decrypt(user.totp_secret_enc, aad=f"user_totp.{user.id}".encode())
+        except Exception:  # noqa: BLE001 — повреждённый секрет = «кода нет», а не падение входа
+            return ""
 
     async def verify_current(self, db: AsyncSession, su, password: str, ip: str) -> bool:
         """Повторное подтверждение пароля уже вошедшего администратора (для опасных действий, например выгрузки секретов). Сессия не создаётся.
@@ -191,10 +300,9 @@ class AuthService:
         await self._throttle.record_success(norm)
         row.last_login_at = utcnow()
         await db.commit()
-        sid, data = await self._sessions.create(user_id=str(row.id), ad_guid=row.ad_guid, sam=row.sam_account_name, display_name=row.display_name,
-                                                is_admin=True, groups=[], local=True, must_change=row.must_change_password)
+        res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip)
         log.info("Вход локального администратора", extra={"user_id": str(row.id)})
-        return LoginResult(sid, data, row)
+        return res
 
     @staticmethod
     async def _upsert_user(db: AsyncSession, ident: DirectoryIdentity, is_admin: bool) -> User:

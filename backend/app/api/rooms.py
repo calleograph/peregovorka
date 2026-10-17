@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
 from ..services import roles, temp_rooms, timings
+from ..services import captcha
 from ..services.audit import audit_now, write_audit
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
@@ -78,6 +79,7 @@ async def temporary_policy(request: Request, su: SessionUser = Depends(require_u
 async def create_temporary_room(request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """«Создать временную переговорку»: только обычный авторизованный пользователь (гость по ссылке сюда не попадает — у него нет сессии).
     Создатель становится руководителем; остальные параметры — значения по умолчанию. Комната живёт, пока идёт встреча, и закрывается сама."""
+    await captcha.guard(request, "temp_room")
     cfg = await request.app.state.settings_svc.get(db, "general")
     try:
         room = await temp_rooms.create(db, su, str(body.get("name") or ""), cfg, default_text_days=request.app.state.settings.default_text_retention_days,

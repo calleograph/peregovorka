@@ -257,6 +257,23 @@ export const syncFields: Field[] = [
 ];
 
 /** Правила рассылки материалов (SMTP-реквизиты — в профилях почты; «что и кому» выбирает руководитель комнаты). */
+export const captchaFields: Field[] = [
+  { name: "mode", label: "Когда требовать проверку", type: "select", options: [["off", "Никогда"], ["after_failures", "После серии неудачных попыток"], ["always", "Всегда"]],
+    help: "«После серии неудач» считает неудачные входы и неверные пароли комнат с одного IP-адреса; для создания временной переговорки этот режим не срабатывает (нет понятия неудачи) — выберите «Всегда»." },
+  { name: "failures", label: "Неудачных попыток до проверки", type: "number", min: 1, max: 1000, example: "20" },
+  { name: "window_minutes", label: "За какой срок считаются неудачи", unit: "минут", type: "number", min: 1, max: 1440, example: "60" },
+  { section: "Дополнительно (расширенные настройки)", name: "difficulty", label: "Сложность задачи", type: "number", min: 1000, max: 2000000,
+    help: "Верхняя граница подбираемого числа; браузеру в среднем нужна половина. 50000 — доли секунды; больше — заметнее для ботов и для медленных телефонов." },
+  { section: "Дополнительно (расширенные настройки)", name: "ttl_seconds", label: "Срок жизни задачи", unit: "секунд", type: "number", min: 30, max: 3600, example: "300" },
+]
+
+export const authSecurityFields: Field[] = [
+  { name: "totp_policy", label: "Политика", type: "select", options: [["off", "Отключена (функция скрыта)"], ["optional", "По желанию пользователя"], ["admins", "Обязательна администраторам"], ["all", "Обязательна всем"], ["groups", "Обязательна для групп каталога"]],
+    help: "«Обязательна»: при следующем входе пользователь сначала настраивает защиту. Пока она не настроена, остальные разделы для него закрыты. Обязательную защиту пользователь отключить не может." },
+  { name: "totp_groups", label: "Группы каталога (для политики «для групп»)", type: "textarea", placeholder: "cn=finance,ou=groups,dc=example,dc=org", help: "DN групп, по одному в строке или через запятую." },
+  { name: "totp_issuer", label: "Название в приложении", type: "text", placeholder: "Peregovorka", help: "Так запись будет называться в приложении-аутентификаторе." },
+]
+
 export const mailPolicyFields: Field[] = [
   { section: "Вложения", name: "attach_format", label: "Формат документов во вложении", type: "select", options: [["docx", "DOCX (Word)"], ["pdf", "PDF"], ["html", "HTML (веб-страница)"], ["txt", "Простой текст"], ["md", "Markdown"]] },
   { section: "Вложения", name: "max_attachment_mb", label: "Максимальный размер вложений в письме", unit: "МБ", type: "number", min: 1, max: 50,

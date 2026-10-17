@@ -1,7 +1,10 @@
 // Клиент REST API. Сессия — HttpOnly cookie (JS её не видит); CSRF-токен хранится только в памяти.
 
 export interface User { id: string; sam_account_name: string; display_name: string; is_admin: boolean }
-export interface Me { user: User; csrf_token: string; local?: boolean; must_change_password?: boolean }
+import { solveCaptcha, type CaptchaChallenge } from "./captcha";
+export interface Me { user: User; csrf_token: string; local?: boolean; must_change_password?: boolean; must_enroll_totp?: boolean }
+export interface TotpChallenge { totp_required: true; challenge: string }
+export interface TotpStatus { available: boolean; policy: string; enabled: boolean; required: boolean; backup_left: number; enabled_at: string | null }
 export interface ActiveMeeting { id: string; started_at: string; participants: number }
 export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
@@ -93,10 +96,10 @@ export interface JobLive { elapsed_s: number; limit_s: number; target_s: number;
 export interface ProtocolTemplate { id: string; name: string; kind: "any" | ProtocolKind; instruction: string; scope: "global" | "user"; can_edit: boolean }
 export interface AdminUser {
   id: string; sam_account_name: string; display_name: string; email: string | null; is_active: boolean; is_admin: boolean;
-  last_login_at: string | null; ad_guid: string;
+  last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -522,8 +525,9 @@ export const leaveOnUnload = (meetingId: string): void => keepalivePost(guestTok
 /** Участник покинул страницу завершённой встречи: временный доступ к ней прекращается. */
 export const releaseOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/release`);
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, captcha?: string): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
+  if (captcha) headers["X-Captcha"] = captcha;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (guestToken) headers["X-Guest-Token"] = guestToken;
   else if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
@@ -541,6 +545,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const code = typeof d === "object" && d ? d.code ?? "error" : "error";
     const message = typeof d === "object" && d ? d.message : typeof d === "string" ? d : `Ошибка ${res.status}`;
     const ra = Number(res.headers.get("Retry-After")) || undefined;
+    if (res.status === 428 && code === "captcha_required" && !captcha && typeof d === "object" && d?.challenge) {
+      // локальная CAPTCHA: решаем задачу в браузере (доли секунды) и повторяем запрос один раз
+      let solved = "";
+      try { solved = await solveCaptcha(d.challenge as CaptchaChallenge); } catch { /* ниже — обычная ошибка */ }
+      if (solved) return request<T>(method, path, body, solved);
+    }
     throw new ApiError(res.status, code, message ?? `Ошибка ${res.status}`, ra);
   }
   return data as T;
@@ -638,7 +648,15 @@ export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100):
 }
 
 export const api = {
-  login: (login: string, password: string) => request<Me>("POST", "/auth/login", { login, password }),
+  login: (login: string, password: string) => request<Me | TotpChallenge>("POST", "/auth/login", { login, password }),
+  loginTotp: (challenge: string, code: string) => request<Me>("POST", "/auth/login/totp", { challenge, code }),
+  totp: {
+    status: () => request<TotpStatus>("GET", "/auth/totp/status"),
+    setup: (password: string) => request<{ secret: string; uri: string; qr_svg: string; expires_in: number }>("POST", "/auth/totp/setup", { password }),
+    enable: (code: string) => request<{ backup_codes: string[] }>("POST", "/auth/totp/enable", { code }),
+    disable: (password: string, code: string) => request<void>("POST", "/auth/totp/disable", { password, code }),
+    regenerate: (password: string, code: string) => request<{ backup_codes: string[] }>("POST", "/auth/totp/backup-codes", { password, code }),
+  },
   /** Смена пароля локального администратора (первичный/сброшенный пароль меняется при первом входе). */
   changePassword: (current_password: string, new_password: string) => request<void>("POST", "/auth/change-password", { current_password, new_password }),
   logout: () => request<void>("POST", "/auth/logout"),
@@ -890,6 +908,7 @@ export const api = {
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     performance: () => request<PerfData>("GET", "/admin/performance"),
+    resetTotp: (userId: string, password: string) => request<void>("POST", `/admin/users/${userId}/totp/reset`, { password }),
     autoBackup: () => request<AutoBackupStatus>("GET", "/admin/auto-backup"),
     autoBackupSave: (body: Partial<Omit<AutoBackupStatus["settings"], "archive_key_set">>) => request<AutoBackupStatus>("PUT", "/admin/auto-backup/settings", body),
     autoBackupKey: (password: string) => request<{ key: string }>("POST", "/admin/auto-backup/key", { password }),

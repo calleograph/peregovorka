@@ -17,6 +17,7 @@ import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
 import LoginPage from "./pages/LoginPage";
+import TotpEnrollGate from "./components/TotpEnrollGate";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import SetupWizard from "./components/SetupWizard";
 import MeetingPage from "./pages/MeetingPage";
@@ -87,6 +88,7 @@ function StaffApp() {
   if (me === undefined) return <div className="center muted">Загрузка…</div>;
   if (me === null) return <LoginPage onLogin={onLogin} info={build} />;
   if (pending.length > 0 && !me.must_change_password) return <ConsentGate items={pending} onDone={() => setPending([])} onLogout={logout} />;
+  if (me.must_enroll_totp && !me.must_change_password) return <TotpEnrollGate onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
   if (me.must_change_password) return <ChangePasswordPage onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
 
   // Верхнее меню — для повседневной работы; полный список разделов администрирования остаётся в левом меню самой админки

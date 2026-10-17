@@ -600,6 +600,47 @@ class AutoBackupSettings(_Group):
         return v
 
 
+class AuthSecuritySettings(_Group):
+    """Двухфакторная аутентификация (TOTP). Политика: off — не предлагается; optional — каждый включает сам; admins — обязательна администраторам;
+    all — всем; groups — участникам указанных групп каталога (DN через запятую) и администраторам не обязательна, если их нет в списке."""
+
+    totp_policy: str = "optional"
+    totp_groups: str = ""
+    totp_issuer: str = Field(default="Peregovorka", max_length=60)
+
+    @field_validator("totp_policy")
+    @classmethod
+    def _policy(cls, v: str) -> str:
+        if v not in ("off", "optional", "admins", "all", "groups"):
+            raise ValueError("Политика 2FA: off, optional, admins, all или groups")
+        return v
+
+    @field_validator("totp_groups")
+    @classmethod
+    def _groups(cls, v: str) -> str:
+        return ",".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ",").split(",") if x.strip()))
+
+    def group_set(self) -> set[str]:
+        return {g for g in self.totp_groups.split(",") if g}
+
+
+class CaptchaSettings(_Group):
+    """Локальная CAPTCHA (доказательство работы, без внешних сервисов): вход, вход гостя по ссылке, создание временной переговорки."""
+
+    mode: str = "after_failures"                                  # off | after_failures | always
+    failures: int = Field(default=20, ge=1, le=1000)              # неудачных попыток с одного IP до включения проверки
+    window_minutes: int = Field(default=60, ge=1, le=1440)        # за какой срок считаются неудачи
+    difficulty: int = Field(default=50000, ge=1000, le=2000000)   # верхняя граница подбираемого числа: больше — дольше решает браузер (в среднем половина)
+    ttl_seconds: int = Field(default=300, ge=30, le=3600)         # срок жизни задачи
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in ("off", "after_failures", "always"):
+            raise ValueError("Режим CAPTCHA: off, after_failures или always")
+        return v
+
+
 class PrivacySettings(_Group):
     """Тексты уведомления о cookie и страницы «Обработка данных» (открывается без входа). Заполняет администратор: юридический текст в приложении не зашит.
     Сервис использует только технические cookie (сессия, защита от подделки запросов); категорий «маркетинг/реклама» нет."""
@@ -807,6 +848,8 @@ GROUPS: dict[str, type[_Group]] = {
     "storage_sync": StorageSyncSettings,
     "autoupdate": AutoUpdateSettings,
     "auto_backup": AutoBackupSettings,
+    "auth_security": AuthSecuritySettings,
+    "captcha": CaptchaSettings,
 }
 
 
