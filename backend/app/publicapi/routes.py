@@ -127,7 +127,7 @@ class DocOut(BaseModel):
     id: str
     meeting_id: str
     kind: Literal["protocol", "summary", "transcript"] | str
-    status: Literal["pending", "ready", "failed"] | str
+    status: Literal["pending", "running", "ready", "failed", "timeout", "cancelled"] | str
     title: str | None = None
     created_at: datetime
     updated_at: datetime

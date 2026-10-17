@@ -71,7 +71,7 @@ def _num(v) -> float | None:
 async def recent_runs(db: AsyncSession, limit: int = 1500) -> list[dict]:
     """Последние документы с метаданными генерации (самые новые первыми)."""
     rows = (await db.execute(select(Protocol.kind, Protocol.status, Protocol.meta, Protocol.created_at)
-                             .where(Protocol.kind.in_(("protocol", "summary")), Protocol.meta.is_not(None))
+                             .where(Protocol.kind.in_(("protocol", "summary")), Protocol.status != "cancelled", Protocol.meta.is_not(None))      # отмена пользователем — не ошибка модели
                              .order_by(Protocol.created_at.desc()).limit(limit))).all()
     out = []
     for kind, status, meta, created in rows:

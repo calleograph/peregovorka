@@ -639,6 +639,8 @@ class ProtocolService:
                         async with asyncio.timeout(budget.max_s):
                             text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info, budget=budget)
                     except TimeoutError:
+                        if budget.elapsed() < budget.max_s - 1:
+                            raise                                    # TimeoutError изнутри (не наш предел): обычная ошибка, а не «превышено время»
                         raise JobTimeout(f"Задание остановлено через {f'{round(budget.max_s / 60)} мин' if budget.max_s >= 120 else f'{int(budget.max_s)} с'}: запросы к модели отменены, документ не сформирован.") from None
                 meta.update(self._timing_meta(info, datetime.now(timezone.utc)))
                 if once:

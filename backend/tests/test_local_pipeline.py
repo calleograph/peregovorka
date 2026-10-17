@@ -273,3 +273,21 @@ def test_local_model_ignores_user_limits_and_instructions_but_external_keeps_the
         sent = "\n".join(m["content"] for b in rt.seen for m in b["messages"])
         assert "МОЯ ИНСТРУКЦИЯ" not in sent and "КОМНАТНАЯ ИНСТРУКЦИЯ" not in sent
         assert min(b["max_tokens"] for b in rt.seen) > 64, "пользовательские лимиты длины ответа к локальной модели не применяются"
+
+
+def test_user_cancellation_is_not_counted_against_the_model(tmp_path, directory):
+    from app.services import llm_stats
+
+    with app_with(tmp_path, directory, Runtime(), **model_env(tmp_path)) as c:
+        _room, mid = meeting_with_two(c)
+
+        async def seed_and_read():
+            async with c.app_obj.state.session_maker() as db:
+                for status in ("cancelled", "timeout", "ready"):
+                    db.add(Protocol(meeting_id=uuid.UUID(mid), kind="summary", status=status, created_by="t", content="x" if status == "ready" else None,
+                                    meta={"model": "m", "llm_local": True, "failed": status != "ready"}))
+                await db.commit()
+                return [r["status"] for r in await llm_stats.recent_runs(db)]
+
+        statuses = c.portal.call(seed_and_read)
+        assert "cancelled" not in statuses and "timeout" in statuses and "ready" in statuses, "остановка по времени — ошибка модели, отмена пользователем — нет"
