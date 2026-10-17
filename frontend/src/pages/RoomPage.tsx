@@ -22,6 +22,9 @@ import TranscriptPanel from "../components/TranscriptPanel";
 import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
 import { buildRoomOptions } from "../roomOptions";
 import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../micPrefs";
+import { applyNoiseMode, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
+import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
+import { QualityManager, type QualityState } from "../quality/manager";
 import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { LiveBus, backoffDelay } from "../liveSocket";
@@ -71,6 +74,16 @@ function Ctl({ error, onClose, children }: { error?: string; onClose: () => void
 
 /** Гостевой вход: сессия уже создана страницей гостя (имя, проверка оборудования); здесь — сама комната без административных функций. */
 export interface GuestSession { info: GuestJoinInfo; onLeft: (why: "left" | "ended") => void }
+
+function qualityTitle(q: QualityState): string {
+  const conn: Record<string, string> = { excellent: "отличное", good: "хорошее", poor: "плохое", lost: "потеряно", unknown: "неизвестно" };
+  const parts = [`Соединение: ${conn[q.conn] ?? q.conn}`, `видео: ${LEVEL_LABEL[q.level].toLowerCase()}${q.manual ? " (выбрано вручную)" : " (автоматически)"}`];
+  if (q.limited) parts.push(`ограничение: ${q.limited === "bandwidth" ? "канал" : q.limited === "cpu" ? "процессор" : q.limited}`);
+  if (q.lossPct !== undefined) parts.push(`потери ${q.lossPct.toFixed(1)}%`);
+  if (q.rttMs !== undefined) parts.push(`задержка ${Math.round(q.rttMs)} мс`);
+  if (q.cameraSuspended) parts.push("камера отключена из-за канала — звук продолжается");
+  return parts.join(" · ") + ". Звук всегда в приоритете.";
+}
 
 export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: { guest?: GuestSession; selfName?: string; roomIdOverride?: string; roomInfo?: Room | null }) {
   const { roomId: routeRoomId = "" } = useParams();
@@ -162,6 +175,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [, setRoomsCreated] = useState(0);
   const [, setInstance] = useState("");
   const [micPrefs, setMicPrefs] = useState<MicPrefs>(() => loadMicPrefs());
+  const qualityRef = useRef<QualityManager | null>(null);
+  const [quality, setQuality] = useState<QualityState | null>(null);
   const [micFail, setMicFail] = useState<"busy" | "denied" | "other" | null>(null);
   const [notice, setNotice] = useState<{ kind: "info" | "ok" | "warn"; text: string } | null>(null);
   const [welcome, setWelcome] = useState<string | null>(null);
@@ -275,6 +290,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     window.clearTimeout(floorTimer.current); floorTimer.current = undefined;
     const r = roomRef.current;
     roomRef.current = null;
+    qualityRef.current?.stop(); qualityRef.current = null; setQuality(null);
     const prep = prepMicRef.current;
     prepMicRef.current = null;
     void prep?.then((t) => { if (!(t instanceof Error)) t.stop(); });
@@ -425,7 +441,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, (pub) => {
         refresh();
-        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); }
+        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); void qualityRef.current?.onCameraPublished(); }
+        if (pub.source === Track.Source.Camera) void qualityRef.current?.onCameraPublished();
         if (pub.source === Track.Source.ScreenShare) {
           screenIntendedRef.current = true;
           reportEvent("screen_track_published", { meetingId: meetingRef.current ?? undefined });
@@ -500,6 +517,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       });
     await room.connect(info.livekit_url, info.token);
     connectedOnce = true;
+    qualityRef.current?.stop();
+    qualityRef.current = new QualityManager(room, setQuality);
+    qualityRef.current.start();
     tl.mark("mediaConnected");
     phase("ICE_CONNECTED");
     tl.mark("active");
@@ -795,10 +815,19 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const pub = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Microphone);
     const track = pub?.audioTrack as LocalAudioTrack | undefined;
     if (!track) return;
-    try { await track.restartTrack(captureOptions(next)); setErr("mic", undefined); }
-    catch (e) { fail("mic", "mic", "mic_failed", e); }
+    try {
+      const res = await applyNoiseMode(track, next.noiseMode, (ns) => track.restartTrack({ ...captureOptions(next), noiseSuppression: ns }), () => void rollbackNoise(next, "worklet_failed"));
+      if (res.fellBack) { const n = { ...next, noiseMode: res.mode }; setMicPrefs(n); saveMicPrefs(n); noteNoiseFallback(res.reason); }
+      setErr("mic", undefined);
+    } catch (e) { fail("mic", "mic", "mic_failed", e); }
   }, [fail, setErr]);
-  const toggleNoise = () => applyMicPrefs({ ...micPrefs, noiseSuppression: !micPrefs.noiseSuppression }, micPrefs.noiseSuppression ? "noise_off" : "noise_on");
+  /** Усиленный режим не запустился или упал на ходу: остаёмся на стандартном, разговор не прерывается. */
+  const noteNoiseFallback = (reason?: string) => {
+    reportEvent("noise_suppression_fallback", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: reason ?? "unknown" });
+    setNotice({ kind: "warn", text: "Усиленное шумоподавление не удалось запустить на этом устройстве — включено стандартное." });
+  };
+  const rollbackNoise = (cur: MicPrefs, why: string) => { void applyMicPrefs({ ...cur, noiseMode: "standard" }, `noise_fallback_${why}`); noteNoiseFallback(why); };
+  const noiseNext = () => { const i = NOISE_MODES.indexOf(micPrefs.noiseMode); const m = NOISE_MODES[(i + 1) % NOISE_MODES.length]; void applyMicPrefs({ ...micPrefs, noiseMode: m }, `noise_${m}`); };
 
   /** Руководитель: выключить микрофоны у всех или у одного участника. */
   const moderate = async (who?: PView) => {
@@ -1113,7 +1142,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   /** «Ещё»: то, что нужно реже основных кнопок. Права проверяет сервер; недоступное этому пользователю не показывается. */
   const moreItems = (): MenuItem[] => [
     { id: "devices", label: "Устройства…", icon: "sliders", hint: "Микрофон, динамики и камера", hidden: !roomRef.current, onSelect: () => setDevPop({ left: Math.max(8, window.innerWidth - 392), bottom: 96 }) },
-    { id: "noise", label: `${micPrefs.noiseSuppression ? "✓ " : ""}Шумоподавление`, icon: micPrefs.noiseSuppression ? "noise" : "noiseOff", hint: "Убирает фоновый шум микрофона", hidden: !canMic, disabled: stage !== "ready", onSelect: toggleNoise },
+    { id: "noise", label: `Шумоподавление: ${NOISE_LABEL[micPrefs.noiseMode].toLowerCase()}`, icon: micPrefs.noiseMode === "off" ? "noiseOff" : "noise", hint: "Нажмите, чтобы переключить: выключено → стандартное → усиленное (нейросеть на вашем устройстве)", hidden: !canMic, disabled: stage !== "ready", onSelect: noiseNext },
+    ...LEVELS.map((lv) => ({ id: `vq-${lv}`, label: `${quality && !quality.manual && quality.level === lv ? "• " : ""}${quality?.manual && quality.level === lv ? "✓ " : ""}Качество видео: ${LEVEL_LABEL[lv].toLowerCase()}`, icon: "video" as const,
+      hint: "Звук всегда в приоритете. Пункт фиксирует уровень; «автоматически» вернёт подстройку под канал", hidden: !canMic || !quality, onSelect: () => void qualityRef.current?.setManual(lv) })),
+    { id: "vq-auto", label: `${quality && !quality.manual ? "✓ " : ""}Качество видео: автоматически`, icon: "video", hint: "Уровень видео подстраивается под канал: при плохой связи страдает картинка, а не голос", hidden: !canMic || !quality, onSelect: () => void qualityRef.current?.setManual(null) },
     { id: "saudio", label: `${withAudio ? "✓ " : ""}Показ экрана со звуком`, icon: "screen", hint: "Звук вкладки или системы при следующем показе экрана", hidden: !(showScreen && join.client.screen_share_audio) || !!me?.screen, onSelect: () => setWithAudio((v) => !v) },
     ...PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: `${curProfile === pr ? "✓ " : ""}Показ экрана: ${PROFILE_LABELS[pr]}`, icon: "screen" as const,
       hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : "Профиль запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер",
@@ -1136,6 +1168,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
+          {quality && connOk && <span className={`badge ${quality.level === "high" ? "ok" : "warn"}`} title={qualityTitle(quality)}>{quality.level === "high" ? "Связь хорошая" : `Видео: ${LEVEL_LABEL[quality.level].toLowerCase()}`}</span>}
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
           {presentation && <span className="badge" title="Сколько зрителей сейчас в комнате (без выступающих)">{audienceLabel(audienceView.length)}</span>}

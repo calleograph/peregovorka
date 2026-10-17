@@ -3,6 +3,7 @@ import { Room as LkRoom } from "livekit-client";
 import { reportEvent } from "../diagnostics";
 import { describeMediaError } from "../mediaErrors";
 import type { MicPrefs } from "../micPrefs";
+import { NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 
 type Kind = "audioinput" | "audiooutput" | "videoinput";
 const LABELS: Record<Kind, string> = { audioinput: "Микрофон", audiooutput: "Динамики", videoinput: "Камера" };
@@ -55,8 +56,13 @@ export default function DevicePanel({ room, prefs, onPrefs, inline = false }: { 
       {prefs && onPrefs && (
         <fieldset className="mic-prefs">
           <legend>Микрофон</legend>
-          <label className="check"><input type="checkbox" checked={prefs.noiseSuppression} onChange={(e) => onPrefs({ ...prefs, noiseSuppression: e.target.checked }, e.target.checked ? "noise_on" : "noise_off")} />
-            <span className="check-body">Шумоподавление<span className="help">Убирает фоновый шум (вентиляторы, клавиатуру). Для студийного микрофона можно выключить.</span></span></label>
+          <div className="noise-modes" role="radiogroup" aria-label="Шумоподавление">
+            <span className="noise-title">Шумоподавление</span>
+            {NOISE_MODES.map((m) => (
+              <label key={m} className="check"><input type="radio" name="noise-mode" checked={prefs.noiseMode === m} onChange={() => onPrefs({ ...prefs, noiseMode: m }, `noise_${m}`)} />
+                <span className="check-body">{NOISE_LABEL[m]}<span className="help">{NOISE_HINT[m]}</span></span></label>
+            ))}
+          </div>
           <label className="check"><input type="checkbox" checked={prefs.echoCancellation} onChange={(e) => onPrefs({ ...prefs, echoCancellation: e.target.checked }, e.target.checked ? "echo_on" : "echo_off")} />
             <span className="check-body">Эхоподавление<span className="help">Нужно, если слушаете через колонки. В наушниках можно выключить.</span></span></label>
           <label className="check"><input type="checkbox" checked={prefs.autoGainControl} onChange={(e) => onPrefs({ ...prefs, autoGainControl: e.target.checked }, e.target.checked ? "agc_on" : "agc_off")} />

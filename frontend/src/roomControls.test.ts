@@ -13,18 +13,25 @@ const memStore = (init: Record<string, string> = {}) => {
 describe("настройки микрофона", () => {
   it("по умолчанию шумоподавление, эхоподавление и автоусиление включены, микрофон не освобождается при выключении", () => {
     expect(loadMicPrefs(memStore())).toEqual(DEFAULT_MIC_PREFS);
-    expect(DEFAULT_MIC_PREFS).toMatchObject({ noiseSuppression: true, echoCancellation: true, autoGainControl: true, releaseOnMute: false });
+    expect(DEFAULT_MIC_PREFS).toMatchObject({ noiseMode: "standard", echoCancellation: true, autoGainControl: true, releaseOnMute: false });
   });
   it("сохраняются и читаются; повреждённые данные не ломают вход", () => {
     const st = memStore();
-    saveMicPrefs({ ...DEFAULT_MIC_PREFS, noiseSuppression: false, releaseOnMute: true }, st);
-    expect(loadMicPrefs(st)).toMatchObject({ noiseSuppression: false, releaseOnMute: true, echoCancellation: true });
+    saveMicPrefs({ ...DEFAULT_MIC_PREFS, noiseMode: "off", releaseOnMute: true }, st);
+    expect(loadMicPrefs(st)).toMatchObject({ noiseMode: "off", releaseOnMute: true, echoCancellation: true });
     expect(loadMicPrefs(memStore({ "room.micPrefs.v1": "{oops" }))).toEqual(DEFAULT_MIC_PREFS);
-    expect(loadMicPrefs(memStore({ "room.micPrefs.v1": JSON.stringify({ noiseSuppression: "yes" }) }))).toEqual(DEFAULT_MIC_PREFS);
+    expect(loadMicPrefs(memStore({ "room.micPrefs.v1": JSON.stringify({ noiseMode: "loud", noiseSuppression: "yes" }) }))).toEqual(DEFAULT_MIC_PREFS);
     expect(loadMicPrefs(null)).toEqual(DEFAULT_MIC_PREFS);
   });
+  it("старые настройки (флаг noiseSuppression) переходят в режимы", () => {
+    expect(loadMicPrefs(memStore({ "room.micPrefs.v1": JSON.stringify({ noiseSuppression: false }) })).noiseMode).toBe("off");
+    expect(loadMicPrefs(memStore({ "room.micPrefs.v1": JSON.stringify({ noiseSuppression: true }) })).noiseMode).toBe("standard");
+    expect(loadMicPrefs(memStore({ "room.micPrefs.v1": JSON.stringify({ noiseMode: "enhanced" }) })).noiseMode).toBe("enhanced");
+  });
   it("параметры захвата берутся из настроек", () => {
-    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseSuppression: false })).toEqual({ noiseSuppression: false, echoCancellation: true, autoGainControl: true });
+    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "off" })).toEqual({ noiseSuppression: false, echoCancellation: true, autoGainControl: true });
+    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "enhanced" }).noiseSuppression).toBe(false);   // усиленный режим: браузерное подавление выключено, чтобы не обрабатывать дважды
+    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "standard" }).noiseSuppression).toBe(true);
   });
 });
 

@@ -1,4 +1,5 @@
 import type { AudioCaptureOptions } from "livekit-client";
+import { browserNoiseSuppression, migrateNoiseMode, type NoiseMode } from "./audio/noiseMode";
 
 /**
  * Настройки микрофона пользователя (хранятся в браузере, на сервер не отправляются).
@@ -7,9 +8,9 @@ import type { AudioCaptureOptions } from "livekit-client";
  *  - releaseOnMute — «не держать микрофон»: при выключении микрофона устройство освобождается совсем, и им могут пользоваться другие программы
  *    (по умолчанию выключено: так включение микрофона мгновенное, а Bluetooth-гарнитура не переключает профиль).
  */
-export interface MicPrefs { noiseSuppression: boolean; echoCancellation: boolean; autoGainControl: boolean; releaseOnMute: boolean }
+export interface MicPrefs { noiseMode: NoiseMode; echoCancellation: boolean; autoGainControl: boolean; releaseOnMute: boolean }
 
-export const DEFAULT_MIC_PREFS: MicPrefs = { noiseSuppression: true, echoCancellation: true, autoGainControl: true, releaseOnMute: false };
+export const DEFAULT_MIC_PREFS: MicPrefs = { noiseMode: "standard", echoCancellation: true, autoGainControl: true, releaseOnMute: false };
 const KEY = "room.micPrefs.v1";
 
 type Store = Pick<Storage, "getItem" | "setItem">;
@@ -20,8 +21,8 @@ export function loadMicPrefs(store: Store | null = defaultStore()): MicPrefs {
     const raw = store?.getItem(KEY);
     if (!raw) return { ...DEFAULT_MIC_PREFS };
     const o = JSON.parse(raw) as Partial<MicPrefs>;
-    const pick = (k: keyof MicPrefs) => (typeof o[k] === "boolean" ? (o[k] as boolean) : DEFAULT_MIC_PREFS[k]);
-    return { noiseSuppression: pick("noiseSuppression"), echoCancellation: pick("echoCancellation"), autoGainControl: pick("autoGainControl"), releaseOnMute: pick("releaseOnMute") };
+    const pick = (k: Exclude<keyof MicPrefs, "noiseMode">) => (typeof o[k] === "boolean" ? (o[k] as boolean) : DEFAULT_MIC_PREFS[k]);
+    return { noiseMode: migrateNoiseMode(o), echoCancellation: pick("echoCancellation"), autoGainControl: pick("autoGainControl"), releaseOnMute: pick("releaseOnMute") };
   } catch { return { ...DEFAULT_MIC_PREFS }; }
 }
 
@@ -31,5 +32,5 @@ export function saveMicPrefs(p: MicPrefs, store: Store | null = defaultStore()):
 
 /** Параметры захвата для getUserMedia/LiveKit. */
 export function captureOptions(p: MicPrefs = loadMicPrefs()): AudioCaptureOptions {
-  return { noiseSuppression: p.noiseSuppression, echoCancellation: p.echoCancellation, autoGainControl: p.autoGainControl };
+  return { noiseSuppression: browserNoiseSuppression(p.noiseMode), echoCancellation: p.echoCancellation, autoGainControl: p.autoGainControl };
 }

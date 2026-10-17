@@ -20,6 +20,7 @@
 | --- | --- | --- |
 | LiveKit Server | **v1.13.7** (закреплён; `latest` в production не используется) | `.env`: `LIVEKIT_IMAGE_TAG` (выставляет `update.sh` из `compat.env`) |
 | livekit-client (браузер) | 2.22.3 | `frontend/package.json` (точно), `package-lock.json` |
+| @sapphi-red/web-noise-suppressor (RNNoise, браузер) | 0.4.1 | `frontend/package.json` (точно), лицензия MIT; RNNoise — BSD-3-Clause |
 | livekit (Python SDK, ASR) | 1.1.20 | `asr-service/requirements.txt` (`==1.1.20`) |
 | livekit-api (Python, backend и ASR) | 1.2.1 | `requirements.txt` (`==1.2.1`) |
 
