@@ -405,6 +405,7 @@ class JournalSettings(_StorageTarget):
 
     local_path: str = "/data/exports/logs"
     retention_days: int = Field(default=30, ge=1, le=3650)
+    audit_retention_days: int = Field(default=0, ge=0, le=36500)   # журнал аудита: 0 — не удалять никогда (по умолчанию), иначе записи старше срока удаляются
     keep_local: bool = True
     min_level: Literal["debug", "info", "warn", "error"] = "info"
     external_flush_seconds: int = Field(default=60, ge=5, le=3600)

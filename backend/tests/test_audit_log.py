@@ -93,3 +93,38 @@ def test_no_key_means_unsigned_and_verify_reports_it():
     audit_svc.set_audit_key(None)
     assert audit_svc._key is None
     audit_svc.set_audit_key(base64.b64encode(b"k" * 32).decode())
+
+
+def test_audit_retention_purges_only_old_prefix_and_keeps_chain_intact(client):
+    from datetime import timedelta
+    from app.models import utcnow
+
+    make_room(client)
+    make_room(client)
+    app = client.app_obj
+    rows = _rows(client)
+    old_ids = [r.id for r in rows[:2]]
+
+    async def age():
+        async with app.state.session_maker() as db:
+            for rid in old_ids:                                                      # подпись покрывает время: «состарим» записи, пересчитав подпись
+                row = await db.get(AuditLog, rid)
+                row.at = utcnow() - timedelta(days=400)
+                row.sig = audit_svc.sign(row)
+            await db.commit()
+    client.portal.call(age)
+
+    async def purge(days):
+        async with app.state.session_maker() as db:
+            await app.state.settings_svc.update(db, "journal", {"audit_retention_days": days}, actor="test")
+        return await app.state.journal.purge_expired()
+
+    assert client.portal.call(purge, 0).get("audit", 0) == 0                          # 0 — не удалять
+    assert client.portal.call(purge, 365)["audit"] == 2
+
+    async def verify():
+        async with app.state.session_maker() as db:
+            return await audit_svc.verify(db)
+    out = client.portal.call(verify)
+    assert out["intact"] and not out["gaps"] and out["checked"] >= 1
+    assert not {r.id for r in _rows(client)} & set(old_ids)

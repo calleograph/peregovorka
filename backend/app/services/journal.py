@@ -21,7 +21,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..logging_setup import request_id_var, scrub
-from ..models import EventLog, utcnow
+from ..models import AuditLog, EventLog, utcnow
 from .settings import JournalSettings, SettingsError, SettingsService
 from .filestore import LOGS, FileStore
 from .storage import StorageError, build_storage
@@ -229,6 +229,11 @@ class Journal:
             res = await db.execute(delete(EventLog).where(EventLog.at < cutoff))
             stats["db"] = res.rowcount or 0
             await db.commit()
+        if cfg.audit_retention_days > 0:                    # удаляется только начало журнала: проверка целостности (`verify`) не видит в этом разрыва
+            async with self._sm() as db:
+                res = await db.execute(delete(AuditLog).where(AuditLog.at < utcnow() - timedelta(days=cfg.audit_retention_days)))
+                stats["audit"] = res.rowcount or 0
+                await db.commit()
         if cfg.enabled:
             try:
                 storage = await self._storage(cfg)
