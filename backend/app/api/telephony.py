@@ -73,14 +73,14 @@ async def phone_call(room_id: uuid.UUID, request: Request, body: dict[str, Any] 
         raise HTTPException(status_code=422, detail="Введите номер или выберите сохранённый.")
     try:
         number = normalize_number(str(raw))
-        res = await request.app.state.sip_routing.call(db, room, meeting, number, by=su.display_name)
+        res = await request.app.state.sip_routing.call(db, room, meeting, number, by=su.display_name, by_id=su.user_id, is_admin=su.is_admin)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except SipError as exc:
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.phone.call_failed", target_type="room", target_id=str(room.id), ip=client_ip(request),
                           details={"room": room.slug, "number": mask_number(number), "sip_status": exc.sip_status, "reason": exc.message[:200]})
         await db.commit()
-        raise HTTPException(status_code=exc.status if exc.status in (403, 409, 422) else 502, detail=exc.message) from None
+        raise HTTPException(status_code=exc.status if exc.status in (403, 409, 422, 429) else 502, detail=exc.message) from None
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.phone.call", target_type="room", target_id=str(room.id), ip=client_ip(request),
                       details={"room": room.slug, "meeting_id": str(meeting.id), "number": mask_number(number), "profile": res["profile"]})
     await db.commit()

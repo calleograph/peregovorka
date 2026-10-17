@@ -100,7 +100,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "outlook" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -309,7 +309,18 @@ export interface LdapProfile {
   use_for_users: boolean; use_for_admins: boolean; position: number; uri: string;
 }
 export interface DiagStage { stage: string; ok: boolean | null; message: string; ms?: number }
-export interface DiagResult { ok: boolean; stages: DiagStage[]; stage?: string; message?: string }
+export interface SipSummaryItem { key: string; title: string; ok: boolean | null; text: string; detail: string }
+export interface DiagResult { ok: boolean; stages: DiagStage[]; stage?: string; message?: string; summary?: SipSummaryItem[] }
+export interface SipGuide {
+  profile: { id?: string; name?: string } | null; params: { key: string; value: string; note: string }[];
+  network: { src: string; dst: string; proto: string; port: string; purpose: string; scope: "pbx" | "internal"; required: boolean }[];
+  ask: string[]; checklist: string[]; text: string; tls_note: string;
+  diagram: { nodes: { id: string; label: string }[]; links: { from: string; to: string; label: string; firewall: boolean }[] };
+}
+export interface SipCallRow {
+  id: string; started_at: string; direction: "in" | "out" | "test"; room: string | null; initiator: string | null; number: string; profile: string | null;
+  result: "dialing" | "answered" | "failed" | "denied"; sip_status: number | null; reason: string | null; duration_s: number | null; end_reason: string | null; tech_id: string | null; ended: boolean;
+}
 export interface CaCert {
   id: string; label: string; subject: string; issuer: string; serial: string; sha256: string; not_before: string; not_after: string; is_ca: boolean; self_signed: boolean;
   expired: boolean; added_by: string | null; created_at: string | null; source: "web" | "file"; type?: string;
@@ -893,7 +904,11 @@ export const api = {
     deleteSip: (id: string) => request<void>("DELETE", `/admin/sip/profiles/${id}`),
     syncSip: (id: string) => request<{ ok: boolean | null; message: string }>("POST", `/admin/sip/profiles/${id}/sync`),
     checkSip: (id: string) => request<DiagResult>("POST", `/admin/sip/profiles/${id}/check`),
-    testCallSip: (id: string, number: string) => request<{ ok: boolean; message: string; ms: number; sip_status?: number | null }>("POST", `/admin/sip/profiles/${id}/test-call`, { number }),
+    sipGuide: (profileId?: string) => request<SipGuide>("GET", `/admin/sip/guide${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ""}`),
+    sipCalls: (q: { direction?: string; result?: string; limit?: number } = {}) => request<{ items: SipCallRow[] }>("GET", `/admin/sip/calls?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]))}`),
+    sipSummary: (id: string) => request<{ summary: SipSummaryItem[]; at: string | null }>("GET", `/admin/sip/profiles/${id}/summary`),
+    sipConfirmAudio: (id: string, heard: boolean) => request<{ summary: SipSummaryItem[] }>("POST", `/admin/sip/profiles/${id}/confirm-audio`, { heard }),
+    testCallSip: (id: string, number: string) => request<{ ok: boolean; message: string; ms: number; sip_status?: number | null; summary?: SipSummaryItem[] }>("POST", `/admin/sip/profiles/${id}/test-call`, { number }),
     localLlmTest: () => request<{ ok: boolean; message: string; ms: number }>("POST", "/admin/llm/local/test"),
     repairs: () => request<RepairsInfo>("GET", "/admin/updates/repairs"),
     repairsScan: () => request<{ request_id: string }>("POST", "/admin/updates/repairs/scan"),

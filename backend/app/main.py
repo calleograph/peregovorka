@@ -229,7 +229,7 @@ def create_app(
         if start_workers:
             tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
-            tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc), name="meeting-reaper"))
+            tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc, sip=app.state.sip_routing), name="meeting-reaper"))
             tasks.append(asyncio.create_task(run_autoupdate(app.state.autoupdate), name="auto-update"))
             tasks.append(asyncio.create_task(run_auto_backup(app.state.auto_backup), name="auto-backup"))
             tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))

@@ -695,6 +695,35 @@ class OutlookSettings(_Group):
         return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))
 
 
+class SipPolicySettings(_Group):
+    """Политика телефонии: ограничения исходящих звонков и журнал вызовов. Профили и порты — в разделе «SIP-телефония»."""
+
+    max_concurrent: int = Field(default=10, ge=0, le=500)                 # одновременных телефонных вызовов на весь сервер (0 — без ограничения)
+    max_call_minutes: int = Field(default=120, ge=0, le=1440)             # предельная длительность одного вызова (0 — без ограничения)
+    blocked_prefixes: str = Field(default="", max_length=2000)            # запрещённые направления: префиксы через запятую (международные, платные)
+    outbound_scope: str = "leaders"                                       # кто может звонить из комнат: leaders | admins
+    fail_limit: int = Field(default=5, ge=0, le=100)                      # неудачных вызовов за окно, после которых пользователь блокируется (0 — без защиты)
+    fail_window_minutes: int = Field(default=10, ge=1, le=1440)
+    mask_numbers: bool = True                                             # в журнале вызовов скрывать середину номера
+    call_log_days: int = Field(default=365, ge=1, le=3650)
+
+    @field_validator("outbound_scope")
+    @classmethod
+    def _scope(cls, v: str) -> str:
+        if v not in ("leaders", "admins"):
+            raise ValueError("Кто может звонить: руководители комнат или только администраторы")
+        return v
+
+    @field_validator("blocked_prefixes")
+    @classmethod
+    def _blocked(cls, v: str) -> str:
+        items = [x.strip() for x in re.split(r"[\s,;]+", v) if x.strip()]
+        for x in items:
+            if not re.match(r"^[0-9+*#]{1,32}$", x):
+                raise ValueError(f"«{x[:40]}»: префикс из цифр и символов + * #")
+        return ",".join(dict.fromkeys(items))
+
+
 class PrivacySettings(_Group):
     """Тексты уведомления о cookie и страницы «Обработка данных» (открывается без входа). Заполняет администратор: юридический текст в приложении не зашит.
     Сервис использует только технические cookie (сессия, защита от подделки запросов); категорий «маркетинг/реклама» нет."""
@@ -906,6 +935,7 @@ GROUPS: dict[str, type[_Group]] = {
     "captcha": CaptchaSettings,
     "profile_policy": ProfilePolicySettings,
     "outlook": OutlookSettings,
+    "sip_policy": SipPolicySettings,
 }
 
 

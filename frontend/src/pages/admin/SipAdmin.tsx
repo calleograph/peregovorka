@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type DiagResult, type SipProfile, type SipStatus } from "../../api";
 import { normalizeNumber } from "../../phone";
 import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
+import { ConnectionCheck, SipCallLog, SipGuideDialog } from "../../components/SipGuide";
 
 interface Form {
   id?: string; name: string; enabled: boolean; is_default: boolean; direction: SipProfile["direction"]; host: string; port: number; transport: SipProfile["transport"];
@@ -32,6 +33,9 @@ export default function SipAdmin() {
   const [callNum, setCallNum] = useState<Record<string, string>>({});
   const [callRes, setCallRes] = useState<Record<string, { ok: boolean; text: string } | "run">>({});
   const [srvBusy, setSrvBusy] = useState(false);
+  const [guide, setGuide] = useState(false);
+  const [conn, setConn] = useState(false);
+  const [connId, setConnId] = useState("");
 
   const load = useCallback(async () => {
     try { const [s, p] = await Promise.all([api.admin.sipStatus(), api.admin.sipProfiles()]); setSt(s); setItems(p.items); } catch (e) { setError((e as ApiError).message); }
@@ -92,7 +96,16 @@ export default function SipAdmin() {
   return (
     <section>
       <div className="row"><h2>SIP-телефония</h2><div className="spacer" />
+        <button className="btn" onClick={() => setGuide(true)} title="Готовые параметры, порты и текст для инженера АТС по настройкам этого сервера">Инструкция по подключению АТС</button>
+        <button className="btn" aria-expanded={conn} disabled={!items.length} onClick={() => { setConn((v) => !v); if (!connId) setConnId((items.find((p) => p.is_default) ?? items[0])?.id ?? ""); }} title={items.length ? "Настройки → служба → АТС → тестовый вызов → звук" : "Сначала добавьте SIP-профиль"}>Проверить подключение</button>
         {!form && <button className="btn primary" onClick={() => { setForm({ ...empty }); setError(""); setNote(""); }}>＋ Добавить SIP-профиль</button>}</div>
+      {guide && <SipGuideDialog profiles={items} onClose={() => setGuide(false)} />}
+      {conn && items.length > 0 && (
+        <div className="card">
+          <div className="row"><h3 style={{ margin: 0 }}>Проверка подключения</h3><div className="spacer" />
+            {items.length > 1 && <label className="inline">Профиль <select value={connId} onChange={(e) => setConnId(e.target.value)}>{items.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}</div>
+          {items.find((p) => p.id === connId) && <ConnectionCheck profile={items.find((p) => p.id === connId)!} onChanged={() => void load()} />}
+        </div>)}
       <p className="muted">Подключение телефонной станции (Asterisk или другой SIP-АТС) и звонки в комнаты: АТС ↔ SIP-транк ↔ <b>LiveKit SIP Service</b> ↔ комната. Телефонный абонент появляется среди участников как обычный, его речь попадает в стенограмму и запись.
         Asterisk — первый проверенный вариант; профили не привязаны к конкретной АТС.</p>
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -220,6 +233,8 @@ export default function SipAdmin() {
           </div>
         );
       })}
+
+      <SipCallLog />
 
       <details className="group"><summary>Подсказка: как это соответствует настройкам Asterisk (PJSIP)</summary>
         <div className="help">

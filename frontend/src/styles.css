@@ -866,3 +866,15 @@ details.group { margin: 8px 0; }
 .pf-note { font-size: 11px; fill: currentColor; opacity: .75; }
 .pf-arrow line { stroke: currentColor; stroke-width: 2; }
 .pf-arrow polygon { fill: currentColor; }
+
+/* SIP: инструкция для инженера АТС, схема, журнал вызовов */
+.sg-flow { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin: 4px 0 14px; max-width: 560px; }
+.sg-node { border: 1px solid var(--line-strong, var(--line)); border-radius: var(--radius-sm, 6px); padding: 8px 12px; text-align: center; font-weight: 500; background: var(--surface, transparent); }
+.sg-link { border-left: 2px solid var(--line-strong, var(--line)); margin-left: 24px; padding: 6px 0 6px 12px; font-size: 13px; color: var(--muted); }
+.sg-link.fw { border-left-style: dashed; border-left-color: var(--warn, #b7791f); color: var(--text); }
+.sg-text { white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm, 6px); padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+.sg-checklist { list-style: none; padding-left: 0; }
+.sip-summary li { font-size: 14px; }
+.bad-text { color: var(--danger, #b3261e); }
+.table-wrap { overflow-x: auto; }
+.modal .tabs { flex: none; }

@@ -33,6 +33,7 @@ from .entities import (
     WebhookDelivery,
     WebhookEndpoint,
     SipProfile,
+    SipCall,
     StorageProfile,
     StorageSyncRun,
     ConfigBackupRun,
@@ -48,7 +49,7 @@ from .entities import (
 
 __all__ = [
     "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "UserBackupCode", "StorageKey", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
-    "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
+    "Room", "RoomAcl", "RoomModerator", "SipProfile", "SipCall", "TranscriptSegment", "User",
 ]
 
 from . import crypto_events  # noqa: E402,F401  (регистрирует события шифрования чата и стенограмм)

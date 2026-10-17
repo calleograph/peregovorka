@@ -993,3 +993,30 @@ class LegalConsent(Base):
     accepted_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     ip: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(300))
+
+
+class SipCall(Base):
+    """Журнал телефонных вызовов (SIP): дата, направление, комната, инициатор, номер (по политике маскирования), длительность, результат и технический идентификатор.
+    Хранит только то, что видит приложение: входящий вызов, отклонённый до попадания в LiveKit (АТС, правила, адрес не в списке), здесь не появится."""
+
+    __tablename__ = "sip_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)                    # out | in | test
+    room_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    room_name: Mapped[str | None] = mapped_column(String(200))
+    meeting_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    guest_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)                 # телефонный участник встречи (для закрытия записи)
+    initiator: Mapped[str | None] = mapped_column(String(200))
+    initiator_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    number: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)   # уже с учётом маскирования
+    profile_name: Mapped[str | None] = mapped_column(String(120))
+    result: Mapped[str] = mapped_column(String(12), default="dialing", server_default="dialing", nullable=False)   # dialing | answered | failed | denied
+    sip_status: Mapped[int | None] = mapped_column(Integer)
+    reason: Mapped[str | None] = mapped_column(String(300))
+    tech_id: Mapped[str | None] = mapped_column(String(160))                             # идентификатор участника LiveKit (identity)
+    answered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    duration_s: Mapped[int | None] = mapped_column(Integer)
+    end_reason: Mapped[str | None] = mapped_column(String(20))                           # hangup | remote | meeting_end | limit | lost

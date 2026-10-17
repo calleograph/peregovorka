@@ -7,19 +7,23 @@ from __future__ import annotations
 
 import asyncio
 import re
+import socket
 import time
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import select
+from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
-from ..models import Room, SipProfile, utcnow
+from ..models import Room, SipCall, SipProfile, utcnow
 from ..services.audit import write_audit
 from ..services.settings import SettingsError
-from ..services.sip import (CODEC_RATES, SipError, explain_livekit_error, explain_sip_status, mask_number, normalize_number, service_status, sip_options_probe)
+from ..services.sip import (CODEC_RATES, SipError, connection_summary, explain_livekit_error, explain_sip_status, mask_number, normalize_number, service_status, sip_options_probe,
+                            tcp_listen_probe)
+from ..services.sip_guide import build_guide
 
 router = APIRouter(prefix="/admin/sip", tags=["admin-sip"])
 
@@ -147,6 +151,11 @@ async def check_profile(pid: str, request: Request, su: SessionUser = Depends(re
     if row.direction in ("inbound", "both") and not (row.allowed_addresses or row.username):
         warn.append("для входящих не задан ни список разрешённых адресов АТС, ни логин — принимать звонки с любых адресов небезопасно")
     add("config", True if not warn else None, "Значения профиля корректны." + (" Замечания: " + "; ".join(warn) + "." if warn else ""))
+    try:
+        addrs = await asyncio.to_thread(socket.getaddrinfo, row.host, row.port)
+        add("dns", True, f"Имя «{row.host}» разрешается в {addrs[0][4][0]}.")
+    except OSError:
+        add("dns", False, f"Имя «{row.host}» не найдено в DNS на сервере приложения: проверьте адрес АТС и DNS (в контейнерах — настройки DNS Docker).")
     probe = await asyncio.to_thread(sip_options_probe, row.host, row.port, row.transport)
     add("pbx", probe["ok"], probe["message"], probe["ms"])
     started = time.monotonic()
@@ -167,9 +176,14 @@ async def check_profile(pid: str, request: Request, su: SessionUser = Depends(re
             add("livekit", False, explain_livekit_error(exc)[0], int((time.monotonic() - started) * 1000))
         svc = await service_status(st.settings, st.sip_gateway, [row], getattr(st, "test_transports", {}).get("sip_health"))
         add("service", svc["service"]["running"], svc["service"]["detail"])
+        shost = urlsplit(st.settings.sip_health_url).hostname or "livekit-sip"
+        lp = await asyncio.to_thread(tcp_listen_probe, shost, int(st.settings.sip_signaling_port))
+        add("listen", lp["ok"], lp["message"])
     ok = not any(s["ok"] is False for s in stages)
     result = {"ok": ok, "stages": stages}
-    row.last_check, row.last_check_at = {"ok": ok, "stages": [{"stage": s["stage"], "ok": s["ok"], "message": s["message"]} for s in stages]}, utcnow()
+    keep = {k: v for k, v in (row.last_check or {}).items() if k in ("test_call", "audio_in", "audio_confirmed")}      # итоги тестового вызова не теряются при новой проверке
+    row.last_check, row.last_check_at = {"ok": ok, "stages": [{"stage": s["stage"], "ok": s["ok"], "message": s["message"]} for s in stages], **keep}, utcnow()
+    result["summary"] = connection_summary(row.last_check)
     await _audit(request, su, db, "sip.profile.check", pid, {"name": row.name, "ok": ok})
     request.app.state.journal.emit("sip", "profile_check", level="info" if ok else "warn", user=su.display_name, ip=client_ip(request), message=f"{row.name}: {'OK' if ok else 'есть проблемы'}")
     await db.commit()
@@ -190,13 +204,24 @@ async def test_call(pid: str, request: Request, body: dict[str, Any] = Body(...)
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if not row.lk_outbound_trunk_id:
         raise HTTPException(status_code=409, detail="У профиля нет исходящего транка в LiveKit: проверьте направление и нажмите «Синхронизировать».")
+    pol = await st.sip.policy(db)
     room_name = f"sip-test-{uuid.uuid4().hex[:10]}"
+    ident = f"sip-test-{uuid.uuid4().hex[:8]}"
     t0 = time.monotonic()
     result: dict[str, Any]
+    audio: dict[str, Any] | None = None
+    started = utcnow()
     try:
-        await st.sip_gateway.dial(trunk_id=row.lk_outbound_trunk_id, number=number, room_name=room_name, identity=f"sip-test-{uuid.uuid4().hex[:8]}",
+        await st.sip_gateway.dial(trunk_id=row.lk_outbound_trunk_id, number=number, room_name=room_name, identity=ident,
                                   display_name="Тестовый вызов", ring_s=row.ring_timeout_s, wait=True, timeout=row.ring_timeout_s + 10)
         result = {"ok": True, "message": "Абонент ответил — связь и маршрут работают. Вызов завершён.", "ms": int((time.monotonic() - t0) * 1000)}
+        try:
+            heard = await st.sip_gateway.audio_from_remote(room_name, ident)
+            audio = {"ok": heard, "message": "Звуковая дорожка абонента опубликована в комнате: звук от АТС к серверу идёт." if heard
+                     else "Абонент ответил, но звуковой дорожки от АТС нет: проверьте RTP (диапазон портов, адрес в SDP, direct_media на АТС)."}
+        except Exception as exc:  # noqa: BLE001
+            audio = {"ok": None, "message": f"Наличие звука проверить не удалось: {explain_livekit_error(exc)[0]}"}
+        result["audio"] = audio
     except Exception as exc:  # noqa: BLE001
         msg, code = explain_livekit_error(exc)
         result = {"ok": False, "message": msg, "sip_status": code, "ms": int((time.monotonic() - t0) * 1000)}
@@ -205,12 +230,86 @@ async def test_call(pid: str, request: Request, body: dict[str, Any] = Body(...)
             await st.sip_gateway.delete_room(room_name)
         except Exception:  # noqa: BLE001
             pass
-    row.last_check, row.last_check_at = {"ok": result["ok"], "test_call": True, "message": result["message"], "sip_status": result.get("sip_status")}, utcnow()
+    now = utcnow()
+    db.add(SipCall(direction="test", initiator=su.display_name, initiator_user_id=su.user_id, number=mask_number(number) if pol.mask_numbers else number, profile_name=row.name,
+                   result="answered" if result["ok"] else "failed", sip_status=result.get("sip_status"), reason=None if result["ok"] else result["message"][:300], tech_id=ident,
+                   started_at=started, answered_at=now if result["ok"] else None, ended_at=now, duration_s=0 if not result["ok"] else int((now - started).total_seconds()),
+                   end_reason="hangup" if result["ok"] else None))
+    prev = dict(row.last_check or {})
+    prev.update(test_call={"ok": result["ok"], "message": result["message"], "sip_status": result.get("sip_status"), "at": now.isoformat()})
+    if audio is not None:
+        prev.update(audio_in={**audio, "at": now.isoformat()})
+    if not result["ok"]:
+        prev.pop("audio_in", None)
+    prev.pop("audio_confirmed", None)         # подтверждение относилось к прошлому вызову
+    row.last_check, row.last_check_at = prev, now
+    result["summary"] = connection_summary(row.last_check)
     await _audit(request, su, db, "sip.profile.test_call", pid, {"name": row.name, "number": mask_number(number), "ok": result["ok"], "sip_status": result.get("sip_status")})
     st.journal.emit("sip", "test_call", level="info" if result["ok"] else "warn", user=su.display_name, ip=client_ip(request),
                     message=f"Тестовый вызов {mask_number(number)}: {'ответили' if result['ok'] else result['message'][:160]}", data={"profile": row.name, "ok": result["ok"]})
     await db.commit()
     return result
+
+
+@router.post("/profiles/{pid}/confirm-audio")
+async def confirm_audio(pid: str, request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Администратор подтверждает, что на тестовом вызове слышно в обе стороны (автоматически проверяется только звук от АТС к серверу)."""
+    st = _st(request)
+    try:
+        row = await st.sip.row(db, pid)
+    except SettingsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    if not (row.last_check or {}).get("test_call", {}).get("ok"):
+        raise HTTPException(status_code=409, detail="Сначала выполните успешный тестовый вызов.")
+    heard = bool(body.get("heard"))
+    prev = dict(row.last_check or {})
+    prev["audio_confirmed"] = {"ok": heard, "message": "Звук слышен в обе стороны." if heard else "Администратор отметил, что звука нет или он односторонний.", "at": utcnow().isoformat(), "by": su.display_name}
+    row.last_check = prev
+    await _audit(request, su, db, "sip.profile.confirm_audio", pid, {"name": row.name, "heard": heard})
+    await db.commit()
+    return {"summary": connection_summary(row.last_check)}
+
+
+@router.get("/profiles/{pid}/summary")
+async def profile_summary(pid: str, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    st = _st(request)
+    try:
+        row = await st.sip.row(db, pid)
+    except SettingsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    return {"summary": connection_summary(row.last_check), "at": row.last_check_at.isoformat() if row.last_check_at else None}
+
+
+@router.get("/guide")
+async def guide(request: Request, profile_id: str | None = None, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Инструкция для инженера АТС по фактическим настройкам сервера и выбранному профилю (без паролей)."""
+    st = _st(request)
+    profile = None
+    if profile_id:
+        try:
+            profile = st.sip.public(await st.sip.row(db, profile_id))
+        except SettingsError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+    else:
+        default = await st.sip.default(db)
+        profile = st.sip.public(default) if default is not None else None
+    exts = [{"extension": e, "room": n} for n, e in (await db.execute(select(Room.name, Room.sip_extension).where(Room.sip_extension.is_not(None), Room.sip_allow_inbound.is_(True)).order_by(Room.name))).all()]
+    return build_guide(st.settings, profile, exts, version=st.settings.app_version)
+
+
+@router.get("/calls")
+async def calls(request: Request, limit: int = 100, direction: str | None = None, result: str | None = None, su: SessionUser = Depends(require_admin),
+                db: AsyncSession = Depends(get_db)):
+    """Журнал телефонных вызовов (новые сверху)."""
+    q = select(SipCall).order_by(SipCall.started_at.desc()).limit(max(1, min(limit, 500)))
+    if direction in ("in", "out", "test"):
+        q = q.where(SipCall.direction == direction)
+    if result in ("answered", "failed", "denied", "dialing"):
+        q = q.where(SipCall.result == result)
+    rows = (await db.execute(q)).scalars().all()
+    return {"items": [{"id": str(c.id), "started_at": c.started_at.isoformat(), "direction": c.direction, "room": c.room_name, "initiator": c.initiator, "number": c.number,
+                       "profile": c.profile_name, "result": c.result, "sip_status": c.sip_status, "reason": c.reason, "duration_s": c.duration_s, "end_reason": c.end_reason,
+                       "tech_id": c.tech_id, "ended": c.ended_at is not None} for c in rows]}
 
 
 @router.get("/explain/{code}")

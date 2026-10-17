@@ -38,5 +38,6 @@ export const ADMIN_QUICK: { tab: string; label: string; hint: string }[] = [
   { tab: "rooms", label: "Комнаты и доступ", hint: "комнаты, доступ, роли" },
   { tab: "llm", label: "Языковая модель (LLM)", hint: "локальная Qwen или внешняя" },
   { tab: "sip", label: "SIP-телефония", hint: "транки и звонки в комнаты" },
+  { tab: "sip_policy", label: "Политика телефонии", hint: "лимиты, запреты, журнал вызовов" },
   { tab: "journal", label: "Журнал событий", hint: "что происходит в системе" },
 ];

@@ -20,6 +20,7 @@ import socket
 import ssl
 import time
 import uuid
+from datetime import timedelta
 from typing import Any, Callable
 
 from livekit import api as lk
@@ -27,7 +28,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Settings
-from ..models import GuestParticipant, Meeting, Room, SipProfile, utcnow
+from ..models import GuestParticipant, Meeting, Room, SipCall, SipProfile, utcnow
 from .settings import SettingsError, SettingsService
 
 log = logging.getLogger("app.sip")
@@ -65,6 +66,12 @@ def number_allowed(profile_patterns: list[str] | None, number: str) -> bool:
     if not pats:
         return True
     return any(number.startswith(p.rstrip("*")) for p in pats)
+
+
+def number_blocked(blocked: str | list[str] | None, number: str) -> str | None:
+    """Первый запрещённый префикс, под который попадает номер (политика «Запрещённые направления»), либо None."""
+    items = re.split(r"[\s,;]+", blocked) if isinstance(blocked, str) else list(blocked or [])
+    return next((p for p in items if p and number.startswith(p.rstrip("*"))), None)
 
 
 def explain_sip_status(code: int | None, reason: str | None = None) -> str:
@@ -148,10 +155,48 @@ def sip_options_probe(host: str, port: int, transport: str, timeout: float = 3.0
     return done(True if code < 500 else None, f"АТС отвечает: SIP {code} {reason}{extra}", code)
 
 
+def _shown(number: str, pol) -> str:
+    """Номер для журнала вызовов по политике маскирования."""
+    return mask_number(number) if pol.mask_numbers else number
+
+
+def tcp_listen_probe(host: str, port: int, timeout: float = 2.0) -> dict:
+    """Слушает ли служба SIP свой порт по TCP (из сети контейнеров). UDP так проверить нельзя — это ограничение, а не признак ошибки. Блокирующая (в потоке)."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return {"ok": True, "message": f"Служба SIP принимает TCP-соединения на {host}:{port}."}
+    except ConnectionRefusedError:
+        return {"ok": False, "message": f"Порт {port}/tcp службы SIP закрыт: служба не запущена или слушает другой порт (SIP_SIGNALING_PORT). Проверьте контейнер livekit-sip."}
+    except OSError as exc:
+        return {"ok": False, "message": f"Служба SIP на {host}:{port} недоступна ({exc.strerror or type(exc).__name__})."}
+
+
+CHECK_LABELS = {  # этап проверки → (название результата для администратора, текст при успехе)
+    "config": ("Конфигурация", "Конфигурация корректна"), "service": ("Служба SIP", "Служба работает"), "pbx": ("Ответ АТС", "АТС отвечает"),
+    "test_call": ("Тестовый вызов", "Тестовый вызов успешен"), "audio_in": ("Звук от АТС", "Звук от абонента идёт в комнату"),
+    "audio_confirmed": ("Двусторонний звук", "Двусторонний звук подтверждён администратором"),
+}
+
+
+def connection_summary(last: dict | None) -> list[dict]:
+    """Пять результатов «Проверить подключение» по последним сохранённым проверкам профиля: {key, title, ok, text}. ok=None — ещё не проверялось/неприменимо."""
+    last = last or {}
+    stages = {s["stage"]: s for s in last.get("stages", [])}
+    out = []
+    for key, (title, good) in CHECK_LABELS.items():
+        s = stages.get(key) if key in ("config", "service", "pbx") else last.get(key)
+        ok, detail = (s["ok"], s["message"]) if isinstance(s, dict) else (None, "ещё не проверялось")
+        out.append({"key": key, "title": title, "ok": ok, "text": good if ok is True else detail, "detail": detail})
+    return out
+
+
 # ------------------------------------------------------------------------------------------------ профили
 class SipService:
     def __init__(self, svc: SettingsService):
         self._svc = svc
+
+    async def policy(self, db: AsyncSession):
+        return await self._svc.get(db, "sip_policy")
 
     # секрет
     def _aad(self, pid) -> bytes:
@@ -445,6 +490,15 @@ class SipGateway:
         async with self._factory() as api:
             return await api.sip.create_sip_participant(req, timeout=timeout)
 
+    async def audio_from_remote(self, room_name: str, identity: str) -> bool:
+        """Опубликовал ли участник (телефонный абонент) звуковую дорожку в комнате: подтверждает звук от АТС к серверу. Обратное направление так не проверить."""
+        async with self._factory() as api:
+            res = await api.room.list_participants(lk.ListParticipantsRequest(room=room_name))
+        for p in res.participants:
+            if p.identity == identity:
+                return any(t.type == lk.TrackType.AUDIO and not t.muted for t in p.tracks)
+        return False
+
     async def delete_room(self, room_name: str) -> None:
         async with self._factory() as api:
             await api.room.delete_room(lk.DeleteRoomRequest(room=room_name))
@@ -503,7 +557,23 @@ class SipRouting:
         if self.journal is not None:
             self.journal.emit("sip", event, level=level, room=room.name if room else None, meeting_id=meeting_id, message=message, data=data or {})
 
-    async def call(self, db: AsyncSession, room: Room, meeting: Meeting, number_raw: str, *, by: str) -> dict:
+    async def policy(self, db: AsyncSession):
+        return await self.svc.policy(db)
+
+    @staticmethod
+    async def open_calls(db: AsyncSession) -> int:
+        """Телефонные вызовы, которые идут сейчас (набор номера или разговор), по журналу вызовов."""
+        return (await db.execute(select(func.count()).select_from(SipCall).where(SipCall.ended_at.is_(None), SipCall.direction.in_(("out", "in")),
+                                                                                  SipCall.result.in_(("dialing", "answered"))))).scalar_one()
+
+    async def _deny(self, db: AsyncSession, room: Room, meeting: Meeting, number: str, pol, by: str, by_id: uuid.UUID | None, message: str, status: int, profile_name: str | None = None) -> None:
+        now = utcnow()
+        db.add(SipCall(direction="out", room_id=room.id, room_name=room.name, meeting_id=meeting.id, initiator=by, initiator_user_id=by_id, number=_shown(number, pol),
+                       profile_name=profile_name, result="denied", reason=message[:300], started_at=now, ended_at=now, duration_s=0))
+        self._emit("call_denied", "warn", room, f"{mask_number(number)}: {message}", {}, str(meeting.id))
+        raise SipError(message, status)
+
+    async def call(self, db: AsyncSession, room: Room, meeting: Meeting, number_raw: str, *, by: str, by_id: uuid.UUID | None = None, is_admin: bool = True) -> dict:
         if not room.sip_allow_outbound:
             raise SipError("Исходящие звонки в этой комнате не разрешены (Настройки комнаты → Телефония).", 403)
         profile = await self.svc.for_room(db, room, "outbound")
@@ -517,20 +587,40 @@ class SipRouting:
             raise SipError("Этот номер не входит в список допустимых для SIP-профиля.", 403)
         if meeting.ended_at is not None:
             raise SipError("Встреча завершена.", 409)
+        pol = await self.policy(db)
+        args = (db, room, meeting, number, pol, by, by_id)
+        if pol.outbound_scope == "admins" and not is_admin:
+            await self._deny(*args, "Звонить из комнат могут только администраторы (политика телефонии).", 403, profile.name)
+        if (blocked := number_blocked(pol.blocked_prefixes, number)) is not None:
+            await self._deny(*args, f"Направление «{blocked}…» запрещено политикой телефонии.", 403, profile.name)
+        if pol.fail_limit and by_id is not None:
+            since = utcnow() - timedelta(minutes=pol.fail_window_minutes)
+            fails = (await db.execute(select(func.count()).select_from(SipCall).where(SipCall.initiator_user_id == by_id, SipCall.direction == "out",
+                                                                                       SipCall.result.in_(("failed", "denied")), SipCall.started_at >= since))).scalar_one()
+            if fails >= pol.fail_limit:
+                await self._deny(*args, f"Слишком много неудачных попыток вызова за {pol.fail_window_minutes} мин. Повторите позже или обратитесь к администратору.", 429, profile.name)
+        if pol.max_concurrent and await self.open_calls(db) >= pol.max_concurrent:
+            await self._deny(*args, f"Достигнут предел одновременных телефонных вызовов ({pol.max_concurrent}). Повторите позже.", 429, profile.name)
         guest = GuestParticipant(meeting_id=meeting.id, room_id=room.id, participant_type="phone", display_name=f"Телефон: {number}")
         db.add(guest)
         await db.flush()
         identity = guest.livekit_identity
+        log_row = SipCall(direction="out", room_id=room.id, room_name=room.name, meeting_id=meeting.id, guest_id=guest.id, initiator=by, initiator_user_id=by_id,
+                          number=_shown(number, pol), profile_name=profile.name, result="dialing", tech_id=identity)
+        db.add(log_row)
         try:
             await self.gateway.dial(trunk_id=profile.lk_outbound_trunk_id, number=number, room_name=meeting.livekit_room, identity=identity,
                                     display_name=guest.display_name, ring_s=profile.ring_timeout_s, wait=True, timeout=profile.ring_timeout_s + 10)
         except Exception as exc:  # noqa: BLE001
             msg, code = explain_livekit_error(exc)
             await db.delete(guest)
+            now = utcnow()
+            log_row.result, log_row.sip_status, log_row.reason, log_row.ended_at, log_row.duration_s, log_row.guest_id = "failed", code, msg[:300], now, 0, None
             await db.flush()
             self._emit("call_failed", "warn", room, f"{mask_number(number)}: {msg}", {"sip_status": code, "profile": profile.name}, str(meeting.id))
             raise SipError(msg, 502, code) from None
-        guest.connected_at = utcnow()
+        guest.connected_at = log_row.answered_at = utcnow()
+        log_row.result = "answered"
         self._emit("call_answered", "info", room, f"Исходящий звонок: {mask_number(number)} ответил", {"profile": profile.name}, str(meeting.id))
         return {"guest_id": str(guest.id), "identity": identity, "display_name": guest.display_name, "profile": profile.name}
 
@@ -540,6 +630,7 @@ class SipRouting:
             return False
         await self.gateway.hangup(meeting.livekit_room, g.livekit_identity)
         g.left_at = g.left_at or utcnow()
+        await self.close_call(db, g.id, "hangup", g.left_at)
         self._emit("call_hangup", "info", room, "Телефонный участник отключён руководителем", {}, str(meeting.id))
         return True
 
@@ -581,6 +672,52 @@ class SipRouting:
         except Exception as exc:  # noqa: BLE001
             log.warning("Не удалось снять правило входящих", extra={"error": type(exc).__name__})
 
+    @staticmethod
+    async def close_call(db: AsyncSession, guest_id: uuid.UUID, reason: str, when=None) -> None:
+        row = (await db.execute(select(SipCall).where(SipCall.guest_id == guest_id, SipCall.ended_at.is_(None)))).scalars().first()
+        if row is None:
+            return
+        row.ended_at = when or utcnow()
+        row.end_reason = reason
+        row.duration_s = max(0, int((row.ended_at - (row.answered_at or row.started_at)).total_seconds())) if row.result == "answered" else 0
+
+    async def sweep(self, db: AsyncSession) -> int:
+        """Фоновая сверка (reaper): закрывает записи журнала завершившихся вызовов, прекращает вызовы дольше предельной длительности и стирает записи старше срока хранения."""
+        now = utcnow()
+        pol = await self.policy(db)
+        n = 0
+        for c in (await db.execute(select(SipCall).where(SipCall.ended_at.is_(None), SipCall.direction.in_(("out", "in"))))).scalars().all():
+            g = await db.get(GuestParticipant, c.guest_id) if c.guest_id else None
+            if c.result == "dialing":
+                if now - c.started_at > timedelta(seconds=180):
+                    c.result, c.reason, c.ended_at, c.duration_s, c.end_reason = "failed", "Состояние вызова неизвестно (сервис перезапускался?)", now, 0, "lost"
+                    n += 1
+                continue
+            if g is None or g.left_at is not None:
+                await self.close_call(db, c.guest_id, "remote", g.left_at if g is not None else now) if c.guest_id else None
+                if c.ended_at is None:
+                    c.ended_at, c.end_reason = now, "lost"
+                    c.duration_s = max(0, int((now - (c.answered_at or c.started_at)).total_seconds()))
+                n += 1
+            elif pol.max_call_minutes and c.answered_at and now - c.answered_at >= timedelta(minutes=pol.max_call_minutes):
+                try:
+                    meeting = await db.get(Meeting, g.meeting_id)
+                    if meeting is not None:
+                        await self.gateway.hangup(meeting.livekit_room, g.livekit_identity)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Не удалось прекратить вызов по пределу длительности", extra={"error": type(exc).__name__})
+                g.left_at = now
+                await self.close_call(db, g.id, "limit", now)
+                self._emit("call_limit", "warn", None, f"Вызов прекращён: превышен предел {pol.max_call_minutes} мин", {}, str(c.meeting_id) if c.meeting_id else None)
+                n += 1
+        cutoff = now - timedelta(days=pol.call_log_days)
+        old = (await db.execute(select(SipCall).where(SipCall.started_at < cutoff))).scalars().all()
+        for r in old:
+            await db.delete(r)
+        if n or old:
+            await db.commit()
+        return n
+
     async def register_inbound(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, attrs: dict[str, str] | None, name: str = "") -> GuestParticipant | None:
         """Входящий телефонный участник вошёл в комнату LiveKit (webhook): заводим запись участника, чтобы он отображался и попадал в стенограмму."""
         meeting = await db.get(Meeting, meeting_id)
@@ -593,11 +730,24 @@ class SipRouting:
             return found
         num = (attrs or {}).get("sip.phoneNumber") or (attrs or {}).get("sip.callerNumber") or name or identity.removeprefix("sip_")
         num = re.sub(r"[^0-9+*#A-Za-z_.-]", "", str(num))[:40]
+        pol = await self.policy(db)
+        if pol.max_concurrent and await self.open_calls(db) >= pol.max_concurrent:
+            now = utcnow()
+            db.add(SipCall(direction="in", room_id=meeting.room_id, room_name=meeting.room.name, meeting_id=meeting_id, number=_shown(num, pol), result="denied", tech_id=identity[:160],
+                           reason=f"Достигнут предел одновременных вызовов ({pol.max_concurrent})", started_at=now, ended_at=now, duration_s=0))
+            try:
+                await self.gateway.hangup(meeting.livekit_room, identity)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Не удалось отклонить входящий вызов сверх предела", extra={"error": type(exc).__name__})
+            self._emit("inbound_denied", "warn", meeting.room, f"Входящий {mask_number(num)} отклонён: предел одновременных вызовов", {}, str(meeting.id))
+            return None
         g = GuestParticipant(meeting_id=meeting_id, room_id=meeting.room_id, participant_type="phone", display_name=f"Телефон: {num}"[:120], lk_identity=identity[:160],
                              connected_at=utcnow())
         db.add(g)
         meeting.empty_since = None
         await db.flush()
+        db.add(SipCall(direction="in", room_id=meeting.room_id, room_name=meeting.room.name, meeting_id=meeting_id, guest_id=g.id, number=_shown(num, pol), result="answered",
+                       tech_id=identity[:160], started_at=g.connected_at, answered_at=g.connected_at))
         self._emit("inbound_joined", "info", meeting.room, f"Входящий звонок: {mask_number(num)}", {}, str(meeting.id))
         return g
 
