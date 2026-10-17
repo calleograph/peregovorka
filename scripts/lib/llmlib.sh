@@ -165,3 +165,15 @@ llm_prepare() { # llm_prepare [soft]
   llm_local_refresh
   return 0
 }
+
+# llm_local_threads ЧИСЛО_VCPU ПРОФИЛЬ — стартовое число потоков llama.cpp по числу vCPU, а не фиксированные 4: на отдельном сервере около 5/8 ядер,
+# на общем (shared-host) около трети; не меньше 2 и не больше 8 (общий — 6). Остаток нужен звонку (LiveKit) и распознаванию (ASR).
+# Это отправная точка из соображений запаса, а не результат измерений на конкретном железе: уточняется в LLM_LOCAL_THREADS.
+llm_local_threads() {
+  local cpus="${1:-4}" profile="${2:-standalone}" t max=8
+  case "$cpus" in ''|*[!0-9]*) cpus=4 ;; esac
+  if [ "$profile" = "shared-host" ]; then t=$(( cpus / 3 )); max=6; else t=$(( cpus * 5 / 8 )); fi
+  [ "$t" -gt "$max" ] && t="$max"
+  [ "$t" -lt 2 ] && t=2
+  printf '%s\n' "$t"
+}

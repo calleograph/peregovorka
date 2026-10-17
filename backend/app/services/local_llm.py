@@ -24,6 +24,8 @@ from .settings import LlmSettings
 
 log = logging.getLogger("app.llm.local")
 
+LOCAL_REQUEST_TIMEOUT_S = 300     # один запрос к локальной модели; время всего задания ограничено отдельно (services/job_budget.py)
+
 # Небольшая локальная модель: на длинных встречах ошибается (путает ответственных, сроки), поэтому интерфейс просит проверять результат.
 MODEL_NOTE = ("Qwen3 1.7B — небольшая локальная модель: данные не покидают сервер, документ собирается по проверенным пунктам с источниками (протокол — кодом, резюме — по этим пунктам). "
               "Это всё ещё небольшая модель: на длинных встречах возможны пропуски и неточности, важные пункты нужно сверять с записью.")
@@ -195,11 +197,12 @@ class LocalLlm:
         m = self.model(cfg.local_model)
         return cfg.model_copy(update={
             "enabled": True, "type": "openai_compatible", "base_url": f"{self.url_for(m)}/v1", "model": m.id, "api_key": "",
-            "max_tokens": m.max_output_tokens, "max_tokens_summary": min(cfg.max_tokens_summary or m.max_output_tokens, m.max_output_tokens),
-            "max_tokens_protocol": min(cfg.max_tokens_protocol or m.max_output_tokens, m.max_output_tokens), "context_window": m.context_tokens,
+            # техническая граница модели; пользовательские лимиты длины ответа и окна контекста (они для внешних моделей) к локальной не применяются
+            "max_tokens": m.max_output_tokens, "max_tokens_summary": m.max_output_tokens, "max_tokens_protocol": m.max_output_tokens,
+            "max_tokens_map": m.max_output_tokens, "context_window": m.context_tokens,
             "temperature": min(cfg.temperature, 0.3), "send_temperature": True, "supports_system": True, "supports_json": True,
             "extra_headers": {}, "secret_headers": "", "secret_header_names": [],
-            "timeout": max(cfg.timeout, 600), "use_corporate_ca": False, "allow_http": True, "routing_provider": ""}), True
+            "timeout": LOCAL_REQUEST_TIMEOUT_S, "use_corporate_ca": False, "allow_http": True, "routing_provider": ""}), True
 
     def client(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
                purpose: str = "protocol") -> LlmClient:

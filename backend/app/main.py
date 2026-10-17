@@ -203,6 +203,10 @@ def create_app(
             app.state.boot_errors["database"] = describe_error(exc)
             log.warning("Не удалось загрузить подключения к каталогу: база недоступна (%s; при первом запуске до миграций это нормально)", app.state.boot_errors["database"],
                         extra={"error": "boot_load_failed"})
+        try:
+            await protocols.recover_orphans()            # документы «в работе» после перезапуска сервера закрываются понятным состоянием
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось закрыть прерванные формирования документов (%s)", describe_error(exc))
         tasks: list[asyncio.Task] = []
         journal.start()
         set_journal_sink(journal.emit)

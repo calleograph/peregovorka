@@ -17,6 +17,7 @@ from ..services import roles
 from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.llm_choice import once_options
+from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
 from ..services.meetings import JoinError
 from ..services.settings import SettingsError
 from ..services.segments import segment_to_dict
@@ -243,12 +244,15 @@ def can_edit_protocol(meeting: Meeting | None, su: SessionUser) -> bool:
     return roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id
 
 
-def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = False) -> dict:
+def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = False, live: dict | None = None) -> dict:
     d = {"id": str(p.id), "meeting_id": str(p.meeting_id), "kind": p.kind, "status": p.status, "error": p.error,
          "created_by": p.created_by, "created_at": p.created_at, "updated_at": p.updated_at, "title": p.title,
          "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"), "can_edit": can_edit,
          # предупреждения конвейера (обрезка ответа по лимиту, упрощённая инструкция, длинная стенограмма) — их видно рядом с документом
          "warnings": (p.meta or {}).get("warnings") or [], "truncated": bool((p.meta or {}).get("truncated")),
+         # ход и итог: когда задание взято в работу (для таймера в интерфейсе), сколько обработано при остановке по времени, полнота резюме, предел времени
+         "progress": (p.meta or {}).get("progress"), "coverage": (p.meta or {}).get("coverage"), "limit_s": (p.meta or {}).get("limit_s"),
+         "run_started_at": (p.meta or {}).get("run_started_at"), "live": live, "instruction_builtin": bool((p.meta or {}).get("instruction_builtin")),
          # ссылка на выгруженный файл отдаётся, только пока файл есть (по сверке с хранилищем); сам текст всегда в базе
          "location": (p.meta or {}).get("location") if p.file_state != "missing" else None, "file_state": p.file_state,
          "export_files": (p.meta or {}).get("export_files"),
@@ -268,7 +272,8 @@ async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUse
     rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, Protocol.kind.in_(KINDS))
                              .order_by(Protocol.created_at.desc()))).scalars().all()
     can = can_edit_protocol(meeting, su)
-    return [_protocol_dict(p, can_edit=can) for p in rows]
+    ps = request.app.state.protocols
+    return [_protocol_dict(p, can_edit=can, live=ps.live_progress(p.id)) for p in rows]
 
 
 @router.get("/{meeting_id}/protocols/default-instruction")
@@ -285,7 +290,9 @@ async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str
         plan = await ps.plan(db, meeting, kind, once=llm if can_override else None)
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    out = {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "plan": plan, "can_override": can_override}
+    builtin = bool(plan.get("builtin_instruction"))      # локальная модель: показывается встроенная инструкция, пользовательские и комнатные к ней не применяются
+    out = {"kind": kind, "instruction": LOCAL_BUILTIN_INSTRUCTION if builtin else await ps.default_instruction(db, meeting, kind), "builtin": builtin,
+           "plan": plan, "can_override": can_override}
     if can_override:
         out["llm_choices"] = await once_options(ps.profiles, ps.local_llm, db)
     return out
@@ -333,6 +340,27 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
     return {"protocol_id": str(pid), "status": "pending"}
 
 
+@router.post("/{meeting_id}/protocols/{protocol_id}/cancel", status_code=202)
+async def cancel_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Остановить формирование: идущий запрос к модели отменяется, ресурсы освобождаются. Документ получает статус «cancelled»."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Останавливать формирование могут администратор, руководитель комнаты и организатор встречи")
+    p = await db.get(Protocol, protocol_id)
+    if p is None or p.meeting_id != meeting_id or p.kind not in KINDS:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    if p.status not in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="Формирование уже завершено")
+    ps = request.app.state.protocols
+    live = ps.cancel(protocol_id)
+    if not live:
+        await ps.recover_orphans()                       # живой задачи нет (сервер перезапускали): документ закрывается как прерванный
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.cancel", target_type="meeting", target_id=str(meeting_id),
+                      details={"protocol_id": str(protocol_id), "kind": p.kind})
+    await db.commit()
+    return {"protocol_id": str(protocol_id), "status": "cancelling" if live else "closed"}
+
+
 async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUID, pid: uuid.UUID, su: SessionUser) -> Protocol:
     await get_meeting_for_user(request, db, meeting_id, su)
     p = await db.get(Protocol, pid)
@@ -345,7 +373,7 @@ async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUI
 async def get_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user),
                        db: AsyncSession = Depends(get_db)):
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
-    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su))
+    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su), live=request.app.state.protocols.live_progress(p.id))
 
 
 @router.patch("/{meeting_id}/protocols/{protocol_id}")
@@ -357,7 +385,7 @@ async def edit_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: 
     meeting = await db.get(Meeting, meeting_id)
     if not can_edit_protocol(meeting, su):
         raise HTTPException(status_code=403, detail="Править протокол могут администратор, руководитель комнаты и организатор встречи")
-    if p.status == "pending":
+    if p.status in ("pending", "running"):
         raise HTTPException(status_code=409, detail="Протокол ещё формируется")
     from ..models import utcnow
 

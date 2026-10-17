@@ -70,7 +70,7 @@ export interface Generation {
   completion_tokens: number | null; structured: boolean | null; failed: boolean | null; error_code: string | null;
 }
 export interface ProtocolItem {
-  id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "ready" | "failed"; error: string | null;
+  id: string; meeting_id: string; kind: ProtocolKind | string; status: "pending" | "running" | "ready" | "failed" | "timeout" | "cancelled"; error: string | null;
   created_by: string | null; created_at: string; updated_at: string; model: string | null; location: string | null;
   title: string | null; edited_at: string | null; edited_by: string | null; content?: string | null; instruction?: string | null;
   /** Править документ может администратор, руководитель комнаты и организатор встречи; остальные участники — только читать. */
@@ -83,7 +83,13 @@ export interface ProtocolItem {
   generation?: Generation;
   /** Выгруженный файл удалён из хранилища (по сверке): ссылки `location` нет; сам текст остаётся в системе. */
   file_state?: "ok" | "missing";
+  /** Ход идущего задания (пока оно выполняется): прошедшее время, предел, этап (prepare | analysis | assemble) и обработанные фрагменты. */
+  live?: JobLive | null;
+  /** Остановка по времени: сколько фрагментов обработано. Резюме с неполным охватом: сколько стенограммы учтено. */
+  progress?: { done: number; total: number } | null; coverage?: { done: number; total: number; percent: number } | null; limit_s?: number | null;
+  run_started_at?: string | null; instruction_builtin?: boolean;
 }
+export interface JobLive { elapsed_s: number; limit_s: number; target_s: number; stage?: "prepare" | "analysis" | "assemble"; done?: number; total?: number }
 export interface ProtocolTemplate { id: string; name: string; kind: "any" | ProtocolKind; instruction: string; scope: "global" | "user"; can_edit: boolean }
 export interface AdminUser {
   id: string; sam_account_name: string; display_name: string; email: string | null; is_active: boolean; is_admin: boolean;
@@ -187,7 +193,7 @@ export interface Forecast { low_s: number; high_s: number; text: string; basis: 
 export interface LlmChoiceOnce { key: string; label: string; local: boolean }
 export interface ProtocolPlan {
   llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean;
-  forecast?: Forecast; max_output_tokens?: number; max_output_note?: string; llm_api_type?: string; llm_source?: string; once?: boolean;
+  forecast?: Forecast; max_output_tokens?: number | null; max_output_note?: string; builtin_instruction?: boolean; job_limit_s?: number; llm_api_type?: string; llm_source?: string; once?: boolean;
   /** Локальная встроенная модель: данные не покидают сервер. warnings — например, длинная стенограмма для облегчённой модели. */
   llm_local?: boolean; llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
 }
@@ -717,10 +723,11 @@ export const api = {
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
   defaultInstruction: (meetingId: string, kind: ProtocolKind, llm = "") =>
-    request<{ kind: string; instruction: string; plan?: ProtocolPlan; can_override?: boolean; llm_choices?: LlmChoiceOnce[] }>(
+    request<{ kind: string; instruction: string; builtin?: boolean; plan?: ProtocolPlan; can_override?: boolean; llm_choices?: LlmChoiceOnce[] }>(
       "GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}${llm ? `&llm=${encodeURIComponent(llm)}` : ""}`),
   createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string, llmOnce = "") =>
     request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction, ...(llmOnce ? { llm_once: llmOnce } : {}) }),
+  cancelProtocol: (meetingId: string, id: string) => request<{ protocol_id: string; status: string }>("POST", `/meetings/${meetingId}/protocols/${id}/cancel`),
   editProtocol: (meetingId: string, id: string, body: { content?: string; title?: string }) =>
     request<ProtocolItem>("PATCH", `/meetings/${meetingId}/protocols/${id}`, body),
   deleteProtocol: (meetingId: string, id: string) => request<void>("DELETE", `/meetings/${meetingId}/protocols/${id}`),

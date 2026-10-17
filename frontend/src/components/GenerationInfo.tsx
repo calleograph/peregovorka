@@ -3,8 +3,12 @@ import { clock, spanRu } from "../util";
 
 /** Итог формирования одним словом: готово / ошибка / обрезано / с предупреждением. Обрезанный документ не выглядит полноценным. */
 export function docState(p: ProtocolItem): { label: string; tone: "ok" | "warn" | "error" | "pending" } {
-  if (p.status === "pending") return { label: "создаётся", tone: "pending" };
+  if (p.status === "pending") return { label: "в очереди", tone: "pending" };
+  if (p.status === "running") return { label: "формируется", tone: "pending" };
   if (p.status === "failed") return { label: "ошибка", tone: "error" };
+  if (p.status === "timeout") return { label: "превышено время", tone: "error" };
+  if (p.status === "cancelled") return { label: "отменено", tone: "warn" };
+  if (p.coverage && p.coverage.done < p.coverage.total) return { label: `неполное, ${p.coverage.percent}%`, tone: "warn" };
   if (p.truncated) return { label: "обрезано", tone: "error" };
   if (p.warnings && p.warnings.length) return { label: "готово, есть предупреждения", tone: "warn" };
   return { label: p.edited_at ? "отредактирован" : "готово", tone: "ok" };
@@ -19,8 +23,9 @@ export function generationLine(p: ProtocolItem): string {
   if (g?.llm_local === true) parts.push("локальная");
   else if (g?.llm_local === false) parts.push(g.llm_profile ? `внешняя API «${g.llm_profile}»` : "внешняя API");
   if (t?.requested_at) parts.push(`начато ${clock(t.requested_at)}`);
-  if (p.status === "ready" || p.status === "failed") {
-    if (t?.finished_at) parts.push(`${p.status === "failed" ? "ошибка" : "готово"} ${clock(t.finished_at)}`);
+  if (p.status !== "pending" && p.status !== "running") {
+    const word = { ready: "готово", failed: "ошибка", timeout: "остановлено по времени", cancelled: "отменено" }[p.status];
+    if (t?.finished_at) parts.push(`${word} ${clock(t.finished_at)}`);
     if (t?.total_s !== null && t?.total_s !== undefined) parts.push(spanRu(t.total_s));
   }
   return parts.join(" · ");

@@ -27,7 +27,8 @@ from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerEr
 from ..integrations.llm import LlmClient, LlmError
 from . import llm_stats
 from .llm_choice import parse_once, resolve_llm
-from .extraction import structured_pipeline
+from .extraction import local_pipeline, structured_pipeline
+from .job_budget import MAX_S, Budget, JobTimeout
 from .local_llm import LocalLlm, LocalModel
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
@@ -36,7 +37,7 @@ from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_mes
 from . import mixdown
 from .recordings import delete_recording_file, finalize_pcm_files
 from .segments import author_name
-from .settings import DEFAULT_PROTOCOL_INSTRUCTION, DEFAULT_SUMMARY_INSTRUCTION, SettingsError, SettingsService
+from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
 log = logging.getLogger("app.protocols")
@@ -76,11 +77,13 @@ LOCAL_PROTOCOL_PROMPT = ("Ты — секретарь совещания. По �
 LOCAL_SUMMARY_PROMPT = ("Ты — секретарь совещания. Кратко (не более 8 строк) изложи по стенограмме: о чём говорили, какие решения приняты, кто что делает и к какому сроку. "
                         "Только то, что сказано в стенограмме, ничего не выдумывай; если сведений нет — не пиши об этом.")
 LOCAL_SOURCES_HINT = " Кроме стенограммы могут быть чат и схема доски: URL, IP-адреса и имена серверов из чата переноси дословно."
-LOCAL_INSTRUCTION_LIMIT = 400       # более длинную (подробный шаблон) инструкцию локальная модель не получает — пользователю показывается предупреждение
-LOCAL_INSTRUCTION_IGNORED = ("Подробная инструкция не применена: облегчённая локальная модель получила упрощённую. Для протокола по сложному шаблону "
-                             "(таблицы, строгая структура) выберите более сильную внешнюю модель.")
-STRUCTURED_INSTRUCTION_NOTE = ("Облегчённая локальная модель собирает протокол по фиксированному шаблону (темы, решения, поручения, отклонённое, открытые вопросы с источниками): "
-                               "индивидуальная инструкция к нему не применяется. Для протокола по своему шаблону выберите более сильную внешнюю модель.")
+# Единая встроенная инструкция локальной модели: короткая и однозначная. Пользовательские, комнатные и шаблонные инструкции к ней не применяются
+# (они сохраняются и продолжают действовать для внешних моделей). Режим документа — протокол или резюме — задаёт приложение.
+LOCAL_BUILTIN_INSTRUCTION = ("Подготовь краткий, структурированный документ по материалам встречи. Используй только факты из источников, ничего не придумывай. "
+                             "Выдели основные темы, принятые решения, поручения, ответственных, сроки и нерешённые вопросы. Не повторяй одинаковые сведения. "
+                             "Пиши кратко и понятно, используй Markdown. Задачи представь таблицей: «Задача | Ответственный | Срок». "
+                             "Если ответственный или срок не назван, укажи «Не назначен» или «Не указан». Не пропускай существенные решения и поручения. "
+                             "Не показывай внутренние рассуждения.")
 TRUNCATED_LOCAL = ("Локальная модель не смогла полностью обработать стенограмму: ответ оборвался по лимиту длины{where}. "
                    "Результат может быть неполным — проверьте его или сформируйте документ более сильной (внешней) моделью.")
 TRUNCATED_EXTERNAL = ("Ответ языковой модели оборван по лимиту длины{where}: результат неполный. "
@@ -134,20 +137,14 @@ class PipelineResult:
 
 
 def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, str | None]:
-    """Системный промпт для облегчённой локальной модели + предупреждение, если пользовательская инструкция не поместилась."""
-    base = LOCAL_SUMMARY_PROMPT if kind == "summary" else LOCAL_PROTOCOL_PROMPT
-    ins = (instruction or "").strip()
-    warn = None
-    if ins and ins not in {DEFAULT_PROTOCOL_INSTRUCTION.strip(), DEFAULT_SUMMARY_INSTRUCTION.strip()}:
-        if len(ins) <= LOCAL_INSTRUCTION_LIMIT:
-            base += "\nПожелания к документу: " + ins
-        else:
-            warn = LOCAL_INSTRUCTION_IGNORED
-    return base + (LOCAL_SOURCES_HINT if has_sources else ""), warn
+    """Системный промпт облегчённой локальной модели: базовый + встроенная инструкция. Пользовательский текст (`instruction`) не применяется вообще."""
+    base = (LOCAL_SUMMARY_PROMPT if kind == "summary" else LOCAL_PROTOCOL_PROMPT) + "\n" + LOCAL_BUILTIN_INSTRUCTION
+    return base + (LOCAL_SOURCES_HINT if has_sources else ""), None
 
 
 async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
-                           has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False, attendees: dict | None = None) -> PipelineResult:
+                           has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False, attendees: dict | None = None,
+                           budget: Budget | None = None) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
     if local is None and external_structured and structured:
@@ -162,22 +159,19 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
         res.warnings.append("Структурный режим не сработал (модель не вернула разбираемый JSON) — использован обычный режим.")
     if local is not None:
         # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
-        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, attendees=attendees) if structured else None
+        budget = budget or Budget()
+        sr = await local_pipeline(llm, kind=kind, instruction=LOCAL_BUILTIN_INSTRUCTION, text=text, limit=limit, budget=budget, attendees=attendees) if structured else None
         if sr is not None and sr.ok_fragments:
             res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
             res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
             res.truncated = sr.truncated
             res.warnings += sr.warnings
-            if kind == "protocol" and (instruction or "").strip() not in {DEFAULT_PROTOCOL_INSTRUCTION.strip(), DEFAULT_SUMMARY_INSTRUCTION.strip()}:
-                res.warnings.append(STRUCTURED_INSTRUCTION_NOTE)
             if sr.truncated and kind == "summary":
                 res.warnings.append(TRUNCATED_LOCAL.format(where=" (резюме)"))
             return res
         if sr is not None:
             res.warnings.append("Структурное извлечение не удалось (модель не вернула разбираемый JSON ни для одного фрагмента) — использован упрощённый текстовый режим.")
-        system, warn = local_system(kind, instruction, has_sources)
-        if warn:
-            res.warnings.append(warn)
+        system, _ = local_system(kind, instruction, has_sources)
     else:
         form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
                 if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
@@ -226,6 +220,8 @@ class ProtocolService:
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
         self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
+        self._live: dict[uuid.UUID, Budget] = {}          # идущие задания: время и этап для интерфейса
+        self._cancel_requested: set[uuid.UUID] = set()    # задания, которые остановил пользователь (остановка сервера — не отмена)
         self._reads: dict[uuid.UUID, int] = {}
         self._last_read: dict[uuid.UUID, float] = {}
         self._busy: dict[uuid.UUID, int] = {}      # встречи, чьи файлы сейчас обрабатываются (финализация, сведение, выгрузка): их нельзя переносить между хранилищами
@@ -623,6 +619,8 @@ class ProtocolService:
         self.spawn(self.run_protocol(protocol_id), f"protocol-{protocol_id}")
 
     async def run_protocol(self, protocol_id: uuid.UUID) -> None:
+        """Жизненный цикл: в очереди (pending) → в работе (running) → ready | failed | timeout | cancelled. Время всего задания ограничено (MAX_S):
+        по истечении идущий запрос к модели отменяется, новые не отправляются, документ не выдаётся за готовый."""
         async with self._sm() as db:
             rec = await db.get(Protocol, protocol_id)
             if rec is None:
@@ -631,16 +629,44 @@ class ProtocolService:
             once = (rec.meta or {}).get("llm_once")
             info: dict = {"requested": rec.created_at, "started": started}      # времена этапов и сведения о модели (заполняет _generate)
             try:
-                async with self.heavy("protocol", defer_at="overloaded", max_defer=600):      # во время перегрузки при идущих встречах документ ждёт до 10 минут
-                    text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info)
+                async with self.heavy("protocol", defer_at="overloaded", max_defer=600):      # «в очереди»: при перегрузке ждёт до 10 минут и затем всё равно запускается
+                    info["started"] = datetime.now(timezone.utc)
+                    rec.status, rec.meta = "running", {**(rec.meta or {}), "run_started_at": info["started"].isoformat()}
+                    await db.commit()
+                    budget = Budget()
+                    self._live[protocol_id] = budget
+                    try:
+                        async with asyncio.timeout(budget.max_s):
+                            text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info, budget=budget)
+                    except TimeoutError:
+                        raise JobTimeout(f"Задание остановлено через {f'{round(budget.max_s / 60)} мин' if budget.max_s >= 120 else f'{int(budget.max_s)} с'}: запросы к модели отменены, документ не сформирован.") from None
                 meta.update(self._timing_meta(info, datetime.now(timezone.utc)))
                 if once:
                     meta["llm_once"] = once
+                if meta.get("instruction_builtin"):
+                    rec.instruction = LOCAL_BUILTIN_INSTRUCTION           # в документе записана инструкция, по которой он реально сформирован
                 rec.content, rec.status, rec.error, rec.meta = text, "ready", None, meta
                 await db.commit()
                 self._emit("llm", "protocol_ready", rec, started, data={k: meta.get(k) for k in (
                     "model", "llm_profile", "anonymizer_profile", "anonymized", "llm_calls", "prompt_tokens", "completion_tokens")})
                 await self._export_generated(db, rec)
+            except JobTimeout as exc:
+                rec.status, rec.error = "timeout", "Превышено время выполнения. " + str(exc)
+                rec.meta = {**self._failure_meta(info, once, "timeout"), "progress": exc.progress or None, "limit_s": int(MAX_S)}
+                log.warning("Формирование документа остановлено по времени", extra={"protocol": str(protocol_id), "progress": exc.progress})
+                await db.commit()
+                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": "timeout", "stage": "timeout", "progress": exc.progress or None})
+            except asyncio.CancelledError:
+                if protocol_id not in self._cancel_requested:
+                    raise                                             # остановка сервера: строка останется «в работе» и будет закрыта при следующем запуске
+                self._cancel_requested.discard(protocol_id)
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
+                rec.status, rec.error = "cancelled", "Формирование отменено."
+                rec.meta = self._failure_meta(info, once, "cancelled")
+                await db.commit()
+                self._emit("llm", "protocol_cancelled", rec, started, level="info", message=rec.error, data={"code": "cancelled"})
             except (AnonymizerError, LlmError) as exc:
                 rec.status, rec.error = "failed", exc.describe()
                 rec.meta = self._failure_meta(info, once, exc.code)
@@ -661,7 +687,43 @@ class ProtocolService:
                 rec.meta = self._failure_meta(info, once, "internal")
                 await db.commit()
                 self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"stage": "internal"})
+        self._live.pop(protocol_id, None)
         await self._notify_document(protocol_id)
+
+    def live_progress(self, protocol_id: uuid.UUID) -> dict | None:
+        """Ход идущего задания для интерфейса: прошедшее время, предел, этап и обработанные фрагменты. None — задание не идёт."""
+        b = self._live.get(protocol_id)
+        if b is None:
+            return None
+        return {"elapsed_s": round(b.elapsed()), "limit_s": int(b.max_s), "target_s": int(b.target_s), **b.progress}
+
+    def cancel(self, protocol_id: uuid.UUID) -> bool:
+        """Остановить формирование по просьбе пользователя: идущий запрос к модели отменяется (соединение закрывается), новые не отправляются.
+        False — живой задачи нет (документ уже готов или задание осиротело: его закрывает `recover_orphans`)."""
+        task = next((t for t in self._tasks if t.get_name() == f"protocol-{protocol_id}"), None)
+        if task is None or task.done():
+            return False
+        self._cancel_requested.add(protocol_id)
+        task.cancel()
+        return True
+
+    async def recover_orphans(self) -> int:
+        """Документы, которые числятся «в очереди» или «в работе», но живой задачи у них нет (сервер перезапускали): переводятся в конечное состояние.
+        Стенограммы и материалы встречи не затрагиваются; пользователь может сформировать документ заново."""
+        live = {t.get_name() for t in self._tasks}
+        n = 0
+        async with self._sm() as db:
+            rows = (await db.execute(select(Protocol).where(Protocol.status.in_(("pending", "running")), Protocol.kind.in_(("protocol", "summary"))))).scalars().all()
+            for rec in rows:
+                if f"protocol-{rec.id}" in live:
+                    continue
+                rec.status, rec.error = "failed", "Формирование прервано перезапуском сервера. Нажмите «Сформировать заново»: стенограмма и материалы встречи не затронуты."
+                rec.meta = {**(rec.meta or {}), "failed": True, "error_code": "interrupted"}
+                n += 1
+            await db.commit()
+        if n:
+            log.warning("Прерванные формирования документов закрыты", extra={"count": n})
+        return n
 
     async def _notify_document(self, protocol_id: uuid.UUID) -> None:
         """Готовность документа для подписчиков публичного API (события document.ready / document.failed). Сбой уведомления документ не затрагивает."""
@@ -671,8 +733,8 @@ class ProtocolService:
             async with self._sm() as db:
                 rec = await db.get(Protocol, protocol_id)
                 meeting = await db.get(Meeting, rec.meeting_id) if rec else None
-                if rec is not None and meeting is not None and rec.status in ("ready", "failed"):
-                    self.on_document(rec.kind, rec.id, meeting.id, meeting.room_id, rec.status, rec.error)
+                if rec is not None and meeting is not None and rec.status in ("ready", "failed", "timeout", "cancelled"):
+                    self.on_document(rec.kind, rec.id, meeting.id, meeting.room_id, "ready" if rec.status == "ready" else "failed", rec.error)
         except Exception:  # noqa: BLE001
             log.exception("Не удалось передать событие документа")
 
@@ -724,7 +786,9 @@ class ProtocolService:
                "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None, "once": bool(once_choice),
                "llm_api_type": eff.type if not is_local else "local"}
         tokens, tnote = eff.output_limit(purpose)
-        out["max_output_tokens"], out["max_output_note"] = tokens, tnote
+        out["max_output_tokens"], out["max_output_note"] = (None, "подбирается автоматически") if is_local else (tokens, tnote)
+        out["builtin_instruction"] = is_local
+        out["job_limit_s"] = int(MAX_S)
         lm = self.local_llm.limits(llm.settings)
         if lm is not None and llm.available:
             fs = await asyncio.to_thread(self.local_llm.file_state, lm)
@@ -758,7 +822,7 @@ class ProtocolService:
                           data={"kind": rec.kind, "duration_ms": ms, "created_by": rec.created_by, **(data or {})})
 
     async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str, *, once: str | None = None,
-                        info: dict | None = None) -> tuple[str, dict]:
+                        info: dict | None = None, budget: Budget | None = None) -> tuple[str, dict]:
         info = info if info is not None else {}
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
@@ -775,6 +839,9 @@ class ProtocolService:
         llm_cfg = llm_res.settings
         eff_cfg, is_local = self.local_llm.effective(llm_cfg)
         lm = self.local_llm.limits(llm_cfg)
+        if is_local:                                     # локальная модель: только встроенная инструкция; пользовательские остаются для внешних моделей
+            instruction = LOCAL_BUILTIN_INSTRUCTION
+            info["instruction_builtin"] = True
         info.update(model=eff_cfg.model, model_title=lm.title if lm else llm_res.name, llm_local=is_local, llm_type="local" if is_local else eff_cfg.type,
                     api_type="local" if is_local else eff_cfg.type, llm_profile=llm_res.name, llm_source=llm_res.source)
         pr_cfg = await self._svc.get(db, "protocol")
@@ -811,7 +878,7 @@ class ProtocolService:
         try:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
                                           has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
-                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att)
+                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att, budget=budget)
         finally:
             info["llm_finished"] = datetime.now(timezone.utc)
             info["llm_stats"] = dict(llm.stats)
@@ -829,7 +896,8 @@ class ProtocolService:
                 "sources": materials.meta()}
         st = llm.stats
         sstats = (pipe.structured or {}).get("stats") or {}
-        meta.update(model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
+        meta.update(instruction_builtin=True if info.get("instruction_builtin") else None, coverage=(pipe.structured or {}).get("coverage"),
+                    model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
                     retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)), length_hits=st["length"], finish=dict(st["finish"]),
                     max_tokens=st["max_tokens"] or None, limit_note=eff_cfg.output_limit(purpose)[1] or None, llm_source=llm_res.source)
         return out, meta

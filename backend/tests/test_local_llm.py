@@ -74,7 +74,7 @@ def test_local_settings_become_a_plain_openai_compatible_call(tmp_path):
     local = ll.LocalLlm(make_settings(tmp_path))
     eff, is_local = local.effective(LlmSettings(provider="local"))
     assert is_local and eff.enabled and eff.type == "openai_compatible" and eff.base_url == "http://llm-local:8080/v1" and eff.model == "qwen3-1.7b-q4_k_m"
-    assert eff.allow_http and not eff.use_corporate_ca and eff.api_key == "" and eff.max_tokens <= 1500 and eff.output_limit("protocol")[0] <= 1500 and eff.output_limit("summary")[0] <= 1500 and eff.timeout >= 600
+    assert eff.allow_http and not eff.use_corporate_ca and eff.api_key == "" and eff.max_tokens <= 1500 and eff.output_limit("protocol")[0] <= 1500 and eff.output_limit("summary")[0] <= 1500 and eff.timeout == 300
     off, loc = local.effective(LlmSettings(provider="off", enabled=True, model="m", base_url="https://x.test"))
     assert not off.enabled and not loc
     ext, loc = local.effective(LlmSettings(enabled=True, type="openai", model="gpt"))       # настройки до 0.5.0: «включена» = внешняя
@@ -176,8 +176,11 @@ def test_protocol_via_local_model_keeps_data_inside_and_cleans_output(tmp_path, 
         assert set(rt.hosts) == {"llm-local:8080/v1/chat/completions"}
         body = rt.seen[-1]
         assert body["model"] == "qwen3-1.7b-q4_k_m" and body["chat_template_kwargs"] == {"enable_thinking": False}
-        assert body["messages"][0]["content"].endswith("/no_think") and "ТОЛЬКО эти пункты" in body["messages"][0]["content"] and "Кратко: решения, задачи, ответственные" in body["messages"][0]["content"]
+        assert body["messages"][0]["content"].endswith("/no_think") and "ТОЛЬКО эти пункты" in body["messages"][0]["content"] and "Кратко: решения, задачи, ответственные" not in body["messages"][0]["content"]
         assert "Authorization" not in json.dumps(body)
+        from app.services.protocols import LOCAL_BUILTIN_INSTRUCTION
+
+        assert got["instruction"] == LOCAL_BUILTIN_INSTRUCTION and got["instruction_builtin"] is True, "в документе записана встроенная инструкция, а не введённая пользователем"
         meta = got["meta"] if "meta" in got else {}
         assert not meta or meta.get("llm_local") is True
 
@@ -238,8 +241,9 @@ def test_long_input_is_split_by_the_model_limit_not_the_global_one(tmp_path, dir
         c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
         _drain(c)
         passes = [b for b in rt.seen if "response_format" in b]
-        assert len(passes) == 4 and len(rt.seen) == 5, "один фрагмент (реплика не делится) → четыре узких прохода по схеме + резюме по проверенным пунктам"
-        assert "response_format" not in rt.seen[-1] and all(p["max_tokens"] <= 900 for p in passes)
+        assert len(passes) == 1 and len(rt.seen) == 2, "один фрагмент (реплика не делится) → ОДИН проход по схеме (раньше четыре) + короткое резюме по проверенным пунктам"
+        assert "response_format" not in rt.seen[-1] and rt.seen[-1]["max_tokens"] <= 220 and all(p["max_tokens"] <= 600 for p in passes)
+        assert set(passes[0]["response_format"]["json_schema"]["schema"]["properties"]) == {"topics", "items", "tasks", "questions"}
 
 
 def test_external_provider_is_unchanged_and_never_uses_the_local_endpoint(tmp_path, directory):
@@ -333,12 +337,14 @@ def test_local_model_gets_a_short_prompt_and_a_long_template_is_reported():
     llm, seen = _llm()
     res = _run(llm, instruction=long_template)
     system = seen[0]["messages"][0]["content"]
-    assert "Разделы: Обсуждение" in system and "таблица" not in system and len(system) < 600
-    assert any("не применена" in w for w in res.warnings), res.warnings
-    # короткие пожелания пользователя применяются, стандартная инструкция по умолчанию не дублируется
+    from app.services.protocols import LOCAL_BUILTIN_INSTRUCTION
+
+    assert "Разделы: Обсуждение" in system and LOCAL_BUILTIN_INSTRUCTION in system and "Структура: 1) тема" not in system and len(system) < 1200
+    assert not any("не применена" in w for w in res.warnings), res.warnings
+    # пользовательские пожелания к локальной модели не применяются (они остаются для внешних моделей)
     llm, seen = _llm()
     res = _run(llm, instruction="Особое внимание срокам")
-    assert "Особое внимание срокам" in seen[0]["messages"][0]["content"] and res.warnings == []
+    assert "Особое внимание срокам" not in seen[0]["messages"][0]["content"] and res.warnings == []
     from app.services.settings import DEFAULT_PROTOCOL_INSTRUCTION
 
     llm, seen = _llm()

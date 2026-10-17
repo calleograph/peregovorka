@@ -18,6 +18,7 @@ const KIND_LABEL: Record<ProtocolKind, string> = { protocol: "Официальн
 export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initialInstruction, onClose, onStarted }: Props) {
   const [kind, setKind] = useState<ProtocolKind>(kind0);
   const [instruction, setInstruction] = useState(initialInstruction ?? "");
+  const [builtin, setBuiltin] = useState("");           // для локальной модели — её встроенная инструкция (редактирование недоступно)
   const [defaultText, setDefaultText] = useState("");
   const [templates, setTemplates] = useState<ProtocolTemplate[]>([]);
   const [tplId, setTplId] = useState("");
@@ -41,11 +42,12 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
     api.defaultInstruction(meetingId, kind, llmKey).then((r) => {
       if (cancelled) return;
       setDefaultText(r.instruction);
+      setBuiltin(r.builtin ? r.instruction : "");
       setPlan(r.plan ?? null);
       setChoices(r.llm_choices ?? []);
       setCanOverride(!!r.can_override);
       // смена модели пересчитывает только прогноз: введённая инструкция остаётся
-      setInstruction((cur) => (cur.trim() ? cur : initialInstruction !== undefined && kind === kind0 ? initialInstruction : r.instruction));
+      if (!r.builtin) setInstruction((cur) => (cur.trim() ? cur : initialInstruction !== undefined && kind === kind0 ? initialInstruction : r.instruction));       // встроенную инструкцию в поле пользователя не подставляем
     }).catch((e) => { if (!cancelled) setErr((e as ApiError).message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -69,7 +71,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   };
   const start = async () => {
     setBusy(true); setErr("");
-    try { const r = await api.createProtocol(meetingId, kind, instruction.trim(), llmKey); onStarted(r.protocol_id); onClose(); }
+    try { const r = await api.createProtocol(meetingId, kind, builtin ? "" : instruction.trim(), llmKey); onStarted(r.protocol_id); onClose(); }
     catch (e) { setErr((e as ApiError).message); setBusy(false); }
   };
 
@@ -110,8 +112,10 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
       )}
       {plan?.warnings?.map((w) => <div key={w} className="alert info" role="status">⚠ {w}</div>)}
       <label>Инструкция для модели
-        <textarea rows={9} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} maxLength={20000}
+        <textarea rows={9} value={builtin || instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} readOnly={!!builtin} maxLength={20000}
                   placeholder="Опишите, какой документ нужно получить" />
+        {builtin && <span className="help" role="status"><b>Для локальной модели используется встроенная инструкция.</b> Ваши, комнатные и шаблонные инструкции к ней не применяются
+          (они сохранены и действуют для внешних моделей). Длина ответа и окно контекста подбираются автоматически.</span>}
         <span className="help">Эту инструкцию вы подтверждаете перед отправкой. {plan?.llm_local
           ? "Текст обрабатывается встроенной локальной моделью на этом сервере и никуда не отправляется."
           : plan && !plan.anonymize
@@ -121,7 +125,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
         <span className="example">Пример: <code>Составь протокол: тема, участники, решения, поручения (кто, что, срок). Ничего не выдумывай.</code></span>
       </label>
       <div className="row">
-        <button type="button" className="btn mini" onClick={() => { setInstruction(defaultText); setNote("Восстановлена инструкция по умолчанию"); }} disabled={loading || !defaultText}>Инструкция по умолчанию</button>
+        <button type="button" className="btn mini" onClick={() => { setInstruction(defaultText); setNote("Восстановлена инструкция по умолчанию"); }} disabled={loading || !defaultText || !!builtin}>Инструкция по умолчанию</button>
         <span className="muted small">{instruction.length} / 20000</span>
       </div>
 
@@ -132,12 +136,12 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
             <option value="">— выберите шаблон —</option>
             {visible.map((t) => <option key={t.id} value={t.id}>{t.scope === "global" ? "Общий: " : "Мой: "}{t.name}</option>)}
           </select>
-          <button type="button" className="btn mini" onClick={apply} disabled={!chosen}>Применить</button>
+          <button type="button" className="btn mini" onClick={apply} disabled={!chosen || !!builtin}>Применить</button>
           {chosen?.can_edit && <button type="button" className="btn mini ghost danger" onClick={removeTemplate}>Удалить шаблон</button>}
         </div>
         <div className="row" style={{ margin: "10px 0" }}>
           <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Название для сохранения текущей инструкции" style={{ maxWidth: 360 }} maxLength={200} />
-          <button type="button" className="btn mini" onClick={saveAsTemplate} disabled={!saveName.trim() || !instruction.trim()}>Сохранить как шаблон</button>
+          <button type="button" className="btn mini" onClick={saveAsTemplate} disabled={!saveName.trim() || !instruction.trim() || !!builtin}>Сохранить как шаблон</button>
           {isAdmin && <label className="check small" style={{ margin: 0 }}><input type="checkbox" checked={saveGlobal} onChange={(e) => setSaveGlobal(e.target.checked)} /> общий (для всех)</label>}
         </div>
       </fieldset>
@@ -145,9 +149,9 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
       {err && <div className="alert error" role="alert">{err}</div>}
       {note && <div className="muted small" role="status">{note}</div>}
       <div className="row">
-        <button className="btn primary" onClick={start} disabled={busy || loading || !instruction.trim()}>{busy ? "Отправка…" : "Сформировать"}</button>
+        <button className="btn primary" onClick={start} disabled={busy || loading || (!builtin && !instruction.trim())}>{busy ? "Отправка…" : "Сформировать"}</button>
         <button className="btn ghost" onClick={onClose} disabled={busy}>Отмена</button>
-        <span className="muted small">Документ появится на странице встречи{plan?.forecast ? `; ожидайте ${plan.forecast.text}` : ""}.</span>
+        <span className="muted small">Документ появится на странице встречи{plan?.forecast ? `; ожидайте ${plan.forecast.text}` : ""}.{plan?.job_limit_s ? ` Задание остановится, если не завершится за ${Math.round(plan.job_limit_s / 60)} мин.` : ""}</span>
       </div>
     </Modal>
   );

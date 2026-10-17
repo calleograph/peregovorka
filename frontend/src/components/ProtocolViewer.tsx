@@ -4,6 +4,7 @@ import { mdToPlain } from "../markdown";
 import { copyText, fmt } from "../util";
 import { ConfirmDialog } from "./Dialogs";
 import GenerationInfo, { docState, generationLine } from "./GenerationInfo";
+import JobProgress from "./JobProgress";
 import { Markdown } from "./Markdown";
 import Menu from "./Menu";
 
@@ -29,9 +30,14 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const content = item.content ?? "";
+  const cancelJob = async () => {
+    setCancelling(true);
+    try { await api.cancelProtocol(meetingId, item.id); } catch (e) { setCancelling(false); flash(false, (e as ApiError).message); }
+  };
 
-  useEffect(() => { setMode("view"); setDraft(item.content ?? ""); setTitle(item.title ?? ""); setMsg(null); }, [item.id]);
+  useEffect(() => { setMode("view"); setDraft(item.content ?? ""); setTitle(item.title ?? ""); setMsg(null); setCancelling(false); }, [item.id]);
   useEffect(() => { if (mode !== "edit") setDraft(item.content ?? ""); }, [item.content, mode]);
 
   const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); if (ok) window.setTimeout(() => setMsg((m) => (m?.text === text ? null : m)), 2500); };
@@ -47,14 +53,15 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
     finally { setBusy(false); }
   };
 
-  if (item.status === "pending") {
-    return <div className="card"><p className="muted" role="status">Документ формируется… Страница обновится сама.</p>
-      {generationLine(item) && <p className="muted small">{generationLine(item)}</p>}</div>;
+  if (item.status === "pending" || item.status === "running") {
+    return <JobProgress item={item} line={generationLine(item)} onCancel={canGenerate ? cancelJob : undefined} cancelling={cancelling} />;
   }
-  if (item.status === "failed") {
+  if (item.status === "failed" || item.status === "timeout" || item.status === "cancelled") {
     return (
       <div className="card">
-        <div className="alert error" role="alert">Не удалось сформировать: {item.error ?? "неизвестная ошибка"}</div>
+        <div className={`alert ${item.status === "cancelled" ? "info" : "error"}`} role="alert">
+          {item.status === "failed" ? `Не удалось сформировать: ${item.error ?? "неизвестная ошибка"}` : item.error ?? (item.status === "timeout" ? "Превышено время выполнения." : "Формирование отменено.")}
+        </div>
         {generationLine(item) && <p className="muted small">{generationLine(item)}</p>}
         <GenerationInfo item={item} />
         <div className="row">{canGenerate && <button className="btn primary" onClick={() => onRegenerate(item)}>Сформировать заново</button>}

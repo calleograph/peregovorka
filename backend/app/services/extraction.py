@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from ..integrations.llm import LlmClient, LlmError
 from .deadlines import is_deadline_phrase, meeting_date, resolve
 from .doc_render import build_document, document_to_markdown
+from .job_budget import SUMMARY_MIN_S, TAIL_RESERVE_S, Budget, JobTimeout, pass_cap
 
 log = logging.getLogger("app.extraction")
 
@@ -33,6 +34,8 @@ SECTION_MARK = {"СТЕНОГРАММА": "", "ЧАТ ВСТРЕЧИ": "чат",
 
 NONE_ID = "none"
 NOT_SET = "не указан"
+LOCAL_MAX_DEPTH = 1               # локальный проход: не более одного повтора по половинам (две попытки на фрагмент)
+SUMMARY_TOKENS_LOCAL = 220       # итоговый абзац локальной модели короткий: каждый токен на CPU — секунды
 MAX_SPLIT_DEPTH = 2              # оборвавшийся/битый проход делится пополам не более двух раз подряд
 MIN_SPLIT_LINES = 4
 
@@ -89,6 +92,8 @@ class Result:
     truncated: bool = False
     failed: int = 0                 # проходы по фрагментам, которые не удалось выполнить даже после деления
     ok_fragments: int = 0           # успешные проходы (0 — вызывающий код вернётся к прежнему текстовому режиму)
+    tokens_per_s: float | None = None   # измеренная скорость модели (по последнему ответу): от неё зависит потолок ответа следующих проходов
+    skipped: int = 0                # фрагментов, до которых не дошли из-за времени (локальный конвейер)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -743,12 +748,18 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
             items += await _run_pass(llm, pk, frag, i, system, schemas[pk], people, res, stats, base_date, f"{i} из {len(frags)}")
             if i == 1 and pk == "topics" and res.ok_fragments == 0:
                 return res                          # первый же проход не разобрался даже после деления — модель или сервер не поддерживают формат; остальные не мучаем
+    return await _assemble(llm, res, kind=kind, instruction=instruction, header=header, people=people, items=items, stats=stats, n_frags=len(frags), attendees=attendees)
+
+
+async def _assemble(llm: LlmClient, res: Result, *, kind: str, instruction: str, header: list[str], people: list[Person], items: list[Item], stats: dict,
+                    n_frags: int, attendees: dict | None, budget: Budget | None = None, local: bool = False) -> Result:
+    """Проверенные пункты → слияние → документ. Общая часть внешнего структурного режима и локального конвейера."""
     if res.ok_fragments == 0:
         return res
     merged = merge_items(items)
     res.structured = to_structured(merged)
     res.structured["participants"] = [{"id": p.pid, "name": p.full} for p in people]
-    res.structured["stats"] = {**stats, "fragments": len(frags), "failed_passes": res.failed}
+    res.structured["stats"] = {**stats, "fragments": n_frags, "failed_passes": res.failed}
     if res.failed:
         res.warnings.append(f"Не удалось выполнить {res.failed} проходов по фрагментам стенограммы даже после деления на части — в протоколе могут быть пропуски. "
                             "Проверьте результат или сформируйте документ более сильной (внешней) моделью.")
@@ -767,13 +778,15 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
     facts = facts_text(merged)
     wish = ""
     ins = (instruction or "").strip()
-    if kind == "summary" and ins and len(ins) <= 400:
+    if kind == "summary" and ins and len(ins) <= 400 and not local:
         wish = f"\nПожелания пользователя: {ins}"
     summary = ""
     summary_ok = False
     try:
+        if budget is not None and budget.soft_left() < SUMMARY_MIN_S:
+            raise LlmError("budget")                 # времени до цели мало: итоговый абзац собирает код из проверенных пунктов
         r = await llm.complete((SUMMARY_SYSTEM if kind == "summary" else SUMMARY_SYSTEM.replace("не более 8 строк", "не более 5 предложений")) + wish,
-                               "Проверенные пункты встречи:\n\n" + facts)
+                               "Проверенные пункты встречи:\n\n" + facts, max_tokens=SUMMARY_TOKENS_LOCAL if local else None)
         res.calls += 1
         res.prompt_tokens += r.prompt_tokens or 0
         res.completion_tokens += r.completion_tokens or 0
@@ -783,10 +796,154 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
                 res.warnings.append("Краткое резюме модель оборвала или не написала — показан перечень проверенных пунктов.")
         else:
             summary, summary_ok = r.text.strip(), True
-    except LlmError:
+    except LlmError as exc:
         if kind == "summary":
-            res.warnings.append("Краткое резюме не удалось получить от модели — показан перечень проверенных пунктов.")
+            res.warnings.append("Краткое резюме собрано из проверенных пунктов без дополнительного обращения к модели (не хватало времени)." if exc.code == "budget"
+                                else "Краткое резюме не удалось получить от модели — показан перечень проверенных пунктов.")
     doc = build_document(header, merged, summary=summary if kind == "protocol" else "", incomplete=bool(res.failed), attendees=attendees if kind == "protocol" else None)
     res.structured["document"] = doc
     res.text = (summary if summary_ok else fallback_summary(merged)) if kind == "summary" else document_to_markdown(doc)
     return res
+
+
+# --------------------------------------------------------------------------------------------- локальная модель: один проход на фрагмент
+def combined_schema(ids: list[str]) -> dict:
+    """Одна схема на все четыре списка (темы, решения, поручения, вопросы): фрагмент обрабатывается ОДНИМ обращением к модели, а не четырьмя."""
+    body: dict = {}
+    for k in TASKS:
+        body.update(schema_for(k, ids)["properties"])
+    return {"type": "object", "properties": body, "required": list(body)}
+
+
+COMBINED_TASK = ("ЗАДАНИЕ: по этому фрагменту заполни четыре списка (если данных нет — пустой список; отвечай коротко, без повторов). "
+                 + " ".join(f"({i}) {k}: {TASKS[k][0].removeprefix('ЗАДАНИЕ: ')}" for i, k in enumerate(TASKS, 1)))
+
+
+def salvage_json(text: str) -> dict | None:
+    """Оборванный по длине JSON → объект с тем, что успело закончиться. Неполный хвост отбрасывается по последнему закрытому элементу,
+    скобки закрываются; пункты, дописанные до обрыва, не пропадают (раньше такой ответ целиком выбрасывался и проход повторялся)."""
+    s = text.strip()
+    start = s.find("{")
+    if start < 0:
+        return None
+    s = s[start:]
+    stack: list[str] = []
+    in_str = esc = False
+    cut: tuple[int, list[str]] | None = None
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if not stack or stack.pop() != ch:
+                return None
+            cut = (i + 1, list(stack))
+    if cut is None:
+        return None
+    end, closers = cut
+    try:
+        d = json.loads(s[:end] + "".join(reversed(closers)))
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _rows(raw: dict) -> int:
+    return sum(len(raw.get(k) or []) for k in ("topics", "items", "tasks", "questions"))
+
+
+async def _combined_pass(llm: LlmClient, frag: list[Line], frag_no: int, system: str, schema: dict, people: list[Person], res: Result, stats: dict, base_date,
+                         label: str, budget: Budget, total_left: int, depth: int = 0) -> list[Item]:
+    user = f"Фрагмент {label}:\n\n" + "\n".join(x.render() for x in frag) + f"\n\n=== {COMBINED_TASK}"
+    raw, truncated = None, False
+    try:
+        r = await llm.complete(system, user, max_tokens=pass_cap(budget, res.tokens_per_s, total_left), json_schema=schema, temperature=0.0)
+        res.calls += 1
+        res.prompt_tokens += r.prompt_tokens or 0
+        res.completion_tokens += r.completion_tokens or 0
+        if r.completion_tokens and r.duration_ms > 0:
+            res.tokens_per_s = r.completion_tokens / (r.duration_ms / 1000)
+        truncated = r.truncated
+        raw = _parse(r.text) if not truncated else None
+        if raw is None and truncated:
+            raw = salvage_json(r.text)               # оборванный ответ не выбрасывается: берём то, что успело закончиться
+            if raw is not None and _rows(raw) == 0:
+                raw = None
+            if raw is not None:
+                stats["salvaged"] += 1
+                res.truncated = True
+    except LlmError as exc:
+        if exc.code in ("not_configured", "unavailable", "unauthorized", "forbidden"):
+            raise
+        log.warning("Извлечение: ошибка вызова модели", extra={"code": exc.code})
+    if raw is not None:
+        res.ok_fragments += 1
+        out: list[Item] = []
+        for k in TASKS:
+            out += verify_pass(k, raw, frag, frag_no, people, stats, base_date)
+        return out
+    if truncated:
+        res.truncated = True
+        stats["length_retries"] += 1
+    else:
+        stats["json_retries"] += 1
+    if depth < LOCAL_MAX_DEPTH and len(frag) >= MIN_SPLIT_LINES and budget.remaining() > TAIL_RESERVE_S + 60:
+        mid = len(frag) // 2
+        a = await _combined_pass(llm, frag[:mid], frag_no, system, schema, people, res, stats, base_date, f"{label}а", budget, total_left, depth + 1)
+        b = await _combined_pass(llm, frag[mid:], frag_no, system, schema, people, res, stats, base_date, f"{label}б", budget, total_left, depth + 1)
+        return a + b
+    res.failed += 1
+    return []
+
+
+async def local_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, budget: Budget, attendees: dict | None = None) -> Result:
+    """Локальная модель: ОДИН проход на фрагмент (темы, решения, поручения и вопросы одним ответом), потолок ответа подбирается по измеренной
+    скорости модели и оставшемуся времени, оборванный ответ не выбрасывается, повторов не больше одного на фрагмент. Проверка и слияние пунктов — те же,
+    что у внешнего структурного режима. Не хватает времени — стенограмма обрабатывается не до конца: резюме получает явную отметку неполноты,
+    для протокола `JobTimeout` (документ не выдаётся за готовый)."""
+    res = Result()
+    header, lines = parse_transcript(text)
+    if not lines:
+        return res
+    people = people_of(participants_of(header, lines))
+    system, schema, base_date = system_for(people), combined_schema([p.pid for p in people]), meeting_date(header)
+    frags = chunk_lines(lines, limit)
+    res.parts = len(frags)
+    stats = {"bad_ts": 0, "empty": 0, "fabricated": 0, "reclassified": 0, "assignee_unverified": 0, "assignee_unknown": 0, "due_dropped": 0, "timewords_removed": 0,
+             "length_retries": 0, "json_retries": 0, "questions_unsupported": 0, "duplicate_assignee": 0, "assignee_from_text": 0, "salvaged": 0}
+    items: list[Item] = []
+    started = budget.elapsed()
+    budget.progress.update(stage="analysis", done=0, total=len(frags))
+    for i, frag in enumerate(frags, 1):
+        done = i - 1
+        budget.progress["done"] = done
+        avg = (budget.elapsed() - started) / done if done else 30.0
+        if budget.remaining() < TAIL_RESERVE_S + max(avg, 20.0):
+            res.skipped = len(frags) - done
+            break
+        items += await _combined_pass(llm, frag, i, system, schema, people, res, stats, base_date, f"{i} из {len(frags)}", budget, len(frags) - done)
+        if i == 1 and res.ok_fragments == 0:
+            return res                              # первый же проход не разобрался даже после повтора — модель или сервер не поддерживают формат
+    if res.skipped:
+        progress = {"done": len(frags) - res.skipped, "total": len(frags)}
+        if kind == "protocol" or progress["done"] == 0:
+            raise JobTimeout(f"За отведённое время обработано {progress['done']} из {progress['total']} фрагментов стенограммы: полный протокол не собран.", progress)
+    budget.progress.update(stage="assemble", done=len(frags) - res.skipped)
+    out = await _assemble(llm, res, kind=kind, instruction=instruction, header=header, people=people, items=items, stats=stats, n_frags=len(frags),
+                          attendees=attendees, budget=budget, local=True)
+    if res.skipped and out.structured is not None:
+        pct = round(100 * (len(frags) - res.skipped) / len(frags))
+        out.structured["complete"] = False
+        out.structured["coverage"] = {"done": len(frags) - res.skipped, "total": len(frags), "percent": pct}
+        out.warnings.insert(0, f"Резюме неполное: за отведённое время обработано {len(frags) - res.skipped} из {len(frags)} фрагментов стенограммы (около {pct}%). "
+                               "Сформируйте его ещё раз или выберите внешнюю модель.")
+    return out

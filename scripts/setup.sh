@@ -127,6 +127,8 @@ if [ ! -f "$ENV" ]; then
     set_var ASR_CPU_THREADS "$ASR_T"; set_var ASR_INTEROP_THREADS "$ASR_I"
     info "ASR на общем сервере: ASR_CPU_THREADS=$ASR_T, ASR_INTEROP_THREADS=$ASR_I (по $CPUS vCPU). Уточнить по задержке: scripts/asr-bench.sh"
   fi
+  LLM_T="$(llm_local_threads "$(nproc 2>/dev/null || echo 4)" "$PROFILE")"; set_var LLM_LOCAL_THREADS "$LLM_T"
+  info "Локальная LLM: LLM_LOCAL_THREADS=$LLM_T (по числу vCPU, остаток — звонку и распознаванию; это отправная точка, а не измерение — при необходимости измените в .env)"
   set_var LDAP_URIS "$LDAPU"; set_var LDAP_BASE_DN "$BASEDN"; set_var LDAP_BIND_DN "$BINDDN"; set_var LDAP_BIND_PASSWORD "$BINDPW"
   set_var LDAP_CA_FILE "$CA"; set_var LDAP_ADMIN_GROUP_DN "$ADMING"
   set_var POSTGRES_DB "${NAME//-/_}"; set_var POSTGRES_USER "${NAME//-/_}"

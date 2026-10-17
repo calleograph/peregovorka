@@ -63,7 +63,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
     const list = await api.protocols(meetingId).catch(() => null);
     if (!list) return [];
     setProtocols(list);
-    const pending = new Set(list.filter((p) => p.status === "pending").map((p) => p.id));
+    const pending = new Set(list.filter((p) => p.status === "pending" || p.status === "running").map((p) => p.id));
     for (const p of list) if (p.status === "ready" && prevPending.current.has(p.id)) setOpenId(p.id); // только что готовый — сразу показываем
     prevPending.current = pending;
     window.clearTimeout(timer.current);

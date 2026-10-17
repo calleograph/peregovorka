@@ -111,7 +111,7 @@ async def apply_task_limit(profiles: ProfileService, db: AsyncSession, ch: "LlmC
     """Потолок ответа по задаче (системные `limit_*`): итог = min(потолок задачи, предел подключения), далее — окно контекста (в output_limit)."""
     main = await profiles.get_settings(db, "llm", None)
     cap = getattr(main.settings, f"limit_{purpose}", None)
-    if not cap or not ch.available:
+    if not cap or not ch.available or ch.settings.effective_provider == "local":      # локальной модели пользовательские потолки не нужны: границы задаёт она сама
         return ch
     field = f"max_tokens_{purpose}"
     cur = getattr(ch.settings, field, None)
