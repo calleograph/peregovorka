@@ -475,7 +475,7 @@ class MeetingService:
                 if now - meeting.started_at >= timedelta(hours=cfg.temp_room_max_hours):      # type: ignore[attr-defined]
                     await self.end(db, meeting, "temp_ttl", kick=True)
                     n += 1
-            elif now - room.created_at >= timedelta(minutes=cfg.temp_room_idle_minutes) or (room.auto_close_at and now >= room.auto_close_at):  # type: ignore[attr-defined]
+            elif (room.room_type != "peer" and now - room.created_at >= timedelta(minutes=cfg.temp_room_idle_minutes)) or (room.auto_close_at and now >= room.auto_close_at):  # type: ignore[attr-defined]  # равноправные комнаты живут по своему сроку (`peer_room_ttl_hours`), а не по получасовому «простою»
                 if temp_rooms.close(room, "idle"):
                     await db.commit()
                     n += 1

@@ -152,3 +152,26 @@ def test_invitee_search_needs_two_chars_and_excludes_self(client):
     assert client.get(f"{P}/users/search", params={"q": "b"}).json() == []
     names = [u["name"] for u in client.get(f"{P}/users/search", params={"q": "bo"}).json()]
     assert "Bob B" in names and "Alice A" not in client.get(f"{P}/users/search", params={"q": "al"}).json().__repr__()
+
+
+def test_unused_peer_room_survives_idle_minutes_but_closes_by_its_own_ttl(client):
+    """Ссылку можно подготовить заранее: комната живёт по `peer_room_ttl_hours`, а не закрывается через 30 минут «простоя» как обычная временная."""
+    from datetime import timedelta
+
+    from app.models import utcnow
+
+    _enable(client)
+    rid = _open(client, "alice").json()["id"]
+    app = client.app_obj
+
+    async def age_and_reap(created_ago_min, close_in_hours):
+        async with app.state.session_maker() as db:
+            room = await db.get(Room, __import__("uuid").UUID(rid))
+            room.created_at = utcnow() - timedelta(minutes=created_ago_min)
+            room.auto_close_at = utcnow() + timedelta(hours=close_in_hours)
+            await db.commit()
+            await app.state.meetings.cleanup_temporary(db)
+            await db.refresh(room)
+            return room.lifecycle
+    assert client.portal.call(age_and_reap, 300, 20) == "active"                 # создана 5 часов назад, срок ещё не вышел
+    assert client.portal.call(age_and_reap, 300, -1) == "closed"                # срок вышел
