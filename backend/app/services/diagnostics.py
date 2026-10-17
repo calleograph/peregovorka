@@ -9,13 +9,16 @@ from __future__ import annotations
 import asyncio
 import datetime
 import importlib.metadata as md
+import ipaddress
 import os
 import re
 import secrets
 import shutil
 import socket
+import ssl
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from livekit import api as lkapi
@@ -110,6 +113,80 @@ def ws_url(http_or_ws: str, path: str) -> str:
     return base + path
 
 
+def classify_failure(exc: BaseException, status: int | None) -> tuple[str, str]:
+    """Этап, на котором оборвалось подключение, и причина простым языком: dns | tcp | tls | auth | route | proxy | ws."""
+    chain: list[BaseException] = []
+    e: BaseException | None = exc
+    while e is not None and e not in chain:
+        chain.append(e)
+        e = e.__cause__ or e.__context__
+    if status in (401, 403):
+        return "auth", (f"HTTP {status}: адрес отвечает, но не принимает корректный тестовый токен. Либо ключ и секрет LiveKit у приложения и у сервера звонков "
+                        "не совпадают (LIVEKIT_API_KEY/SECRET), либо адрес ведёт не на LiveKit")
+    if status == 404:
+        return "route", "404: путь не найден на этом сервере (для /rtc/v1 это признак устаревшего LiveKit или неверного пути /livekit/ на прокси)"
+    if status in (502, 503, 504):
+        return "proxy", f"HTTP {status}: прокси отвечает, но не достучался до LiveKit (сервис остановлен или неверный адрес в настройке прокси)"
+    if status:
+        return "ws", f"HTTP {status} вместо переключения на WebSocket (проверьте Upgrade/Connection на прокси)"
+    for x in chain:
+        if isinstance(x, ssl.SSLCertVerificationError):
+            m = (getattr(x, "verify_message", "") or str(x)).lower()
+            if "self" in m and "signed" in m:
+                return "tls", "самоподписанный сертификат: устройства ему не доверяют, и звонки не подключатся, пока сертификат не заменят на выданный доверенным центром или не добавят в доверенные на устройствах"
+            if "expired" in m:
+                return "tls", "срок действия сертификата истёк"
+            if "mismatch" in m or "hostname" in m or "ip address" in m:
+                return "tls", "сертификат выпущен на другое имя или адрес, чем указан в публичном адресе LiveKit"
+            if "issuer" in m or "unable to get" in m:
+                return "tls", "цепочка сертификата неполная или выдана недоверенным центром (добавьте промежуточные сертификаты)"
+            return "tls", "сертификат не прошёл проверку: " + (getattr(x, "verify_message", "") or "причина не указана")
+        if isinstance(x, ssl.SSLError):
+            return "tls", "сбой TLS: " + (str(x) or type(x).__name__) + " (возможно, на этом порту нет TLS, а адрес начинается с wss://)"
+        if isinstance(x, socket.gaierror):
+            return "dns", "имя в адресе не разрешается в IP (DNS)"
+        if isinstance(x, ConnectionRefusedError):
+            return "tcp", "соединение отклонено: порт закрыт или сервис не слушает"
+    if any(isinstance(x, (ConnectionResetError, BrokenPipeError, EOFError)) for x in chain):
+        return "tcp", "соединение сброшено при установлении: для адреса wss:// это обычно значит, что на порту нет TLS (там обычный HTTP), либо файрвол сбрасывает соединения"
+    if any(isinstance(x, (TimeoutError, asyncio.TimeoutError)) for x in chain):
+        return "tcp", "нет ответа за отведённое время (файрвол, маршрут или сервис не отвечает)"
+    if any(isinstance(x, OSError) for x in chain):
+        return "tcp", "сеть недоступна: " + type(chain[-1]).__name__
+    return "ws", "не удалось установить WebSocket: " + type(exc).__name__
+
+
+def public_url_review(settings: Settings) -> list[dict]:
+    """Замечания к публичному адресу LiveKit по самому адресу, без обращения к сети: он должен быть доступен браузерам пользователей."""
+    url = (settings.livekit_public_url or "").strip()
+    if not url:
+        return [{"level": "warn", "text": "Публичный адрес LiveKit (LIVEKIT_PUBLIC_URL) не задан"}]
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    out: list[dict] = []
+    if parts.scheme not in ("ws", "wss") or not host:
+        return [{"level": "warn", "text": "Публичный адрес LiveKit должен быть вида wss://хост[/livekit]"}]
+    if parts.scheme == "ws" and urlsplit(settings.app_public_url).scheme == "https":
+        out.append({"level": "warn", "text": "Приложение открывается по HTTPS, а адрес звонков начинается с ws://: браузер заблокирует такое подключение. Нужен wss://"})
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if ip.is_loopback or ip.is_link_local:
+            out.append({"level": "warn", "text": f"В адресе звонков указан служебный адрес {host}: он доступен только с самого сервера"})
+        elif parts.scheme == "wss":
+            out.append({"level": "warn", "text": "Адрес звонков задан IP-адресом при wss://: сертификат для IP обычно самоподписанный, и устройства ему не доверяют. "
+                                                "Используйте доменное имя с доверенным сертификатом либо добавьте сертификат в доверенные на устройствах"})
+        if ip.is_private and not (ip.is_loopback or ip.is_link_local):
+            out.append({"level": "info", "text": "Это внутренний адрес: пользователи вне внутренней сети (например, через VPN) смогут подключиться, только если маршрут до него открыт"})
+    elif "." not in host:
+        out.append({"level": "warn", "text": f"В адресе звонков указано короткое внутреннее имя «{host}»: оно не разрешается на устройствах пользователей"})
+    if host != (urlsplit(settings.app_public_url).hostname or "").lower():
+        out.append({"level": "info", "text": "Адрес звонков и адрес приложения указывают на разные имена: сертификат должен быть доверенным для каждого из них"})
+    return out
+
+
 async def ws_handshake(url: str, *, timeout: float = 6.0) -> dict:
     """Настоящий WebSocket Upgrade: успех — код 101 (соединение сразу закрывается). Токен из URL в результат не попадает."""
     started = time.monotonic()
@@ -118,7 +195,7 @@ async def ws_handshake(url: str, *, timeout: float = 6.0) -> dict:
 
         async with connect(url, open_timeout=timeout, close_timeout=2, max_size=1 << 16) as ws:
             status = getattr(getattr(ws, "response", None), "status_code", 101)
-        return {"ok": status == 101, "status": status, "ms": int((time.monotonic() - started) * 1000)}
+        return {"ok": status == 101, "status": status, "stage": "ok" if status == 101 else "ws", "ms": int((time.monotonic() - started) * 1000)}
     except Exception as exc:  # noqa: BLE001
         resp = getattr(exc, "response", None)
         status = getattr(resp, "status_code", None)
@@ -130,7 +207,10 @@ async def ws_handshake(url: str, *, timeout: float = 6.0) -> dict:
             hint = "404: путь не найден на этом сервере (для /rtc/v1 это признак устаревшего LiveKit)"
         elif status:
             hint = f"HTTP {status}" + (f": {body}" if body else "")
-        return {"ok": False, "status": status, "error": type(exc).__name__, "hint": hint, "body": body,
+        stage, why = classify_failure(exc, status)
+        if not status or status in (401, 403, 502, 503, 504):
+            hint = why + (f" [{body}]" if status and body else "")
+        return {"ok": False, "status": status, "error": type(exc).__name__, "stage": stage, "hint": hint, "body": body,
                 "ms": int((time.monotonic() - started) * 1000)}
 
 
@@ -160,6 +240,8 @@ async def livekit_checks(settings: Settings) -> dict:
         out["rtc_v1_public"] = rtc_v1_route(await ws_handshake(ws_url(pub, "/rtc/v1" + q)))
         out["rtc_ws_public"] = await ws_handshake(ws_url(pub, "/rtc" + q))
         out["rtc_v1_public"]["url"] = out["rtc_ws_public"]["url"] = pub
+        out["rtc_ws_public"]["note"] = "проверено из контейнера backend: набор доверенных сертификатов на устройствах пользователей может отличаться"
+    out["public_url_review"] = public_url_review(settings)
     tcp = {"configured": bool(settings.livekit_rtc_tcp_port), "port": settings.livekit_rtc_tcp_port or None,
            "node_ip": settings.livekit_node_ip or None}
     if tcp["configured"] and settings.livekit_node_ip:
@@ -313,6 +395,13 @@ def verdict(rep: dict) -> list[str]:
     if d_ws and not d_ws.get("ok"):
         out.append(f"LiveKit напрямую: WebSocket на /rtc не установлен ({why(d_ws)}) — это ответ самого LiveKit (токен, ключи, версия), прокси здесь ни при чём")
     # Через публичный адрес виноват прокси только если напрямую тот же запрос проходит
+    lower_stage = p_ws.get("stage") if p_ws and not p_ws.get("ok") else None
+    if lower_stage in ("dns", "tcp", "tls", "auth"):      # причина названа точно — общий вывод «виноват прокси» тут не нужен
+        out.append(f"Публичный адрес звонков ({lower_stage.upper()}): {why(p_ws)}")
+        p_route = p_ws = None
+    for r in lk.get("public_url_review", []):
+        if r.get("level") == "warn":
+            out.append("Адрес звонков: " + str(r.get("text")))
     if p_route and not p_route.get("ok"):
         out.append("Через публичный адрес маршрут /rtc/v1 недоступен (" + why(p_route) + ")"
                    + (": напрямую LiveKit его отдаёт — проблема в прокси или в пути /livekit/" if d_route and d_route.get("ok") else ": напрямую тоже не работает — искать в LiveKit"))

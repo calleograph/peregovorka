@@ -74,8 +74,9 @@ _curl_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null || e
 ws_upgrade_probe() {
   local key bf; key="$(openssl rand -base64 16 2>/dev/null || echo dGhlIHNhbXBsZSBub25jZQ==)"
   bf="$(mktemp 2>/dev/null || echo "/tmp/ws-body.$$")"
+  WS_RC=0
   WS_CODE="$(printf 'url = "%s"\n' "$1" | curl -s -o "$bf" -m "${2:-6}" -w '%{http_code}' --http1.1 -K - \
-      -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null || true)"
+      -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $key" 2>/dev/null)" || WS_RC=$?
   WS_BODY="$(head -c 200 "$bf" 2>/dev/null | tr -d '\r\n\000')"; rm -f "$bf"
   return 0
 }
@@ -100,7 +101,17 @@ ws_verdict() {
           else WS_NOTE="HTTP $1 вместо 101${body}: результат прямого запроса неизвестен, поэтому нельзя сказать, виноват ли прокси (проверьте Upgrade/Connection на прокси и ответ LiveKit напрямую)"; fi ;;
         *) WS_NOTE="HTTP $1 вместо 101${body}: ответ LiveKit или прокси — сравните с запросом напрямую (scripts/smoke-test.sh это делает)" ;;
       esac ;;
-    000|"") WS_STATUS=WARNING; WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось" ;;
+    000|"") WS_STATUS=WARNING
+      # код возврата curl называет этап сбоя; ответа с этого сервера может не быть и при рабочем адресе (клиенты ходят снаружи), поэтому это предупреждение
+      case "${WS_RC:-0}" in
+        6) WS_NOTE="DNS: имя в адресе не разрешается в IP (с этого сервера; проверьте и с устройств пользователей)" ;;
+        7) WS_NOTE="TCP: соединение отклонено — порт закрыт или сервис не слушает" ;;
+        28) WS_NOTE="TCP: нет ответа за отведённое время (файрвол, маршрут или сервис не отвечает)" ;;
+        35|52|56) WS_NOTE="TLS/TCP: соединение сброшено при установлении защищённого канала — на порту может не быть TLS, а адрес начинается с wss://" ;;
+        51) WS_NOTE="TLS: сертификат выпущен на другое имя или адрес, чем указан в публичном адресе" ;;
+        60|58|77|83) WS_NOTE="TLS: сертификату не доверяет этот сервер (самоподписанный или неизвестный центр). Если так же у пользователей, звонки к такому адресу не подключатся: нужен сертификат доверенного центра или добавление сертификата в доверенные на устройствах" ;;
+        *) WS_NOTE="нет ответа (адрес не разрешается/порт закрыт/таймаут) — с этого сервера проверить не удалось" ;;
+      esac ;;
   esac
   return 0
 }

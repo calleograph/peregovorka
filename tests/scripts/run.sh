@@ -118,6 +118,8 @@ source "$ROOT/tests/scripts/part_llm.sh"
 source "$ROOT/tests/scripts/part_sip.sh"
 # shellcheck source=part_release_channel.sh
 source "$ROOT/tests/scripts/part_release_channel.sh"
+# shellcheck source=part_livekit_url.sh
+source "$ROOT/tests/scripts/part_livekit_url.sh"
 
 echo "shell-тесты: пройдено $PASS, провалено $FAIL"
 [ "$FAIL" -eq 0 ]

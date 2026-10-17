@@ -164,6 +164,7 @@ if [ ! -f "$ENV" ]; then
     fi
     set_var NGINX_TLS_CERT "$DATA/tls/server.crt"; set_var NGINX_TLS_KEY "$DATA/tls/server.key"; set_var NGINX_MANAGE "yes"
     ok "Создан самоподписанный сертификат HTTPS (браузер покажет предупреждение — это ожидаемо; позже его можно заменить своим)."
+    warn "Звонки (wss://$HOSTN$SUFFIX/livekit) работают только на устройствах, которые доверяют этому сертификату: добавьте $DATA/tls/server.crt в доверенные на каждом устройстве либо замените его сертификатом доверенного центра и задайте доменное имя (NGINX_TLS_CERT/KEY, APP_PUBLIC_URL, LIVEKIT_PUBLIC_URL). Иначе у пользователей, не принявших сертификат, звонки не подключатся."
   elif [ -r "$CA" ]; then :; else warn "Файл CA $CA пока не найден — положите туда PEM цепочки CA, иначе preflight откажет."; fi
 fi
 
