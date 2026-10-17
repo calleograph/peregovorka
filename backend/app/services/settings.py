@@ -627,10 +627,10 @@ class AuthSecuritySettings(_Group):
     @field_validator("totp_groups")
     @classmethod
     def _groups(cls, v: str) -> str:
-        return ",".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ",").split(",") if x.strip()))
+        return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))      # DN содержат запятые: разделитель — перевод строки или «;»
 
     def group_set(self) -> set[str]:
-        return {g for g in self.totp_groups.split(",") if g}
+        return {g for g in self.totp_groups.split(";") if g}
 
 
 class CaptchaSettings(_Group):
