@@ -10,7 +10,7 @@ export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
-  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation" | "peer"; auto_record?: boolean;
+  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation" | "peer"; auto_record?: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted";
   /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
   /** Только в списке комнат: вошедший — руководитель/администратор; секрет гостевой ссылки отдаётся только им и только при включённом гостевом входе. */
@@ -46,6 +46,7 @@ export interface ClientConfig {
 export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
   recording: boolean; transcription?: boolean; asr_ready: boolean; client: ClientConfig;
+  e2ee?: { key: string; mode: "full" | "trusted" } | null;     // ключ сквозного шифрования встречи (если у комнаты включено E2EE)
 }
 /** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
 export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }
@@ -251,7 +252,7 @@ export interface TransferDetail extends TransferJob { problems: { recording_id: 
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
-  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
+  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
@@ -324,6 +325,12 @@ export interface ProfileField { name: "display_name" | "email" | "title" | "depa
 export interface OutlookPublic { name: string; state: "waiting" | "open" | "live" | "ended" | "cancelled"; start: string | null; end: string | null; opens_at: string | null; recurring: boolean; early_minutes: number; server_time: string; slug: string; guests: boolean; guest_token: string | null }
 export interface PeerPolicy { enabled: boolean; create_on_link: boolean; max_per_user: number; active_mine: number; can_create: boolean; ttl_hours: number }
 export interface PeerRoom { id: string; slug: string; name: string; created: boolean; lifecycle: string; access: "link" | "invited"; owner: boolean; link: string; expires_at: string | null; invited: { name: string | null; ref: string }[] }
+export interface CryptoStatus {
+  ready: boolean; master_key_set: boolean; algorithm: string;
+  keys: { id: number; active: boolean; created_at: string; retired_at: string | null }[];
+  counts: { meeting_chat_messages: { total: number; sealed: number }; transcript_segments: { total: number; sealed: number }; rooms_encrypted: number };
+  job: { state?: "running" | "done" | "failed"; done?: number; skipped?: number; sealed?: number; error?: string; by?: string };
+}
 export interface Profile {
   fields?: ProfileField[]; restorable?: boolean;
   id: string; display_name: string; login: string; email: string | null; title: string | null; department: string | null; phone: string | null;
@@ -407,7 +414,7 @@ export interface RoomAdmin {
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
   mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
-  room_type: RoomType; auto_record: boolean; board_allowed: boolean; board_access?: string;
+  room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; board_allowed: boolean; board_access?: string;
   slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
@@ -711,6 +718,11 @@ export const api = {
   participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),
   profile: () => request<Profile>("GET", "/profile"),
   outlookPublic: (code: string) => request<OutlookPublic>("GET", `/outlook/public/${encodeURIComponent(code)}`),
+  crypto: {
+    status: () => request<CryptoStatus>("GET", "/admin/crypto"),
+    rotate: (password: string) => request<{ active: number }>("POST", "/admin/crypto/rotate", { password }),
+    reseal: (body: { room_id?: string; rotate_all?: boolean }) => request<{ started: boolean }>("POST", "/admin/crypto/reseal", body),
+  },
   peer: {
     policy: () => request<PeerPolicy>("GET", "/rooms/peer/policy"),
     create: (name: string) => request<PeerRoom>("POST", "/rooms/peer", { name }),

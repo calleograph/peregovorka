@@ -54,6 +54,9 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
   if (msg.includes("permission") && (msg.includes("publish") || msg.includes("can_publish") || msg.includes("not allowed to"))) {
     return { reason: "PublishNotAllowed", message: "Сервер не разрешил вам публиковать этот источник (ограничено настройками комнаты или ролью)." };
   }
+  if (msg.includes("e2ee_unsupported")) {
+    return { reason: "E2eeUnsupported", message: "Эта комната использует сквозное шифрование, а ваш браузер его не поддерживает. Откройте комнату в актуальном Chrome, Edge или Firefox (в Safari — версии с поддержкой Insertable Streams). Без шифрования войти нельзя: тогда звук не был бы защищён так, как заявлено." };
+  }
   if (action === "connect" && isConnectionReset(e)) {
     return { reason: "ConnectionReset", message: `Соединение с сервером звонков сброшено на сетевом уровне (ERR_CONNECTION_RESET) — это не ошибка приложения. Возможные причины: ${NET_CAUSES} между вами и сервером. Попробуйте другую сеть или отключите VPN; администратору — проверьте MTU VPN и передачу WebSocket на прокси (сведения о вашем соединении записаны в журнал).` };
   }

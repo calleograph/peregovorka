@@ -150,7 +150,7 @@ def test_upgrade_from_0_14_0_keeps_recordings_and_adds_waveforms_and_transfer_ta
         assert conn.execute(sa.text("select name from rooms where slug='old'")).scalar_one() == "Комната из 0.14"
         row = conn.execute(sa.text("select path, size_bytes, kind, status from recordings")).one()
         assert tuple(row) == ("old/a.wav", 1234, "mix_audio", "ready"), "записи после обновления целы"
-        assert conn.execute(sa.text("select version_num from alembic_version")).scalar_one() == "0029"
+        assert conn.execute(sa.text("select version_num from alembic_version")).scalar_one() == "0031"
         assert conn.execute(sa.text("select count(*) from storage_transfers")).scalar_one() == 0
     eng.dispose()
     # приложение стартует на обновлённой базе и умеет то, что добавили новые миграции (волна по запросу, перенос, показатели)

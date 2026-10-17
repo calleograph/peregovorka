@@ -10,7 +10,7 @@ interface Form {
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; acl: AclEntry[]; moderators: AclEntry[]; history_access: HistoryAccess;
   anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; welcome_message: string;
-  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; board_allowed: boolean; board_access: string; slug_history?: string[];
+  guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; board_allowed: boolean; board_access: string; slug_history?: string[];
 }
 
 const empty: Form = {
@@ -18,7 +18,7 @@ const empty: Form = {
   transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
   text_retention_days: "", audio_retention_days: "", protocol_instructions: "", acl: [], moderators: [], history_access: "admin",
   anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "", mute_on_join: false, welcome_message: "",
-  guest_access_enabled: false, guest_token: null, room_type: "regular", auto_record: false, board_allowed: true, board_access: "auto",
+  guest_access_enabled: false, guest_token: null, room_type: "regular", auto_record: false, encrypt_storage: false, e2ee_mode: "off", board_allowed: true, board_access: "auto",
 };
 
 const days = (v: string) => (v.trim() === "" ? null : Number(v));
@@ -35,7 +35,7 @@ function toForm(r: RoomAdmin): Form {
     anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "",
     mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "",
     guest_access_enabled: r.guest_access_enabled ?? false, guest_token: r.guest_token ?? null,
-    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, board_allowed: r.board_allowed ?? true, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : ((r.board_allowed ?? true) ? "auto" : "leaders"), slug_history: r.slug_history ?? [] };
+    room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, encrypt_storage: r.encrypt_storage ?? false, e2ee_mode: r.e2ee_mode ?? "off", board_allowed: r.board_allowed ?? true, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : ((r.board_allowed ?? true) ? "auto" : "leaders"), slug_history: r.slug_history ?? [] };
 }
 
 type TabId = "main" | "access" | "features" | "ai" | "storage";
@@ -103,7 +103,7 @@ export default function RoomsAdmin() {
     const base = {
       name: form.name, description: form.description || null, is_enabled: form.is_enabled, max_participants: form.max_participants,
       transcription_enabled: true, record_audio: form.record_audio || form.auto_record, camera_allowed: form.camera_allowed,
-      room_type: form.room_type, auto_record: form.auto_record, board_allowed: form.board_allowed, board_access: form.board_access,
+      room_type: form.room_type, auto_record: form.auto_record, encrypt_storage: form.encrypt_storage, e2ee_mode: form.e2ee_mode, board_allowed: form.board_allowed, board_access: form.board_access,
       screen_share_allowed: form.screen_share_allowed, text_retention_days: days(form.text_retention_days),
       audio_retention_days: days(form.audio_retention_days), protocol_instructions: form.protocol_instructions || null,
       acl: form.acl, moderators: form.moderators, history_access: form.history_access,
@@ -207,6 +207,17 @@ export default function RoomsAdmin() {
                   <span className="check-body">Запись аудио разрешена<span className="help">Руководитель комнаты включает и выключает запись кнопкой во время встречи (хранение — в разделе «Хранилища»).</span></span></label>
                 <label className="check"><input type="checkbox" checked={form.auto_record} onChange={(e) => set("auto_record", e.target.checked)} />
                   <span className="check-body">Начинать запись автоматически<span className="help">Запись начинается вместе со встречей; иначе её включают вручную.</span></span></label>
+              </fieldset>
+              <fieldset className="group"><legend>Шифрование</legend>
+                <label className="check"><input type="checkbox" checked={form.encrypt_storage} onChange={(e) => set("encrypt_storage", e.target.checked)} />
+                  <span className="check-body">Шифровать чат и стенограммы при хранении<span className="help">Новые сообщения и реплики записываются в базу в зашифрованном виде (AES-256-GCM, ключи на сервере). Уже записанное при включении не меняется — для него есть «Зашифровать существующие» в разделе «Шифрование хранилища». Это защита хранилища, а не сквозное шифрование звука и видео.</span></span></label>
+                <label>Сквозное шифрование звука и видео (E2EE)
+                  <select value={form.e2ee_mode} onChange={(e) => set("e2ee_mode", e.target.value as Form["e2ee_mode"])}>
+                    <option value="off">Выключено</option>
+                    <option value="trusted">Включено, с доверенным компонентом (стенограмма и запись работают)</option>
+                    <option value="full">Полное E2EE (серверная стенограмма и запись недоступны)</option>
+                  </select>
+                  <span className="help">Звук и видео шифруются на устройствах участников ключом встречи; сервер звонков содержимого не видит. «С доверенным компонентом»: служба распознавания речи получает ключ встречи и расшифровывает звук у себя — это нужно, чтобы работали стенограмма и запись. «Полное»: ключа у сервера нет, стенограмма и запись звука отключены. Чат, доска и сигналы идут через сервер по TLS (их можно защитить при хранении переключателем выше). Не работает с телефонными участниками (SIP). Участникам нужен современный браузер; действует со следующей встречи.</span></label>
               </fieldset>
               <fieldset className="group"><legend>Гостевой доступ</legend>
                 <label className="check"><input type="checkbox" checked={form.guest_access_enabled} onChange={(e) => set("guest_access_enabled", e.target.checked)} />

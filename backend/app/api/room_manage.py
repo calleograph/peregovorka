@@ -26,6 +26,7 @@ from ..services.llm_choice import clean_choice, describe, llm_options, resolve_l
 from ..services.sip import normalize_number
 from ..security.passwords import hash_room_password
 from ..services import roles
+from ..services import storage_encryption as se
 from ..services.audit import write_audit
 from ..services.mail_delivery import MATERIALS, clean_spec
 from ..services.rooms import acl_allows
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode")
+                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -56,6 +57,8 @@ class RoomManageOut(BaseModel):
     board_level: str = "everyone"      # действующий уровень с учётом типа комнаты
     room_type: str
     auto_record: bool
+    encrypt_storage: bool = False
+    e2ee_mode: str = "off"
     record_audio: bool
     recording_mode: str = "audio"
     transcription_enabled: bool
@@ -98,6 +101,8 @@ class RoomManagePatch(BaseModel):
     board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")
     room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
     auto_record: bool | None = None
+    encrypt_storage: bool | None = None
+    e2ee_mode: str | None = Field(default=None, pattern="^(off|full|trusted)$")
     record_audio: bool | None = None
     recording_mode: str | None = Field(default=None, pattern="^(audio|audio_video|off)$")
     mute_on_join: bool | None = None
@@ -149,7 +154,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, record_audio=room.record_audio, recording_mode=room.recording_mode,
+        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
@@ -200,6 +205,8 @@ async def _apply_sip(request: Request, db: AsyncSession, room: Room, raw: dict, 
             raise HTTPException(status_code=422, detail=f"Сохранённый номер: {exc}") from None
     if len(contacts) > 30:
         raise HTTPException(status_code=422, detail="Сохранённых номеров не больше 30")
+    if mode != "off" and room.e2ee_mode != "off":
+        raise HTTPException(status_code=409, detail="В комнате включено сквозное шифрование: телефонные участники (SIP) его не поддерживают. Сначала выключите E2EE.")
     before = (room.sip_mode, room.sip_profile_id, room.sip_extension, room.sip_allow_inbound, room.sip_allow_outbound, room.sip_contacts or [])
     room.sip_mode, room.sip_profile_id, room.sip_extension = mode, pid, ext
     room.sip_allow_inbound, room.sip_allow_outbound, room.sip_contacts = inbound, outbound, contacts
@@ -226,6 +233,10 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
     fields = body.model_dump(exclude_unset=True)
     if fields.get("recording_mode") == "audio_video" and room.recording_mode != "audio_video":
         raise HTTPException(409, "Запись видео пока в разработке: выберите «Только аудио» или «Без общей записи».")   # не принимаем режим, который не выполняется
+    if fields.get("e2ee_mode") not in (None, "off") and room.sip_mode != "off":
+        raise HTTPException(409, "Телефонные участники (SIP) не поддерживают сквозное шифрование: отключите телефонию в этой комнате или оставьте E2EE выключенным.")
+    if fields.get("encrypt_storage") and not room.encrypt_storage and not await se.ensure_ready(request.app):
+        raise HTTPException(409, "Шифрование хранилища недоступно: не задан APP_MASTER_KEY или ключи не загружены. Обратитесь к администратору.")
     if room.lifetime == "temporary" and fields.get("guest_access_enabled") and not room.guest_access_enabled:
         await _require_temp_guest_policy(request, db)
     changed: dict = {}

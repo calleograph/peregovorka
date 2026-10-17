@@ -37,6 +37,7 @@ from .entities import (
     StorageSyncRun,
     ConfigBackupRun,
     UserBackupCode,
+    StorageKey,
     StorageTransfer,
     StorageTransferItem,
     RoomAcl,
@@ -46,6 +47,8 @@ from .entities import (
 )
 
 __all__ = [
-    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "UserBackupCode", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
+    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "UserBackupCode", "StorageKey", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording",
     "Room", "RoomAcl", "RoomModerator", "SipProfile", "TranscriptSegment", "User",
 ]
+
+from . import crypto_events  # noqa: E402,F401  (регистрирует события шифрования чата и стенограмм)

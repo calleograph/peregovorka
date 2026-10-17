@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser
 from ..models import Meeting, Room, RoomAcl, RoomModerator, utcnow
 from .rooms import slug_taken
+from . import storage_encryption as se
 from .settings import GeneralSettings
 
 log = logging.getLogger("app.temp_rooms")
@@ -66,7 +67,7 @@ async def create(db: AsyncSession, su: SessionUser, name: str, cfg: GeneralSetti
             continue
         room = Room(slug=code, name=name, lifetime="temporary", lifecycle="active", history_access="participants",
                     created_by_user_id=su.user_id, created_by_name=su.display_name, text_retention_days=default_text_days,
-                    audio_retention_days=default_audio_days, auto_close_at=now + timedelta(minutes=cfg.temp_room_idle_minutes))
+                    audio_retention_days=default_audio_days, auto_close_at=now + timedelta(minutes=cfg.temp_room_idle_minutes), encrypt_storage=se.default_for_new(cfg))
         if su.ad_guid and not su.local:      # локальный администратор и так руководит всеми комнатами и в списках не нуждается
             ref = su.ad_guid.lower()
             room.acl = [RoomAcl(subject_type="user", subject_ref=ref, display_name=su.display_name)]

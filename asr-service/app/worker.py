@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -33,6 +33,7 @@ class SessionInfo:
     transcribe: bool = True
     record_audio: bool = False
     started_at: float = 0.0  # unix-время команды start от backend (для метрики asr_join_ms)
+    e2ee_key: str = field(default="", repr=False)   # ключ сквозного шифрования встречи (режим «доверенный компонент»): без него звук зашифрованной встречи не расшифровать
 
 
 class RoomWorker:
@@ -76,6 +77,14 @@ class RoomWorker:
                 pass
 
     # ---------------------------------------------------------------- подключение
+    def _room_options(self, rtc):  # noqa: ANN001, ANN202
+        """Параметры подключения: подписка вручную; если встреча зашифрована сквозным ключом и backend выдал его доверенному компоненту — E2EE с общим ключом
+        (из строки-пароля ключ выводится так же, как в браузере: PBKDF2, поэтому звук расшифровывается одинаково)."""
+        opts = {"auto_subscribe": False}
+        if self.info.e2ee_key:
+            opts["e2ee"] = rtc.E2EEOptions(key_provider_options=rtc.KeyProviderOptions(shared_key=self.info.e2ee_key.encode("utf-8")))
+        return rtc.RoomOptions(**opts)
+
     def _token(self) -> str:
         from livekit import api  # noqa: PLC0415
 
@@ -121,8 +130,7 @@ class RoomWorker:
                 disconnected.set()
 
             try:
-                await room.connect(self._s.livekit_internal_url, self._token(),
-                                   options=rtc.RoomOptions(auto_subscribe=False))
+                await room.connect(self._s.livekit_internal_url, self._token(), options=self._room_options(rtc))
                 self.connected = True
                 backoff = 2.0
                 join_ms = (time.time() - self.info.started_at) * 1000 if self.info.started_at else None

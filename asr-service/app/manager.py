@@ -28,7 +28,8 @@ def parse_session(meeting_id: str, raw: str | dict) -> SessionInfo | None:
             return None
         return SessionInfo(meeting_id=str(data.get("meeting_id") or meeting_id), room_name=room_name,
                            room_id=str(data.get("room_id", "")), transcribe=bool(data.get("transcribe", True)),
-                           record_audio=bool(data.get("record_audio", False)), started_at=float(data.get("started_at") or 0))
+                           record_audio=bool(data.get("record_audio", False)), started_at=float(data.get("started_at") or 0),
+                           e2ee_key=str(data.get("e2ee_key") or ""))
     except (KeyError, ValueError, TypeError):
         return None
 
@@ -95,7 +96,7 @@ class SessionManager:
             info = parse_session(mid, f.get("payload") or {})
             worker = self.workers.get(mid)
             if info and worker:
-                worker.set_flags(info.transcribe, info.record_audio)
+                worker.set_flags(info.transcribe, info.record_audio)       # ключ E2EE не меняется в течение встречи: переподключаться не нужно
                 log.info("Флаги сессии изменены", extra={"meeting": mid, "transcribe": info.transcribe, "record_audio": info.record_audio})
             elif info:  # сессии нет (рестарт) — поднимаем с актуальными флагами
                 await self.start_session(info)

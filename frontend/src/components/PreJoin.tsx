@@ -65,6 +65,11 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
                 </li>
               ))}
             </ul>
+            {room?.e2ee_mode && room.e2ee_mode !== "off" && (
+              <div className="alert info pj-rec" role="note"><b>Сквозное шифрование звука и видео.</b> {room.e2ee_mode === "full"
+                ? "Сервер не имеет ключа: стенограмма и серверная запись звука в этой комнате отключены. Нужен современный браузер."
+                : "Стенограмму и запись выполняет доверенный компонент сервера, которому комната выдаёт ключ встречи. Нужен современный браузер."}</div>
+            )}
             {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
             {site.recording_text && <div className="alert info pj-rec" role="note" style={{ whiteSpace: "pre-wrap" }}>{site.recording_text}</div>}
           </div>

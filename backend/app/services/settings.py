@@ -479,6 +479,7 @@ class GeneralSettings(_Group):
     temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
     temp_room_allow_guest_link: bool = False
     # Временные равноправные комнаты (создаются по ссылке /p/<код> или кнопкой; без обязательного ведущего). По умолчанию выключены.
+    encrypt_new_rooms: bool = False                                       # новые комнаты создаются с шифрованием хранимых чата и стенограмм
     peer_rooms_enabled: bool = False
     peer_create_on_link: bool = True                                       # первый переход по новой ссылке создаёт комнату (иначе — только кнопкой)
     peer_room_max_per_user: int = Field(default=3, ge=1, le=50)

@@ -17,6 +17,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
 from ..services import audit as audit_svc
+from ..services import storage_encryption as se
 from ..services.audit import write_audit
 from ..services.rooms import slug_taken
 from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
               "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
               "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "welcome_message",
-              "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access")
+              "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access", "encrypt_storage", "e2ee_mode")
 
 
 def new_guest_token() -> str:
@@ -70,7 +71,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
-        room_type=room.room_type, auto_record=room.auto_record, board_allowed=room.board_allowed, board_access=room.board_access,
+        room_type=room.room_type, auto_record=room.auto_record, board_allowed=room.board_allowed, board_access=room.board_access, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode,
         slug_history=list(room.slug_history or []), lifetime=room.lifetime, lifecycle=room.lifecycle, closed_at=room.closed_at, created_by_name=room.created_by_name,
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
@@ -106,8 +107,12 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
         mute_on_join=body.mute_on_join, welcome_message=body.welcome_message,
         guest_access_enabled=body.guest_access_enabled, guest_token=new_guest_token() if body.guest_access_enabled else None,
-        room_type=body.room_type, auto_record=body.auto_record, board_allowed=body.board_allowed, board_access=body.board_access,
+        room_type=body.room_type, auto_record=body.auto_record, board_allowed=body.board_allowed, board_access=body.board_access, e2ee_mode=body.e2ee_mode,
+        encrypt_storage=body.encrypt_storage or ("encrypt_storage" not in body.model_fields_set and bool((await request.app.state.settings_svc.get(db, "general")).encrypt_new_rooms)
+                                                 and await se.ensure_ready(request.app)),
     )
+    if room.encrypt_storage and not await se.ensure_ready(request.app):
+        raise HTTPException(status_code=409, detail="Шифрование хранилища недоступно: не задан APP_MASTER_KEY или ключи не загружены.")
     if room.auto_record:
         room.record_audio = True  # автоматическая запись предполагает, что запись аудио разрешена
     room.acl = _acl_rows(body.acl)
@@ -141,6 +146,10 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
     if room is None:
         raise HTTPException(status_code=404, detail="Комната не найдена")
     fields = body.model_dump(exclude_unset=True)
+    if fields.get("e2ee_mode") not in (None, "off") and room.sip_mode != "off":
+        raise HTTPException(status_code=409, detail="Телефонные участники (SIP) не поддерживают сквозное шифрование: отключите телефонию в этой комнате или оставьте E2EE выключенным.")
+    if fields.get("encrypt_storage") and not room.encrypt_storage and not await se.ensure_ready(request.app):
+        raise HTTPException(status_code=409, detail="Шифрование хранилища недоступно: не задан APP_MASTER_KEY или ключи не загружены.")
     changed: dict = {}
     new_slug = fields.pop("slug", None)
     if new_slug and new_slug != room.slug:

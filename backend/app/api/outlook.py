@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, Room, utcnow
 from ..services import outlook as ol
+from ..services import storage_encryption as se
 from ..services.audit import write_audit
 from ..services.temp_rooms import TempRoomError
 
@@ -89,7 +90,8 @@ async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSess
     try:
         room, created = await ol.ensure(db, su, cfg, key=str(body.get("key") or ""), subject=str(body.get("subject") or ""), start=_dt(body.get("start"), "start"),
                                         end=_dt(body.get("end"), "end"), recurring=bool(body.get("recurring")), default_text_days=s.settings.default_text_retention_days,
-                                        default_audio_days=s.settings.default_audio_retention_days)
+                                        default_audio_days=s.settings.default_audio_retention_days,
+                                        encrypt_storage=se.default_for_new(await s.settings_svc.get(db, "general")))
     except TempRoomError as exc:
         _fail(exc)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.create" if created else "outlook.sync", target_type="room", target_id=str(room.id),

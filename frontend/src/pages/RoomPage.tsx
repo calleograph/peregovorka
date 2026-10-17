@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ConnectionState, DisconnectReason, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
+import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
 import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room } from "../api";
 import Whiteboard from "../board/Whiteboard";
@@ -25,6 +25,7 @@ import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../mi
 import { applyNoiseMode, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
+import ProtectionBadge from "../components/ProtectionBadge";
 import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { LiveBus, backoffDelay } from "../liveSocket";
@@ -176,6 +177,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [, setInstance] = useState("");
   const [micPrefs, setMicPrefs] = useState<MicPrefs>(() => loadMicPrefs());
   const qualityRef = useRef<QualityManager | null>(null);
+  const e2eeWorkerRef = useRef<Worker | null>(null);
+  const [e2eeActive, setE2eeActive] = useState(false);
   const [quality, setQuality] = useState<QualityState | null>(null);
   const [micFail, setMicFail] = useState<"busy" | "denied" | "other" | null>(null);
   const [notice, setNotice] = useState<{ kind: "info" | "ok" | "warn"; text: string } | null>(null);
@@ -291,6 +294,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const r = roomRef.current;
     roomRef.current = null;
     qualityRef.current?.stop(); qualityRef.current = null; setQuality(null);
+    e2eeWorkerRef.current?.terminate(); e2eeWorkerRef.current = null; setE2eeActive(false);
     const prep = prepMicRef.current;
     prepMicRef.current = null;
     void prep?.then((t) => { if (!(t instanceof Error)) t.stop(); });
@@ -418,7 +422,18 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const tl = timeline.current;
     setStage("server");
     signalReachedRef.current = false;
-    const room = new LkRoom(buildRoomOptions());
+    const opts = buildRoomOptions();
+    let e2eeKeys: ExternalE2EEKeyProvider | null = null;
+    e2eeWorkerRef.current?.terminate();
+    e2eeWorkerRef.current = null;
+    if (info.e2ee) {
+      // Комната со сквозным шифрованием: без поддержки в браузере входить нельзя — молча без шифрования мы не подключаемся (иначе заявленная защита была бы ложной)
+      if (!isE2EESupported()) throw new Error("e2ee_unsupported");
+      e2eeKeys = new ExternalE2EEKeyProvider();
+      e2eeWorkerRef.current = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
+      opts.encryption = { keyProvider: e2eeKeys, worker: e2eeWorkerRef.current };
+    }
+    const room = new LkRoom(opts);
     instanceRef.current = newInstanceId();
     setInstance(instanceRef.current);
     setRoomsCreated((n) => n + 1);
@@ -515,8 +530,13 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         }
         scheduleRejoin(0);
       });
+    if (e2eeKeys && info.e2ee) {
+      await e2eeKeys.setKey(info.e2ee.key);
+      await room.setE2EEEnabled(true);                    // до подключения: ни один кадр не уйдёт в открытом виде
+    }
     await room.connect(info.livekit_url, info.token);
     connectedOnce = true;
+    setE2eeActive(!!e2eeKeys && room.isE2EEEnabled);
     qualityRef.current?.stop();
     qualityRef.current = new QualityManager(room, setQuality);
     qualityRef.current.start();
@@ -1042,6 +1062,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }
 
   const room = join.room;
+  const serverTranscript = room.transcription_enabled && join.e2ee?.mode !== "full";          // полное E2EE: у сервера нет ключа, распознавание невозможно
   const isLeader = !!join.client.can_manage && !guest;
   const presentation = !!join.client.presentation;
   const pubOk = !presentation || pubAllowed;          // в презентации кнопки открываются, когда сервер звонков действительно выдал право (а не только по настройке)
@@ -1151,7 +1172,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : "Профиль запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер",
       hidden: !(showScreen && canScreen), onSelect: () => void chooseProfile(pr) })),
     { id: "rec", label: recording ? "Остановить запись" : "Начать запись", icon: recording ? "recordStop" : "record", hint: recording ? "Остановить запись звука встречи (транскрибация не меняется)" : "Начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
-    { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: "Звонок и запись звука продолжаются", hidden: !(room.transcription_enabled && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
+    { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: "Звонок и запись звука продолжаются", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
     { id: "muteall", label: "Выключить у всех микрофоны", icon: "micOff", hint: "У вас — нет. Каждый сможет включить свой снова", hidden: !join.client.can_moderate, disabled: stage !== "ready", onSelect: () => void moderate() },
   ];
@@ -1168,18 +1189,19 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
+          <ProtectionBadge input={{ https: window.location.protocol === "https:", storage: !!room.encrypt_storage, e2ee: e2eeActive, e2eeRecorder: join.e2ee?.mode === "trusted" }} />
           {quality && connOk && <span className={`badge ${quality.level === "high" ? "ok" : "warn"}`} title={qualityTitle(quality)}>{quality.level === "high" ? "Связь хорошая" : `Видео: ${LEVEL_LABEL[quality.level].toLowerCase()}`}</span>}
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
           {presentation && <span className="badge" title="Сколько зрителей сейчас в комнате (без выступающих)">{audienceLabel(audienceView.length)}</span>}
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</span>}
-          {room.transcription_enabled && (
+          {serverTranscript && (
             <span className={`rec-badge ${transcribing ? "tr" : "off"}`} title={transcribing ? "Реплики участников записываются в стенограмму" : "Транскрибация приостановлена руководителем: звонок и запись звука продолжаются"}>
               {transcribing ? "Транскрибация идёт" : "Транскрибация остановлена"}
             </span>
           )}
-          {room.transcription_enabled && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
+          {serverTranscript && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
           <div className="spacer" />
           {room.lifetime === "temporary" && !guest && (
             <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`)}
@@ -1348,7 +1370,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
       {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}
-      <TranscriptPanel meetingId={join.meeting_id} enabled={room.transcription_enabled} paused={!transcribing} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
+      <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />
     </div>

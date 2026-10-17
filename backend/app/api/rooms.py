@@ -11,12 +11,13 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
 from ..services import roles, temp_rooms, timings
 from ..services import captcha
+from ..services import e2ee as e2ee_svc
 from ..services.audit import audit_now, write_audit
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
 from ..services.rooms import acl_allows, find_by_ref, list_accessible_rooms
 from .clientcfg import build_client_config
-from .schemas import ActiveMeetingOut, JoinIn, JoinOut, RoomOut
+from .schemas import ActiveMeetingOut, E2EEOut, JoinIn, JoinOut, RoomOut
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -29,7 +30,7 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, board_access=room.board_access, room_type=room.room_type, auto_record=room.auto_record,
+        board_allowed=room.board_allowed, board_access=room.board_access, room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode,
         lifetime=room.lifetime, lifecycle=room.lifecycle, auto_close_at=room.auto_close_at, created_by_name=room.created_by_name,
         active_meeting=ActiveMeetingOut(id=active.id, started_at=active.started_at, participants=participants) if active else None,
     )
@@ -94,6 +95,11 @@ async def create_temporary_room(request: Request, body: dict = Body(...), su: Se
     return await room_out(db, room)
 
 
+async def _e2ee_out(request: Request, meeting_id):
+    info = await e2ee_svc.get(request.app.state.redis, meeting_id)
+    return E2EEOut(key=info["key"], mode=info["mode"]) if info else None
+
+
 @router.post("/{room_id}/join", response_model=JoinOut)
 async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
                     su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
@@ -126,4 +132,5 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
         token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
         asr_ready=asr_ready, client=build_client_config(result.room, screen, result, su=su),
+        e2ee=await _e2ee_out(request, result.meeting.id),
     )

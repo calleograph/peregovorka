@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser
 from ..models import Room, RoomAcl, User, utcnow
+from . import storage_encryption as se
 from .rooms import slug_taken
 from .settings import GeneralSettings
 from .temp_rooms import TempRoomError
@@ -86,7 +87,7 @@ async def create(db: AsyncSession, redis, su: SessionUser, cfg: GeneralSettings,
                 raise TempRoomError("exists", "Комната с таким адресом уже есть.")
             continue
         room = Room(slug=slug_of(c), name=name, lifetime="temporary", lifecycle="active", room_type=ROOM_TYPE, history_access="participants", peer_access="link",
-                    camera_allowed=True, screen_share_allowed=True, board_allowed=True, created_by_user_id=su.user_id, created_by_name=su.display_name,
+                    camera_allowed=True, screen_share_allowed=True, board_allowed=True, created_by_user_id=su.user_id, created_by_name=su.display_name, encrypt_storage=se.default_for_new(cfg),
                     text_retention_days=default_text_days, audio_retention_days=default_audio_days, auto_close_at=now + timedelta(hours=cfg.peer_room_ttl_hours))
         db.add(room)
         try:

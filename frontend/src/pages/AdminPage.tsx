@@ -25,6 +25,7 @@ import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import ConfigBackupAdmin from "./admin/ConfigBackupAdmin";
+import CryptoAdmin from "./admin/CryptoAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import PerformanceAdmin from "./admin/PerformanceAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
@@ -46,6 +47,7 @@ const GROUPS: Group[] = [
     { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
     { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
     { id: "login_access", label: "Кто может входить", render: (go) => <LoginAccessAdmin onOpen={go} /> },
+    { id: "crypto", label: "Шифрование хранилища", render: () => <CryptoAdmin /> },
     { id: "outlook", label: "Надстройка Outlook", render: () => (
       <>
         <SettingsForm key="outlook" group="outlook" title="Интеграция с Outlook (календарь)" fields={outlookFields}
@@ -130,7 +132,7 @@ const GROUPS: Group[] = [
 /** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
 const KEYWORDS: Record<string, string> = {
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
-  outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
+  crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
   public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };

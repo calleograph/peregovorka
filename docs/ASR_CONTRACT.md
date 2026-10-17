@@ -8,6 +8,9 @@ Backend не импортирует код ASR, ASR не обращается к
 - Hash `asr:sessions` — активные сессии: поле = `meeting_id`, значение = JSON
   `{"meeting_id","room_name","room_id","transcribe":true,"record_audio":false,"started_at"}`.
   Backend пишет при старте встречи и удаляет при завершении.
+  Необязательное поле `e2ee_key` (строка) backend добавляет только для комнат со сквозным шифрованием в режиме «доверенный компонент»: ASR входит в комнату с общим ключом
+  (`rtc.E2EEOptions`, PBKDF2) и расшифровывает звук у себя; в режиме «полное E2EE» backend сессию с `transcribe=false, record_audio=false` и без ключа. Ключ живёт одну встречу,
+  в логи не пишется (`SessionInfo.e2ee_key` скрыт из repr). См. docs/ENCRYPTION.md.
 - Stream `asr:control` — команды (идемпотентны):
   `type=start|stop|config`, `meeting_id`, `room_name`, `payload` (JSON как выше). `config` меняет флаги
   идущей сессии (`transcribe`, `record_audio`) — кнопки «начать/остановить запись».

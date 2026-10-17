@@ -70,6 +70,7 @@ class Room(Base):
     """Постоянная переговорка (настройки). Конкретные сеансы — Meeting."""
 
     __tablename__ = "rooms"
+    __table_args__ = (Index("uq_rooms_outlook_key", "created_by_user_id", "outlook_key", unique=True),)      # одна комната на событие календаря у одного организатора
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)  # технический идентификатор
@@ -103,6 +104,10 @@ class Room(Base):
     room_type: Mapped[str] = mapped_column(String(16), default="regular", server_default="regular", nullable=False)
     # Только для равноправных временных комнат (room_type = peer): link — войти может любой вошедший сотрудник со ссылкой; invited — владелец, администратор и приглашённые.
     peer_access: Mapped[str] = mapped_column(String(8), default="link", server_default="link", nullable=False)
+    # Шифрование хранимых чата и стенограмм этой комнаты (AES-256-GCM, ключи — таблица storage_keys). Прежние записи при включении не меняются.
+    encrypt_storage: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Сквозное шифрование звука и видео (LiveKit E2EE): off | full (серверные запись и распознавание недоступны) | trusted (ключ получает служба распознавания). Действует с начала следующей встречи.
+    e2ee_mode: Mapped[str] = mapped_column(String(8), default="off", server_default="off", nullable=False)
     # Запланированная конференция из календаря Outlook (временная комната с окном входа): время (UTC), ключ события (идемпотентность), серия, отмена.
     scheduled_start: Mapped[datetime | None] = mapped_column(UTCDateTime)
     scheduled_end: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -723,6 +728,18 @@ class StorageSyncRun(Base):
     orphans: Mapped[int] = mapped_column(Integer, default=0, nullable=False)       # неизвестные файлы (не импортируются)
     unavailable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)   # не удалось проверить (хранилище недоступно)
     details: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class StorageKey(Base):
+    """Ключи данных для шифрования хранимых материалов. Здесь только обёртка (DEK под AES-GCM ключом, выведенным из APP_MASTER_KEY); сам ключ в базе не лежит."""
+
+    __tablename__ = "storage_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wrapped: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class UserBackupCode(Base):

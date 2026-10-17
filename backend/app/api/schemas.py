@@ -54,6 +54,8 @@ class RoomOut(BaseModel):
     board_access: str = "auto"
     room_type: str = "regular"
     auto_record: bool = False
+    encrypt_storage: bool = False      # чат и стенограммы этой комнаты шифруются при хранении
+    e2ee_mode: str = "off"             # сквозное шифрование звука и видео: off | full | trusted
     lifetime: str = "permanent"        # permanent | temporary
     lifecycle: str = "active"          # active | grace_period | closed
     auto_close_at: datetime | None = None
@@ -89,6 +91,11 @@ class ClientConfig(BaseModel):
     attachments: bool = True        # вложения в чат включены
 
 
+class E2EEOut(BaseModel):
+    key: str = Field(repr=False)
+    mode: str
+
+
 class JoinOut(BaseModel):
     meeting_id: uuid.UUID
     room: RoomOut
@@ -100,6 +107,7 @@ class JoinOut(BaseModel):
     transcription: bool = True  # идёт транскрибация
     asr_ready: bool = False  # транскрибация готова; вход в комнату от этого НЕ зависит
     client: ClientConfig = Field(default_factory=ClientConfig)
+    e2ee: E2EEOut | None = None          # ключ сквозного шифрования этой встречи (если у комнаты включено E2EE)
 
 
 class ParticipantOut(BaseModel):
@@ -188,6 +196,8 @@ class RoomAdminOut(BaseModel):
     auto_record: bool = False
     board_allowed: bool = True
     board_access: str = "auto"
+    encrypt_storage: bool = False
+    e2ee_mode: str = "off"
     guest_access_enabled: bool = False
     slug_history: list[str] = Field(default_factory=list)      # прежние адреса комнаты (старые ссылки перенаправляют на нынешний)
     lifetime: str = "permanent"
@@ -224,6 +234,8 @@ class RoomCreateIn(BaseModel):
     auto_record: bool = False
     board_allowed: bool = True
     board_access: str = Field(default="auto", pattern="^(auto|everyone|speakers|leaders|private)$")
+    encrypt_storage: bool = False
+    e2ee_mode: str = Field(default="off", pattern="^(off|full|trusted)$")
     guest_access_enabled: bool = False
     acl: list[AclEntryIn] = Field(default_factory=list)
     moderators: list[AclEntryIn] = Field(default_factory=list)
@@ -263,6 +275,8 @@ class RoomPatchIn(BaseModel):
     auto_record: bool | None = None
     board_allowed: bool | None = None
     board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")
+    encrypt_storage: bool | None = None
+    e2ee_mode: str | None = Field(default=None, pattern="^(off|full|trusted)$")
     guest_access_enabled: bool | None = None
     acl: list[AclEntryIn] | None = None
     moderators: list[AclEntryIn] | None = None

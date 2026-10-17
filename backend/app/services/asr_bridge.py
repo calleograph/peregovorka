@@ -22,17 +22,21 @@ class AsrBridge:
     def __init__(self, redis: Redis):
         self._r = redis
 
-    async def start(self, *, meeting_id: str, room_name: str, room_id: str, transcribe: bool, record_audio: bool) -> None:
+    async def start(self, *, meeting_id: str, room_name: str, room_id: str, transcribe: bool, record_audio: bool, e2ee_key: str | None = None) -> None:
         payload = {"meeting_id": meeting_id, "room_name": room_name, "room_id": room_id,
                    "transcribe": transcribe, "record_audio": record_audio, "started_at": time.time()}
+        if e2ee_key:
+            payload["e2ee_key"] = e2ee_key          # доверенный компонент (режим trusted): служба распознавания расшифровывает звук встречи этим ключом
         await self._r.hset(SESSIONS_HASH, meeting_id, json.dumps(payload))
         await self._r.xadd(CONTROL_STREAM, {"type": "start", "meeting_id": meeting_id, "room_name": room_name,
                                             "payload": json.dumps(payload)}, maxlen=10000, approximate=True)
 
-    async def configure(self, *, meeting_id: str, room_name: str, room_id: str, transcribe: bool, record_audio: bool) -> None:
+    async def configure(self, *, meeting_id: str, room_name: str, room_id: str, transcribe: bool, record_audio: bool, e2ee_key: str | None = None) -> None:
         """Изменить флаги идущей сессии (пауза/возобновление записи) без переподключения."""
         payload = {"meeting_id": meeting_id, "room_name": room_name, "room_id": room_id,
                    "transcribe": transcribe, "record_audio": record_audio}
+        if e2ee_key:
+            payload["e2ee_key"] = e2ee_key
         await self._r.hset(SESSIONS_HASH, meeting_id, json.dumps(payload))
         await self._r.xadd(CONTROL_STREAM, {"type": "config", "meeting_id": meeting_id, "room_name": room_name,
                                             "payload": json.dumps(payload)}, maxlen=10000, approximate=True)

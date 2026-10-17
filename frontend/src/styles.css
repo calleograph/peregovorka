@@ -845,3 +845,24 @@ details.group { margin: 8px 0; }
 .totp-qr svg { display: block; width: 100%; height: auto; }
 .backup-codes { list-style: none; margin: 12px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 16px; }
 .backup-codes code { font-size: 15px; letter-spacing: .5px; user-select: all; }
+
+/* Индикатор защиты (шифрование) */
+.prot-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border, #d0d4dc); }
+.prot-badge .prot-label { font-weight: 700; letter-spacing: .02em; }
+.prot-badge .prot-kind { opacity: .85; font-weight: 500; }
+.prot-red { color: #fff; background: #c62828; border-color: #c62828; }
+.prot-warn { color: #8a4b00; background: #fff4e0; border-color: #e0a040; }
+.prot-plain { opacity: .9; }
+.prot-info { all: unset; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; border-radius: 50%; }
+.prot-info:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.prot-rows { list-style: none; margin: 0 0 12px; padding: 0; }
+.prot-rows li { margin: 0 0 10px; font-size: 14px; }
+.prot-rows li.off b { opacity: .75; }
+.prot-flow { margin: 12px 0; }
+.prot-flow figcaption { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.pf-box { fill: var(--surface, #f3f5f9); stroke: var(--border, #b9c0cd); stroke-width: 1.5; }
+.pf-lock { fill: #fdecea; stroke: #c62828; }
+.pf-title { font-size: 13px; font-weight: 600; fill: currentColor; }
+.pf-note { font-size: 11px; fill: currentColor; opacity: .75; }
+.pf-arrow line { stroke: currentColor; stroke-width: 2; }
+.pf-arrow polygon { fill: currentColor; }

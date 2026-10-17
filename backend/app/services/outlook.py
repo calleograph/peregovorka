@@ -118,7 +118,7 @@ async def owned(db: AsyncSession, su: SessionUser, room_id: uuid.UUID) -> Room:
 
 
 async def ensure(db: AsyncSession, su: SessionUser, cfg: OutlookSettings, *, key: str, subject: str, start: datetime, end: datetime, recurring: bool,
-                 default_text_days: int | None = None, default_audio_days: int | None = None) -> tuple[Room, bool]:
+                 default_text_days: int | None = None, default_audio_days: int | None = None, encrypt_storage: bool = False) -> tuple[Room, bool]:
     """Создаёт запланированную комнату или возвращает уже связанную с этим событием (идемпотентно). Отменённую или закрытую по ошибке комнату,
     у которой встреча ещё не закончилась, повторное нажатие кнопки возвращает в работу."""
     if not cfg.enabled:
@@ -143,7 +143,7 @@ async def ensure(db: AsyncSession, su: SessionUser, cfg: OutlookSettings, *, key
         room = Room(slug=PREFIX + code, name=subject, lifetime="temporary", lifecycle="active", history_access="participants", created_by_user_id=su.user_id,
                     created_by_name=su.display_name, text_retention_days=default_text_days, audio_retention_days=default_audio_days, peer_access="link",
                     scheduled_start=start, scheduled_end=end, join_opens_at=opens_at(start, cfg.early_minutes), outlook_key=key, recurring=recurring,
-                    auto_close_at=_auto_close(end, recurring, cfg, now), camera_allowed=True, screen_share_allowed=True)
+                    auto_close_at=_auto_close(end, recurring, cfg, now), camera_allowed=True, screen_share_allowed=True, encrypt_storage=encrypt_storage)
         if cfg.guest_links:
             room.guest_access_enabled = True
             room.guest_token = secrets.token_urlsafe(24)

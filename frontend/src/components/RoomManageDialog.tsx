@@ -17,14 +17,14 @@ const days = (d: number | null | undefined) => (d == null ? "бессрочно"
 
 interface Form {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
-  room_type: RoomType; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off"; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
+  room_type: RoomType; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off"; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
 }
 
 const toForm = (r: RoomManage): Form => ({
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, password: "", clearPassword: false,
-  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
+  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",
@@ -62,7 +62,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
       const r = await api.manage.patch(roomId, {
         name: form.name.trim(), description: form.description.trim() || null, max_participants: form.max_participants,
         welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, room_type: form.room_type,
-        record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, recording_mode: form.recording_mode, camera_allowed: form.camera_allowed,
+        record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, recording_mode: form.recording_mode, encrypt_storage: form.encrypt_storage, e2ee_mode: form.e2ee_mode, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, board_access: form.board_access, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
         protocol_instructions: form.protocol_instructions.trim() || null, llm: form.llm, llm_summary: form.llm_summary, sip: form.sip, auto_map_mode: form.auto_map_mode,
@@ -125,6 +125,17 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                   <span className="check-body">Обычная<span className="help">Все участники могут говорить, включать камеру и показывать экран (если это разрешено ниже).</span></span></label>
                 <label className="check"><input type="radio" name="rt" checked={form.room_type === "presentation"} onChange={() => set("room_type", "presentation")} />
                   <span className="check-body">Презентационная<span className="help">Участники входят слушателями: микрофон, камера, показ экрана и доска у них закрыты. Говорят руководители и те, кому руководитель «дал слово» на встрече — временно, до конца встречи.</span></span></label>
+              </fieldset>
+              <fieldset className="group"><legend>Шифрование</legend>
+                <label className="check"><input type="checkbox" checked={form.encrypt_storage} onChange={(e) => set("encrypt_storage", e.target.checked)} />
+                  <span className="check-body">Шифровать чат и стенограммы при хранении<span className="help">Новые сообщения и реплики записываются в базу в зашифрованном виде (AES-256-GCM, ключи на сервере). Уже записанное при включении не меняется — для него есть «Зашифровать существующие» в разделе «Шифрование хранилища». Это защита хранилища, а не сквозное шифрование звука и видео.</span></span></label>
+                <label>Сквозное шифрование звука и видео (E2EE)
+                  <select value={form.e2ee_mode} onChange={(e) => set("e2ee_mode", e.target.value as Form["e2ee_mode"])}>
+                    <option value="off">Выключено</option>
+                    <option value="trusted">Включено, с доверенным компонентом (стенограмма и запись работают)</option>
+                    <option value="full">Полное E2EE (серверная стенограмма и запись недоступны)</option>
+                  </select>
+                  <span className="help">Звук и видео шифруются на устройствах участников ключом встречи; сервер звонков содержимого не видит. «С доверенным компонентом»: служба распознавания речи получает ключ встречи и расшифровывает звук у себя — это нужно, чтобы работали стенограмма и запись. «Полное»: ключа у сервера нет, стенограмма и запись звука отключены. Чат, доска и сигналы идут через сервер по TLS (их можно защитить при хранении переключателем выше). Не работает с телефонными участниками (SIP). Участникам нужен современный браузер; действует со следующей встречи.</span></label>
               </fieldset>
               <fieldset className="group"><legend>Запись и транскрибация</legend>
                 <p className="help" style={{ marginTop: 0 }}>Транскрибация включена всегда. Во время встречи руководитель может приостановить и возобновить её кнопкой «Остановить транскрибацию» — звонок и запись звука при этом не затрагиваются.</p>

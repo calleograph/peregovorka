@@ -23,6 +23,7 @@ from ..config import Settings
 from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
 from . import events, roles, temp_rooms
+from . import e2ee as e2ee_svc
 from . import outlook as outlook_svc
 from .access import grant_leases
 from .asr_bridge import AsrBridge
@@ -150,8 +151,12 @@ class MeetingService:
         await self._sync_room(db, room, meeting)
 
         if created:
+            e2ee = await e2ee_svc.begin(self._r, room, meeting.id)         # ключ сквозного шифрования этой встречи (если у комнаты включено E2EE)
+            if e2ee_svc.blocks_server_features(e2ee) and (meeting.transcription_enabled or meeting.record_audio):
+                meeting.transcription_enabled = meeting.record_audio = False      # полное E2EE: у сервера нет ключа — распознавание и запись звука невозможны
+                await db.commit()
             await self._bridge.start(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(room.id),
-                                     transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio)
+                                     transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio, e2ee_key=e2ee_svc.asr_key(e2ee))
             log.info("Встреча начата", extra={"meeting_id": str(meeting.id), "room": room.slug})
             if self.on_started is not None:
                 self.on_started(meeting.id)
@@ -352,6 +357,7 @@ class MeetingService:
                 minutes = (await self.settings_svc.get(db, "general")).post_meeting_access_minutes
             await grant_leases(self._r, meeting.id, online, minutes)
         await self._bridge.stop(meeting_id=str(meeting.id), room_name=meeting.livekit_room)
+        await e2ee_svc.drop(self._r, meeting.id)         # ключ сквозного шифрования действует одну встречу
         await self._clear_state(meeting.id)   # «слово» и список руководителей — состояние встречи, после неё сбрасывается
         await events.publish(self._r, meeting.id, {"type": "meeting_ended", "reason": reason})
         if kick:
@@ -661,12 +667,15 @@ class MeetingService:
     # ----------------------------------------------- транскрибация и запись аудио (раздельно)
     async def _push_flags(self, meeting: Meeting) -> None:
         await self._bridge.configure(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(meeting.room_id),
-                                     transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio)
+                                     transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio,
+                                     e2ee_key=e2ee_svc.asr_key(await e2ee_svc.get(self._r, meeting.id)))
 
     async def set_transcription(self, db: AsyncSession, meeting: Meeting, enabled: bool) -> bool:
         """«Остановить / возобновить транскрибацию». Звонок и запись аудио не затрагиваются."""
         if meeting.ended_at is not None:
             raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        if enabled and e2ee_svc.blocks_server_features(await e2ee_svc.get(self._r, meeting.id)):
+            raise JoinError("e2ee_full", "В комнате включено полное сквозное шифрование: у сервера нет ключа, поэтому транскрибация недоступна.", 409)
         if enabled and not meeting.room.transcription_enabled:
             raise JoinError("transcription_forbidden", "В этой комнате транскрибация отключена администратором.", 409)
         if meeting.transcription_enabled == enabled:
@@ -682,6 +691,8 @@ class MeetingService:
         """«Начать / остановить запись» — запись АУДИО встречи (стенограмма от неё не зависит). Включить можно, если комната допускает запись аудио."""
         if meeting.ended_at is not None:
             raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
+        if enabled and e2ee_svc.blocks_server_features(await e2ee_svc.get(self._r, meeting.id)):
+            raise JoinError("e2ee_full", "В комнате включено полное сквозное шифрование: у сервера нет ключа, поэтому запись звука недоступна.", 409)
         if enabled and not meeting.room.record_audio:
             raise JoinError("recording_forbidden", "В этой комнате запись аудио не разрешена (включается в настройках комнаты).", 409)
         if meeting.record_audio == enabled:
