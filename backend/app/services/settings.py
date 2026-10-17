@@ -627,10 +627,10 @@ class AuthSecuritySettings(_Group):
     @field_validator("totp_groups")
     @classmethod
     def _groups(cls, v: str) -> str:
-        return ",".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ",").split(",") if x.strip()))
+        return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))      # DN содержат запятые: разделитель — перевод строки или «;»
 
     def group_set(self) -> set[str]:
-        return {g for g in self.totp_groups.split(",") if g}
+        return {g for g in self.totp_groups.split(";") if g}
 
 
 class CaptchaSettings(_Group):
@@ -665,6 +665,33 @@ class ProfilePolicySettings(_Group):
         if bad:
             raise ValueError(f"Неизвестные поля: {', '.join(bad)}. Допустимы: {', '.join(known)}")
         return ",".join(dict.fromkeys(items))
+
+
+class OutlookSettings(_Group):
+    """Надстройка Outlook (Office.js): запланированные временные комнаты из календаря. По умолчанию выключено."""
+
+    enabled: bool = False
+    public_url: str = ""                                                  # адрес, который попадёт в манифест и ссылки (пусто — публичный адрес приложения)
+    allowed_groups: str = ""                                              # DN групп каталога через запятую, кому можно создавать; пусто — любому сотруднику
+    early_minutes: int = Field(default=10, ge=0, le=240)                  # за сколько минут до начала можно войти
+    after_end_minutes: int = Field(default=120, ge=5, le=1440)            # сколько после планового окончания комната остаётся открытой, если встреча не шла
+    closed_retention_days: int = Field(default=30, ge=1, le=3650)         # сколько хранить завершённые комнаты без встреч (затем удаляются; со встречами — остаются навсегда)
+    token_ttl_hours: int = Field(default=168, ge=1, le=720)               # срок действия токена надстройки (потом — повторный вход в окне Outlook)
+    max_active_per_user: int = Field(default=100, ge=1, le=1000)
+    guest_links: bool = False                                             # пускать по ссылке гостей без учётной записи (в открывшееся окно входа)
+
+    @field_validator("public_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        if v and not re.match(r"^https://[^\s/]+(/[^\s]*)?$", v):
+            raise ValueError("Публичный адрес надстройки: https://адрес (Outlook принимает только HTTPS)")
+        return v
+
+    @field_validator("allowed_groups")
+    @classmethod
+    def _groups(cls, v: str) -> str:
+        return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))
 
 
 class PrivacySettings(_Group):
@@ -877,6 +904,7 @@ GROUPS: dict[str, type[_Group]] = {
     "auth_security": AuthSecuritySettings,
     "captcha": CaptchaSettings,
     "profile_policy": ProfilePolicySettings,
+    "outlook": OutlookSettings,
 }
 
 

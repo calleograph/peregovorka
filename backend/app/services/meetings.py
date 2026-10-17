@@ -23,6 +23,7 @@ from ..config import Settings
 from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
 from . import events, roles, temp_rooms
+from . import outlook as outlook_svc
 from .access import grant_leases
 from .asr_bridge import AsrBridge
 from .livekit import (
@@ -102,6 +103,8 @@ class MeetingService:
             room = await get_accessible_room(db, room_id, su)
         except RoomNotFound:
             raise JoinError("room_not_found", "Комната не найдена или недоступна.", 404) from None
+        if outlook_svc.is_too_early(room):            # запланированная конференция из Outlook: вход открывается за N минут до начала
+            raise JoinError("too_early", outlook_svc.gate_message(room), 425)
 
         if room.password_hash:
             await self._check_room_password(room, su, password)
@@ -184,6 +187,8 @@ class MeetingService:
         запускал бы запись и ASR в пустой комнате). Права минимальные: без демонстрации экрана и без управления."""
         if room.lifecycle == "closed":
             raise JoinError("room_closed", "Эта временная переговорка закрыта.", 410)
+        if outlook_svc.is_too_early(room):
+            raise JoinError("too_early", outlook_svc.gate_message(room), 425)
         meeting = await self._active_meeting(db, room.id)
         if meeting is None:
             raise JoinError("meeting_not_active", "Встреча ещё не началась. Дождитесь, пока её откроет сотрудник.", 409)
@@ -466,7 +471,7 @@ class MeetingService:
             return 0
         rooms = (await db.execute(select(Room).where(Room.lifetime == "temporary", Room.lifecycle != "closed"))).scalars().all()
         if not rooms:
-            return 0
+            return await self.purge_scheduled(db, utcnow())
         cfg = await self.settings_svc.get(db, "general")
         now, n = utcnow(), 0
         for room in rooms:
@@ -475,11 +480,23 @@ class MeetingService:
                 if now - meeting.started_at >= timedelta(hours=cfg.temp_room_max_hours):      # type: ignore[attr-defined]
                     await self.end(db, meeting, "temp_ttl", kick=True)
                     n += 1
-            elif (room.room_type != "peer" and now - room.created_at >= timedelta(minutes=cfg.temp_room_idle_minutes)) or (room.auto_close_at and now >= room.auto_close_at):  # type: ignore[attr-defined]  # равноправные комнаты живут по своему сроку (`peer_room_ttl_hours`), а не по получасовому «простою»
+            elif (room.room_type != "peer" and room.scheduled_start is None and now - room.created_at >= timedelta(minutes=cfg.temp_room_idle_minutes)) or (room.auto_close_at and now >= room.auto_close_at):  # type: ignore[attr-defined]  # равноправные комнаты живут по своему сроку (`peer_room_ttl_hours`), а не по получасовому «простою»
                 if temp_rooms.close(room, "idle"):
                     await db.commit()
                     n += 1
-        return n
+        return n + await self.purge_scheduled(db, now)
+
+    async def purge_scheduled(self, db: AsyncSession, now) -> int:
+        """Завершённые конференции из Outlook, в которых так и не было встреч, удаляются через `closed_retention_days`; комнаты со встречами остаются навсегда."""
+        cfg = await self.settings_svc.get(db, "outlook")
+        cutoff = now - timedelta(days=cfg.closed_retention_days)       # type: ignore[attr-defined]
+        used = select(Meeting.id).where(Meeting.room_id == Room.id).exists()
+        old = (await db.execute(select(Room).where(Room.scheduled_start.is_not(None), Room.lifecycle == "closed", Room.closed_at.is_not(None), Room.closed_at < cutoff, ~used))).scalars().all()
+        for room in old:
+            await db.delete(room)
+        if old:
+            await db.commit()
+        return len(old)
 
     # ----------------------------------------------------- состояние встречи в Redis: слово и привилегированные
     @staticmethod

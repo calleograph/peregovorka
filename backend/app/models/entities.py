@@ -103,6 +103,13 @@ class Room(Base):
     room_type: Mapped[str] = mapped_column(String(16), default="regular", server_default="regular", nullable=False)
     # Только для равноправных временных комнат (room_type = peer): link — войти может любой вошедший сотрудник со ссылкой; invited — владелец, администратор и приглашённые.
     peer_access: Mapped[str] = mapped_column(String(8), default="link", server_default="link", nullable=False)
+    # Запланированная конференция из календаря Outlook (временная комната с окном входа): время (UTC), ключ события (идемпотентность), серия, отмена.
+    scheduled_start: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    scheduled_end: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    join_opens_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    outlook_key: Mapped[str | None] = mapped_column(String(80))
+    recurring: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Общая запись всей встречи: audio — единая аудиозапись; audio_video — видеозапись со звуком (нужна служба LiveKit Egress); off — общая запись не создаётся.
