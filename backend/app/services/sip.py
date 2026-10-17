@@ -160,6 +160,15 @@ def _shown(number: str, pol) -> str:
     return mask_number(number) if pol.mask_numbers else number
 
 
+def dns_probe(host: str, port: int) -> dict:
+    """Разрешается ли имя АТС в DNS сервера приложения. Блокирующая (в потоке)."""
+    try:
+        addr = socket.getaddrinfo(host, port)[0][4][0]
+        return {"ok": True, "message": f"Имя «{host}» разрешается в {addr}."}
+    except OSError:
+        return {"ok": False, "message": f"Имя «{host}» не найдено в DNS на сервере приложения: проверьте адрес АТС и DNS (в контейнерах — настройки DNS Docker)."}
+
+
 def tcp_listen_probe(host: str, port: int, timeout: float = 2.0) -> dict:
     """Слушает ли служба SIP свой порт по TCP (из сети контейнеров). UDP так проверить нельзя — это ограничение, а не признак ошибки. Блокирующая (в потоке)."""
     try:

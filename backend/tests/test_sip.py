@@ -228,8 +228,10 @@ def test_check_reports_each_stage_with_a_clear_reason(tmp_path, directory, monke
     with Ctx(tmp_path, directory, lk) as c:
         p = make_profile(c)
         monkeypatch.setattr("app.api.admin_sip.sip_options_probe", lambda h, pt, tr: {"ok": True, "message": "АТС отвечает: SIP 200 OK", "status": 200, "ms": 4})
+        monkeypatch.setattr("app.api.admin_sip.dns_probe", lambda h, pt: {"ok": True, "message": "разрешается"})                  # в тестах нет сети и DNS
+        monkeypatch.setattr("app.api.admin_sip.tcp_listen_probe", lambda h, pt: {"ok": True, "message": "служба слушает порт"})
         r = c.post(f"/api/v1/admin/sip/profiles/{p['id']}/check").json()
-        assert r["ok"] is True and [s["stage"] for s in r["stages"]] == ["config", "pbx", "livekit", "service"]
+        assert r["ok"] is True and [s["stage"] for s in r["stages"]] == ["config", "dns", "pbx", "livekit", "service", "listen"]
         assert next(s for s in r["stages"] if s["stage"] == "livekit")["ok"] is True
         monkeypatch.setattr("app.api.admin_sip.sip_options_probe", lambda h, pt, tr: {"ok": False, "message": "АТС не ответила на SIP OPTIONS за 3 с", "status": None, "ms": 3000})
         lk.out.clear()                                        # транк удалили вручную в LiveKit

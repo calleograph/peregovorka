@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import socket
 import time
 import uuid
 from typing import Any
@@ -22,7 +21,7 @@ from ..models import Room, SipCall, SipProfile, utcnow
 from ..services.audit import write_audit
 from ..services.settings import SettingsError
 from ..services.sip import (CODEC_RATES, SipError, connection_summary, explain_livekit_error, explain_sip_status, mask_number, normalize_number, service_status, sip_options_probe,
-                            tcp_listen_probe)
+                            dns_probe, tcp_listen_probe)
 from ..services.sip_guide import build_guide
 
 router = APIRouter(prefix="/admin/sip", tags=["admin-sip"])
@@ -151,11 +150,8 @@ async def check_profile(pid: str, request: Request, su: SessionUser = Depends(re
     if row.direction in ("inbound", "both") and not (row.allowed_addresses or row.username):
         warn.append("для входящих не задан ни список разрешённых адресов АТС, ни логин — принимать звонки с любых адресов небезопасно")
     add("config", True if not warn else None, "Значения профиля корректны." + (" Замечания: " + "; ".join(warn) + "." if warn else ""))
-    try:
-        addrs = await asyncio.to_thread(socket.getaddrinfo, row.host, row.port)
-        add("dns", True, f"Имя «{row.host}» разрешается в {addrs[0][4][0]}.")
-    except OSError:
-        add("dns", False, f"Имя «{row.host}» не найдено в DNS на сервере приложения: проверьте адрес АТС и DNS (в контейнерах — настройки DNS Docker).")
+    dns = await asyncio.to_thread(dns_probe, row.host, row.port)
+    add("dns", dns["ok"], dns["message"])
     probe = await asyncio.to_thread(sip_options_probe, row.host, row.port, row.transport)
     add("pbx", probe["ok"], probe["message"], probe["ms"])
     started = time.monotonic()
