@@ -98,3 +98,5 @@ import.meta.env.DEV
 
 # --- публичные адреса Microsoft: схемы XML манифеста надстройки Outlook, документация, CDN office.js (не адреса серверов организации)
 microsoft.com
+xmlsoap.org
+microsoftonline.com

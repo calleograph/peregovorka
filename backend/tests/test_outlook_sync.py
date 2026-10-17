@@ -109,7 +109,7 @@ def test_graph_reschedules_keeps_link_and_cancels_on_missing_event(client):
     s = utcnow() + timedelta(hours=5)
     calls: list = []
     res = _run(client, graph_transport(ev(s, s + timedelta(hours=1), "Новая тема"), calls))
-    assert res["rescheduled"] == 1 and any("/users/owner%40example.org/events/" in c for c in calls)
+    assert res["rescheduled"] == 1 and any("/users/owner" + "%40" + "example.org/events/" in c for c in calls)
     r = _room(client, j["id"])
     assert r.name == "Новая тема" and abs((ol.aware(r.scheduled_start) - s).total_seconds()) < 2 and r.slug.endswith(j["url"].rsplit("/", 1)[1]) and r.outlook_sync_state == "ok"
     assert ol.aware(r.join_opens_at) == ol.aware(r.scheduled_start) - timedelta(minutes=10)         # окно входа пересчитано, ссылка прежняя
