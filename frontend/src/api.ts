@@ -10,7 +10,7 @@ export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
-  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation"; auto_record?: boolean;
+  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation" | "peer"; auto_record?: boolean;
   /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
   /** Только в списке комнат: вошедший — руководитель/администратор; секрет гостевой ссылки отдаётся только им и только при включённом гостевом входе. */
@@ -99,7 +99,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -320,7 +320,11 @@ export interface AccessCheck {
   found: boolean; message?: string; login?: string; display_name?: string; source?: string; account_disabled?: boolean; restricted?: boolean;
   would_log_in?: boolean; reason?: string; allowed_via?: string[]; admin?: boolean; admin_via?: string[]; groups_total?: number;
 }
+export interface ProfileField { name: "display_name" | "email" | "title" | "department" | "phone"; value: string | null; source: "ad" | "bitrix" | "local"; manual: boolean; manual_at: string | null; ad_value: string | null; editable: boolean }
+export interface PeerPolicy { enabled: boolean; create_on_link: boolean; max_per_user: number; active_mine: number; can_create: boolean; ttl_hours: number }
+export interface PeerRoom { id: string; slug: string; name: string; created: boolean; lifecycle: string; access: "link" | "invited"; owner: boolean; link: string; expires_at: string | null; invited: { name: string | null; ref: string }[] }
 export interface Profile {
+  fields?: ProfileField[]; restorable?: boolean;
   id: string; display_name: string; login: string; email: string | null; title: string | null; department: string | null; phone: string | null;
   source: "ad" | "local"; avatar_url: string | null; synced_at: string | null; is_admin: boolean;
 }
@@ -705,7 +709,19 @@ export const api = {
   meetingAvatars: (id: string) => request<Record<string, string>>("GET", `/meetings/${id}/avatars`),
   participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),
   profile: () => request<Profile>("GET", "/profile"),
+  peer: {
+    policy: () => request<PeerPolicy>("GET", "/rooms/peer/policy"),
+    create: (name: string) => request<PeerRoom>("POST", "/rooms/peer", { name }),
+    open: (code: string) => request<PeerRoom>("POST", "/rooms/peer/open", { code }),
+    get: (id: string) => request<PeerRoom>("GET", `/rooms/peer/${id}`),
+    update: (id: string, body: { access?: "link" | "invited"; invited?: string[]; invited_add?: string[]; invited_remove?: string[]; extend_hours?: number; name?: string }) => request<PeerRoom>("PATCH", `/rooms/peer/${id}`, body),
+    rotate: (id: string) => request<PeerRoom>("POST", `/rooms/peer/${id}/rotate`),
+    close: (id: string) => request<void>("POST", `/rooms/peer/${id}/close`),
+    users: (q: string) => request<{ id: string; name: string; login: string; department: string | null }[]>("GET", `/rooms/peer/users/search?q=${encodeURIComponent(q)}`),
+  },
   refreshProfile: () => request<Profile>("POST", "/profile/refresh"),
+  editProfile: (fields: Record<string, string>) => request<Profile>("PATCH", "/profile", { fields }),
+  restoreProfile: (fields?: string[]) => request<Profile>("POST", "/profile/restore", { fields: fields ?? [] }),
   uploadAvatar: (blob: Blob) => putBlob<Profile>("/profile/avatar", blob),
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,

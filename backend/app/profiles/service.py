@@ -20,6 +20,7 @@ from ..models import User, utcnow
 from ..services import avatars as avatar_svc
 from .base import FIELDS, ProviderError, SourceProfile
 from .bitrix import MAX_PHOTO, Bitrix24Provider
+from .manual import apply_manual
 from .merge import avatar_source, effective, priorities_from
 
 log = logging.getLogger("app")
@@ -71,7 +72,9 @@ def apply_effective(user: User, cfg, *, use_bitrix: bool) -> bool:
             setattr(user, f, v)
             changed = True
     user.profile_sources = {**(user.profile_sources or {}), "ad": src["ad"]}
-    return changed
+    before = {f: getattr(user, f) for f in FIELDS}
+    apply_manual(user)                                         # правки пользователя сильнее любой синхронизации
+    return changed or any(getattr(user, f) != v for f, v in before.items())
 
 
 class ProfileEnrichment:

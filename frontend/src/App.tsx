@@ -25,6 +25,7 @@ import RoomsPage from "./pages/RoomsPage";
 
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
+import PeerOpenPage from "./pages/PeerOpenPage";
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const PlayerHost = lazy(() => import("./player/PlayerHost"));
@@ -71,7 +72,7 @@ function StaffApp() {
 
   useEffect(() => { setUnauthorizedHandler(() => { setCsrf(""); setMe(null); }); return () => setUnauthorizedHandler(null); }, []);
 
-  const onLogin = useCallback((m: Me) => { setCsrf(m.csrf_token); setMe(m); navigate("/"); }, [navigate]);
+  const onLogin = useCallback((m: Me) => { setCsrf(m.csrf_token); setMe(m); if (!window.location.pathname.startsWith("/p/")) navigate("/"); }, [navigate]);        // ссылка на равноправную комнату после входа открывается, а не теряется
   const logout = async () => { await api.logout().catch(() => undefined); setCsrf(""); setMe(null); navigate("/"); };
 
   // мастер первоначальной настройки — один раз после первого локального входа (пока не завершён и не закрыт)
@@ -129,6 +130,7 @@ function StaffApp() {
         <Routes>
           <Route path="/" element={<RoomsPage isAdmin={me.user.is_admin} />} />
           <Route path="/rooms/:roomId" element={<RoomRoute selfName={me.user.display_name} />} />
+          <Route path="/p/:code" element={<PeerOpenPage />} />
           {AudienceDemo && <Route path="/__dev/audience" element={<Suspense fallback={null}><AudienceDemo /></Suspense>} />}
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />

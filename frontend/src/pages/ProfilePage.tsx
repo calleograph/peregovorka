@@ -52,9 +52,54 @@ function SoundSettings() {
   );
 }
 
-const FIELDS: [keyof Profile, string][] = [["display_name", "ФИО"], ["login", "Логин"], ["email", "E-mail"], ["title", "Должность"], ["department", "Подразделение"], ["phone", "Телефон"]];
 
-/** Личный кабинет: данные из Active Directory (только разрешённые атрибуты), обновление из AD и собственная аватарка. */
+const FIELD_LABEL: Record<string, string> = { display_name: "ФИО", email: "E-mail", title: "Должность", department: "Подразделение", phone: "Телефон" };
+const SOURCE_LABEL: Record<string, string> = { ad: "Каталог", bitrix: "Портал", local: "Вы" };
+
+/** Данные учётной записи: итог по каждому полю, источник, значение каталога и правка пользователем (сильнее каталога, до «Восстановить из LDAP»). */
+function ProfileFields({ p, onChange, disabled }: { p: Profile; onChange: (p: Profile) => void; disabled: boolean }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [val, setVal] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<Profile>) => { setBusy(true); setErr(""); try { onChange(await fn()); setEditing(null); } catch (e) { setErr((e as ApiError).message); } setBusy(false); };
+  return (
+    <div>
+      <dl className="profile-dl">
+        <div><dt>Логин</dt><dd>{p.login}</dd></div>
+        {(p.fields ?? []).map((f) => (
+          <div key={f.name}>
+            <dt>{FIELD_LABEL[f.name]}</dt>
+            <dd>
+              {editing === f.name ? (
+                <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => api.editProfile({ [f.name]: val })); }}>
+                  <input value={val} onChange={(e) => setVal(e.target.value)} autoFocus maxLength={f.name === "email" ? 320 : 300} aria-label={FIELD_LABEL[f.name]} />
+                  <button className="btn mini primary" disabled={busy || !val.trim()}>Сохранить</button>
+                  <button type="button" className="btn mini" onClick={() => setEditing(null)}>Отмена</button>
+                </form>
+              ) : (
+                <>
+                  {f.value || <span className="muted">не указано</span>}
+                  {p.source === "ad" && f.value && <span className={`badge ${f.manual ? "warn" : ""}`} style={{ marginLeft: 8 }} title={f.manual && f.manual_at ? `Изменено вами ${fmt(f.manual_at)}` : undefined}>{f.manual ? "изменено вами" : SOURCE_LABEL[f.source]}</span>}
+                  {f.editable && <button className="btn mini ghost" style={{ marginLeft: 8 }} disabled={disabled || busy} onClick={() => { setEditing(f.name); setVal(f.value ?? ""); setErr(""); }}>Изменить</button>}
+                  {f.manual && p.restorable && <>
+                    <div className="muted small">В каталоге: {f.ad_value || "не указано"}{f.manual_at ? ` · изменено ${fmt(f.manual_at)}` : ""}</div>
+                    <button className="btn mini ghost" disabled={disabled || busy} onClick={() => void run(() => api.restoreProfile([f.name]))}>Восстановить из LDAP</button>
+                  </>}
+                </>
+              )}
+            </dd>
+          </div>
+        ))}
+        <div><dt>Источник</dt><dd>{p.source === "ad" ? "Active Directory" : "Локальная учётная запись"}</dd></div>
+        <div><dt>Данные из AD обновлены</dt><dd>{p.synced_at ? fmt(p.synced_at) : <span className="muted">ещё не обновлялись</span>}</dd></div>
+      </dl>
+      {err && <div className="alert error" role="alert">{err}</div>}
+      {(p.fields ?? []).some((f) => f.manual) && p.restorable && <p className="small muted">Значения, которые вы изменили, не перезаписываются данными из каталога. Чтобы вернуть значение из каталога, нажмите «Восстановить из LDAP».</p>}
+    </div>
+  );
+}
+
 function TwoFactorSection() {
   const [st, setSt] = useState<TotpStatus | null>(null);
   const load = () => { api.totp.status().then(setSt).catch(() => setSt(null)); };
@@ -68,6 +113,7 @@ function TwoFactorSection() {
   );
 }
 
+/** Личный кабинет: данные из Active Directory (только разрешённые атрибуты), обновление из AD и собственная аватарка. */
 export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => void }) {
   const [p, setP] = useState<Profile | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -102,13 +148,7 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
         </div>
         <div className="card">
           <h2>Данные учётной записи</h2>
-          <dl className="profile-dl">
-            {FIELDS.map(([k, label]) => (
-              <div key={k}><dt>{label}</dt><dd>{(p[k] as string | null) || <span className="muted">не указано</span>}</dd></div>
-            ))}
-            <div><dt>Источник</dt><dd>{p.source === "ad" ? "Active Directory" : "Локальная учётная запись"}</dd></div>
-            <div><dt>Данные из AD обновлены</dt><dd>{p.synced_at ? fmt(p.synced_at) : <span className="muted">ещё не обновлялись</span>}</dd></div>
-          </dl>
+          <ProfileFields p={p} onChange={(np) => { setP(np); onChanged(np); }} disabled={busy} />
           {p.source === "ad" ? (
             <div className="row">
               <button className="btn primary" onClick={() => void run(() => api.refreshProfile(), "Данные обновлены из Active Directory.")} disabled={busy}>

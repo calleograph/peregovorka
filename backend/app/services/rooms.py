@@ -67,10 +67,18 @@ def is_moderator(room: Room, su: SessionUser) -> bool:
     return su.is_admin or _matches(room.moderators, su)
 
 
+def _peer_visible(room: Room, su: SessionUser) -> bool:
+    """Равноправная комната по ссылке открыта любому вошедшему сотруднику, но в общем списке её видят только владелец, администратор и приглашённые."""
+    ref = (su.ad_guid or "").lower()
+    return su.is_admin or room.created_by_user_id == su.user_id or any(e.subject_type == "user" and e.subject_ref.lower() == ref for e in room.acl)
+
+
 def acl_allows(room: Room, su: SessionUser) -> bool:
     """Пустой ACL = доступ только администраторам. Админ видит все включённые комнаты. Руководителю комнаты вход разрешён всегда."""
     if su.is_admin or _matches(room.moderators, su):
         return True
+    if room.room_type == "peer":
+        return room.peer_access == "link" or _peer_visible(room, su)
     for entry in room.acl:
         if entry.subject_type == "group" and entry.subject_ref.lower() in su.groups:
             return True
@@ -81,7 +89,7 @@ def acl_allows(room: Room, su: SessionUser) -> bool:
 
 async def list_accessible_rooms(db: AsyncSession, su: SessionUser) -> list[Room]:
     rooms = (await db.execute(select(Room).where(Room.is_enabled.is_(True), Room.lifecycle != "closed").order_by(Room.name))).scalars().all()
-    return [r for r in rooms if acl_allows(r, su)]
+    return [r for r in rooms if acl_allows(r, su) and (r.room_type != "peer" or _peer_visible(r, su))]
 
 
 async def get_accessible_room(db: AsyncSession, room_id: uuid.UUID, su: SessionUser) -> Room:

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Settings
 from ..models import User, UserBackupCode, utcnow
+from ..profiles.manual import apply_manual
 from ..profiles.service import record_ad
 from ..security.passwords import verify_room_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
@@ -317,6 +318,7 @@ class AuthService:
         user.email = ident.email
         record_ad(user, {"display_name": ident.display_name, "email": ident.email}, clear_missing=True)
         apply_profile(user, ident)
+        apply_manual(user)                                        # правки пользователя в личном кабинете сильнее данных каталога
         user.last_is_admin = is_admin
         user.last_login_at = utcnow()
         await db.commit()

@@ -478,6 +478,14 @@ class GeneralSettings(_Group):
     temp_room_idle_minutes: int = Field(default=30, ge=5, le=1440)       # комната, в которую так никто и не вошёл
     temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
     temp_room_allow_guest_link: bool = False
+    # Временные равноправные комнаты (создаются по ссылке /p/<код> или кнопкой; без обязательного ведущего). По умолчанию выключены.
+    peer_rooms_enabled: bool = False
+    peer_create_on_link: bool = True                                       # первый переход по новой ссылке создаёт комнату (иначе — только кнопкой)
+    peer_room_max_per_user: int = Field(default=3, ge=1, le=50)
+    peer_room_max_total: int = Field(default=50, ge=1, le=2000)
+    peer_create_per_hour: int = Field(default=10, ge=1, le=200)           # новых комнат в час у одного пользователя
+    peer_room_ttl_hours: int = Field(default=24, ge=1, le=168)            # срок жизни комнаты, в которую так никто и не вошёл (затем она закрывается)
+    peer_room_max_extend_hours: int = Field(default=24, ge=1, le=168)     # на сколько часов владелец может продлить за раз
     # Карточка участника во встрече: какие контактные данные показывать другим сотрудникам (ФИО, должность, подразделение показываются всегда)
     card_show_email: bool = True
     card_show_phone: bool = False                             # можно ли владельцу временной комнаты выпускать гостевую ссылку
@@ -640,6 +648,23 @@ class CaptchaSettings(_Group):
         if v not in ("off", "after_failures", "always"):
             raise ValueError("Режим CAPTCHA: off, after_failures или always")
         return v
+
+
+class ProfilePolicySettings(_Group):
+    """Какие поля личного кабинета пользователь может править сам. Правка пользователя сильнее данных каталога: синхронизация её не перезаписывает,
+    а «Восстановить из LDAP» возвращает значение каталога. Поля: display_name, email, title, department, phone."""
+
+    editable_fields: str = "title,department,phone"
+
+    @field_validator("editable_fields")
+    @classmethod
+    def _fields(cls, v: str) -> str:
+        known = ("display_name", "email", "title", "department", "phone")
+        items = [x.strip() for x in v.replace("\n", ",").split(",") if x.strip()]
+        bad = [x for x in items if x not in known]
+        if bad:
+            raise ValueError(f"Неизвестные поля: {', '.join(bad)}. Допустимы: {', '.join(known)}")
+        return ",".join(dict.fromkeys(items))
 
 
 class PrivacySettings(_Group):
@@ -851,6 +876,7 @@ GROUPS: dict[str, type[_Group]] = {
     "auto_backup": AutoBackupSettings,
     "auth_security": AuthSecuritySettings,
     "captcha": CaptchaSettings,
+    "profile_policy": ProfilePolicySettings,
 }
 
 

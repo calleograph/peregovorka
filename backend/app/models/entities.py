@@ -101,6 +101,8 @@ class Room(Base):
     # Тип комнаты: regular — обычная (все публикуют звук/видео по правам комнаты); presentation — участники входят слушателями, публиковать
     # (микрофон, камера, экран) и править доску могут руководители и те, кому руководитель «дал слово» на время встречи.
     room_type: Mapped[str] = mapped_column(String(16), default="regular", server_default="regular", nullable=False)
+    # Только для равноправных временных комнат (room_type = peer): link — войти может любой вошедший сотрудник со ссылкой; invited — владелец, администратор и приглашённые.
+    peer_access: Mapped[str] = mapped_column(String(8), default="link", server_default="link", nullable=False)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Общая запись всей встречи: audio — единая аудиозапись; audio_video — видеозапись со звуком (нужна служба LiveKit Egress); off — общая запись не создаётся.
