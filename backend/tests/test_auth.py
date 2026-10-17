@@ -33,6 +33,10 @@ def test_wrong_password_is_generic_and_unknown_user_looks_the_same(client):
 
 
 def test_throttle_stops_calls_to_ad_before_lockout_threshold(client, directory):
+    async def captcha_off():                          # CAPTCHA по умолчанию включается на тех же 20 неудачах; здесь проверяется именно блокировка входа
+        async with client.app_obj.state.session_maker() as db:
+            await client.app_obj.state.settings_svc.update(db, "captcha", {"mode": "off"}, actor="test")
+    client.portal.call(captcha_off)
     for _ in range(20):  # LOGIN_MAX_FAILURES_PER_USER по умолчанию = 20
         assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "bad"}).status_code == 401
     calls_before = directory.calls
