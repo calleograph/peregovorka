@@ -285,7 +285,7 @@ export const captchaFields: Field[] = [
 export const authSecurityFields: Field[] = [
   { name: "totp_policy", label: "Политика", type: "select", options: [["off", "Отключена (функция скрыта)"], ["optional", "По желанию пользователя"], ["admins", "Обязательна администраторам"], ["all", "Обязательна всем"], ["groups", "Обязательна для групп каталога"]],
     help: "«Обязательна»: при следующем входе пользователь сначала настраивает защиту. Пока она не настроена, остальные разделы для него закрыты. Обязательную защиту пользователь отключить не может." },
-  { name: "totp_groups", label: "Группы каталога (для политики «для групп»)", type: "textarea", placeholder: "cn=finance,ou=groups,dc=example,dc=org", help: "DN групп, по одному в строке (или через «;»)." },
+  { name: "totp_groups", label: "Группы каталога (для политики «для групп»)", type: "textarea", placeholder: "cn=finance,ou=groups,dc=example,dc=org", help: "DN групп, по одному в строке (или через «;»): запятые внутри DN — часть имени." },
   { name: "totp_issuer", label: "Название в приложении", type: "text", placeholder: "Peregovorka", help: "Так запись будет называться в приложении-аутентификаторе." },
 ]
 
