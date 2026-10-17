@@ -106,7 +106,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
               <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} maxLength={200} /></label>
               <label>Описание<input value={form.description} onChange={(e) => set("description", e.target.value)} maxLength={2000} placeholder="Еженедельная планёрка отдела" /></label>
               <div className="cols">
-                <label>Максимум участников<input type="number" min={1} max={200} value={form.max_participants} onChange={(e) => set("max_participants", Number(e.target.value))} /></label>
+                <label>Максимум участников<input type="number" min={1} max={2000} value={form.max_participants} onChange={(e) => set("max_participants", Number(e.target.value))} /></label>
                 <label>Пароль комнаты {room.has_password && <span className="muted small">(пусто — не менять)</span>}
                   <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" disabled={form.clearPassword} /></label>
               </div>

@@ -21,6 +21,7 @@ from ..auth.directory import DirectoryError
 import re
 
 from ..models import Meeting, Room, SipProfile
+from .schemas import MAX_ROOM_PARTICIPANTS
 from ..services.llm_choice import clean_choice, describe, llm_options, resolve_llm, room_choice
 from ..services.sip import normalize_number
 from ..security.passwords import hash_room_password
@@ -89,7 +90,7 @@ class RoomManagePatch(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
-    max_participants: int | None = Field(default=None, ge=1, le=200)
+    max_participants: int | None = Field(default=None, ge=1, le=MAX_ROOM_PARTICIPANTS)
     password: str | None = Field(default=None, max_length=256, repr=False)
     camera_allowed: bool | None = None
     screen_share_allowed: bool | None = None

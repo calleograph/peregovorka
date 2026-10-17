@@ -157,7 +157,7 @@ export default function RoomsAdmin() {
               </div>
               <label>Описание<input value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Еженедельная планёрка отдела" /></label>
               <div className="cols">
-                <label>Максимум участников<input type="number" min={1} max={200} value={form.max_participants} onChange={(e) => set("max_participants", Number(e.target.value))} />
+                <label>Максимум участников<input type="number" min={1} max={2000} value={form.max_participants} onChange={(e) => set("max_participants", Number(e.target.value))} />
                   <span className="help">Больше людей войти не смогут.</span></label>
                 <label>Пароль комнаты {form.id && <span className="muted small">(пусто — не менять)</span>}
                   <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" disabled={form.clearPassword} />

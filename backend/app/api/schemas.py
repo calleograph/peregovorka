@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+MAX_ROOM_PARTICIPANTS = 2000   # верхняя граница настройки комнаты; это не гарантия 2000 одновременных видеоподключений (нагрузку определяют ресурсы сервера и LiveKit)
+
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
 
 
@@ -202,7 +204,7 @@ class RoomCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     is_enabled: bool = True
-    max_participants: int = Field(default=20, ge=1, le=200)
+    max_participants: int = Field(default=20, ge=1, le=MAX_ROOM_PARTICIPANTS)
     password: str | None = Field(default=None, max_length=256, repr=False)
     transcription_enabled: bool = True
     record_audio: bool = False
@@ -241,7 +243,7 @@ class RoomPatchIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     is_enabled: bool | None = None
-    max_participants: int | None = Field(default=None, ge=1, le=200)
+    max_participants: int | None = Field(default=None, ge=1, le=MAX_ROOM_PARTICIPANTS)
     password: str | None = Field(default=None, max_length=256, repr=False)
     transcription_enabled: bool | None = None
     record_audio: bool | None = None
