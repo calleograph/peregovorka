@@ -26,6 +26,7 @@ import RoomsPage from "./pages/RoomsPage";
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 import PeerOpenPage from "./pages/PeerOpenPage";
+import MeetPage from "./pages/MeetPage";
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const PlayerHost = lazy(() => import("./player/PlayerHost"));
@@ -72,7 +73,14 @@ function StaffApp() {
 
   useEffect(() => { setUnauthorizedHandler(() => { setCsrf(""); setMe(null); }); return () => setUnauthorizedHandler(null); }, []);
 
-  const onLogin = useCallback((m: Me) => { setCsrf(m.csrf_token); setMe(m); if (!window.location.pathname.startsWith("/p/")) navigate("/"); }, [navigate]);        // ссылка на равноправную комнату после входа открывается, а не теряется
+  const onLogin = useCallback((m: Me) => {
+    setCsrf(m.csrf_token); setMe(m);
+    const next = new URLSearchParams(window.location.search).get("next") ?? "";
+    // возврат после входа: окно входа надстройки Outlook или страница конференции из календаря (только эти адреса — открытого перенаправления нет)
+    if (next === "/outlook/auth.html") { window.location.assign(next); return; }
+    if (/^\/m\/[a-z0-9]{20,32}$/.test(next)) { navigate(next); return; }
+    if (!window.location.pathname.startsWith("/p/")) navigate("/");
+  }, [navigate]);        // ссылка на равноправную комнату после входа открывается, а не теряется
   const logout = async () => { await api.logout().catch(() => undefined); setCsrf(""); setMe(null); navigate("/"); };
 
   // мастер первоначальной настройки — один раз после первого локального входа (пока не завершён и не закрыт)
@@ -168,6 +176,7 @@ export default function App() {
   const site = useSite();
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
   if (pathname.startsWith("/legal/")) return <><Routes><Route path="/legal/:kind" element={<LegalPage />} /></Routes><CookieNotice /></>;       // документы организации открываются без входа
+  if (pathname.startsWith("/m/")) return <Routes><Route path="/m/:code" element={<MeetPage />} /></Routes>;          // страница конференции из календаря: открывается без входа
   if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;
 }

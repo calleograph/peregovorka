@@ -99,7 +99,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "outlook" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -321,6 +321,7 @@ export interface AccessCheck {
   would_log_in?: boolean; reason?: string; allowed_via?: string[]; admin?: boolean; admin_via?: string[]; groups_total?: number;
 }
 export interface ProfileField { name: "display_name" | "email" | "title" | "department" | "phone"; value: string | null; source: "ad" | "bitrix" | "local"; manual: boolean; manual_at: string | null; ad_value: string | null; editable: boolean }
+export interface OutlookPublic { name: string; state: "waiting" | "open" | "live" | "ended" | "cancelled"; start: string | null; end: string | null; opens_at: string | null; recurring: boolean; early_minutes: number; server_time: string; slug: string; guests: boolean; guest_token: string | null }
 export interface PeerPolicy { enabled: boolean; create_on_link: boolean; max_per_user: number; active_mine: number; can_create: boolean; ttl_hours: number }
 export interface PeerRoom { id: string; slug: string; name: string; created: boolean; lifecycle: string; access: "link" | "invited"; owner: boolean; link: string; expires_at: string | null; invited: { name: string | null; ref: string }[] }
 export interface Profile {
@@ -709,6 +710,7 @@ export const api = {
   meetingAvatars: (id: string) => request<Record<string, string>>("GET", `/meetings/${id}/avatars`),
   participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),
   profile: () => request<Profile>("GET", "/profile"),
+  outlookPublic: (code: string) => request<OutlookPublic>("GET", `/outlook/public/${encodeURIComponent(code)}`),
   peer: {
     policy: () => request<PeerPolicy>("GET", "/rooms/peer/policy"),
     create: (name: string) => request<PeerRoom>("POST", "/rooms/peer", { name }),

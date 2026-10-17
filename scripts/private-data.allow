@@ -95,3 +95,6 @@ ip:100.64.0.1
 www.w3.org
 zone38.net
 import.meta.env.DEV
+
+# --- публичные адреса Microsoft: схемы XML манифеста надстройки Outlook, документация, CDN office.js (не адреса серверов организации)
+microsoft.com

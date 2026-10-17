@@ -1,0 +1,4 @@
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 24px; color: #1f2430; background: #fff; }
+h1 { font-size: 20px; margin: 0 0 12px; }
+p { font-size: 14px; line-height: 1.5; }
+.err { color: #b3261e; }

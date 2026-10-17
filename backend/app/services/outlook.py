@@ -256,7 +256,8 @@ def public_view(room: Room, st: str, *, now: datetime, cfg: OutlookSettings) -> 
 def manifest_xml(base: str, version: str) -> str:
     """Манифест надстройки (add-in only manifest, поставщик онлайн-встреч). Идентификатор стабилен для адреса, поэтому обновление манифеста заменяет надстройку."""
     gid = str(uuid.uuid5(uuid.NAMESPACE_URL, "peregovorka-outlook:" + base))
-    v = ".".join((re.findall(r"\d+", version) + ["0", "0", "0", "0"])[:4])
+    n = [int(x) for x in re.findall(r"\d+", version)[:3]] + [0, 0, 0]
+    v = f"{n[0] + 1}.{n[1]}.{n[2]}.0"                 # Office требует версию манифеста не ниже 1.0: старшая часть увеличена на единицу (растёт вместе с версией приложения)
     b = escape(base)
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0" xsi:type="MailApp">
