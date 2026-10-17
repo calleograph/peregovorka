@@ -100,7 +100,7 @@ def test_validation_and_local_account(client):
 
 
 def test_pure_helpers():
-    u = SimpleNamespace(title="AD", department=None, phone=None, display_name="A", email="a@x.org", profile_sources={"ad": {"title": "AD"}}, auth_source="ad")
+    u = SimpleNamespace(title="AD", department=None, phone=None, display_name="A", email="a@example.org", profile_sources={"ad": {"title": "AD"}}, auth_source="ad")
     done = manual.set_manual(u, {"title": "Мой"}, {"title"}, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert done == {"title": ("AD", "Мой")} and u.title == "Мой"
     assert manual.set_manual(u, {"title": "Мой"}, {"title"}) == {}                     # то же значение — ничего не меняется
