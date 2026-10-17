@@ -23,7 +23,7 @@ from ..auth.deps import SessionUser, client_ip, get_db
 from ..auth.guests import Actor, require_actor
 from ..models import ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services import events, roles, whiteboard as wb
-from ..services.audit import write_audit
+from ..services.audit import audit_now, write_audit
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
 from ..services.meetings import JoinError
 from ..services.materials import chat_files_map, render_chat
@@ -353,6 +353,10 @@ async def chat_attachment_get(meeting_id: uuid.UUID, attachment_id: uuid.UUID, r
     except AttachmentError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
     inline = att.kind == "image" and att.mime in INLINE_IMAGES.values() and not download
+    if not inline:                                                     # скачивание файла (просмотр картинки в чате в аудит не пишется)
+        await audit_now(request.app, actor_user_id=None if actor.is_guest else actor.id, actor_name=actor.label, action="chat_file.download", target_type="meeting",
+                        target_id=str(meeting_id), ip=client_ip(request), actor_type="guest" if actor.is_guest else "user",
+                        details={"attachment_id": str(att.id), "kind": att.kind, "size": att.size_bytes if hasattr(att, "size_bytes") else None})
     from urllib.parse import quote  # noqa: PLC0415
 
     disposition = ("inline" if inline else "attachment") + "; filename*=UTF-8''" + quote(att.name, safe="")
@@ -493,7 +497,7 @@ BOARD_EXPORT_FORMATS = ("png", "svg", "pdf", "drawio")
 async def _audit_board(db: AsyncSession, request: Request, actor: Actor, meeting_id: uuid.UUID, action: str, details: dict) -> None:
     """Скачивание схемы — в журнал аудита: кто, когда, откуда, какой формат (содержимое схемы в журнал не попадает)."""
     await write_audit(db, actor_user_id=None if actor.is_guest else actor.id, actor_name=actor.label, action=action, target_type="meeting", target_id=str(meeting_id),
-                      details=details, ip=client_ip(request))
+                      details=details, ip=client_ip(request), actor_type="guest" if actor.is_guest else "user")
 
 
 @router.post("/{meeting_id}/whiteboard/export", status_code=204)

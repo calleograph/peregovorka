@@ -41,7 +41,7 @@ def test_admin_crud_and_audit_trail_without_secrets(client):
         async with app.state.session_maker() as db:
             return (await db.execute(select(AuditLog).order_by(AuditLog.id))).scalars().all()
 
-    rows = client.portal.call(_audit)
+    rows = [r for r in client.portal.call(_audit) if not r.action.startswith("auth.")]  # вход/выход аудируются отдельно
     assert [r.action for r in rows] == ["room.create", "room.update", "room.update", "room.delete"]
     assert all(r.actor_name == "Root Admin" for r in rows)
     dump = " ".join(str(r.details) for r in rows)

@@ -131,7 +131,9 @@ export interface SystemStatus {
     recording: { recorder_queue: number | null; recorder_dropped: number | null; recorder_written_mb: number | null };
   };
 }
-export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null }
+export interface AuditRow { id: number; at: string; actor: string; action: string; target_type: string; target_id: string; details: unknown; ip: string | null; actor_type?: string; result?: string; user_agent?: string | null; session_id?: string | null; request_id?: string | null; signed?: boolean }
+export type AuditFilter = { q?: string; actor?: string; action?: string; result?: string; actor_type?: string; object_type?: string; ip?: string; since?: string; until?: string }
+export interface AuditVerify { signed: boolean; checked: number; ok: number; unsigned: number; bad: number[]; gaps: number[][]; intact?: boolean; note: string }
 export interface RecordingRow {
   id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
   export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing";
@@ -614,6 +616,10 @@ async function fetchBlob(path: string): Promise<Blob> {
 export type ExportFormat = "md" | "txt" | "docx" | "pdf" | "html";
 
 /** Параметры запроса журнала (фильтры — JSON-строкой; пустые поля не передаются). */
+export function auditParams(f: AuditFilter): string {
+  return Object.entries(f).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+}
+
 export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100): string {
   const p = new URLSearchParams({ limit: String(limit) });
   const filters = qy.filters.filter((f) => (Array.isArray(f.value) ? f.value.length > 0 : String(f.value).trim() !== ""));
@@ -798,8 +804,9 @@ export const api = {
     addGrant: (id: string, userId: string) => request<{ ok: boolean }>("POST", `/admin/meetings/${id}/grants`, { user_id: userId }),
     removeGrant: (id: string, userId: string) => request<void>("DELETE", `/admin/meetings/${id}/grants/${userId}`),
     system: () => request<SystemStatus>("GET", "/admin/system"),
-    audit: (offset = 0, f: { q?: string; actor?: string; action?: string } = {}) =>
-      request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}&q=${encodeURIComponent(f.q ?? "")}&actor=${encodeURIComponent(f.actor ?? "")}&action=${encodeURIComponent(f.action ?? "")}`),
+    audit: (offset = 0, f: AuditFilter = {}) => request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}&${auditParams(f)}`),
+    auditExportUrl: (format: "csv" | "json", f: AuditFilter = {}) => `/api/v1/admin/audit/export?format=${format}&${auditParams(f)}`,
+    auditVerify: () => request<AuditVerify>("GET", "/admin/audit/verify"),
     recordings: (offset = 0) => request<RecordingRow[]>("GET", `/admin/recordings?limit=100&offset=${offset}`),
 
     journal: (qy: JournalQuery, beforeId?: number, limit = 100) => request<JournalPage>("GET", `/admin/journal?${journalParams(qy, beforeId, limit)}`),

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type AdminUser, type ApiError, type AuditRow, type Meeting, type RecordingRow } from "../../api";
+import { api, auditParams, type AdminUser, type ApiError, type AuditFilter, type AuditRow, type AuditVerify, type Meeting, type RecordingRow } from "../../api";
 import MeetingAdminActions from "../../components/MeetingAdminActions";
 import { ConfirmDialog } from "../../components/Dialogs";
 import ClientDiagAdmin from "./ClientDiagAdmin";
@@ -86,26 +86,46 @@ export function MeetingsAdmin() {
 }
 
 export function AuditAdmin() {
-  const [f, setF] = useState({ q: "", actor: "", action: "" });
+  const [f, setF] = useState<Required<AuditFilter>>({ q: "", actor: "", action: "", result: "", actor_type: "", object_type: "", ip: "", since: "", until: "" });
   const [applied, setApplied] = useState(f);
+  const [ver, setVer] = useState<AuditVerify | null>(null);
+  const [verErr, setVerErr] = useState("");
+  const verify = async () => { setVerErr(""); try { setVer(await api.admin.auditVerify()); } catch (e) { setVerErr((e as ApiError).message); } };
+  const upd = (k: keyof AuditFilter, v: string) => setF({ ...f, [k]: v });
   useEffect(() => { const t = window.setTimeout(() => setApplied(f), 300); return () => window.clearTimeout(t); }, [f]);
-  const list = useInfinite<AuditRow>(async (offset) => { const r = await api.admin.audit(offset, applied); return { rows: r, more: r.length >= 100 }; }, [applied.q, applied.actor, applied.action]);
+  const list = useInfinite<AuditRow>(async (offset) => { const r = await api.admin.audit(offset, applied); return { rows: r, more: r.length >= 100 }; }, [auditParams(applied)]);
   return (
     <section>
       <h2>Журнал аудита</h2>
       <p className="muted">Кто, что и когда сделал: изменения настроек, удаления записей, протоколов и встреч, выдача доступа, скачивание аудио. Хранится отдельно от журнала событий и вручную не удаляется; пароли и секреты в него не попадают.
-        Записи аудита также отражаются в «Журнале событий» (категория «администрирование») и попадают в его архив.</p>
+        Записи аудита также отражаются в «Журнале событий» (категория «администрирование») и попадают в его архив. Время хранится в UTC.</p>
       <div className="row filter-row">
         <input className="grow" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} placeholder="Поиск по исполнителю, действию, объекту, IP" aria-label="Поиск" />
         <input value={f.actor} onChange={(e) => setF({ ...f, actor: e.target.value })} placeholder="Кто выполнил" aria-label="Исполнитель" style={{ maxWidth: 220 }} />
         <input value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })} placeholder="Действие, например room." aria-label="Действие" style={{ maxWidth: 220 }} />
       </div>
+      <div className="row filter-row">
+        <select value={f.result} onChange={(e) => upd("result", e.target.value)} aria-label="Результат"><option value="">Любой результат</option><option value="success">успех</option><option value="denied">отказ</option><option value="failure">ошибка</option></select>
+        <select value={f.actor_type} onChange={(e) => upd("actor_type", e.target.value)} aria-label="Тип исполнителя"><option value="">Любой исполнитель</option><option value="user">пользователь</option><option value="guest">гость</option><option value="system">система</option><option value="service">сервис</option></select>
+        <input value={f.object_type} onChange={(e) => upd("object_type", e.target.value)} placeholder="Тип объекта" aria-label="Тип объекта" style={{ maxWidth: 160 }} />
+        <input value={f.ip} onChange={(e) => upd("ip", e.target.value)} placeholder="IP" aria-label="IP" style={{ maxWidth: 160 }} />
+        <label className="small">с <input type="date" value={f.since} onChange={(e) => upd("since", e.target.value)} aria-label="С даты" /></label>
+        <label className="small">по <input type="date" value={f.until} onChange={(e) => upd("until", e.target.value)} aria-label="По дату" /></label>
+        <div className="spacer" />
+        <a className="btn" href={api.admin.auditExportUrl("csv", applied)} download title="Выгрузка по текущим фильтрам, до 100 000 записей">⬇ CSV</a>
+        <a className="btn" href={api.admin.auditExportUrl("json", applied)} download>⬇ JSON</a>
+        <button className="btn" onClick={verify} title="Проверка подписей записей и непрерывности нумерации">Проверить целостность</button>
+      </div>
+      {verErr && <div className="alert error">{verErr}</div>}
+      {ver && <div className={`alert ${ver.signed && ver.intact ? "ok" : "error"}`}>
+        {!ver.signed ? ver.note : ver.intact ? `Целостность подтверждена: проверено записей ${ver.checked}${ver.unsigned ? `, без подписи (старые) ${ver.unsigned}` : ""}.`
+          : `Нарушена целостность: изменённых записей ${ver.bad.length}, пропусков в нумерации ${ver.gaps.length}.`} <span className="muted small">{ver.signed ? ver.note : ""}</span></div>}
       {list.error && <div className="alert error">{list.error}</div>}
       <div className="table-scroll"><table className="table">
-        <thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Подробности</th><th>IP</th></tr></thead>
+        <thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Подробности</th><th>Результат</th><th>IP</th></tr></thead>
         <tbody>{list.items.map((r) => (
-          <tr key={r.id}><td>{fmt(r.at)}</td><td>{r.actor}</td><td><code>{r.action}</code></td><td>{r.target_type} <span className="muted small">{r.target_id.slice(0, 8)}</span></td>
-            <td className="small">{r.details ? JSON.stringify(r.details).slice(0, 200) : ""}</td><td className="small">{r.ip ?? ""}</td></tr>))}</tbody>
+          <tr key={r.id}><td>{fmt(r.at)}</td><td>{r.actor}{r.actor_type && r.actor_type !== "user" ? <span className="muted small"> ({r.actor_type})</span> : null}</td><td><code>{r.action}</code></td><td>{r.target_type} <span className="muted small">{r.target_id.slice(0, 8)}</span></td>
+            <td className="small">{r.details ? JSON.stringify(r.details).slice(0, 200) : ""}</td><td>{r.result && r.result !== "success" ? <span className="badge warn">{r.result === "denied" ? "отказ" : "ошибка"}</span> : "успех"}</td><td className="small" title={r.user_agent ?? ""}>{r.ip ?? ""}</td></tr>))}</tbody>
       </table></div>
       <ListFooter loading={list.loading} done={list.done} error={list.error} sentinel={list.sentinel} count={list.items.length} empty="Записей по этим условиям нет." />
     </section>

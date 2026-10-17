@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..auth.directory import parse_login
 from ..config import origin_allowed
+from ..services.audit import audit_now
 from ..models import User
 from ..security.passwords import verify_room_password
 from ..services import local_admin as la
@@ -42,6 +44,10 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     try:
         result = await request.app.state.auth.login(db, body.login, body.password, ip)
     except AuthError as exc:
+        denied = exc.code in ("access_denied", "throttled")
+        await audit_now(request.app, actor_user_id=None, actor_name=login_shown, action="auth.login_locked" if exc.code == "throttled" else "auth.login_denied" if exc.code == "access_denied" else "auth.login_failed",
+                        target_type="user", target_id=login_shown[:80], ip=ip, result="denied" if denied else "failure", actor_type="user",
+                        details={"code": exc.code, "reason": getattr(exc, "reason", None), "http": exc.status})
         if exc.code == "access_denied":   # пароль верный, но правила допуска не пропускают: отдельное событие для аудита
             journal.emit("auth", "login_denied_acl", level="warn", user=login_shown, ip=ip, client=ua,
                          message="Вход запрещён: пользователь не входит ни в одну разрешённую группу" if exc.reason == "not_in_allowed_groups"
@@ -53,6 +59,9 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
     d = result.decision
+    await audit_now(request.app, actor_user_id=uuid.UUID(result.session.user_id), actor_name=result.session.display_name or result.session.sam_account_name, action="auth.login",
+                    target_type="user", target_id=str(result.session.user_id), ip=ip,
+                    details={"login": result.session.sam_account_name, "local": bool(getattr(result.session, "local", False)), "admin": bool(result.session.is_admin)})
     journal.emit("auth", "login_ok", user=result.session.sam_account_name, ip=ip, client=ua,
                  data={"admin": bool(result.session.is_admin), **({"allowed_via": d.via[:5], "admin_via": d.admin_via[:5], "restricted": d.restricted} if d else {"local": True})})
     # Дополнительные источники профиля (Bitrix24): пересчёт по сохранённым данным — без сети; обновление с портала — в фоне. Вход их не ждёт и от них не зависит.
@@ -73,6 +82,7 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
 @router.post("/logout", status_code=204)
 async def logout(request: Request, response: Response, su: SessionUser = Depends(require_user)):
     await request.app.state.sessions.destroy(su.session_id)
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="auth.logout", target_type="user", target_id=str(su.user_id), ip=client_ip(request))
     request.app.state.journal.emit("auth", "logout", user=su.sam_account_name, ip=client_ip(request), client=parse_client(request.headers.get("user-agent")))
     response.delete_cookie(request.app.state.settings.cookie_name, path="/")
     response.status_code = 204

@@ -14,7 +14,7 @@ from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGran
                       TranscriptSegment)
 from ..services.access import can_access_meeting, release_lease
 from ..services import roles
-from ..services.audit import write_audit
+from ..services.audit import audit_now, write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.llm_choice import once_options
 from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
@@ -140,6 +140,7 @@ async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 async def leave_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
     await request.app.state.meetings.leave(db, meeting_id, su.user_id)
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.leave", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request))
     request.app.state.journal.emit("room", "leave", user=su.sam_account_name, room=m.room.name, meeting_id=str(meeting_id), ip=client_ip(request))
 
 
@@ -201,6 +202,8 @@ async def transcript_txt(meeting_id: uuid.UUID, request: Request, su: SessionUse
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
     ps = request.app.state.protocols
     text = await ps.transcript_text(db, meeting, await ps._tz(db))  # noqa: SLF001
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="transcript.download", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
+                    details={"format": "txt"})
     return PlainTextResponse(text, headers={"Content-Disposition": f'attachment; filename="transcript-{str(meeting_id)[:8]}.txt"'})
 
 
@@ -211,6 +214,8 @@ async def transcript_export(meeting_id: uuid.UUID, request: Request, format: str
     ps = request.app.state.protocols
     text = await ps.transcript_text(db, meeting, await ps._tz(db))  # noqa: SLF001
     md = "\n\n".join(line for line in text.splitlines() if line.strip())  # каждая строка стенограммы — отдельный абзац
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="transcript.download", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
+                    details={"format": format})
     return _file_response(_render(format, md, f"Стенограмма: {meeting.room.name}"), format, f"transcript-{str(meeting_id)[:8]}")
 
 
@@ -423,6 +428,8 @@ async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
         raise HTTPException(status_code=409, detail="Протокол ещё не готов")
     meeting = await db.get(Meeting, meeting_id)
     title = p.title or ("Протокол совещания" if p.kind == "protocol" else "Краткое резюме") + f": {meeting.room.name}"
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.export", target_type="protocol", target_id=str(p.id), ip=client_ip(request),
+                    details={"format": format, "kind": p.kind, "meeting_id": str(meeting_id)})
     return _file_response(_render(format, p.content, title), format, f"{p.kind}-{str(p.id)[:8]}")
 
 

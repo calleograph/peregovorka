@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 import secrets
 import uuid
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
+from ..services import audit as audit_svc
 from ..services.audit import write_audit
 from ..services.rooms import slug_taken
 from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
@@ -217,13 +223,25 @@ async def delete_room(room_id: uuid.UUID, request: Request, su: SessionUser = De
     await db.commit()
 
 
-@router.get("/audit")
-async def audit_log(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), q: str = Query("", max_length=100),
-                    actor: str = Query("", max_length=100), action: str = Query("", max_length=80),
-                    su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Журнал аудита: от новых к старым; фильтры по исполнителю, действию и тексту (в имени, действии, объекте, IP)."""
-    stmt = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
+AUDIT_EXPORT_LIMIT = 100_000
 
+
+def _day(v: str, end: bool) -> datetime | None:
+    """«2026-10-17» или «2026-10-17T10:30» (UTC) → граница периода; для даты без времени конец периода — конец суток."""
+    v = v.strip()
+    if not v:
+        return None
+    try:
+        if len(v) == 10:
+            d = datetime.combine(date.fromisoformat(v), time.min, tzinfo=timezone.utc)
+            return d + timedelta(days=1) if end else d
+        d = datetime.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Дата: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (UTC)") from None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _audit_filter(stmt, *, q: str, actor: str, action: str, result: str, actor_type: str, object_type: str, ip: str, request_id: str, since: str, until: str):
     def like(col, v):
         esc = v.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return func.lower(col).like(f"%{esc}%", escape="\\")
@@ -231,9 +249,87 @@ async def audit_log(limit: int = Query(100, ge=1, le=500), offset: int = Query(0
         stmt = stmt.where(like(AuditLog.actor_name, actor.strip()))
     if action.strip():
         stmt = stmt.where(like(AuditLog.action, action.strip()))
+    if result in audit_svc.RESULTS:
+        stmt = stmt.where(AuditLog.result == result)
+    if actor_type in audit_svc.ACTOR_TYPES:
+        stmt = stmt.where(AuditLog.actor_type == actor_type)
+    if object_type.strip():
+        stmt = stmt.where(AuditLog.target_type == object_type.strip())
+    if ip.strip():
+        stmt = stmt.where(like(func.coalesce(AuditLog.ip, ""), ip.strip()))
+    if request_id.strip():
+        stmt = stmt.where(AuditLog.request_id == request_id.strip())
+    if (a := _day(since, False)) is not None:
+        stmt = stmt.where(AuditLog.at >= a)
+    if (b := _day(until, True)) is not None:
+        stmt = stmt.where(AuditLog.at < b)
     if q.strip():
         stmt = stmt.where(or_(like(AuditLog.actor_name, q.strip()), like(AuditLog.action, q.strip()), like(AuditLog.target_id, q.strip()),
-                              like(func.coalesce(AuditLog.ip, ""), q.strip())))
+                              like(func.coalesce(AuditLog.ip, ""), q.strip()), like(func.coalesce(AuditLog.request_id, ""), q.strip())))
+    return stmt
+
+
+def _audit_row(r: AuditLog) -> dict:
+    return {"id": r.id, "at": r.at, "actor": r.actor_name, "actor_id": str(r.actor_user_id) if r.actor_user_id else None, "actor_type": r.actor_type,
+            "action": r.action, "target_type": r.target_type, "target_id": r.target_id, "details": r.details, "request_id": r.request_id, "ip": r.ip,
+            "user_agent": r.user_agent, "session_id": r.session_id, "result": r.result, "signed": r.sig is not None}
+
+
+@router.get("/audit")
+async def audit_log(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), q: str = Query("", max_length=100),
+                    actor: str = Query("", max_length=100), action: str = Query("", max_length=80), result: str = Query("", max_length=12),
+                    actor_type: str = Query("", max_length=12), object_type: str = Query("", max_length=40), ip: str = Query("", max_length=64),
+                    request_id: str = Query("", max_length=64), since: str = Query("", max_length=32), until: str = Query("", max_length=32),
+                    su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Журнал аудита: от новых к старым; фильтры по исполнителю, действию, результату, типу исполнителя и объекта, IP, запросу, периоду и тексту."""
+    stmt = _audit_filter(select(AuditLog), q=q, actor=actor, action=action, result=result, actor_type=actor_type, object_type=object_type, ip=ip,
+                         request_id=request_id, since=since, until=until).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
+    return [_audit_row(r) for r in (await db.execute(stmt)).scalars().all()]
+
+
+_CSV_COLUMNS = ("timestamp", "event_type", "actor_id", "actor_type", "actor_name", "source_ip", "user_agent", "session_id", "object_type", "object_id", "result", "request_id", "details")
+
+
+def _csv_cell(v) -> str:
+    t = "" if v is None else str(v)
+    return "'" + t if t[:1] in ("=", "+", "-", "@", "\t", "\r") else t        # ячейка не должна исполняться как формула в Excel
+
+
+@router.get("/audit/export")
+async def audit_export(request: Request, format: str = Query("csv", pattern="^(csv|json)$"), q: str = Query("", max_length=100), actor: str = Query("", max_length=100),
+                       action: str = Query("", max_length=80), result: str = Query("", max_length=12), actor_type: str = Query("", max_length=12),
+                       object_type: str = Query("", max_length=40), ip: str = Query("", max_length=64), request_id: str = Query("", max_length=64),
+                       since: str = Query("", max_length=32), until: str = Query("", max_length=32),
+                       su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Выгрузка журнала (CSV или JSON) по тем же фильтрам, не более 100 000 записей, время в UTC. Сама выгрузка записывается в аудит."""
+    stmt = _audit_filter(select(AuditLog), q=q, actor=actor, action=action, result=result, actor_type=actor_type, object_type=object_type, ip=ip,
+                         request_id=request_id, since=since, until=until).order_by(AuditLog.id.desc()).limit(AUDIT_EXPORT_LIMIT)
     rows = (await db.execute(stmt)).scalars().all()
-    return [{"id": r.id, "at": r.at, "actor": r.actor_name, "action": r.action, "target_type": r.target_type,
-             "target_id": r.target_id, "details": r.details, "request_id": r.request_id, "ip": r.ip} for r in rows]
+    flt = {k: v for k, v in dict(q=q, actor=actor, action=action, result=result, actor_type=actor_type, object_type=object_type, ip=ip, request_id=request_id,
+                                  since=since, until=until).items() if v}
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="audit.export", target_type="audit", target_id="log",
+                      ip=client_ip(request), details={"format": format, "rows": len(rows), "filters": flt, "truncated": len(rows) >= AUDIT_EXPORT_LIMIT})
+    await db.commit()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    if format == "json":
+        body = json.dumps([{**_audit_row(r), "at": r.at.isoformat()} for r in rows], ensure_ascii=False, indent=1, default=str)
+        return Response(body.encode("utf-8"), media_type="application/json", headers={"Content-Disposition": f'attachment; filename="audit-{stamp}.json"', "Cache-Control": "no-store"})
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_CSV_COLUMNS)
+    for r in rows:
+        w.writerow([_csv_cell(x) for x in (r.at.isoformat(), r.action, r.actor_user_id, r.actor_type, r.actor_name, r.ip, r.user_agent, r.session_id, r.target_type,
+                                           r.target_id, r.result, r.request_id, json.dumps(r.details or {}, ensure_ascii=False, sort_keys=True))])
+    return Response(("\ufeff" + buf.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="audit-{stamp}.csv"', "Cache-Control": "no-store"})
+
+
+@router.get("/audit/verify")
+async def audit_verify(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Контроль целостности журнала: подпись каждой записи и непрерывность нумерации. Запуск проверки записывается в аудит."""
+    out = await audit_svc.verify(db)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="audit.verify", target_type="audit", target_id="log", ip=client_ip(request),
+                      result="success" if out.get("intact", False) or not out["signed"] else "failure",
+                      details={"checked": out["checked"], "bad": len(out["bad"]), "gaps": len(out["gaps"]), "unsigned": out.get("unsigned", 0)})
+    await db.commit()
+    return out

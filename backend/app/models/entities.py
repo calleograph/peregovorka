@@ -365,6 +365,11 @@ class AuditLog(Base):
     details: Mapped[dict | None] = mapped_column(JSONType)
     request_id: Mapped[str | None] = mapped_column(String(64))
     ip: Mapped[str | None] = mapped_column(String(64))
+    actor_type: Mapped[str] = mapped_column(String(12), default="user", server_default="user", nullable=False)   # user | guest | system | service
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    session_id: Mapped[str | None] = mapped_column(String(24))              # отпечаток сеанса, не сам идентификатор
+    result: Mapped[str] = mapped_column(String(12), default="success", server_default="success", index=True, nullable=False)   # success | denied | failure
+    sig: Mapped[str | None] = mapped_column(String(64))                     # HMAC записи (services/audit.py); пусто у записей до появления подписи
 
 
 class AppSetting(Base):

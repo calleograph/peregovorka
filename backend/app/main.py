@@ -22,6 +22,7 @@ from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
 from .api import config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
 from .auth.guests import GuestSessionStore
@@ -32,7 +33,7 @@ from .db import create_engine, create_session_maker
 from .logging_setup import configure_logging, request_id_var
 from .services.api_profiles import ProfileService
 from .services.asr_bridge import AsrBridge
-from .services.audit import set_journal_sink
+from .services.audit import audit_ctx, session_fingerprint, set_audit_key, set_journal_sink
 from .services.events import EventHub
 from .services.perf import PerfHub
 from .services.chat_files import ChatFilesService
@@ -210,6 +211,7 @@ def create_app(
         tasks: list[asyncio.Task] = []
         journal.start()
         set_journal_sink(journal.emit)
+        set_audit_key(settings.app_master_key)
         if start_workers:
             tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
             tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
@@ -256,6 +258,8 @@ def create_app(
         incoming = request.headers.get("x-request-id", "")
         rid = incoming if _RID_RE.match(incoming) else uuid.uuid4().hex[:16]
         token = request_id_var.set(rid)
+        ctx_token = audit_ctx.set({"ip": client_ip(request), "user_agent": (request.headers.get("user-agent") or "")[:300] or None,
+                                   "session": session_fingerprint(request.cookies.get(settings.cookie_name))})
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -264,6 +268,7 @@ def create_app(
             raise
         finally:
             request_id_var.reset(token)
+            audit_ctx.reset(ctx_token)
         response.headers["X-Request-ID"] = rid
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")

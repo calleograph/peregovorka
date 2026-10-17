@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services.audit import audit_now
 from ..auth.deps import _origin_ok, client_ip, get_db
 from ..auth.guests import GUEST_HEADER, Actor, require_actor
 from ..models import GuestParticipant, Room
@@ -138,6 +139,8 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
             raise HTTPException(status_code=403, detail={"code": "room_password_required", "message": "Требуется пароль комнаты."})
         if not verify_room_password(room.password_hash, body.password):
             await _throttle(request, "guest:pwfail", PASSWORD_FAILS, PASSWORD_WINDOW)
+            await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,
+                            result="denied", actor_type="guest", details={"code": "room_password_invalid"})
             journal.emit("room", "guest_join_denied", level="warn", user=f"guest:{name}", room=room.name, ip=ip, client=client,
                          message="Неверный пароль комнаты", data={"code": "room_password_invalid"})
             raise HTTPException(status_code=403, detail={"code": "room_password_invalid", "message": "Неверный пароль комнаты."})
@@ -145,6 +148,8 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     try:
         result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client)
     except JoinError as exc:
+        await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,
+                        result="denied", actor_type="guest", details={"code": exc.code})
         journal.emit("room", "guest_join_denied", level="warn", user=f"guest:{name}", room=room.name, ip=ip, client=client,
                      message=exc.message, data={"code": exc.code})
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from None
