@@ -177,3 +177,14 @@ def test_regenerate_backup_codes_invalidates_old(client):
     ch = _login_step1(client).json()["challenge"]
     assert client.post("/api/v1/auth/login/totp", json={"challenge": ch, "code": old[0]}).status_code == 401
     assert client.post("/api/v1/auth/login/totp", json={"challenge": ch, "code": r.json()["backup_codes"][0]}).status_code == 200
+
+
+def test_policy_groups_accept_dn_with_commas(client):
+    """DN содержит запятые: список групп разделяется переводом строки или «;», а не запятой (иначе политика «для групп» не срабатывала бы)."""
+    _policy(client, totp_policy="groups", totp_groups="CN=Finance,OU=Groups,DC=corp,DC=test\ncn=staff,ou=groups,dc=corp,dc=test")
+    r = client.get("/api/v1/admin/settings/auth_security").json()
+    assert r["totp_groups"] == "cn=finance,ou=groups,dc=corp,dc=test;cn=staff,ou=groups,dc=corp,dc=test"
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
+    out = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"}).json()      # alice входит в staff
+    assert out["must_enroll_totp"] is True
