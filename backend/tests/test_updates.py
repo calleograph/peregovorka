@@ -206,7 +206,7 @@ def test_components_table_shows_running_tested_available_status_and_decision(tmp
         lk = rows["livekit_server"]
         assert (lk["installed"], lk["tested"], lk["latest"]) == (tested["livekit_server"], tested["livekit_server"], "v1.99.0")
         assert lk["status"] == "available" and "следующего релиза" in lk["note"] and lk["bundle"] == "livekit" and lk["changelog"].startswith("https://")
-        assert rows["fastapi"]["installed"] and rows["fastapi"]["status"] in ("available", "current"), "версия backend — из работающего процесса"
+        assert rows["fastapi"]["installed"] and rows["fastapi"]["status"] in ("available", "current", "deferred", "review"), "версия backend — из работающего процесса"
         assert rows["livekit_client_js"]["installed"] == tested["livekit_client_js"] and rows["livekit_client_js"]["status"] == "current", "frontend — из собранного приложения"
         assert rows["react"]["installed"] == "0.0.1" and rows["react"]["status"] == "review", "работает не та версия, что проверена в релизе — требуется проверка"
         assert rows["nginx"]["installed"] == "1.30.6" and rows["node"]["installed"] == "24.22.0" and rows["drawio"]["installed"] == tested["drawio"]

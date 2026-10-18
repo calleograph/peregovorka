@@ -63,14 +63,14 @@ def test_gigaam_is_installed_without_onnx():
 
 # ------------------------------------------------------------------------------------------------ правила решений
 def test_new_version_without_decision_is_a_problem(manifest):
-    c = next(x for x in manifest["components"] if x["key"] == "fastapi")
+    c = next(x for x in manifest["components"] if x["key"] == "httpx")
     c["reviewed_latest"] = "9.9.9"
     pr = deps.problems(manifest, online=False, max_age=None)
-    assert any("fastapi" in p and "решения нет" in p for p in pr)
+    assert any("httpx" in p and "решения нет" in p for p in pr)
 
 
 def test_deferral_needs_reason_issue_recheck_and_not_expired(manifest):
-    c = next(x for x in manifest["components"] if x["key"] == "fastapi")
+    c = next(x for x in manifest["components"] if x["key"] == "httpx")
     c["reviewed_latest"] = "9.9.9"
     c["deferred"] = {"version": "9.9.9", "reason": "", "issue": "", "recheck": ""}
     pr = " | ".join(deps.problems(manifest, online=False, max_age=None))
@@ -83,7 +83,7 @@ def test_deferral_needs_reason_issue_recheck_and_not_expired(manifest):
 
 
 def test_deferral_must_reference_an_existing_task_and_the_current_version(manifest):
-    c = next(x for x in manifest["components"] if x["key"] == "fastapi")
+    c = next(x for x in manifest["components"] if x["key"] == "httpx")
     c["reviewed_latest"] = "9.9.9"
     soon = (dt.date.fromisoformat(manifest["reviewed_at"]) + dt.timedelta(days=30)).isoformat()
     c["deferred"] = {"version": "9.9.9", "reason": "причина", "issue": "DEP-999", "recheck": soon}
@@ -92,17 +92,17 @@ def test_deferral_must_reference_an_existing_task_and_the_current_version(manife
     c["deferred"]["version"] = "9.9.8"
     assert any("отсрочка относится к 9.9.8" in p for p in deps.problems(manifest, online=False, max_age=None))
     c["deferred"]["version"] = "9.9.9"
-    assert not [p for p in deps.problems(manifest, online=False, max_age=None) if "fastapi" in p]
+    assert not [p for p in deps.problems(manifest, online=False, max_age=None) if "httpx" in p]
 
 
 def test_wait_for_next_release_without_a_plan_is_rejected(manifest):
-    c = next(x for x in manifest["components"] if x["key"] == "fastapi")
+    c = next(x for x in manifest["components"] if x["key"] == "httpx")
     c["reviewed_latest"] = "9.9.9"
     soon = (dt.date.fromisoformat(manifest["reviewed_at"]) + dt.timedelta(days=30)).isoformat()
     c["deferred"] = {"version": "9.9.9", "reason": "Дождитесь следующего релиза", "issue": "DEP-1", "recheck": soon}
     assert any("без плана" in p for p in deps.problems(manifest, online=False, max_age=None))
     c["deferred"]["plan"] = "Проверить в 0.25.0 с тестами API"
-    assert not [p for p in deps.problems(manifest, online=False, max_age=None) if "fastapi" in p]
+    assert not [p for p in deps.problems(manifest, online=False, max_age=None) if "httpx" in p]
 
 
 def test_stale_deferral_for_a_current_version_and_untested_pin_are_problems(manifest):
