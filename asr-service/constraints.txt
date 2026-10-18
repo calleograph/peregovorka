@@ -12,7 +12,7 @@ anyio==4.15.1
 attrs==26.1.0
 cffi==2.1.1
 click==8.5.0
-fastapi==0.143.5
+fastapi==0.145.0
 filelock==4.2.2
 frozenlist==1.8.0
 fsspec==2026.9.0

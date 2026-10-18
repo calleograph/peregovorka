@@ -274,7 +274,7 @@ services:
   # Включение — scripts/sip.sh enable / кнопка в админке. SIP signalling и RTP — отдельные порты для АТС; браузерные участники их не используют.
   livekit-sip:
     profiles: ["sip"]
-    image: ${SIP_IMAGE:-livekit/sip:v1.20.0}
+    image: ${SIP_IMAGE:-livekit/sip:v1.20.0@sha256:e675638b7678eadb19d48c7a8865149d1b7c23a95b2e3c6fae173684d70c62fc}
     restart: unless-stopped
     depends_on:
       livekit:
@@ -309,7 +309,7 @@ services:
   # и проверена (scripts запускают compose с --profile llm); без модели система работает без него. Модель хранится вне образа: ${DATA_ROOT}/models/llm.
   llm-local:
     profiles: ["llm"]
-    image: ${LLM_LOCAL_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b11371}
+    image: ${LLM_LOCAL_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b11371@sha256:460ff87b6dfd6b9e8ee0f4018540e007eb333a574994033b70dd6be46069de01}
     restart: unless-stopped
     command:
       - "-m"

@@ -24,7 +24,7 @@ LLM_DEFAULT_FILE="Qwen3-1.7B-Q4_K_M.gguf"
 LLM_DEFAULT_URL="https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf"
 LLM_DEFAULT_BYTES=1282439584
 LLM_DEFAULT_SHA256="72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
-LLM_DEFAULT_IMAGE="ghcr.io/ggml-org/llama.cpp:server-b11371"
+LLM_DEFAULT_IMAGE="ghcr.io/ggml-org/llama.cpp:server-b11371@sha256:460ff87b6dfd6b9e8ee0f4018540e007eb333a574994033b70dd6be46069de01"
 LLM_DEFAULT_ALIAS="qwen3-1.7b-q4_k_m"
 
 llm_file_name()  { printf '%s' "${LLM_MODEL_FILE:-$LLM_DEFAULT_FILE}"; }

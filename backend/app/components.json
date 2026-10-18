@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.24.0",
+ "release": "0.24.1",
  "reviewed_at": "2026-10-18",
  "components": [
   {
@@ -55,7 +55,7 @@
    "group": "Видеосвязь и телефония",
    "pinned": "v1.20.0",
    "tested": "v1.20.0",
-   "reviewed_latest": "v1.20.0",
+   "reviewed_latest": "1.20.0",
    "source": {
     "type": "docker",
     "registry": "hub",
@@ -66,17 +66,20 @@
     {
      "type": "image-ref",
      "file": "deployment/compose.yml",
-     "regex": "\\$\\{SIP_IMAGE:-livekit/sip:(\\S+?)\\}"
+     "regex": "\\$\\{SIP_IMAGE:-livekit/sip:(\\S+?)\\}",
+     "with_digest": true
     },
     {
      "type": "image-ref",
      "file": "scripts/lib/siplib.sh",
-     "regex": "SIP_DEFAULT_IMAGE=\"livekit/sip:([^\"]+)\""
+     "regex": "SIP_DEFAULT_IMAGE=\"livekit/sip:([^\"]+)\"",
+     "with_digest": true
     },
     {
      "type": "image-ref",
      "file": ".env.example",
-     "regex": "^# SIP_IMAGE=livekit/sip:(\\S+)"
+     "regex": "^# SIP_IMAGE=livekit/sip:(\\S+)",
+     "with_digest": true
     }
    ],
    "changelog": "https://github.com/livekit/sip/releases",
@@ -85,7 +88,7 @@
     "repo": "livekit/sip"
    },
    "bundle": "livekit",
-   "digest": "sha256:80bf1f5b2563d75febfb24ebe0601ebc5073810223a24709850c2ba5391558d3"
+   "digest": "sha256:e675638b7678eadb19d48c7a8865149d1b7c23a95b2e3c6fae173684d70c62fc"
   },
   {
    "key": "livekit_client_js",
@@ -418,17 +421,20 @@
     {
      "type": "image-ref",
      "file": "deployment/compose.yml",
-     "regex": "\\$\\{LLM_LOCAL_IMAGE:-ghcr\\.io/ggml-org/llama\\.cpp:(\\S+?)\\}"
+     "regex": "\\$\\{LLM_LOCAL_IMAGE:-ghcr\\.io/ggml-org/llama\\.cpp:(\\S+?)\\}",
+     "with_digest": true
     },
     {
      "type": "image-ref",
      "file": "scripts/lib/llmlib.sh",
-     "regex": "LLM_DEFAULT_IMAGE=\"ghcr\\.io/ggml-org/llama\\.cpp:([^\"]+)\""
+     "regex": "LLM_DEFAULT_IMAGE=\"ghcr\\.io/ggml-org/llama\\.cpp:([^\"]+)\"",
+     "with_digest": true
     },
     {
      "type": "image-ref",
      "file": ".env.example",
-     "regex": "^# LLM_LOCAL_IMAGE=ghcr\\.io/ggml-org/llama\\.cpp:(\\S+)"
+     "regex": "^# LLM_LOCAL_IMAGE=ghcr\\.io/ggml-org/llama\\.cpp:(\\S+)",
+     "with_digest": true
     }
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
@@ -438,7 +444,12 @@
     "issue": "DEP-1",
     "recheck": "2026-11-16",
     "plan": "Поднять образ с моделью, прогнать структурированное извлечение на эталонной стенограмме и сравнить с b11371; при совпадении включить в 0.25.0."
-   }
+   },
+   "image": {
+    "registry": "ghcr",
+    "repo": "ggml-org/llama.cpp"
+   },
+   "digest": "sha256:460ff87b6dfd6b9e8ee0f4018540e007eb333a574994033b70dd6be46069de01"
   },
   {
    "key": "python_backend",
@@ -491,9 +502,9 @@
    "key": "fastapi",
    "title": "FastAPI",
    "group": "Backend",
-   "pinned": "0.143.5",
-   "tested": "0.143.5",
-   "reviewed_latest": "0.143.5",
+   "pinned": "0.145.0",
+   "tested": "0.145.0",
+   "reviewed_latest": "0.145.0",
    "source": {
     "type": "pypi",
     "name": "fastapi"
@@ -1201,7 +1212,7 @@
    "group": "Инфраструктура и образы",
    "pinned": "1.30",
    "tested": "1.30",
-   "reviewed_latest": "1.30-alpine",
+   "reviewed_latest": "1.30",
    "source": {
     "type": "docker",
     "registry": "hub",
@@ -1273,9 +1284,9 @@
    "key": "drawio",
    "title": "draw.io (редактор доски)",
    "group": "Frontend",
-   "pinned": "v32.4.1",
-   "tested": "v32.4.1",
-   "reviewed_latest": "v32.4.1",
+   "pinned": "v32.5.5",
+   "tested": "v32.5.5",
+   "reviewed_latest": "v32.5.5",
    "source": {
     "type": "github-release",
     "repo": "jgraph/drawio"
@@ -1402,25 +1413,6 @@
  "security": {
   "checked_at": "2026-10-18",
   "source": "osv.dev",
-  "advisories": {
-   "onnx==1.19.1": [
-    "GHSA-3r9x-f23j-gc73",
-    "GHSA-538c-55jv-c5g9",
-    "GHSA-cmw6-hcpp-c6jp",
-    "GHSA-hqmj-h5c6-369m",
-    "GHSA-hwpq-hmq9-wj77",
-    "GHSA-p433-9wv8-28xj",
-    "GHSA-p893-rvq9-2xf9",
-    "GHSA-q56x-g2fj-4rj6",
-    "PYSEC-2026-103",
-    "PYSEC-2026-104",
-    "PYSEC-2026-2239",
-    "PYSEC-2026-2240",
-    "PYSEC-2026-2241",
-    "PYSEC-2026-2689",
-    "PYSEC-2026-3587",
-    "PYSEC-2026-3876"
-   ]
-  }
+  "advisories": {}
  }
 }

@@ -340,6 +340,8 @@ def constraints_problems(m: dict) -> list[str]:
 def online_problems(m: dict) -> list[str]:
     out: list[str] = []
     for c in m["components"]:
+        if (c.get("source") or {}).get("type") == "none":
+            continue                                   # версия определяется образом/внешним сервисом: автоматической проверки нет (в интерфейсе — «Не отслеживается»)
         lat = latest_for(c)
         if lat is None:
             out.append(f"{c['key']}: не удалось узнать последнюю версию (сеть/источник) — проверка не может считаться пройденной")
