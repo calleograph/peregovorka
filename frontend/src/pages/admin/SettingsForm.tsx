@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import FieldsEditor from "./FieldsEditor";
+import { useDirty } from "../../dirtyGuard";
 import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import { api, type ApiError, type SettingsGroup, type SettingsValues, type StorageProfile, type TestResult } from "../../api";
 
@@ -46,6 +47,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [test, setTest] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [base, setBase] = useState("");        // снимок сохранённого состояния: по нему видно, есть ли несохранённые правки
 
   const [profiles, setProfiles] = useState<StorageProfile[]>([]);
   const wantsProfiles = fields.some((f) => f.name === "profile_id");
@@ -53,8 +55,11 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
   const shown = wantsProfiles ? fields.map((f) => f.name !== "profile_id" ? f : { ...f, options: [["", profiles.length ? "Не выбрано" : "Не выбрано (хранилищ пока нет — создайте в разделе «Хранилища»)"] as [string, string],
     ...profiles.map((p) => [p.id, `${p.name} — ${p.address.length > 48 ? `${p.address.slice(0, 45)}…` : p.address}`] as [string, string])] }) : fields;
 
-  const load = useCallback(() => api.admin.settings(group).then((v) => { setValues(v); setSecrets({}); setHeaders(headersFromValues(v)); }).catch((e) => setMsg({ ok: false, text: e.message })), [group]);
+  const load = useCallback(() => api.admin.settings(group).then((v) => { setValues(v); setSecrets({}); const h = headersFromValues(v); setHeaders(h); setBase(JSON.stringify([v, h])); }).catch((e) => setMsg({ ok: false, text: e.message })), [group]);
   useEffect(() => { setValues(null); setMsg(null); setTest(null); void load(); }, [load]);
+
+  const dirty = !!values && (base !== JSON.stringify([values, headers]) || Object.values(secrets).some((x) => x !== ""));
+  useDirty(`settings:${group}`, dirty);
 
   if (!values) return msg ? <div className="alert error">{msg.text}</div> : <div className="muted">Загрузка…</div>;
   const set = (name: string, v: string | number | boolean | null) => setValues({ ...values, [name]: v });
@@ -68,7 +73,7 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
       else if (f.type === "secret") { if (f.name in secrets) body[f.name] = secrets[f.name]; }
       else body[f.name] = values[f.name] as string | number | boolean | null;
     }
-    try { const saved = await api.admin.saveSettings(group, body); setValues(saved); setSecrets({}); setHeaders(headersFromValues(saved)); setMsg({ ok: true, text: "Сохранено" }); onSaved?.(); }
+    try { const saved = await api.admin.saveSettings(group, body); setValues(saved); setSecrets({}); const h = headersFromValues(saved); setHeaders(h); setBase(JSON.stringify([saved, h])); setMsg({ ok: true, text: "Сохранено" }); onSaved?.(); }
     catch (err) { setMsg({ ok: false, text: (err as ApiError).message }); }
     finally { setBusy(false); }
   };
@@ -87,6 +92,8 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
       {note && <p className="muted small">{note}</p>}
       <div className="row">
         <button className="btn primary" disabled={busy}>Сохранить</button>
+        {dirty && <button type="button" className="btn ghost" onClick={() => { setMsg(null); setTest(null); void load(); }} disabled={busy}>Отменить изменения</button>}
+        {dirty && <span className="badge warn" role="status">Есть несохранённые изменения</span>}
         {testable && <button type="button" className="btn" onClick={runTest} disabled={busy}>Проверить подключение</button>}
       </div>
       {msg && <div className={`alert ${msg.ok ? "" : "error"}`} role="status">{msg.text}</div>}

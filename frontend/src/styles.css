@@ -878,3 +878,8 @@ details.group { margin: 8px 0; }
 .bad-text { color: var(--danger, #b3261e); }
 .table-wrap { overflow-x: auto; }
 .modal .tabs { flex: none; }
+
+/* длинные значения (идентификаторы, JSON подробностей) переносятся внутри ячейки, а не растягивают страницу */
+.table td, .table th { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .table input[type="checkbox"] { width: 24px; height: 24px; } }   /* мелкие цели нажатия в таблицах (журнал, списки): не меньше 24 px, WCAG 2.2 / 2.5.8 */
+.btn.mini { min-width: 24px; }

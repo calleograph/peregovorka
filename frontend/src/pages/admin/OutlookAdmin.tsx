@@ -122,7 +122,7 @@ export default function OutlookAdmin() {
 
       <div className="card" aria-label="Журнал ошибок надстройки">
         <div className="row"><h3 style={{ margin: 0 }}>Журнал надстройки и сверки</h3><div className="spacer" /><button className="btn mini" onClick={() => void loadLists()}>Обновить</button></div>
-        <p className="muted small">Сообщения, которые пользователь видел в уведомлении Outlook, и итоги серверной сверки. Полный журнал — «Журналы → Журнал событий», категория outlook.</p>
+        <p className="muted small">Сообщения, которые пользователь видел в уведомлении Outlook, и итоги серверной сверки. Полный журнал — «Хранение и журналы → Журнал событий», категория outlook.</p>
         {log && !log.length && <p className="muted">Ошибок нет.</p>}
         {log && log.length > 0 && (
           <ul className="stage-list">{log.map((l) => (

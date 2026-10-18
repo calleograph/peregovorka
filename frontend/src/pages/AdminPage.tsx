@@ -21,6 +21,7 @@ import LlmAdmin from "./admin/LlmAdmin";
 import UpdatesAdmin from "./admin/UpdatesAdmin";
 import RoomsAdmin from "./admin/RoomsAdmin";
 import OutlookAdmin from "./admin/OutlookAdmin";
+import { confirmLeave } from "../dirtyGuard";
 import SipAdmin from "./admin/SipAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
@@ -35,71 +36,44 @@ import TemplatesAdmin from "./admin/TemplatesAdmin";
 interface Page { id: string; label: string; render: (go: (id: string) => void) => ReactNode }
 interface Group { title: string; pages: Page[] }
 
-/** Разделы сгруппированы по смыслу: состояние, вход и доступ, хранилища, почта, встречи, интеграции, журналы, система. Пароли нигде не показываются. */
+/** Разделы сгруппированы по назначению: обзор, встречи, комнаты и пользователи, интеграции, безопасность, хранение и журналы, система. Идентификаторы разделов (адрес `/admin?tab=…`) не менять: на них ссылаются мастер настройки, меню и документация. */
 const GROUPS: Group[] = [
-  { title: "Состояние", pages: [
+  { title: "Обзор", pages: [
     { id: "system", label: "Обзор", render: (go) => <SystemAdmin onOpen={go} /> },
     { id: "system_tech", label: "Технические показатели", render: (go) => <SystemAdmin onOpen={go} view="tech" /> },
     { id: "performance", label: "Производительность", render: () => <PerformanceAdmin /> },
     { id: "clients", label: "Диагностика клиентов", render: () => <ClientDiagAdmin /> },
-    { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
   ] },
-  { title: "Доступ и каталог (LDAP)", pages: [
-    { id: "ldap", label: "Подключения LDAP", render: (go) => <LdapAdmin onOpen={go} /> },
-    { id: "ca", label: "Сертификаты (CA)", render: () => <CaAdmin /> },
+  { title: "Встречи", pages: [
+    { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
+    { id: "recordings", label: "Аудиозаписи", render: () => <RecordingsAdmin /> },
+    { id: "protocol", label: "Протоколы: инструкции и режим", render: () => (
+      <SettingsForm key="protocol" group="protocol" title="Инструкции и режим формирования протоколов" fields={protocolFields}
+        intro="Что по умолчанию просит модель и когда документы создаются сами. Пользователь всегда видит инструкцию в окне «Сформировать протокол» и может её изменить." />) },
+    { id: "templates", label: "Протоколы: общие шаблоны", render: () => <TemplatesAdmin /> },
+  ] },
+  { title: "Комнаты и пользователи", pages: [
+    { id: "rooms", label: "Комнаты и доступ", render: () => <RoomsAdmin /> },
+    { id: "users", label: "Пользователи", render: () => <UsersAdmin /> },
     { id: "login_access", label: "Кто может входить", render: (go) => <LoginAccessAdmin onOpen={go} /> },
-    { id: "crypto", label: "Шифрование хранилища", render: () => <CryptoAdmin /> },
+    { id: "access", label: "Администраторы сервера", render: () => <AccessAdmin /> },
     { id: "profile_policy", label: "Правка профиля", render: () => (
       <SettingsForm key="profile_policy" group="profile_policy" title="Что пользователь может изменить в личном кабинете" fields={profilePolicyFields}
         intro="Правка пользователя сильнее данных каталога: вход и «обновить из AD» её не перезаписывают, а кнопка «Восстановить из LDAP» возвращает значение каталога. Все правки записываются в журнал аудита." />) },
-    { id: "captcha", label: "CAPTCHA", render: () => (
-      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (защита от перебора)" fields={captchaFields}
-        intro="Локальная проверка без внешних сервисов: браузер решает небольшую вычислительную задачу (доли секунды). Защищает вход, вход гостя по ссылке и создание временной переговорки." />) },
-    { id: "auth_security", label: "Двухфакторная аутентификация", render: () => (
-      <SettingsForm key="auth_security" group="auth_security" title="Двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
-        intro="Одноразовые коды из приложения-аутентификатора. Если защита обязательна, пользователь при первом входе настраивает её сам (QR-код и резервные коды). Потерянное устройство — «Пользователи → сбросить» или консольная команда admin-reset для локального администратора." />) },
-    { id: "access", label: "Администраторы", render: () => <AccessAdmin /> },
-  ] },
-  { title: "Хранилища", pages: [
-    { id: "storages", label: "Файловые хранилища", render: (go) => <StoragesAdmin onOpen={go} /> },
-    { id: "storage", label: "Документы встреч", render: () => (
-      <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
-        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Файловые хранилища» — подпапки создаются автоматически." />) },
-    { id: "audio_storage", label: "Аудиозаписи", render: () => (
-      <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
-        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Файловые хранилища»." />) },
-    { id: "chat_files", label: "Вложения чата", render: () => (
-      <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
-        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
-    { id: "storage_sync", label: "Проверка целостности хранилищ", render: () => <StorageSyncAdmin /> },
-  ] },
-  { title: "Электронная почта", pages: [
-    { id: "mail", label: "Исходящая почта (SMTP)", render: (go) => <MailAdmin onOpen={go} /> },
-    { id: "mail_policy", label: "Правила рассылки", render: () => (
-      <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
-        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Материалы после встречи»); адреса сервера и пароль ему не показываются." />) },
-    { id: "mail_templates", label: "Шаблоны писем", render: () => <MailTemplatesAdmin /> },
-    { id: "mail_log", label: "Журнал отправки", render: () => <MailLogAdmin /> },
-  ] },
-  { title: "Комнаты и встречи", pages: [
-    { id: "rooms", label: "Комнаты и доступ", render: () => <RoomsAdmin /> },
-    { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
-    { id: "recordings", label: "Аудиозаписи (список)", render: () => <RecordingsAdmin /> },
-    { id: "users", label: "Пользователи", render: () => <UsersAdmin /> },
-    { id: "protocol", label: "Инструкции и режим протоколов", render: () => (
-      <SettingsForm key="protocol" group="protocol" title="Инструкции и режим формирования протоколов" fields={protocolFields}
-        intro="Что по умолчанию просит модель и когда документы создаются сами. Пользователь всегда видит инструкцию в окне «Сформировать протокол» и может её изменить." />) },
-    { id: "templates", label: "Общие шаблоны", render: () => <TemplatesAdmin /> },
   ] },
   { title: "Интеграции", pages: [
+    { id: "ldap", label: "Каталог: подключения LDAP/AD", render: (go) => <LdapAdmin onOpen={go} /> },
+    { id: "ca", label: "Каталог: сертификаты (CA)", render: () => <CaAdmin /> },
+    { id: "mail", label: "Почта: сервер SMTP", render: (go) => <MailAdmin onOpen={go} /> },
     { id: "asr", label: "Распознавание речи (ASR)", render: () => <AsrModelsAdmin /> },
+    { id: "llm", label: "Языковая модель (LLM)", render: () => <LlmAdmin /> },
     { id: "anon", label: "Обезличивание", render: () => (
       <>
         <SettingsForm key="anonymizer" group="anonymizer" title="Обезличивание: основной API" fields={anonFields} testable
           intro="Внутренний сервис обезличивания (DocClean или совместимый JSON API). Пока он ВКЛЮЧЁН, текст проходит через него перед отправкой в языковую модель, а при сбое протокол не создаётся. Если выключить — протоколы и резюме создаются как обычно, но текст уходит в модель без обезличивания. Для отдельной переговорки обезличивание можно выключить или включить принудительно в её настройках." />
         <ApiProfilesAdmin key="anon-profiles" kind="anonymizer" fields={anonFields} />
       </>) },
-    { id: "llm", label: "Языковая модель (LLM)", render: () => <LlmAdmin /> },
+    { id: "storages", label: "Файловые хранилища", render: (go) => <StoragesAdmin onOpen={go} /> },
     { id: "outlook", label: "Microsoft Outlook", render: () => <OutlookAdmin /> },
     { id: "sip", label: "SIP-телефония", render: () => <SipAdmin /> },
     { id: "sip_policy", label: "Политика телефонии", render: () => (
@@ -108,23 +82,46 @@ const GROUPS: Group[] = [
     { id: "bitrix24", label: "Bitrix24 (профили)", render: () => <Bitrix24Admin /> },
     { id: "public_api", label: "Публичный API", render: () => <PublicApiAdmin /> },
   ] },
-  { title: "Журналы", pages: [
+  { title: "Безопасность", pages: [
+    { id: "auth_security", label: "Двухфакторная аутентификация", render: () => (
+      <SettingsForm key="auth_security" group="auth_security" title="Двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
+        intro="Одноразовые коды из приложения-аутентификатора. Если защита обязательна, пользователь при первом входе настраивает её сам (QR-код и резервные коды). Потерянное устройство — «Пользователи → сбросить» или консольная команда admin-reset для локального администратора." />) },
+    { id: "captcha", label: "CAPTCHA", render: () => (
+      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (защита от перебора)" fields={captchaFields}
+        intro="Локальная проверка без внешних сервисов: браузер решает небольшую вычислительную задачу (доли секунды). Защищает вход, вход гостя по ссылке и создание временной переговорки." />) },
+    { id: "crypto", label: "Шифрование хранилища", render: () => <CryptoAdmin /> },
+    { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
+  ] },
+  { title: "Хранение и журналы", pages: [
+    { id: "storage", label: "Хранилище документов встреч", render: () => (
+      <SettingsForm key="storage" group="storage" title="Хранилище протоколов и материалов" fields={storageFields} testable
+        intro="Куда складываются стенограммы, протоколы, переписка и схемы доски. Выберите хранилище из раздела «Файловые хранилища» — подпапки создаются автоматически." />) },
+    { id: "audio_storage", label: "Хранилище аудиозаписей", render: () => (
+      <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
+        intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Файловые хранилища»." />) },
+    { id: "chat_files", label: "Хранилище вложений чата", render: () => (
+      <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
+        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
+    { id: "storage_sync", label: "Целостность хранилищ", render: () => <StorageSyncAdmin /> },
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
     { id: "journal_settings", label: "Хранение журнала", render: () => (
       <SettingsForm key="journal" group="journal" title="Хранение журнала событий" fields={journalFields} testable
         intro="Сколько хранить записи, нужно ли держать их в базе сервера и куда дублировать во внешнее хранилище (диск или сетевой ресурс), чтобы не занимать место на сервере." />) },
-    { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
-  ] },
-  { title: "Сервер", pages: [
-    { id: "config_backup", label: "Резервная копия конфигурации", render: () => <ConfigBackupAdmin /> },
+    { id: "mail_log", label: "Почта: журнал отправки", render: () => <MailLogAdmin /> },
   ] },
   { title: "Система", pages: [
-    { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
+    { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
+    { id: "config_backup", label: "Резервная копия конфигурации", render: () => <ConfigBackupAdmin /> },
+    { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
     { id: "site", label: "Настройки сайта", render: () => <SiteAdmin /> },
     { id: "privacy", label: "Конфиденциальность и cookie", render: () => (
       <SettingsForm key="privacy" group="privacy" title="Конфиденциальность и cookie" fields={privacyFields}
         intro="Тексты для страницы входа и страницы «Обработка данных» (открывается без входа и по ссылке «Подробнее»). Юридические формулировки в приложении не зашиты — заполните их по правилам вашей организации. Используются только технические cookie." /> ) },
-    { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
+    { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
+    { id: "mail_policy", label: "Почта: правила рассылки", render: () => (
+      <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
+        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Материалы после встречи»); адреса сервера и пароль ему не показываются." />) },
+    { id: "mail_templates", label: "Почта: шаблоны писем", render: () => <MailTemplatesAdmin /> },
   ] },
 ];
 
@@ -147,6 +144,7 @@ export default function AdminPage({ version }: { version: string }) {
   const setGroups = (s: Set<string>) => { setCollapsed(s); saveCollapsed(s); };
   // переход к странице (из мастера настройки, верхнего меню) раскрывает её раздел, чтобы пункт не оказался скрытым
   const pick = (t: string) => {
+    if (t !== tab && !confirmLeave()) return;
     setTab(t);
     try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ }
     const g = GROUPS.find((x) => x.pages.some((p) => p.id === t));
