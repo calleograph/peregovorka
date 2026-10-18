@@ -2,4 +2,4 @@
 aiosqlite>=0.20
 pytest>=8
 pytest-asyncio>=0.24
-fakeredis>=2.26
+fakeredis>=2.40.0
