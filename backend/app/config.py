@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     livekit_token_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     # сведения о развёртывании LiveKit для диагностики (compose передаёт из .env)
     livekit_server_version: str = ""
+    web_internal_url: str = "http://web:8080"  # контейнер web: версии frontend из собранного приложения («Версии компонентов»)
     asr_internal_url: str = "http://asr:8090"  # управление моделями ASR (статус, тест, сравнение) — только внутри сети проекта
     # --- локальная языковая модель (контейнер llm-local, llama.cpp; compose передаёт значения из .env). Модель хранится вне образа.
     local_llm_url: str = "http://llm-local:8080"

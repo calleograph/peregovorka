@@ -40,6 +40,19 @@ def _livekit_sdk() -> str | None:
     return _pkg_version("livekit")
 
 
+# Пакеты, версии которых backend сверяет с манифестом релиза (backend/app/components.json): показывается то, что РАБОТАЕТ в этом контейнере.
+TRACKED_PACKAGES = ("livekit", "livekit-api", "transcribe-cpp", "torch", "torchaudio", "silero-vad", "numpy", "fastapi", "uvicorn", "pydantic", "pydantic-settings", "redis")
+
+
+def runtime_packages() -> dict[str, str | None]:
+    import sys  # noqa: PLC0415
+
+    out: dict[str, str | None] = {n: _pkg_version(n) for n in TRACKED_PACKAGES}
+    out["python"] = ".".join(map(str, sys.version_info[:3]))
+    out["gigaam"] = os.environ.get("GIGAAM_GIT_COMMIT") or None
+    return out
+
+
 async def watch_desired_model(redis: Redis, models: ModelManager, interval: float = 5.0) -> None:
     """Применяет выбор администратора: backend пишет желаемую модель в Redis, ASR переключается сам.
     Неудавшийся выбор повторно не загружается, пока выбор не изменится (иначе — цикл неудачных загрузок)."""
@@ -81,7 +94,7 @@ async def amain() -> None:
             "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
-            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"),
+            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(),
             **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
             "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }

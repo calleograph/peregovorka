@@ -518,10 +518,17 @@ export interface UpdateLog {
   exit_code: number | null; result: string | null; finished_at: number | null; available: boolean;
   action?: string | null; repair_id?: string | null; outcome?: UpdateOutcome | null;
 }
+export type ComponentStatus = "current" | "available" | "deferred" | "review" | "error" | "manual" | "off";
 export interface ComponentRow {
-  key: string; title: string; installed: string | null; tested: string | null; latest: string | null; status: "ok" | "newer" | "ahead" | "unknown"; pinned: boolean; note: string;
+  key: string; title: string; group: string; installed: string | null; pinned: string; tested: string; latest: string | null; status: ComponentStatus; note: string; checked_at: string;
+  changelog: string | null; bundle: string | null; deferred: { version: string; reason: string; issue: string; recheck: string; plan?: string } | null;
+  security: { state: "ok" | "advisories" | "unknown"; ids: string[]; checked_at: string | null };
 }
-export interface ComponentsInfo { rows: ComponentRow[]; internet: boolean; fetched_at: number | null; tested: Record<string, string>; project_latest: string | null }
+export interface ComponentsPostcheck { release: string; checked_at: string; worst: number; components: { key: string; title: string; expected: string; running: string | null; status: "ok" | "mismatch" | "unknown"; critical: boolean }[]; notes: string[] }
+export interface ComponentsInfo {
+  rows: ComponentRow[]; internet: boolean; fetched_at: number | null; tested: Record<string, string>; project_latest: string | null; release: string; reviewed_at: string;
+  security: { checked_at: string | null; source: string | null }; postcheck: ComponentsPostcheck | null;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public retryAfter?: number) {

@@ -1,0 +1,1426 @@
+{
+ "schema": 1,
+ "release": "0.24.0",
+ "reviewed_at": "2026-10-18",
+ "components": [
+  {
+   "key": "livekit_server",
+   "title": "LiveKit Server",
+   "group": "Видеосвязь и телефония",
+   "pinned": "v1.13.10",
+   "tested": "v1.13.10",
+   "reviewed_latest": "v1.13.10",
+   "source": {
+    "type": "github-release",
+    "repo": "livekit/livekit"
+   },
+   "locations": [
+    {
+     "type": "env",
+     "file": ".env.example",
+     "key": "LIVEKIT_IMAGE_TAG"
+    },
+    {
+     "type": "dockerfile-arg",
+     "file": "deployment/livekit/Dockerfile",
+     "key": "LIVEKIT_IMAGE_TAG"
+    },
+    {
+     "type": "compat-env",
+     "file": "deployment/compat.env",
+     "key": "TESTED_LIVEKIT_SERVER"
+    },
+    {
+     "type": "image-ref",
+     "file": "scripts/lib/dockerlib.sh",
+     "regex": "LIVEKIT_IMAGE_TAG:-(v[0-9.]+)\\}"
+    }
+   ],
+   "changelog": "https://github.com/livekit/livekit/releases",
+   "runtime": {
+    "how": "exec-version",
+    "service": "livekit",
+    "cmd": [
+     "/usr/local/bin/livekit-server",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)",
+    "critical": true
+   },
+   "bundle": "livekit"
+  },
+  {
+   "key": "livekit_sip",
+   "title": "LiveKit SIP Service (livekit/sip)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "v1.20.0",
+   "tested": "v1.20.0",
+   "reviewed_latest": "v1.20.0",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "livekit/sip",
+    "track": "^v(\\d+\\.\\d+\\.\\d+)$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "\\$\\{SIP_IMAGE:-livekit/sip:(\\S+?)\\}"
+    },
+    {
+     "type": "image-ref",
+     "file": "scripts/lib/siplib.sh",
+     "regex": "SIP_DEFAULT_IMAGE=\"livekit/sip:([^\"]+)\""
+    },
+    {
+     "type": "image-ref",
+     "file": ".env.example",
+     "regex": "^# SIP_IMAGE=livekit/sip:(\\S+)"
+    }
+   ],
+   "changelog": "https://github.com/livekit/sip/releases",
+   "image": {
+    "registry": "hub",
+    "repo": "livekit/sip"
+   },
+   "bundle": "livekit",
+   "digest": "sha256:80bf1f5b2563d75febfb24ebe0601ebc5073810223a24709850c2ba5391558d3"
+  },
+  {
+   "key": "livekit_client_js",
+   "title": "livekit-client (браузер)",
+   "group": "Frontend",
+   "pinned": "2.23.0",
+   "tested": "2.23.0",
+   "reviewed_latest": "2.23.0",
+   "source": {
+    "type": "npm",
+    "name": "livekit-client"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "livekit-client"
+    },
+    {
+     "type": "package-json",
+     "file": "frontend/package.json",
+     "name": "livekit-client"
+    },
+    {
+     "type": "compat-env",
+     "file": "deployment/compat.env",
+     "key": "TESTED_LIVEKIT_CLIENT_JS"
+    }
+   ],
+   "changelog": "https://github.com/livekit/client-sdk-js/releases",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "livekit-client"
+   },
+   "bundle": "livekit"
+  },
+  {
+   "key": "livekit_python_sdk",
+   "title": "livekit (Python SDK, ASR)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "1.1.21",
+   "tested": "1.1.21",
+   "reviewed_latest": "1.1.21",
+   "source": {
+    "type": "pypi",
+    "name": "livekit"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "livekit"
+    },
+    {
+     "type": "compat-env",
+     "file": "deployment/compat.env",
+     "key": "TESTED_LIVEKIT_PYTHON_SDK"
+    },
+    {
+     "type": "text",
+     "file": "asr-service/requirements.txt",
+     "regex": "^livekit==(\\S+)"
+    }
+   ],
+   "changelog": "https://github.com/livekit/python-sdks/releases",
+   "runtime": {
+    "service": "asr",
+    "python_package": "livekit",
+    "critical": true
+   },
+   "bundle": "livekit"
+  },
+  {
+   "key": "livekit_api_python",
+   "title": "livekit-api (Python)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "1.2.2",
+   "tested": "1.2.2",
+   "reviewed_latest": "1.2.2",
+   "source": {
+    "type": "pypi",
+    "name": "livekit-api"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "livekit-api"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "livekit-api"
+    },
+    {
+     "type": "compat-env",
+     "file": "deployment/compat.env",
+     "key": "TESTED_LIVEKIT_API_PYTHON"
+    },
+    {
+     "type": "text",
+     "file": "backend/requirements.txt",
+     "regex": "^livekit-api==(\\S+)"
+    },
+    {
+     "type": "text",
+     "file": "asr-service/requirements.txt",
+     "regex": "^livekit-api==(\\S+)"
+    }
+   ],
+   "changelog": "https://github.com/livekit/python-sdks/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "livekit-api",
+    "critical": true
+   },
+   "bundle": "livekit"
+  },
+  {
+   "key": "rnnoise_wasm",
+   "title": "RNNoise (WASM, @sapphi-red/web-noise-suppressor)",
+   "group": "Frontend",
+   "pinned": "0.4.1",
+   "tested": "0.4.1",
+   "reviewed_latest": "0.4.1",
+   "source": {
+    "type": "npm",
+    "name": "@sapphi-red/web-noise-suppressor"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "@sapphi-red/web-noise-suppressor"
+    },
+    {
+     "type": "package-json",
+     "file": "frontend/package.json",
+     "name": "@sapphi-red/web-noise-suppressor"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/@sapphi-red/web-noise-suppressor?activeTab=versions",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "@sapphi-red/web-noise-suppressor"
+   },
+   "note": "Нейросетевое шумоподавление в браузере; RNNoise собран внутри пакета (upstream xiph/rnnoise v0.2)."
+  },
+  {
+   "key": "officejs",
+   "title": "Office.js (Outlook, CDN Microsoft)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "1",
+   "tested": "1",
+   "reviewed_latest": "1",
+   "source": {
+    "type": "none"
+   },
+   "locations": [],
+   "changelog": "https://learn.microsoft.com/office/dev/add-ins/",
+   "note": "Библиотека подключается страницами надстройки с CDN Microsoft без версии в адресе; проект проверяет наборы требований Mailbox (1.3, для передачи при отправке 1.12) и валидатором манифеста."
+  },
+  {
+   "key": "transcribe_cpp",
+   "title": "transcribe-cpp (движок GGUF)",
+   "group": "Распознавание речи и модели",
+   "pinned": "0.4.0",
+   "tested": "0.4.0",
+   "reviewed_latest": "0.4.0",
+   "source": {
+    "type": "pypi",
+    "name": "transcribe-cpp"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "transcribe-cpp"
+    }
+   ],
+   "changelog": "https://github.com/handy-computer/transcribe.cpp/releases",
+   "runtime": {
+    "service": "asr",
+    "python_package": "transcribe-cpp"
+   },
+   "note": "GGUF-модели сняты с вооружения по умолчанию (основной путь — GigaAM на PyTorch); пакет нужен для режима GGUF."
+  },
+  {
+   "key": "torch",
+   "title": "PyTorch (CPU)",
+   "group": "Распознавание речи и модели",
+   "pinned": "2.14.1",
+   "tested": "2.14.1",
+   "reviewed_latest": "2.14.1",
+   "source": {
+    "type": "pypi",
+    "name": "torch"
+   },
+   "locations": [
+    {
+     "type": "dockerfile-arg",
+     "file": "asr-service/Dockerfile",
+     "key": "TORCH_VERSION"
+    }
+   ],
+   "changelog": "https://github.com/pytorch/pytorch/releases",
+   "runtime": {
+    "service": "asr",
+    "python_package": "torch",
+    "prefix_match": true
+   }
+  },
+  {
+   "key": "torchaudio",
+   "title": "torchaudio (CPU)",
+   "group": "Распознавание речи и модели",
+   "pinned": "2.11.0",
+   "tested": "2.11.0",
+   "reviewed_latest": "2.11.0",
+   "source": {
+    "type": "pypi",
+    "name": "torchaudio"
+   },
+   "locations": [
+    {
+     "type": "dockerfile-arg",
+     "file": "asr-service/Dockerfile",
+     "key": "TORCHAUDIO_VERSION"
+    }
+   ],
+   "changelog": "https://github.com/pytorch/audio/releases",
+   "runtime": {
+    "service": "asr",
+    "python_package": "torchaudio",
+    "prefix_match": true
+   }
+  },
+  {
+   "key": "gigaam",
+   "title": "GigaAM (коммит)",
+   "group": "Распознавание речи и модели",
+   "pinned": "7447938d791c4f3e643386ee22c33777004293a5",
+   "tested": "7447938d791c4f3e643386ee22c33777004293a5",
+   "reviewed_latest": "7447938d791c4f3e643386ee22c33777004293a5",
+   "source": {
+    "type": "github-commit",
+    "repo": "salute-developers/GigaAM",
+    "branch": "main"
+   },
+   "locations": [
+    {
+     "type": "env",
+     "file": ".env.example",
+     "key": "GIGAAM_GIT_COMMIT"
+    }
+   ],
+   "changelog": "https://github.com/salute-developers/GigaAM/commits/main",
+   "runtime": {
+    "how": "exec-version",
+    "service": "asr",
+    "cmd": [
+     "printenv",
+     "GIGAAM_GIT_COMMIT"
+    ],
+    "regex": "([0-9a-f]{40})"
+   }
+  },
+  {
+   "key": "silero_vad",
+   "title": "silero-vad",
+   "group": "Распознавание речи и модели",
+   "pinned": "6.2.3",
+   "tested": "6.2.3",
+   "reviewed_latest": "6.2.3",
+   "source": {
+    "type": "pypi",
+    "name": "silero-vad"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "silero-vad"
+    }
+   ],
+   "changelog": "https://github.com/snakers4/silero-vad/releases",
+   "runtime": {
+    "service": "asr",
+    "python_package": "silero-vad"
+   }
+  },
+  {
+   "key": "numpy",
+   "title": "NumPy",
+   "group": "Распознавание речи и модели",
+   "pinned": "2.5.4",
+   "tested": "2.5.4",
+   "reviewed_latest": "2.5.4",
+   "source": {
+    "type": "pypi",
+    "name": "numpy"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "numpy"
+    }
+   ],
+   "changelog": "https://numpy.org/doc/stable/release.html",
+   "runtime": {
+    "service": "asr",
+    "python_package": "numpy"
+   }
+  },
+  {
+   "key": "llama_cpp",
+   "title": "llama.cpp (локальная LLM, образ server)",
+   "group": "Распознавание речи и модели",
+   "pinned": "server-b11371",
+   "tested": "server-b11371",
+   "reviewed_latest": "server-b11718",
+   "source": {
+    "type": "docker",
+    "registry": "ghcr",
+    "repo": "ggml-org/llama.cpp",
+    "track": "^(server-b\\d+)$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "\\$\\{LLM_LOCAL_IMAGE:-ghcr\\.io/ggml-org/llama\\.cpp:(\\S+?)\\}"
+    },
+    {
+     "type": "image-ref",
+     "file": "scripts/lib/llmlib.sh",
+     "regex": "LLM_DEFAULT_IMAGE=\"ghcr\\.io/ggml-org/llama\\.cpp:([^\"]+)\""
+    },
+    {
+     "type": "image-ref",
+     "file": ".env.example",
+     "regex": "^# LLM_LOCAL_IMAGE=ghcr\\.io/ggml-org/llama\\.cpp:(\\S+)"
+    }
+   ],
+   "changelog": "https://github.com/ggml-org/llama.cpp/releases",
+   "deferred": {
+    "version": "server-b11718",
+    "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
+    "issue": "DEP-1",
+    "recheck": "2026-11-16",
+    "plan": "Поднять образ с моделью, прогнать структурированное извлечение на эталонной стенограмме и сравнить с b11371; при совпадении включить в 0.25.0."
+   }
+  },
+  {
+   "key": "python_backend",
+   "title": "Python (backend)",
+   "group": "Backend",
+   "pinned": "3.12",
+   "tested": "3.12",
+   "reviewed_latest": "3.15",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/python",
+    "track": "^(3\\.\\d+)-slim$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "backend/Dockerfile",
+     "regex": "^ARG PYTHON_IMAGE=python:(\\S+)",
+     "suffix": "-slim",
+     "with_digest": true
+    },
+    {
+     "type": "text",
+     "file": ".github/workflows/ci.yml",
+     "regex": "python-version: \"(3\\.\\d+)\""
+    }
+   ],
+   "changelog": "https://www.python.org/downloads/",
+   "runtime": {
+    "how": "python",
+    "service": "backend",
+    "prefix_match": true
+   },
+   "image": {
+    "registry": "hub",
+    "repo": "library/python",
+    "suffix": "-slim"
+   },
+   "digest": "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+   "deferred": {
+    "version": "3.15",
+    "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
+    "issue": "DEP-2",
+    "recheck": "2026-12-01",
+    "plan": "После выхода колёс torch под 3.15 проверить сборку ASR и backend, обновить PYTHON_IMAGE, freeze и CI."
+   }
+  },
+  {
+   "key": "fastapi",
+   "title": "FastAPI",
+   "group": "Backend",
+   "pinned": "0.143.5",
+   "tested": "0.143.5",
+   "reviewed_latest": "0.143.5",
+   "source": {
+    "type": "pypi",
+    "name": "fastapi"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "fastapi"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "fastapi"
+    }
+   ],
+   "changelog": "https://fastapi.tiangolo.com/release-notes/",
+   "runtime": {
+    "service": "backend",
+    "python_package": "fastapi"
+   }
+  },
+  {
+   "key": "uvicorn",
+   "title": "Uvicorn",
+   "group": "Backend",
+   "pinned": "0.54.0",
+   "tested": "0.54.0",
+   "reviewed_latest": "0.54.0",
+   "source": {
+    "type": "pypi",
+    "name": "uvicorn"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "uvicorn"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "uvicorn"
+    }
+   ],
+   "changelog": "https://github.com/encode/uvicorn/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "uvicorn"
+   }
+  },
+  {
+   "key": "sqlalchemy",
+   "title": "SQLAlchemy",
+   "group": "Backend",
+   "pinned": "2.1.5",
+   "tested": "2.1.5",
+   "reviewed_latest": "2.1.5",
+   "source": {
+    "type": "pypi",
+    "name": "sqlalchemy"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "sqlalchemy"
+    }
+   ],
+   "changelog": "https://docs.sqlalchemy.org/en/21/changelog/",
+   "runtime": {
+    "service": "backend",
+    "python_package": "sqlalchemy"
+   }
+  },
+  {
+   "key": "asyncpg",
+   "title": "asyncpg",
+   "group": "Backend",
+   "pinned": "0.32.0",
+   "tested": "0.32.0",
+   "reviewed_latest": "0.32.0",
+   "source": {
+    "type": "pypi",
+    "name": "asyncpg"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "asyncpg"
+    }
+   ],
+   "changelog": "https://github.com/MagicStack/asyncpg/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "asyncpg"
+   }
+  },
+  {
+   "key": "alembic",
+   "title": "Alembic",
+   "group": "Backend",
+   "pinned": "1.20.0",
+   "tested": "1.20.0",
+   "reviewed_latest": "1.20.0",
+   "source": {
+    "type": "pypi",
+    "name": "alembic"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "alembic"
+    }
+   ],
+   "changelog": "https://alembic.sqlalchemy.org/en/latest/changelog.html",
+   "runtime": {
+    "service": "backend",
+    "python_package": "alembic"
+   }
+  },
+  {
+   "key": "pydantic",
+   "title": "Pydantic",
+   "group": "Backend",
+   "pinned": "2.14.1",
+   "tested": "2.14.1",
+   "reviewed_latest": "2.14.1",
+   "source": {
+    "type": "pypi",
+    "name": "pydantic"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "pydantic"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "pydantic"
+    }
+   ],
+   "changelog": "https://docs.pydantic.dev/latest/changelog/",
+   "runtime": {
+    "service": "backend",
+    "python_package": "pydantic"
+   }
+  },
+  {
+   "key": "pydantic_settings",
+   "title": "pydantic-settings",
+   "group": "Backend",
+   "pinned": "2.16.0",
+   "tested": "2.16.0",
+   "reviewed_latest": "2.16.0",
+   "source": {
+    "type": "pypi",
+    "name": "pydantic-settings"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "pydantic-settings"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "pydantic-settings"
+    }
+   ],
+   "changelog": "https://github.com/pydantic/pydantic-settings/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "pydantic-settings"
+   }
+  },
+  {
+   "key": "redis_py",
+   "title": "redis-py",
+   "group": "Backend",
+   "pinned": "8.1.0",
+   "tested": "8.1.0",
+   "reviewed_latest": "8.1.0",
+   "source": {
+    "type": "pypi",
+    "name": "redis"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "redis"
+    },
+    {
+     "type": "constraints",
+     "file": "asr-service/constraints.txt",
+     "name": "redis"
+    }
+   ],
+   "changelog": "https://github.com/redis/redis-py/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "redis"
+   }
+  },
+  {
+   "key": "ldap3",
+   "title": "ldap3",
+   "group": "Backend",
+   "pinned": "2.9.1",
+   "tested": "2.9.1",
+   "reviewed_latest": "2.9.1",
+   "source": {
+    "type": "pypi",
+    "name": "ldap3"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "ldap3"
+    }
+   ],
+   "changelog": "https://github.com/cannatag/ldap3/blob/dev/CHANGES.md",
+   "runtime": {
+    "service": "backend",
+    "python_package": "ldap3"
+   }
+  },
+  {
+   "key": "cryptography",
+   "title": "cryptography",
+   "group": "Backend",
+   "pinned": "50.0.2",
+   "tested": "50.0.2",
+   "reviewed_latest": "50.0.2",
+   "source": {
+    "type": "pypi",
+    "name": "cryptography"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "cryptography"
+    }
+   ],
+   "changelog": "https://cryptography.io/en/latest/changelog/",
+   "runtime": {
+    "service": "backend",
+    "python_package": "cryptography"
+   }
+  },
+  {
+   "key": "argon2_cffi",
+   "title": "argon2-cffi",
+   "group": "Backend",
+   "pinned": "25.1.0",
+   "tested": "25.1.0",
+   "reviewed_latest": "25.1.0",
+   "source": {
+    "type": "pypi",
+    "name": "argon2-cffi"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "argon2-cffi"
+    }
+   ],
+   "changelog": "https://github.com/hynek/argon2-cffi/blob/main/CHANGELOG.md",
+   "runtime": {
+    "service": "backend",
+    "python_package": "argon2-cffi"
+   }
+  },
+  {
+   "key": "httpx",
+   "title": "httpx",
+   "group": "Backend",
+   "pinned": "0.28.1",
+   "tested": "0.28.1",
+   "reviewed_latest": "0.28.1",
+   "source": {
+    "type": "pypi",
+    "name": "httpx"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "httpx"
+    }
+   ],
+   "changelog": "https://github.com/encode/httpx/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "httpx"
+   }
+  },
+  {
+   "key": "smbprotocol",
+   "title": "smbprotocol",
+   "group": "Backend",
+   "pinned": "1.17.0",
+   "tested": "1.17.0",
+   "reviewed_latest": "1.17.0",
+   "source": {
+    "type": "pypi",
+    "name": "smbprotocol"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "smbprotocol"
+    }
+   ],
+   "changelog": "https://github.com/jborean93/smbprotocol/blob/master/CHANGELOG.md",
+   "runtime": {
+    "service": "backend",
+    "python_package": "smbprotocol"
+   }
+  },
+  {
+   "key": "fpdf2",
+   "title": "fpdf2",
+   "group": "Backend",
+   "pinned": "2.8.9",
+   "tested": "2.8.9",
+   "reviewed_latest": "2.8.9",
+   "source": {
+    "type": "pypi",
+    "name": "fpdf2"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "fpdf2"
+    }
+   ],
+   "changelog": "https://github.com/py-pdf/fpdf2/blob/master/CHANGELOG.md",
+   "runtime": {
+    "service": "backend",
+    "python_package": "fpdf2"
+   }
+  },
+  {
+   "key": "python_docx",
+   "title": "python-docx",
+   "group": "Backend",
+   "pinned": "1.2.0",
+   "tested": "1.2.0",
+   "reviewed_latest": "1.2.0",
+   "source": {
+    "type": "pypi",
+    "name": "python-docx"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "python-docx"
+    }
+   ],
+   "changelog": "https://github.com/python-openxml/python-docx/blob/master/HISTORY.rst",
+   "runtime": {
+    "service": "backend",
+    "python_package": "python-docx"
+   }
+  },
+  {
+   "key": "pillow",
+   "title": "Pillow",
+   "group": "Backend",
+   "pinned": "13.0.0",
+   "tested": "13.0.0",
+   "reviewed_latest": "13.0.0",
+   "source": {
+    "type": "pypi",
+    "name": "pillow"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "pillow"
+    }
+   ],
+   "changelog": "https://pillow.readthedocs.io/en/stable/releasenotes/",
+   "runtime": {
+    "service": "backend",
+    "python_package": "pillow"
+   }
+  },
+  {
+   "key": "segno",
+   "title": "segno",
+   "group": "Backend",
+   "pinned": "1.6.6",
+   "tested": "1.6.6",
+   "reviewed_latest": "1.6.6",
+   "source": {
+    "type": "pypi",
+    "name": "segno"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "segno"
+    }
+   ],
+   "changelog": "https://github.com/heuer/segno/blob/master/CHANGES.rst",
+   "runtime": {
+    "service": "backend",
+    "python_package": "segno"
+   }
+  },
+  {
+   "key": "tzdata",
+   "title": "tzdata",
+   "group": "Backend",
+   "pinned": "2026.5",
+   "tested": "2026.5",
+   "reviewed_latest": "2026.5",
+   "source": {
+    "type": "pypi",
+    "name": "tzdata"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "tzdata"
+    }
+   ],
+   "changelog": "https://github.com/python/tzdata/releases",
+   "runtime": {
+    "service": "backend",
+    "python_package": "tzdata"
+   }
+  },
+  {
+   "key": "python_asr",
+   "title": "Python (ASR)",
+   "group": "Распознавание речи и модели",
+   "pinned": "3.12",
+   "tested": "3.12",
+   "reviewed_latest": "3.15",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/python",
+    "track": "^(3\\.\\d+)-slim$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "asr-service/Dockerfile",
+     "regex": "^ARG PYTHON_IMAGE=python:(\\S+)",
+     "suffix": "-slim",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://www.python.org/downloads/",
+   "runtime": {
+    "how": "python",
+    "service": "asr",
+    "prefix_match": true
+   },
+   "image": {
+    "registry": "hub",
+    "repo": "library/python",
+    "suffix": "-slim"
+   },
+   "digest": "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+   "deferred": {
+    "version": "3.15",
+    "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
+    "issue": "DEP-2",
+    "recheck": "2026-12-01",
+    "plan": "См. DEP-2."
+   }
+  },
+  {
+   "key": "ffmpeg",
+   "title": "ffmpeg и шрифты (пакеты Debian в образе backend)",
+   "group": "Backend",
+   "pinned": "из образа Python 3.12-slim",
+   "tested": "из образа Python 3.12-slim",
+   "reviewed_latest": "из образа Python 3.12-slim",
+   "source": {
+    "type": "none"
+   },
+   "locations": [],
+   "changelog": "https://www.debian.org/security/",
+   "note": "Устанавливаются из репозитория Debian базового образа при сборке; версию определяет дистрибутив на дату сборки. Исправления безопасности приходят вместе с обновлением digest базового образа."
+  },
+  {
+   "key": "react",
+   "title": "React",
+   "group": "Frontend",
+   "pinned": "19.3.1",
+   "tested": "19.3.1",
+   "reviewed_latest": "19.3.1",
+   "source": {
+    "type": "npm",
+    "name": "react"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "react"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/react?activeTab=versions",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "react"
+   }
+  },
+  {
+   "key": "react_dom",
+   "title": "React DOM",
+   "group": "Frontend",
+   "pinned": "19.3.1",
+   "tested": "19.3.1",
+   "reviewed_latest": "19.3.1",
+   "source": {
+    "type": "npm",
+    "name": "react-dom"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "react-dom"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/react-dom?activeTab=versions",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "react-dom"
+   }
+  },
+  {
+   "key": "react_router",
+   "title": "React Router",
+   "group": "Frontend",
+   "pinned": "7.18.4",
+   "tested": "7.18.4",
+   "reviewed_latest": "7.18.4",
+   "source": {
+    "type": "npm",
+    "name": "react-router-dom"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "react-router-dom"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/react-router-dom?activeTab=versions",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "react-router-dom"
+   }
+  },
+  {
+   "key": "vite",
+   "title": "Vite",
+   "group": "Frontend",
+   "pinned": "8.3.4",
+   "tested": "8.3.4",
+   "reviewed_latest": "8.3.4",
+   "source": {
+    "type": "npm",
+    "name": "vite"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "vite"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/vite?activeTab=versions"
+  },
+  {
+   "key": "vitest",
+   "title": "Vitest",
+   "group": "Frontend",
+   "pinned": "5.0.5",
+   "tested": "5.0.5",
+   "reviewed_latest": "5.0.5",
+   "source": {
+    "type": "npm",
+    "name": "vitest"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "vitest"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/vitest?activeTab=versions"
+  },
+  {
+   "key": "typescript",
+   "title": "TypeScript",
+   "group": "Frontend",
+   "pinned": "7.0.2",
+   "tested": "7.0.2",
+   "reviewed_latest": "7.0.2",
+   "source": {
+    "type": "npm",
+    "name": "typescript"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "typescript"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/typescript?activeTab=versions"
+  },
+  {
+   "key": "vite_react",
+   "title": "@vitejs/plugin-react",
+   "group": "Frontend",
+   "pinned": "6.1.2",
+   "tested": "6.1.2",
+   "reviewed_latest": "6.1.2",
+   "source": {
+    "type": "npm",
+    "name": "@vitejs/plugin-react"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "@vitejs/plugin-react"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/@vitejs/plugin-react?activeTab=versions"
+  },
+  {
+   "key": "node",
+   "title": "Node.js (сборка frontend)",
+   "group": "Frontend",
+   "pinned": "24",
+   "tested": "24",
+   "reviewed_latest": "26",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/node",
+    "track": "^(\\d*[02468])-alpine$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "frontend/Dockerfile",
+     "regex": "^ARG NODE_IMAGE=node:(\\S+)",
+     "suffix": "-alpine",
+     "with_digest": true
+    },
+    {
+     "type": "text",
+     "file": ".github/workflows/ci.yml",
+     "regex": "node-version: \"(\\d+)\""
+    }
+   ],
+   "changelog": "https://nodejs.org/en/blog/release/",
+   "image": {
+    "registry": "hub",
+    "repo": "library/node",
+    "suffix": "-alpine"
+   },
+   "digest": "sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f",
+   "note": "Вместе с Node поставляется npm 11.",
+   "deferred": {
+    "version": "26",
+    "reason": "Node 26 по графику Node.js становится LTS осенью 2026; сборка frontend остаётся на LTS 24.",
+    "issue": "DEP-3",
+    "recheck": "2026-11-09",
+    "plan": "После перехода 26 в LTS собрать frontend, прогнать типы, тесты и живые сценарии, обновить NODE_IMAGE и CI."
+   }
+  },
+  {
+   "key": "nginx",
+   "title": "nginx (образ web)",
+   "group": "Инфраструктура и образы",
+   "pinned": "1.30",
+   "tested": "1.30",
+   "reviewed_latest": "1.30-alpine",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "nginxinc/nginx-unprivileged",
+    "track": "^(1\\.\\d*[02468])-alpine$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "frontend/Dockerfile",
+     "regex": "^ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:(\\S+)",
+     "suffix": "-alpine",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://nginx.org/en/CHANGES",
+   "runtime": {
+    "how": "exec-version",
+    "service": "web",
+    "cmd": [
+     "nginx",
+     "-v"
+    ],
+    "regex": "nginx/(\\d+\\.\\d+)",
+    "prefix_match": true
+   },
+   "image": {
+    "registry": "hub",
+    "repo": "nginxinc/nginx-unprivileged",
+    "suffix": "-alpine"
+   },
+   "digest": "sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01"
+  },
+  {
+   "key": "alpine",
+   "title": "Alpine Linux (образы livekit и сборка draw.io)",
+   "group": "Инфраструктура и образы",
+   "pinned": "3.24",
+   "tested": "3.24",
+   "reviewed_latest": "3.24",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/alpine",
+    "track": "^(3\\.\\d+)$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "frontend/Dockerfile",
+     "regex": "^ARG ALPINE_IMAGE=alpine:(\\S+)",
+     "with_digest": true
+    },
+    {
+     "type": "image-ref",
+     "file": "deployment/livekit/Dockerfile",
+     "regex": "^ARG ALPINE_IMAGE=alpine:(\\S+)",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://alpinelinux.org/releases/",
+   "image": {
+    "registry": "hub",
+    "repo": "library/alpine"
+   },
+   "digest": "sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+  },
+  {
+   "key": "drawio",
+   "title": "draw.io (редактор доски)",
+   "group": "Frontend",
+   "pinned": "v32.4.1",
+   "tested": "v32.4.1",
+   "reviewed_latest": "v32.4.1",
+   "source": {
+    "type": "github-release",
+    "repo": "jgraph/drawio"
+   },
+   "locations": [
+    {
+     "type": "dockerfile-arg",
+     "file": "frontend/Dockerfile",
+     "key": "DRAWIO_VERSION"
+    }
+   ],
+   "changelog": "https://github.com/jgraph/drawio/releases",
+   "runtime": {
+    "how": "exec-version",
+    "service": "web",
+    "cmd": [
+     "cat",
+     "/usr/share/nginx/html/drawio/VERSION"
+    ],
+    "regex": "v(\\d+\\.\\d+\\.\\d+)"
+   }
+  },
+  {
+   "key": "postgres",
+   "title": "PostgreSQL",
+   "group": "Инфраструктура и образы",
+   "pinned": "16",
+   "tested": "16",
+   "reviewed_latest": "18",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/postgres",
+    "track": "^(\\d+)-alpine$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "^\\s*image:\\s*postgres:(\\S+)",
+     "suffix": "-alpine",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://www.postgresql.org/support/security/",
+   "runtime": {
+    "how": "exec-version",
+    "service": "postgres",
+    "cmd": [
+     "postgres",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+)",
+    "critical": true,
+    "prefix_match": true,
+    "digest_service": "postgres"
+   },
+   "image": {
+    "registry": "hub",
+    "repo": "library/postgres",
+    "suffix": "-alpine"
+   },
+   "digest": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+   "deferred": {
+    "version": "18",
+    "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",
+    "issue": "DEP-4",
+    "recheck": "2027-02-10",
+    "plan": "Описана процедура (docs/DEPENDENCIES.md, DEP-4); автоматизировать в update.sh и проверить на копии базы; в линии 16.x исправления приходят обновлением digest."
+   }
+  },
+  {
+   "key": "redis",
+   "title": "Redis",
+   "group": "Инфраструктура и образы",
+   "pinned": "7",
+   "tested": "7",
+   "reviewed_latest": "8",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "library/redis",
+    "track": "^(\\d+)-alpine$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "^\\s*image:\\s*redis:(\\S+)",
+     "suffix": "-alpine",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://github.com/redis/redis/releases",
+   "runtime": {
+    "how": "exec-version",
+    "service": "redis",
+    "cmd": [
+     "redis-server",
+     "--version"
+    ],
+    "regex": "v=(\\d+\\.\\d+\\.\\d+)",
+    "critical": true,
+    "prefix_match": true,
+    "digest_service": "redis"
+   },
+   "image": {
+    "registry": "hub",
+    "repo": "library/redis",
+    "suffix": "-alpine"
+   },
+   "digest": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+   "deferred": {
+    "version": "8",
+    "reason": "Мажорное обновление: нужна проверка совместимости Redis 8 с очередями ASR, сессиями, E2EE-ключами и LiveKit SIP на стенде и оценка условий лицензии.",
+    "issue": "DEP-5",
+    "recheck": "2027-01-15",
+    "plan": "Проверка на стенде с настоящим Redis 8, затем обновление образа и digest; в линии 7.x исправления приходят обновлением digest."
+   }
+  }
+ ],
+ "security_ack": [],
+ "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
+ "security": {
+  "checked_at": "2026-10-18",
+  "source": "osv.dev",
+  "advisories": {
+   "onnx==1.19.1": [
+    "GHSA-3r9x-f23j-gc73",
+    "GHSA-538c-55jv-c5g9",
+    "GHSA-cmw6-hcpp-c6jp",
+    "GHSA-hqmj-h5c6-369m",
+    "GHSA-hwpq-hmq9-wj77",
+    "GHSA-p433-9wv8-28xj",
+    "GHSA-p893-rvq9-2xf9",
+    "GHSA-q56x-g2fj-4rj6",
+    "PYSEC-2026-103",
+    "PYSEC-2026-104",
+    "PYSEC-2026-2239",
+    "PYSEC-2026-2240",
+    "PYSEC-2026-2241",
+    "PYSEC-2026-2689",
+    "PYSEC-2026-3587",
+    "PYSEC-2026-3876"
+   ]
+  }
+ }
+}

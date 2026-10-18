@@ -52,7 +52,7 @@ UNITSTATE_FILE="$CH/unit-state.json"                          # как заве�
 EXPECT_UID="${UPDATER_EXPECT_UID:-0}"                         # от какого пользователя ДОЛЖЕН работать процесс (root); тесты без root задают свой
 PULSE_EVERY="${UPDATER_PULSE_EVERY:-10}"
 HB_MAX_AGE=40                                                 # то же значение использует веб-интерфейс (HEARTBEAT_MAX_AGE)
-STEPS_DEFAULT=16
+STEPS_DEFAULT=17
 
 # ------------------------------------------------------------------------------------------------ служебное
 ensure_channel() {

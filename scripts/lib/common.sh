@@ -163,6 +163,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/updatelib.sh"
 
 # shellcheck source=verifylib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/depslib.sh"
 
 # shellcheck source=prereqlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/prereqlib.sh"

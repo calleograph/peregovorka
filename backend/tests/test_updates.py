@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from app.services import changelog as chlog
+from app.services import components as comp
 from app.services import updates as upd
 
 from .conftest import login, make_settings, running_app
@@ -168,46 +169,72 @@ def external(handler=None, fail=False):
             raise httpx.ConnectError("нет сети")
         u = str(req.url)
         if "livekit/livekit/releases" in u:
-            return httpx.Response(200, json={"tag_name": "v1.14.0"})
+            return httpx.Response(200, json={"tag_name": "v1.99.0"})
         if "registry.npmjs.org/livekit-client" in u:
-            return httpx.Response(200, json={"version": "2.22.3"})
-        if "pypi.org/pypi/livekit-api" in u:
-            return httpx.Response(200, json={"info": {"version": "1.2.1"}})
-        if "pypi.org/pypi/livekit/" in u:
-            return httpx.Response(200, json={"info": {"version": "1.1.99"}})
-        if "pypi.org/pypi/" in u:
+            return httpx.Response(200, json={"version": comp.tested_map()["livekit_client_js"]})
+        if "pypi.org/pypi/fastapi/" in u:
             return httpx.Response(200, json={"info": {"version": "99.0.0"}})
+        if "pypi.org/pypi/" in u:
+            return httpx.Response(200, json={"info": {"version": comp.tested_map().get("livekit_api_python", "1.0")}})
         if "api.github.com/repos/calleograph/peregovorka/commits/main" in u:
             return httpx.Response(200, json={"sha": "f" * 40})
         return httpx.Response(404)
     return httpx.MockTransport(h)
 
 
-def test_components_show_installed_tested_latest_and_explain_risk(tmp_path, directory):
-    gen = running_app(make_settings(tmp_path, livekit_server_version="v1.13.7"), directory, transports={"updates": external()})
+def web_transport(components: dict | None = None):
+    def h(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/version.json":
+            return httpx.Response(200, json={"version": "x", "node": "24.22.0", "components": components or {}})
+        if req.url.path == "/nginx-version.txt":
+            return httpx.Response(200, text="1.30.6\n")
+        if req.url.path == "/drawio/VERSION":
+            return httpx.Response(200, text=comp.tested_map()["drawio"] + "\n")
+        return httpx.Response(404)
+    return httpx.MockTransport(h)
+
+
+def test_components_table_shows_running_tested_available_status_and_decision(tmp_path, directory):
+    tested = comp.tested_map()
+    web = {"livekit-client": tested["livekit_client_js"], "react": "0.0.1"}
+    gen = running_app(make_settings(tmp_path, livekit_server_version=tested["livekit_server"]), directory, transports={"updates": external(), "web": web_transport(web)})
     with gen as c:
         login(c, "root")
         r = c.get(f"{U}/components").json()
-        assert r["internet"] is True and r["project_latest"] == "f" * 12
+        assert r["internet"] is True and r["project_latest"] == "f" * 12 and r["release"] and r["reviewed_at"]
         rows = {x["key"]: x for x in r["rows"]}
         lk = rows["livekit_server"]
-        assert (lk["installed"], lk["tested"], lk["latest"], lk["status"]) == ("v1.13.7", "v1.13.7", "v1.14.0", "newer")
-        assert "не проверена" in lk["note"] and "новой редакции проекта" in lk["note"], "закреплённый компонент: новая версия не ставится отдельно"
-        assert rows["livekit_api_python"]["status"] in ("ok", "ahead", "newer") and rows["livekit_api_python"]["installed"]
-        assert rows["fastapi"]["status"] == "newer" and "пересборке" in rows["fastapi"]["note"]
-        assert rows["livekit_client_js"]["installed"] is None and rows["livekit_client_js"]["latest"] == "2.22.3", "версия браузерной части известна только браузеру"
-        assert all(x["title"] and "note" in x for x in r["rows"])
+        assert (lk["installed"], lk["tested"], lk["latest"]) == (tested["livekit_server"], tested["livekit_server"], "v1.99.0")
+        assert lk["status"] == "available" and "следующего релиза" in lk["note"] and lk["bundle"] == "livekit" and lk["changelog"].startswith("https://")
+        assert rows["fastapi"]["installed"] and rows["fastapi"]["status"] in ("available", "current"), "версия backend — из работающего процесса"
+        assert rows["livekit_client_js"]["installed"] == tested["livekit_client_js"] and rows["livekit_client_js"]["status"] == "current", "frontend — из собранного приложения"
+        assert rows["react"]["installed"] == "0.0.1" and rows["react"]["status"] == "review", "работает не та версия, что проверена в релизе — требуется проверка"
+        assert rows["nginx"]["installed"] == "1.30.6" and rows["node"]["installed"] == "24.22.0" and rows["drawio"]["installed"] == tested["drawio"]
+        assert rows["torch"]["status"] == "error" and rows["torch"]["installed"] is None, "ASR не запущен: версия не определена — это ошибка определения, а не «актуально»"
+        assert rows["livekit_sip"]["status"] == "off" and rows["officejs"]["status"] == "manual"
+        assert all(x["title"] and x["status"] in comp.STATUSES and x["checked_at"] for x in r["rows"])
+        assert rows["fastapi"]["security"]["state"] in ("ok", "advisories", "unknown")
+
+
+def test_deferred_update_is_reported_with_reason_task_and_date(tmp_path, directory, monkeypatch):
+    m = comp.load_manifest()
+    pg = next(x for x in m["components"] if x["key"] == "postgres")
+    assert pg.get("deferred") and pg["deferred"]["issue"].startswith("DEP-"), "мажорная смена PostgreSQL отложена с задачей"
+    rows = comp.build_rows(m, {"postgres": pg["pinned"] + ".1", "livekit_server": m["components"][0]["pinned"]}, {}, sip_enabled=False)
+    r = {x["key"]: x for x in rows}["postgres"]
+    assert r["status"] == "deferred" and r["deferred"]["reason"] and r["deferred"]["recheck"] and r["deferred"]["issue"].startswith("DEP-")
 
 
 def test_components_without_internet_say_so_and_do_not_fail(tmp_path, directory):
-    gen = running_app(make_settings(tmp_path, livekit_server_version="v1.13.7"), directory, transports={"updates": external(fail=True)})
+    tested = comp.tested_map()
+    gen = running_app(make_settings(tmp_path, livekit_server_version=tested["livekit_server"]), directory, transports={"updates": external(fail=True), "web": web_transport()})
     with gen as c:
         login(c, "root")
         r = c.get(f"{U}/components").json()
         assert r["internet"] is False and r["project_latest"] is None
         lk = {x["key"]: x for x in r["rows"]}["livekit_server"]
-        assert lk["status"] == "unknown" and lk["latest"] is None and "нет доступа в интернет" in lk["note"]
-        assert lk["installed"] == "v1.13.7"
+        assert lk["status"] == "current" and lk["latest"] == tested["livekit_server"] and "интернета получить не удалось" in lk["note"]
+        assert lk["installed"] == tested["livekit_server"]
 
 
 def test_components_are_cached_and_refresh_bypasses_the_cache(tmp_path, directory):
@@ -217,7 +244,7 @@ def test_components_are_cached_and_refresh_bypasses_the_cache(tmp_path, director
         hits["n"] += 1
         return httpx.Response(200, json={"tag_name": "v1.13.7", "version": "2.22.3", "info": {"version": "1.0.0"}, "sha": "a" * 40})
 
-    gen = running_app(make_settings(tmp_path), directory, transports={"updates": httpx.MockTransport(h)})
+    gen = running_app(make_settings(tmp_path), directory, transports={"updates": httpx.MockTransport(h), "web": web_transport()})
     with gen as c:
         login(c, "root")
         c.get(f"{U}/components")
@@ -229,17 +256,19 @@ def test_components_are_cached_and_refresh_bypasses_the_cache(tmp_path, director
 
 
 @pytest.mark.parametrize("a,b,expect", [("v1.13.7", "v1.13.7", "ok"), ("1.1.20", "1.1.21", "newer"), ("1.2.1", "1.2.0", "ahead"), ("v1.9.0", "v1.13.7", "newer"),
-                                        ("0.30.1", "0.30.1", "ok"), (None, "1.0", "unknown"), ("x", "1.0", "unknown"), ("2.10", "2.9", "ahead")])
+                                        ("0.30.1", "0.30.1", "ok"), (None, "1.0", "unknown"), ("x", "1.0", "unknown"), ("2.10", "2.9", "ahead"), ("server-b11371", "server-b11718", "newer"),
+                                        ("7447938d791c", "7447938d791c", "ok"), ("a" * 40, "b" * 40, "newer")])
 def test_version_comparison_is_numeric_not_textual(a, b, expect):
-    assert upd.compare(a, b) == expect
+    assert comp.compare(a, b) == expect
 
 
-def test_tested_versions_match_deployment_compat_env():
+def test_compat_env_matches_the_release_manifest():
     env = dict(line.split("=", 1) for line in (REPO / "deployment" / "compat.env").read_text(encoding="utf-8").splitlines() if "=" in line and not line.startswith("#"))
-    assert env["TESTED_LIVEKIT_SERVER"].strip() == upd.TESTED["livekit_server"]
-    assert env["TESTED_LIVEKIT_CLIENT_JS"].strip() == upd.TESTED["livekit_client_js"]
-    assert env["TESTED_LIVEKIT_PYTHON_SDK"].strip() == upd.TESTED["livekit_python_sdk"]
-    assert env["TESTED_LIVEKIT_API_PYTHON"].strip() == upd.TESTED["livekit_api_python"]
+    t = comp.tested_map()
+    assert env["TESTED_LIVEKIT_SERVER"].strip() == t["livekit_server"]
+    assert env["TESTED_LIVEKIT_CLIENT_JS"].strip() == t["livekit_client_js"]
+    assert env["TESTED_LIVEKIT_PYTHON_SDK"].strip() == t["livekit_python_sdk"]
+    assert env["TESTED_LIVEKIT_API_PYTHON"].strip() == t["livekit_api_python"]
 
 
 def hist(d: Path, *rows):

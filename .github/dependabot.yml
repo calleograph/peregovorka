@@ -1,0 +1,29 @@
+# Еженедельные PR на обновление зависимостей (docs/DEPENDENCIES.md). PR — это предложение: релиз включает версию только после проверки совместимости
+# (scripts/deps.py review → решение «включить» или «отложить с причиной, задачей и датой»). Что Dependabot не видит (образы LiveKit/llama.cpp по .env, draw.io, GigaAM,
+# torch, digest-ы) — отслеживает .github/workflows/deps-watch.yml.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+  - package-ecosystem: pip
+    directory: /asr-service
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+  - package-ecosystem: docker
+    directories: [/backend, /asr-service, /frontend, /deployment/livekit]
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    labels: [dependencies]

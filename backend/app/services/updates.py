@@ -14,17 +14,14 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
 import time
 import uuid
-from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-import httpx
 
 log = logging.getLogger("app.updates")
 
@@ -37,8 +34,6 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "image_commit", "migrations", "reverify", "llm_model", "sip_enable", "sip_disable")
 BUSY_STATES = ("updating", "repairing")
 
-# Версии, с которыми проект проверен (зеркало deployment/compat.env; совпадение проверяется тестом).
-TESTED = {"livekit_server": "v1.13.7", "livekit_client_js": "2.22.3", "livekit_python_sdk": "1.1.20", "livekit_api_python": "1.2.1"}
 REPO = "calleograph/peregovorka"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -265,105 +260,3 @@ def compare(installed: str | None, latest: str | None) -> str:
     if not a or not b:
         return "unknown"
     return "ok" if a == b else "newer" if a < b else "ahead"
-
-
-async def _get_json(client: httpx.AsyncClient, url: str, headers: dict | None = None) -> Any:
-    r = await client.get(url, headers=headers)
-    r.raise_for_status()
-    return r.json()
-
-
-async def fetch_latest(transport: httpx.AsyncBaseTransport | None = None) -> dict[str, dict]:
-    """Актуальные версии из публичных источников; недоступность интернета не ошибка — значение None и причина."""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=4.0), transport=transport, follow_redirects=True,
-                                 headers={"User-Agent": "peregovorka-version-check", "Accept": "application/json"}) as c:
-        async def one(key: str, url: str, pick) -> tuple[str, dict]:
-            try:
-                return key, {"latest": str(pick(await _get_json(c, url))), "error": None}
-            except Exception as exc:  # noqa: BLE001
-                return key, {"latest": None, "error": type(exc).__name__}
-
-        jobs = [
-            one("livekit_server", "https://api.github.com/repos/livekit/livekit/releases/latest", lambda j: j["tag_name"]),
-            one("livekit_client_js", "https://registry.npmjs.org/livekit-client/latest", lambda j: j["version"]),
-            one("livekit_python_sdk", "https://pypi.org/pypi/livekit/json", lambda j: j["info"]["version"]),
-            one("livekit_api_python", "https://pypi.org/pypi/livekit-api/json", lambda j: j["info"]["version"]),
-            one("fastapi", "https://pypi.org/pypi/fastapi/json", lambda j: j["info"]["version"]),
-            one("sqlalchemy", "https://pypi.org/pypi/sqlalchemy/json", lambda j: j["info"]["version"]),
-            one("pydantic", "https://pypi.org/pypi/pydantic/json", lambda j: j["info"]["version"]),
-            one("transcribe_cpp", "https://pypi.org/pypi/transcribe-cpp/json", lambda j: j["info"]["version"]),
-            one("project", f"https://api.github.com/repos/{REPO}/commits/main", lambda j: j["sha"][:12]),
-        ]
-        return dict(await asyncio.gather(*jobs))
-
-
-def _pkg(name: str) -> str | None:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return None
-
-
-def build_rows(installed: dict[str, str | None], latest: dict[str, dict]) -> list[dict]:
-    """Строки таблицы «Версии»: установлено · проверено с проектом · актуально в интернете · статус · пояснение."""
-    spec = [
-        ("livekit_server", "LiveKit Server (сервер звонков)", True, "Закреплён на проверенной версии. Обновляется вместе с проектом."),
-        ("livekit_client_js", "livekit-client (браузер)", True, "Зашит в веб-приложение; обновляется вместе с проектом."),
-        ("livekit_python_sdk", "livekit (Python SDK, ASR)", True, "Обновляется вместе с проектом."),
-        ("livekit_api_python", "livekit-api (Python, backend)", True, "Обновляется вместе с проектом."),
-        ("transcribe_cpp", "transcribe-cpp (движок GGUF, ASR)", False, "Диапазон версий задан проектом; обновляется при сборке образа."),
-        ("fastapi", "FastAPI (backend)", False, "Диапазон версий задан проектом; обновляется при сборке образа."),
-        ("sqlalchemy", "SQLAlchemy (backend)", False, "Диапазон версий задан проектом; обновляется при сборке образа."),
-        ("pydantic", "Pydantic (backend)", False, "Диапазон версий задан проектом; обновляется при сборке образа."),
-        ("postgres", "PostgreSQL", False, "Мажорная версия закреплена намеренно (смена требует миграции каталога данных); обновления безопасности — в образе."),
-        ("redis", "Redis", False, "Мажорная версия закреплена намеренно."),
-        ("python", "Python (backend)", False, "Версия задана образом."),
-    ]
-    rows = []
-    for key, title, pinned, note in spec:
-        inst = installed.get(key)
-        lat = (latest.get(key) or {}).get("latest")
-        err = (latest.get(key) or {}).get("error")
-        tested = TESTED.get(key)
-        st = compare(inst, lat) if lat else "unknown"
-        if pinned and st == "newer":
-            msg = "В интернете есть более новая версия, но она не проверена с этим проектом. Отдельно её ставить не рекомендуется — дождитесь новой редакции проекта (кнопка «Обновить проект»)."
-        elif st == "newer":
-            msg = "Доступна более новая версия. Она попадёт в образ при следующей пересборке («Обновить проект» с пересборкой); отдельно ставить не нужно."
-        elif st == "unknown" and err:
-            msg = "Нет данных: у сервера нет доступа в интернет или источник недоступен. " + note
-        else:
-            msg = note
-        rows.append({"key": key, "title": title, "installed": inst, "tested": tested, "latest": lat, "status": st, "pinned": pinned, "note": msg})
-    return rows
-
-
-async def installed_versions(app) -> dict[str, str | None]:
-    """Версии, установленные на сервере: библиотеки backend, LiveKit (из настроек), ASR (по «пульсу»), PostgreSQL и Redis (запросами)."""
-    s = app.state.settings
-    out: dict[str, str | None] = {
-        "livekit_server": s.livekit_server_version or None, "livekit_api_python": _pkg("livekit-api"), "fastapi": _pkg("fastapi"),
-        "sqlalchemy": _pkg("sqlalchemy"), "pydantic": _pkg("pydantic"), "python": ".".join(map(str, __import__("sys").version_info[:3])),
-        "livekit_client_js": None, "livekit_python_sdk": None, "transcribe_cpp": None, "postgres": None, "redis": None,
-    }
-    try:
-        hb = await app.state.bridge.heartbeat()
-        out["livekit_python_sdk"] = (hb or {}).get("livekit_sdk")
-        out["transcribe_cpp"] = (hb or {}).get("transcribe_cpp")
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        info = await app.state.redis.info("server")
-        out["redis"] = info.get("redis_version")
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from sqlalchemy import text  # noqa: PLC0415
-
-        async with app.state.session_maker() as db:
-            v = (await db.execute(text("select version()"))).scalar_one()
-        m = re.search(r"PostgreSQL (\d+(?:\.\d+)*)", str(v))
-        out["postgres"] = m.group(1) if m else None
-    except Exception:  # noqa: BLE001
-        pass
-    return out

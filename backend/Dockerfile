@@ -1,5 +1,6 @@
-ARG PYTHON_VERSION=3.12
-FROM python:${PYTHON_VERSION}-slim
+# Базовый образ закреплён тегом и digest (scripts/deps.py apply): сборка воспроизводима, исправления образа приходят через ревизию релиза и Dependabot.
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM ${PYTHON_IMAGE}
 
 # Версия/commit/время сборки — в КОНЦЕ файла: их изменение не должно сбрасывать кэш слоёв с зависимостями.
 # Сетевые операции (apt, pip) повторяются при временных сбоях сети/зеркал.
@@ -11,8 +12,9 @@ RUN apt-get -o Acquire::Retries=5 update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# constraints.txt — точные версии ВСЕХ зависимостей (scripts/deps.py freeze): повторная сборка даёт тот же набор, а не «самые новые в диапазоне».
+COPY requirements.txt constraints.txt ./
+RUN pip install -r requirements.txt -c constraints.txt
 
 COPY alembic.ini ./
 COPY migrations ./migrations

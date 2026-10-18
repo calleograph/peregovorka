@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import Meeting
 from ..services import changelog as chlog
+from ..services import components as comp
 from ..services import updates as upd
 from ..services.audit import write_audit
 
@@ -186,8 +187,9 @@ async def update_log(request: Request, offset: int = Query(0, ge=-1), su: Sessio
 
 @router.get("/components")
 async def components(request: Request, refresh: bool = False, su: SessionUser = Depends(require_admin)):
-    """Версии компонентов: установлено на сервере · проверено с проектом · актуально в интернете. Внешние источники опрашиваются раз в 6 часов."""
+    """Версии компонентов: работает сейчас · проверено с релизом · доступно · статус и решение. Внешние источники опрашиваются раз в 6 часов; манифест релиза — `app/components.json`."""
     r = request.app.state.redis
+    m = comp.load_manifest()
     cached = None if refresh else await r.get(CACHE_KEY)
     latest = None
     fetched_at = None
@@ -199,14 +201,24 @@ async def components(request: Request, refresh: bool = False, su: SessionUser = 
             latest = None
     if latest is None:
         transports = getattr(request.app.state, "test_transports", {}) or {}
-        latest = await upd.fetch_latest(transports.get("updates"))
+        latest = await comp.fetch_latest(m["components"], upd.REPO, transports.get("updates"))
         fetched_at = time.time()
         if any(v.get("latest") for v in latest.values()):  # недоступный интернет не кэшируем надолго — повторим при следующем открытии
             await r.set(CACHE_KEY, json.dumps({"latest": latest, "at": fetched_at}), ex=CACHE_TTL)
-    installed = await upd.installed_versions(request.app)
-    rows = upd.build_rows(installed, latest)
+    installed = await comp.installed_versions(request.app, m)
+    rows = comp.build_rows(m, installed, latest, sip_enabled=str(request.app.state.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on"))
     internet = any(v.get("latest") for v in latest.values())
-    return {"rows": rows, "internet": internet, "fetched_at": fetched_at, "tested": upd.TESTED, "project_latest": (latest.get("project") or {}).get("latest")}
+    return {"rows": rows, "internet": internet, "fetched_at": fetched_at, "tested": comp.tested_map(m), "project_latest": (latest.get("project") or {}).get("latest"),
+            "release": m["release"], "reviewed_at": m["reviewed_at"], "security": {"checked_at": (m.get("security") or {}).get("checked_at"), "source": (m.get("security") or {}).get("source")},
+            "postcheck": _postcheck(request)}
+
+
+def _postcheck(request: Request) -> dict | None:
+    """Итог сверки после последнего обновления (scripts/deps.py postcheck пишет components-report.json в каталог обмена с помощником)."""
+    try:
+        return json.loads((channel(request).dir / "components-report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 # ===================================================================== «Исправить автоматически»

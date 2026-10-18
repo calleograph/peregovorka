@@ -2,7 +2,7 @@
 # Регрессионные тесты shell-части (setup/preflight/models): bash tests/scripts/run.sh
 # Не требуют Docker/root; все действия — во временном каталоге.
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; export ROOT
 # shellcheck source=../../scripts/lib/envlib.sh
 source "$ROOT/scripts/lib/envlib.sh"
 PASS=0; FAIL=0

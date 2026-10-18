@@ -13,7 +13,7 @@ t "sip: по умолчанию телефония выключена" bash -c '
 t "sip: порты по умолчанию — signalling 5060, RTP 20000-20100" eq "$(sq "$SP/env" 'echo "$(sip_port) $(sip_rtp)"')" "5060 20000-20100"
 printf 'SIP_SIGNALING_PORT=5070\nSIP_RTP_START=30000\nSIP_RTP_END=30010\n' > "$SP/env.ports"; cat "$SP/env" >> "$SP/env.ports"
 t "sip: порты настраиваются через .env" eq "$(sq "$SP/env.ports" 'echo "$(sip_port) $(sip_rtp)"')" "5070 30000-30010"
-t "sip: образ по умолчанию livekit/sip, переопределяется SIP_IMAGE" bash -c '[ "$(source "$1/scripts/lib/siplib.sh"; sip_image)" = livekit/sip:v1.13.0 ] && [ "$(SIP_IMAGE=example/sip:1 bash -c "source \"$1/scripts/lib/siplib.sh\"; sip_image")" = example/sip:1 ]' _ "$ROOT"
+t "sip: образ по умолчанию livekit/sip, переопределяется SIP_IMAGE" bash -c '[ "$(source "$1/scripts/lib/siplib.sh"; sip_image)" = livekit/sip:$(grep -oE "livekit/sip:v[0-9.]+" "$1/.env.example" | head -1 | cut -d: -f2) ] && [ "$(SIP_IMAGE=example/sip:1 bash -c "source \"$1/scripts/lib/siplib.sh\"; sip_image")" = example/sip:1 ]' _ "$ROOT"
 t "sip: строка Redis для LiveKit использует общую шину (db 1)" bash -c 'source "$1/scripts/lib/siplib.sh"; REDIS_PASSWORD=pw; [[ "$(sip_livekit_redis_line)" == "redis: {address: redis:6379, password: pw, db: 1}" ]]' _ "$ROOT"
 printf 'SIP_ENABLED=yes\n' > "$SP/env.on"; cat "$SP/env" >> "$SP/env.on"
 t "sip: включена, но Docker/образа нет → sip_active ложь (контейнер не запускаем)" bash -c '! env -i PATH="/nonexistent" ENV_FILE="$2" /bin/bash -c "source \"$1/scripts/lib/common.sh\"; load_env \"\$ENV_FILE\"; sip_active"' _ "$ROOT" "$SP/env.on"

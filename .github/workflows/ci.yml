@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  deps:
+    # Ревизия сторонних компонентов (docs/DEPENDENCIES.md): закрепления в файлах = манифест релиза, у каждой отсрочки есть причина, задача и непросроченная дата.
+    # Для тега релиза дополнительно по сети: нет вышедших версий без решения и нет известных уязвимостей без записи (OSV).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/deps.py verify
+      - name: Новые версии и уязвимости (только для тега релиза)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/deps.py verify --online --release "${GITHUB_REF_NAME#v}"
+
   backend:
     runs-on: ubuntu-24.04
     steps:
@@ -13,7 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg
-      - run: pip install -r backend/requirements-dev.txt
+      # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
+      - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt
       - run: pytest -q --junitxml=junit.xml
         working-directory: backend
       # при падении тестов их имена и первая строка ошибки выводятся аннотациями (видны и через API, без доступа к журналу задания)
@@ -39,7 +53,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       # torch/GigaAM в тестах не нужны: используются подставные провайдер и VAD
-      - run: pip install "numpy>=2,<3" redis fastapi uvicorn pydantic pydantic-settings pytest pytest-asyncio fakeredis httpx
+      - run: pip install -c asr-service/constraints.txt "numpy>=2,<3" redis fastapi uvicorn pydantic pydantic-settings pytest pytest-asyncio fakeredis httpx
       - run: pytest -q
         working-directory: asr-service
 
@@ -48,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+        with: { node-version: "24", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
         working-directory: frontend
       # Типы проверяются раздельно: production-конфигурация (tsconfig.json) не включает *.test.ts и не знает Node, тесты — свой tsconfig.test.json.

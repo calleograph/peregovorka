@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
 done
 export DRY_RUN
 
-STEP=0; STEPS=16; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
+STEP=0; STEPS=17; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
   fail "$*"
@@ -263,6 +263,16 @@ phase2() {
   verify_deployment; VF=$?
   WARN_N=${#VERIFY_WARNINGS[@]}; VSTAGES="$(print_verify_stages)"
   [ "$VF" -eq 0 ] && ok "Verify: PASS" || fail "Verify: FAIL (ошибок: $VF)"
+
+  step "Сверка работающих компонентов с релизом (версии и digest образов)"
+  deps_postcheck; CMPRC=$?
+  case "$CMPRC" in
+    0) ok "Работающие компоненты соответствуют релизу"; upd_state_set components_status ok ;;
+    1) warn "Есть расхождения работающих версий с релизом (не критичные) — см. вывод выше и «Администрирование → Обзор → Версии компонентов»"; WARN_N=$((WARN_N + 1)); upd_state_set components_status warn ;;
+    2) fail "КРИТИЧЕСКОЕ расхождение: работает не тот комплект компонентов, что проверен в релизе (см. выше). Это ошибка обновления: пересоберите образы (./scripts/update.sh --force-build) или откатите код (./scripts/rollback.sh)"
+       VF=$((VF + 1)); upd_state_set components_status fail ;;
+    *) warn "Сверка компонентов не выполнена — обновление не остановлено, но состояние комплекта не подтверждено"; WARN_N=$((WARN_N + 1)); upd_state_set components_status skipped ;;
+  esac
 
   SM="skipped"; SMRC=0; SMISS=""
   step "Smoke-test"

@@ -1,0 +1,53 @@
+name: Контроль зависимостей
+# Между релизами: раз в неделю и вручную сверяет закреплённые версии с официальными источниками (PyPI, npm, GitHub, Docker Hub/ghcr, OSV).
+# Если появилась версия без решения, изменился образ под закреплённым тегом (исправления безопасности) или найдена уязвимость — создаётся/обновляется задача
+# «Ревизия зависимостей» с таблицей: компонент, было, стало, ссылка на changelog, уязвимости. Решение принимает разработчик при подготовке релиза (docs/DEPENDENCIES.md).
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/deps.py check --json > deps-check.json
+          python3 scripts/deps.py verify --online > deps-verify.txt 2>&1 && echo "clean=1" >> "$GITHUB_OUTPUT" || echo "clean=0" >> "$GITHUB_OUTPUT"
+          cat deps-verify.txt
+      - name: Задача «Ревизия зависимостей»
+        if: steps.check.outputs.clean == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY' > issue.md
+          import json
+          rows = json.load(open("deps-check.json", encoding="utf-8"))
+          m = json.load(open("backend/app/components.json", encoding="utf-8"))
+          ch = {c["key"]: c.get("changelog", "") for c in m["components"]}
+          title = {c["key"]: c["title"] for c in m["components"]}
+          print("Автоматическая сверка нашла расхождения с официальными источниками. Решение (включить после проверки или отложить с причиной, задачей и датой) принимается при подготовке релиза: `scripts/deps.py review` — см. docs/DEPENDENCIES.md.\n")
+          print("| Компонент | Закреплено | Доступно | Решение | Что изменилось |\n|---|---|---|---|---|")
+          for r in rows:
+              if r["level"] in ("patch", "minor", "major") and not r["verdict"].startswith("отложено"):
+                  print(f"| {title[r['key']]} | {r['pinned']} | {r['latest']} | {r['verdict']} | {ch.get(r['key'], '')} |")
+          print("\n<details><summary>Полный вывод verify --online (включая образы с обновлённым digest и уязвимости OSV)</summary>\n\n```\n" + open("deps-verify.txt", encoding="utf-8").read() + "\n```\n</details>")
+          PY
+          n="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search 'Ревизия зависимостей in:title' --json number --jq '.[0].number')"
+          if [ -n "$n" ]; then gh issue edit "$n" --repo "$GITHUB_REPOSITORY" --body-file issue.md; else gh issue create --repo "$GITHUB_REPOSITORY" --title "Ревизия зависимостей: есть новые версии или уязвимости" --body-file issue.md; fi
+      - name: Закрыть задачу, если расхождений нет
+        if: steps.check.outputs.clean == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search 'Ревизия зависимостей in:title' --json number --jq '.[0].number')"
+          [ -z "$n" ] || gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Расхождений нет (автоматическая сверка)."

@@ -129,7 +129,7 @@ pull_base_images() {
 
 # ------------------------------------------------------------------- образы проекта
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
-svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.13.7}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
+svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.13.10}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
 svc_extra() { case "$1" in
   livekit) echo "${LIVEKIT_IMAGE_TAG:-}" ;;
   asr) echo "${ASR_TORCH_INDEX_URL:-}|${GIGAAM_GIT_COMMIT:-}|${IMAGE_TAG:-}" ;;

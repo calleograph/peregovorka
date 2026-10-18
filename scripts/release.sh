@@ -65,6 +65,20 @@ cmd_notes() {
   changelog_section "$CL" "$v"
 }
 
+# Обязательная ревизия сторонних компонентов: каждая вышедшая версия имеет решение (включена или отложена с причиной, задачей и датой), нет известных уязвимостей без записи.
+# Ревизия не старше 3 дней. PEREGOVORKA_SKIP_DEPS_ONLINE=1 — только проверка файлов без сети (для среды без интернета; запишите это в отчёт о релизе).
+deps_release_gate() {
+  [ -f "$REPO_ROOT/scripts/deps.py" ] || return 0        # репозиторий без контроля зависимостей (например, тестовый каркас release.sh)
+  local py; py="$(command -v python3 || true)"
+  [ -n "$py" ] || { say "✗ нужен python3 для проверки зависимостей (scripts/deps.py)"; return 1; }
+  if [ "${PEREGOVORKA_SKIP_DEPS_ONLINE:-0}" = 1 ]; then
+    say "⚠ Проверка новых версий и уязвимостей по сети ПРОПУЩЕНА (PEREGOVORKA_SKIP_DEPS_ONLINE=1) — укажите это в отчёте о релизе."
+    "$py" "$REPO_ROOT/scripts/deps.py" verify --max-age 3 --release "$1"
+  else
+    "$py" "$REPO_ROOT/scripts/deps.py" verify --online --max-age 3 --release "$1"
+  fi
+}
+
 cmd_release() {
   local kind="$1" cur new today body branch
   cur="$(version_file_read "$VF")"; ver_valid "$cur" || die "VERSION повреждён: «$cur»"
@@ -73,6 +87,7 @@ cmd_release() {
   g rev-parse --git-dir >/dev/null 2>&1 || die "это не git-репозиторий"
   [ -z "$(g status --porcelain)" ] || die "в рабочем дереве есть несохранённые изменения — сначала закоммитьте их"
   g rev-parse -q --verify "refs/tags/v$new" >/dev/null && die "тег v$new уже существует"
+  deps_release_gate "$new" || die "ревизия сторонних компонентов не пройдена (docs/DEPENDENCIES.md): выполните scripts/deps.py review --release $new, оформите решения по каждой новой версии и повторите"
   branch="$(g rev-parse --abbrev-ref HEAD)"
   [ -f "$CL" ] || die "нет CHANGELOG.md"
   today="$(date +%Y-%m-%d)"

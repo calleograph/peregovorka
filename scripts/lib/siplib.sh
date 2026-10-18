@@ -13,7 +13,7 @@
 if [ -n "${_VM_SIPLIB_LOADED:-}" ]; then return 0; fi
 _VM_SIPLIB_LOADED=1
 
-SIP_DEFAULT_IMAGE="livekit/sip:v1.13.0"
+SIP_DEFAULT_IMAGE="livekit/sip:v1.20.0"
 
 sip_enabled()  { [ "${SIP_ENABLED:-no}" = "yes" ]; }
 sip_image()    { printf '%s' "${SIP_IMAGE:-$SIP_DEFAULT_IMAGE}"; }

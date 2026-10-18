@@ -186,8 +186,8 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 ## 4. Технологии и версии
 
 Python 3.12 (образы), FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16 и Redis 7 (мажор закреплён намеренно), LiveKit Server
-(`LIVEKIT_IMAGE_TAG`, **закреплён v1.13.7**), `livekit` 1.1.20 / `livekit-api` 1.2.1 (Python, `==`), GigaAM (закреплённый коммит),
-silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vitest 5, `livekit-client` 2.22.3 (точно). Прочие Python-зависимости заданы диапазонами
+(`LIVEKIT_IMAGE_TAG`, **закреплён v1.13.10**), `livekit` 1.1.21 / `livekit-api` 1.2.2 (Python, `==`), GigaAM (закреплённый коммит),
+silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vitest 5, `livekit-client` 2.23.0 (точно). Прочие Python-зависимости заданы диапазонами
 (≥ проверенной, < следующего мажора), npm — `^` + lock; базовые образы — через ARG (`docs/COMPATIBILITY.md`).
 
 ## 5. Конфигурация

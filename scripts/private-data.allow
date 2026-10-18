@@ -100,3 +100,21 @@ import.meta.env.DEV
 microsoft.com
 xmlsoap.org
 microsoftonline.com
+
+# --- публичные ссылки на changelog и источники версий компонентов (backend/app/components.json): документация и реестры, не адреса серверов организации
+alembic.sqlalchemy.org
+alpinelinux.org
+api.osv.dev
+cryptography.io
+docs.pydantic.dev
+docs.sqlalchemy.org
+fastapi.tiangolo.com
+nginx.org
+nodejs.org
+numpy.org
+osv.dev
+pillow.readthedocs.io
+www.debian.org
+www.npmjs.com
+www.postgresql.org
+www.python.org

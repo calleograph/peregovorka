@@ -315,7 +315,7 @@ sudo scripts/prereq.sh --check            # все ли системные пр�
 
 **Версия проекта** — простая схема `0.1.0 → 0.1.1 → …`, единственный источник — файл [`VERSION`](../VERSION). Она же — в интерфейсе вместе с commit (`0.1.4 · 6123022`), в образах, на странице «Обновления и версии» и в релизах GitHub. Что менялось от версии к версии — в [CHANGELOG.md](../CHANGELOG.md); как выпустить версию — [docs/VERSIONING.md](VERSIONING.md) (`./scripts/release.sh patch`).
 
-Проверенный набор: **LiveKit Server v1.13.7**, `livekit-client` 2.22.3 (браузер), Python SDK `livekit` 1.1.20 и `livekit-api` 1.2.1. Старый сервер LiveKit опасен: клиенты пробуют путь `/rtc/v1`,
+Проверенный набор: **LiveKit Server v1.13.10**, SIP-служба v1.20.0, `livekit-client` 2.23.0 (браузер), Python SDK `livekit` 1.1.21 и `livekit-api` 1.2.2. Старый сервер LiveKit опасен: клиенты пробуют путь `/rtc/v1`,
 и при ответе 404 вход замедляется на секунды. Поэтому версия **закреплена**, `latest` в production не используется, а `smoke-test.sh` проверяет `/rtc/v1` реальным WebSocket Upgrade.
 Остальные зависимости заданы диапазонами. Актуальные версии в интернете и статус каждого компонента — в разделе «Обновления и версии»; подробности — [docs/COMPATIBILITY.md](COMPATIBILITY.md).
 

@@ -67,9 +67,9 @@ pin() { # pin ТЕКУЩИЙ_ТЕГ → итоговый тег в файле и
   bash -c 'source "$1"; REPO_ROOT="$2"; upd_livekit_pin "$3" 2>&1; grep "^LIVEKIT_IMAGE_TAG=" "$3"; grep -q "^OTHER=1$" "$3" || echo LOST' _ "$UL" "$ROOT" "$TMP/pin.env"
 }
 export -f pin
-t "LiveKit latest → проверенная версия" bash -c 'out="$(pin latest)"; grep -q "^LIVEKIT_IMAGE_TAG=v1.13.7$" <<<"$out" && ! grep -q LOST <<<"$out"'
-t "LiveKit v1.9.0 (устарел) → проверенная версия" bash -c 'pin v1.9.0 | grep -q "^LIVEKIT_IMAGE_TAG=v1.13.7$"'
-t "LiveKit v1.13.7 — без изменений" bash -c 'pin v1.13.7 | grep -q "проверенная версия"'
+t "LiveKit latest → проверенная версия" bash -c 'out="$(pin latest)"; grep -q "^LIVEKIT_IMAGE_TAG=$(grep ^TESTED_LIVEKIT_SERVER= "$ROOT/deployment/compat.env" | cut -d= -f2)$" <<<"$out" && ! grep -q LOST <<<"$out"'
+t "LiveKit v1.9.0 (устарел) → проверенная версия" bash -c 'pin v1.9.0 | grep -q "^LIVEKIT_IMAGE_TAG=$(grep ^TESTED_LIVEKIT_SERVER= "$ROOT/deployment/compat.env" | cut -d= -f2)$"'
+t "LiveKit проверенной версии — без изменений" bash -c 'pin "$(grep ^TESTED_LIVEKIT_SERVER= "$ROOT/deployment/compat.env" | cut -d= -f2)" | grep -q "проверенная версия"'
 t "LiveKit более новый конкретный тег — оставлен, с предупреждением" bash -c 'out="$(pin v1.20.0)"; grep -q "^LIVEKIT_IMAGE_TAG=v1.20.0$" <<<"$out" && grep -q "новее проверенной" <<<"$out"'
 
 # ---------------------------------------------------------------------------------------------- модели
@@ -202,7 +202,7 @@ T1="$(git -C "$TMP/seed" rev-parse HEAD)"
 t "код обновлён fast-forward до origin/main" bash -c '[ "$(git -C "$1" rev-parse HEAD)" = "$2" ]' _ "$TMP/cl" "$T1"
 t ".env: резервная копия с правами 600 и ИДЕНТИЧНОЙ прежней копией" bash -c 'b="$(ls "$1"/.env.backup-* 2>/dev/null | head -1)"; [ -n "$b" ] && grep -qF "Sup3r\$ecret#Pass" "$b" && grep -q "^LIVEKIT_IMAGE_TAG=latest$" "$b" && { [ "$(uname -s)" != Linux ] || [ "$(stat -c %a "$b")" = 600 ]; }' _ "$TMP/cl"
 t ".env: прежние значения и секреты не изменены, добавлен только безопасный параметр" bash -c 'e="$1/.env"; grep -qF "LDAP_BIND_PASSWORD=Sup3r\$ecret#Pass" "$e" && grep -q "^APP_MASTER_KEY=masterkey123456$" "$e" && grep -q "^NEW_SAFE_PARAM=42$" "$e" && ! grep -q "NEW_ADMIN_PASSWORD" "$e" && ! grep -q "NEW_LISTEN_PORT" "$e"' _ "$TMP/cl"
-t ".env: LiveKit закреплён на проверенной версии (latest → v1.13.7)" bash -c 'grep -q "^LIVEKIT_IMAGE_TAG=v1.13.7$" "$1/.env"' _ "$TMP/cl"
+t ".env: LiveKit закреплён на проверенной версии (latest → проверенная версия из compat.env)" bash -c 'grep -q "^LIVEKIT_IMAGE_TAG=$(grep ^TESTED_LIVEKIT_SERVER= "$2/deployment/compat.env" | cut -d= -f2)$" "$1/.env"' _ "$TMP/cl" "$ROOT"
 t "после слияния продолжает НОВАЯ версия скрипта (фаза 2) и печатает прогресс этапов" bash -c 'grep -q "Продолжает уже НОВАЯ версия" <<<"$1" && grep -q "Миграции базы данных" <<<"$1" || grep -q "Запуск сервисов" <<<"$1"' _ "$OUTR"
 t "сборка: commit и время сборки передаются образам (IMAGE_TAG/версия из git, не unknown)" bash -c '! grep -q "commit=unknown" <<<"$1" && grep -q "stage=build" <<<"$1"' _ "$OUTR"
 t "остановка понятна: этап и инструкция «повторите ./scripts/update.sh»" bash -c 'grep -q "Обновление остановлено на этапе" <<<"$1" && grep -q "повторите ./scripts/update.sh" <<<"$1"' _ "$OUTR"
