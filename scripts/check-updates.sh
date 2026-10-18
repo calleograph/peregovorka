@@ -61,5 +61,8 @@ row "livekit-api (Python)" "${api_now:-?}" "$api_new" "$(verdict x "${api_now:-?
 row "livekit-client (браузер)" "${js_now:-?}" "$js_new" "$(verdict x "${js_now:-?}" "$js_new")"
 log
 info "Правило: версии сервера и клиентов обновляйте вместе и проверяйте scripts/smoke-test.sh (строка «LiveKit /rtc/v1»)."
-info "Сборка берёт Python-зависимости по диапазонам из requirements, а npm — по package-lock.json (npm update livekit-client обновит его)."
-info "Версии LiveKit/SDK в production меняют разработчики вместе с deployment/compat.env после проверки; на сервере они приходят с ./scripts/update.sh."
+info "Сборка берёт ТОЧНЫЕ версии из constraints.txt, package-lock.json и digest образов: пересборка на сервере новых версий не ставит — они приходят с релизом после ревизии (docs/DEPENDENCIES.md)."
+if [ -n "$PY" ] && [ -f "$REPO_ROOT/scripts/deps.py" ]; then
+  log; log "== Все компоненты: закреплено · проверено · доступно · решение (scripts/deps.py check) =="
+  "$PY" "$REPO_ROOT/scripts/deps.py" check 2>/dev/null || warn "Не удалось получить сведения о компонентах (нет сети?)"
+fi
