@@ -883,3 +883,9 @@ details.group { margin: 8px 0; }
 .table td, .table th { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .table input[type="checkbox"] { width: 24px; height: 24px; } }   /* мелкие цели нажатия в таблицах (журнал, списки): не меньше 24 px, WCAG 2.2 / 2.5.8 */
 .btn.mini { min-width: 24px; }
+
+/* «Версии компонентов»: одна таблица с заголовками групп, версии не переносятся */
+.comp-table .nowrap { white-space: nowrap; }
+.comp-table .comp-group th { text-align: left; background: var(--soft, transparent); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.comp-table td:first-child { min-width: 180px; }
+.comp-table td:nth-child(5) { min-width: 150px; }

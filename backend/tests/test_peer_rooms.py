@@ -175,3 +175,23 @@ def test_unused_peer_room_survives_idle_minutes_but_closes_by_its_own_ttl(client
             return room.lifecycle
     assert client.portal.call(age_and_reap, 300, 20) == "active"                 # создана 5 часов назад, срок ещё не вышел
     assert client.portal.call(age_and_reap, 300, -1) == "closed"                # срок вышел
+
+
+def test_simultaneous_first_visits_by_link_open_the_same_room_instead_of_failing(client, monkeypatch):
+    """Двойной переход по новой ссылке (повторная загрузка, двойной щелчок): второй запрос не должен получать «комната уже есть» — он открывает комнату, созданную первым."""
+    _enable(client)
+    login(client, "alice")
+    real = pr.create
+    state = {"n": 0}
+
+    async def racing_create(db, redis, su, cfg, name, **kw):
+        if state["n"] == 0:
+            state["n"] = 1
+            await real(db, redis, su, cfg, name, **kw)          # «параллельный запрос» успел создать комнату
+            await db.commit()
+        return await real(db, redis, su, cfg, name, **kw)       # а этот упрётся в занятый адрес
+
+    monkeypatch.setattr(pr, "create", racing_create)
+    r = client.post(f"{P}/open", json={"code": CODE})
+    assert r.status_code == 200, r.text
+    assert r.json()["slug"] == pr.slug_of(CODE) and r.json()["created"] is False

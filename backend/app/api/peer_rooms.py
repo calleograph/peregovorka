@@ -84,6 +84,12 @@ async def open_by_link(request: Request, body: dict = Body(...), su: SessionUser
     except TempRoomError as exc:
         if exc.code in ("disabled", "link_disabled", "forbidden"):
             raise HTTPException(status_code=404, detail="Комната не найдена или недоступна") from None      # создание запрещено: наличие функции не раскрываем
+        if exc.code == "exists":
+            # два одновременных перехода по одной ссылке (двойной щелчок, повторная загрузка страницы): комнату уже создал параллельный запрос — открываем её, а не отвечаем ошибкой
+            room = (await db.execute(select(Room).where(Room.slug == pr.slug_of(code)))).scalar_one_or_none()
+            if room is not None and pr.is_peer(room) and room.lifecycle != "closed" and pr.link_access(room, su):
+                return _out(room, su, False)
+            raise HTTPException(status_code=404, detail="Комната не найдена или недоступна") from None
         await _raise(exc)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.create_peer", target_type="room", target_id=str(room.id), ip=client_ip(request),
                       details={"slug": room.slug, "via": "link"})

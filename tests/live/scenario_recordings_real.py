@@ -27,7 +27,7 @@ class Cl(S.Client):
     async def start(self):                              # как Client.start, но микрофон — файл с речью
         self.proc = subprocess.Popen([S.EDGE, "--headless=new", "--disable-gpu", f"--remote-debugging-port={self.port}", f"--user-data-dir={tempfile.mkdtemp(prefix='edge-s-')}",
                                       "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", f"--use-file-for-fake-audio-capture={self.wav}%noloop",
-                                      "--autoplay-policy=no-user-gesture-required", "--window-size=1366,768", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                      "--autoplay-policy=no-user-gesture-required", "--window-size=1366,768", *os.environ.get("BROWSER_FLAGS", "").split(), "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(60):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json").read(); break

@@ -45,8 +45,9 @@ async def main():
         # управление ссылкой
         box = await A.js("(() => { const el = [...document.querySelectorAll('.room-card, .rc')].find(x => x.textContent.includes('Равноправная')); if (!el) return null; el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()")
         S.check("карточка равноправной комнаты найдена", bool(box), str(box))
+        await A.send("Input.dispatchMouseEvent", type="mouseMoved", x=box["x"], y=box["y"])            # в Chromium под Linux без движения и buttons=2 контекстное меню не открывается
         for t in ("mousePressed", "mouseReleased"):                                    # настоящий щелчок правой кнопкой
-            await A.send("Input.dispatchMouseEvent", type=t, x=box["x"], y=box["y"], button="right", clickCount=1)
+            await A.send("Input.dispatchMouseEvent", type=t, x=box["x"], y=box["y"], button="right", buttons=2 if t == "mousePressed" else 0, clickCount=1)
         await asyncio.sleep(0.6)
         S.check("в меню комнаты есть «Управление ссылкой…»", await A.js("[...document.querySelectorAll('[role=menuitem]')].some(x => x.textContent.includes('Управление ссылкой'))"))
         await A.js("[...document.querySelectorAll('[role=menuitem]')].find(x => x.textContent.includes('Управление ссылкой')).click()")

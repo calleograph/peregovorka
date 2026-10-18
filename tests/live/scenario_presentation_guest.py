@@ -13,7 +13,7 @@ class Anon(S.Client):
     async def start(self):          # без входа в систему
         import subprocess, tempfile, urllib.request, json, time, websockets
         self.proc = subprocess.Popen([S.EDGE, "--headless=new", "--disable-gpu", f"--remote-debugging-port={self.port}", f"--user-data-dir={tempfile.mkdtemp(prefix='edge-g-')}",
-                                      "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required", "--window-size=1366,768", "about:blank"],
+                                      "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required", "--window-size=1366,768", *os.environ.get("BROWSER_FLAGS", "").split(), "about:blank"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(60):
             try: urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json").read(); break

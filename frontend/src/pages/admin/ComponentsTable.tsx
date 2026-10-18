@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ComponentRow, type ComponentsInfo } from "../../api";
 import { fmt } from "../../util";
 
@@ -45,34 +45,37 @@ export default function ComponentsTable({ compact }: { compact?: boolean }) {
           {pc.worst > 0 && <ul className="stage-list">{pc.components.filter((x) => x.status !== "ok").map((x) => <li key={x.key} className="bad"><span>{x.title}: работает {x.running ?? "не определено"}, по релизу {x.expected}{x.critical ? " (критично)" : ""}</span></li>)}</ul>}
         </div>)}
       {!rows.length && !err && info && <p className="muted">Все компоненты соответствуют релизу и актуальны.</p>}
-      {groups.map((g) => (
-        <div key={g} className="table-scroll">
-          <table className="table compact">
-            <caption className="muted small" style={{ textAlign: "left", fontWeight: 600 }}>{g}</caption>
+      {rows.length > 0 && (
+        <div className="table-scroll">
+          <table className="table compact comp-table">
             <thead><tr><th>Компонент</th><th title="Версия, которая работает на сервере сейчас">Работает</th><th title="Версия, с которой проверен этот релиз">Проверено с релизом</th><th title="Последняя версия на дату проверки">Доступно</th><th>Статус</th>{!compact && <th>Решение и подробности</th>}</tr></thead>
             <tbody>
-              {rows.filter((r) => r.group === g).map((r) => {
-                const [label, cls] = STATUS[r.status];
-                return (
-                  <tr key={r.key}>
-                    <td>{r.title}{r.bundle && <span className="badge" title="Проверяется вместе с остальными компонентами комплекта LiveKit"> комплект {r.bundle}</span>}</td>
-                    <td><code>{r.installed ?? "—"}</code></td>
-                    <td><code>{r.tested.length > 18 ? r.tested.slice(0, 12) : r.tested}</code></td>
-                    <td>{r.latest ? <code>{r.latest.length > 18 ? r.latest.slice(0, 12) : r.latest}</code> : <span className="muted">—</span>}</td>
-                    <td><span className={cls}>{label}</span>{r.security.state === "advisories" && <div><span className="badge bad" title={r.security.ids.join(", ")}>уязвимости: {r.security.ids.length}</span></div>}</td>
-                    {!compact && (
-                      <td className="small">
-                        {r.note && <div className="muted">{r.note}</div>}
-                        {r.deferred && <div>Задача <b>{r.deferred.issue}</b>, повторная проверка до {r.deferred.recheck}.{r.deferred.plan ? ` План: ${r.deferred.plan}` : ""}</div>}
-                        <div className="muted">проверено {r.checked_at}{r.changelog && <> · <a href={r.changelog} target="_blank" rel="noreferrer">что изменилось</a></>}</div>
-                      </td>)}
-                  </tr>
-                );
-              })}
+              {groups.map((g) => (
+                <Fragment key={g}>
+                  <tr className="comp-group"><th colSpan={compact ? 5 : 6} scope="colgroup">{g}</th></tr>
+                  {rows.filter((r) => r.group === g).map((r) => {
+                    const [label, cls] = STATUS[r.status];
+                    return (
+                      <tr key={r.key}>
+                        <td>{r.title}{r.bundle && <span className="badge" title="Проверяется вместе с остальными компонентами комплекта LiveKit"> комплект {r.bundle}</span>}</td>
+                        <td className="nowrap"><code>{r.installed ?? "—"}</code></td>
+                        <td className="nowrap"><code>{r.tested.length > 18 ? r.tested.slice(0, 12) : r.tested}</code></td>
+                        <td className="nowrap">{r.latest ? <code>{r.latest.length > 18 ? r.latest.slice(0, 12) : r.latest}</code> : <span className="muted">—</span>}</td>
+                        <td><span className={cls}>{label}</span>{r.security.state === "advisories" && <div><span className="badge bad" title={r.security.ids.join(", ")}>уязвимости: {r.security.ids.length}</span></div>}</td>
+                        {!compact && (
+                          <td className="small">
+                            {r.note && <div className="muted">{r.note}</div>}
+                            {r.deferred && <div>Задача <b>{r.deferred.issue}</b>, повторная проверка до {r.deferred.recheck}.{r.deferred.plan ? ` План: ${r.deferred.plan}` : ""}</div>}
+                            <div className="muted">проверено {r.checked_at}{r.changelog && <> · <a href={r.changelog} target="_blank" rel="noreferrer">что изменилось</a></>}</div>
+                          </td>)}
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              ))}
             </tbody>
           </table>
-        </div>
-      ))}
+        </div>)}
       {!info && !err && <p className="muted">Загрузка…</p>}
       <p className="muted small"><b>Как обновляются компоненты.</b> Версии закреплены в проекте и проверяются при каждом релизе: новая версия попадает в релиз после проверки совместимости либо откладывается с причиной, задачей и датой повторной проверки.
         «Полная пересборка» воспроизводит комплект текущего релиза (она не ищет новые версии) — новые версии приходят вместе с релизом через «Обновить проект». Устанавливать компоненты по отдельности не нужно и не рекомендуется.
