@@ -1,6 +1,6 @@
 # Точные версии ВСЕХ зависимостей asr-service (в том числе транзитивных) — воспроизводимая сборка образа. Формируется командой `scripts/deps.py freeze` при ревизии релиза;
 # руками не правится. Платформа: Python 3.12 (образ python:3.12-slim), linux x86_64. Диапазоны в requirements.txt — допустимые границы; сборка использует именно эти версии (pip install -c).
-# torch и torchaudio ставятся отдельно из индекса PyTorch (CPU/CUDA): их версии закреплены в Dockerfile (TORCH_VERSION, TORCHAUDIO_VERSION); gigaam ставится из git по коммиту без зависимостей (они — в requirements.txt).
+# torch и torchaudio ставятся отдельно из индекса PyTorch (CPU/CUDA): их версии закреплены в Dockerfile (TORCH_VERSION, TORCHAUDIO_VERSION); gigaam ставится из git по коммиту (его зависимости, включая onnx 1.19.x, — в этом файле).
 aiofiles==25.1.0
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.5
@@ -12,11 +12,15 @@ anyio==4.15.1
 attrs==26.1.0
 cffi==2.1.1
 click==8.5.0
+coloredlogs==15.0.1
 fastapi==0.145.0
 filelock==4.2.2
+flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2026.9.0
+gigaam==0.2.0
 h11==0.16.0
+humanfriendly==10.0
 hydra-core==1.3.7
 idna==3.20
 jinja2==3.1.6
@@ -24,11 +28,14 @@ livekit==1.1.21
 livekit-api==1.2.2
 livekit-protocol==1.1.27
 markupsafe==3.0.4
+ml-dtypes==0.6.0
 mpmath==1.3.0
 multidict==7.1.0
 networkx==3.7
 numpy==2.5.4
 omegaconf==2.3.1
+onnx==1.19.1
+onnxruntime==1.23.2
 opentelemetry-api==1.45.1
 packaging==26.3
 propcache==0.5.4

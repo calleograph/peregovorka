@@ -1043,7 +1043,7 @@ export interface PerfData {
   rooms: { active_meetings: number; participants: number; presentations: number; audience_in_presentations: number; top: { name: string; type: string; participants: number }[] };
   livekit: { available: boolean; rooms: number | null; participants: number | null; publishers: number | null; audio_tracks: number | null; video_tracks: number | null;
              in_kbps: number | null; out_kbps: number | null; dropped_pps: number | null; metrics: boolean; error?: string };
-  asr: { ok: boolean; queue_depth?: number | null; active_meetings?: number | null; avg_infer_ms?: number | null; avg_queue_ms?: number | null; rtf?: number | null; dropped?: number | null;
+  asr: { ok: boolean; model_ready?: boolean; pipeline_ready?: boolean; pipeline_error?: string | null; queue_depth?: number | null; active_meetings?: number | null; avg_infer_ms?: number | null; avg_queue_ms?: number | null; rtf?: number | null; dropped?: number | null;
          errors?: number | null; torch_threads?: number | null; torch_interop_threads?: number | null; recorder_queue?: number | null; recorder_dropped?: number | null };
   jobs: { gate: { concurrency: number; running: number; waiting: number; started: number; deferred: number; deferred_seconds: number; forced: number };
           protocols_pending: number; maps_pending: number; recordings_processing: number; storage_transfers_active: number };

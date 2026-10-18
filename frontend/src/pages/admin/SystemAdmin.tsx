@@ -96,6 +96,11 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
           <div key={k} className="card"><div className="row"><span className={`dot ${v.ok ? "ok" : "bad"}`} /><b>{names[k] ?? k}</b></div>
             <div className="muted small">{v.ok ? (k === "llm_local" ? (v.configured ? (v.selected ? "работает, выбрана для протоколов" : "модель на месте, не выбрана в настройках") : v.state === "disabled" ? "отключена при установке" : "не загружена (необязательно)") : k === "sip" ? (v.configured ? `работает · signalling ${(v as { ports?: { signaling_port?: number } }).ports?.signaling_port ?? "?"}` : "не включена (необязательно)") : "работает") : `недоступен${v.error ? ` (${v.error})` : ""}`}</div>
             {k === "sip" && onOpen && <div className="row tight" style={{ marginTop: 6 }}><button className="btn mini" onClick={() => onOpen("sip")}>Открыть SIP-телефонию</button></div>}
+            {k === "asr" && asr && (
+              <div className="small" style={{ marginTop: 4 }}>
+                <div><span className={`dot ${asr.model_ready ? "ok" : "bad"}`} /> Модель {asr.model_ready ? "готова" : "не готова"}</div>
+                <div><span className={`dot ${asr.ok ? "ok" : "bad"}`} /> Транскрибация {asr.ok ? "готова" : "не работает"}{asr.pipeline_error ? `: ${String(asr.pipeline_error)}` : ""}</div>
+              </div>)}
             {tech && k === "asr" && (
               <div className="muted small" style={{ marginTop: 4 }}>
                 модель: {prov}<br />

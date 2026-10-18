@@ -21,7 +21,7 @@ def create_health_app(snapshot: Callable[[], dict], selftest: Callable[[], Await
     async def readyz():
         """Готовность: модель загружена, redis доступен. 503, пока не готов."""
         snap = snapshot()
-        ready = bool(snap.get("model_loaded")) and bool(snap.get("redis_ok", True))
+        ready = bool(snap.get("model_loaded")) and bool(snap.get("redis_ok", True)) and bool((snap.get("pipeline") or {}).get("ready", True))   # конвейер сломан — не «готов»
         return JSONResponse({"ready": ready, **snap}, status_code=200 if ready else 503)
 
     @app.post("/selftest")

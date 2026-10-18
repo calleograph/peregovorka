@@ -19,6 +19,7 @@ from .audio.vad import VadFactory
 from .config import AsrSettings
 from .inference import InferenceQueue
 from .runtime_config import segmenter_config
+from .pipeline_health import HEALTH
 from .pipeline import Flags, ParticipantPipeline, is_user_microphone_track
 from .publisher import SegmentPublisher
 
@@ -174,10 +175,15 @@ class RoomWorker:
     def _start_stream(self, rtc, track, sid: str, identity: str) -> None:  # noqa: ANN001
         if sid in self._streams:
             return
-        pipeline = ParticipantPipeline(
-            meeting_id=self.info.meeting_id, room_name=self.info.room_name, identity=identity,
-            vad_factory=self._vad_factory, seg_cfg=segmenter_config(self._s), queue=self._queue, publisher=self._publisher,
-            flags=self.flags, recordings_dir=self._s.recordings_dir)
+        try:
+            pipeline = ParticipantPipeline(
+                meeting_id=self.info.meeting_id, room_name=self.info.room_name, identity=identity,
+                vad_factory=self._vad_factory, seg_cfg=segmenter_config(self._s), queue=self._queue, publisher=self._publisher,
+                flags=self.flags, recordings_dir=self._s.recordings_dir)
+        except Exception as exc:  # noqa: BLE001 — иначе ошибка тонет в обработчике событий LiveKit, а сервис остаётся «готовым»
+            HEALTH.fail("vad", exc)
+            return
+        HEALTH.ok("vad")
 
         async def frames() -> AsyncIterator[tuple[np.ndarray, float]]:
             stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
@@ -187,7 +193,9 @@ class RoomWorker:
             finally:
                 await stream.aclose()
 
-        self._streams[sid] = asyncio.create_task(pipeline.run(frames()), name=f"track-{sid}")
+        task = asyncio.create_task(pipeline.run(frames()), name=f"track-{sid}")
+        task.add_done_callback(lambda t: HEALTH.fail("pipeline", t.exception()) if not t.cancelled() and t.exception() is not None else None)
+        self._streams[sid] = task
         log.info("Начата транскрибация трека", extra={"room": self.info.room_name, "identity": identity})
 
     def _stop_stream(self, sid: str) -> None:

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services import asr_state
 from ..services import captcha
 from ..services.audit import audit_now
 from ..auth.deps import _origin_ok, client_ip, get_db
@@ -118,7 +119,7 @@ def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str
 async def _asr_ready(request: Request) -> bool:
     try:
         hb = await request.app.state.bridge.heartbeat()
-        return bool(hb and hb.get("model_loaded"))
+        return asr_state.transcription_ready(hb)
     except Exception:  # noqa: BLE001
         return False
 

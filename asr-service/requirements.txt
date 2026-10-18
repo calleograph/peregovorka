@@ -12,10 +12,6 @@ livekit-api==1.2.2  # проверенная версия (deployment/compat.env
 silero-vad>=6.2.3,<7
 # Runtime GGUF-моделей (Q5_K_M): Python-привязки transcribe.cpp с готовыми колёсами (Linux x86_64/arm64, Windows, macOS); модель резидентна в памяти.
 transcribe-cpp>=0.4.0,<0.5   # 0.x: каждый минорный выпуск может менять API — верхняя граница следующий минор; проверено в 0.4.0
-# Зависимости GigaAM перечислены здесь явно: сам пакет ставится из git БЕЗ зависимостей (Dockerfile). Его onnx==1.19.* и onnxruntime нужны только ONNX-экспорту,
-# которым проект не пользуется, а onnx 1.19 имеет известные уязвимости (OSV, scripts/deps.py verify --online).
-hydra-core>=1.3,<1.4
-omegaconf>=2.3,<2.4
-soundfile>=0.13,<1
-sentencepiece>=0.2,<1
-tqdm>=4,<5
+# Silero VAD работает через ONNX Runtime (load_silero_vad(onnx=True)). Диапазон — тот, что требует GigaAM 0.2.0 (onnx==1.19.*, onnxruntime==1.23.*): новее — pip check падает.
+# Остальные зависимости GigaAM (hydra-core, onnx, …) приходят вместе с ним и закреплены в constraints.txt; согласованность проверяет `python -m app.selfcheck` при сборке образа.
+onnxruntime>=1.23,<1.24

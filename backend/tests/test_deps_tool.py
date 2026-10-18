@@ -55,10 +55,12 @@ def test_dockerfiles_install_with_constraints_and_pin_base_images_by_digest():
     assert re.search(r"image: redis:\S+@sha256:[0-9a-f]{64}", (REPO / "deployment" / "compose.yml").read_text(encoding="utf-8"))
 
 
-def test_gigaam_is_installed_without_onnx():
-    """onnx 1.19 (зависимость GigaAM) имеет известные уязвимости, ONNX-экспорт проекту не нужен: GigaAM ставится без зависимостей, нужное — в requirements."""
-    assert "--no-deps" in (REPO / "asr-service" / "Dockerfile").read_text(encoding="utf-8")
-    assert not re.search(r"^onnx", (REPO / "asr-service" / "constraints.txt").read_text(encoding="utf-8"), re.M)
+def test_asr_image_checks_onnx_chain():
+    """Регрессия 0.24.1: без onnxruntime Silero VAD не создавался, а сервис оставался «здоровым». Теперь ONNX-цепочка закреплена и проверяется при сборке образа."""
+    df = (REPO / "asr-service" / "Dockerfile").read_text(encoding="utf-8")
+    assert "--no-deps" not in df and "python -m app.selfcheck" in df
+    cons = (REPO / "asr-service" / "constraints.txt").read_text(encoding="utf-8")
+    assert re.search(r"^onnxruntime==1\.23\.", cons, re.M) and re.search(r"^onnx==1\.19\.", cons, re.M)
 
 
 # ------------------------------------------------------------------------------------------------ правила решений

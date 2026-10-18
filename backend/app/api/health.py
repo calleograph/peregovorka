@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ..services import asr_state
 
 import httpx
 from fastapi import APIRouter, Request
@@ -47,7 +48,7 @@ async def ready(request: Request):
             asr = await app.state.bridge.heartbeat()
         except Exception:  # noqa: BLE001
             asr = None
-    checks["asr"] = {"ok": bool(asr and asr.get("model_loaded")), "queue_depth": (asr or {}).get("queue_depth"),
+    checks["asr"] = {**asr_state.state(asr), "queue_depth": (asr or {}).get("queue_depth"),
                      "active_meetings": (asr or {}).get("active_meetings")}
 
     required_ok = all(checks[k]["ok"] for k in ("postgres", "redis", "livekit"))

@@ -441,8 +441,13 @@ def cmd_freeze(a) -> int:
     for svc in ("backend", "asr-service"):
         with tempfile.TemporaryDirectory() as td:
             extra = "--extra-index-url https://download.pytorch.org/whl/cpu" if svc == "asr-service" else ""     # torch подтягивается silero-vad: берём CPU-сборку, как в образе
+            if svc == "asr-service":      # GigaAM — из git по коммиту из .env.example, С зависимостями (onnx, hydra…): они должны попасть в constraints
+                sha = re.search(r"^GIGAAM_GIT_COMMIT=(\w+)", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M).group(1)
+                (Path(td) / "extra.txt").write_text(f"gigaam @ git+https://github.com/salute-developers/GigaAM.git@{sha}\n", encoding="utf-8")
+            else:
+                (Path(td) / "extra.txt").write_text("", encoding="utf-8")
             script = ("apt-get -qq update >/dev/null && apt-get -qq install -y --no-install-recommends git ca-certificates >/dev/null 2>&1; "
-                      f"pip install -q --dry-run --ignore-installed --report /out/r.json -r /src/{svc}/requirements.txt {extra} 2>&1 | tail -15")
+                      f"pip install -q --dry-run --ignore-installed --report /out/r.json -r /src/{svc}/requirements.txt -r /out/extra.txt {extra} 2>&1 | tail -15")
             os.chmod(td, 0o777)
             r = subprocess.run(["docker", "run", "--rm", "-v", f"{ROOT}:/src:ro", "-v", f"{td}:/out", image, "sh", "-c", script], capture_output=True, text=True)
             rep = Path(td) / "r.json"
@@ -456,7 +461,7 @@ def cmd_freeze(a) -> int:
         head = (f"# Точные версии ВСЕХ зависимостей {svc} (в том числе транзитивных) — воспроизводимая сборка образа. Формируется командой `scripts/deps.py freeze` при ревизии релиза;\n"
                 f"# руками не правится. Платформа: Python 3.12 (образ {image.split('@')[0]}), linux x86_64. Диапазоны в requirements.txt — допустимые границы; сборка использует именно эти версии (pip install -c).\n")
         if skip:
-            head += "# torch и torchaudio ставятся отдельно из индекса PyTorch (CPU/CUDA): их версии закреплены в Dockerfile (TORCH_VERSION, TORCHAUDIO_VERSION); gigaam ставится из git по коммиту без зависимостей (они — в requirements.txt).\n"
+            head += "# torch и torchaudio ставятся отдельно из индекса PyTorch (CPU/CUDA): их версии закреплены в Dockerfile (TORCH_VERSION, TORCHAUDIO_VERSION); gigaam ставится из git по коммиту (его зависимости, включая onnx 1.19.x, — в этом файле).\n"
         (ROOT / svc / "constraints.txt").write_text(head + "\n".join(body) + "\n", encoding="utf-8")
         print(f"✓ {svc}/constraints.txt: {len(body)} пакетов")
     return 0
@@ -653,6 +658,10 @@ def cmd_postcheck(a) -> int:
                     "status": "ok" if ok else ("unknown" if rc3 != 0 else "mismatch"), "critical": False})
         if not ok:
             worst = max(worst, 1)
+    rc, out = _run(comp + ["exec", "-T", "asr", "python", "-m", "app.selfcheck"])      # pip check и реальная инициализация Silero VAD в РАБОТАЮЩЕМ контейнере (регрессия 0.24.1)
+    if rc != 0:
+        notes.append(f"ASR: самопроверка конвейера не пройдена — {out.strip().splitlines()[-1][:300] if out.strip() else 'контейнер не ответил'}")
+        worst = 2
     data = {"release": m["release"], "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "worst": worst, "components": rep, "notes": notes}
     if a.json:
         print(json.dumps(data, ensure_ascii=False))

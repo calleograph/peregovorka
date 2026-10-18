@@ -115,7 +115,7 @@ export default function PerformanceAdmin() {
 
         <section className="card">
           <h3>Распознавание речи (GigaAM)</h3>
-          {!d.asr.ok && <div className="alert warn small" role="status">Служба распознавания не сообщает о готовности.</div>}
+          {!d.asr.ok && <div className="alert warn small" role="status">{d.asr.model_ready && d.asr.pipeline_error ? `Модель готова, но транскрибация не работает: ${d.asr.pipeline_error}` : "Служба распознавания не сообщает о готовности."}</div>}
           <table className="table compact"><tbody>
             <Row k="Очередь реплик" v={asrQueueText(d.asr.queue_depth)} />
             <Row k="Встреч в обработке" v={num(d.asr.active_meetings)} />

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services import asr_state
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
 from ..services import roles, temp_rooms, timings
@@ -118,7 +119,7 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
     asr_ready = False
     try:  # готовность ASR только сообщается клиенту; вход в комнату её не ждёт
         hb = await request.app.state.bridge.heartbeat()
-        asr_ready = bool(hb and hb.get("model_loaded"))
+        asr_ready = asr_state.transcription_ready(hb)
         await timings.record(request.app.state.redis, "join_backend_ms", (time.monotonic() - started) * 1000)
     except Exception:  # noqa: BLE001
         pass

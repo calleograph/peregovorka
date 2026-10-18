@@ -20,6 +20,7 @@ from .logging_setup import configure_logging
 from .manager import SessionManager
 from .model_manager import ModelManager
 from .pipeline import recorder_stats
+from .pipeline_health import HEALTH
 from .publisher import SegmentPublisher, heartbeat_loop
 from .runtime_config import VAD_CONFIG_KEY, apply_vad, current_vad
 
@@ -94,7 +95,7 @@ async def amain() -> None:
             "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
             "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
-            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(),
+            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(), "pipeline": HEALTH.snapshot(),
             **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
             "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
@@ -111,6 +112,12 @@ async def amain() -> None:
     def authorized(token: str) -> bool:
         return not settings.internal_api_token or hmac.compare_digest(token, settings.internal_api_token)
 
+    from .selfcheck import vad_problem  # noqa: PLC0415
+
+    async def check_vad() -> None:
+        vp = await asyncio.to_thread(vad_problem)  # реальная инициализация VAD на старте: ошибка видна сразу, а не при первом участнике
+        HEALTH.fail("vad", RuntimeError(vp)) if vp else HEALTH.ok("vad")
+
     # health-сервер поднимаем СРАЗУ: /healthz отвечает, пока модель ещё грузится.
     server = uvicorn.Server(uvicorn.Config(create_health_app(snapshot, selftest, models=models, authorized=authorized), host="0.0.0.0",
                                            port=settings.health_port, log_level="warning", access_log=False))
@@ -124,6 +131,7 @@ async def amain() -> None:
 
     tasks: list[asyncio.Task] = []
     try:
+        await check_vad()
         wanted = await redis.get(DESIRED_MODEL_KEY) or settings.asr_model_id
         res = await models.activate(wanted)  # ошибка загрузки НЕ останавливает сервис: админ увидит причину и сможет выбрать другую модель
         if not res.get("ok"):

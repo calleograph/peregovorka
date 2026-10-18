@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services import asr_state
 from ..auth.deps import SessionUser, get_db, require_admin
 from ..models import ConversationMap, GuestParticipant, Meeting, MeetingParticipant, Protocol, Recording, Room, StorageTransfer
 from ..services import diagnostics, perf
@@ -59,7 +60,7 @@ async def performance(request: Request, su: SessionUser = Depends(require_admin)
 
     keys = ("queue_depth", "active_meetings", "avg_infer_ms", "avg_queue_ms", "rtf", "dropped", "errors", "torch_threads", "torch_interop_threads",
             "recorder_queue", "recorder_dropped")
-    asr = {"ok": bool(hb and hb.get("model_loaded")), **{k: (hb or {}).get(k) for k in keys}}
+    asr = {**asr_state.state(hb), **{k: (hb or {}).get(k) for k in keys}}
 
     queued_protocols = (await db.execute(select(func.count()).select_from(Protocol).where(Protocol.status == "pending"))).scalar_one()
     maps_running = (await db.execute(select(func.count()).select_from(ConversationMap).where(ConversationMap.status.in_(("pending", "running"))))).scalar_one()

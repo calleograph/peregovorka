@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from livekit import api as lkapi
 from sqlalchemy import delete, select
 
+from ..services import asr_state
 from ..auth.deps import require_internal
 from ..models import Meeting, MeetingParticipant, Room, TranscriptSegment, User
 from ..services import diagnostics
@@ -189,7 +190,7 @@ async def diag(request: Request):
     except Exception as exc:  # noqa: BLE001
         out["livekit"] = {"ok": False, "error": type(exc).__name__}
     hb = await app.state.bridge.heartbeat()
-    out["asr"] = {"ok": bool(hb and hb.get("model_loaded")), "provider": (hb or {}).get("provider"), "commit": (hb or {}).get("commit")}
+    out["asr"] = {**asr_state.state(hb), "provider": (hb or {}).get("provider"), "commit": (hb or {}).get("commit")}
     out["versions"] = {"livekit_server": s.livekit_server_version or "unknown", "livekit_python_sdk_asr": (hb or {}).get("livekit_sdk")}
     if request.query_params.get("deep") == "1":  # реальный WebSocket Upgrade на /rtc/v1 (создаёт и сразу закрывает тестовое соединение)
         out["livekit_ws"] = await diagnostics.livekit_checks(s)

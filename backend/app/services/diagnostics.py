@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 from livekit import api as lkapi
 
+from . import asr_state
 from ..config import Settings
 from . import timings
 
@@ -362,7 +363,7 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
     except Exception:  # noqa: BLE001
         pass
     prov = (hb or {}).get("provider") or {}
-    rep["asr"] = {"ready": bool(hb and hb.get("model_loaded")), "model": prov.get("name"), "device": prov.get("device"),
+    rep["asr"] = {"ready": asr_state.transcription_ready(hb), "model_ready": asr_state.model_ready(hb), "pipeline_ready": asr_state.pipeline_error(hb) is None, "pipeline_error": asr_state.pipeline_error(hb), "model": prov.get("name"), "device": prov.get("device"),
                   "provider": prov.get("provider"), "runtime": prov.get("runtime"), "model_id": prov.get("model_id"), "quant": prov.get("quant"),
                   "loading_model": (hb or {}).get("loading_model"), "models": (hb or {}).get("models"), "version": (hb or {}).get("version"), "commit": (hb or {}).get("commit"),
                   "threads": (hb or {}).get("torch_threads"), "interop_threads": (hb or {}).get("torch_interop_threads"),

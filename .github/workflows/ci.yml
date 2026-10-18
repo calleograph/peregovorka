@@ -128,6 +128,19 @@ jobs:
           sed -i 's#^LDAP_CA_FILE=.*#LDAP_CA_FILE=/tmp/vm-ca/ad-ca.pem#; s#^DATA_ROOT=.*#DATA_ROOT=/tmp/vm-data#' .env
           DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 APP_VERSION="$(cat VERSION)" APP_GIT_COMMIT="${GITHUB_SHA::7}" APP_BUILT_AT="$(date -u +%FT%TZ)"             docker compose -p ci --project-directory deployment --env-file .env -f deployment/compose.yml build web
 
+  asr-image:
+    # Регрессия 0.24.1 (нет onnxruntime → Silero VAD не создавался, а ASR оставался «здоровым»): образ собирается как при обновлении; сборка падает на `pip check`
+    # и на неудачной инициализации VAD (RUN python -m app.selfcheck в Dockerfile). Здесь же проверяем, что самопроверка готового образа проходит.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка ASR (с pip check и проверкой Silero VAD)
+        run: |
+          sha="$(grep '^GIGAAM_GIT_COMMIT=' .env.example | cut -d= -f2)"
+          docker build --build-arg GIGAAM_GIT_COMMIT="$sha" -t asr-ci asr-service
+      - name: Самопроверка готового образа
+        run: docker run --rm asr-ci python -m app.selfcheck
+
   clean-os:
     # «С чистой ОС»: в чистом контейнере Ubuntu/Debian нет ни Docker, ни nginx, ни git. Автоматическая установка зависимостей (манифест scripts/lib/prereqlib.sh)
     # должна поставить Docker Engine + Compose + Buildx, nginx, git, curl, openssl и утилиты, а повторный запуск — ничего не ломать.

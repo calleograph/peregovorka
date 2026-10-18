@@ -19,6 +19,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import asr_state
 from ..models import CaCertificate, LdapProfile, MailProfile, StorageProfile
 from . import diagnostics
 
@@ -141,8 +142,10 @@ async def check_asr(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
         hb = await app.state.bridge.heartbeat()
     except Exception as exc:  # noqa: BLE001
         return [item("asr", "Распознавание речи (ASR)", WARN, f"Служба распознавания не отвечает ({type(exc).__name__}): звонки работают, стенограммы нет", "asr")]
+    if hb and hb.get("model_loaded") and asr_state.pipeline_error(hb):
+        return [item("asr", "Распознавание речи (ASR)", FAIL, f"Модель загружена, но конвейер транскрибации не работает: {asr_state.pipeline_error(hb)}. Стенограмма не появится — см. Администрирование → Распознавание речи", "asr")]
     if hb and hb.get("model_loaded"):
-        return [item("asr", "Распознавание речи (ASR)", OK, "Модель загружена, служба отвечает", "asr")]
+        return [item("asr", "Распознавание речи (ASR)", OK, "Модель загружена, конвейер транскрибации работает, служба отвечает", "asr")]
     return [item("asr", "Распознавание речи (ASR)", WARN, "Модель распознавания не загружена или служба остановлена: звонки работают, стенограммы нет", "asr")]
 
 

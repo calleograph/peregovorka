@@ -23,10 +23,12 @@ WORKDIR /srv/asr
 COPY requirements.txt constraints.txt ./
 RUN for i in 1 2 3 4; do pip install -r requirements.txt -c constraints.txt && ok=1 && break; echo "pip requirements: сбой, повтор $i/4"; sleep $((i * 15)); done; [ "${ok:-0}" = 1 ]
 # Установка GigaAM с GitHub может идти долго (клонирование + зависимости): это не зависание, пока есть сетевая активность.
-RUN for i in 1 2 3 4; do pip install --no-deps "gigaam @ git+https://github.com/salute-developers/GigaAM.git@${GIGAAM_GIT_COMMIT}" && ok=1 && break; echo "gigaam: сбой, повтор $i/4"; sleep $((i * 15)); done; [ "${ok:-0}" = 1 ] \
+RUN for i in 1 2 3 4; do pip install -c constraints.txt "gigaam @ git+https://github.com/salute-developers/GigaAM.git@${GIGAAM_GIT_COMMIT}" && ok=1 && break; echo "gigaam: сбой, повтор $i/4"; sleep $((i * 15)); done; [ "${ok:-0}" = 1 ] \
     && apt-get purge -y git && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
+# Сборка падает, если пакеты несовместимы (pip check) или Silero VAD не создаётся (например, нет onnxruntime): образ с таким дефектом не публикуется.
+RUN python -m app.selfcheck
 
 # Метаданные сборки — в конце (кэш слоёв torch/GigaAM не сбрасывается); запекаются в образ.
 ARG APP_VERSION=0.0.0
