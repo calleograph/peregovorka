@@ -13,7 +13,7 @@ const memStore = (init: Record<string, string> = {}) => {
 describe("настройки микрофона", () => {
   it("по умолчанию шумоподавление, эхоподавление и автоусиление включены, микрофон не освобождается при выключении", () => {
     expect(loadMicPrefs(memStore())).toEqual(DEFAULT_MIC_PREFS);
-    expect(DEFAULT_MIC_PREFS).toMatchObject({ noiseMode: "standard", echoCancellation: true, autoGainControl: true, releaseOnMute: false });
+    expect(DEFAULT_MIC_PREFS).toMatchObject({ noiseMode: "enhanced", echoCancellation: true, autoGainControl: true, releaseOnMute: false });
   });
   it("сохраняются и читаются; повреждённые данные не ломают вход", () => {
     const st = memStore();
@@ -30,7 +30,7 @@ describe("настройки микрофона", () => {
   });
   it("параметры захвата берутся из настроек", () => {
     expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "off" })).toEqual({ noiseSuppression: false, echoCancellation: true, autoGainControl: true });
-    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "enhanced" }).noiseSuppression).toBe(false);   // усиленный режим: браузерное подавление выключено, чтобы не обрабатывать дважды
+    expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "enhanced" })).toMatchObject({ noiseSuppression: false, autoGainControl: true });   // усиленный режим: браузерное подавление выключено, чтобы не обрабатывать дважды
     expect(captureOptions({ ...DEFAULT_MIC_PREFS, noiseMode: "standard" }).noiseSuppression).toBe(true);
   });
 });

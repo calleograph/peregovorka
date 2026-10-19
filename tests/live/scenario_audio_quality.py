@@ -68,7 +68,7 @@ async def main():
 
         labels = await menu_labels(A)
         S.check("в меню по одной строке «Шумоподавление ▸» и «Качество видео ▸» (без отдельных пунктов на каждый уровень)", sum("Шумоподавление" in x for x in labels) == 1 and sum("Качество видео" in x for x in labels) == 1, str(labels))
-        S.check("шумоподавление: по умолчанию отмечено «Стандартное»", await menu_state(A, "Шумоподавление") == "Стандартное")
+        S.check("шумоподавление: по умолчанию отмечено «Усиленное»", await menu_state(A, "Шумоподавление") == "Усиленное")
         S.check("качество видео: по умолчанию отмечено «Автоматически»", await menu_state(A, "Качество видео") == "Автоматически")
 
         # --- усиленное шумоподавление
@@ -106,8 +106,8 @@ async def main():
         enc = await A.js(VIDEO_TOP)
         top = max(enc[0], key=lambda e: e.get("br") or 0) if enc and enc[0] else {}
         S.check("битрейт верхнего слоя камеры ограничен уровнем «низкое» (≤ 250 кбит/с)", 0 < (top.get("br") or 0) <= 250_000, str(enc))
-        badge = await A.js("[...document.querySelectorAll('.room-head .badge')].map(b => b.textContent.trim())")
-        S.check("в шапке индикатор «Видео: низкое»", any("Видео: низкое" in b for b in badge), str(badge))
+        sig = await A.js("(() => { const e = document.querySelector('.room-head .sig'); return e ? {cls: e.className, label: e.getAttribute('aria-label'), title: e.title} : null; })()")
+        S.check("в шапке индикатор сигнала жёлтый (уровень видео «низкое»), подробности — в подсказке", bool(sig) and "sig-warn" in sig["cls"] and "низкое" in sig["title"].lower(), str(sig))
 
         before = (await B.js(S.STATS))["ain"]
         S.check("Алиса: уровень «Только звук»", await menu_pick(A, "Качество видео", "Только звук"))
@@ -116,8 +116,8 @@ async def main():
         await asyncio.sleep(2)
         after = (await B.js(S.STATS))["ain"]
         S.check("звук при «Только звук» продолжает идти", after > before + 20, f"{before}->{after}")
-        badge = await A.js("[...document.querySelectorAll('.room-head .badge')].map(b => b.textContent.trim())")
-        S.check("индикатор «Видео: только звук»", any("только звук" in b.lower() for b in badge), str(badge))
+        sig = await A.js("(() => { const e = document.querySelector('.room-head .sig'); return e ? {cls: e.className, title: e.title} : null; })()")
+        S.check("индикатор сигнала красный («только звук»), подробности — в подсказке", bool(sig) and "sig-bad" in sig["cls"] and "только звук" in sig["title"].lower(), str(sig))
         await A.shot("quality-audio-only")
 
         S.check("Алиса: «Качество видео» → «Автоматически»", await menu_pick(A, "Качество видео", "Автоматически"))

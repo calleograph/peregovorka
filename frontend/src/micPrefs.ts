@@ -10,7 +10,7 @@ import { browserNoiseSuppression, migrateNoiseMode, type NoiseMode } from "./aud
  */
 export interface MicPrefs { noiseMode: NoiseMode; echoCancellation: boolean; autoGainControl: boolean; releaseOnMute: boolean }
 
-export const DEFAULT_MIC_PREFS: MicPrefs = { noiseMode: "standard", echoCancellation: true, autoGainControl: true, releaseOnMute: false };
+export const DEFAULT_MIC_PREFS: MicPrefs = { noiseMode: "enhanced", echoCancellation: true, autoGainControl: true, releaseOnMute: false };
 const KEY = "room.micPrefs.v1";
 
 type Store = Pick<Storage, "getItem" | "setItem">;

@@ -58,6 +58,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
   const [camMs, setCamMs] = useState<{ gum: number; frame: number } | null>(null);
   const camTicket = useRef(0);                           // номер актуальной операции: устаревший ответ getUserMedia отбрасывается, а его поток освобождается
   const camT0 = useRef(0);
+  const micTicket = useRef(0);                           // то же для микрофона: запоздавший getUserMedia не должен оставить поток открытым (иначе браузер держит устройство со старыми настройками обработки звука, и в комнате шумоподавление не переключается)
   const [level, setLevel] = useState(0);
   const [micErr, setMicErr] = useState("");
   const [camErr, setCamErr] = useState("");
@@ -92,6 +93,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
   }, []);
 
   const stopMic = useCallback(() => {
+    micTicket.current++;
     cancelAnimationFrame(raf.current);
     micStream.current?.getTracks().forEach((t) => t.stop()); micStream.current = null;
     void ctxRef.current?.close().catch(() => undefined); ctxRef.current = null;
@@ -100,9 +102,11 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
 
   const startMic = useCallback(async (id?: string) => {
     stopMic();
+    const ticket = micTicket.current;
     setMicErr("");
     try {
       const stream = await track(() => navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id } } : true }));
+      if (ticket !== micTicket.current) { stream.getTracks().forEach((t) => t.stop()); return; }          // за время запроса запустили другой или закрыли проверку: этот поток никому не нужен
       micStream.current = stream;
       setMicOk(true);
       const used = stream.getAudioTracks()[0]?.getSettings().deviceId;

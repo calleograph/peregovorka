@@ -7,7 +7,7 @@ export const NOISE_LABEL: Record<NoiseMode, string> = { off: "Выключено
 export const NOISE_HINT: Record<NoiseMode, string> = {
   off: "Звук без обработки — для студийного микрофона и тихой комнаты.",
   standard: "Шумоподавление браузера: вентиляторы, фон. Подходит большинству.",
-  enhanced: "Нейросеть RNNoise на вашем устройстве: сильнее убирает клавиатуру и разговоры вдали, но чуть нагружает процессор. Если не запустится — включится стандартное.",
+  enhanced: "Нейросеть RNNoise и затвор на вашем устройстве: заметно сильнее убирает клавиатуру, мышь, голоса и гул на фоне, речь сохраняется. Чуть нагружает процессор. Если не запустится — включится стандартное.",
 };
 
 export const isNoiseMode = (v: unknown): v is NoiseMode => v === "off" || v === "standard" || v === "enhanced";
@@ -15,9 +15,9 @@ export const isNoiseMode = (v: unknown): v is NoiseMode => v === "off" || v === 
 /** Включать ли шумоподавление браузера при захвате: в «усиленном» режиме — нет (иначе двойная обработка искажает речь). */
 export const browserNoiseSuppression = (m: NoiseMode): boolean => m === "standard";
 
-/** Старые настройки хранили только флаг «шумоподавление включено». */
+/** Старые настройки хранили только флаг «шумоподавление включено»: выбор пользователя сохраняется. Если выбора нет — режим по умолчанию («усиленный»; не запустится на устройстве — само вернётся к стандартному). */
 export const migrateNoiseMode = (stored: { noiseMode?: unknown; noiseSuppression?: unknown }): NoiseMode =>
-  isNoiseMode(stored.noiseMode) ? stored.noiseMode : stored.noiseSuppression === false ? "off" : "standard";
+  isNoiseMode(stored.noiseMode) ? stored.noiseMode : stored.noiseSuppression === false ? "off" : stored.noiseSuppression === true ? "standard" : "enhanced";
 
 export interface NoiseResult { mode: NoiseMode; fellBack: boolean; reason?: string }
 
@@ -38,7 +38,7 @@ export async function applyNoiseMode(
   try {
     const { RnnoiseProcessor, rnnoiseSupported } = await import("./rnnoise");
     if (!rnnoiseSupported()) throw new Error("not_supported");
-    await restart(false);
+    if (track.mediaStreamTrack?.getSettings?.().noiseSuppression !== false) await restart(false);     // захват уже без браузерного подавления (так публикуется при «усиленном» по умолчанию) — повторный запуск микрофона не нужен
     const p = new RnnoiseProcessor();
     p.onError = (r) => onLateFailure(r);
     await withTimeout(track.setProcessor(p), 8000);

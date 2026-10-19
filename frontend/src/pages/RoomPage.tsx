@@ -403,6 +403,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     });
   }, []);
 
+  const noiseRestoreRef = useRef<() => void>(() => undefined);
   const enableMic = useCallback(async () => {
     const lp = roomRef.current?.localParticipant;
     if (!lp) return;
@@ -474,7 +475,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, (pub) => {
         refresh();
-        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); void qualityRef.current?.onCameraPublished(); }
+        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); void qualityRef.current?.onCameraPublished(); noiseRestoreRef.current(); }
         if (pub.source === Track.Source.Camera) void qualityRef.current?.onCameraPublished();
         if (pub.source === Track.Source.ScreenShare) {
           screenIntendedRef.current = true;
@@ -865,6 +866,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const noteNoiseFallback = (reason?: string) => {
     reportEvent("noise_suppression_fallback", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: reason ?? "unknown" });
     setNotice({ kind: "warn", text: "Усиленное шумоподавление не удалось запустить на этом устройстве — включено стандартное." });
+  };
+  // сохранённый «усиленный» режим применяется к КАЖДОМУ опубликованному микрофону: при входе, после включения с освобождением устройства, при переподключении
+  noiseRestoreRef.current = () => {
+    const p = loadMicPrefs();
+    if (p.noiseMode !== "enhanced") return;
+    const t = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack as LocalAudioTrack | undefined;
+    if (!t || t.getProcessor()) return;
+    void applyMicPrefs(p, "restore_after_publish");
   };
   const rollbackNoise = (cur: MicPrefs, why: string) => { void applyMicPrefs({ ...cur, noiseMode: "standard" }, `noise_fallback_${why}`); noteNoiseFallback(why); };
 

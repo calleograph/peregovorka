@@ -11,7 +11,8 @@ describe("режимы шумоподавления", () => {
     expect(["off", "standard", "enhanced"].every(isNoiseMode)).toBe(true);
     expect(isNoiseMode("loud")).toBe(false);
     expect(migrateNoiseMode({ noiseSuppression: false })).toBe("off");
-    expect(migrateNoiseMode({})).toBe("standard");
+    expect(migrateNoiseMode({})).toBe("enhanced");            // выбора нет — режим по умолчанию
+    expect(migrateNoiseMode({ noiseSuppression: true })).toBe("standard");   // прежний явный выбор не меняется
     expect(migrateNoiseMode({ noiseMode: "enhanced", noiseSuppression: false })).toBe("enhanced");
   });
 
