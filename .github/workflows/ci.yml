@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg fonts-dejavu-core libkrb5-dev gcc
       # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       # torch/GigaAM в тестах не нужны: используются подставные провайдер и VAD
       - run: pip install -c asr-service/constraints.txt "numpy>=2,<3" redis fastapi uvicorn pydantic pydantic-settings pytest pytest-asyncio fakeredis httpx
@@ -146,7 +146,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libkrb5-dev gcc      # gssapi и krb5 собираются из исходников
       - run: pip install -r backend/requirements.txt -c backend/constraints.txt
@@ -169,7 +169,7 @@ jobs:
         ports: ["6379:6379"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libkrb5-dev gcc
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt psutil aiohttp
