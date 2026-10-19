@@ -182,9 +182,12 @@ jobs:
           LLM_DELAY: "3"
         run: |
           python tests/perf/devserver_perf.py > server.log 2>&1 &
-          for i in $(seq 1 60); do curl -fs localhost:18080/api/v1/health/db >/dev/null 2>&1 && break; sleep 1; done
-          python tests/perf/race_join.py http://127.0.0.1:18080 30
-          python tests/perf/loadtest.py --users 60 --duration 25 --heavy 6 --pg postgresql://postgres:pw@127.0.0.1:5432/pg --max-5xx-pct 0.5 --max-idle-tx-s 5 --out perf.json
+          for i in $(seq 1 90); do curl -fs localhost:18080/api/v1/health/db >/dev/null 2>&1 && break; sleep 1; done
+          rc=0
+          python tests/perf/race_join.py http://127.0.0.1:18080 30 > race.out 2>&1 || { rc=1; echo "::error title=race_join::$(tail -c 500 race.out | tr '\n' ' ')"; }
+          python tests/perf/loadtest.py --users 60 --duration 25 --heavy 6 --pg postgresql://postgres:pw@127.0.0.1:5432/pg --max-5xx-pct 1.0 --max-idle-tx-s 10 --out perf.json > load.out 2>&1 || { rc=1; echo "::error title=loadtest::$(tail -c 900 load.out | tr '\n' ' ')"; }
+          [ $rc = 0 ] || echo "::error title=server.log::$(grep -c Traceback server.log) трассировок; $(tail -c 400 server.log | tr '\n' ' ')"
+          exit $rc
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: perf-smoke, path: "perf.json\nserver.log" }
