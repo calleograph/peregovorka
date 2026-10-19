@@ -707,7 +707,7 @@ body.in-room .room-wrap.board-focus .st-spotbar { display: none; }
 @media (max-width: 1000px) {
   body.in-room main { padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); }
   body.in-room .room-wrap { grid-template-columns: minmax(0, 1fr); min-height: 0; height: calc(100dvh - var(--hdr, 52px) - 12px - env(safe-area-inset-bottom, 0px)); }
-  body.in-room .transcript:not(.collapsed) { position: fixed; left: 0; right: 0; bottom: 0; top: var(--hdr, 52px); height: auto; z-index: 60; border-radius: 0; }
+  body.in-room .transcript:not(.collapsed) { position: fixed; left: 0; right: 0; bottom: var(--rbar-h, 96px); top: var(--hdr, 52px); height: auto; z-index: 60; border-radius: 0; }
   body.in-room .transcript.collapsed { top: auto; bottom: 120px; }
   body.in-room .room-head { gap: 5px; }
   body.in-room .room-head .badge:not(.ok):not(.warn), body.in-room .room-head .rec-badge.tr { display: none; }

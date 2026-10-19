@@ -25,6 +25,8 @@ import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../mi
 import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
+import SignalBars from "../components/SignalBars";
+import { signalOf } from "../quality/signal";
 import ProtectionBadge from "../components/ProtectionBadge";
 import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
@@ -170,7 +172,23 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [, setSnapshot] = useState<Snapshot | null>(null);          // статистика уходит в журнал сервера; в комнате её не показываем — диагностика во «Встречи» администратора
   const [, setLog] = useState<string[]>([]);
   const [tw, setTw] = useState(() => clamp(Number(lsGet("room.tw")) || TW_DEFAULT, TW_MIN, TW_MAX));
-  const [tCollapsed, setTCollapsed] = useState(() => { const v = lsGet("room.tcollapsed"); return v === null ? window.innerWidth <= 1000 : v === "1"; });     // на телефоне и узком окне панель по умолчанию свёрнута
+  // Широкое окно — запомненный выбор; узкое (≤1000 px) — панель выезжает поверх сцены, поэтому по умолчанию свёрнута и не наследует «развёрнуто» с широкого окна. Выбор в узком окне не запоминается.
+  const [tCollapsed, setTCollapsed] = useState(() => { const v = lsGet("room.tcollapsed"); return window.innerWidth <= 1000 ? true : v === null ? false : v === "1"; });
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1000px)");
+    const on = () => { if (mq.matches) setTCollapsed(true); else { const v = lsGet("room.tcollapsed"); setTCollapsed(v === "1"); } };
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  // высота панели управления нужна выезжающей панели: она заканчивается над кнопками управления, а не закрывает их
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".controls.rbar");
+    if (!bar) return;
+    const set = () => document.body.style.setProperty("--rbar-h", `${Math.ceil(bar.getBoundingClientRect().height) + 12}px`);
+    set();
+    const ro = new ResizeObserver(set); ro.observe(bar);
+    return () => { ro.disconnect(); document.body.style.removeProperty("--rbar-h"); };
+  }, [stage]);                                                                                                             // eslint-disable-line react-hooks/exhaustive-deps
   const [redirectIn, setRedirectIn] = useState<number | null>(null);
   const [asrLost, setAsrLost] = useState(false);
   const [, setRoomsCreated] = useState(0);
@@ -1037,7 +1055,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const w = clamp(tw + (e.key === "ArrowLeft" ? 24 : -24), TW_MIN, TW_MAX);
     setTw(w); persistTw(w);
   };
-  const toggleCollapsed = () => setTCollapsed((c) => { lsSet("room.tcollapsed", c ? "0" : "1"); return !c; });
+  const toggleCollapsed = () => setTCollapsed((c) => { if (window.innerWidth > 1000) lsSet("room.tcollapsed", c ? "0" : "1"); return !c; });
 
   // ---------------------------------------------------------------------- вид «до входа»
   const onHw = (p: PreJoinHw & { micOk: boolean }) => setPreJoin({ micId: p.micId, speakerId: p.speakerId, camId: p.camId, camOn: p.camOn, micOn: p.micOn });
@@ -1192,20 +1210,17 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         <div className="room-head row">
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
-          <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
+          {!connOk && <span className="badge warn" role="status">{connLabel}</span>}
           <ProtectionBadge input={{ https: window.location.protocol === "https:", storage: !!room.encrypt_storage, e2ee: e2eeActive, e2eeRecorder: join.e2ee?.mode === "trusted" }} e2eeExpected={!!join.e2ee} />
-          {quality && connOk && <span className={`badge ${quality.level === "high" ? "ok" : "warn"}`} title={qualityTitle(quality)}>{quality.level === "high" ? "Связь хорошая" : `Видео: ${LEVEL_LABEL[quality.level].toLowerCase()}`}</span>}
+          {quality && connOk && <SignalBars signal={signalOf(quality.level, quality.conn)} title={qualityTitle(quality)} />}
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
           {presentation && <span className="badge" title="Сколько зрителей сейчас в комнате (без выступающих)">{audienceLabel(audienceView.length)}</span>}
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</span>}
-          {serverTranscript && (
-            <span className={`rec-badge ${transcribing ? "tr" : "off"}`} title={transcribing ? "Реплики участников записываются в стенограмму" : "Транскрибация приостановлена руководителем: звонок и запись звука продолжаются"}>
-              {transcribing ? "Транскрибация идёт" : "Транскрибация остановлена"}
-            </span>
+          {serverTranscript && !transcribing && (
+            <span className="rec-badge off" title="Транскрибация приостановлена руководителем: звонок и запись звука продолжаются">Транскрибация остановлена</span>
           )}
-          {serverTranscript && !asrReady && !guest && <span className="badge warn">{asrLost ? "Транскрибация временно недоступна" : "Транскрибация запускается…"}</span>}
           <div className="spacer" />
           {room.lifetime === "temporary" && !guest && (
             <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`)}
@@ -1342,7 +1357,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             </Ctl>
           )}
           <Ctl onClose={() => undefined}>
-            <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
+            <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); if (window.innerWidth > 1000) lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
           </Ctl>
           <Ctl error={ctlErr.rec ?? ctlErr.tr} onClose={() => { setErr("rec"); setErr("tr"); }}>
             <RoundButton icon="more" label="Ещё" tone={recording ? "rec" : "neutral"} badge={recording} disabled={ended}

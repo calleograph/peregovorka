@@ -897,3 +897,12 @@ details.group { margin: 8px 0; }
 .comp-table .comp-group th { text-align: left; background: var(--soft, transparent); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .comp-table td:first-child { min-width: 180px; }
 .comp-table td:nth-child(5) { min-width: 150px; }
+.sig { display: inline-flex; align-items: center; padding: 2px 4px; cursor: help; }
+.sig rect.off { fill: var(--border, #c9ced8); }
+.sig-ok rect.on { fill: #16a34a; }
+.sig-warn rect.on { fill: #d97706; }
+.sig-bad rect.on { fill: #dc2626; }
+.board-head { position: relative; padding-right: 44px; }
+.board-close { position: absolute; top: 0; right: 0; z-index: 3; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--border, #d0d4dc); background: var(--card, #fff); color: inherit; cursor: pointer; }
+.board-close:hover { background: var(--soft); }
+@media (max-width: 760px), (max-height: 640px) { .board-hint { display: none; } .board-head h2 { font-size: 14px; } }

@@ -28,7 +28,14 @@ describe("что крупно", () => {
   const since = new Map([["screen:b", 10], ["screen:c", 20]]);
   const all = items(ps, false, since);
   it("без закреплений — самый свежий показ экрана", () => {
-    expect(chooseMain({ items: all, pins: [], spotlight: [], speaker: null, layout: "auto" })).toMatchObject({ main: ["screen:c"], reason: "screen", mode: "stage" });
+    expect(chooseMain({ items: all, pins: [], spotlight: [], speaker: null, layout: "auto" })).toMatchObject({ main: ["screen:c"], reason: "screen", mode: "side" });
+  });
+  it("«Авто» раскладывает как «Рядом» (колонка справа), «Сцена» — лентой снизу только по явному выбору, на телефоне колонки нет", () => {
+    const o = { items: all, pins: [] as string[], spotlight: [] as string[], speaker: null };
+    expect(chooseMain({ ...o, layout: "auto" }).mode).toBe("side");
+    expect(chooseMain({ ...o, layout: "side" }).mode).toBe("side");
+    expect(chooseMain({ ...o, layout: "stage" }).mode).toBe("stage");
+    expect(chooseMain({ ...o, layout: "auto", mobile: true }).mode).toBe("stage");
   });
   it("личное закрепление важнее общей сцены ведущего", () => {
     const c = chooseMain({ items: all, pins: ["screen:b"], spotlight: ["screen:c"], speaker: null, layout: "auto" });

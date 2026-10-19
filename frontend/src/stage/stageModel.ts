@@ -19,7 +19,7 @@ export const GRID_AUTO_MAX = 9;     // «Авто» без показа экра
 export const GRID_MAX = 16;         // «Сетка»: не больше 16 ячеек, остальные — в ленте
 export const MOBILE_W = 600;
 export const LAYOUTS: { id: LayoutMode; label: string; hint: string }[] = [
-  { id: "auto", label: "Авто", hint: "Показ экрана и доска — крупно, без них — сетка или говорящий" },
+  { id: "auto", label: "Авто", hint: "Как «Рядом»: показ экрана, доска или говорящий — крупно, остальные колонкой справа; без них — сетка" },
   { id: "grid", label: "Сетка", hint: "Все участники одинаковыми плитками" },
   { id: "stage", label: "Сцена", hint: "Главное крупно, остальные — лентой снизу" },
   { id: "side", label: "Рядом", hint: "Главное крупно, остальные — колонкой справа" },
@@ -65,7 +65,8 @@ export function chooseMain(o: { items: StageItem[]; pins: string[]; spotlight: s
   const have = new Set(o.items.map((i) => i.key));
   const cams = o.items.filter((i) => i.type === "camera");
   const limit = o.mobile ? 1 : MAX_PINS;
-  const side = o.layout === "side" ? "side" : "stage";
+  // «Авто» ведёт себя как «Рядом» (главное крупно, остальные — колонкой справа): отдельного режима для этого нет; «Сцена» с лентой снизу — только по явному выбору. На телефоне колонки нет.
+  const side = o.layout === "stage" || o.mobile ? "stage" : "side";
   if (o.layout === "grid" && !o.mobile) return { main: [], reason: "grid", mode: "grid" };
   const pins = o.pins.filter((k) => have.has(k)).slice(0, limit);
   if (pins.length) return { main: pins, reason: "pins", mode: side };

@@ -42,7 +42,7 @@ export default function ProtectionBadge({ input, e2eeExpected = false }: { input
   return (
     <>
       <span className={`prot-badge ${input.e2ee ? "prot-red" : "prot-warn"}`} title={input.e2ee ? "Сквозное шифрование звука и видео включено" : "Комната требует сквозного шифрования, но оно не активно"}>
-        <span className="prot-label">{input.e2ee ? "🔒 Шифрование включено" : "⚠ Шифрование не активно"}</span>
+        <span className="prot-label">{input.e2ee ? "🔒 Шифрование" : "⚠ Шифрование не активно"}</span>
         <button type="button" className="prot-info" onClick={() => setOpen(true)} aria-label="Что именно защищено: пояснение и схема" title="Что именно защищено">ⓘ</button>
       </span>
       {open && (
