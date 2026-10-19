@@ -410,7 +410,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11718",
+   "reviewed_latest": "server-b11723",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -439,7 +439,7 @@
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
    "deferred": {
-    "version": "server-b11718",
+    "version": "server-b11723",
     "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
     "issue": "DEP-1",
     "recheck": "2026-11-16",
@@ -1251,7 +1251,7 @@
     "repo": "nginxinc/nginx-unprivileged",
     "suffix": "-alpine"
    },
-   "digest": "sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01"
+   "digest": "sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03"
   },
   {
    "key": "alpine",
