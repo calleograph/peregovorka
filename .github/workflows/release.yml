@@ -30,7 +30,7 @@ jobs:
     needs: ci-gate
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Тег, VERSION и CHANGELOG согласованы
         run: |
           test "${GITHUB_REF_NAME}" = "v$(tr -d '[:space:]' < VERSION)"
