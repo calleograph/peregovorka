@@ -404,7 +404,7 @@ class LdapDirectory:
             flt = f"(&(objectClass=group)(|(cn=*{q}*)(sAMAccountName=*{q}*)(displayName=*{q}*)))"
             attrs = ["distinguishedName", "cn", "description"]
         elif kind == "user":
-            flt = (f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName=*{q}*)(displayName=*{q}*)"
+            flt = (f"(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(|(sAMAccountName=*{q}*)(displayName=*{q}*)"
                    f"(userPrincipalName=*{q}*)({self._s.ldap_email_attribute}=*{q}*)))")
             attrs = ["objectGUID", "distinguishedName", "sAMAccountName", self._s.ldap_display_name_attribute, self._s.ldap_email_attribute]
         else:

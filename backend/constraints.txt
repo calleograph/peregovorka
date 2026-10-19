@@ -17,7 +17,7 @@ click==8.5.0
 cryptography==50.0.2
 decorator==5.3.1
 defusedxml==0.7.1
-fastapi==0.145.0
+fastapi==0.149.0
 fonttools==4.67.0
 fpdf2==2.8.9
 frozenlist==1.8.0
