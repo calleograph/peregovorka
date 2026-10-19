@@ -1,6 +1,8 @@
 from __future__ import annotations
 from ..services import asr_state
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -15,6 +17,40 @@ async def live():
     return {"status": "ok"}
 
 
+async def _postgres(app) -> dict:
+    """PostgreSQL проверяется через ОТДЕЛЬНЫЙ крошечный пул: исчерпание основного пула не маскируется под «база жива», а недоступность базы не маскируется под «процесс здоров».
+    Состояние: ok; saturated — база отвечает, но пул запросов занят более чем на 90 % (идёт деградация); idle_in_transaction — есть долго удерживаемые транзакции."""
+    from ..services import db_health  # noqa: PLC0415
+
+    he = getattr(app.state, "health_engine", None)
+    try:
+        if he is not None:
+            async with he.connect() as c:
+                await asyncio.wait_for(c.execute(text("SELECT 1")), 4)
+        else:
+            async with app.state.session_maker() as db:
+                await db.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": type(exc).__name__}
+    pools = {k: db_health.pool_info(e) for k, e in getattr(app.state, "db_stats", db_health.DbStats()).engines.items()}
+    sat = max((p.get("saturation", 0) for p in pools.values()), default=0)
+    return {"ok": True, "saturated": sat >= 0.9, "pools": pools}
+
+
+@router.get("/health/db")
+async def db_ready(request: Request):
+    """Готовность ядра: PostgreSQL и Redis (то, без чего не работают вход, комнаты, чат, история). Для проверки контейнера: «процесс жив» (/health/live) не значит «приложение работает»."""
+    app = request.app
+    pg = await _postgres(app)
+    try:
+        await app.state.redis.ping()
+        rd = {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        rd = {"ok": False, "error": type(exc).__name__}
+    ok = pg["ok"] and rd["ok"]
+    return JSONResponse({"status": ("degraded" if pg.get("saturated") else "ready") if ok else "unavailable", "postgres": pg, "redis": rd}, status_code=200 if ok else 503)
+
+
 @router.get("/health/ready")
 async def ready(request: Request):
     """PostgreSQL, Redis и LiveKit обязательны (503 при сбое). ASR необязателен: без него
@@ -22,12 +58,7 @@ async def ready(request: Request):
     app = request.app
     checks: dict[str, dict] = {}
 
-    try:
-        async with app.state.session_maker() as db:
-            await db.execute(text("SELECT 1"))
-        checks["postgres"] = {"ok": True}
-    except Exception as exc:  # noqa: BLE001
-        checks["postgres"] = {"ok": False, "error": type(exc).__name__}
+    checks["postgres"] = await _postgres(app)
 
     try:
         await app.state.redis.ping()
@@ -52,7 +83,8 @@ async def ready(request: Request):
                      "active_meetings": (asr or {}).get("active_meetings")}
 
     required_ok = all(checks[k]["ok"] for k in ("postgres", "redis", "livekit"))
-    status = "ready" if required_ok and checks["asr"]["ok"] else ("degraded" if required_ok else "unavailable")
+    degraded = (not checks["asr"]["ok"]) or bool(checks["postgres"].get("saturated"))
+    status = "ready" if required_ok and not degraded else ("degraded" if required_ok else "unavailable")
     return JSONResponse({"status": status, "checks": checks}, status_code=200 if required_ok else 503)
 
 

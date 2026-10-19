@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..integrations.llm import LlmClient, LlmError
+from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, Protocol, TranscriptSegment, utcnow
 from .extraction import Line, _parse, _stems, chunk_lines, norm, snap
 from .llm_choice import resolve_llm
@@ -505,10 +507,18 @@ class MapService:
         else:
             rec.status, rec.error, rec.created_by = "pending", None, actor
         rec.meta = {"requested_at": now.isoformat()}
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:                                 # два одновременных запроса «построить карту»: запись уже создана другим — используем её (не 500)
+            await db.rollback()
+            rec = await self.get(db, meeting_id)
+            if rec is None:
+                raise
         return rec
 
     def start(self, map_id: uuid.UUID) -> None:
+        if map_id in self._active:                             # задание этой карты уже запущено (одновременный повторный запрос): второго не создаём
+            return
         self._active.add(map_id)
         self.ps.spawn(self.run(map_id), f"map-{map_id}")
 
@@ -557,40 +567,53 @@ class MapService:
             log.exception("Не удалось передать событие карты")
 
     async def _run(self, map_id: uuid.UUID) -> None:
+        """Три коротких этапа с базой и один долгий БЕЗ неё: (1) пометить «в работе»; (2) прочитать всё нужное и ОТПУСТИТЬ соединение; (3) запрос к языковой модели — без транзакции;
+        (4) новая короткая транзакция: сохранить результат. Раньше сессия жила весь этап LLM (минуты) и держала соединение PostgreSQL «idle in transaction»."""
         async with self.ps._sm() as db:
             rec = await db.get(ConversationMap, map_id)
             if rec is None:
                 return
             requested = rec.meta.get("requested_at") if rec.meta else None
+            await release(db)
         async with self._sem:                                    # очередь: одна карта за раз
+            started = datetime.now(timezone.utc)
             async with self.ps._sm() as db:
                 rec = await db.get(ConversationMap, map_id)
                 if rec is None:
                     return
-                started = datetime.now(timezone.utc)
                 rec.status = "running"
                 rec.meta = {"requested_at": requested, "started_at": started.isoformat()}
+                meeting_id = rec.meeting_id
                 await db.commit()
-                info: dict = {}
-                try:
-                    data, meta = await self._generate(db, rec.meeting_id, info)
-                    meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat())
-                    meta["duration_s"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
+            info: dict = {}
+            try:
+                async with self.ps._sm() as db:                  # этап чтения: всё нужное — в обычные объекты, затем сессия закрывается
+                    prep = await self._prepare(db, meeting_id, info)
+                data, meta = await self._compute(prep, info)    # LLM: ни одной транзакции PostgreSQL
+                meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat())
+                meta["duration_s"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
+                async with self.ps._sm() as db:
+                    rec = await db.get(ConversationMap, map_id)
+                    if rec is None:
+                        return
                     rec.data, rec.meta, rec.status, rec.error = data, meta, "ready", None
                     await db.commit()
-                    self._emit("map_ready", rec, level="info", data={k: meta.get(k) for k in ("model", "chunks", "retries", "duration_s", "topics")})
-                except (LlmError, MapError, ValueError) as exc:
-                    msg = exc.describe() if isinstance(exc, LlmError) else str(exc)
-                    rec.status, rec.error = "failed", msg[:480]
-                    rec.meta = {**self._base_meta(requested, started, info), "failed": True}
-                    await db.commit()
-                    self._emit("map_failed", rec, level="error", message=rec.error)
-                except Exception:  # noqa: BLE001
-                    log.exception("Ошибка формирования карты разговора", extra={"map": str(map_id)})
-                    rec.status, rec.error = "failed", "Внутренняя ошибка (см. журнал сервера)"
-                    rec.meta = {**self._base_meta(requested, started, info), "failed": True}
-                    await db.commit()
-                    self._emit("map_failed", rec, level="error", message=rec.error)
+                self._emit("map_ready", rec, level="info", data={k: meta.get(k) for k in ("model", "chunks", "retries", "duration_s", "topics")})
+            except (LlmError, MapError, ValueError) as exc:
+                msg = exc.describe() if isinstance(exc, LlmError) else str(exc)
+                await self._fail(map_id, msg[:480], {**self._base_meta(requested, started, info), "failed": True}, "map_failed")
+            except Exception:  # noqa: BLE001
+                log.exception("Ошибка формирования карты разговора", extra={"map": str(map_id)})
+                await self._fail(map_id, "Внутренняя ошибка (см. журнал сервера)", {**self._base_meta(requested, started, info), "failed": True}, "map_failed")
+
+    async def _fail(self, map_id: uuid.UUID, error: str, meta: dict, event: str) -> None:
+        async with self.ps._sm() as db:
+            rec = await db.get(ConversationMap, map_id)
+            if rec is None:
+                return
+            rec.status, rec.error, rec.meta = "failed", error, meta
+            await db.commit()
+        self._emit(event, rec, level="error", message=error)
 
     @staticmethod
     def _base_meta(requested: str | None, started: datetime, info: dict) -> dict:
@@ -602,7 +625,8 @@ class MapService:
         if self.journal is not None:
             self.journal.emit("llm", event, level=level, meeting_id=str(rec.meeting_id), message=message or event, data={"kind": "map", **(data or {})})
 
-    async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict) -> tuple[dict, dict]:
+    async def _prepare(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict) -> dict:
+        """Чтение из базы для построения карты: возвращает обычные данные (без привязки к сессии). После возврата сессия закрывается, соединение свободно."""
         ps = self.ps
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
@@ -630,6 +654,13 @@ class MapService:
                                   .order_by(Protocol.created_at.desc()))).scalars().first()
         structured = (proto.meta or {}).get("structured") if proto else None
         llm = ps.local_llm.client(choice.settings, ca_file=ps._ca(), transport=ps._transports.get("llm"), purpose="map")
+        _ = meeting.room, meeting.started_at                         # подгрузить связанное до закрытия сессии
+        await release(db)
+        return {"meeting": meeting, "choice": choice, "eff": eff, "is_local": is_local, "lines": lines, "tz": tz, "clock_offset": clock_offset, "structured": structured, "llm": llm}
+
+    async def _compute(self, prep: dict, info: dict) -> tuple[dict, dict]:
+        """Обращение к модели и сборка карты — без базы данных."""
+        meeting, choice, eff, is_local, lines, tz, clock_offset, structured, llm = (prep[k] for k in ("meeting", "choice", "eff", "is_local", "lines", "tz", "clock_offset", "structured", "llm"))
         t0 = datetime.now(timezone.utc)
         try:
             groups, run = await analyse(llm, lines)

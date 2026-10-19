@@ -152,6 +152,7 @@ async def import_apply(request: Request, su: SessionUser = Depends(require_admin
                 cfiles.undo(promo)                                                                # база не зафиксирована — прежние файлы возвращаются
                 raise
             cfiles.finish(promo)
+            s.settings_svc.invalidate()                                                           # настройки перечитываются из базы сразу, а не через ttl кэша
         except importer.ImportError_ as exc:
             await db.rollback()
             cfiles.discard(staged)

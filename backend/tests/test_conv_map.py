@@ -310,3 +310,27 @@ def test_new_write_endpoints_require_csrf_and_are_rate_limited(tmp_path, directo
             codes.append(c.post(f"{API}/{mid}/map").status_code)
             _drain(c)
         assert 429 in codes and codes[0] == 202, codes
+
+
+# ------------------------------------------------------------------------------------------------ соединения PostgreSQL не удерживаются во время обращения к модели
+def test_no_database_connection_is_held_while_the_model_is_working(tmp_path, directory):
+    """Регрессия 0.25.0: сессия жила весь этап LLM и держала соединение «idle in transaction». Во время запроса к модели занятых соединений быть не должно (ни у карты, ни у протокола)."""
+    seen: list[int] = []
+    app_ref: dict = {}
+
+    def llm(req: httpx.Request) -> httpx.Response:
+        eng = app_ref["app"].state.engine.sync_engine
+        seen.append(eng.pool.checkedout())
+        return topics_llm(req)
+
+    with running_app(make_settings(tmp_path), directory, transports={"llm": httpx.MockTransport(llm)}) as c:
+        app_ref["app"] = c.app_obj
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        _room, mid = finished_meeting(c)
+        login(c, "alice")
+        assert c.post(f"{API}/{mid}/map").status_code == 202
+        _drain(c)
+        assert c.get(f"{API}/{mid}/map").json()["status"] == "ready" and seen, "модель вызывалась"
+        assert max(seen) == 0, f"во время запроса к модели занято соединений: {seen}"
+        stats = c.app_obj.state.db_stats
+        assert stats.long_holds == 0

@@ -325,3 +325,30 @@ def test_markdown_parser_handles_required_constructs_and_keeps_html_inert():
     assert to_docx(md, "T")[:2] == b"PK"
     if find_fonts():
         assert to_pdf(md, "T")[:5] == b"%PDF-"
+
+
+def test_protocol_generation_holds_no_database_connection_while_anonymizer_and_model_work(tmp_path, directory):
+    """Во время обращений к обезличивателю и модели соединение PostgreSQL не занято (раньше сессия жила весь этап и держала «idle in transaction»)."""
+    held: list[tuple[str, int]] = []
+    ref: dict = {}
+
+    def llm(req: httpx.Request) -> httpx.Response:
+        held.append(("llm", ref["app"].state.engine.sync_engine.pool.checkedout()))
+        return LLM_OK(req)
+
+    def anon(req: httpx.Request) -> httpx.Response:
+        held.append(("anonymizer", ref["app"].state.engine.sync_engine.pool.checkedout()))
+        return anon_ok(req)
+
+    with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon), "llm": httpx.MockTransport(llm)}) as c:
+        ref["app"] = c.app_obj
+        configure(c)
+        _room, mid = meeting_with_two(c)
+        end_by_alice(c, mid)
+        login(c, "alice")
+        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "кратко"})
+        assert r.status_code == 202
+        _drain(c)
+        assert c.get(f"/api/v1/meetings/{mid}/protocols/{r.json()['protocol_id']}").json()["status"] == "ready"
+        assert {k for k, _ in held} == {"anonymizer", "llm"}, held
+        assert all(n == 0 for _, n in held), f"соединений занято во время сетевых обращений: {held}"

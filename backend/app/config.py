@@ -24,11 +24,24 @@ class Settings(BaseSettings):
     log_format: str = "json"  # json | console
     docs_enabled: bool = False   # документация и схема внутреннего API по умолчанию закрыты (в compose было false, в коде — true: «открыто по умолчанию» не должно зависеть от окружения)
     data_dir: str = "/data"
-    heavy_concurrency: int = Field(default=2, ge=1, le=8)               # тяжёлых фоновых задач одновременно (сведение записи, волновая форма, протокол)
+    heavy_concurrency: int = Field(default=0, ge=0, le=64)              # тяжёлых фоновых задач одновременно (сведение записи, волновая форма, протокол, карта); 0 — по доступным ядрам и памяти (см. perf.auto_heavy_concurrency)
     heavy_max_defer_seconds: int = Field(default=1800, ge=0, le=86400)  # пока идёт встреча и сервер перегружен, тяжёлая задача ждёт, но не дольше этого
     livekit_metrics_url: str = ""                                       # метрики LiveKit (Prometheus); пусто — http://<livekit>:6789/metrics
     meeting_mix_enabled: bool = True          # общая запись встречи (сведение дорожек участников); выключатель на случай проблем с ffmpeg
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
+    # --- пулы соединений PostgreSQL. 0 — подобрать по числу ядер процессора; значения масштабируются конфигурацией установки, под конкретный сервер ничего не зашито.
+    # Запросы пользователей и фоновые задачи (LLM, экспорт, карты, рассылка) используют РАЗНЫЕ пулы: тяжёлая обработка не может занять все соединения у обычных запросов.
+    db_pool_size: int = Field(default=0, ge=0, le=500)                  # постоянных соединений пула запросов (0 = max(10, min(40, 3 × ядер)))
+    db_max_overflow: int = Field(default=0, ge=0, le=500)               # временных сверх пула (0 = равно размеру пула)
+    db_bg_pool_size: int = Field(default=0, ge=0, le=200)               # пул фоновых задач (0 = max(4, min(12, ядер)))
+    db_bg_max_overflow: int = Field(default=0, ge=0, le=200)
+    db_pool_timeout_s: float = Field(default=15.0, ge=1, le=300)        # сколько ждать свободное соединение; затем 503 с Retry-After, а не 500
+    db_pool_recycle_s: int = Field(default=1800, ge=0, le=86400)
+    db_idle_in_tx_timeout_s: int = Field(default=120, ge=0, le=86400)   # PostgreSQL сам завершает соединение, забытое «в транзакции» дольше этого (0 — выключено)
+    db_statement_timeout_s: int = Field(default=300, ge=0, le=86400)    # предел одного SQL-запроса (0 — выключено)
+    db_hold_warn_s: float = Field(default=20.0, ge=1, le=3600)          # соединение занято дольше — предупреждение в журнале с указанием запроса/задачи
+    redis_max_connections: int = Field(default=0, ge=0, le=20000)       # соединений с Redis на процесс (0 = max(200, 3 × размер пула запросов к БД)); при нехватке запросы ждут, а не падают
+    leader_lease_s: int = Field(default=30, ge=10, le=300)              # аренда «ведущего» экземпляра для фоновых задач при нескольких экземплярах backend (Redis)
     tls_local_configured: bool = False   # в установке задан собственный TLS-сертификат (NGINX_TLS_CERT): HTTPS завершает nginx установщика, а не внешний узел
     outlook_check_ca_file: str = ""       # необязательный файл корневого CA организации для проверок с сервера; по умолчанию — /data/ca/outlook-ca.pem, если администратор положил его туда
 

@@ -125,7 +125,8 @@ class MeetingService:
                 await db.commit()
                 created = True
             except IntegrityError:  # гонка: другой участник создал встречу первым
-                await db.rollback()
+                await db.rollback()                                  # rollback «протухает» все загруженные объекты (room): обращение к их полям — скрытый запрос и MissingGreenlet (500 при одновременном входе)
+                room = await get_accessible_room(db, room_id, su)
                 meeting = await self._active_meeting(db, room.id)
                 if meeting is None:
                     raise JoinError("meeting_race", "Не удалось начать встречу, повторите.", 409) from None

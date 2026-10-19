@@ -41,6 +41,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?}
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    # Предел соединений и контрольные таймауты: пулы приложения масштабируются по ядрам (backend/app/db.py), PostgreSQL должен вмещать пулы ВСЕХ процессов backend
+    # (число процессов × (пул запросов + пул фоновых задач) + служебные). Значение задаётся в .env (POSTGRES_MAX_CONNECTIONS); при смене перезапустите postgres.
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}", "-c", "idle_in_transaction_session_timeout=${POSTGRES_IDLE_IN_TX_MS:-0}"]
     volumes:
       - ${DATA_ROOT:?DATA_ROOT is required}/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -165,6 +168,14 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       TLS_LOCAL_CONFIGURED: ${NGINX_TLS_CERT:+true}
+      # Масштабирование (docs/DB_AND_SCALING.md): число процессов uvicorn и размеры пулов; пусто/0 — по числу ядер. Фоновые задачи выполняет один «ведущий» процесс (Redis).
+      UVICORN_WORKERS: ${BACKEND_WORKERS:-1}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-0}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-0}
+      DB_BG_POOL_SIZE: ${DB_BG_POOL_SIZE:-0}
+      DB_POOL_TIMEOUT_S: ${DB_POOL_TIMEOUT_S:-15}
+      DB_IDLE_IN_TX_TIMEOUT_S: ${DB_IDLE_IN_TX_TIMEOUT_S:-120}
+      DB_STATEMENT_TIMEOUT_S: ${DB_STATEMENT_TIMEOUT_S:-300}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-28800}
@@ -212,7 +223,7 @@ services:
       - ${DATA_ROOT}/updater:/data/updater
       - ${DATA_ROOT}/models/llm:/models/llm:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=4).status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/db', timeout=4).status == 200 else 1)"]
       interval: 15s
       timeout: 6s
       retries: 5

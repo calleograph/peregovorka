@@ -10,6 +10,7 @@ import json
 import ntpath
 import posixpath
 import re
+import time
 from typing import Any, ClassVar, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -1021,8 +1022,19 @@ GROUPS: dict[str, type[_Group]] = {
 
 
 class SettingsService:
-    def __init__(self, secretbox: SecretBox | None):
+    """Настройки читаются почти в каждом запросе: расшифрованные значения групп кэшируются в памяти процесса на `ttl` секунд (по умолчанию 3) и сбрасываются при любой записи
+    в этом процессе. Другие экземпляры backend видят изменение не позже чем через `ttl`. Кэш снимает с PostgreSQL и процессора по 3–5 запросов на каждый HTTP-запрос."""
+
+    def __init__(self, secretbox: SecretBox | None, ttl: float = 3.0):
         self._box = secretbox
+        self._ttl = max(0.0, ttl)
+        self._cache: dict[str, tuple[float, dict]] = {}
+
+    def invalidate(self, group: str | None = None) -> None:
+        if group is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(group, None)
 
     @property
     def box(self) -> SecretBox | None:
@@ -1049,17 +1061,23 @@ class SettingsService:
     async def get(self, db: AsyncSession, group: str) -> _Group:
         """Группа целиком, СЕКРЕТЫ В ОТКРЫТОМ ВИДЕ — только для серверного использования."""
         model = GROUPS[group]
-        rows = await self._rows(db, group)
-        data = {}
-        for name, row in rows.items():
-            if name in model.model_fields:
-                try:
-                    data[name] = self._decode(row)
-                except SettingsError:
-                    if name in model.SECRETS:
-                        data[name] = ""
-                    else:
-                        raise
+        hit = self._cache.get(group)
+        if hit is not None and self._ttl and time.monotonic() - hit[0] < self._ttl:
+            data = dict(hit[1])
+        else:
+            rows = await self._rows(db, group)
+            data = {}
+            for name, row in rows.items():
+                if name in model.model_fields:
+                    try:
+                        data[name] = self._decode(row)
+                    except SettingsError:
+                        if name in model.SECRETS:
+                            data[name] = ""
+                        else:
+                            raise
+            if self._ttl:
+                self._cache[group] = (time.monotonic(), dict(data))
         try:
             return model(**data)
         except ValueError:
@@ -1130,6 +1148,7 @@ class SettingsService:
                 row.value, row.updated_by, row.updated_at = stored, actor, utcnow()
             changed.append(name)
         await db.commit()
+        self.invalidate(group)
         return changed
 
     def _safe_secret(self, row: AppSetting) -> str:

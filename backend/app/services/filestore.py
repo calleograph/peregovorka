@@ -25,6 +25,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..db import release
 from ..models import StorageProfile, utcnow
 from .settings import SettingsError, SettingsService, _StorageTarget, _first_error
 from .storage import LocalStorage, SmbStorage, StorageBackend, StorageError, build_storage
@@ -249,11 +250,13 @@ class FileStore:
         Недоступность/ошибка настройки — `StorageError`."""
         cfg = await self._svc.get(db, group)
         if not getattr(cfg, "enabled", False):
+            await release(db)
             return None
         pid = getattr(cfg, "profile_id", "")
         if pid:
             try:
                 row = await self.row(db, pid)
+                await release(db)                              # дальше работа с хранилищем (сеть/диск): соединение PostgreSQL не удерживается
                 base = await asyncio.to_thread(self.build, row)
             except SettingsError as exc:
                 raise StorageError(f"Хранилище недоступно: {exc}") from None
@@ -270,6 +273,7 @@ class FileStore:
         if pid:
             try:
                 row = await self.row(db, pid)
+                await release(db)
                 base = await asyncio.to_thread(self.build, row)
             except SettingsError as exc:
                 raise StorageError(f"Хранилище вложений недоступно: {exc}") from None
@@ -281,7 +285,9 @@ class FileStore:
         if profile_id is None:
             return LocalStorage(str(Path(self._data_dir) / "chat-files"))
         try:
-            base = await asyncio.to_thread(self.build, await self.row(db, str(profile_id)))
+            row = await self.row(db, str(profile_id))
+            await release(db)
+            base = await asyncio.to_thread(self.build, row)
         except SettingsError as exc:
             raise StorageError(f"Хранилище вложений недоступно: {exc}") from None
         return PrefixedStorage(base, f"{CHAT}/files")

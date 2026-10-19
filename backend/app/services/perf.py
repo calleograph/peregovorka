@@ -311,6 +311,27 @@ def metrics_url(settings) -> str:
     return f"{u.scheme}://{u.hostname}:6789/metrics" if u.hostname else ""
 
 
+def auto_heavy_concurrency() -> int:
+    """Сколько тяжёлых фоновых задач одновременно: половина доступных ядер (с учётом лимита контейнера), но не больше, чем позволяет память (≈1 ГиБ на задачу), от 1 до 8.
+    Обычные запросы пользователей этим пределом не ограничиваются: тяжёлые задачи ждут в очереди (приоритет у пользовательского API)."""
+    import os  # noqa: PLC0415
+
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpus = os.cpu_count() or 2
+    mem_gib = 4.0
+    try:
+        with open("/proc/meminfo", encoding="ascii") as f:
+            for ln in f:
+                if ln.startswith("MemAvailable:"):
+                    mem_gib = int(ln.split()[1]) / 1024 / 1024
+                    break
+    except OSError:
+        pass
+    return max(1, min(8, cpus // 2 or 1, int(mem_gib) or 1))
+
+
 class PerfHub:
     """Состояние сбора показателей приложения: монитор хоста, очередь тяжёлых задач и кэш обращений к LiveKit (не чаще раза в `ttl` секунд)."""
 
@@ -318,7 +339,7 @@ class PerfHub:
         self._s, self._r, self._sm, self._ttl = settings, redis, session_maker, ttl
         self.host = HostMonitor()
         self.rates = RateTracker()
-        self.gate = HeavyGate(self.status, concurrency=max(1, int(getattr(settings, "heavy_concurrency", 2))),
+        self.gate = HeavyGate(self.status, concurrency=int(getattr(settings, "heavy_concurrency", 0)) or auto_heavy_concurrency(),
                               max_defer=float(getattr(settings, "heavy_max_defer_seconds", 1800)))
         self._meetings: tuple[float, int] = (0.0, 0)
         self._status: tuple[float, dict] = (0.0, {"level": "ok", "reasons": [], "active_meetings": 0})

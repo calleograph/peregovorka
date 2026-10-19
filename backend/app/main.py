@@ -29,7 +29,9 @@ from .auth.guests import GuestSessionStore
 from .auth.sessions import SessionStore
 from .auth.throttle import LoginThrottle
 from .config import Settings, get_settings
-from .db import create_engine, create_session_maker
+from .db import create_engine, create_health_engine, create_session_maker
+from .services import db_health
+from .services.leader import Leader
 from .logging_setup import configure_logging, request_id_var
 from .services.api_profiles import ProfileService
 from .services.asr_bridge import AsrBridge
@@ -67,6 +69,17 @@ log = logging.getLogger("app")
 _RID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 
+def make_redis(settings: Settings) -> Redis:
+    """Клиент Redis с ОЖИДАЮЩИМ пулом: при пике запросов команды ждут свободное соединение (до `db_pool_timeout_s`), а не падают с MaxConnectionsError (раньше это были HTTP 500)."""
+    from redis.asyncio import BlockingConnectionPool  # noqa: PLC0415
+
+    from .db import pool_plan  # noqa: PLC0415
+
+    plan = pool_plan(settings, background=False)
+    limit = settings.redis_max_connections or max(200, 3 * (plan["pool_size"] + plan["max_overflow"]))
+    return Redis(connection_pool=BlockingConnectionPool.from_url(settings.effective_redis_url, max_connections=limit, timeout=settings.db_pool_timeout_s, decode_responses=True))
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -79,9 +92,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        engine = create_engine(settings)
+        engine = create_engine(settings)                              # запросы пользователей
+        sqlite = str(settings.sqlalchemy_url).startswith("sqlite")
+        bg_engine = engine if sqlite else create_engine(settings, background=True)       # фоновые задачи (LLM, экспорт, карты, рассылка): свой пул, чужие запросы не вытесняет
+        health_engine = create_health_engine(settings)               # крошечный пул проверок готовности и статистики
+        db_stats = db_health.DbStats()
+        db_health.install(engine, "api", db_stats, settings.db_hold_warn_s)
+        if bg_engine is not engine:
+            db_health.install(bg_engine, "background", db_stats, settings.db_hold_warn_s)
         session_maker = create_session_maker(engine)
-        redis = redis_factory(settings) if redis_factory else Redis.from_url(settings.effective_redis_url, decode_responses=True)
+        bg_sm = create_session_maker(bg_engine)
+        redis = redis_factory(settings) if redis_factory else make_redis(settings)
         bridge = AsrBridge(redis)
         meetings_svc = MeetingService(settings, redis, bridge)
         sessions = SessionStore(redis, settings)
@@ -91,12 +112,12 @@ def create_app(
             log.error("APP_MASTER_KEY некорректен — секретные настройки недоступны")
             box = None
         settings_svc = SettingsService(box)
-        journal = Journal(session_maker, settings_svc, settings.data_dir)
+        journal = Journal(bg_sm, settings_svc, settings.data_dir)
         profiles = ProfileService(settings_svc)
         ca = CaBundleService(settings.data_dir, settings.ldap_ca_file)
         ldap_service = LdapService(settings_svc, ca)
         directory = directory_factory(settings) if directory_factory else ProfileDirectory(settings, ldap_service)
-        protocols = ProtocolService(settings, session_maker, settings_svc, transports=getattr(app.state, "test_transports", None))
+        protocols = ProtocolService(settings, bg_sm, settings_svc, transports=getattr(app.state, "test_transports", None))
         meetings_svc.settings_svc = settings_svc
         protocols.journal = journal
         protocols.profiles = profiles
@@ -108,6 +129,9 @@ def create_app(
         app.state.settings = settings
         app.state.engine = engine
         app.state.session_maker = session_maker
+        app.state.bg_session_maker = bg_sm
+        app.state.db_stats = db_stats
+        app.state.health_engine = health_engine
         app.state.redis = redis
         app.state.event_hub = EventHub(redis)             # единый подписчик Redis для всех WebSocket (services/events.py)
         app.state.event_hub.start()
@@ -124,14 +148,14 @@ def create_app(
         protocols.gate = app.state.perf.gate
         app.state.avatars = AvatarStore(settings.data_dir)
         app.state.branding = BrandingStore(settings.data_dir)
-        app.state.enrichment = ProfileEnrichment(session_maker, settings_svc, app.state.avatars, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
+        app.state.enrichment = ProfileEnrichment(bg_sm, settings_svc, app.state.avatars, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
         app.state.local_llm = protocols.local_llm
-        app.state.api_log = RequestLogWriter(session_maker, settings_svc)
+        app.state.api_log = RequestLogWriter(bg_sm, settings_svc)
         app.state.api_log.start()
         # публичный API, этап 2: события (webhooks) и фоновые задачи; воркеры стартуют ниже вместе с остальными
-        webhooks = WebhookService(session_maker, settings_svc, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
+        webhooks = WebhookService(bg_sm, settings_svc, journal, transports=getattr(app.state, "test_transports", None), ca_file=settings.ldap_ca_file or None)
         app.state.webhooks = webhooks
-        app.state.jobs = JobRunner(session_maker, settings_svc, protocols, webhooks, journal)
+        app.state.jobs = JobRunner(bg_sm, settings_svc, protocols, webhooks, journal)
 
         def _meeting_event(event: str, m) -> None:
             r = m.room
@@ -150,7 +174,7 @@ def create_app(
         protocols.on_document = _document_event
         # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
         app.state.auto_backup = AutoBackup(app)
-        app.state.autoupdate = AutoUpdater(session_maker, settings_svc, redis, settings.data_dir, settings.app_version)
+        app.state.autoupdate = AutoUpdater(bg_sm, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
         app.state.outlook_sync = SyncRunner(settings_svc, journal, getattr(app.state, "test_transports", {}).get("outlook_sync"))
         app.state.sip_gateway = SipGateway(settings)
@@ -164,19 +188,19 @@ def create_app(
         meetings_svc.on_ended_extra = lambda mid: asyncio.get_running_loop().create_task(app.state.sip_routing.on_meeting_ended(mid))
         app.state.profiles = profiles
         mail = MailService(settings_svc, ca)
-        delivery = DeliveryService(session_maker, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
+        delivery = DeliveryService(bg_sm, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
         protocols.after_finalize = delivery.run_auto
         async def _sync_audit(db, *, actor, action, target_id, details):
             await write_audit(db, actor_user_id=None, actor_name=actor, action=action, target_type="storage", target_id=target_id, details=details)
 
-        reconciler = Reconciler(session_maker, protocols.files, settings.recordings_path, journal, _sync_audit)
+        reconciler = Reconciler(bg_sm, protocols.files, settings.recordings_path, journal, _sync_audit)
         app.state.reconciler = reconciler
         from .services.storage_stats import StorageStats  # noqa: PLC0415
         from .services.transfer import TransferService  # noqa: PLC0415
-        app.state.storage_stats = StorageStats(session_maker, protocols, redis)
-        app.state.transfers = TransferService(session_maker, protocols, journal, _sync_audit)
+        app.state.storage_stats = StorageStats(bg_sm, protocols, redis)
+        app.state.transfers = TransferService(bg_sm, protocols, journal, _sync_audit)
         from .services.waveforms import WaveformService  # noqa: PLC0415
-        protocols.waveforms = app.state.waveforms = WaveformService(session_maker, protocols)
+        protocols.waveforms = app.state.waveforms = WaveformService(bg_sm, protocols)
         app.state.mail = mail
         app.state.delivery = delivery
         app.state.ca = ca
@@ -229,20 +253,28 @@ def create_app(
 
         _captcha.set_captcha_key(settings.app_master_key)
         if start_workers:
-            tasks.append(asyncio.create_task(legacy.auto_import(session_maker, redis, directory), name="legacy-ldap-import"))
-            tasks.append(asyncio.create_task(run_consumer(redis, session_maker, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))
-            tasks.append(asyncio.create_task(run_reaper(session_maker, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync), name="meeting-reaper"))
-            tasks.append(asyncio.create_task(run_autoupdate(app.state.autoupdate), name="auto-update"))
-            tasks.append(asyncio.create_task(run_auto_backup(app.state.auto_backup), name="auto-backup"))
-            tasks.append(asyncio.create_task(run_retention(session_maker, protocols), name="retention"))
-            tasks.append(asyncio.create_task(run_asr_sync(session_maker, settings_svc, redis), name="asr-model-sync"))
-            tasks.append(asyncio.create_task(run_journal_retention(journal), name="journal-retention"))
-            tasks.append(asyncio.create_task(run_mail_queue(session_maker, delivery), name="mail-queue"))
-            webhooks.start()
-            app.state.jobs.start()
-            tasks.append(asyncio.create_task(run_storage_sync(session_maker, settings_svc, reconciler, redis), name="storage-sync"))
-            tasks.append(asyncio.create_task(app.state.storage_stats.run(), name="storage-stats"))
-            tasks.append(asyncio.create_task(app.state.transfers.run(), name="storage-transfer"))
+            tasks.append(asyncio.create_task(run_consumer(redis, bg_sm, block_ms=settings.segment_consumer_block_ms), name="segment-consumer"))      # группа потребителей Redis: безопасно на каждом экземпляре
+            # Одиночные фоновые задачи выполняет только «ведущий» экземпляр (аренда в Redis): при нескольких экземплярах backend нет дублей писем, заданий и синхронизаций.
+            leader = Leader(redis, settings.leader_lease_s)
+            app.state.leader = leader
+
+            def _task(name, make):
+                return lambda: asyncio.create_task(make(), name=name)
+
+            leader.register("legacy-ldap-import", _task("legacy-ldap-import", lambda: legacy.auto_import(bg_sm, redis, directory)))
+            leader.register("meeting-reaper", _task("meeting-reaper", lambda: run_reaper(bg_sm, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync)))
+            leader.register("auto-update", _task("auto-update", lambda: run_autoupdate(app.state.autoupdate)))
+            leader.register("auto-backup", _task("auto-backup", lambda: run_auto_backup(app.state.auto_backup)))
+            leader.register("retention", _task("retention", lambda: run_retention(bg_sm, protocols)))
+            leader.register("asr-model-sync", _task("asr-model-sync", lambda: run_asr_sync(bg_sm, settings_svc, redis)))
+            leader.register("journal-retention", _task("journal-retention", lambda: run_journal_retention(journal)))
+            leader.register("mail-queue", _task("mail-queue", lambda: run_mail_queue(bg_sm, delivery)))
+            leader.register("webhooks", lambda: webhooks.start(), lambda: webhooks.stop())
+            leader.register("jobs", lambda: app.state.jobs.start(), lambda: app.state.jobs.stop())
+            leader.register("storage-sync", _task("storage-sync", lambda: run_storage_sync(bg_sm, settings_svc, reconciler, redis)))
+            leader.register("storage-stats", _task("storage-stats", lambda: app.state.storage_stats.run()))
+            leader.register("storage-transfer", _task("storage-transfer", lambda: app.state.transfers.run()))
+            tasks.append(asyncio.create_task(leader.run(), name="background-leader"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
         journal.emit("system", "app_started", message=f"Версия {settings.app_version}, commit {settings.app_git_commit}")
         try:
@@ -262,6 +294,10 @@ def create_app(
             with contextlib.suppress(Exception):
                 await redis.aclose()
             await engine.dispose()
+            if bg_engine is not engine:
+                await bg_engine.dispose()
+            if health_engine is not None:
+                await health_engine.dispose()
 
     app = FastAPI(
         title="Peregovorka API", version=settings.app_version, lifespan=lifespan,
@@ -278,6 +314,7 @@ def create_app(
         ctx_token = audit_ctx.set({"ip": client_ip(request), "user_agent": (request.headers.get("user-agent") or "")[:300] or None,
                                    "session": session_fingerprint(request.cookies.get(settings.cookie_name))})
         started = time.perf_counter()
+        db_ctx = db_health.db_context.set(f"{request.method} {request.url.path}")
         try:
             response = await call_next(request)
         except Exception:
@@ -286,6 +323,7 @@ def create_app(
         finally:
             request_id_var.reset(token)
             audit_ctx.reset(ctx_token)
+            db_health.db_context.reset(db_ctx)
         response.headers["X-Request-ID"] = rid
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -295,6 +333,27 @@ def create_app(
             log.info("http", extra={"method": request.method, "path": request.url.path, "status": response.status_code,
                                     "ms": int((time.perf_counter() - started) * 1000), "request_id_echo": rid})
         return response
+
+    from fastapi.responses import JSONResponse as _JSON
+    from sqlalchemy import exc as sa_exc
+
+    @app.exception_handler(sa_exc.TimeoutError)
+    async def pool_exhausted(request: Request, exc: Exception):
+        stats = getattr(request.app.state, "db_stats", None)
+        if stats is not None:
+            stats.pool_timeouts += 1
+        log.error("Нет свободных соединений с базой: запрос отклонён 503", extra={"path": request.url.path, "method": request.method})
+        return _JSON({"detail": "Сервер перегружен: нет свободных соединений с базой данных. Повторите через несколько секунд."}, status_code=503, headers={"Retry-After": "5"})
+
+    @app.exception_handler(sa_exc.DBAPIError)
+    async def db_unavailable(request: Request, exc: sa_exc.DBAPIError):
+        if not (exc.connection_invalidated or isinstance(exc, (sa_exc.OperationalError, sa_exc.InterfaceError))):
+            raise exc
+        stats = getattr(request.app.state, "db_stats", None)
+        if stats is not None:
+            stats.db_unavailable += 1
+        log.error("База данных недоступна или соединение потеряно: запрос отклонён 503", extra={"path": request.url.path, "error": type(exc.orig).__name__ if exc.orig else type(exc).__name__})
+        return _JSON({"detail": "База данных временно недоступна. Повторите через несколько секунд."}, status_code=503, headers={"Retry-After": "5"})
 
     prefix = "/api/v1"
     for r in (site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):

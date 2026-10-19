@@ -151,6 +151,43 @@ jobs:
       - run: pip install -r backend/requirements.txt -c backend/constraints.txt
       - run: bash tests/ps/run.sh python3
 
+  perf-smoke:
+    # Регрессионная проверка производительности и соединений PostgreSQL на НАСТОЯЩИХ PostgreSQL и Redis: смешанная нагрузка + одновременное формирование протоколов и карт
+    # (модель отвечает с задержкой). Падает при росте доли 5xx или при «idle in transaction» дольше порога — то есть если код снова удержит соединение во время долгой операции.
+    # Полные испытания на 100/500/1000/2000 пользователей — tests/perf/run_matrix.sh (docs/PERFORMANCE.md).
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: pw, POSTGRES_DB: pg }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libkrb5-dev gcc
+      - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt psutil aiohttp
+      - name: Сервер и нагрузка
+        env:
+          PG_URL: postgresql+asyncpg://postgres:pw@127.0.0.1:5432/pg
+          REDIS_URL: redis://127.0.0.1:6379/0
+          USERS: "160"
+          PORT: "18080"
+          LLM_DELAY: "3"
+        run: |
+          python tests/perf/devserver_perf.py > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -fs localhost:18080/api/v1/health/db >/dev/null 2>&1 && break; sleep 1; done
+          python tests/perf/race_join.py http://127.0.0.1:18080 40
+          python tests/perf/loadtest.py --users 60 --duration 25 --heavy 6 --pg postgresql://postgres:pw@127.0.0.1:5432/pg --max-5xx-pct 0.5 --max-idle-tx-s 5 --out perf.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: perf-smoke, path: "perf.json\nserver.log" }
+
   clean-os:
     # «С чистой ОС»: в чистом контейнере Ubuntu/Debian нет ни Docker, ни nginx, ни git. Автоматическая установка зависимостей (манифест scripts/lib/prereqlib.sh)
     # должна поставить Docker Engine + Compose + Buildx, nginx, git, curl, openssl и утилиты, а повторный запуск — ничего не ломать.

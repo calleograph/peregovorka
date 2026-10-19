@@ -1055,6 +1055,9 @@ export interface PerfData {
              in_kbps: number | null; out_kbps: number | null; dropped_pps: number | null; metrics: boolean; error?: string };
   asr: { ok: boolean; model_ready?: boolean; pipeline_ready?: boolean; pipeline_error?: string | null; queue_depth?: number | null; active_meetings?: number | null; avg_infer_ms?: number | null; avg_queue_ms?: number | null; rtf?: number | null; dropped?: number | null;
          errors?: number | null; torch_threads?: number | null; torch_interop_threads?: number | null; recorder_queue?: number | null; recorder_dropped?: number | null };
+  db?: { pools: Record<string, { size?: number; max_overflow?: number; checked_out?: number; capacity?: number; saturation?: number }>; pool_timeouts: number; db_unavailable: number; long_holds: number; longest_hold_s: number;
+         last_long_hold: { pool: string; held_s: number; who: string } | null; leader?: { is_leader: boolean; instance: string | null };
+         postgres: { ok: boolean; connections?: number; max_connections?: number; active?: number; idle?: number; idle_in_transaction?: number; idle_in_transaction_oldest_s?: number; error?: string; note?: string } };
   jobs: { gate: { concurrency: number; running: number; waiting: number; started: number; deferred: number; deferred_seconds: number; forced: number };
           protocols_pending: number; maps_pending: number; recordings_processing: number; storage_transfers_active: number };
   events: { channels: number; subscribers: number; messages: number; delivered: number; slow_dropped: number; queued: number };

@@ -69,8 +69,12 @@ async def performance(request: Request, su: SessionUser = Depends(require_admin)
     jobs = {"gate": hub.gate.snapshot(), "protocols_pending": queued_protocols, "maps_pending": maps_running, "recordings_processing": mixes,
             "storage_transfers_active": transfers}
 
+    from ..services import db_health  # noqa: PLC0415
+
+    dbinfo = await db_health.snapshot(app.state.db_stats, getattr(app.state, "health_engine", None))
+    dbinfo["leader"] = {"is_leader": bool(getattr(getattr(app.state, "leader", None), "is_leader", True)), "instance": getattr(getattr(app.state, "leader", None), "id", None)}
     return {
-        "ts": time.time(), "assessment": assessment, "host": host.as_dict(), "rooms": rooms, "livekit": lk, "asr": asr, "jobs": jobs,
+        "db": dbinfo, "ts": time.time(), "assessment": assessment, "host": host.as_dict(), "rooms": rooms, "livekit": lk, "asr": asr, "jobs": jobs,
         "events": app.state.event_hub.snapshot(), "webrtc": webrtc, "kernel": diagnostics.kernel_report(),
         "containers": {"backend": host.as_dict()["container"],
                        "note": "Ресурсы других контейнеров без доступа к Docker из приложения не видны (приложению не выдаётся сокет Docker): смотрите «docker stats» на сервере."},

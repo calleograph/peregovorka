@@ -30,6 +30,7 @@ from .llm_choice import parse_once, resolve_llm
 from .extraction import local_pipeline, structured_pipeline
 from .job_budget import MAX_S, Budget, JobTimeout
 from .local_llm import LocalLlm, LocalModel
+from ..db import release
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
 from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
@@ -625,6 +626,7 @@ class ProtocolService:
             rec = await db.get(Protocol, protocol_id)
             if rec is None:
                 return
+            await release(db)                              # очередь «heavy» может ждать минутами: за это время соединение не держим
             started = datetime.now(timezone.utc)
             once = (rec.meta or {}).get("llm_once")
             info: dict = {"requested": rec.created_at, "started": started}      # времена этапов и сведения о модели (заполняет _generate)
@@ -862,6 +864,7 @@ class ProtocolService:
         an_res = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
         # локальная модель не отправляет данные наружу: «наследуемое» обезличивание для неё не применяется (явное «включено» для комнаты — остаётся)
         do_anonymize = mode == "on" or (mode == "inherit" and not is_local and an_res is not None and bool(an_res.settings.enabled))
+        await release(db)                                  # дальше — сетевые обращения (обезличивание, модель): транзакция PostgreSQL не должна жить во время них
         if do_anonymize:
             anon = AnonymizerClient(an_res.settings, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type, union-attr]
             clean = await anon.anonymize(text, "protocol")
@@ -876,6 +879,7 @@ class ProtocolService:
         warnings: list[str] = []
         if lm is not None and lm.light and len(clean.text) > lm.warn_input_chars:
             warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
+        await release(db)
         info["llm_started"] = datetime.now(timezone.utc)
         try:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
@@ -914,10 +918,12 @@ class ProtocolService:
         prev = (await db.execute(select(Protocol).where(Protocol.meeting_id == rec.meeting_id, Protocol.kind == "transcript",
                                                          Protocol.status == "ready").order_by(Protocol.created_at.desc()))).scalars().first()
         meeting = await db.get(Meeting, rec.meeting_id)
+        await release(db)                                  # запись в файловое хранилище (сеть, SMB, WebDAV) идёт без транзакции PostgreSQL
         if prev and prev.meta and prev.meta.get("dir"):
             dir_rel = prev.meta["dir"]
         elif meeting:
             tz = await self._tz(db)
+            await release(db)
             dir_rel = await unique_meeting_dir(storage, meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz)))
         else:
             return

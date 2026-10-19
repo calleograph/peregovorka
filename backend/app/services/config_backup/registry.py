@@ -174,7 +174,7 @@ FILES: dict[str, str] = {
 ENV_REASON_DEFAULT = "параметр установки (.env): задаётся при развёртывании сервера и не переносится"
 ENV: dict[str, str] = {
     "app_version": "версия определяется собранным образом", "app_git_commit": "версия определяется собранным образом", "app_built_at": "версия определяется собранным образом",
-    "app_public_url": "внешний адрес этой установки", "log_level": ENV_REASON_DEFAULT, "log_format": ENV_REASON_DEFAULT, "docs_enabled": ENV_REASON_DEFAULT, "tls_local_configured": "топология сети этой установки (есть ли собственный TLS-сертификат)", "outlook_check_ca_file": "файл корня организации для проверок с сервера; относится к этой установке",
+    "app_public_url": "внешний адрес этой установки", "log_level": ENV_REASON_DEFAULT, "log_format": ENV_REASON_DEFAULT, "docs_enabled": ENV_REASON_DEFAULT, "db_pool_size": ENV_REASON_DEFAULT, "db_max_overflow": ENV_REASON_DEFAULT, "db_bg_pool_size": ENV_REASON_DEFAULT, "db_bg_max_overflow": ENV_REASON_DEFAULT, "db_pool_timeout_s": ENV_REASON_DEFAULT, "db_pool_recycle_s": ENV_REASON_DEFAULT, "db_idle_in_tx_timeout_s": ENV_REASON_DEFAULT, "db_statement_timeout_s": ENV_REASON_DEFAULT, "db_hold_warn_s": ENV_REASON_DEFAULT, "leader_lease_s": ENV_REASON_DEFAULT, "redis_max_connections": ENV_REASON_DEFAULT, "tls_local_configured": "топология сети этой установки (есть ли собственный TLS-сертификат)", "outlook_check_ca_file": "файл корня организации для проверок с сервера; относится к этой установке",
     "data_dir": "каталог данных этой установки", "meeting_mix_enabled": ENV_REASON_DEFAULT, "trusted_proxy_hops": "топология сети этой установки", "trusted_proxy_cidrs": "топология сети этой установки", "allowed_origins": "адреса внешнего доступа этой установки",
     "database_url": "подключение к базе этой установки", "postgres_host": "подключение к базе этой установки", "postgres_port": "подключение к базе этой установки", "postgres_db": "подключение к базе этой установки",
     "postgres_user": "подключение к базе этой установки", "postgres_password": "секрет этой установки (не копируется)",
@@ -237,6 +237,7 @@ VOLUMES: dict[str, str] = {
 # --------------------------------------------------------------------------------- файл окружения .env (все ключи .env.example)
 # Ключи .env описывают конкретный сервер и не переносятся, но влияют на работу: поэтому они сгруппированы по причинам, а отличия исходного и нового сервера показываются в предпросмотре импорта.
 ENV_FILE_PREFIX: dict[str, str] = {
+    "BACKEND_": "число процессов backend этой установки (масштабирование, docs/DB_AND_SCALING.md)",
     "COMPOSE_": "параметры развёртывания (compose)", "INSTALL_": "параметры установки", "APP_": "адреса и ключи этой установки", "DATA_": "каталог данных этой установки", "IMAGE_": "версия образов этой установки",
     "LOG_": "журналирование этой установки", "WEB_": "сетевые порты этой установки", "LIVEKIT_": "параметры LiveKit этой установки (ключи, адреса, порты)", "POSTGRES_": "подключение к базе этой установки",
     "REDIS_": "подключение к Redis этой установки", "DOCS_": "служебная документация API этой установки", "INTERNAL_": "служебный секрет этой установки", "LDAP_": "прежние параметры каталога: при первом запуске становятся подключением в базе, которое переносится",

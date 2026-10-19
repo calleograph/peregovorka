@@ -128,6 +128,25 @@ export default function PerformanceAdmin() {
           </tbody></table>
         </section>
 
+        {d.db && (
+          <section className="card">
+            <h3>База данных (PostgreSQL)</h3>
+            {(!d.db.postgres.ok || (d.db.postgres.idle_in_transaction_oldest_s ?? 0) > 30 || d.db.pool_timeouts > 0 || Object.values(d.db.pools).some((p) => (p.saturation ?? 0) >= 0.9)) && (
+              <div className="alert warn small" role="status">
+                {!d.db.postgres.ok ? "PostgreSQL не отвечает на проверку." : d.db.pool_timeouts > 0 ? `Запросов отклонено из-за нехватки соединений: ${d.db.pool_timeouts}. Увеличьте пул (DB_POOL_SIZE) или число экземпляров backend.` :
+                  (d.db.postgres.idle_in_transaction_oldest_s ?? 0) > 30 ? `Есть транзакции, забытые открытыми дольше 30 с (самая долгая — ${d.db.postgres.idle_in_transaction_oldest_s} с): см. журнал, запись «удерживалось слишком долго».` : "Пул соединений заполнен более чем на 90 %."}
+              </div>)}
+            <table className="table compact"><tbody>
+              {Object.entries(d.db.pools).map(([name, p]) => <Row key={name} k={`Пул «${name === "api" ? "запросы пользователей" : "фоновые задачи"}»: занято / ёмкость`} v={p.capacity ? `${p.checked_out} / ${p.capacity} (${Math.round((p.saturation ?? 0) * 100)} %)` : NO_DATA} hint="Ёмкость = постоянные + временные соединения; когда пул занят полностью, запросы ждут и затем получают 503" />)}
+              <Row k="Соединений в PostgreSQL / предел" v={d.db.postgres.connections == null ? NO_DATA : `${d.db.postgres.connections} / ${d.db.postgres.max_connections}`} />
+              <Row k="Активных / простаивающих" v={d.db.postgres.connections == null ? NO_DATA : `${d.db.postgres.active} / ${d.db.postgres.idle}`} />
+              <Row k="В транзакции без работы (idle in transaction)" v={d.db.postgres.idle_in_transaction == null ? NO_DATA : `${d.db.postgres.idle_in_transaction} (самая долгая ${d.db.postgres.idle_in_transaction_oldest_s} с)`} hint="Должно быть 0 или кратковременно; долгие — признак кода, удерживающего соединение" />
+              <Row k="Отказов 503 из-за пула / из-за недоступности БД" v={`${d.db.pool_timeouts} / ${d.db.db_unavailable}`} />
+              <Row k="Долгие удержания соединения (счётчик / максимум)" v={`${d.db.long_holds} / ${d.db.longest_hold_s} с`} hint={d.db.last_long_hold ? `Последнее: ${d.db.last_long_hold.who}, ${d.db.last_long_hold.held_s} с` : undefined} />
+              {d.db.leader && <Row k="Фоновые задачи на этом экземпляре" v={d.db.leader.is_leader ? "выполняет (ведущий)" : "не выполняет (ведущий — другой экземпляр)"} />}
+            </tbody></table>
+          </section>)}
+
         <section className="card">
           <h3>Фоновые задачи</h3>
           <table className="table compact"><tbody>
