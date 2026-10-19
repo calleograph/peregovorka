@@ -40,6 +40,10 @@ def test_center_manifest_package_work_without_login_and_contain_no_secrets(tmp_p
         assert "Install-OutlookAddin.ps1" in z.namelist() and "Peregovorka-Outlook.xml" in z.namelist()
         for secret in ("S3cret!Q", "P@ssEws1", "tid-1", "cid-1"):
             assert secret not in blob and secret not in c.get("/api/v1/outlook/center").text
+        sc = c.get("/api/v1/outlook/scripts/Install-OutlookAddin.ps1")
+        assert sc.status_code == 200 and sc.content.startswith(b"\xef\xbb\xbf") and b"New-App" in sc.content and c.get("/api/v1/outlook/scripts/evil.ps1").status_code == 404
+        for secret in ("S3cret!Q", "P@ssEws1"):
+            assert secret.encode() not in sc.content
         info = c.get("/api/v1/outlook/center").json()
         assert info["enabled"] and info["manifest_url"] == "https://meet.example.org/api/v1/outlook/manifest.xml" and info["compat"]["environments"]
         assert "internal" not in c.get("/api/v1/outlook/center").text.lower().replace("внутренн", "")

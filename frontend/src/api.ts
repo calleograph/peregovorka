@@ -309,8 +309,15 @@ export interface LdapProfile {
   use_for_users: boolean; use_for_admins: boolean; position: number; uri: string;
 }
 export interface DiagStage { stage: string; ok: boolean | null; message: string; ms?: number }
-export interface OutlookTls { host: string; port: number; state: string; issuer?: string | null; subject?: string | null; not_after?: string | null; days_left?: number | null; mode: "proxy" | "direct"; client_check_url: string }
-export interface OutlookCheck { key: string; title: string; ok: boolean | null; message: string; tls?: OutlookTls }
+export interface OutlookTls { host: string; port: number; state: string; issuer?: string | null; subject?: string | null; not_after?: string | null; days_left?: number | null; mode: string; client_check_url: string }
+export interface OutlookCenterInfo {
+  enabled: boolean; reason?: string; base: string; version: string; manifest_url: string; package_url: string; addin_id: string; mail_kind: string;
+  compat: { basic_functions: string[]; advanced_functions: string[]; notes: string[]; environments: { id: string; title: string; mailbox_api: string; basic: boolean | null; send_tracking: boolean; server_sync: string[]; verified: boolean; note: string }[] };
+  tls: { host: string; port: number; state: string; ok: boolean | null; issuer?: string | null; subject?: string | null; not_after?: string | null; days_left?: number | null; message: string; fix?: { where: string; text: string } | null;
+         chain?: { role: string; subject: string; issuer: string; not_after: string; sha256: string }[] } | null;
+  downloads: { chain: boolean; fullchain: boolean };
+}
+export interface OutlookCheck { key: string; title: string; ok: boolean | null; message: string; tls?: OutlookTls & { chain_complete?: boolean | null; has_fullchain?: boolean; fix?: { where: string; text: string } | null } }
 export interface OutlookConference {
   id: string; name: string; organizer: string | null; organizer_email: string | null; start: string; end: string; recurring: boolean; state: string; url: string;
   sync_state: string | null; sync_error: string | null; synced_at: string | null; tracked: boolean; created_at: string;
@@ -741,6 +748,7 @@ export const api = {
   meetingAvatars: (id: string) => request<Record<string, string>>("GET", `/meetings/${id}/avatars`),
   participantCard: (id: string, identity: string) => request<ParticipantCard>("GET", `/meetings/${id}/participants/${encodeURIComponent(identity)}/card`),
   profile: () => request<Profile>("GET", "/profile"),
+  outlookCenter: () => request<OutlookCenterInfo>("GET", "/outlook/center"),
   outlookPublic: (code: string) => request<OutlookPublic>("GET", `/outlook/public/${encodeURIComponent(code)}`),
   crypto: {
     status: () => request<CryptoStatus>("GET", "/admin/crypto"),

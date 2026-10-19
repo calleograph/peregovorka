@@ -77,7 +77,7 @@ async def status(request: Request, su: SessionUser = Depends(require_admin), db:
         if transport:
             tls_res = {"state": "ok", "ok": True, "message": "проверка пропущена в тесте", "host": u.hostname, "port": u.port or 443}
         else:
-            tls_res = await od.tls_snapshot(request.app, base, fetch_aia=True, force=True, extra_ca=st.settings.outlook_check_ca_file)
+            tls_res = await od.tls_snapshot(request.app, base, fetch_aia=True, force=True, extra_ca=st.settings.check_ca)
         reach = tls_res["state"] == "unreachable"
         add("tls", "Внешняя проверка с сервера недоступна" if reach else "Сертификат HTTPS", tls_res["ok"], tls_res["message"])
         checks[-1]["tls"] = {**od.public_tls_view(tls_res), "mode": topo["mode"], "client_check_url": f"{base}/api/v1/outlook/config",
@@ -88,7 +88,7 @@ async def status(request: Request, su: SessionUser = Depends(require_admin), db:
         web = await od.probe_json("http://web:8080/api/v1/outlook/config", transport=transport, timeout=3.0)
         if web["code"] not in ("dns", "skip", "network", "timeout", "refused"):
             add("api_web", "API через web-контейнер", web["ok"], "Маршрут web → backend внутри Docker: " + web["message"])
-        verify = tls_chain.system_context(st.settings.outlook_check_ca_file or None)
+        verify = tls_chain.system_context(st.settings.check_ca or None)
         pub = await od.probe_json(f"{base}/api/v1/outlook/config", transport=transport, verify=verify)
         if pub["ok"] is not None or pub["code"] == "forbidden":
             add("api", "API надстройки (публичный адрес)", pub["ok"], pub["message"])

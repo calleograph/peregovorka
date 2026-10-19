@@ -174,7 +174,7 @@ FILES: dict[str, str] = {
 ENV_REASON_DEFAULT = "параметр установки (.env): задаётся при развёртывании сервера и не переносится"
 ENV: dict[str, str] = {
     "app_version": "версия определяется собранным образом", "app_git_commit": "версия определяется собранным образом", "app_built_at": "версия определяется собранным образом",
-    "app_public_url": "внешний адрес этой установки", "log_level": ENV_REASON_DEFAULT, "log_format": ENV_REASON_DEFAULT, "docs_enabled": ENV_REASON_DEFAULT,
+    "app_public_url": "внешний адрес этой установки", "log_level": ENV_REASON_DEFAULT, "log_format": ENV_REASON_DEFAULT, "docs_enabled": ENV_REASON_DEFAULT, "tls_local_configured": "топология сети этой установки (есть ли собственный TLS-сертификат)", "outlook_check_ca_file": "файл корня организации для проверок с сервера; относится к этой установке",
     "data_dir": "каталог данных этой установки", "meeting_mix_enabled": ENV_REASON_DEFAULT, "trusted_proxy_hops": "топология сети этой установки", "trusted_proxy_cidrs": "топология сети этой установки", "allowed_origins": "адреса внешнего доступа этой установки",
     "database_url": "подключение к базе этой установки", "postgres_host": "подключение к базе этой установки", "postgres_port": "подключение к базе этой установки", "postgres_db": "подключение к базе этой установки",
     "postgres_user": "подключение к базе этой установки", "postgres_password": "секрет этой установки (не копируется)",

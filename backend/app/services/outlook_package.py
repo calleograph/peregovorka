@@ -17,85 +17,160 @@ BOM = "﻿"
 
 INSTALL_PS1 = r"""<#
 .SYNOPSIS
-  Установка надстройки Peregovorka для Outlook в локальном Exchange.
+  Установка (и обновление) надстройки Peregovorka для Outlook в Exchange Server 2016/2019/Subscription Edition и Exchange Online.
 .DESCRIPTION
-  Запускайте в Exchange Management Shell под учётной записью с ролью «Org Management» (управление приложениями организации).
-  Сценарий читает манифест рядом с собой и добавляет его как приложение организации. Повторный запуск без -Replace ничего не меняет.
-  -WhatIf показывает действие без выполнения.
+  Запускайте в Exchange Management Shell (Exchange Online — после Connect-ExchangeOnline) под учётной записью с ролью «Org Marketplace Apps» или «Org Management».
+  Сценарий идемпотентен: если надстройка с этим идентификатором уже установлена в той же версии, ничего не меняется и дубликат не создаётся.
+  Все действия пишутся в журнал (-LogPath). Адреса и идентификаторы берутся из манифеста; в сценарии ничего не зашито.
+  Манифест — файл рядом со сценарием либо прямая ссылка (-ManifestUrl): она должна открываться по HTTPS БЕЗ перенаправлений (Exchange 2019 за перенаправлениями не идёт).
 .EXAMPLE
   .\Install-OutlookAddin.ps1 -WhatIf
 .EXAMPLE
   .\Install-OutlookAddin.ps1 -ProvidedTo SpecificUsers -UserList 'ivanov@example.org','petrova@example.org'
 .EXAMPLE
-  .\Install-OutlookAddin.ps1 -Replace      # обновление: старая запись удаляется, добавляется новая с тем же идентификатором
+  .\Install-OutlookAddin.ps1 -ManifestUrl 'https://meet.example.org/api/v1/outlook/manifest.xml'
+.EXAMPLE
+  .\Install-OutlookAddin.ps1 -Replace      # обновление: прежняя запись заменяется новой с тем же идентификатором
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$ManifestPath = (Join-Path $PSScriptRoot 'Peregovorka-Outlook.xml'),
+    [string]$ManifestUrl,
     [ValidateSet('Everyone', 'SpecificUsers')] [string]$ProvidedTo = 'Everyone',
     [string[]]$UserList = @(),
     [ValidateSet('Enabled', 'Disabled', 'AlwaysEnabled')] [string]$DefaultState = 'Enabled',
-    [switch]$Replace
+    [switch]$Replace,
+    [string]$LogPath = (Join-Path (Get-Location) ('Peregovorka-Outlook-install-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date)))
 )
 $ErrorActionPreference = 'Stop'
-
-if (-not (Get-Command New-App -ErrorAction SilentlyContinue)) {
-    throw 'Команда New-App не найдена. Запустите сценарий в Exchange Management Shell (а не в обычном PowerShell).'
+function Write-Log([string]$Text, [string]$Level = 'INFO') {
+    $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] {2}' -f (Get-Date), $Level, $Text
+    Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+    if ($Level -eq 'ERROR') { Write-Host $Text -ForegroundColor Red } else { Write-Host $Text }
 }
-if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "Файл манифеста не найден: $ManifestPath" }
-if ($ProvidedTo -eq 'SpecificUsers' -and $UserList.Count -eq 0) { throw 'Для SpecificUsers укажите -UserList.' }
-
-[xml]$manifest = Get-Content -Raw -LiteralPath $ManifestPath
-$appId = [string]$manifest.OfficeApp.Id
-$name = [string]$manifest.OfficeApp.DisplayName.DefaultValue
-if (-not $appId) { throw 'В манифесте нет идентификатора надстройки (OfficeApp/Id).' }
-Write-Host "Надстройка: $name, идентификатор $appId, версия $($manifest.OfficeApp.Version)"
-
-$existing = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $appId })
-if ($existing.Count -gt 0) {
-    if (-not $Replace) {
-        Write-Host 'Надстройка уже установлена. Для обновления запустите сценарий с ключом -Replace.'
-        return
+try {
+    Write-Log "Журнал: $LogPath"
+    foreach ($cmd in 'New-App', 'Get-App', 'Remove-App') {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "Команда $cmd не найдена. Запустите сценарий в Exchange Management Shell (для Exchange Online — после Connect-ExchangeOnline)." }
     }
-    if ($PSCmdlet.ShouldProcess($appId, 'Удалить прежнюю запись приложения организации')) {
-        Remove-App -Identity $appId -OrganizationApp -Confirm:$false
+    try { $null = Get-App -OrganizationApp -ErrorAction Stop }
+    catch { throw "Нет прав на управление приложениями организации: нужна роль «Org Marketplace Apps» или «Org Management». Подробности: $($_.Exception.Message)" }
+
+    if ($ManifestUrl) {
+        if ($ManifestUrl -notmatch '^https://') { throw 'ManifestUrl должен начинаться с https://' }
+        $ManifestPath = Join-Path ([System.IO.Path]::GetTempPath()) ('Peregovorka-Outlook-{0}.xml' -f [guid]::NewGuid())
+        try { Invoke-WebRequest -Uri $ManifestUrl -UseBasicParsing -MaximumRedirection 0 -OutFile $ManifestPath -TimeoutSec 30 }
+        catch { throw "Манифест не загружен прямой ссылкой без перенаправлений: $($_.Exception.Message)" }
+        Write-Log "Манифест загружен: $ManifestUrl"
+    }
+    if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "Файл манифеста не найден: $ManifestPath" }
+    [xml]$manifest = Get-Content -Raw -LiteralPath $ManifestPath
+    $appId = [string]$manifest.OfficeApp.Id
+    $name = [string]$manifest.OfficeApp.DisplayName.DefaultValue
+    $version = [string]$manifest.OfficeApp.Version
+    if (-not $appId) { throw 'В манифесте нет идентификатора надстройки (OfficeApp/Id).' }
+    if ($ProvidedTo -eq 'SpecificUsers' -and $UserList.Count -eq 0) { throw 'Для SpecificUsers укажите -UserList.' }
+    Write-Log "Надстройка: $name, идентификатор $appId, версия манифеста $version"
+
+    $existing = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $appId })
+    if ($existing.Count -gt 0) {
+        $installedVersion = [string]$existing[0].Version
+        if (-not $Replace) {
+            if ($installedVersion -eq $version) { Write-Log "Уже установлена та же версия ($installedVersion): изменений нет." }
+            else { Write-Log "Установлена версия $installedVersion, в манифесте $version. Для обновления запустите сценарий с ключом -Replace." }
+            return
+        }
+        if ($PSCmdlet.ShouldProcess($appId, 'Удалить прежнюю запись приложения организации (обновление)')) {
+            Remove-App -Identity $appId -OrganizationApp -Confirm:$false
+            Write-Log "Прежняя запись удалена (версия $installedVersion)."
+        }
+    }
+
+    $params = @{ OrganizationApp = $true; ProvidedTo = $ProvidedTo; DefaultStateForUser = $DefaultState }
+    if ($ProvidedTo -eq 'SpecificUsers') { $params['UserList'] = $UserList }
+    if ($ManifestUrl) { $params['Url'] = $ManifestUrl } else { $params['FileData'] = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ManifestPath).Path) }
+    if ($PSCmdlet.ShouldProcess($appId, "Установить надстройку (доступ: $ProvidedTo)")) {
+        New-App @params | Out-Null
+        Write-Log 'Надстройка добавлена.'
+        $after = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $appId })
+        if ($after.Count -ne 1) { throw "После установки найдено записей: $($after.Count) (ожидалась 1). Проверьте Get-App -OrganizationApp." }
+        Write-Log ("Проверка: {0}, включена: {1}, доступ: {2}" -f $after[0].DisplayName, $after[0].Enabled, $after[0].ProvidedTo)
+        Write-Log 'Готово. Клиентам Outlook нужно до нескольких часов, чтобы получить надстройку; перезапустите Outlook.'
     }
 }
-
-$bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ManifestPath).Path)
-$args2 = @{ OrganizationApp = $true; FileData = $bytes; ProvidedTo = $ProvidedTo; DefaultStateForUser = $DefaultState }
-if ($ProvidedTo -eq 'SpecificUsers') { $args2['UserList'] = $UserList }
-if ($PSCmdlet.ShouldProcess($appId, 'Установить надстройку для организации')) {
-    New-App @args2 | Out-Null
-    Write-Host 'Готово. Клиентам Outlook нужно до нескольких часов, чтобы получить надстройку; перезапустите Outlook.'
-    Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $appId } | Format-List DisplayName, AppId, Enabled, ProvidedTo
+catch {
+    Write-Log $_.Exception.Message 'ERROR'
+    exit 1
 }
+"""
+
+UNINSTALL_PS1 = r"""<#
+.SYNOPSIS
+  Удаление надстройки Peregovorka для Outlook из организации Exchange (Exchange Management Shell или Exchange Online).
+.DESCRIPTION
+  Идентификатор берётся из манифеста рядом со сценарием (или -AppId). Если надстройки нет, сценарий ничего не делает. Конференции и ссылки в отправленных приглашениях продолжают работать.
+.EXAMPLE
+  .\Uninstall-OutlookAddin.ps1 -WhatIf
+#>
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [string]$ManifestPath = (Join-Path $PSScriptRoot 'Peregovorka-Outlook.xml'),
+    [string]$AppId,
+    [string]$LogPath = (Join-Path (Get-Location) ('Peregovorka-Outlook-uninstall-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date)))
+)
+$ErrorActionPreference = 'Stop'
+function Write-Log([string]$Text, [string]$Level = 'INFO') {
+    Add-Content -LiteralPath $LogPath -Value ('{0:yyyy-MM-dd HH:mm:ss} [{1}] {2}' -f (Get-Date), $Level, $Text) -Encoding UTF8
+    if ($Level -eq 'ERROR') { Write-Host $Text -ForegroundColor Red } else { Write-Host $Text }
+}
+try {
+    foreach ($cmd in 'Get-App', 'Remove-App') { if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "Команда $cmd не найдена: запустите сценарий в Exchange Management Shell." } }
+    if (-not $AppId) {
+        if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "Укажите -AppId или положите манифест рядом: $ManifestPath" }
+        [xml]$m = Get-Content -Raw -LiteralPath $ManifestPath
+        $AppId = [string]$m.OfficeApp.Id
+    }
+    $found = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $AppId })
+    if ($found.Count -eq 0) { Write-Log "Надстройка $AppId не установлена: ничего не делаю."; return }
+    if ($PSCmdlet.ShouldProcess($AppId, 'Удалить надстройку организации')) {
+        Remove-App -Identity $AppId -OrganizationApp -Confirm:$false
+        $left = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq $AppId })
+        if ($left.Count -gt 0) { throw 'Надстройка осталась в списке после удаления: проверьте права и повторите.' }
+        Write-Log "Надстройка $AppId удалена."
+    }
+}
+catch { Write-Log $_.Exception.Message 'ERROR'; exit 1 }
 """
 
 TEST_PS1 = r"""<#
 .SYNOPSIS
-  Проверка условий для надстройки Peregovorka для Outlook: манифест, доступность адресов, сертификат HTTPS, состояние в Exchange.
+  Проверка условий для надстройки Peregovorka для Outlook: манифест, прямая загрузка без перенаправлений, адреса, цепочка сертификатов HTTPS, состояние в Exchange.
 .DESCRIPTION
-  Запускайте на компьютере, откуда доступен сервер Peregovorka (лучше — с рабочей станции пользователя Outlook). Часть «Exchange» выполняется,
-  только если сценарий запущен в Exchange Management Shell. Ничего не изменяет.
+  Запускайте на компьютере, откуда доступен сервер Peregovorka (лучше — с рабочей станции пользователя Outlook): так проверяется ровно то, что увидит клиент.
+  Часть «Exchange» выполняется, только если сценарий запущен в Exchange Management Shell. Ничего не изменяет.
 #>
 [CmdletBinding()]
-param([string]$ManifestPath = (Join-Path $PSScriptRoot 'Peregovorka-Outlook.xml'))
+param([string]$ManifestPath = (Join-Path $PSScriptRoot 'Peregovorka-Outlook.xml'), [string]$ManifestUrl)
 $ErrorActionPreference = 'Continue'
 $results = New-Object System.Collections.ArrayList
 function Add-Result([string]$Name, [bool]$Ok, [string]$Detail) { [void]$results.Add([pscustomobject]@{ Проверка = $Name; Результат = $(if ($Ok) { 'OK' } else { 'ОШИБКА' }); Подробности = $Detail }) }
 
 try {
-    [xml]$m = Get-Content -Raw -LiteralPath $ManifestPath
-    Add-Result 'Манифест читается' $true "Id $($m.OfficeApp.Id), версия $($m.OfficeApp.Version)"
-} catch { Add-Result 'Манифест читается' $false $_.Exception.Message; $results | Format-Table -AutoSize -Wrap; exit 1 }
+    if ($ManifestUrl) {
+        $resp = Invoke-WebRequest -Uri $ManifestUrl -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 20
+        Add-Result 'Манифест по прямой ссылке (без перенаправлений)' ($resp.StatusCode -eq 200) "HTTP $($resp.StatusCode), Content-Type: $($resp.Headers['Content-Type'])"
+        [xml]$m = $resp.Content
+    } else { [xml]$m = Get-Content -Raw -LiteralPath $ManifestPath }
+    Add-Result 'Манифест читается как XML' $true "Id $($m.OfficeApp.Id), версия $($m.OfficeApp.Version)"
+} catch { Add-Result 'Манифест' $false $_.Exception.Message; $results | Format-Table -AutoSize -Wrap; exit 1 }
 
 $urls = New-Object System.Collections.ArrayList
 $m.SelectNodes('//*[@DefaultValue]') | ForEach-Object { if ($_.DefaultValue -match '^https?://') { [void]$urls.Add($_.DefaultValue) } }
 $urls = @($urls | Sort-Object -Unique)
+Add-Result 'Все адреса в манифесте — HTTPS' (@($urls | Where-Object { $_ -notmatch '^https://' }).Count -eq 0) "адресов: $($urls.Count)"
 foreach ($u in $urls) {
     try {
-        $r = Invoke-WebRequest -Uri $u -UseBasicParsing -Method Get -TimeoutSec 15
+        $r = Invoke-WebRequest -Uri $u -UseBasicParsing -Method Get -TimeoutSec 15 -MaximumRedirection 0
         Add-Result "Адрес открывается: $u" ($r.StatusCode -eq 200) "HTTP $($r.StatusCode)"
     } catch { Add-Result "Адрес открывается: $u" $false $_.Exception.Message }
 }
@@ -103,17 +178,23 @@ foreach ($u in $urls) {
 $hostName = ([uri]$urls[0]).Host
 try {
     $client = New-Object System.Net.Sockets.TcpClient($hostName, 443)
-    $ssl = New-Object System.Net.Security.SslStream($client.GetStream(), $false)
+    $script:policyErrors = 'None'; $script:chainInfo = @()
+    $callback = [System.Net.Security.RemoteCertificateValidationCallback]{ param($s, $c, $chain, $errors) $script:policyErrors = [string]$errors; $script:chainInfo = @($chain.ChainElements | ForEach-Object { $_.Certificate.Subject }); $true }
+    $ssl = New-Object System.Net.Security.SslStream($client.GetStream(), $false, $callback)
     $ssl.AuthenticateAsClient($hostName)
     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
     $days = [int]($cert.NotAfter - (Get-Date)).TotalDays
-    Add-Result "Сертификат HTTPS ($hostName)" ($days -gt 14) "действует до $($cert.NotAfter.ToString('yyyy-MM-dd')) (осталось дней: $days), выдан: $($cert.Issuer)"
+    $trusted = ($script:policyErrors -eq 'None')
+    Add-Result "Сертификат HTTPS ($hostName): доверие этого компьютера" $trusted "ошибки политики: $($script:policyErrors); цепочка: $($script:chainInfo -join ' → ')"
+    Add-Result "Сертификат HTTPS ($hostName): срок действия" ($days -gt 14) "до $($cert.NotAfter.ToString('yyyy-MM-dd')) (осталось дней: $days), выдан: $($cert.Issuer)"
+    if (-not $trusted) { Add-Result 'Что делать' $false 'RemoteCertificateChainErrors — нет доверия цепочке: корневой/промежуточный сертификат не установлен на этом компьютере либо прокси отдаёт неполную цепочку (исправляется на прокси: fullchain). RemoteCertificateNameMismatch — имя сайта не в сертификате.' }
     $client.Close()
-} catch { Add-Result "Сертификат HTTPS ($hostName)" $false "$($_.Exception.Message) — Outlook не загрузит надстройку с недоверенным сертификатом" }
+} catch { Add-Result "Сертификат HTTPS ($hostName)" $false "$($_.Exception.Message) — Outlook не загрузит надстройку без доверия сертификату" }
 
 if (Get-Command Get-App -ErrorAction SilentlyContinue) {
     $app = @(Get-App -OrganizationApp | Where-Object { ([string]$_.AppId) -eq [string]$m.OfficeApp.Id })
-    Add-Result 'Надстройка установлена в Exchange' ($app.Count -gt 0) $(if ($app.Count -gt 0) { "включена: $($app[0].Enabled)" } else { 'не найдена: запустите Install-OutlookAddin.ps1' })
+    Add-Result 'Надстройка установлена в Exchange' ($app.Count -gt 0) $(if ($app.Count -gt 0) { "включена: $($app[0].Enabled), версия: $($app[0].Version), записей: $($app.Count)" } else { 'не найдена: запустите Install-OutlookAddin.ps1' })
+    if ($app.Count -gt 1) { Add-Result 'Дубликаты' $false 'найдено несколько записей с одним идентификатором: удалите лишние (Uninstall-OutlookAddin.ps1, затем Install-OutlookAddin.ps1)' }
 } else {
     Add-Result 'Состояние в Exchange' $true 'пропущено: сценарий запущен не в Exchange Management Shell'
 }
@@ -131,7 +212,8 @@ def _readme(base: str, version: str, cfg: OutlookSettings) -> str:
 
 СОСТАВ
   Peregovorka-Outlook.xml     манифест с адресами вашего сервера ({base}) и постоянным идентификатором надстройки
-  Install-OutlookAddin.ps1    установка в локальный Exchange (Exchange Management Shell)
+  Install-OutlookAddin.ps1    установка и обновление в Exchange (Exchange Management Shell; идемпотентно, с журналом)
+  Uninstall-OutlookAddin.ps1  удаление надстройки из организации
   Test-OutlookAddin.ps1       проверка условий: манифест, адреса, сертификат HTTPS, состояние в Exchange
   README.txt                  эта инструкция (обновление и удаление — в конце)
 
@@ -167,20 +249,20 @@ def _readme(base: str, version: str, cfg: OutlookSettings) -> str:
   Если надстройка включает отправку-синхронизацию (событие OnAppointmentSend), администратор Microsoft 365 должен повторно подтвердить обновлённый манифест.
 
 УДАЛЕНИЕ
-  Exchange: Get-App -OrganizationApp | ? DisplayName -eq 'Peregovorka' | Remove-App -OrganizationApp
+  Exchange: .\\Uninstall-OutlookAddin.ps1  (или Remove-App -Identity <Id> -OrganizationApp)
   Microsoft 365: Integrated apps → Peregovorka → Remove.
   Конференции и ссылки в уже отправленных приглашениях продолжают работать (комнаты хранятся в Peregovorka).
 
 ОГРАНИЧЕНИЯ
-  Сценарии PowerShell не запускались на настоящем Exchange автором пакета: сначала прогоните их на тестовой базе. Надстройка не проверялась в настоящем
-  Outlook/Exchange. Подробности и матрица совместимости — docs/OUTLOOK_ADDIN.md в репозитории.
+  Сценарии не запускались на настоящем Exchange автором пакета (синтаксис разобран парсером PowerShell): сначала прогоните их на тестовой базе -WhatIf. Подробности и матрица совместимости — docs/OUTLOOK_ADDIN.md в репозитории.
 """
 
 
 def build_package(base: str, version: str, cfg: OutlookSettings) -> bytes:
     """ZIP-пакет для установки администратором Exchange / Microsoft 365."""
     files = {"Peregovorka-Outlook.xml": ol.manifest_xml(base, version, sync_on_send=cfg.effective_sync_on_send), "README.txt": _readme(base, version, cfg),
-             "Install-OutlookAddin.ps1": BOM + INSTALL_PS1, "Test-OutlookAddin.ps1": BOM + TEST_PS1}
+             "Install-OutlookAddin.ps1": BOM + INSTALL_PS1, "Test-OutlookAddin.ps1": BOM + TEST_PS1,
+             "Uninstall-OutlookAddin.ps1": BOM + UNINSTALL_PS1}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, text in files.items():

@@ -6,6 +6,7 @@ export function pageTitle(pathname: string, signedIn = true, brand: string = BRA
   let t: string | null = null;
   if (p === "/privacy") t = "Обработка данных";
   else if (p.startsWith("/legal/")) t = "Документ";
+  else if (p === "/outlook") t = "Надстройка Outlook";
   else if (p.startsWith("/guest/")) t = "Гостевой вход";
   else if (!signedIn) t = "Вход";
   else if (p === "/") t = "Переговорки";

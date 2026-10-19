@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type JournalRow, type OutlookCheck, type OutlookConference } from "../../api";
+import { api, type ApiError, type JournalRow, type OutlookCenterInfo, type OutlookCheck, type OutlookConference } from "../../api";
 import SettingsForm from "./SettingsForm";
 import { outlookFields } from "./fields";
 import { fmtDate } from "./common";
@@ -13,6 +13,7 @@ const STATE: Record<string, string> = { waiting: "ждёт начала", open: 
  */
 export default function OutlookAdmin() {
   const [checks, setChecks] = useState<OutlookCheck[] | null>(null);
+  const [compat, setCompat] = useState<OutlookCenterInfo["compat"] | null>(null);
   const [checking, setChecking] = useState(false);
   const [err, setErr] = useState("");
   const [rows, setRows] = useState<OutlookConference[] | null>(null);
@@ -38,7 +39,7 @@ export default function OutlookAdmin() {
     try { setRows((await api.admin.outlookMeetings()).items); } catch (e) { setErr((e as ApiError).message); }
     try { setLog((await api.admin.journal({ filters: [{ field: "category", op: "eq", value: "outlook" }] }, undefined, 30)).items); } catch { setLog([]); }
   }, []);
-  useEffect(() => { void check(); void loadLists(); }, [check, loadLists]);
+  useEffect(() => { void check(); void loadLists(); api.outlookCenter().then((c) => setCompat(c.compat)).catch(() => undefined); }, [check, loadLists]);
 
   const syncTest = async () => {
     setBusy("test"); setTest(null);
@@ -61,6 +62,8 @@ export default function OutlookAdmin() {
 
       <div className="card" aria-label="Состояние интеграции">
         <div className="row"><h3 style={{ margin: 0 }}>Состояние и проверки</h3><div className="spacer" />
+          <a className="btn mini" href="/outlook" target="_blank" rel="noreferrer">Публичная страница установки</a>
+          <a className="btn mini" href="/api/docs" target="_blank" rel="noreferrer">Открыть документацию API</a>
           <button className="btn mini" disabled={checking} onClick={() => void check()}>{checking ? "Проверка…" : "Проверить заново"}</button></div>
         {!checks ? <p className="muted">Проверяем…</p> : (
           <ul className="stage-list" aria-label="Результаты проверок">
@@ -70,6 +73,9 @@ export default function OutlookAdmin() {
                 <span><b>{c.title}.</b> {c.message}
                   {c.tls && (
                     <div className="muted small">Адрес: {c.tls.host}:{c.tls.port}{c.tls.issuer ? ` · издатель: ${c.tls.issuer}` : ""}{c.tls.not_after ? ` · действует до ${fmtDate(c.tls.not_after)}` : ""}{c.tls.days_left != null ? ` (осталось дней: ${c.tls.days_left})` : ""}
+                      {c.tls.chain_complete === false && <> · цепочка, отдаваемая устройством, неполная</>}
+                      {c.tls.fix && <div><b>Где исправлять:</b> {c.tls.fix.text}</div>}
+                      {c.tls.has_fullchain && <div><a href="/api/v1/outlook/tls/fullchain.pem" download>Скачать fullchain.pem</a> (сертификат сайта + найденные промежуточные, без корня) — установите его на устройстве, где завершается HTTPS</div>}
                       {(c.ok !== true) && <> · <button className="btn mini" onClick={() => void clientCheck(c.tls!.client_check_url)}>Проверить с этого компьютера</button></>}</div>)}</span></li>))}
           </ul>)}
         {clientNote && <div className="alert info" role="status">{clientNote}</div>}
@@ -93,15 +99,15 @@ export default function OutlookAdmin() {
           </div>
         </details>
         <details className="group"><summary>Матрица совместимости (по документации Microsoft; в настоящем Outlook и Exchange не проверялась)</summary>
-          <div className="table-wrap"><table className="table compact">
-            <thead><tr><th>Среда</th><th>Кнопка и вставка ссылки</th><th>Передача при отправке</th><th>Примечание</th></tr></thead>
-            <tbody>
-              <tr><td>Exchange 2019 + классический Outlook для Windows (Microsoft 365 Apps)</td><td>Да (Mailbox 1.3)</td><td>Exchange 2019 CU12+, Outlook 2206+</td><td>Первый целевой сценарий</td></tr>
-              <tr><td>Exchange 2019 + Outlook 2019/2021 (бессрочный)</td><td>Не гарантируется</td><td>Нет</td><td>Функция «поставщик онлайн-встреч» заявлена для подписки Microsoft 365</td></tr>
-              <tr><td>Exchange 2019 + Outlook в браузере / новый Outlook</td><td>Проверить на вашем тенанте</td><td>Для локального Exchange не заявлено</td><td>Нужен доступ клиентов к серверу</td></tr>
-              <tr><td>Exchange Online + все клиенты (Windows, Web, Mac)</td><td>Да</td><td>Да (1.12)</td><td>Мобильные клиенты не поддержаны этим манифестом</td></tr>
-              <tr><td>Exchange 2016</td><td>Mailbox 1.3 доступен; функция поставщика — по клиенту</td><td>Нет</td><td>Не проверялось</td></tr>
-            </tbody></table></div>
+          {compat && (
+            <>
+              <p className="small">Базовые функции (Mailbox 1.3): {compat.basic_functions.join("; ")}.</p>
+              <p className="small">Дополнительные (зависят от версии Mailbox API): {compat.advanced_functions.join("; ")}.</p>
+              <div className="table-wrap"><table className="table compact">
+                <thead><tr><th>Среда</th><th>Mailbox API</th><th>Базовые функции</th><th>Подписка на отправку</th><th>Серверная сверка</th><th>Примечание</th></tr></thead>
+                <tbody>{compat.environments.map((e) => <tr key={e.id}><td>{e.title}</td><td>{e.mailbox_api}</td><td>{e.basic === null ? "Зависит от клиента" : e.basic ? "Да" : "Нет"}</td><td>{e.send_tracking ? "Да (1.12)" : "Нет"}</td><td>{e.server_sync.join(", ")}</td><td>{e.note}{!e.verified && " Не проверено в этой установке."}</td></tr>)}</tbody></table></div>
+              {compat.notes.map((n) => <div key={n} className="alert info small">{n}</div>)}
+            </>)}
         </details>
       </div>
 

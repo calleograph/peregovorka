@@ -205,8 +205,8 @@ async def center(request: Request, db: AsyncSession = Depends(get_db)):
     s = request.app.state.settings
     base = _public_base(request, cfg)
     if not cfg.enabled or not base.startswith("https://"):
-        return {"enabled": False, "reason": "Интеграция с Outlook выключена администратором или не задан публичный HTTPS-адрес."}
-    tls = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=s.outlook_check_ca_file)
+        return {"enabled": False, "reason": "Интеграция с Outlook выключена администратором или не задан публичный HTTPS-адрес.", "compat": compat.matrix(cfg.mail_kind, cfg.sync_on_send)}
+    tls = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=s.check_ca)
     has_chain = bool(tls and tls.get("chain"))
     return {"enabled": True, "base": base, "version": s.app_version, "manifest_url": f"{base}/api/v1/outlook/manifest.xml", "package_url": f"{base}/api/v1/outlook/package",
             "addin_id": ol.addin_id(base), "mail_kind": cfg.mail_kind, "compat": compat.matrix(cfg.mail_kind, cfg.sync_on_send),
@@ -225,7 +225,7 @@ async def tls_file(name: str, request: Request, db: AsyncSession = Depends(get_d
     base = _public_base(request, cfg)
     if not cfg.enabled or not base.startswith("https://"):
         raise HTTPException(status_code=404, detail="Интеграция выключена.")
-    res = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=request.app.state.settings.outlook_check_ca_file)
+    res = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=request.app.state.settings.check_ca)
     pem = (res or {}).get("completed_chain_pem") or (res or {}).get("_chain_pem")
     if not pem:
         raise HTTPException(status_code=404, detail="Сертификаты публичного адреса недоступны с сервера. Скачайте их в браузере: значок замка → сертификат → экспорт.")
@@ -258,6 +258,19 @@ async def public_package(request: Request, db: AsyncSession = Depends(get_db)):
     from ..services.outlook_package import build_package  # noqa: PLC0415
 
     return Response(build_package(base, s.app_version, cfg), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="Peregovorka-Outlook.zip"', "Cache-Control": "no-store"})
+
+
+@router.get("/scripts/{name}")
+async def public_script(name: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Отдельный сценарий PowerShell из пакета (без входа): те же файлы, что в архиве; параметры сценарии берут из манифеста и аргументов."""
+    from ..services import outlook_package as pk  # noqa: PLC0415
+
+    scripts = {"Install-OutlookAddin.ps1": pk.INSTALL_PS1, "Test-OutlookAddin.ps1": pk.TEST_PS1, "Uninstall-OutlookAddin.ps1": pk.UNINSTALL_PS1}
+    cfg = await _cfg(request, db)
+    if not cfg.enabled or name not in scripts:
+        raise HTTPException(status_code=404, detail="Такого сценария нет или интеграция выключена.")
+    body = (pk.BOM + scripts[name]).replace("\r\n", "\n").replace("\n", "\r\n")
+    return Response(body.encode("utf-8"), media_type="text/plain; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @router.get("/manifest.xml")

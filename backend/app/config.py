@@ -30,7 +30,12 @@ class Settings(BaseSettings):
     meeting_mix_enabled: bool = True          # общая запись встречи (сведение дорожек участников); выключатель на случай проблем с ffmpeg
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
     tls_local_configured: bool = False   # в установке задан собственный TLS-сертификат (NGINX_TLS_CERT): HTTPS завершает nginx установщика, а не внешний узел
-    outlook_check_ca_file: str = ""       # необязательный файл корневого CA организации для проверок с сервера (подключается администратором явно)
+    outlook_check_ca_file: str = ""       # необязательный файл корневого CA организации для проверок с сервера; по умолчанию — /data/ca/outlook-ca.pem, если администратор положил его туда
+
+    @property
+    def check_ca(self) -> str:
+        import os  # noqa: PLC0415
+        return self.outlook_check_ca_file or ("/data/ca/outlook-ca.pem" if os.path.isfile("/data/ca/outlook-ca.pem") else "")
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
     trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"
     # Дополнительные адреса, с которых открывают приложение через внешний reverse proxy (через запятую, вида https://хост[:порт]).
@@ -114,6 +119,11 @@ class Settings(BaseSettings):
     segment_consumer_block_ms: int = Field(default=2000, ge=10, le=10000)
     room_password_max_failures: int = 5
     room_password_failure_window_seconds: int = 300
+
+    @field_validator("tls_local_configured", mode="before")
+    @classmethod
+    def _tls_local(cls, v):
+        return False if v in ("", None) else v          # compose передаёт пустую строку, если NGINX_TLS_CERT не задан
 
     @field_validator("ldap_uris")
     @classmethod

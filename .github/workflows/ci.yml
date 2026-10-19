@@ -141,6 +141,16 @@ jobs:
       - name: Самопроверка готового образа
         run: docker run --rm asr-ci python -m app.selfcheck
 
+  outlook-scripts:
+    # Сценарии PowerShell для Exchange: разбор настоящим парсером PowerShell и прогон (установка, повтор, обновление, удаление, -WhatIf) на подставном Exchange.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r backend/requirements.txt -c backend/constraints.txt
+      - run: bash tests/ps/run.sh python3
+
   clean-os:
     # «С чистой ОС»: в чистом контейнере Ubuntu/Debian нет ни Docker, ни nginx, ни git. Автоматическая установка зависимостей (манифест scripts/lib/prereqlib.sh)
     # должна поставить Docker Engine + Compose + Buildx, nginx, git, curl, openssl и утилиты, а повторный запуск — ничего не ломать.

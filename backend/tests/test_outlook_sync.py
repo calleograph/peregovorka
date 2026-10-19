@@ -319,7 +319,7 @@ def test_package_contents_are_server_specific_and_secret_free():
     data = build_package("https://meet.example.org", "0.23.0", cfg)
     assert build_package("https://meet.example.org", "0.23.0", cfg) == data                       # повторное скачивание — тот же архив
     z = zipfile.ZipFile(io.BytesIO(data))
-    assert sorted(z.namelist()) == ["Install-OutlookAddin.ps1", "Peregovorka-Outlook.xml", "README.txt", "Test-OutlookAddin.ps1"]
+    assert sorted(z.namelist()) == ["Install-OutlookAddin.ps1", "Peregovorka-Outlook.xml", "README.txt", "Test-OutlookAddin.ps1", "Uninstall-OutlookAddin.ps1"]
     allf = "".join(z.read(n).decode("utf-8-sig") for n in z.namelist())
     assert "S3cret" not in allf and "P@ss" not in allf and "tid-123" not in allf
     xml = z.read("Peregovorka-Outlook.xml").decode()

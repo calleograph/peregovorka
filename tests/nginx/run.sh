@@ -62,6 +62,8 @@ t "/livekit/ со схемой https → 200" test "$(code -H 'X-Forwarded-Proto
 t "/internal/ снаружи закрыт (404)" test "$(code $U/internal/v1/smoke)" = 404
 t "/drawio/index.html → 200" test "$(code $U/drawio/index.html)" = 200
 t "/drawio/: CSP и CORS для песочницы" bash -c "curl -sI $U/drawio/index.html | tr -d '\r' | grep -qi '^content-security-policy:.*frame-ancestors' && curl -sI $U/drawio/index.html | grep -qi '^access-control-allow-origin: \*'"
+t "/outlook (центр установки) → 200 без перенаправления" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' $U/outlook) = 200 ]"
+t "/outlook/ → 200 (приложение), а не 301/404" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' $U/outlook/) = 200 ]"
 t "приложение разрешает только свои фреймы (frame-src 'self')" bash -c "curl -sI $U/ | grep -i '^content-security-policy:' | grep -q \"frame-src 'self'\""
 t "ошибок «cycle»/«emerg» в журнале nginx нет" bash -c "! docker logs $WEB 2>&1 | grep -Eqi 'cycle while|\[emerg\]'"
 echo "nginx/web: пройдено $PASS, провалено $FAIL"

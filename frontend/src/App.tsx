@@ -24,6 +24,7 @@ import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
 
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
+import OutlookCenter from "./pages/OutlookCenter";
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
@@ -176,6 +177,7 @@ export default function App() {
   const site = useSite();
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
   if (pathname.startsWith("/legal/")) return <><Routes><Route path="/legal/:kind" element={<LegalPage />} /></Routes><CookieNotice /></>;       // документы организации открываются без входа
+  if (pathname === "/outlook" || pathname === "/outlook/") return <Routes><Route path="*" element={<OutlookCenter />} /></Routes>;          // центр установки надстройки: открывается без входа
   if (pathname.startsWith("/m/")) return <Routes><Route path="/m/:code" element={<MeetPage />} /></Routes>;          // страница конференции из календаря: открывается без входа
   if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;

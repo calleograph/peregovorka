@@ -67,7 +67,7 @@ def connect_failure(exc: Exception) -> tuple[str, str]:
     seen = 0
     while cause is not None and seen < 6:
         if isinstance(cause, ssl.SSLCertVerificationError):
-            return "tls_untrusted", f"Ошибка доверия TLS: {cause.verify_message or cause}. Сервер Peregovorka не доверяет сертификату своего публичного адреса (чаще всего — неполная цепочка на прокси или внутренний центр сертификации)."
+            return "tls_untrusted", f"Ошибка доверия TLS: {getattr(cause, "verify_message", None) or cause}. Сервер Peregovorka не доверяет сертификату своего публичного адреса (чаще всего — неполная цепочка на прокси или внутренний центр сертификации)."
         if isinstance(cause, socket.gaierror):
             return "dns", "Имя публичного адреса не разрешается из контейнера (DNS). Типично для split DNS: клиентам имя известно, контейнеру — нет."
         if isinstance(cause, ConnectionRefusedError):
