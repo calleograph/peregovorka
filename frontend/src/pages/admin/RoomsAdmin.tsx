@@ -3,6 +3,8 @@ import { copyText } from "../../util";
 import { useContextMenu } from "../../components/ContextMenu";
 import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile, type HistoryAccess, type RoomAdmin, type RoomType } from "../../api";
 import AclPicker, { entryLabel } from "../../components/AclPicker";
+import RoomIcon from "../../components/RoomIcon";
+import RoomIconPicker, { applyPendingIcon, type PendingIcon } from "../../components/RoomIconPicker";
 
 interface Form {
   id?: string; slug: string; name: string; description: string; is_enabled: boolean; max_participants: number;
@@ -82,6 +84,7 @@ export default function RoomsAdmin() {
   const [anonProfiles, setAnonProfiles] = useState<ApiProfile[]>([]);
   const [showClosed, setShowClosed] = useState(false);
   const [origSlug, setOrigSlug] = useState("");
+  const [pendingIcon, setPendingIcon] = useState<PendingIcon>(null);       // значок новой комнаты: применяется после её создания
   useEffect(() => {
     if (!form) return;
     void api.admin.profiles("llm").then(setLlmProfiles).catch(() => undefined);
@@ -91,7 +94,7 @@ export default function RoomsAdmin() {
   const load = useCallback(() => api.admin.rooms(showClosed).then(setRooms).catch((e) => setError(e.message)), [showClosed]);
   useEffect(() => { void load(); }, [load]);
 
-  const open = (f: Form) => { setForm(f); setOrigSlug(f.slug); setTab("main"); setError(""); };
+  const open = (f: Form) => { setForm(f); setPendingIcon(null); setOrigSlug(f.slug); setTab("main"); setError(""); };
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
@@ -115,7 +118,8 @@ export default function RoomsAdmin() {
       if (form.id) {
         await api.admin.patchRoom(form.id, { ...base, slug: form.slug.trim().toLowerCase(), ...(form.clearPassword ? { password: "" } : form.password ? { password: form.password } : {}) });
       } else {
-        await api.admin.createRoom({ ...base, slug: form.slug.trim().toLowerCase(), password: form.password || null });
+        const created = await api.admin.createRoom({ ...base, slug: form.slug.trim().toLowerCase(), password: form.password || null });
+        if (pendingIcon) await applyPendingIcon(created.id, pendingIcon).catch((e) => setError(`Комната создана, но значок не применился: ${(e as ApiError).message}`));
       }
       setForm(null); setNote("Сохранено"); await load();
     } catch (err) { setError((err as ApiError).message); }
@@ -168,6 +172,8 @@ export default function RoomsAdmin() {
               <label>Приветствие при входе <span className="muted small">(необязательно)</span>
                 <textarea rows={2} value={form.welcome_message} onChange={(e) => set("welcome_message", e.target.value)} maxLength={2000} placeholder="Добро пожаловать! Запись и транскрибация ведутся." />
                 <span className="help">Показывается участнику сразу после входа: правила встречи, напоминание о записи и т. п.</span></label>
+              <RoomIconPicker roomId={form.id || undefined} name={form.name} icon={rooms.find((x) => x.id === form.id)?.icon} onChange={(i) => setRooms((rs) => rs.map((x) => (x.id === form.id ? { ...x, icon: i } : x)))}
+                              pending={pendingIcon} onPending={setPendingIcon} />
             </div>
           )}
 
@@ -290,7 +296,7 @@ export default function RoomsAdmin() {
               { id: "url", label: "Скопировать URL", icon: "copy", onSelect: () => void copyText(`${window.location.origin}/rooms/${r.slug}`) },
               { id: "del", label: "Удалить", icon: "close", danger: true, confirm: `Удалить переговорку «${r.name}»?`, onSelect: () => remove(r) },
             ])}>
-              <td>{r.name}{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
+              <td><span className="h-room-link"><RoomIcon name={r.name} icon={r.icon} size={26} />{r.name}</span>{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
               <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча</span>}
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>

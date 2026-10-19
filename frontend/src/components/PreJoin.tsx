@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Room } from "../api";
-import { initials, magnet, tint } from "../fx";
+import { magnet, tint } from "../fx";
 import { useSite } from "../site";
 import { Icon } from "./Icons";
 import PreJoinCheck from "./PreJoinCheck";
 import type { PreJoin as PreJoinHw } from "../prejoin";
 import { initialMic, micFacts, type JoinMode } from "../prejoinMode";
+import RoomIcon from "./RoomIcon";
 
 interface Props {
   room?: Room | null;
@@ -45,7 +46,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
     <section className="prejoin-pro" style={{ "--ha": t.a, "--hb": t.b } as CSSProperties}>
       <div className={`pj-card${onHw && !busy ? "" : " pj-single"}`}>
         <div className="pj-hero">
-          <span className="pj-mark" aria-hidden>{initials(name)}</span>
+          <RoomIcon name={name} icon={room?.icon} size={58} className="pj-mark" />
           <div>
             <h1>{name}</h1>
             <span className={`pill ${live ? "live" : "free"}`}><i className="pulse" aria-hidden />

@@ -17,6 +17,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
 from ..services import audit as audit_svc
+from ..services.room_icons import icon_out
 from ..services import storage_encryption as se
 from ..services.audit import write_audit
 from ..services.rooms import slug_taken
@@ -62,6 +63,7 @@ def _mod_rows(entries: list[AclEntryIn]) -> list[RoomModerator]:
 async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
     active = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).scalar_one_or_none()
     return RoomAdminOut(
+        icon=icon_out(room),
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled,
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,

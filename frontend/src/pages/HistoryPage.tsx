@@ -7,6 +7,7 @@ import MeetingAdminActions from "../components/MeetingAdminActions";
 import { ListFooter, useInfinite } from "../useInfinite";
 import { moreLabel, summarizeParticipants } from "../meetingPeople";
 import { duration, fmt } from "../util";
+import RoomIcon from "../components/RoomIcon";
 
 export { fmt } from "../util";
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
@@ -69,7 +70,7 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
         <tbody>
           {shown.map((m) => (
             <tr key={m.id}>
-              <td className="h-room"><Link to={`/history/${m.id}`}>{m.room_name}</Link></td>
+              <td className="h-room"><Link to={`/history/${m.id}`} className="h-room-link"><RoomIcon name={m.room_name} icon={m.room_icon} size={26} />{m.room_name}</Link></td>
               <td data-label="Начало">{fmt(m.started_at)}</td>
               <td data-label="Длительность">{m.ended_at ? duration(m.started_at, m.ended_at) : <span className="badge rec">идёт</span>}</td>
               <td data-label="Участники" className="h-people"><People m={m} /></td>

@@ -25,6 +25,7 @@ import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../mi
 import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
+import RoomIcon from "../components/RoomIcon";
 import SignalBars from "../components/SignalBars";
 import { signalOf } from "../quality/signal";
 import ProtectionBadge from "../components/ProtectionBadge";
@@ -1217,6 +1218,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     <div className={`room-wrap ${tCollapsed ? "tcollapsed" : ""} ${focus ? "board-focus" : ""}`} style={style}>
       <section className={`stage ${recording && !ended ? "is-recording" : ""}`}>
         <div className="room-head row">
+          <RoomIcon name={room.name} icon={room.icon} size={28} className="room-head-icon" />
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
           {!connOk && <span className="badge warn" role="status">{connLabel}</span>}

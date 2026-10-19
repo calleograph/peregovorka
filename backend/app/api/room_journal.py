@@ -29,18 +29,18 @@ LABELS = {
     "map.create": ("Карта разговора сформирована", "materials"), "map.recreate": ("Карта разговора сформирована заново", "materials"), "map.edit_topic": ("Карта разговора изменена", "materials"),
     "map.delete": ("Карта разговора удалена", "materials"), "map.export_html": ("Карта разговора скачана", "materials"), "transcript.download": ("Стенограмма скачана", "materials"),
     "recording.download": ("Запись скачана", "files"), "recording.play": ("Запись прослушана", "files"), "recording.delete": ("Запись удалена", "files"),
-    "room.manage.update": ("Изменены настройки комнаты", "settings"), "room.update": ("Изменены настройки комнаты администратором", "settings"),
+    "room.icon": ("Изменён значок комнаты", "settings"), "room.manage.update": ("Изменены настройки комнаты", "settings"), "room.update": ("Изменены настройки комнаты администратором", "settings"),
 }
 KINDS = {"participants": "Участники", "meeting": "Встреча", "access": "Доступ", "materials": "Материалы", "mail": "Рассылка", "settings": "Настройки", "files": "Файлы"}
 
 
-_COMMON = ("user", "via", "group", "members", "added", "rights", "by", "before", "after", "kinds", "count")
+_COMMON = ("mode", "key", "user", "via", "group", "members", "added", "rights", "by", "before", "after", "kinds", "count")
 _HIDDEN = {"room_id", "meeting_id", "room", "ip"}
 
 
 def _details(action: str, d: dict) -> dict:
     """Подробности события. Для изменений настроек — всё, что записано в аудите (что изменено: было/стало; аудит уже очищен от секретов); для остальных событий — только перечисленные поля."""
-    if action in ("room.manage.update", "room.update", "meeting.settings.update"):
+    if action in ("room.manage.update", "room.update", "meeting.settings.update", "room.icon"):
         return {k: v for k, v in d.items() if k not in _HIDDEN}
     return {x: d[x] for x in _COMMON if x in d}
 

@@ -6,7 +6,9 @@ export interface Me { user: User; csrf_token: string; local?: boolean; must_chan
 export interface TotpChallenge { totp_required: true; challenge: string }
 export interface TotpStatus { available: boolean; policy: string; enabled: boolean; required: boolean; backup_left: number; enabled_at: string | null }
 export interface ActiveMeeting { id: string; started_at: string; participants: number }
+export interface RoomIconInfo { kind: "library" | "image"; key: string | null; url: string | null }
 export interface Room {
+  icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
@@ -177,6 +179,7 @@ export interface Participant {
   user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; role?: "organizer" | "leader" | null; display_name: string; joined_at: string; left_at: string | null; online: boolean;
 }
 export interface Meeting {
+  room_icon?: RoomIconInfo | null;
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
@@ -251,6 +254,7 @@ export interface TransferJob {
 export interface TransferDetail extends TransferJob { problems: { recording_id: string; state: string; error: string | null }[] }
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
+  icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
   transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
@@ -441,6 +445,7 @@ export interface SyncRun {
 export interface SyncOverview { settings: { enabled: boolean; interval_hours: number; batch_size: number; guard_percent: number }; runs: SyncRun[]; running: SyncRun | null; last: SyncRun | null }
 export interface ApiProfile { id: string; kind: ProfileKind; name: string; config: Record<string, unknown>; secret_set: boolean; is_default: boolean; virtual: boolean }
 export interface RoomAdmin {
+  icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean; camera_allowed: boolean;
   screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
@@ -795,6 +800,11 @@ export const api = {
   editProfile: (fields: Record<string, string>) => request<Profile>("PATCH", "/profile", { fields }),
   restoreProfile: (fields?: string[]) => request<Profile>("POST", "/profile/restore", { fields: fields ?? [] }),
   uploadAvatar: (blob: Blob) => putBlob<Profile>("/profile/avatar", blob),
+  roomIcon: {
+    library: (roomId: string, key: string) => request<{ icon: RoomIconInfo | null }>("PUT", `/rooms/${roomId}/icon/library`, { key }),
+    upload: (roomId: string, blob: Blob) => putBlob<{ icon: RoomIconInfo | null }>(`/rooms/${roomId}/icon`, blob),
+    reset: (roomId: string) => request<{ icon: RoomIconInfo | null }>("DELETE", `/rooms/${roomId}/icon`),
+  },
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),

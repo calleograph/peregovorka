@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, type AclEntry, type ApiError, type LlmChoice, type MailDeliverySpec, type RoomManage, type RoomSip, type RoomType } from "../api";
 import { copyText } from "../util";
 import AclPicker from "./AclPicker";
+import RoomIconPicker from "./RoomIconPicker";
 import { Modal } from "./Dialogs";
 import DeliveryEditor, { emptySpec } from "./DeliveryEditor";
 import LlmChoiceEditor from "./LlmChoiceEditor";
@@ -115,6 +116,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                 <span className="check-body">Микрофон при входе выключен<span className="help">Участники заходят без звука и включают микрофон сами.</span></span></label>
               <label>Приветствие при входе <span className="muted small">(необязательно)</span>
                 <textarea rows={2} value={form.welcome_message} onChange={(e) => set("welcome_message", e.target.value)} maxLength={2000} /></label>
+              <RoomIconPicker roomId={roomId} name={form.name} icon={room.icon} onChange={(i) => { const nr = { ...room, icon: i }; setRoom(nr); onSaved?.(nr); }} />
             </div>
           )}
 

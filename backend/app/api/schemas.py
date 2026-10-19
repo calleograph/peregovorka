@@ -39,6 +39,12 @@ class ActiveMeetingOut(BaseModel):
     participants: int
 
 
+class RoomIconOut(BaseModel):
+    kind: str                       # library | image (стандартного значка в ответе нет: icon = null)
+    key: str | None = None          # ключ значка библиотеки
+    url: str | None = None          # адрес загруженного изображения (с версией: кэш обновляется при замене)
+
+
 class RoomOut(BaseModel):
     id: uuid.UUID
     slug: str
@@ -64,6 +70,7 @@ class RoomOut(BaseModel):
     mute_on_join: bool = False                # участники входят с выключенным микрофоном (экран входа показывает это руководителю презентации)
     guest_token: str | None = None            # секрет гостевой ссылки: отдаётся ТОЛЬКО руководителям и администраторам, и только если гостевой вход включён
     active_meeting: ActiveMeetingOut | None = None
+    icon: RoomIconOut | None = None
 
 
 class JoinIn(BaseModel):
@@ -125,6 +132,7 @@ class MeetingOut(BaseModel):
     id: uuid.UUID
     room_id: uuid.UUID
     room_name: str
+    room_icon: RoomIconOut | None = None
     started_at: datetime
     ended_at: datetime | None
     end_reason: str | None
@@ -177,6 +185,7 @@ class RoomAdminOut(BaseModel):
     slug: str
     name: str
     description: str | None
+    icon: RoomIconOut | None = None
     is_enabled: bool
     max_participants: int
     has_password: bool

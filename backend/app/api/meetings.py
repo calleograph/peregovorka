@@ -14,6 +14,7 @@ from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGran
                       TranscriptSegment)
 from ..services.access import can_access_meeting, release_lease
 from ..services import roles
+from ..services.room_icons import icon_out
 from ..services.audit import audit_now, write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.llm_choice import once_options
@@ -50,7 +51,7 @@ def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestPartic
     guests = [ParticipantOut(guest_id=g.id, participant_type="phone" if g.is_phone else "guest", display_name=g.label, joined_at=g.joined_at,
                              left_at=g.left_at, online=g.left_at is None) for g in guests or []]
     return MeetingOut(
-        id=m.id, room_id=m.room_id, room_name=m.room.name, started_at=m.started_at, ended_at=m.ended_at,
+        id=m.id, room_id=m.room_id, room_name=m.room.name, room_icon=icon_out(m.room), started_at=m.started_at, ended_at=m.ended_at,
         end_reason=m.end_reason, transcription_enabled=m.transcription_enabled,
         participants=[ParticipantOut(user_id=p.user_id, role=role_of(p), display_name=p.user.display_name, joined_at=p.joined_at,
                                      left_at=p.left_at, online=p.left_at is None) for p in latest.values()] + guests,

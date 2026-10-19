@@ -13,6 +13,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
 from ..services import roles, temp_rooms, timings
 from ..services import captcha
+from ..services.room_icons import icon_out
 from ..services import e2ee as e2ee_svc
 from ..services.audit import audit_now, write_audit
 from ..services.journal import parse_client
@@ -35,6 +36,7 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
         board_allowed=room.board_allowed, board_access=room.board_access, room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode,
         lifetime=room.lifetime, lifecycle=room.lifecycle, auto_close_at=room.auto_close_at, created_by_name=room.created_by_name,
         active_meeting=ActiveMeetingOut(id=active.id, started_at=active.started_at, participants=participants) if active else None,
+        icon=icon_out(room),
     )
 
 

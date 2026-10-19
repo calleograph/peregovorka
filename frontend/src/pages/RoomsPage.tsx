@@ -8,7 +8,8 @@ import { useToast } from "../components/Toast";
 import { copyText } from "../util";
 import { Modal } from "../components/Dialogs";
 import { PeerCreateDialog, PeerManageDialog } from "../components/PeerRooms";
-import { initials, magnet, spotlight, tint } from "../fx";
+import { magnet, spotlight, tint } from "../fx";
+import RoomIcon from "../components/RoomIcon";
 
 /** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
 function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: () => void }) {
@@ -119,7 +120,7 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
           aria-label={`${r.name}: ${live ? `идёт встреча, участников ${live.participants}` : "свободна"}`}>
       <span className="rc-glow" aria-hidden />
       <div className="rc-top">
-        <span className="rc-mark" aria-hidden>{initials(r.name)}</span>
+        <RoomIcon name={r.name} icon={r.icon} size={46} className="rc-mark" />
         <div className="rc-title">
           <h2 title={r.name}>{r.name}</h2>
           <span className={`pill ${live ? "live" : "free"}`}>

@@ -21,7 +21,8 @@ from ..auth.directory import DirectoryError
 import re
 
 from ..models import Meeting, Room, SipProfile
-from .schemas import MAX_ROOM_PARTICIPANTS
+from .schemas import MAX_ROOM_PARTICIPANTS, RoomIconOut
+from ..services.room_icons import icon_out
 from ..services.llm_choice import clean_choice, describe, llm_options, resolve_llm, room_choice
 from ..services.sip import normalize_number
 from ..security.passwords import hash_room_password
@@ -47,6 +48,7 @@ class RoomManageOut(BaseModel):
     slug: str
     name: str
     description: str | None
+    icon: RoomIconOut | None = None
     is_enabled: bool
     max_participants: int
     has_password: bool
@@ -149,6 +151,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         sip, sip_opts = await _sip_block(request, db, room)
         extra = {"llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
     return RoomManageOut(
+        icon=icon_out(room),
         protocol_instructions=room.protocol_instructions,
         retention={"text_days": room.text_retention_days, "audio_days": room.audio_retention_days, "history_access": room.history_access, "anonymize_mode": room.anonymize_mode},
         **extra,

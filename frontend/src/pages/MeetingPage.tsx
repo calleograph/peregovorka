@@ -8,6 +8,7 @@ import Menu from "../components/Menu";
 import RecordingsBlock from "../components/RecordingsBlock";
 import MapTab from "../components/MapTab";
 import { useMeetingAdmin } from "../components/MeetingAdminActions";
+import RoomIcon from "../components/RoomIcon";
 import AccessDialog from "../components/AccessDialog";
 import RoomJournal from "../components/RoomJournal";
 import DeliveryLog from "../components/DeliveryLog";
@@ -154,7 +155,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   return (
     <section>
       <p><Link to="/history">← К истории</Link></p>
-      <div className="row"><h1 style={{ margin: 0 }}>{meeting.room_name}</h1>{!finished && <span className="badge rec">идёт</span>}</div>
+      <div className="row"><RoomIcon name={meeting.room_name} icon={meeting.room_icon} size={34} /><h1 style={{ margin: 0 }}>{meeting.room_name}</h1>{!finished && <span className="badge rec">идёт</span>}</div>
       <p className="muted">{fmt(meeting.started_at)} — {meeting.ended_at ? `${fmt(meeting.ended_at)} (${duration(meeting.started_at, meeting.ended_at)})` : "идёт"} · Участвовали: {meeting.participants.map((p) => p.display_name).join(", ") || "—"}
         {(chatCount > 0 || boardUsed) && <> · Материалы: {chatCount > 0 && `чат (${chatCount})`}{chatCount > 0 && boardUsed && ", "}{boardUsed && "общая доска (схема)"}</>}</p>
       {error && <div className="alert error" role="alert">{error}</div>}

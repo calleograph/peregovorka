@@ -206,6 +206,9 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .crop-box canvas { display: block; cursor: grab; } .crop-box canvas:active { cursor: grabbing; }
 .crop-ring { position: absolute; inset: 0; pointer-events: none; border-radius: 50%; box-shadow: 0 0 0 999px rgba(0, 0, 0, .35); outline: 2px solid rgba(255, 255, 255, .9); outline-offset: -2px; }
 .crop-zoom { width: 280px; font-weight: 500; }
+.crop-ring.rounded { border-radius: 22%; }
+.crop-preview { display: flex; align-items: center; gap: 12px; align-self: stretch; }
+.crop-preview canvas { width: 64px; height: 64px; border: 1px solid var(--line); background: #fff; flex: none; } .crop-preview canvas.circle { border-radius: 50%; } .crop-preview canvas.rounded { border-radius: 22%; }
 
 /* ---------- «рука», «печатает…», проверка оборудования ---------- */
 .tile-hand { position: absolute; top: 8px; left: 8px; z-index: 3; display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px 4px 7px; border-radius: 999px; background: #f5b83d; color: #3b2a00;
@@ -880,3 +883,20 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .sess-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
 .sess-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
 .sess-list small { display: block; }
+/* ---- значки комнат ---- */
+.room-icon { flex: none; display: inline-grid; place-items: center; color: #fff; font-family: var(--display); font-weight: 800; letter-spacing: 0; vertical-align: middle;
+  background: linear-gradient(135deg, hsl(var(--ha, 220) 72% 52%), hsl(var(--hb, 260) 72% 46%)); box-shadow: 0 8px 16px -8px hsl(var(--ha, 220) 80% 40% / .8); object-fit: cover; }
+.room-icon.img { background: transparent; box-shadow: none; }
+.rc .room-icon { transition: transform .45s var(--spring); } .rc:hover .room-icon { transform: rotate(-5deg) scale(1.08); }
+.pj-mark.room-icon { background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .3); box-shadow: none; }
+.pj-mark.room-icon.img { background: transparent; border: 0; }
+.h-room-link { display: inline-flex; align-items: center; gap: 8px; }
+.room-head-icon { margin-right: 2px; }
+.ricon-pick { display: flex; flex-direction: column; gap: 10px; }
+.ricon-now { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ricon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; max-height: 340px; overflow: auto; padding: 2px; }
+.ricon-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); cursor: pointer; font: inherit; color: inherit; }
+.ricon-tile:hover { border-color: var(--accent); } .ricon-tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, rgba(60, 100, 240, .2)); }
+.ricon-tile span.n { font-size: 11.5px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; hyphens: auto; }
+.ricon-cats { display: flex; gap: 6px; flex-wrap: wrap; }
+.ricon-lic { font-size: 11.5px; }
