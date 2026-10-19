@@ -8,17 +8,20 @@
 * любая **ошибка связи или прав никогда не отменяет комнату**: пишется состояние `error` и причина, комната остаётся как есть. Отмена — только по явному ответу «события нет».
 
 Минимальные права: Microsoft Graph — приложение с правом `Calendars.ReadBasic.All` (без тела и вложений); EWS — учётная запись с ролью ApplicationImpersonation
-(или доступом «Рецензент» к календарям организаторов), базовая аутентификация по HTTPS. NTLM/Kerberos не поддержаны.
+(или доступом «Рецензент» к календарям организаторов — «делегированный доступ»); вход — Basic, NTLM, Negotiate (Kerberos) или Kerberos по HTTPS,
+несколько серверов за балансировщиком. Успешный вход прав на чужие календари не даёт: права проверяются отдельно.
 Идентификаторы события присылает надстройка (при отправке приглашения или повторном нажатии кнопки в сохранённой встрече).
 """
 from __future__ import annotations
 
 import logging
+import os
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from xml.sax.saxutils import escape
 
 import httpx
@@ -26,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Room, utcnow
+from . import ews_auth
 from . import outlook as ol
 from .temp_rooms import TempRoomError
 
@@ -113,27 +117,146 @@ def _envelope(body: str, mailbox: str | None) -> str:
             f'</soap:Header><soap:Body>{body}</soap:Body></soap:Envelope>')
 
 
+_DENIED = ("ErrorImpersonateUserDenied", "ErrorImpersonationDenied", "ErrorAccessDenied", "ErrorNonPrimarySmtpAddress")
+_AUTH_CACHE: dict[tuple[str, str], tuple[str, float]] = {}      # (адрес, настройка) → (схема, время): автоопределение не повторяется на каждом проходе
+_MODE_CACHE: dict[str, str] = {}                                 # адрес → impersonation | delegate: какой способ доступа к календарям сработал
+
+
 class EwsClient:
+    """EWS локального Exchange: Basic / NTLM / Negotiate (Kerberos) / Kerberos, несколько серверов за балансировщиком, имперсонация или делегированный доступ («Рецензент»).
+
+    Каждая ошибка называет причину и место: нет связи (с каким сервером), сервер не предлагает выбранный способ, логин/пароль отклонены, нет прав на календарь организатора.
+    Успешный вход прав на календари не даёт: права проверяются отдельным шагом. Пароль в тексты ошибок и журнал не попадает.
+    """
     kind = "ews"
 
-    def __init__(self, url: str, user: str, password: str, transport: httpx.AsyncBaseTransport | None = None):
-        self._url, self._user, self._pw, self._transport = url, user, password, transport
+    def __init__(self, url: str, user: str, password: str, transport: httpx.AsyncBaseTransport | None = None, *, auth: str = "auto", domain: str = "", access: str = "auto",
+                 realm: str = "", kdc: str = "", verify: Any = True):
+        try:
+            self._urls = ews_auth.normalize_urls(url)
+        except ValueError as exc:
+            raise CalendarError(str(exc)) from None
+        if not self._urls:
+            raise CalendarError("Не заполнен адрес EWS.")
+        self._user, self._pw, self._transport, self._pref, self._domain, self._access = user, password, transport, auth if auth in ews_auth.AUTH_CHOICES else "auto", domain, access
+        self._verify, self._good = verify, 0
+        self._realm, self._kdc = realm, kdc
+        self.last_detail = ""
+        self.used_scheme = ""
+        self.used_url = ""
+
+    # ---- транспорт -------------------------------------------------------------------------------------
+    def _red(self, text: str) -> str:
+        return ews_auth.redact(text, self._pw)
+
+    def _client(self, auth=None) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=self._transport, verify=self._verify, auth=auth, timeout=httpx.Timeout(20.0, connect=8.0),
+                                 limits=httpx.Limits(max_connections=1, max_keepalive_connections=1), follow_redirects=False)       # NTLM привязан к соединению
+
+    async def _scheme(self, url: str) -> str:
+        """Явная настройка — как задана. auto: найденная ранее схема, иначе Basic (как работало раньше); если сервер Basic не предлагает, схема выбирается по его ответу 401 (см. _post)."""
+        if self._pref in ("basic", "ntlm", "negotiate", "kerberos"):
+            return self._pref
+        hit = _AUTH_CACHE.get((url, self._user))
+        return hit[0] if hit and time.monotonic() - hit[1] < 600 else "basic"
+
+    async def detect(self) -> list[dict]:
+        """По каждому адресу: доступность, предложенные способы входа, рекомендация. Без учётных данных (ничего не отправляется, кроме пустого запроса)."""
+        out = []
+        for url in self._urls:
+            host = urlsplit(url).hostname or url
+            try:
+                async with self._client() as c:
+                    r = await c.get(url)
+                offered = ews_auth.parse_schemes(r.headers.get_list("www-authenticate"))
+                out.append({"url": url, "reachable": True, "status": r.status_code, "schemes": offered, "recommended": ews_auth.choose(offered, "auto") if r.status_code == 401 else None,
+                            "message": (f"{host}: предлагает {', '.join(ews_auth.SCHEME_LABEL.get(x, x) for x in offered)}." if offered else f"{host}: ответил HTTP {r.status_code} без предложения способов входа (проверьте адрес Exchange.asmx).")})
+            except httpx.HTTPError as exc:
+                out.append({"url": url, "reachable": False, "status": None, "schemes": [], "recommended": None, "message": f"{host}: {self._net_reason(exc)}"})
+        return out
+
+    @staticmethod
+    def _net_reason(exc: Exception) -> str:
+        from . import outlook_diag  # noqa: PLC0415
+
+        return outlook_diag.connect_failure(exc)[1] if isinstance(exc, httpx.HTTPError) else type(exc).__name__
+
+    async def _send(self, url: str, scheme: str, xml: str) -> httpx.Response:
+        host = urlsplit(url).hostname or ""
+        if scheme in ("negotiate", "kerberos"):
+            ews_auth.apply_kerberos_env(self._realm, self._kdc)
+        auth = ews_auth.build_auth(scheme, self._user, self._pw, self._domain, host)
+        async with self._client(auth) as c:
+            return await c.post(url, content=xml.encode("utf-8"), headers={"Content-Type": "text/xml; charset=utf-8"})
+
+    def _auth_failure(self, scheme: str, r: httpx.Response, url: str) -> CalendarError:
+        offered = ews_auth.parse_schemes(r.headers.get_list("www-authenticate"))
+        host = urlsplit(url).hostname
+        need = "negotiate" if scheme == "kerberos" else scheme
+        label = ews_auth.SCHEME_LABEL.get(scheme, scheme)
+        if offered and need not in offered:
+            return CalendarError(f"Сервер {host} не предлагает способ «{label}»; доступны: {', '.join(ews_auth.SCHEME_LABEL.get(x, x) for x in offered)}. Выберите другой способ входа.")
+        hint = {"ntlm": " Для NTLM укажите имя в виде ДОМЕН\\пользователь или user@домен.", "negotiate": " Для Kerberos имя сервера в адресе должно совпадать с зарегистрированным именем службы HTTP/<имя>; проверьте область Kerberos и доступность KDC.",
+                "kerberos": " Для Kerberos имя сервера в адресе должно совпадать с зарегистрированным именем службы HTTP/<имя>; проверьте область Kerberos и доступность KDC.", "basic": ""}.get(scheme, "")
+        return CalendarError(f"Сервер {host} отклонил учётную запись ({label}): неверный логин или пароль, учётная запись заблокирована или не допущена к EWS.{hint}")
 
     async def _post(self, xml: str) -> ET.Element:
-        try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(20.0, connect=8.0), auth=httpx.BasicAuth(self._user, self._pw)) as c:
-                r = await c.post(self._url, content=xml.encode("utf-8"), headers={"Content-Type": "text/xml; charset=utf-8"})
-        except httpx.HTTPError as exc:
-            raise CalendarError(f"Нет связи с EWS ({type(exc).__name__}).") from None
-        if r.status_code == 401:
-            raise CalendarError("EWS отклонил логин/пароль. Поддерживается только базовая аутентификация (NTLM и Kerberos не поддержаны).")
-        if r.status_code != 200:
-            raise CalendarError(f"EWS ответил HTTP {r.status_code}.")
-        try:
-            return ET.fromstring(r.content)
-        except ET.ParseError:
-            raise CalendarError("EWS вернул не SOAP-ответ: проверьте адрес Exchange.asmx.") from None
+        failures: list[str] = []
+        n = len(self._urls)
+        for k in range(n):
+            idx = (self._good + k) % n
+            url = self._urls[idx]
+            host = urlsplit(url).hostname or url
+            try:
+                scheme = await self._scheme(url)
+                r = await self._send(url, scheme, xml)
+            except CalendarError:
+                raise
+            except httpx.HTTPError as exc:
+                failures.append(f"{host}: {self._net_reason(exc)}")
+                continue
+            except ImportError as exc:
+                raise CalendarError(f"Способ входа недоступен в этой сборке: {self._red(str(exc))[:160]}") from None
+            except Exception as exc:  # noqa: BLE001 — ошибки Kerberos/NTLM контекста (нет KDC, неверный пароль до отправки)
+                msg = self._red(str(exc))[:220]
+                if scheme in ("negotiate", "kerberos"):
+                    raise CalendarError(f"Kerberos: не удалось получить билет для {host} ({type(exc).__name__}: {msg}). Проверьте область, KDC и имя службы HTTP/{host}.") from None
+                raise CalendarError(f"Ошибка входа в EWS ({scheme}): {type(exc).__name__}: {msg}") from None
+            if r.status_code in (502, 503, 504):
+                failures.append(f"{host}: HTTP {r.status_code} (ошибка сервера или балансировщика)")
+                continue
+            if r.status_code == 401 and self._pref == "auto":
+                offered = ews_auth.parse_schemes(r.headers.get_list("www-authenticate"))
+                alt = ews_auth.choose(offered, "auto")
+                if "basic" not in offered and alt and alt != scheme:        # Basic сервер не принимает: берём то, что он предлагает (при Basic в списке — настоящая ошибка пароля, повторов нет)
+                    try:
+                        r = await self._send(url, alt, xml)
+                    except httpx.HTTPError as exc:
+                        failures.append(f"{host}: {self._net_reason(exc)}")
+                        continue
+                    except Exception as exc:  # noqa: BLE001
+                        raise CalendarError(f"Ошибка входа в EWS ({alt}): {type(exc).__name__}: {self._red(str(exc))[:220]}") from None
+                    scheme = alt
+                    if r.status_code != 401:
+                        _AUTH_CACHE[(url, self._user)] = (alt, time.monotonic())
+            if r.status_code == 401:
+                _AUTH_CACHE.pop((url, self._user), None)
+                raise self._auth_failure(scheme, r, url)               # другой сервер с теми же данными не пробуем: это блокировало бы учётную запись
+            if r.status_code == 403:
+                raise CalendarError(f"EWS на {host} запретил доступ (HTTP 403): проверьте права учётной записи на EWS и правила брандмауэра/WAF.")
+            if r.status_code == 404:
+                raise CalendarError(f"Адрес EWS на {host} не найден (HTTP 404): проверьте путь (обычно /EWS/Exchange.asmx).")
+            if r.status_code != 200 and r.status_code != 500:
+                raise CalendarError(f"EWS на {host} ответил HTTP {r.status_code}.")
+            self._good, self.used_scheme, self.used_url = idx, scheme, url
+            try:
+                return ET.fromstring(r.content)
+            except ET.ParseError:
+                raise CalendarError(f"{host} вернул не SOAP-ответ: проверьте адрес Exchange.asmx (за балансировщиком он должен вести на CAS/EWS).") from None
+        self.last_detail = "; ".join(failures)
+        raise CalendarError("Exchange недоступен: " + "; ".join(failures) + ".")
 
+    # ---- разбор ответов -------------------------------------------------------------------------------
     @staticmethod
     def _code(root: ET.Element) -> tuple[str, str]:
         msg = root.find(".//m:GetItemResponseMessage", NS)
@@ -143,14 +266,38 @@ class EwsClient:
             return "Error", "NoResponse"
         return msg.get("ResponseClass", "Error"), (msg.findtext("m:ResponseCode", "", NS) or "")
 
+    def _mode(self) -> str:
+        return self._access if self._access in ("impersonation", "delegate") else _MODE_CACHE.get(self._urls[0], "impersonation")
+
+    async def _with_mode(self, body_for, organizer: str):
+        """Выполняет запрос выбранным способом доступа; при auto и отказе имперсонации пробует делегированный доступ и запоминает, что сработало."""
+        mode = self._mode()
+        root = await self._post(_envelope(body_for(mode), organizer if mode == "impersonation" else None))
+        cls, code = self._code(root)
+        if cls != "Success" and code in _DENIED and self._access == "auto" and mode == "impersonation":
+            root2 = await self._post(_envelope(body_for("delegate"), None))
+            cls2, code2 = self._code(root2)
+            if cls2 == "Success" or code2 not in _DENIED:
+                _MODE_CACHE[self._urls[0]] = "delegate"
+                return root2, cls2, code2, "delegate"
+        if cls == "Success" and self._access == "auto":
+            _MODE_CACHE[self._urls[0]] = mode
+        return root, cls, code, mode
+
+    def _denied(self, mode: str, probe: bool = False) -> CalendarError:
+        if mode == "impersonation":
+            tail = "Назначьте учётной записи роль ApplicationImpersonation (только на нужные ящики) либо выберите способ «Делегированный доступ» и выдайте право «Рецензент» на календари организаторов."
+        else:
+            tail = "Выдайте учётной записи право «Рецензент» на календарь организатора (Add-MailboxFolderPermission … -AccessRights Reviewer) либо роль ApplicationImpersonation."
+        return CalendarError(("Вход выполнен, но " if probe else "") + "прав на календарь организатора нет. Успешный вход в EWS сам по себе прав на чужие календари не даёт. " + tail)
+
     async def get_event(self, organizer: str, rest_id: str | None, ews_id: str | None) -> EventInfo:
         if not ews_id:
             raise CalendarError("У события нет идентификатора EWS.")
         body = ('<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/>'
                 '<t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsCancelled"/></t:AdditionalProperties></m:ItemShape>'
                 f'<m:ItemIds><t:ItemId Id="{escape(ews_id, {chr(34): "&quot;"})}"/></m:ItemIds></m:GetItem>')
-        root = await self._post(_envelope(body, organizer))
-        cls, code = self._code(root)
+        root, cls, code, mode = await self._with_mode(lambda _m: body, organizer)
         if cls == "Success":
             it = root.find(".//t:CalendarItem", NS)
             if it is None:
@@ -159,8 +306,8 @@ class EwsClient:
                              _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)))
         if code in ("ErrorItemNotFound", "ErrorInvalidIdMalformed", "ErrorInvalidId"):
             return EventInfo(False) if code == "ErrorItemNotFound" else self._bad_id()
-        if code in ("ErrorImpersonateUserDenied", "ErrorImpersonationDenied", "ErrorAccessDenied"):
-            raise CalendarError("EWS отказал в доступе к календарю организатора: назначьте учётной записи роль ApplicationImpersonation.")
+        if code in _DENIED:
+            raise self._denied(mode)
         raise CalendarError(f"EWS ответил ошибкой {code or 'неизвестной'}.")
 
     @staticmethod
@@ -168,14 +315,26 @@ class EwsClient:
         raise CalendarError("Идентификатор события не принят EWS (событие пересохранено?). Нажмите кнопку в Outlook ещё раз.")
 
     async def probe(self, mailbox: str) -> str:
-        body = '<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape><m:FolderIds><t:DistinguishedFolderId Id="calendar"/></m:FolderIds></m:GetFolder>'
-        root = await self._post(_envelope(body, mailbox))
-        cls, code = self._code(root)
+        """Два отдельных шага: 1) вход (способ, сервер); 2) права на календарь указанного ящика (имперсонация или делегированный доступ)."""
+        def body_for(mode: str) -> str:
+            folder = ('<t:DistinguishedFolderId Id="calendar"/>' if mode == "impersonation" else
+                      f'<t:DistinguishedFolderId Id="calendar"><t:Mailbox><t:EmailAddress>{escape(mailbox)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>')
+            return f'<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape><m:FolderIds>{folder}</m:FolderIds></m:GetFolder>'
+        root, cls, code, mode = await self._with_mode(body_for, mailbox)
+        login = f"Вход выполнен ({ews_auth.SCHEME_LABEL.get(self.used_scheme, self.used_scheme)}, сервер {urlsplit(self.used_url).hostname})."
+        way = "имперсонация" if mode == "impersonation" else "делегированный доступ"
         if cls == "Success":
-            return f"Вход выполнен, календарь {mailbox} читается."
-        if code in ("ErrorImpersonateUserDenied", "ErrorImpersonationDenied", "ErrorAccessDenied"):
-            raise CalendarError("Вход выполнен, но доступа к календарю нет: назначьте роль ApplicationImpersonation.")
-        raise CalendarError(f"EWS ответил ошибкой {code or 'неизвестной'}.")
+            return f"{login} Права на календарь {mailbox}: есть ({way}), календарь читается."
+        if code in _DENIED:
+            raise CalendarError(f"{login} " + self._denied(mode).args[0])
+        raise CalendarError(f"{login} EWS ответил ошибкой {code or 'неизвестной'}.")
+
+
+def _default_verify():
+    from . import tls_chain  # noqa: PLC0415
+
+    ca = os.environ.get("OUTLOOK_CHECK_CA_FILE") or ("/data/ca/outlook-ca.pem" if os.path.isfile("/data/ca/outlook-ca.pem") else "")
+    return tls_chain.system_context(ca or None)
 
 
 def make_client(cfg: Any, transport: httpx.AsyncBaseTransport | None = None):
@@ -186,7 +345,8 @@ def make_client(cfg: Any, transport: httpx.AsyncBaseTransport | None = None):
     if cfg.sync_mode == "ews":
         if not (cfg.ews_url and cfg.ews_user and cfg.ews_password):
             raise CalendarError("Не заполнены адрес EWS, логин или пароль.")
-        return EwsClient(cfg.ews_url, cfg.ews_user, cfg.ews_password, transport)
+        return EwsClient(cfg.ews_url, cfg.ews_user, cfg.ews_password, transport, auth=getattr(cfg, "ews_auth", "auto"), domain=getattr(cfg, "ews_domain", ""),
+                         access=getattr(cfg, "ews_access", "auto"), realm=getattr(cfg, "ews_kerberos_realm", ""), kdc=getattr(cfg, "ews_kdc", ""), verify=_default_verify())
     raise CalendarError("Серверная сверка выключена.")
 
 
@@ -232,7 +392,8 @@ async def run_once(db: AsyncSession, cfg: Any, client, now: datetime | None = No
         counts["checked"] += 1
         counts[res] += 1
         if journal is not None and res in ("cancelled", "rescheduled", "error"):
-            journal.emit("outlook", f"sync_{res}", level="warn" if res == "error" else "info", room=room.name, message=(room.outlook_sync_error or "")[:200] if res == "error" else None)
+            journal.emit("outlook", f"sync_{res}", level="warn" if res == "error" else "info", room=room.name, message=(room.outlook_sync_error or "")[:300] if res == "error" else None,
+                         data={"client": client.kind, "scheme": getattr(client, "used_scheme", None) or None, "server": (urlsplit(client.used_url).hostname if getattr(client, "used_url", "") else None)})
     return counts
 
 

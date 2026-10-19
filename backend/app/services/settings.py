@@ -690,6 +690,11 @@ class OutlookSettings(_Group):
     graph_client_id: str = ""
     graph_client_secret: str = ""                                         # секрет приложения Entra ID (только чтение календарей)
     ews_url: str = ""                                                     # https://mail.example.org/EWS/Exchange.asmx
+    ews_auth: str = "auto"                                                # способ входа в EWS: auto (по предложению сервера: Basic → NTLM → Negotiate) | basic | ntlm | negotiate | kerberos
+    ews_domain: str = ""                                                  # домен для NTLM/Kerberos, если логин без домена (необязательно)
+    ews_access: str = "auto"                                              # доступ к календарям организаторов: auto | impersonation (ApplicationImpersonation) | delegate («Рецензент»)
+    ews_kerberos_realm: str = ""                                          # область Kerberos, если её нельзя найти по DNS (необязательно)
+    ews_kdc: str = ""                                                     # адрес KDC (необязательно; обычно находится по DNS)
     ews_user: str = ""                                                    # учётная запись сверки (роль ApplicationImpersonation либо доступ «Рецензент» к календарям)
     ews_password: str = ""
 
@@ -724,6 +729,36 @@ class OutlookSettings(_Group):
     def effective_sync_on_send(self) -> bool:
         """Подписка на отправку (Smart Alerts) требует Mailbox 1.12; локальный Exchange поддерживает Mailbox API не выше 1.5 — там она не включается (вместо неё серверная сверка EWS)."""
         return bool(self.sync_on_send and self.mail_kind == "m365")
+
+    @field_validator("ews_auth")
+    @classmethod
+    def _ews_auth(cls, v: str) -> str:
+        if v not in ("auto", "basic", "ntlm", "negotiate", "kerberos"):
+            raise ValueError("Способ входа в EWS: auto, basic, ntlm, negotiate или kerberos")
+        return v
+
+    @field_validator("ews_access")
+    @classmethod
+    def _ews_access(cls, v: str) -> str:
+        if v not in ("auto", "impersonation", "delegate"):
+            raise ValueError("Доступ к календарям: auto, impersonation или delegate")
+        return v
+
+    @field_validator("ews_kerberos_realm", "ews_kdc")
+    @classmethod
+    def _krb(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.fullmatch(r"[A-Za-z0-9.\-:]+", v):
+            raise ValueError("Область Kerberos и KDC: только буквы, цифры, точки, дефисы и двоеточие (порт)")
+        return v
+
+    @field_validator("ews_url")
+    @classmethod
+    def _ews_url(cls, v: str) -> str:
+        """Один или несколько адресов EWS (по одному в строке): `mail.example.org` → https://mail.example.org/EWS/Exchange.asmx; только HTTPS."""
+        from .ews_auth import normalize_urls  # noqa: PLC0415
+
+        return "\n".join(normalize_urls(v))
 
     @field_validator("sync_mode")
     @classmethod

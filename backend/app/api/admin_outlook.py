@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import Meeting, Room, utcnow
 from ..services import outlook as ol
+from ..services import ews_auth
 from ..services import outlook_diag as od
 from ..services import tls_chain, tls_check
 from ..services import outlook_sync as osync
@@ -153,6 +154,21 @@ async def package(request: Request, su: SessionUser = Depends(require_admin), db
                       details={"base": base, "version": st.settings.app_version, "sync_on_send": cfg.sync_on_send})
     await db.commit()
     return Response(data, media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="Peregovorka-Outlook.zip"', "Cache-Control": "no-store"})
+
+
+@router.post("/ews-detect")
+async def ews_detect(request: Request, body: dict[str, Any] = Body(default={}), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Определяет, какие способы входа предлагают серверы EWS (Basic / NTLM / Negotiate), и рекомендует один. Учётные данные не нужны и не отправляются; адрес — из тела запроса или из сохранённых настроек."""
+    cfg = await _cfg(request, db)
+    raw = str(body.get("url") or cfg.ews_url or "")
+    try:
+        client = osync.EwsClient(raw, "", "", getattr(request.app.state, "test_transports", {}).get("outlook_sync"), verify=osync._default_verify())
+    except osync.CalendarError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    items = await client.detect()
+    rec = next((i["recommended"] for i in items if i["recommended"]), None)
+    return {"servers": items, "recommended": rec, "label": ews_auth.SCHEME_LABEL.get(rec or "", ""),
+            "message": ("Рекомендуется способ входа: " + ews_auth.SCHEME_LABEL[rec] + ".") if rec else "Ни один сервер не предложил поддерживаемый способ входа: проверьте адрес и доступность."}
 
 
 @router.post("/sync-test")

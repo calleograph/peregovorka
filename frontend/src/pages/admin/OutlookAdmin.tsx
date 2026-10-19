@@ -41,6 +41,16 @@ export default function OutlookAdmin() {
   }, []);
   useEffect(() => { void check(); void loadLists(); api.outlookCenter().then((c) => setCompat(c.compat)).catch(() => undefined); }, [check, loadLists]);
 
+  const [formKey, setFormKey] = useState(0);
+  const [det, setDet] = useState<Awaited<ReturnType<typeof api.admin.outlookEwsDetect>> | null>(null);
+  const detect = async () => {
+    setBusy("detect"); setDet(null);
+    try { setDet(await api.admin.outlookEwsDetect()); } catch (e) { setTest({ ok: false, text: (e as ApiError).message }); }
+    setBusy("");
+  };
+  const applyAuth = async (m: string) => {
+    try { await api.admin.saveSettings("outlook", { ews_auth: m } as never); setFormKey((k) => k + 1); setDet(null); void check(); } catch (e) { setTest({ ok: false, text: (e as ApiError).message }); }
+  };
   const syncTest = async () => {
     setBusy("test"); setTest(null);
     try { const r = await api.admin.outlookSyncTest(mailbox.trim()); setTest({ ok: r.ok, text: `${r.message} (${r.ms} мс)` }); } catch (e) { setTest({ ok: false, text: (e as ApiError).message }); }
@@ -111,7 +121,7 @@ export default function OutlookAdmin() {
         </details>
       </div>
 
-      <SettingsForm key="outlook" group="outlook" title="Настройки интеграции" fields={outlookFields} onSaved={() => void check()}
+      <SettingsForm key={`outlook-${formKey}`} group="outlook" title="Настройки интеграции" fields={outlookFields} onSaved={() => void check()}
         intro="Включите интеграцию, задайте публичный HTTPS-адрес и при необходимости группы, которым разрешено создавать конференции. Все настройки хранятся в базе и входят в резервную копию конфигурации." />
 
       <div className="card" aria-label="Проверка сверки календаря">
@@ -120,7 +130,14 @@ export default function OutlookAdmin() {
         <div className="row">
           <input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="организатор@example.org" aria-label="Почтовый ящик для проверки" style={{ maxWidth: 320 }} inputMode="email" />
           <button className="btn" disabled={busy !== "" || !mailbox.includes("@")} onClick={() => void syncTest()}>{busy === "test" ? "Проверяем…" : "Проверить доступ"}</button>
+          <button className="btn" disabled={busy !== ""} onClick={() => void detect()} title="Без учётных данных: что предлагают сохранённые адреса EWS">{busy === "detect" ? "Определяем…" : "Определить способы входа"}</button>
           <button className="btn" disabled={busy !== ""} onClick={() => void syncRun()} title="Не дожидаясь интервала">{busy === "run" ? "Сверяем…" : "Сверить сейчас"}</button></div>
+        {det && (
+          <div className="alert info" role="status">
+            <b>{det.message}</b>
+            <ul className="stage-list">{det.servers.map((x) => <li key={x.url} className={x.reachable ? "ok" : "bad"}><span className="stage-mark" aria-hidden>{x.reachable ? "✓" : "✗"}</span><span>{x.message}</span></li>)}</ul>
+            {det.recommended && <button className="btn mini" onClick={() => void applyAuth(det.recommended!)}>Применить: {det.label}</button>}
+          </div>)}
         {test && <div className={`alert ${test.ok ? "ok" : "error"}`} role="status">{test.ok ? "✓ " : "✗ "}{test.text}</div>}
         {note && <div className="alert info" role="status">{note}</div>}
       </div>

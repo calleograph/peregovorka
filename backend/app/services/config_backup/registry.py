@@ -196,7 +196,7 @@ ENV: dict[str, str] = {
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
-ENV_OTHER: dict[str, str] = {"FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере"}
+ENV_OTHER: dict[str, str] = {"FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
 
 
 def exported_tables() -> list[str]:

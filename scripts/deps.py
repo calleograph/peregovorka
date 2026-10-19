@@ -446,8 +446,11 @@ def cmd_freeze(a) -> int:
                 (Path(td) / "extra.txt").write_text(f"gigaam @ git+https://github.com/salute-developers/GigaAM.git@{sha}\n", encoding="utf-8")
             else:
                 (Path(td) / "extra.txt").write_text("", encoding="utf-8")
-            script = ("apt-get -qq update >/dev/null && apt-get -qq install -y --no-install-recommends git ca-certificates >/dev/null 2>&1; "
-                      f"pip install -q --dry-run --ignore-installed --report /out/r.json -r /src/{svc}/requirements.txt -r /out/extra.txt {extra} 2>&1 | tail -15")
+            # отсрочка обновления (deferred) действует и при пересчёте: компонент остаётся на закреплённой версии, пока решение не пересмотрено
+            defer = [f"{c['source']['name']}<={c['pinned']}" for c in m["components"] if c.get("deferred") and c.get("source", {}).get("type") == "pypi" and c["pinned"][:1].isdigit()]
+            (Path(td) / "defer.txt").write_text("\n".join(defer) + "\n", encoding="utf-8")
+            script = ("apt-get -qq update >/dev/null && apt-get -qq install -y --no-install-recommends git ca-certificates gcc libkrb5-dev >/dev/null 2>&1; "
+                      f"pip install -q --dry-run --ignore-installed --report /out/r.json -r /src/{svc}/requirements.txt -r /out/extra.txt -c /out/defer.txt {extra} 2>&1 | tail -15")
             os.chmod(td, 0o777)
             r = subprocess.run(["docker", "run", "--rm", "-v", f"{ROOT}:/src:ro", "-v", f"{td}:/out", image, "sh", "-c", script], capture_output=True, text=True)
             rep = Path(td) / "r.json"

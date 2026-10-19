@@ -14,7 +14,7 @@ cffi==2.1.1
 click==8.5.0
 coloredlogs==15.0.1
 fastapi==0.145.0
-filelock==4.2.2
+filelock==4.2.4
 flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2026.9.0
@@ -52,7 +52,7 @@ sentencepiece==0.2.2
 setuptools==84.0.0
 silero-vad==6.2.3
 soundfile==0.14.0
-starlette==1.8.0
+starlette==1.9.0
 sympy==1.14.0
 tqdm==4.70.1
 transcribe-cpp==0.4.0

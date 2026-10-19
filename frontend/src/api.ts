@@ -927,6 +927,7 @@ export const api = {
     checkSip: (id: string) => request<DiagResult>("POST", `/admin/sip/profiles/${id}/check`),
     outlookStatus: () => request<{ checks: OutlookCheck[]; base: string; ok: boolean; conferences: number; enabled: boolean }>("GET", "/admin/outlook/status"),
     outlookMeetings: () => request<{ items: OutlookConference[] }>("GET", "/admin/outlook/meetings"),
+    outlookEwsDetect: (url?: string) => request<{ servers: { url: string; reachable: boolean; status: number | null; schemes: string[]; recommended: string | null; message: string }[]; recommended: string | null; label: string; message: string }>("POST", "/admin/outlook/ews-detect", { url }),
     outlookSyncTest: (mailbox: string) => request<{ ok: boolean; message: string; ms: number }>("POST", "/admin/outlook/sync-test", { mailbox }),
     outlookSyncRun: () => request<{ checked: number; cancelled: number; rescheduled: number; error: number; ok: number }>("POST", "/admin/outlook/sync-run"),
     sipGuide: (profileId?: string) => request<SipGuide>("GET", `/admin/sip/guide${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ""}`),

@@ -7,14 +7,20 @@ FROM ${PYTHON_IMAGE}
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_RETRIES=5 PIP_DEFAULT_TIMEOUT=60
 
 # Шрифт с кириллицей для экспорта протоколов в PDF; ffmpeg — сведение общей аудиозаписи встречи
+# libgssapi-krb5-2/libkrb5-3 — рабочие библиотеки Kerberos (аутентификация EWS); устанавливаются явно, чтобы не удалиться вместе со сборочными пакетами ниже
 RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-dejavu-core ffmpeg \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-dejavu-core ffmpeg libgssapi-krb5-2 libkrb5-3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
 # constraints.txt — точные версии ВСЕХ зависимостей (scripts/deps.py freeze): повторная сборка даёт тот же набор, а не «самые новые в диапазоне».
 COPY requirements.txt constraints.txt ./
-RUN pip install -r requirements.txt -c constraints.txt
+# gssapi и krb5 собираются из исходников (колёс для Linux нет): сборочные пакеты ставятся на время установки и удаляются
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends gcc libkrb5-dev \
+    && pip install -r requirements.txt -c constraints.txt \
+    && apt-get purge -y --auto-remove gcc libkrb5-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY alembic.ini ./
 COPY migrations ./migrations

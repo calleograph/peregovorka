@@ -183,3 +183,11 @@ def put_settings(client, group: str, **values):
     r = client.put(f"/api/v1/admin/settings/{group}", json=values)
     assert r.status_code == 200, r.text
     return r.json()
+
+
+@pytest.fixture(autouse=True)
+def _reset_ews_caches():
+    """Кэши способа входа и доступа EWS живут в модуле: между тестами их очищаем."""
+    from app.services import outlook_sync as _os
+    _os._AUTH_CACHE.clear(); _os._MODE_CACHE.clear()
+    yield
