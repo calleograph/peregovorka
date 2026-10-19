@@ -3,6 +3,8 @@ import { api, type ApiError, type MediaItem, type MeetingMedia } from "../api";
 import { fmtTime } from "../mediaPlayerMath";
 import { bytes, fmt } from "../util";
 import { Icon } from "./Icons";
+import { useLocation } from "react-router-dom";
+import { parseMoment } from "../player/playerMath";
 import { openPlayer } from "../player/store";
 
 const TITLE: Record<string, string> = { mix_video: "Видеозапись встречи", mix_audio: "Аудиозапись встречи", participant: "Запись участника" };
@@ -11,11 +13,19 @@ const TITLE: Record<string, string> = { mix_video: "Видеозапись вс�
 export default function RecordingsBlock({ meetingId }: { meetingId: string }) {
   const [data, setData] = useState<MeetingMedia | null>(null);
   const [err, setErr] = useState("");
+  const { search } = useLocation();
   const load = useCallback(() => api.meetingMedia(meetingId).then((d) => { setData(d); setErr(""); }).catch((e) => setErr((e as ApiError).message)), [meetingId]);
   useEffect(() => { void load(); }, [load]);
   // пока общая запись формируется в фоне — обновляем список
   const processing = !!data?.mixes.some((m) => m.status === "processing");
   useEffect(() => { if (!processing) return; const t = window.setInterval(() => void load(), 8000); return () => window.clearInterval(t); }, [processing, load]);
+
+  // ссылка на момент записи (?rec=…&t=…): открывается только если запись входит в список доступных этому пользователю
+  useEffect(() => {
+    const mom = parseMoment(search);
+    const m = mom && data?.mixes.find((x) => x.id === mom.rec);
+    if (mom && m && m.status === "ready") openPlayer({ id: m.id, meetingId, title: m.has_video ? "Запись встречи (видео)" : "Запись встречи (звук)", kind: m.kind, hasVideo: m.has_video, durationS: m.duration_s ?? 0, canDownload: m.can_download, startAt: mom.t });
+  }, [data, search, meetingId]);
 
   if (err) return null;                                  // записей нет или нет доступа — блок не показываем
   if (!data || (!data.mixes.length && !data.participants.length)) return null;

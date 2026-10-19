@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { api, type SubtitleData } from "../api";
 import { Icon } from "../components/Icons";
 import { SPEEDS, clamp, fmtTime, keyAction, mediaErrorText, nextSpeed } from "../mediaPlayerMath";
-import { MIN_FULL, activeCues, clampRect, decodePeaks, defaultRect, parsePrefs, type Cue, type Prefs, type Rect } from "./playerMath";
+import { MIN_FULL, activeCues, clampRect, decodePeaks, defaultRect, momentLink, parsePrefs, type Cue, type Prefs, type Rect } from "./playerMath";
 import { closePlayer, setPlayerMode, usePlayer, type PlayerItem } from "./store";
 import TranscriptPanel from "./TranscriptPanel";
 import Waveform from "./Waveform";
@@ -89,6 +89,7 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
   useEffect(() => { const m = media.current; if (!m) return; m.volume = prefs.volume; m.muted = prefs.muted; m.playbackRate = prefs.speed; }, [prefs.volume, prefs.muted, prefs.speed]);
   useEffect(() => () => { const m = media.current; if (m) { m.pause(); m.removeAttribute("src"); m.load(); } }, []);          // закрытие: остановить и закрыть соединение с файлом
   useEffect(() => { win.current?.focus(); }, [focusTick]);
+  useEffect(() => { if (item.startAt != null && !mobile) setPrefs({ transcript: true, follow: true }); }, [item.id]);          // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const f = () => setFs(!!document.fullscreenElement); document.addEventListener("fullscreenchange", f); return () => document.removeEventListener("fullscreenchange", f); }, []);
   // во время встречи запись не играет (иначе звук попадёт в микрофон): ставим на паузу и сворачиваем
   useEffect(() => { if (pathname.startsWith("/rooms/")) { media.current?.pause(); setPlayerMode("mini"); } }, [pathname]);
@@ -99,6 +100,9 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
 
   const toggle = useCallback(() => { const m = media.current; if (!m) return; if (m.paused) void m.play().catch(() => undefined); else m.pause(); }, []);
   const seek = useCallback((t: number) => { const m = media.current; if (!m) return; const d = Number.isFinite(m.duration) ? m.duration : dur; m.currentTime = clamp(t, 0, d || t); setCur(m.currentTime); }, [dur]);
+  const playAt = useCallback((t: number) => { seek(t); const m = media.current; if (m) void m.play().catch(() => undefined); }, [seek]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const momentUrl = useCallback((t: number) => momentLink(window.location.origin, item.meetingId, item.id, t), [item.meetingId, item.id]);
+  useEffect(() => { if (item.seekTick && item.startAt != null) seek(item.startAt); }, [item.seekTick]);      // eslint-disable-line react-hooks/exhaustive-deps
   const toggleFull = () => { if (!item.hasVideo) return; if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); else void stage.current?.requestFullscreen?.().catch(() => undefined); };
 
   const onError = async () => {
@@ -175,7 +179,7 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
   const common = {
     ref: media as never, src, preload: "metadata" as const, onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onError, playsInline: true,
     onTimeUpdate: () => { if (!playing) setCur(media.current?.currentTime ?? 0); },
-    onLoadedMetadata: () => { setLoading(false); const m = media.current; if (m) { m.volume = prefs.volume; m.muted = prefs.muted; m.playbackRate = prefs.speed; if (Number.isFinite(m.duration)) setDur(m.duration); } },
+    onLoadedMetadata: () => { setLoading(false); const m = media.current; if (m) { m.volume = prefs.volume; m.muted = prefs.muted; m.playbackRate = prefs.speed; if (Number.isFinite(m.duration)) setDur(m.duration); if (item.startAt) { m.currentTime = item.startAt; setCur(item.startAt); } } },
     onDurationChange: () => { const d = media.current?.duration; if (d && Number.isFinite(d)) setDur(d); },
     onWaiting: () => setLoading(true), onCanPlay: () => setLoading(false), onEnded: () => setPlaying(false),
   };
@@ -219,7 +223,7 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
           )}
           {!isMini && <div className="plr-hint muted small">Пробел — пауза · ←/→ — 5 с (Shift — 30 с) · ↑/↓ — громкость · M — звук · «,» «.» — скорость · Esc — закрыть</div>}
         </div>
-        {!isMini && prefs.transcript && <TranscriptPanel cues={cues} time={cur} follow={prefs.follow} onFollow={(v) => setPrefs({ follow: v })} onSeek={seek} unavailable={trUnavailable} scope={subs?.scope ?? "meeting"} />}
+        {!isMini && prefs.transcript && <TranscriptPanel cues={cues} time={cur} follow={prefs.follow} onFollow={(v) => setPrefs({ follow: v })} onSeek={seek} onPlay={playAt} momentUrl={momentUrl} unavailable={trUnavailable} scope={subs?.scope ?? "meeting"} />}
       </div>
       {!isMini && !mobile && !fs && <div className="plr-grip" onPointerDown={startSize} onPointerMove={moveSize} onPointerUp={endSize} onPointerCancel={endSize} aria-hidden title="Изменить размер" />}
     </div>

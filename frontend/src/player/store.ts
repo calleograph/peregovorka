@@ -4,6 +4,8 @@ import { useSyncExternalStore } from "react";
 export interface PlayerItem {
   id: string; meetingId: string; title: string; subtitle?: string; kind: "mix_audio" | "mix_video" | "participant";
   hasVideo: boolean; durationS: number; canDownload: boolean;
+  seekTick?: number;
+  startAt?: number;            // «ссылка на момент»: с какой секунды начать (и сразу показать стенограмму)
 }
 export interface PlayerState { item: PlayerItem | null; mode: "full" | "mini"; focusTick: number }
 
@@ -14,7 +16,7 @@ const set = (s: Partial<PlayerState>) => { state = { ...state, ...s }; emit(); }
 
 /** Открыть запись. Если играет другая — она останавливается (элемент пересоздаётся по `key`), одновременно звучит только одна. Та же запись — просто разворачивается. */
 export function openPlayer(item: PlayerItem): void {
-  if (state.item && state.item.id === item.id) { set({ mode: "full", focusTick: state.focusTick + 1 }); return; }
+  if (state.item && state.item.id === item.id) { set({ mode: "full", focusTick: state.focusTick + 1, item: item.startAt != null ? { ...state.item, startAt: item.startAt, seekTick: (state.item.seekTick ?? 0) + 1 } : state.item }); return; }
   set({ item, mode: "full", focusTick: state.focusTick + 1 });
 }
 export const closePlayer = () => set({ item: null });

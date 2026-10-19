@@ -51,13 +51,64 @@ export function activeCues(cues: Cue[], t: number, hold = 0.8, max = 2): Cue[] {
   return out.reverse();
 }
 
-/** Поиск по тексту и имени говорящего (без учёта регистра): номера найденных реплик. */
-export function searchCues(cues: Cue[], q: string): number[] {
-  const s = q.trim().toLowerCase();
-  if (!s) return [];
-  const out: number[] = [];
-  cues.forEach((c, i) => { if (c.text.toLowerCase().includes(s) || c.speaker.toLowerCase().includes(s)) out.push(i); });
+/** Приведение к сравнимому виду: без регистра, «ё» = «е», знаки препинания — пробелы (подряд идущие сливаются). `map[i]` — позиция в исходной строке для символа `text[i]`. */
+export function normalize(src: string): { text: string; map: number[] } {
+  let text = ""; const map: number[] = [];
+  for (let i = 0; i < src.length; i++) {
+    let ch = src[i].toLowerCase();
+    if (ch === "ё") ch = "е";
+    if (!/[\p{L}\p{N}]/u.test(ch)) ch = " ";
+    if (ch === " " && (text === "" || text.endsWith(" "))) continue;
+    text += ch[0]; map.push(i);
+  }
+  return { text, map };
+}
+
+/** Участки исходного текста, совпавшие с запросом (слово или фраза; по всем вхождениям): [начало, конец) в исходной строке. */
+export function matchRanges(src: string, q: string): [number, number][] {
+  const needle = normalize(q).text.trim();
+  if (!needle) return [];
+  const { text, map } = normalize(src);
+  const out: [number, number][] = [];
+  for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length)) {
+    out.push([map[at], map[at + needle.length - 1] + 1]);
+  }
   return out;
+}
+
+/** Поиск по тексту (слово или фраза, без учёта регистра, «ё», знаков препинания) и по имени говорящего: номера найденных реплик; `speaker` — только реплики этого участника. */
+export function searchCues(cues: Cue[], q: string, speaker = ""): number[] {
+  const needle = normalize(q).text.trim();
+  if (!needle) return [];
+  const out: number[] = [];
+  cues.forEach((c, i) => {
+    if (speaker && c.speaker !== speaker) return;
+    if (normalize(c.text).text.includes(needle) || normalize(c.speaker).text.includes(needle)) out.push(i);
+  });
+  return out;
+}
+
+/** Общее число вхождений в тексте реплик (для «N совпадений»). */
+export function countMatches(cues: Cue[], hits: number[], q: string): number {
+  return hits.reduce((n, i) => n + matchRanges(cues[i].text, q).length, 0);
+}
+
+/** Цитата для копирования: «[1:02:03] Имя: текст». */
+export function quoteOf(c: Cue, fmt: (t: number) => string, withSpeaker = true): string {
+  return `[${fmt(c.start)}]${withSpeaker && c.speaker ? ` ${c.speaker}:` : ""} ${c.text}`;
+}
+
+/** Ссылка на момент записи: страница встречи сама проверит права того, кто по ней перейдёт. */
+export function momentLink(origin: string, meetingId: string, recordingId: string, t: number): string {
+  return `${origin}/history/${meetingId}?rec=${recordingId}&t=${Math.max(0, Math.floor(t))}`;
+}
+
+/** Параметры ссылки на момент: `?rec=<id>&t=<секунды>`. */
+export function parseMoment(search: string): { rec: string; t: number } | null {
+  const p = new URLSearchParams(search);
+  const rec = p.get("rec");
+  const t = Number(p.get("t") ?? 0);
+  return rec && /^[0-9a-f-]{32,36}$/i.test(rec) ? { rec, t: Number.isFinite(t) && t >= 0 ? t : 0 } : null;
 }
 
 export interface Rect { x: number; y: number; w: number; h: number; auto?: boolean }          // auto — окно ещё не двигали: прижато к правому нижнему углу средствами CSS
