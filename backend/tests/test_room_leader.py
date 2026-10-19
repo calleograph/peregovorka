@@ -7,7 +7,8 @@ import uuid
 from app.models import MailMessage, Protocol, User
 from sqlalchemy import select
 
-from .conftest import STAFF_GROUP, login, make_room
+from .conftest import STAFF_GROUP, login, make_room, put_settings
+from .test_admin_features import _drain
 from .test_mail import LEADERS, add_profile, fake_smtp, finished_meeting, messages, run_queue, set_delivery  # noqa: F401
 from .test_transcripts import _feed_and_consume, _join, _segment
 
@@ -127,7 +128,7 @@ def test_room_journal_has_events_of_all_meetings_filters_and_is_private(client, 
     grant = next(e for e in j["items"] if e["action"] == "meeting.grant")
     assert grant["actor"] == "Carol C" and grant["details"]["user"] == "dave" and grant["details"]["via"] == "user" and grant["at"].endswith("+00:00")
     upd = next(e for e in j["items"] if e["action"] == "room.manage.update")
-    assert upd["details"].get("after") is None or True
+    assert upd["details"]["mail_delivery"]["after"]["per_material"]["protocol"]["mode"] == "leader"
     assert "password" not in str(j).lower() and "token" not in str(j).lower()
     only_mid2 = client.get(f"{API}/rooms/{room1['id']}/journal", params={"meeting_id": mid2}).json()["items"]
     assert only_mid2 and all(e["meeting_id"] == mid2 for e in only_mid2)
@@ -206,3 +207,232 @@ def test_auto_delivery_sends_each_material_to_its_own_recipients_once_and_logs_f
     jr = client.get(f"{API}/rooms/{room['id']}/journal", params={"kind": "mail"}).json()["items"]
     assert jr and all(e["kind"] == "mail" for e in jr) and any(e["details"].get("recipient") == "carol@corp.test" for e in jr)
     _ = MailMessage
+
+
+# ---------------------------------------------------------------- права доступа ко ВСЕМ маршрутам встречи, подмена идентификаторов
+
+SECRET = "СЕКРЕТНОЕ-СОДЕРЖИМОЕ-7731"
+
+
+def _paths(client, mid, pid):
+    """Все маршруты пользовательского API с `{meeting_id}` (кроме административных и публичного API по ключам): путь, метод."""
+    out = []
+    for p, ops in client.app_obj.openapi()["paths"].items():
+        if not p.startswith("/api/v1/") or "{meeting_id}" not in p or p.startswith(("/api/v1/admin", "/api/public")):
+            continue
+        for m in sorted(set(ops) - {"head", "options", "parameters"}):
+            url = (p.replace("{meeting_id}", mid).replace("{protocol_id}", pid).replace("{recording_id}", str(uuid.uuid4()))
+                   .replace("{attachment_id}", str(uuid.uuid4())).replace("{user_id}", str(uuid.uuid4())).replace("{identity}", "u-x"))
+            out.append((m.upper(), url.replace("{", "x").replace("}", "")))
+    return out
+
+
+def _protocol(client, mid):
+    async def make():
+        async with client.app_obj.state.session_maker() as db:
+            p = Protocol(meeting_id=uuid.UUID(mid), kind="protocol", status="ready", content=SECRET, created_by="test", title="Т")
+            db.add(p)
+            await db.commit()
+            return str(p.id)
+    return client.portal.call(make)
+
+
+def _hammer(client, mid, pid, allow_ok=("/release", "/leave")):   # собственные «выход»/«освободить доступ» безвредны и идемпотентны
+    """Каждый маршрут встречи: чужому — ни одного 2xx и ни следа содержимого; возвращает коды."""
+    bad = []
+    paths = _paths(client, mid, pid)
+    assert len(paths) > 40, "маршруты встречи не найдены — проверка была бы пустой"
+    for method, url in paths:
+        if any(url.endswith(a) or a in url for a in allow_ok):
+            continue
+        r = client.request(method, url, json={} if method != "GET" else None)
+        if 200 <= r.status_code < 300 or SECRET in r.text:
+            bad.append((method, url.replace(mid, "<m>").replace(pid, "<p>"), r.status_code))
+        assert r.status_code < 500, (method, url, r.status_code, r.text[:200])
+    return bad
+
+
+def test_every_meeting_route_is_closed_for_strangers_and_after_revocation(client, directory):
+    room1, room2 = setup_rooms(client, directory)
+    mid = meeting_of(client, room1)
+    pid = _protocol(client, mid)
+    dave = directory.users["dave"][1]
+    for who in ("dave", "bob"):                       # не имеет права / руководитель другой комнаты
+        login(client, who)
+        assert _hammer(client, mid, pid) == [], who
+    login(client, "carol")
+    assert client.post(f"{API}/meetings/{mid}/access", json={"ref": dave.ad_guid, "sam": "dave"}).status_code == 201
+    uid = client.get(f"{API}/meetings/{mid}/access").json()["grants"][0]["user_id"]
+    login(client, "dave")                              # право просмотра: материалы открываются, управление — нет
+    assert client.get(f"{API}/meetings/{mid}/protocols/{pid}").json()["content"] == SECRET
+    assert client.get(f"{API}/meetings/{mid}/transcript/export?format=txt").status_code == 200
+    assert client.get(f"{API}/meetings/{mid}/protocols/{pid}/export?format=txt").status_code == 200
+    for method, url in [("GET", f"/meetings/{mid}/access"), ("GET", f"/meetings/{mid}/delivery"), ("GET", f"/meetings/{mid}/delivery/log"), ("PUT", f"/meetings/{mid}/settings"),
+                        ("POST", f"/meetings/{mid}/delivery/send"), ("DELETE", f"/meetings/{mid}/protocols/{pid}"), ("DELETE", f"/meetings/{mid}"), ("POST", f"/meetings/{mid}/protocols")]:
+        r = client.request(method, API + url, json={})
+        assert r.status_code in (403, 404, 422), (method, url, r.status_code)
+    assert client.get(f"{API}/meetings/{mid}/protocols/{pid}").json()["content"] == SECRET, "чужие действия ничего не удалили"
+    login(client, "carol")
+    assert client.delete(f"{API}/meetings/{mid}/access/{uid}").status_code == 204
+    login(client, "dave")
+    assert _hammer(client, mid, pid) == [], "после отзыва закрыты все маршруты — не только интерфейс"
+    assert client.get(f"{API}/meetings/{mid}/protocols/{pid}/export?format=txt").status_code in (403, 404)
+
+
+def test_swapping_ids_never_crosses_meetings_or_rooms(client, directory):
+    room1, room2 = setup_rooms(client, directory)
+    m1, m2 = meeting_of(client, room1), meeting_of(client, room2)
+    p1, p2 = _protocol(client, m1), _protocol(client, m2)
+    login(client, "carol")                              # руководитель комнаты 1: своя встреча — да, чужой документ в своей встрече и чужая встреча — нет
+    assert client.get(f"{API}/meetings/{m1}/protocols/{p1}").status_code == 200
+    assert client.get(f"{API}/meetings/{m1}/protocols/{p2}").status_code == 404, "документ другой встречи по идентификатору своей"
+    assert client.get(f"{API}/meetings/{m1}/protocols/{p2}/export?format=txt").status_code == 404
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p2}").status_code == 404
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p1}").status_code == 404
+    assert client.patch(f"{API}/meetings/{m1}/protocols/{p2}", json={"content": "x"}).status_code in (403, 404)
+    assert client.delete(f"{API}/meetings/{m1}/protocols/{p2}").status_code in (403, 404)
+    login(client, "bob")                                # руководитель комнаты 2 — зеркально
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p2}").status_code == 200
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p1}").status_code == 404
+    assert client.get(f"{API}/meetings/{m1}/protocols/{p1}").status_code == 404
+    login(client, "root")
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p2}").json()["content"] == SECRET
+    # и ключ-идентификатор выдачи доступа: отозвать чужое право через свою встречу нельзя
+    login(client, "carol")
+    dave = directory.users["dave"][1]
+    login(client, "bob")
+    client.post(f"{API}/meetings/{m2}/access", json={"ref": dave.ad_guid, "sam": "dave"})
+    uid = client.get(f"{API}/meetings/{m2}/access").json()["grants"][0]["user_id"]
+    login(client, "carol")
+    assert client.delete(f"{API}/meetings/{m1}/access/{uid}").status_code in (204, 404)
+    login(client, "dave")
+    assert client.get(f"{API}/meetings/{m2}/protocols/{p2}").status_code == 200, "отзыв через встречу другой комнаты не затронул выданное право"
+
+
+# ---------------------------------------------------------------- полнота журнала комнаты
+
+def test_room_journal_records_every_listed_action_with_actor_time_and_meeting(tmp_path, directory, fake_smtp):  # noqa: F811
+    from .test_access_and_protocols import configure, llm_app
+
+    with llm_app(tmp_path, directory, []) as c:
+        configure(c)
+        directory.add("dave", "dave-pass", name="Dave D")
+        room = make_room(c, name="Журналируемая", moderators=LEADERS)
+        add_profile(c)
+        set_delivery(c, room, {"enabled": True, "per_material": {"protocol": {"mode": "leader"}}, "formats": ["txt"]})   # изменение настроек — событие
+        a = _join(c, "alice", room["id"])                                                                               # вход, начало
+        _feed_and_consume(c, [_segment(a["meeting_id"], a["identity"], "Принято решение")])
+        mid = a["meeting_id"]
+        login(c, "carol")
+        r = c.put(f"{API}/meetings/{mid}/settings", json={"delivery": {"enabled": True, "per_material": {"summary": {"mode": "leader"}}}})  # настройки встречи
+        assert r.status_code == 200, r.text
+        login(c, "alice")
+        assert c.post(f"{API}/meetings/{mid}/leave").status_code == 204                                                  # выход
+        login(c, "root")
+        assert c.post(f"{API}/meetings/{mid}/end").status_code == 204                                                    # завершение
+        run_queue(c)
+        login(c, "carol")
+        p1 = c.post(f"{API}/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"}).json()["protocol_id"]       # формирование
+        _drain(c)
+        c.post(f"{API}/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "заново"})                             # пересоздание
+        _drain(c)
+        assert c.patch(f"{API}/meetings/{mid}/protocols/{p1}", json={"content": "# Правка"}).status_code == 200                   # правка
+        assert c.get(f"{API}/meetings/{mid}/protocols/{p1}/export", params={"format": "txt"}).status_code == 200                  # скачивание
+        assert c.post(f"{API}/meetings/{mid}/delivery/send", json={"kinds": ["protocol"], "emails": ["carol@corp.test"]}).status_code in (200, 202)   # ручная отправка
+        run_queue(c)
+        dave = directory.users["dave"][1]
+        assert c.post(f"{API}/meetings/{mid}/access", json={"ref": dave.ad_guid, "sam": "dave"}).status_code == 201
+        uid = c.get(f"{API}/meetings/{mid}/access").json()["grants"][0]["user_id"]
+        assert c.delete(f"{API}/meetings/{mid}/access/{uid}").status_code == 204
+        login(c, "root")
+        assert c.delete(f"{API}/meetings/{mid}/protocols/{p1}").status_code == 204                                                # удаление материала
+        login(c, "carol")
+        items = c.get(f"{API}/rooms/{room['id']}/journal", params={"limit": 500}).json()["items"]
+        actions = {e["action"] for e in items}
+        need = {"meeting.join", "meeting.leave", "meeting.start", "protocol.create", "protocol.edit", "protocol.export", "protocol.delete", "meeting.materials.send",
+                "meeting.settings.update", "room.manage.update", "meeting.grant", "meeting.revoke", "mail.sent"}
+        assert need <= actions, f"в журнале нет: {sorted(need - actions)}"
+        assert actions & {"meeting.end", "meeting.ended"}, "завершение встречи"
+        assert sum(1 for e in items if e["action"] == "protocol.create") >= 2, "формирование и пересоздание записаны отдельно"
+        for e in items:
+            assert e["actor"], f"нет исполнителя: {e['action']}"
+            assert e["at"].endswith("+00:00"), f"время не в UTC: {e['action']}"
+            if e["kind"] in ("access", "materials", "mail", "participants") or e["action"].startswith("meeting."):
+                assert e["meeting_id"] == mid, f"нет встречи: {e['action']}"
+        sent = [e for e in items if e["action"] == "mail.sent"]
+        assert sent and all(e["details"]["recipient"] and e["details"]["kinds"] for e in sent), "отправка — с получателем и материалами; результат в поле result"
+        assert any(e["action"] == "room.manage.update" and "before" in e["details"].get("mail_delivery", {}) and "after" in e["details"]["mail_delivery"] for e in items), "что изменено в рассылке: было/стало"
+        assert not any(w in str(items).lower() for w in ("pass", "secret", SECRET.lower()))
+
+
+# ---------------------------------------------------------------- фактическая отправка четырёх материалов (SMTP подменён), повтор после сбоя, пересоздание
+
+def test_all_four_materials_reach_their_own_recipients_survive_smtp_failure_and_are_not_resent(client, directory, fake_smtp):  # noqa: F811
+    from .test_mail import FakeSMTP
+    from .test_mail_map import add_map
+
+    add_profile(client)
+    room = make_room(client, moderators=LEADERS)
+    carol_ref = directory.users["carol"][1].ad_guid
+    set_delivery(client, room, {"enabled": True, "formats": ["txt"], "per_material": {
+        "protocol": {"mode": "all"}, "summary": {"mode": "leader"},
+        "transcript": {"mode": "selected", "users": [{"ref": carol_ref, "name": "Carol C", "email": "carol@corp.test"}]}, "map": {"mode": "all"}}})
+    FakeSMTP.fail_at = "connect"                                                      # почтовый сервер недоступен в момент автоотправки
+    joins = [_join(client, u, room["id"]) for u in ("alice", "bob")]
+    mid = joins[0]["meeting_id"]
+    _feed_and_consume(client, [_segment(mid, joins[0]["identity"], f"Реплика {i}", offset=i * 3) for i in range(7)])
+    add_map(client, mid)
+
+    async def prepare():
+        async with client.app_obj.state.session_maker() as db:
+            for kind, text in (("protocol", "# Протокол\n\nРешили."), ("summary", "Кратко: тест.")):
+                db.add(Protocol(meeting_id=uuid.UUID(mid), kind=kind, status="ready", content=text, created_by="test"))
+            await db.commit()
+    client.portal.call(prepare)
+    login(client, "root")
+    assert client.post(f"{API}/meetings/{mid}/end").status_code == 204
+    _drain(client)
+    run_queue(client)                                                                  # попытка отправки при недоступном сервере
+    rows = messages(client)
+    assert rows and all(r["state"] in ("queued", "failed") for r in rows) and all(r["attempts"] >= 1 for r in rows), "письма в очереди, материал не потерян"
+    login(client, "carol")
+    assert client.get(f"{API}/meetings/{mid}/protocols").json(), "сам материал остался на месте"
+    log = client.get(f"{API}/meetings/{mid}/delivery/log").json()
+    assert all(x["state"] != "sent" for x in log) and any(x["error"] for x in log) or not log, "ошибка видна в журнале доставки"
+    FakeSMTP.fail_at = None
+
+    async def due():                                                                   # наступило время повторной попытки
+        from sqlalchemy import update
+
+        from app.models import utcnow
+        async with client.app_obj.state.session_maker() as db:
+            await db.execute(update(MailMessage).values(next_attempt_at=utcnow()))
+            await db.commit()
+    client.portal.call(due)
+    run_queue(client, passes=3)
+    got: dict[str, set[str]] = {}
+    for m in fake_smtp.sent:
+        names = {p.get_filename() for p in m.iter_attachments()}
+        got.setdefault(m["To"], set()).update(names)
+    sent_ids = [(m["To"], tuple(sorted(p.get_filename() for p in m.iter_attachments()))) for m in fake_smtp.sent]
+    assert len(sent_ids) == len(set(sent_ids)), "одно и то же письмо не уходит дважды"
+    assert any("карт" in n.lower() or n.lower().endswith(".html") for n in got.get("carol@corp.test", set()) | got.get("alice@corp.test", set())), got
+    assert any("стенограмм" in n.lower() or "transcript" in n.lower() for n in got.get("carol@corp.test", set())), (got, "стенограмма — выбранному")
+    assert not any("стенограмм" in n.lower() or "transcript" in n.lower() for n in got.get("alice@corp.test", set()) | got.get("bob@corp.test", set())), "участникам стенограмма не уходит"
+    before = len(fake_smtp.sent)
+    client.portal.call(lambda: client.app_obj.state.delivery.run_auto(uuid.UUID(mid)))
+    run_queue(client, passes=2)
+    assert len(fake_smtp.sent) == before, "повторное автоматическое выполнение не отправляет ничего"
+    # пересоздание: автоматически не уходит; вручную — по явному действию руководителя
+    async def regenerate():
+        async with client.app_obj.state.session_maker() as db:
+            db.add(Protocol(meeting_id=uuid.UUID(mid), kind="protocol", status="ready", content="# Пересозданный", created_by="test"))
+            await db.commit()
+        await client.app_obj.state.delivery.run_auto(uuid.UUID(mid))
+    client.portal.call(regenerate)
+    run_queue(client, passes=2)
+    assert len(fake_smtp.sent) == before, "пересозданный материал сам не рассылается"
+    login(client, "carol")
+    assert client.post(f"{API}/meetings/{mid}/delivery/send", json={"kinds": ["protocol"], "emails": ["carol@corp.test"]}).status_code in (200, 202)
+    run_queue(client, passes=2)
+    assert len(fake_smtp.sent) == before + 1, "ручная отправка пересозданного — ровно одно письмо"

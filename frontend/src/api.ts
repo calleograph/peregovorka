@@ -818,7 +818,7 @@ export const api = {
     phoneCall: (roomId: string, body: { number?: string; contact?: number }) => request<{ guest_id: string; identity: string; display_name: string; profile: string }>("POST", `/rooms/${roomId}/phone/call`, body),
     phoneHangup: (roomId: string, guestId: string) => request<{ ok: boolean }>("POST", `/rooms/${roomId}/phone/hangup`, { guest_id: guestId }),
     deliveryPreview: (roomId: string, spec: MailDeliverySpec) =>
-      request<{ recipients: DeliveryRecipient[]; participants_by_meeting: boolean; mail_configured: boolean; allowed_domains: string[]; materials: DeliveryMaterialInfo[] }>("POST", `/rooms/${roomId}/manage/delivery-preview`, { mail_delivery: spec }),
+      request<{ recipients: DeliveryRecipient[]; by_material?: Record<string, DeliveryRecipient[]> | null; participants_by_meeting: boolean; mail_configured: boolean; allowed_domains: string[]; materials: DeliveryMaterialInfo[] }>("POST", `/rooms/${roomId}/manage/delivery-preview`, { mail_delivery: spec }),
   },
   /** Ручная отправка материалов завершённой встречи (руководитель комнаты / администратор). */
   access: {

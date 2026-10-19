@@ -42,7 +42,7 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<DirHit[]>([]);
   const [hint, setHint] = useState("");
-  const [preview, setPreview] = useState<{ recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; participants_by_meeting: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ recipients: DeliveryRecipient[]; by_material?: Record<string, DeliveryRecipient[]> | null; mail_configured: boolean; allowed_domains: string[]; participants_by_meeting: boolean } | null>(null);
   const [err, setErr] = useState("");
   const [tpls, setTpls] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
   const [fmts, setFmts] = useState<string[]>(["docx", "pdf", "html", "txt", "md"]);
@@ -142,7 +142,19 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
         <div className="stack">
           {!preview.mail_configured && <div className="alert info">Исходящая почта ещё не настроена администратором системы — письма не будут отправляться, пока её не подключат.</div>}
           {preview.allowed_domains.length > 0 && <div className="muted small">Политика отправки разрешает только домены: {preview.allowed_domains.join(", ")}.</div>}
-          <RecipientTable rows={preview.recipients} />
+          {preview.by_material
+            ? MATERIAL_KINDS.map((m) => {
+                const mode = pm[m.kind].mode;
+                const rows = preview.by_material?.[m.kind] ?? [];
+                return (
+                  <div key={m.kind} className="card" aria-label={`Получатели: ${m.label}`}>
+                    <b>{m.label}</b> <span className="badge">{MODE_LABEL[mode]}</span>
+                    {mode === "none" ? <div className="muted small">Автоматически не отправляется.</div>
+                      : <>{mode === "all" && <div className="muted small">Участники конкретной встречи определяются после её завершения{rows.length ? "; ниже — адреса, которые уйдут в любом случае" : ""}.</div>}
+                        {(rows.length > 0 || mode !== "all") && <RecipientTable rows={rows} />}</>}
+                  </div>);
+              })
+            : <RecipientTable rows={preview.recipients} />}
           {preview.participants_by_meeting && <div className="muted small">Участники встречи определяются по факту каждой встречи — здесь их состав неизвестен.</div>}
         </div>)}
     </div>

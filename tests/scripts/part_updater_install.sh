@@ -131,7 +131,8 @@ FAKESR
   FPID="$(cat "$TMP/foreign.pid")"; export FPID
   t "посторонний экземпляр помощника запущен и пишет пульс (вне службы)" waitfor 20 bash -c '[ "$(hbj pid)" = "$FPID" ] && [ "$(hbj under_systemd)" = false ]'
   t "verify видит: работает вручную, а не службой (manual_process), и ненулевой код" bash -c '! "$UP" verify --env "$ENVF" >/dev/null 2>&1 && [ "$(uj verdict)" = manual_process ]'
-  t "служба рядом с посторонним процессом не стартует: блокировка занята (сообщение называет процесс)" bash -c '"$TMP/fakebin/systemctl" start u.service; sleep 3; [ "$(mainpid)" = 0 ] && grep -q "уже запущен" "$FSD/service.log" && grep -q "$FPID" "$FSD/service.log"'
+  "$TMP/fakebin/systemctl" start u.service
+  t "служба рядом с посторонним процессом не стартует: блокировка занята (сообщение называет процесс)" waitfor 30 bash -c '[ "$(mainpid)" = 0 ] && grep -q "уже запущен" "$FSD/service.log" && grep -q "$FPID" "$FSD/service.log"'
   "$UP" install --env "$ENVF" --yes > "$TMP/inst4.out" 2>&1; INST4_RC=$?
   t "install заменяет посторонний процесс: он завершён, работает процесс службы, вердикт ok" bash -c '[ "$1" -eq 0 ] || exit 1; if [ -d "/proc/$FPID" ] && [ "$(awk "/^State:/{print \$2; exit}" "/proc/$FPID/status")" != Z ]; then exit 1; fi; p="$(mainpid)"; [ "$p" -gt 0 ] && [ "$p" != "$FPID" ] && [ "$(hbj pid)" = "$p" ] && [ "$(uj verdict)" = ok ]' _ "$INST4_RC"
   t "install сообщает о завершении постороннего процесса" grep -q "посторонний экземпляр" "$TMP/inst4.out"

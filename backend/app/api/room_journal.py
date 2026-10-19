@@ -34,6 +34,17 @@ LABELS = {
 KINDS = {"participants": "Участники", "meeting": "Встреча", "access": "Доступ", "materials": "Материалы", "mail": "Рассылка", "settings": "Настройки", "files": "Файлы"}
 
 
+_COMMON = ("user", "via", "group", "members", "added", "rights", "by", "before", "after", "kinds", "count")
+_HIDDEN = {"room_id", "meeting_id", "room", "ip"}
+
+
+def _details(action: str, d: dict) -> dict:
+    """Подробности события. Для изменений настроек — всё, что записано в аудите (что изменено: было/стало; аудит уже очищен от секретов); для остальных событий — только перечисленные поля."""
+    if action in ("room.manage.update", "room.update", "meeting.settings.update"):
+        return {k: v for k, v in d.items() if k not in _HIDDEN}
+    return {x: d[x] for x in _COMMON if x in d}
+
+
 def _aware(d: datetime) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
@@ -64,7 +75,7 @@ async def journal(room_id: uuid.UUID, request: Request, date_from: datetime | No
         d = a.details or {}
         mid = d.get("meeting_id") or (a.target_id if a.target_type == "meeting" else None)
         events.append({"at": _aware(a.at).isoformat(), "kind": k, "action": a.action, "title": label, "actor": a.actor_name, "meeting_id": mid, "result": a.result,
-                       "details": {x: d[x] for x in ("user", "via", "group", "members", "added", "rights", "by", "before", "after", "kinds", "count") if x in d}})
+                       "details": _details(a.action, d)})
     # --- письма
     mq = select(MailMessage).where(MailMessage.meeting_id.in_([m.id for m in meetings] or [uuid.UUID(int=0)])).order_by(MailMessage.created_at.desc()).limit(1500)
     for r in (await db.execute(mq)).scalars().all():
