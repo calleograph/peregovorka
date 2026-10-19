@@ -269,9 +269,15 @@ def test_status_tls_mode_proxy_is_detected_without_local_certificate(tmp_path, d
         login(c, "root")
         c.put("/api/v1/admin/settings/outlook", json={"enabled": True})
         by = {x["key"]: x for x in c.get("/api/v1/admin/outlook/status", headers={"X-Forwarded-Proto": "https"}).json()["checks"]}
-        assert by["tls"]["ok"] is True and by["tls"]["tls"]["mode"] == "proxy" and "обратном прокси" in by["tls"]["message"]
+        assert by["tls"]["ok"] is True and by["tls"]["tls"]["mode"] == "external" and "внешнем узле" in by["topology"]["message"]
         assert by["tls"]["tls"]["client_check_url"] == "https://meet.example.org/api/v1/outlook/config"
         assert c.put("/api/v1/admin/settings/outlook", json={"tls_mode": "bogus"}).status_code == 422
+        # без признаков схема НЕ угадывается по исходу TLS: «Требуется уточнение» и ручной выбор
+        by = {x["key"]: x for x in c.get("/api/v1/admin/outlook/status").json()["checks"]}
+        assert by["topology"]["ok"] is None and "Требуется уточнение" in by["topology"]["message"]
+        assert c.put("/api/v1/admin/settings/outlook", json={"tls_mode": "gateway"}).status_code == 200
+        by = {x["key"]: x for x in c.get("/api/v1/admin/outlook/status").json()["checks"]}
+        assert by["topology"]["ok"] is True and "WAF" in by["topology"]["message"] and by["api_internal"]["ok"] is True
 
 
 def test_sync_test_endpoint(client):
@@ -298,8 +304,18 @@ def test_manifest_is_wellformed_and_id_is_stable():
     assert 'Type="OnAppointmentSend"' in with_sync and 'MinVersion="1.12"' in with_sync and 'SendMode="SoftBlock"' in with_sync and "https://meet.example.org/outlook/commands.js" in with_sync
 
 
+def test_sync_on_send_is_not_applied_for_on_premises_exchange():
+    """Локальный Exchange: Mailbox API не выше 1.5, подписка на отправку (1.12) не включается — иначе кнопка вообще не появилась бы; об этом сообщается."""
+    assert OutlookSettings(sync_on_send=True, mail_kind="exchange").effective_sync_on_send is False
+    assert OutlookSettings(sync_on_send=True, mail_kind="exchange_se").effective_sync_on_send is False
+    assert OutlookSettings(sync_on_send=True, mail_kind="m365").effective_sync_on_send is True
+    from app.services import outlook_compat
+    assert outlook_compat.matrix("exchange", True)["notes"] and not outlook_compat.matrix("m365", True)["notes"]
+    assert "OnAppointmentSend" not in build_package("https://meet.example.org", "0.25.0", OutlookSettings(sync_on_send=True, mail_kind="exchange")).decode("latin-1", "ignore")
+
+
 def test_package_contents_are_server_specific_and_secret_free():
-    cfg = OutlookSettings(sync_on_send=True, graph_client_secret="S3cret!", ews_password="P@ss", graph_tenant_id="tid-123")
+    cfg = OutlookSettings(sync_on_send=True, mail_kind="m365", graph_client_secret="S3cret!", ews_password="P@ss", graph_tenant_id="tid-123")
     data = build_package("https://meet.example.org", "0.23.0", cfg)
     assert build_package("https://meet.example.org", "0.23.0", cfg) == data                       # повторное скачивание — тот же архив
     z = zipfile.ZipFile(io.BytesIO(data))

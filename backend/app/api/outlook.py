@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, Room, utcnow
 from ..services import outlook as ol
+from ..services import outlook_compat as compat
+from ..services import outlook_diag as od
 from ..services import storage_encryption as se
 from ..services.audit import write_audit
 from ..services.temp_rooms import TempRoomError
@@ -191,6 +193,73 @@ async def public_info(code: str, request: Request, db: AsyncSession = Depends(ge
     return ol.public_view(room, ol.state(room, now, meeting_active=live), now=now, cfg=cfg)
 
 
+# ------------------------------------------------------------------------------------------------ публичный центр установки (без входа)
+def _public_base(request: Request, cfg) -> str:
+    return ol.public_url(request.app.state.settings.app_public_url, cfg)
+
+
+@router.get("/center")
+async def center(request: Request, db: AsyncSession = Depends(get_db)):
+    """Данные публичной страницы /outlook: адреса манифеста и пакета, сведения о публичном TLS, матрица совместимости. Только то, что и так видно любому клиенту; секретов и внутренних адресов нет."""
+    cfg = await _cfg(request, db)
+    s = request.app.state.settings
+    base = _public_base(request, cfg)
+    if not cfg.enabled or not base.startswith("https://"):
+        return {"enabled": False, "reason": "Интеграция с Outlook выключена администратором или не задан публичный HTTPS-адрес."}
+    tls = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=s.outlook_check_ca_file)
+    has_chain = bool(tls and tls.get("chain"))
+    return {"enabled": True, "base": base, "version": s.app_version, "manifest_url": f"{base}/api/v1/outlook/manifest.xml", "package_url": f"{base}/api/v1/outlook/package",
+            "addin_id": ol.addin_id(base), "mail_kind": cfg.mail_kind, "compat": compat.matrix(cfg.mail_kind, cfg.sync_on_send),
+            "tls": od.public_tls_view(tls) if tls else None,
+            "downloads": {"chain": has_chain, "fullchain": bool(tls and (tls.get("completed_chain_pem") or tls.get("_chain_pem")))}}
+
+
+_TLS_FILES = {"chain.pem": "presented", "fullchain.pem": "full"}
+
+
+@router.get("/tls/{name}")
+async def tls_file(name: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Публичные сертификаты адреса: `chain.pem` — как их отдаёт сервер, `fullchain.pem` — сертификат сайта и промежуточные без корня (дополнено из AIA, если цепочка была неполной),
+    `cert-N.pem|.cer` — отдельный сертификат цепочки (PEM или DER). Это общедоступные данные: любой клиент получает их при соединении. Закрытых ключей здесь нет и быть не может."""
+    cfg = await _cfg(request, db)
+    base = _public_base(request, cfg)
+    if not cfg.enabled or not base.startswith("https://"):
+        raise HTTPException(status_code=404, detail="Интеграция выключена.")
+    res = await od.tls_snapshot(request.app, base, fetch_aia=False, extra_ca=request.app.state.settings.outlook_check_ca_file)
+    pem = (res or {}).get("completed_chain_pem") or (res or {}).get("_chain_pem")
+    if not pem:
+        raise HTTPException(status_code=404, detail="Сертификаты публичного адреса недоступны с сервера. Скачайте их в браузере: значок замка → сертификат → экспорт.")
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    certs = x509.load_pem_x509_certificates(pem.encode("ascii"))
+    headers = {"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{name}"'}
+    if name == "chain.pem" or name == "fullchain.pem":
+        keep = [c for c in certs if not (name == "fullchain.pem" and c.subject == c.issuer)]
+        return Response("".join(c.public_bytes(serialization.Encoding.PEM).decode("ascii") for c in keep), media_type="application/x-pem-file", headers=headers)
+    m = re.fullmatch(r"cert-(\d{1,2})\.(pem|cer)", name)
+    if not m or int(m.group(1)) >= len(certs):
+        raise HTTPException(status_code=404, detail="Такого файла нет.")
+    c = certs[int(m.group(1))]
+    if m.group(2) == "pem":
+        return Response(c.public_bytes(serialization.Encoding.PEM), media_type="application/x-pem-file", headers=headers)
+    return Response(c.public_bytes(serialization.Encoding.DER), media_type="application/pkix-cert", headers=headers)
+
+
+@router.get("/package")
+async def public_package(request: Request, db: AsyncSession = Depends(get_db)):
+    """Установочный пакет для администратора Exchange без входа: манифест, инструкции и сценарии PowerShell. Содержит только публичный адрес, идентификатор надстройки и версию;
+    паролей, ключей и настроек сверки в нём нет (тот же состав, что у защищённого пакета администратора)."""
+    cfg = await _cfg(request, db)
+    s = request.app.state.settings
+    base = _public_base(request, cfg)
+    if not cfg.enabled or not base.startswith("https://"):
+        raise HTTPException(status_code=404, detail="Интеграция выключена или не задан публичный HTTPS-адрес.")
+    from ..services.outlook_package import build_package  # noqa: PLC0415
+
+    return Response(build_package(base, s.app_version, cfg), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="Peregovorka-Outlook.zip"', "Cache-Control": "no-store"})
+
+
 @router.get("/manifest.xml")
 async def manifest(request: Request, db: AsyncSession = Depends(get_db)):
     """Манифест надстройки для установки администратором (в нём нет секретов; отдаётся только при включённой интеграции)."""
@@ -199,4 +268,4 @@ async def manifest(request: Request, db: AsyncSession = Depends(get_db)):
     base = ol.public_url(s.app_public_url, cfg)
     if not cfg.enabled or not base.startswith("https://"):
         raise HTTPException(status_code=404, detail="Интеграция выключена или не задан публичный HTTPS-адрес.")
-    return Response(ol.manifest_xml(base, s.app_version, sync_on_send=cfg.sync_on_send), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})
+    return Response(ol.manifest_xml(base, s.app_version, sync_on_send=cfg.effective_sync_on_send), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})

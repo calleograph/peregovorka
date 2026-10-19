@@ -681,7 +681,7 @@ class OutlookSettings(_Group):
     token_ttl_hours: int = Field(default=168, ge=1, le=720)               # срок действия токена надстройки (потом — повторный вход в окне Outlook)
     max_active_per_user: int = Field(default=100, ge=1, le=1000)
     guest_links: bool = False                                             # пускать по ссылке гостей без учётной записи (в открывшееся окно входа)
-    tls_mode: str = "auto"                                                # где завершается HTTPS: auto (по проверке публичного адреса) | proxy (внешний обратный прокси) | direct (сам сервер); локальный сертификат в приложении не требуется
+    tls_mode: str = "auto"                                                # где завершается HTTPS: auto (по признакам установки и proxy-заголовкам) | local (сам сервер) | proxy (reverse proxy) | gateway (WAF/балансировщик); локальный сертификат не требуется
     mail_kind: str = "exchange"                                           # exchange (локальный Exchange) | m365 (Exchange Online) — подсказки и инструкции; на работу не влияет
     sync_on_send: bool = False                                            # манифест подписывает надстройку на отправку приглашения (Smart Alerts): время и тема уходят на сервер. Нужен Mailbox 1.12
     sync_mode: str = "off"                                                # серверная сверка календаря: off | graph | ews
@@ -696,8 +696,8 @@ class OutlookSettings(_Group):
     @field_validator("tls_mode")
     @classmethod
     def _tls_mode(cls, v: str) -> str:
-        if v not in ("auto", "proxy", "direct"):
-            raise ValueError("Режим HTTPS: auto, proxy или direct")
+        if v not in ("auto", "local", "proxy", "gateway", "direct"):
+            raise ValueError("Режим HTTPS: auto, local, proxy или gateway")
         return v
 
     @field_validator("public_url")
@@ -716,9 +716,14 @@ class OutlookSettings(_Group):
     @field_validator("mail_kind")
     @classmethod
     def _kind(cls, v: str) -> str:
-        if v not in ("exchange", "m365"):
-            raise ValueError("Почтовая инфраструктура: локальный Exchange или Microsoft 365")
+        if v not in ("exchange", "exchange_se", "m365"):
+            raise ValueError("Почтовая инфраструктура: локальный Exchange (2016/2019), Exchange Subscription Edition или Microsoft 365")
         return v
+
+    @property
+    def effective_sync_on_send(self) -> bool:
+        """Подписка на отправку (Smart Alerts) требует Mailbox 1.12; локальный Exchange поддерживает Mailbox API не выше 1.5 — там она не включается (вместо неё серверная сверка EWS)."""
+        return bool(self.sync_on_send and self.mail_kind == "m365")
 
     @field_validator("sync_mode")
     @classmethod

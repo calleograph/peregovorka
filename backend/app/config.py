@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     livekit_metrics_url: str = ""                                       # метрики LiveKit (Prometheus); пусто — http://<livekit>:6789/metrics
     meeting_mix_enabled: bool = True          # общая запись встречи (сведение дорожек участников); выключатель на случай проблем с ffmpeg
     trusted_proxy_hops: int = Field(default=1, ge=1, le=10)
+    tls_local_configured: bool = False   # в установке задан собственный TLS-сертификат (NGINX_TLS_CERT): HTTPS завершает nginx установщика, а не внешний узел
+    outlook_check_ca_file: str = ""       # необязательный файл корневого CA организации для проверок с сервера (подключается администратором явно)
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
     trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"
     # Дополнительные адреса, с которых открывают приложение через внешний reverse proxy (через запятую, вида https://хост[:порт]).

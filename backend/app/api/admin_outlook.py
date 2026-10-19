@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import Meeting, Room, utcnow
 from ..services import outlook as ol
-from ..services import tls_check
+from ..services import outlook_diag as od
+from ..services import tls_chain, tls_check
 from ..services import outlook_sync as osync
 from ..services.audit import write_audit
 from ..services.outlook_package import build_package
@@ -32,6 +33,17 @@ ASSETS = ("/outlook/commands.html", "/outlook/commands.js", "/outlook/auth.html"
 
 def tls_probe(host: str, port: int, timeout: float = 6.0) -> dict:
     return tls_check.probe(host, port, timeout)
+
+
+async def _internal_api(request: Request) -> dict:
+    """Запрос к собственному API внутри процесса (без сети): доказывает, что маршрут и интеграция работают независимо от публичного адреса."""
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app), base_url="http://internal", timeout=5.0) as c:
+            r = await c.get("/api/v1/outlook/config")
+        ok, _, text = od.http_verdict(r.status_code)
+        return {"ok": ok, "message": text if ok is not True else "API надстройки отвечает внутри приложения."}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": f"API не ответил внутри приложения: {type(exc).__name__}."}
 
 
 async def _cfg(request: Request, db: AsyncSession):
@@ -50,35 +62,57 @@ async def status(request: Request, su: SessionUser = Depends(require_admin), db:
         checks.append({"key": key, "title": title, "ok": ok, "message": message})
 
     add("enabled", "Интеграция", True if cfg.enabled else None, "Интеграция включена." if cfg.enabled else "Интеграция выключена: манифест не выдаётся, ссылки /m/… не работают.")
+    topo = od.detect_topology(request.headers, st.settings.tls_local_configured, cfg.tls_mode)
+    transport = getattr(st, "test_transports", {}).get("outlook")
+    tls_res: dict | None = None
     if not base.startswith("https://"):
         add("url", "Публичный адрес", False, f"«{base or 'не задан'}»: Outlook принимает надстройки только по HTTPS. Задайте публичный HTTPS-адрес ниже или в настройках приложения.")
     else:
         add("url", "Публичный адрес", True, f"{base}")
         u = urlsplit(base)
-        tls = await asyncio.to_thread(tls_probe, u.hostname or "", u.port or 443) if not getattr(st, "test_transports", {}).get("outlook") else {"ok": True, "state": "ok", "message": "проверка пропущена в тесте"}
-        # Режим: HTTPS завершает внешний обратный прокси (запрос пришёл с X-Forwarded-Proto: https) или сам сервер. Решает проверка ПУБЛИЧНОГО адреса; локальный сертификат не требуется.
-        mode = cfg.tls_mode if cfg.tls_mode != "auto" else ("proxy" if request.headers.get("x-forwarded-proto", "").lower() == "https" else "direct")
-        mode_text = "HTTPS завершается на внешнем обратном прокси" if mode == "proxy" else "HTTPS на самом сервере"
-        add("tls", "Сертификат HTTPS" if tls["state"] != "unreachable" else "Внешняя проверка с сервера недоступна", tls["ok"], f"{tls['message']} Режим: {mode_text}"
-            + (" (определён автоматически)." if cfg.tls_mode == "auto" else " (выбран вручную)."))
-        checks[-1]["tls"] = {k: tls.get(k) for k in ("host", "port", "state", "issuer", "subject", "not_after", "days_left")} | {"mode": mode, "client_check_url": f"{base}/api/v1/outlook/config"}
-        transport = getattr(st, "test_transports", {}).get("outlook")
+        add("topology", "Где завершается HTTPS", None if topo["needs_choice"] else True,
+            f"{topo['label']}{' (определено автоматически)' if topo['auto'] and not topo['needs_choice'] else ''}." + (" Признаки: " + "; ".join(topo["evidence"]) + "." if topo["evidence"] else "")
+            + (" Выберите схему вручную в настройках («Где завершается HTTPS»)." if topo["needs_choice"] else ""))
+        checks[-1]["topology"] = topo
+        if transport:
+            tls_res = {"state": "ok", "ok": True, "message": "проверка пропущена в тесте", "host": u.hostname, "port": u.port or 443}
+        else:
+            tls_res = await od.tls_snapshot(request.app, base, fetch_aia=True, force=True, extra_ca=st.settings.outlook_check_ca_file)
+        reach = tls_res["state"] == "unreachable"
+        add("tls", "Внешняя проверка с сервера недоступна" if reach else "Сертификат HTTPS", tls_res["ok"], tls_res["message"])
+        checks[-1]["tls"] = {**od.public_tls_view(tls_res), "mode": topo["mode"], "client_check_url": f"{base}/api/v1/outlook/config",
+                             "has_fullchain": bool(tls_res.get("completed_chain_pem")), "cert_page": f"{base}/outlook"}
+        # --- API: изнутри приложения, через web внутри Docker и через публичный адрес — отдельно, чтобы причина была видна
+        internal = await _internal_api(request)
+        add("api_internal", "API внутри приложения", internal["ok"], internal["message"])
+        web = await od.probe_json("http://web:8080/api/v1/outlook/config", transport=transport, timeout=3.0)
+        if web["code"] not in ("dns", "skip", "network", "timeout", "refused"):
+            add("api_web", "API через web-контейнер", web["ok"], "Маршрут web → backend внутри Docker: " + web["message"])
+        verify = tls_chain.system_context(st.settings.outlook_check_ca_file or None)
+        pub = await od.probe_json(f"{base}/api/v1/outlook/config", transport=transport, verify=verify)
+        if pub["ok"] is not None or pub["code"] == "forbidden":
+            add("api", "API надстройки (публичный адрес)", pub["ok"], pub["message"])
+        else:
+            inside_ok = internal["ok"] is True
+            add("api", "API надстройки (публичный адрес)", None, pub["message"] + (" Приложение при этом работает (см. «API внутри приложения») — это особенность внутренней маршрутизации, а не отказ надстройки: "
+                "доступность клиентам проверьте кнопкой «Проверить с этого компьютера»." if inside_ok else ""))
         bad: list[str] = []
+        unreachable_files = pub["code"] in ("dns", "refused", "timeout", "network", "tls_untrusted")
+        files_base = base if not unreachable_files else "http://web:8080"
         try:
-            async with httpx.AsyncClient(transport=transport, verify=ssl.create_default_context(), timeout=httpx.Timeout(8.0, connect=5.0), follow_redirects=False) as c:
-                r = await c.get(f"{base}/api/v1/outlook/config")
-                api_ok = r.status_code == 200
+            async with httpx.AsyncClient(transport=transport, verify=verify, timeout=httpx.Timeout(8.0, connect=5.0), follow_redirects=False) as c:
                 for path in ASSETS:
-                    rr = await c.get(base + path)
+                    rr = await c.get(files_base + path)
                     if rr.status_code != 200:
                         bad.append(f"{path}: HTTP {rr.status_code}")
-            add("api", "API надстройки", api_ok, "API отвечает." if api_ok else f"/api/v1/outlook/config ответил HTTP {r.status_code}: проверьте обратный прокси.")
-            add("files", "Файлы надстройки", not bad, "Страницы и значки надстройки доступны по адресу сервера." if not bad else "Недоступны: " + "; ".join(bad) + ". Проверьте обратный прокси (путь /outlook/).")
+            add("files", "Файлы надстройки", not bad if not bad else False, ("Страницы и значки надстройки доступны" + (" (проверено внутри Docker: публичный адрес с сервера недоступен)." if unreachable_files else " по адресу сервера."))
+                if not bad else "Недоступны: " + "; ".join(bad) + ". Проверьте обратный прокси (путь /outlook/).")
         except httpx.HTTPError as exc:
-            add("api", "API надстройки", None, f"Сервер приложения не смог обратиться к {base} ({type(exc).__name__}). Из контейнера собственный публичный адрес может быть недоступен — "
-                                               "проверьте адрес с рабочей станции скриптом Test-OutlookAddin.ps1 из пакета.")
+            code, text = od.connect_failure(exc)
+            add("files", "Файлы надстройки", None, text + " Проверьте их с рабочей станции (публичная страница /outlook).")
+        add("client", "Доступность клиентам", None, "Достоверно проверяется из браузера клиента: откройте публичную страницу установки (/outlook) или нажмите «Проверить с этого компьютера».")
     try:
-        root = ET.fromstring(ol.manifest_xml(base or "https://example.invalid", st.settings.app_version, sync_on_send=cfg.sync_on_send))
+        root = ET.fromstring(ol.manifest_xml(base or "https://example.invalid", st.settings.app_version, sync_on_send=cfg.effective_sync_on_send))
         add("manifest", "Манифест", True, f"Идентификатор надстройки {root.findtext('{http://schemas.microsoft.com/office/appforoffice/1.1}Id')} постоянен для адреса {base}.")
     except ET.ParseError:
         add("manifest", "Манифест", False, "Манифест не разбирается — сообщите разработчикам.")

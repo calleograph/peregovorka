@@ -253,9 +253,14 @@ def public_view(room: Room, st: str, *, now: datetime, cfg: OutlookSettings) -> 
 
 
 # ------------------------------------------------------------------------------------------------ манифест
+def addin_id(base: str) -> str:
+    """Постоянный идентификатор надстройки для адреса (не меняется между версиями и скачиваниями)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "peregovorka-outlook:" + base))
+
+
 def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
     """Манифест надстройки (add-in only manifest, поставщик онлайн-встреч). Идентификатор стабилен для адреса, поэтому обновление манифеста заменяет надстройку."""
-    gid = str(uuid.uuid5(uuid.NAMESPACE_URL, "peregovorka-outlook:" + base))
+    gid = addin_id(base)
     n = [int(x) for x in re.findall(r"\d+", version)[:3]] + [0, 0, 0]
     v = f"{n[0] + 1}.{n[1]}.{n[2]}.0"                 # Office требует версию манифеста не ниже 1.0: старшая часть увеличена на единицу (растёт вместе с версией приложения)
     b = escape(base)

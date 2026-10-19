@@ -125,7 +125,7 @@ if (@($results | Where-Object { $_.Результат -ne 'OK' }).Count -gt 0) {
 
 def _readme(base: str, version: str, cfg: OutlookSettings) -> str:
     host = urlsplit(base).hostname or base
-    sync = ("включена (в манифесте подписка на отправку приглашения, нужен Mailbox 1.12)" if cfg.sync_on_send else "выключена")
+    sync = ("включена (в манифесте подписка на отправку приглашения, нужен Mailbox 1.12)" if cfg.effective_sync_on_send else "выключена" + (" (запрошена, но не применяется: локальный Exchange поддерживает Mailbox API не выше 1.5; используйте серверную сверку EWS)" if cfg.sync_on_send else ""))
     return f"""НАДСТРОЙКА PEREGOVORKA ДЛЯ OUTLOOK — установочный пакет для сервера {host}
 Версия Peregovorka: {version}. Сформировано сервером автоматически; в пакете нет паролей и ключей.
 
@@ -179,7 +179,7 @@ def _readme(base: str, version: str, cfg: OutlookSettings) -> str:
 
 def build_package(base: str, version: str, cfg: OutlookSettings) -> bytes:
     """ZIP-пакет для установки администратором Exchange / Microsoft 365."""
-    files = {"Peregovorka-Outlook.xml": ol.manifest_xml(base, version, sync_on_send=cfg.sync_on_send), "README.txt": _readme(base, version, cfg),
+    files = {"Peregovorka-Outlook.xml": ol.manifest_xml(base, version, sync_on_send=cfg.effective_sync_on_send), "README.txt": _readme(base, version, cfg),
              "Install-OutlookAddin.ps1": BOM + INSTALL_PS1, "Test-OutlookAddin.ps1": BOM + TEST_PS1}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
