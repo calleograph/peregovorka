@@ -21,7 +21,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import meeting_access, room_journal, api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
@@ -189,6 +189,7 @@ def create_app(
         app.state.profiles = profiles
         mail = MailService(settings_svc, ca)
         delivery = DeliveryService(bg_sm, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
+        delivery.redis = redis
         protocols.after_finalize = delivery.run_auto
         async def _sync_audit(db, *, actor, action, target_id, details):
             await write_audit(db, actor_user_id=None, actor_name=actor, action=action, target_type="storage", target_id=target_id, details=details)
@@ -356,7 +357,7 @@ def create_app(
         return _JSON({"detail": "База данных временно недоступна. Повторите через несколько секунд."}, status_code=503, headers={"Retry-After": "5"})
 
     prefix = "/api/v1"
-    for r in (site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, meeting_access.router, room_journal.router, maps_api.router, admin_system.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(api_docs.router)     # /api/docs: общедоступная документация (выполнение запросов остаётся под аутентификацией)

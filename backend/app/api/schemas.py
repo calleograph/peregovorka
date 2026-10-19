@@ -137,6 +137,7 @@ class MeetingOut(BaseModel):
     whiteboard_shapes: int = 0       # 0 — доска не использовалась
     guests: int = 0
     can_generate: bool = False         # формировать протокол, резюме и карту: администратор, руководитель комнаты, организатор встречи
+    can_manage_access: bool = False    # руководитель комнаты / администратор: «Управление доступом», журнал комнаты
     can_send_materials: bool = False   # руководитель комнаты / администратор: «Отправить материалы» по почте
 
 

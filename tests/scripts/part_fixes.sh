@@ -46,6 +46,22 @@ t "BACKUP_COPY_DIR недоступен: предупреждение, а лок
 
 # ---------------------------------------------------------------------------------- WebSocket LiveKit: маршрут и Upgrade
 t "ws_route_verdict: 400 «join_request is required» = маршрут /rtc/v1 существует (OK)" bash -c 'set -u; source "$1"; WS_BODY="join_request is required"; ws_route_verdict 400 direct; [ "$WS_STATUS" = OK ] && [[ "$WS_NOTE" == *существует* ]]' _ "$VL"
+t "ws_route_verdict: 400 без «join_request» через публичный адрес — OK, если с неверным токеном LiveKit отвечает 401; иначе FAIL (реальные ошибки по-прежнему видны)" bash -c 'set -u; source "$1"
+  d="$(mktemp -d)"; cat > "$d/s.py" <<PY
+import http.server, sys
+mode = sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        bad = "access_token=invalid" in self.path
+        code, body = ((401, b"invalid authorization token") if bad and mode != "all400" else (400, b"Bad Request"))
+        if mode == "404": code, body = 404, b"not found"
+        self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+  verdict() { python3 "$d/s.py" "$1" "$2" & local p=$!; sleep 0.7; ws_upgrade_probe "http://127.0.0.1:$1/rtc/v1?access_token=VALID" 4; ws_route_verdict "$WS_CODE" proxy "http://127.0.0.1:$1/rtc/v1"; kill $p 2>/dev/null; wait $p 2>/dev/null; printf %s "$WS_STATUS"; }
+  a="$(verdict 18741 normal)"; b="$(verdict 18742 all400)"; c="$(verdict 18743 404)"
+  rm -rf "$d"; [ "$a$b$c" = OKFAILFAIL ]' _ "$VL"
 t "ws_route_verdict: 400 без join_request — FAIL, 404 — FAIL с указанием на устаревший LiveKit, 101 — OK" bash -c 'set -u; source "$1"; WS_BODY="что-то другое"; ws_route_verdict 400; a=$WS_STATUS; WS_BODY=""; ws_route_verdict 404; b=$WS_STATUS; n=$WS_NOTE; ws_route_verdict 101; [ "$a$b$WS_STATUS" = FAILFAILOK ] && [[ "$n" == *rtc/v1* ]]' _ "$VL"
 t "ws_verdict 400 напрямую: это ответ самого LiveKit, прокси не обвиняется" bash -c 'set -u; source "$1"; WS_BODY="boom"; ws_verdict 400 direct; [ "$WS_STATUS" = FAIL ] && [[ "$WS_NOTE" == *"самого LiveKit"* ]] && [[ "$WS_NOTE" != *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *boom* ]]' _ "$VL"
 t "ws_verdict через прокси: напрямую 101 → виноват прокси" bash -c 'set -u; source "$1"; DIRECT_WS_CODE=101; WS_BODY=""; ws_verdict 400 proxy; [[ "$WS_NOTE" == *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *Upgrade* ]]' _ "$VL"

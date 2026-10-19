@@ -136,13 +136,13 @@ print(json.load(urllib.request.urlopen(r,timeout=15))['token'])" | tr -d '\r\n')
 if [ -n "$TOKEN" ]; then
   Q="?access_token=${TOKEN}&auto_subscribe=0&sdk=js&protocol=15&version=smoke"
   # через web-контейнер: маршрут /rtc/v1 и настоящий Upgrade на /rtc (простая проверка WebSocket: /rtc → 101; /rtc/v1 без join_request даёт 400 — это норма)
-  ws_upgrade_probe "${BASE}/livekit/rtc/v1${Q}"; ws_route_verdict "$WS_CODE" proxy; rec "LiveKit /rtc/v1: маршрут (через web)" "$WS_STATUS" "$WS_NOTE"
+  ws_upgrade_probe "${BASE}/livekit/rtc/v1${Q}"; ws_route_verdict "$WS_CODE" proxy "${BASE}/livekit/rtc/v1"; rec "LiveKit /rtc/v1: маршрут (через web)" "$WS_STATUS" "$WS_NOTE"
   ws_upgrade_probe "${BASE}/livekit/rtc${Q}"; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (через web)" "$WS_STATUS" "$WS_NOTE"
   PUB="${LIVEKIT_PUBLIC_URL:-}"
   if [ "$NO_PUBLIC" = 1 ] || [ -z "$PUB" ]; then rec "LiveKit WebSocket /rtc (публичный URL)" SKIP "не проверялся"
   else
     purl="$(printf '%s' "$PUB" | sed -e 's#^wss://#https://#' -e 's#^ws://#http://#')"
-    ws_upgrade_probe "${purl%/}/rtc/v1${Q}" 8; ws_route_verdict "$WS_CODE" proxy; rec "LiveKit /rtc/v1: маршрут (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
+    ws_upgrade_probe "${purl%/}/rtc/v1${Q}" 8; ws_route_verdict "$WS_CODE" proxy "${purl%/}/rtc/v1"; rec "LiveKit /rtc/v1: маршрут (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
     ws_upgrade_probe "${purl%/}/rtc${Q}" 8; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
   fi
 else rec "LiveKit WebSocket" WARNING "не удалось получить тестовый токен у backend"; fi

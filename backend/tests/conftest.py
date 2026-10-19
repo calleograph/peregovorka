@@ -56,7 +56,7 @@ class FakeDirectory:
         return None
 
     def members(self, group_dn: str, limit: int = 300) -> list[dict]:
-        return [{"name": i.display_name, "sam": i.sam_account_name, "email": i.email or ""} for _, i in self.users.values() if group_dn.lower() in i.groups][:limit]
+        return [{"name": i.display_name, "sam": i.sam_account_name, "email": i.email or "", "ref": i.ad_guid} for _, i in self.users.values() if group_dn.lower() in i.groups][:limit]
 
     def search(self, kind: str, query: str, limit: int = 20) -> list[dict]:
         q = query.lower()

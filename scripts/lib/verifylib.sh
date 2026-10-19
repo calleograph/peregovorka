@@ -119,11 +119,24 @@ ws_verdict() {
 # ws_route_verdict КОД [direct|proxy] → проверка СУЩЕСТВОВАНИЯ маршрута /rtc/v1 (запрос без join_request, который передаёт только настоящий SDK).
 # LiveKit 1.13 отвечает на него 400 «join_request is required» — это значит «маршрут есть»; устаревший сервер ответил бы 404 (SDK тратил бы секунды на /rtc).
 ws_route_verdict() {
-  local body="${WS_BODY:+ («${WS_BODY}»)}"
+  local body="${WS_BODY:+ («${WS_BODY}»)}" url="${3:-}" code0 body0
   case "${1:-}" in
     101) WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (101)" ;;
     400) if printf '%s' "${WS_BODY:-}" | grep -qi 'join_request'; then WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (LiveKit ответил 400 «join_request is required» — так он отвечает на запрос без параметров SDK)"
-         else WS_STATUS=FAIL; WS_NOTE="HTTP 400${body} на /rtc/v1 — ответ без признака LiveKit; сравните с запросом напрямую"; fi ;;
+         else
+           # Ответ 400 без текста «join_request» (прокси или версия LiveKit формулируют иначе) сам по себе не доказывает поломку: второй вопрос — доходит ли запрос до LiveKit.
+           # Тот же адрес с заведомо неверным токеном LiveKit отклоняет своим «401 invalid authorization token»: значит, маршрут и прокси исправны.
+           # Ошибки соединения, 404, 5xx и страницы прокси по-прежнему дают FAIL.
+           code0="${WS_CODE:-}"; body0="${WS_BODY:-}"
+           if [ -n "$url" ]; then
+             ws_upgrade_probe "${url%%\?*}?access_token=invalid" "${WS_PROBE_TIMEOUT:-8}"
+             if [ "$WS_CODE" = 401 ] && printf '%s' "${WS_BODY:-}" | grep -qi 'invalid authorization token'; then
+               WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует: LiveKit отвечает (с неверным токеном — 401 «invalid authorization token»); на запрос с тестовым токеном вернулся HTTP 400${body0:+ («$body0»)}"
+               return 0
+             fi
+           fi
+           WS_CODE="$code0"; WS_BODY="$body0"; body="${WS_BODY:+ («${WS_BODY}»)}"
+           WS_STATUS=FAIL; WS_NOTE="HTTP 400${body} на /rtc/v1 — ответ без признака LiveKit; сравните с запросом напрямую"; fi ;;
     *) ws_verdict "${1:-}" "${2:-}" ;;
   esac
   return 0

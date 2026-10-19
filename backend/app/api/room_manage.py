@@ -28,7 +28,7 @@ from ..security.passwords import hash_room_password
 from ..services import roles
 from ..services import storage_encryption as se
 from ..services.audit import write_audit
-from ..services.mail_delivery import MATERIALS, clean_spec
+from ..services.mail_delivery import MATERIALS, Recipient, clean_spec, view_spec
 from ..services.rooms import acl_allows
 from .admin import _acl_rows, _mod_rows, new_guest_token
 from .schemas import AclEntryIn, AclEntryOut
@@ -159,7 +159,16 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],
-        active_meeting_id=active, can_edit_system_fields=su.is_admin, mail_delivery=_safe_spec(room.mail_delivery))
+        active_meeting_id=active, can_edit_system_fields=su.is_admin, mail_delivery=view_spec(_safe_spec(room.mail_delivery)))
+
+
+def _delivery_summary(spec: dict) -> dict:
+    """Краткое описание правил рассылки для журнала: режим по каждому материалу и числа адресатов — без имён и адресов."""
+    pm = spec.get("per_material")
+    if pm:
+        return {"enabled": spec["enabled"], "per_material": {k: {"mode": v["mode"], "users": len(v["users"])} for k, v in pm.items()}}
+    r = spec["recipients"]
+    return {"enabled": spec["enabled"], "materials": spec["materials"], "leaders": r["leaders"], "participants": r["participants"], "users": len(r["users"]), "emails": len(r["emails"])}
 
 
 def _safe_spec(raw: dict | None) -> dict:
@@ -262,11 +271,10 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             spec = clean_spec(fields["mail_delivery"])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        if spec != _safe_spec(room.mail_delivery):
+        before = _safe_spec(room.mail_delivery)
+        if spec != before:
             room.mail_delivery = spec
-            r = spec["recipients"]
-            changed["mail_delivery"] = {"enabled": spec["enabled"], "materials": spec["materials"], "leaders": r["leaders"], "participants": r["participants"],
-                                        "users": len(r["users"]), "emails": len(r["emails"])}
+            changed["mail_delivery"] = {"before": _delivery_summary(before), "after": _delivery_summary(spec)}      # кто, когда (запись аудита) и что изменилось; адреса и имена в журнал не пишутся
     for key, purpose in (("llm", "protocol"), ("llm_summary", "summary")):
         if key not in fields:
             continue
@@ -358,8 +366,20 @@ async def delivery_preview(room_id: uuid.UUID, request: Request, body: dict = Bo
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     delivery = request.app.state.delivery
-    recipients = await delivery.resolve(db, room, None, spec)
+    by_material = None
+    if spec.get("per_material"):
+        from ..services.mail_delivery import recipients_spec  # noqa: PLC0415
+
+        by_material = {k: [r.public() for r in await delivery.resolve(db, room, None, recipients_spec(spec, k))] for k in spec["materials"]}
+        seen: dict[str, object] = {}
+        for rs in by_material.values():
+            for r in rs:
+                seen.setdefault((r["email"] or f"!{r['name']}").lower(), r)
+        recipients = [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in seen.values()]
+    else:
+        recipients = await delivery.resolve(db, room, None, spec)
     pol = await delivery.policy(db)
-    return {"recipients": [r.public() for r in recipients], "participants_by_meeting": spec["recipients"]["participants"],
+    return {"recipients": [r.public() for r in recipients], "by_material": by_material,
+            "participants_by_meeting": spec["recipients"]["participants"] or any(v["mode"] == "all" for v in (spec.get("per_material") or {}).values()),
             "mail_configured": await request.app.state.mail.active(db) is not None, "allowed_domains": pol.domains(),
             "materials": [{"kind": k, "label": d.label, "describe": d.describe} for k, d in MATERIALS.items()]}

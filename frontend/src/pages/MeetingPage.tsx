@@ -8,6 +8,8 @@ import Menu from "../components/Menu";
 import RecordingsBlock from "../components/RecordingsBlock";
 import MapTab from "../components/MapTab";
 import { useMeetingAdmin } from "../components/MeetingAdminActions";
+import AccessDialog from "../components/AccessDialog";
+import RoomJournal from "../components/RoomJournal";
 import DeliveryLog from "../components/DeliveryLog";
 import SendMaterialsDialog from "../components/SendMaterialsDialog";
 import ProtocolDialog from "../components/ProtocolDialog";
@@ -46,12 +48,13 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [recordings, setRecordings] = useState<MeetingRecording[]>([]);
   const [xfer, setXfer] = useState("");
   const [sendOpen, setSendOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
   const [logKey, setLogKey] = useState(0);
   const [boardWarm, setBoardWarm] = useState(false);          // редактор схемы подгружается за кадром после открытия карточки (не мешая стенограмме и протоколам)
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
-  const [tab, setTab] = useState<"docs" | "transcript" | "map" | "chat" | "board" | "audio">("docs");
+  const [tab, setTab] = useState<"docs" | "transcript" | "map" | "chat" | "board" | "audio" | "journal">("docs");
   const [focusSeg, setFocusSeg] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -164,6 +167,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
                 title={!finished ? "Протокол формируется после завершения встречи" : !canMake ? "Нет ни реплик, ни чата, ни схемы" : "Окно с инструкцией для модели. Материалы: стенограмма, чат и схема с доски"}>Сформировать протокол</button>
         <button className="btn" disabled={!canMake} onClick={() => setDialog({ kind: "summary" })}>Сформировать резюме</button></>}
         {finished && (isAdmin || meeting.can_send_materials) && <button className="btn" onClick={() => setSendOpen(true)} title="Протокол, резюме, стенограмма и карта разговора — выбранным получателям по электронной почте">Отправить материалы</button>}
+        {(isAdmin || meeting.can_manage_access) && <button className="btn" onClick={() => setAccessOpen(true)} title="Кому, кроме участников, открыты материалы этой встречи: выдать или отозвать доступ">Управление доступом</button>}
         <Menu label="Ещё" title="Скачать стенограмму, действия администратора">
           <span className="menu-h">Скачать стенограмму</span>
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
@@ -176,11 +180,12 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       {finished && <RecordingsBlock meetingId={meetingId} />}
 
       <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "docs"} className={`tab ${tab === "docs" ? "active" : ""}`} onClick={() => setTab("docs")}>Протоколы и резюме{protocols.length ? ` (${protocols.length})` : ""}</button>
+        <button role="tab" aria-selected={tab === "docs"} className={`tab ${tab === "docs" ? "active" : ""}`} onClick={() => setTab("docs")}>Материалы встречи{protocols.length ? ` (${protocols.length})` : ""}</button>
         <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Стенограмма ({segments.length})</button>
         {finished && <button role="tab" aria-selected={tab === "map"} className={`tab ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}>Карта разговора</button>}
         {chatCount > 0 && <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Чат ({chatCount})</button>}
         {boardUsed && <button role="tab" aria-selected={tab === "board"} className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>Доска</button>}
+        {(isAdmin || meeting.can_manage_access) && <button role="tab" aria-selected={tab === "journal"} className={`tab ${tab === "journal" ? "active" : ""}`} onClick={() => setTab("journal")}>История действий</button>}
         {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Файлы участников ({recordings.length})</button>}
       </div>
 
@@ -218,6 +223,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
+      {tab === "journal" && (isAdmin || meeting.can_manage_access) && <RoomJournal roomId={meeting.room_id} meetingId={meetingId} />}
+
       {tab === "map" && finished && (
         <MapTab meetingId={meetingId} roomName={meeting.room_name} startedAt={meeting.started_at} hasMaterials={segments.length > 0} onGoto={gotoSource} onToast={toast} />
       )}
@@ -254,6 +261,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
+      {accessOpen && <AccessDialog meetingId={meetingId} onClose={() => setAccessOpen(false)} />}
       {sendOpen && <SendMaterialsDialog meetingId={meetingId} onClose={() => { setSendOpen(false); setLogKey((k) => k + 1); }} />}
       {finished && (isAdmin || meeting.can_send_materials) && tab === "docs" && <DeliveryLog meetingId={meetingId} refreshKey={logKey} />}
       {dialog && <ProtocolDialog meetingId={meetingId} kind={dialog.kind} isAdmin={isAdmin} initialInstruction={dialog.instruction} onClose={() => setDialog(null)} onStarted={onStarted} />}

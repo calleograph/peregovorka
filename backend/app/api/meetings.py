@@ -133,6 +133,7 @@ async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
     out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
     out.can_generate = can_edit_protocol(m, su)           # формировать документы и отправлять материалы: администратор, руководитель комнаты, организатор встречи
     out.can_send_materials = out.can_generate
+    out.can_manage_access = roles.can_manage_room(m.room, su)
     return out
 
 

@@ -381,7 +381,9 @@ class LdapDirectory:
                     v = v[0] if isinstance(v, list) and v else v
                     return str(v) if v not in (None, "") else ""
 
-                out.append({"name": one(self._s.ldap_display_name_attribute) or one("sAMAccountName"), "sam": one("sAMAccountName"), "email": one(self._s.ldap_email_attribute)})
+                g = (e.get("raw_attributes", {}).get("objectGUID") or [b""])[0]
+                out.append({"name": one(self._s.ldap_display_name_attribute) or one("sAMAccountName"), "sam": one("sAMAccountName"), "email": one(self._s.ldap_email_attribute),
+                            "ref": guid_from_bytes(g) if len(g) == 16 else ""})
             return out[:limit]
         finally:
             try:

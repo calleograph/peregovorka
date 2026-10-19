@@ -17,7 +17,7 @@ from ..models import Meeting
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.llm_choice import clean_choice, describe, llm_options, resolve_llm, room_choice
-from ..services.mail_delivery import clean_spec, effective_delivery
+from ..services.mail_delivery import clean_spec, effective_delivery, view_spec
 
 router = APIRouter(prefix="/meetings/{meeting_id}/settings", tags=["meeting-settings"])
 
@@ -42,7 +42,7 @@ async def _out(request: Request, db: AsyncSession, meeting: Meeting) -> dict:
     choice_s = await resolve_llm(st.protocols.profiles, st.local_llm, db, meeting.room, meeting, "summary")
     return {
         "ended": meeting.ended_at is not None,
-        "delivery": {"effective": _safe_spec(effective_delivery(meeting)), "room": _safe_spec(meeting.room.mail_delivery), "override": meeting.delivery_override is not None},
+        "delivery": {"effective": view_spec(_safe_spec(effective_delivery(meeting))), "room": view_spec(_safe_spec(meeting.room.mail_delivery)), "override": meeting.delivery_override is not None},
         "llm": {"effective": describe(choice), "room": room_choice(meeting.room), "override": meeting.llm_override},
         "llm_summary": {"effective": describe(choice_s), "room": room_choice(meeting.room, "summary"), "override": meeting.llm_summary_override},
         "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db),
@@ -65,7 +65,7 @@ async def put_settings(meeting_id: uuid.UUID, request: Request, body: dict[str, 
                 raise HTTPException(status_code=409, detail="Встреча уже завершена — рассылка для неё определена. Отправить материалы можно вручную со страницы встречи.")
             new = None if body["delivery"] is None else clean_spec(body["delivery"])
             meeting.delivery_override = new
-            changed["delivery"] = "как в комнате" if new is None else {"enabled": new["enabled"], "materials": new["materials"], "archive": new["archive"]}
+            changed["delivery"] = "как в комнате" if new is None else {"enabled": new["enabled"], "materials": new["materials"], "archive": new["archive"], **({"per_material": {k: v["mode"] for k, v in new["per_material"].items()}} if new.get("per_material") else {})}
         if "llm" in body:
             new_llm = clean_choice(body["llm"])
             meeting.llm_override = new_llm

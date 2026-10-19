@@ -22,6 +22,7 @@ from typing import Awaitable, Callable
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..db import release
 from ..models import Meeting, MailMessage, Protocol, User, utcnow
 from . import mail_templates as mt
 from .export_docs import md_to_plain, to_docx, to_html, to_pdf
@@ -36,6 +37,8 @@ FORMAT_MIME = {"html": "text/html; charset=utf-8", "docx": "application/vnd.open
                "txt": "text/plain; charset=utf-8", "md": "text/markdown; charset=utf-8"}
 MAX_MANUAL_EMAILS = 50
 MAX_RECIPIENTS = 300
+MODES = ("none", "leader", "all", "selected")
+MODE_LABEL = {"none": "Не отправлять", "leader": "Только руководителю", "all": "Всем участникам встречи", "selected": "Выбранным пользователям"}
 
 
 @dataclass
@@ -148,9 +151,66 @@ def clean_spec(raw: dict | None) -> dict:
     if len(emails) > MAX_MANUAL_EMAILS:
         raise ValueError(f"Свои адреса: не больше {MAX_MANUAL_EMAILS}")
     spec["recipients"]["emails"] = emails
+    pm = raw.get("per_material")
+    if pm is not None:
+        # «Рассылка материалов встреч»: для КАЖДОГО материала свой получатель — все участники / выбранные пользователи / только руководитель / не отправлять.
+        # Новые комнаты: «Не отправлять» для всех материалов — конфиденциальные документы автоматически не уходят.
+        spec["per_material"] = {}
+        for k in MATERIALS:
+            e = (pm or {}).get(k) or {}
+            mode = e.get("mode") if e.get("mode") in MODES else "none"
+            users: list[dict] = []
+            seen_u: set[str] = set()
+            for u in (e.get("users") or []) if mode == "selected" else []:
+                ref = str((u or {}).get("ref") or "").strip()
+                if not ref or len(ref) > 64 or ref.lower() in seen_u:
+                    continue
+                seen_u.add(ref.lower())
+                em = str((u or {}).get("email") or "").strip()
+                users.append({"ref": ref, "name": str((u or {}).get("name") or "")[:300], "email": em if valid_email(em) else ""})
+            if len(users) > 100:
+                raise ValueError("Выбранных людей не больше 100 на материал — для большего числа выберите «Всем участникам встречи»")
+            if mode == "selected" and not users:
+                raise ValueError(f"«{MATERIALS[k].label}»: выберите хотя бы одного пользователя или другой вариант получателей")
+            spec["per_material"][k] = {"mode": mode, "users": users}
+        spec["materials"] = [k for k in MATERIALS if spec["per_material"][k]["mode"] != "none"]
+        spec["enabled"] = bool(spec["materials"]) if raw.get("enabled") is not False else False
     if spec["enabled"] and not spec["materials"]:
         raise ValueError("Выберите хотя бы один материал для отправки")
     return spec
+
+
+def view_spec(spec: dict) -> dict:
+    """Настройки в виде «по материалам» для интерфейса: прежние (один набор получателей на все материалы) показываются приближённо — «всем участникам» при выбранных участниках,
+    иначе «только руководителю», иначе «выбранным». Рассылка по прежним настройкам продолжает работать как раньше, пока их не сохранят заново из нового экрана."""
+    if spec.get("per_material"):
+        return spec
+    r = spec["recipients"]
+    mode = "all" if r["participants"] else "leader" if r["leaders"] else "selected" if r["users"] else "none"
+    users = r["users"] if mode == "selected" else []
+    pm = {k: {"mode": mode if k in spec["materials"] else "none", "users": users if k in spec["materials"] else []} for k in MATERIALS}
+    return {**spec, "per_material": pm, "converted_from_legacy": bool(spec["enabled"] or spec["materials"])}
+
+
+def recipients_spec(spec: dict, kind: str) -> dict:
+    """Получатели одного материала в формате прежних настроек (для `resolve`). Без per_material — одни и те же получатели у всех материалов (прежнее поведение)."""
+    pm = spec.get("per_material")
+    if not pm:
+        return spec
+    e = pm.get(kind) or {"mode": "none", "users": []}
+    return {**spec, "recipients": {"leaders": e["mode"] == "leader", "participants": e["mode"] == "all", "users": e["users"] if e["mode"] == "selected" else [], "emails": []}}
+
+
+def group_by_recipients(spec: dict, kinds: list[str], resolved: dict[str, list]) -> list[tuple[list[str], list]]:
+    """Материалы с одинаковым набором получателей отправляются ОДНИМ письмом (а не по письму на материал): [(материалы, получатели)]."""
+    groups: dict[frozenset, tuple[list[str], list]] = {}
+    for k in kinds:
+        rec = resolved.get(k) or []
+        key = frozenset((r.email.lower() if r.email else f"!{r.name}") for r in rec)
+        if not key:
+            continue
+        groups.setdefault(key, ([], rec))[0].append(k)
+    return list(groups.values())
 
 
 @dataclass
@@ -177,6 +237,7 @@ class DeliveryService:
         self.directory = directory
         self._public_url = public_url.rstrip("/")
         self.journal = journal
+        self.redis = None                      # Redis (общая блокировка «одна авто-рассылка на встречу» между экземплярами backend); задаётся при запуске приложения
 
     async def policy(self, db: AsyncSession) -> MailPolicySettings:
         return await self._svc.get(db, "mail_policy")  # type: ignore[return-value]
@@ -247,10 +308,20 @@ class DeliveryService:
             m = await d.load(self, db, meeting)
             mats.append({"kind": k, "label": d.label, "available": m is not None,
                          "reason": None if m else not_ready_reason(k)})
-        rec = await self.resolve(db, meeting.room, meeting, spec)
+        by_mat: dict[str, list] = {}
+        if spec.get("per_material"):
+            for k in kinds:
+                by_mat[k] = await self.resolve(db, meeting.room, meeting, recipients_spec(spec, k))
+            seen_e: dict[str, "Recipient"] = {}
+            for rs in by_mat.values():
+                for r in rs:
+                    seen_e.setdefault((r.email or f"!{r.name}").lower(), r)
+            rec = list(seen_e.values())
+        else:
+            rec = await self.resolve(db, meeting.room, meeting, spec)
         prof = await self.mail.active(db)
         pol = await self.policy(db)
-        return {"materials": mats, "recipients": [r.public() for r in rec], "mail_configured": prof is not None,
+        return {"materials": mats, "recipients": [r.public() for r in rec], "by_material": {k: [r.public() for r in v] for k, v in by_mat.items()} or None, "mail_configured": prof is not None,
                 "allowed_domains": pol.domains(), "max_attachment_mb": pol.max_attachment_mb, "attach_format": pol.attach_format}
 
     # ----------------------------------------------------------------------------------------------- очередь
@@ -311,6 +382,10 @@ class DeliveryService:
                 done = (await db.execute(select(func.count()).select_from(MailMessage).where(MailMessage.meeting_id == meeting_id, MailMessage.trigger == "auto"))).scalar_one()
                 if done:
                     return
+                # один раз на встречу и на всех экземплярах backend: повторное выполнение фонового задания рассылку не дублирует
+                redis = self.redis
+                if redis is not None and not await redis.set(f"mail:auto:{meeting_id}", "1", nx=True, ex=7 * 24 * 3600):
+                    return
                 need = [k for k in spec["materials"] if k in ("protocol", "summary") and await MATERIALS[k].load(self, db, meeting) is None]
                 want_map = "map" in spec["materials"] and await MATERIALS["map"].load(self, db, meeting) is None
             if need and await self.protocols.has_materials(meeting_id):
@@ -327,6 +402,7 @@ class DeliveryService:
                 have = [m["kind"] for m in plan["materials"] if m["available"]]
                 missing = [k for k in spec["materials"] if k not in have]
                 recipients = [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in plan["recipients"]]
+                by_kind = {k: [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in rs] for k, rs in (plan.get("by_material") or {}).items()}
                 if missing:       # материал не готов (например, протокол завершился ошибкой): событие фиксируется всегда, дальше — по настройке комнаты
                     self._emit("mail_material_missing", "warn", meeting, "К рассылке не готовы материалы: " + ", ".join(MATERIALS[k].label for k in missing),
                                {"missing": missing, "policy": spec["if_missing"]})
@@ -336,12 +412,17 @@ class DeliveryService:
                     return
                 subject, body, tname = await self.compose_for(db, meeting, spec.get("template_id"))
                 pol = await self.policy(db)
-                res = await self.enqueue(db, meeting, have, recipients, trigger="auto", by="автоматически", archive=spec["archive"], subject=subject, body=body,
-                                         formats=spec.get("formats") or [pol.attach_format], template=tname)
-                for s in res["skipped"]:
-                    self._emit("mail_recipient_skipped", "warn", meeting, f"{s['name'] or s['email'] or 'получатель'}: {s['reason']}", {})
+                groups = group_by_recipients(spec, have, by_kind) if spec.get("per_material") else [(have, recipients)]
+                queued_total, skipped_total = 0, 0
+                for kinds_g, recs_g in groups:
+                    res = await self.enqueue(db, meeting, kinds_g, recs_g, trigger="auto", by="автоматически", archive=spec["archive"], subject=subject, body=body,
+                                             formats=spec.get("formats") or [pol.attach_format], template=tname)
+                    queued_total += res["queued"]
+                    skipped_total += len(res["skipped"])
+                    for s in res["skipped"]:
+                        self._emit("mail_recipient_skipped", "warn", meeting, f"{s['name'] or s['email'] or 'получатель'}: {s['reason']}", {})
                 await db.commit()
-                self._emit("mail_queued", "info", meeting, f"В очередь поставлено писем: {res['queued']}", {"kinds": have, "skipped": len(res["skipped"])})
+                self._emit("mail_queued", "info", meeting, f"В очередь поставлено писем: {queued_total}", {"kinds": have, "skipped": skipped_total})
         except Exception:  # noqa: BLE001
             log.exception("Ошибка автоматической рассылки материалов")
 
@@ -445,6 +526,7 @@ class DeliveryService:
                     body += ["", "Краткое резюме:", "", md_to_plain(summary.md)]
                 body += ["", "—", "Письмо отправлено автоматически системой Peregovorka. Отвечать на него не нужно."]
                 msg = build_message(cfg, row.recipient, row.subject, "\n".join(body), None if big else files)
+                await release(db)                              # отправка по SMTP может идти минуты: соединение PostgreSQL на это время не держим
                 await asyncio.to_thread(send, cfg, msg)
                 row.state, row.sent_at, row.last_error, row.delivery = "sent", utcnow(), None, "link" if big else "attachment"
                 self._emit("mail_sent", "info", meeting, f"Отправлено: {row.recipient}", {"recipient": row.recipient, "delivery": row.delivery, "trigger": row.trigger})

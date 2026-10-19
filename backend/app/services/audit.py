@@ -82,8 +82,33 @@ def build(*, actor_user_id, actor_name: str, action: str, target_type: str, targ
     return row
 
 
+async def _room_context(db: AsyncSession, target_type: str, target_id: str) -> dict:
+    """К какой комнате и встрече относится объект записи: нужно для журнала комнаты (руководитель видит события только своей комнаты). Сбой определения запись не ломает."""
+    try:
+        import uuid  # noqa: PLC0415
+
+        from ..models import Meeting, Protocol, Recording  # noqa: PLC0415
+
+        uid = uuid.UUID(str(target_id))
+        if target_type == "room":
+            return {"room_id": str(uid)}
+        m = None
+        if target_type == "meeting":
+            m = await db.get(Meeting, uid)
+        elif target_type in ("protocol", "recording"):
+            obj = await db.get(Protocol if target_type == "protocol" else Recording, uid)
+            m = await db.get(Meeting, obj.meeting_id) if obj is not None and getattr(obj, "meeting_id", None) else None
+        return {"room_id": str(m.room_id), "meeting_id": str(m.id)} if m is not None else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 async def write_audit(db: AsyncSession, *, actor_user_id, actor_name: str, action: str, target_type: str, target_id: str, details: dict | None = None,
                       ip: str | None = None, result: str = "success", actor_type: str | None = None) -> None:
+    if target_type in ("room", "meeting", "protocol", "recording") and not (details and details.get("room_id")):
+        ctx = await _room_context(db, target_type, target_id)
+        if ctx:
+            details = {**(details or {}), **{k: v for k, v in ctx.items() if k not in (details or {})}}
     row = build(actor_user_id=actor_user_id, actor_name=actor_name, action=action, target_type=target_type, target_id=target_id, details=details, ip=ip,
                 result=result, actor_type=actor_type)
     db.add(row)

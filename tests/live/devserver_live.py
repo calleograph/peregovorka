@@ -8,7 +8,7 @@ from fakeredis import FakeAsyncRedis
 from sqlalchemy.orm import Session
 from app.config import Settings
 from app.main import create_app
-from app.models import Base, Meeting, MeetingParticipant, Room, RoomAcl, TranscriptSegment, User, utcnow
+from app.models import Base, Meeting, MeetingParticipant, Room, RoomAcl, RoomModerator, TranscriptSegment, User, utcnow
 from conftest import FakeDirectory, ADMIN_GROUP, STAFF_GROUP
 from app.services import transfer as _tr
 _tr.SETTLE_S, _tr.RECENT_S, _tr.GRACE_S, _tr.READ_QUIET_S = 0, 0, 3, 4          # стенд: перенос без ожидания «устоявшейся» встречи, отсрочка удаления источника — секунды
@@ -23,6 +23,7 @@ d.add("root", "root-pass", groups=(ADMIN_GROUP,), name="Администрато
 ALICE_GUID = "11111111-1111-4111-8111-111111111111"
 d.add("alice", "alice-pass", name="Алиса Крылова", guid=ALICE_GUID)
 d.add("bob", "bob-pass", name="Борис Мартынов")
+d.add("dave", "dave-pass", name="Дмитрий Соколов")      # сотрудник без участия во встречах — получатель доступа в scenario_room_leader
 s = Settings(database_url=f"sqlite+aiosqlite:///{DATA}/dev.db", redis_url="redis://x", app_public_url="http://localhost:5173", cookie_secure=False,
              livekit_api_key="devkey", livekit_api_secret="s" * 40, livekit_public_url="ws://127.0.0.1:7880", livekit_internal_url="http://127.0.0.1:7880",
              app_master_key=base64.b64encode(os.urandom(32)).decode(), internal_api_token="t", ldap_admin_group_dn=ADMIN_GROUP, data_dir=DATA,
@@ -126,6 +127,7 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
             for i, p in enumerate(people[:n]):
                 db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st + dt.timedelta(seconds=i * 20), left_at=st + dt.timedelta(minutes=55)))
             db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=room.id, user_id=people[0].id, participant_identity="u0", started_at=st, ended_at=st + dt.timedelta(seconds=4), text="Начинаем."))
+        rooms[6].moderators.append(RoomModerator(subject_type="user", subject_ref=ALICE_GUID, display_name="Алиса Крылова"))   # alice — руководитель «Продаж»
         db.commit()
     eng.dispose()
 uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

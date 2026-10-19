@@ -181,7 +181,7 @@ export interface Meeting {
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
   /** Сообщений в чате встречи; доска «использовалась», если whiteboard_shapes > 0. */
-  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean; can_generate?: boolean;
+  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean; can_generate?: boolean; can_manage_access?: boolean;
 }
 export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
@@ -411,7 +411,17 @@ export interface DeliveryLogRow {
   id: string; batch_id: string | null; at: string; sent_at: string | null; by: string | null; trigger: string; recipient: string; name: string | null; state: string; attempts: number;
   error: string | null; kinds: string[]; template: string | null; formats: string[] | null; delivery: string | null; subject: string;
 }
+export interface AccessState {
+  history_access: string; ended: boolean; note: string; leaders: string[];
+  grants: { user_id: string; display_name: string; sam_account_name: string; email: string | null; granted_by: string | null; created_at: string }[];
+  participants: { user_id: string; display_name: string; sam_account_name: string }[];
+}
+export interface RoomJournalEvent { at: string; kind: string; action: string; title: string; actor: string | null; meeting_id: string | null; result: string | null; details: Record<string, unknown> }
+export interface RoomJournal { items: RoomJournalEvent[]; total: number; kinds: Record<string, string> | string[]; meetings: { id: string; started_at: string }[] }
+export type PerMode = "none" | "leader" | "all" | "selected";
+export interface PerMaterial { mode: PerMode; users: { ref: string; name: string; email: string }[] }
 export interface MailDeliverySpec {
+  per_material?: Record<string, PerMaterial>; converted_from_legacy?: boolean;
   enabled: boolean; archive?: boolean; materials: string[]; template_id?: string | null; formats?: string[]; if_missing?: "send" | "skip";
   recipients: { leaders: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
 }
@@ -811,6 +821,15 @@ export const api = {
       request<{ recipients: DeliveryRecipient[]; participants_by_meeting: boolean; mail_configured: boolean; allowed_domains: string[]; materials: DeliveryMaterialInfo[] }>("POST", `/rooms/${roomId}/manage/delivery-preview`, { mail_delivery: spec }),
   },
   /** Ручная отправка материалов завершённой встречи (руководитель комнаты / администратор). */
+  access: {
+    get: (meetingId: string) => request<AccessState>("GET", `/meetings/${meetingId}/access`),
+    search: (meetingId: string, kind: "user" | "group", q: string) => request<(DirHit & { has_access?: boolean })[]>("GET", `/meetings/${meetingId}/access/search?kind=${kind}&q=${encodeURIComponent(q)}`),
+    grant: (meetingId: string, h: DirHit) => request<{ ok: boolean }>("POST", `/meetings/${meetingId}/access`, { ref: h.ref, sam: h.sam, name: h.name, email: h.email }),
+    groupMembers: (meetingId: string, dn: string) => request<{ count: number; too_many: boolean; max: number; sample: string[] }>("GET", `/meetings/${meetingId}/access/group-members?dn=${encodeURIComponent(dn)}`),
+    grantGroup: (meetingId: string, dn: string, confirmCount: number) => request<{ ok: boolean; added: number }>("POST", `/meetings/${meetingId}/access/group`, { dn, confirm_count: confirmCount }),
+    revoke: (meetingId: string, userId: string) => request<void>("DELETE", `/meetings/${meetingId}/access/${userId}`),
+  },
+  roomJournal: (roomId: string, p: Record<string, string>) => request<RoomJournal>("GET", `/rooms/${roomId}/journal?${new URLSearchParams(p).toString()}`),
   delivery: {
     preview: (meetingId: string) => request<DeliveryPlan>("GET", `/meetings/${meetingId}/delivery`),
     send: (meetingId: string, kinds: string[], emails: string[], extra: { template_id?: string | null; subject?: string; body?: string; formats?: string[] } = {}) =>
