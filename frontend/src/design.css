@@ -863,3 +863,12 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .pv-brand { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; font-family: var(--pixel); font-size: 13px; } .pv-brand img { max-height: 60px; background: #fff; padding: 6px 10px; border-radius: 8px; } .pv-brand small { font: 12px var(--sans); color: #aeb8de; }
 .pv-form { display: grid; gap: 8px; } .pv-form i { display: block; height: 30px; border-radius: 9px; background: #0b0f26; border: 1px solid #2c3a74; } .pv-form span { font-size: 12px; font-weight: 700; }
 .pv-foot { padding: 8px 16px; font-size: 12px; color: var(--muted); text-align: center; }
+
+/* Вложенные меню (как в контекстных меню Windows): подменю справа от строки; на узком экране раскрывается внутри меню */
+.ctx-row { position: relative; }
+.ctx-arrow { margin-left: auto; padding-left: 12px; color: var(--muted); }
+.ctx-text { flex: 1 1 auto; min-width: 0; }
+.ctx-sub { position: absolute; left: calc(100% + 4px); top: -6px; min-width: 190px; padding: 5px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,.18)); z-index: 1; }
+.ctx-sub.inline { position: static; min-width: 0; margin: 2px 0 4px 12px; padding: 2px; border-radius: 8px; box-shadow: none; border-color: var(--line); }
+.ctx-menu.flip .ctx-sub:not(.inline) { left: auto; right: calc(100% + 4px); }
+@media (max-width: 600px) { .ctx-menu { max-height: calc(100vh - 16px); overflow-y: auto; } }

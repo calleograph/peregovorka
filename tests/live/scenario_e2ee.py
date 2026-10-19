@@ -62,8 +62,8 @@ async def main():
         for c in (A, B):
             S.check(f"{c.label}: вошёл", await c.join())
         await asyncio.gather(*[c.wait_for("document.querySelectorAll('.tile').length>=2", 40) for c in (A, B)])
-        badge = await A.wait_for("(() => { const b = document.querySelector('.prot-badge'); return !!b && b.textContent.includes('сквозное (E2EE)'); })()", 20)
-        S.check("индикатор: «ШИФРОВАНИЕ ВКЛЮЧЕНО · сквозное (E2EE)»", badge, await A.js("document.querySelector('.prot-badge')?.textContent"))
+        badge = await A.wait_for("(() => { const b = document.querySelector('.prot-badge'); return !!b && b.textContent.includes('Шифрование включено'); })()", 20)
+        S.check("индикатор: «Шифрование включено»", badge, await A.js("document.querySelector('.prot-badge')?.textContent"))
         S.check("камера Боба включена", await B.click_btn("Камера выкл."))
         await asyncio.sleep(5)
         sa, sb = await A.js(S.STATS), await B.js(S.STATS)

@@ -20,21 +20,39 @@ async def close_menu(c):
     await asyncio.sleep(0.3)
 
 
-async def menu_pick(c, text_part):
-    """«Ещё» → пункт меню по части названия."""
+async def open_group(c, group):
+    """«Ещё» → строка группы со стрелкой ▸ (подменю раскрывается справа)."""
     await close_menu(c)
     ok = await c.click_btn("Ещё")
     await asyncio.sleep(0.4)
-    clicked = await c.js(f"(() => {{ const b = [...document.querySelectorAll('[role=menuitem]')].find(x => x.textContent.includes({text_part!r})); if (!b || b.disabled) return false; b.click(); return true; }})()")
-    await asyncio.sleep(0.6)
+    clicked = await c.js(f"(() => {{ const b = [...document.querySelectorAll('.ctx-menu [role=menuitem]')].find(x => x.textContent.includes({group!r})); if (!b || b.disabled) return false; b.click(); return true; }})()")
+    await asyncio.sleep(0.4)
     return bool(ok and clicked)
+
+
+async def menu_pick(c, group, item):
+    """«Ещё» → группа ▸ → пункт подменю (по точному названию); меню закрывается, настройка применяется сразу."""
+    if not await open_group(c, group):
+        return False
+    clicked = await c.js(f"(() => {{ const b = [...document.querySelectorAll('.ctx-sub [role=menuitemradio]')].find(x => x.textContent.replace('✓','').trim() === {item!r}); if (!b || b.disabled) return false; b.click(); return true; }})()")
+    await asyncio.sleep(0.6)
+    return bool(clicked)
+
+
+async def menu_state(c, group):
+    """Название отмеченного (✓) пункта подменю группы или None."""
+    if not await open_group(c, group):
+        return None
+    st = await c.js("(() => { const b = document.querySelector('.ctx-sub [role=menuitemradio][aria-checked=true]'); return b ? b.textContent.replace('✓','').trim() : null; })()")
+    await close_menu(c)
+    return st
 
 
 async def menu_labels(c):
     await close_menu(c)
     await c.click_btn("Ещё")
     await asyncio.sleep(0.4)
-    labels = await c.js("[...document.querySelectorAll('[role=menuitem]')].map(x => x.textContent.trim())")
+    labels = await c.js("[...document.querySelectorAll('.ctx-menu [role=menuitem]')].map(x => x.textContent.trim())")
     await close_menu(c)
     return labels or []
 
@@ -49,16 +67,17 @@ async def main():
         await asyncio.sleep(3)
 
         labels = await menu_labels(A)
-        S.check("в меню есть «Шумоподавление: стандартное» (режим по умолчанию)", any("Шумоподавление: стандартное" in x for x in labels), str([x for x in labels if "Шум" in x]))
-        S.check("в меню есть пункты «Качество видео»", sum("Качество видео" in x for x in labels) >= 6)
+        S.check("в меню по одной строке «Шумоподавление ▸» и «Качество видео ▸» (без отдельных пунктов на каждый уровень)", sum("Шумоподавление" in x for x in labels) == 1 and sum("Качество видео" in x for x in labels) == 1, str(labels))
+        S.check("шумоподавление: по умолчанию отмечено «Стандартное»", await menu_state(A, "Шумоподавление") == "Стандартное")
+        S.check("качество видео: по умолчанию отмечено «Автоматически»", await menu_state(A, "Качество видео") == "Автоматически")
 
         # --- усиленное шумоподавление
         before = (await B.js(S.STATS))["ain"]
-        S.check("Алиса: переключила на «усиленное»", await menu_pick(A, "Шумоподавление: стандартное"))
+        S.check("Алиса: переключила на «усиленное»", await menu_pick(A, "Шумоподавление", "Усиленное"))
         await asyncio.sleep(4)
-        labs = await menu_labels(A)
-        S.check("режим теперь «усиленное» (или откат на стандартное с уведомлением)", any("Шумоподавление: усиленное" in x for x in labs) or any("Шумоподавление: стандартное" in x for x in labs), str([x for x in labs if "Шум" in x]))
-        enhanced = any("Шумоподавление: усиленное" in x for x in labs)
+        cur = await menu_state(A, "Шумоподавление")
+        S.check("режим теперь «усиленное» (или откат на стандартное с уведомлением)", cur in ("Усиленное", "Стандартное"), str(cur))
+        enhanced = cur == "Усиленное"
         names = await A.js(AUDIO_LABELS)
         S.check("в «усиленном» режиме в WebRTC уходит обработанный трек RNNoise", (not enhanced) or any("MediaStreamAudioDestinationNode" in (n or "") for n in names), f"enhanced={enhanced} labels={names}")
         await asyncio.sleep(3)
@@ -67,14 +86,12 @@ async def main():
         await A.shot("noise-enhanced")
 
         # --- выкл → стандартное
-        S.check("Алиса: следующее нажатие переключает на «выключено»", await menu_pick(A, "Шумоподавление:"))
+        S.check("Алиса: выбрала «Выключено»", await menu_pick(A, "Шумоподавление", "Выключено"))
         await asyncio.sleep(2)
-        labs = await menu_labels(A)
-        S.check("режим «выключено», обработчик снят", any("Шумоподавление: выключено" in x for x in labs) and not any("MediaStreamAudioDestinationNode" in (n or "") for n in await A.js(AUDIO_LABELS)))
-        S.check("Алиса: снова «стандартное»", await menu_pick(A, "Шумоподавление:"))
+        S.check("режим «выключено», обработчик снят", await menu_state(A, "Шумоподавление") == "Выключено" and not any("MediaStreamAudioDestinationNode" in (n or "") for n in await A.js(AUDIO_LABELS)))
+        S.check("Алиса: снова «Стандартное»", await menu_pick(A, "Шумоподавление", "Стандартное"))
         await asyncio.sleep(2)
-        labs = await menu_labels(A)
-        S.check("режим «стандартное»", any("Шумоподавление: стандартное" in x for x in labs), str([x for x in labs if "Шум" in x]))
+        S.check("режим «стандартное»", await menu_state(A, "Шумоподавление") == "Стандартное")
 
         # --- качество видео
         S.check("Алиса: включила камеру", await A.click_btn("Камера выкл."))
@@ -84,7 +101,7 @@ async def main():
         await asyncio.sleep(3)
         enc0 = await A.js(VIDEO_TOP)
         S.check("до выбора уровня у кодировщика камеры есть слои", bool(enc0) and len(enc0[0]) >= 1, str(enc0))
-        S.check("Алиса: уровень «Качество видео: низкое»", await menu_pick(A, "Качество видео: низкое"))
+        S.check("Алиса: уровень «Качество видео: низкое»", await menu_pick(A, "Качество видео", "Низкое"))
         await asyncio.sleep(1.5)
         enc = await A.js(VIDEO_TOP)
         top = max(enc[0], key=lambda e: e.get("br") or 0) if enc and enc[0] else {}
@@ -93,7 +110,7 @@ async def main():
         S.check("в шапке индикатор «Видео: низкое»", any("Видео: низкое" in b for b in badge), str(badge))
 
         before = (await B.js(S.STATS))["ain"]
-        S.check("Алиса: уровень «Только звук»", await menu_pick(A, "Качество видео: только звук"))
+        S.check("Алиса: уровень «Только звук»", await menu_pick(A, "Качество видео", "Только звук"))
         await asyncio.sleep(3)
         S.check("камера Алисы выключена (у Боба вместо видео аватар)", await B.wait_for(ALICE_AVATAR, 15))
         await asyncio.sleep(2)
@@ -103,9 +120,8 @@ async def main():
         S.check("индикатор «Видео: только звук»", any("только звук" in b.lower() for b in badge), str(badge))
         await A.shot("quality-audio-only")
 
-        S.check("Алиса: «Качество видео: автоматически»", await menu_pick(A, "Качество видео: автоматически"))
-        labs = await menu_labels(A)
-        S.check("автоматический режим отмечен", any("✓ Качество видео: автоматически" in x for x in labs), str([x for x in labs if "Качество" in x]))
+        S.check("Алиса: «Качество видео» → «Автоматически»", await menu_pick(A, "Качество видео", "Автоматически"))
+        S.check("автоматический режим отмечен", await menu_state(A, "Качество видео") == "Автоматически")
         print("errs:", (await A.state())["errs"][:3], (await B.state())["errs"][:3])
         S.check("ошибок страницы нет", not (await A.state())["errs"] and not (await B.state())["errs"])
     finally:

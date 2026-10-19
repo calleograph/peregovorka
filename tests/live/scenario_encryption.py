@@ -1,5 +1,5 @@
 """Сценарий (см. README.md): шифрование хранимых чата и стенограмм. Администратор включает режим у комнаты, участники переписываются на настоящем LiveKit;
-проверяется: красный индикатор «ШИФРОВАНИЕ ВКЛЮЧЕНО» и пояснение со схемой, текст сообщения в базе — шифртекст, а в чате у собеседника — обычный текст.
+проверяется: при шифровании только хранилища значка в шапке нет (индикатор — только для E2EE), текст сообщения в базе — шифртекст, а в чате у собеседника — обычный текст.
 Для проверки базы нужен доступ к её файлу (каталог `LIVE_DATA` стенда, SQLite). Не проверяется: PostgreSQL (в проде) — там то же поведение на уровне ORM."""
 import asyncio, os, sqlite3, sys, uuid
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -8,7 +8,7 @@ import smoke_room as S
 DB = os.path.join(os.environ.get("LIVE_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")), "dev.db")
 SET = """(async () => { const me = await (await fetch('/api/v1/auth/me')).json(); const h = {'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf_token};
   const rooms = await (await fetch('/api/v1/admin/rooms')).json(); const room = rooms.find(r => r.slug === 'sales');
-  const r = await fetch('/api/v1/admin/rooms/' + room.id, {method: 'PATCH', headers: h, body: JSON.stringify({encrypt_storage: true})});
+  const r = await fetch('/api/v1/admin/rooms/' + room.id, {method: 'PATCH', headers: h, body: JSON.stringify({encrypt_storage: true, e2ee_mode: 'off'})});
   return r.status; })()"""
 
 
@@ -24,13 +24,7 @@ async def main():
         for c in (A, B):
             S.check(f"{c.label}: вошёл", await c.join())
         await asyncio.gather(*[c.wait_for("document.querySelectorAll('.tile').length>=2", 40) for c in (A, B)])
-        badge = await A.js("(() => { const b = document.querySelector('.prot-badge'); return b ? {text: b.textContent, cls: b.className, color: getComputedStyle(b).backgroundColor} : null; })()")
-        S.check("в шапке красный индикатор «ШИФРОВАНИЕ ВКЛЮЧЕНО»", bool(badge) and "ШИФРОВАНИЕ ВКЛЮЧЕНО" in badge["text"] and "prot-red" in badge["cls"], str(badge))
-        S.check("рядом подпись «хранилище» (а не E2EE)", "хранилище" in badge["text"] and "E2EE" not in badge["text"], badge["text"])
-        S.check("кнопка ⓘ открывает пояснение", await A.js("(() => { const b = document.querySelector('.prot-info'); if (!b) return false; b.click(); return true; })()"))
-        S.check("в пояснении есть схема и перечень (AES-256-GCM, TLS, «не сквозное»)", await A.wait_for("(() => { const t = document.body.innerText; return !!document.querySelector('.prot-flow svg') && t.includes('AES-256-GCM') && t.includes('не сквозное') && t.includes('Выключено'); })()", 10))
-        await A.shot("encryption-info")
-        await A.js("document.querySelector('.modal button.close, .modal [aria-label=\"Закрыть\"], dialog button')?.click(); [...document.querySelectorAll('button')].filter(b => /Закрыть|Отмена/.test(b.textContent)).forEach(b => b.click())")
+        S.check("шифрование только хранилища: значка шифрования в шапке нет (индикатор относится к E2EE)", await A.js("!document.querySelector('.prot-badge')"))
         # сообщение в чате
         sent = await A.js(f"""(async () => {{ const mid = (await (await fetch('/api/v1/rooms')).json()).find(r => r.slug === 'sales').active_meeting.id;
           const me = await (await fetch('/api/v1/auth/me')).json();

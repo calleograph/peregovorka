@@ -22,7 +22,7 @@ import TranscriptPanel from "../components/TranscriptPanel";
 import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
 import { buildRoomOptions } from "../roomOptions";
 import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../micPrefs";
-import { applyNoiseMode, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
+import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
 import ProtectionBadge from "../components/ProtectionBadge";
@@ -849,7 +849,6 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     setNotice({ kind: "warn", text: "Усиленное шумоподавление не удалось запустить на этом устройстве — включено стандартное." });
   };
   const rollbackNoise = (cur: MicPrefs, why: string) => { void applyMicPrefs({ ...cur, noiseMode: "standard" }, `noise_fallback_${why}`); noteNoiseFallback(why); };
-  const noiseNext = () => { const i = NOISE_MODES.indexOf(micPrefs.noiseMode); const m = NOISE_MODES[(i + 1) % NOISE_MODES.length]; void applyMicPrefs({ ...micPrefs, noiseMode: m }, `noise_${m}`); };
 
   /** Руководитель: выключить микрофоны у всех или у одного участника. */
   const moderate = async (who?: PView) => {
@@ -1165,14 +1164,17 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   /** «Ещё»: то, что нужно реже основных кнопок. Права проверяет сервер; недоступное этому пользователю не показывается. */
   const moreItems = (): MenuItem[] => [
     { id: "devices", label: "Устройства…", icon: "sliders", hint: "Микрофон, динамики и камера", hidden: !roomRef.current, onSelect: () => setDevPop({ left: Math.max(8, window.innerWidth - 392), bottom: 96 }) },
-    { id: "noise", label: `Шумоподавление: ${NOISE_LABEL[micPrefs.noiseMode].toLowerCase()}`, icon: micPrefs.noiseMode === "off" ? "noiseOff" : "noise", hint: "Нажмите, чтобы переключить: выключено → стандартное → усиленное (нейросеть на вашем устройстве)", hidden: !canMic, disabled: stage !== "ready", onSelect: noiseNext },
-    ...LEVELS.map((lv) => ({ id: `vq-${lv}`, label: `${quality && !quality.manual && quality.level === lv ? "• " : ""}${quality?.manual && quality.level === lv ? "✓ " : ""}Качество видео: ${LEVEL_LABEL[lv].toLowerCase()}`, icon: "video" as const,
-      hint: "Звук всегда в приоритете. Пункт фиксирует уровень; «автоматически» вернёт подстройку под канал", hidden: !canMic || !quality, onSelect: () => void qualityRef.current?.setManual(lv) })),
-    { id: "vq-auto", label: `${quality && !quality.manual ? "✓ " : ""}Качество видео: автоматически`, icon: "video", hint: "Уровень видео подстраивается под канал: при плохой связи страдает картинка, а не голос", hidden: !canMic || !quality, onSelect: () => void qualityRef.current?.setManual(null) },
+    { id: "noise", label: "Шумоподавление", icon: micPrefs.noiseMode === "off" ? "noiseOff" : "noise", hint: "Обработка вашего микрофона (нейросеть работает на вашем устройстве)", hidden: !canMic, disabled: stage !== "ready", onSelect: () => undefined,
+      submenu: NOISE_MODES.map((m) => ({ id: `noise-${m}`, label: NOISE_LABEL[m], hint: NOISE_HINT[m], checked: micPrefs.noiseMode === m, onSelect: () => { if (micPrefs.noiseMode !== m) void applyMicPrefs({ ...micPrefs, noiseMode: m }, `noise_${m}`); } })) },
+    { id: "vq", label: "Качество видео", icon: "video", hint: "Звук всегда в приоритете. «Автоматически» подстраивает видео под канал: при плохой связи страдает картинка, а не голос", hidden: !canMic || !quality, onSelect: () => undefined,
+      submenu: [
+        { id: "vq-auto", label: "Автоматически", checked: !!quality && !quality.manual, onSelect: () => void qualityRef.current?.setManual(null) },
+        ...LEVELS.map((lv) => ({ id: `vq-${lv}`, label: LEVEL_LABEL[lv], checked: !!quality?.manual && quality.level === lv, onSelect: () => void qualityRef.current?.setManual(lv) })),
+      ] },
     { id: "saudio", label: `${withAudio ? "✓ " : ""}Показ экрана со звуком`, icon: "screen", hint: "Звук вкладки или системы при следующем показе экрана", hidden: !(showScreen && join.client.screen_share_audio) || !!me?.screen, onSelect: () => setWithAudio((v) => !v) },
-    ...PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: `${curProfile === pr ? "✓ " : ""}Показ экрана: ${PROFILE_LABELS[pr]}`, icon: "screen" as const,
-      hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : "Профиль запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер",
-      hidden: !(showScreen && canScreen), onSelect: () => void chooseProfile(pr) })),
+    { id: "sp", label: "Профиль показа экрана", icon: "screen", hint: "Запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер", hidden: !(showScreen && canScreen), onSelect: () => undefined,
+      submenu: PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: PROFILE_LABELS[pr], checked: curProfile === pr,
+        hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : undefined, onSelect: () => void chooseProfile(pr) })) },
     { id: "rec", label: recording ? "Остановить запись" : "Начать запись", icon: recording ? "recordStop" : "record", hint: recording ? "Остановить запись звука встречи (транскрибация не меняется)" : "Начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
     { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: "Звонок и запись звука продолжаются", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
