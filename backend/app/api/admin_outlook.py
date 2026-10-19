@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import Meeting, Room, utcnow
 from ..services import outlook as ol
+from ..services import tls_check
 from ..services import outlook_sync as osync
 from ..services.audit import write_audit
 from ..services.outlook_package import build_package
@@ -30,20 +31,7 @@ ASSETS = ("/outlook/commands.html", "/outlook/commands.js", "/outlook/auth.html"
 
 
 def tls_probe(host: str, port: int, timeout: float = 6.0) -> dict:
-    """Проверяет HTTPS-сертификат так, как это делает клиент: цепочка и имя проверяются; возвращает срок действия. Блокирующая (в потоке)."""
-    ctx = ssl.create_default_context()
-    try:
-        with socket.create_connection((host, port), timeout=timeout) as raw, ctx.wrap_socket(raw, server_hostname=host) as s:
-            cert = s.getpeercert()
-        left = (datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc) - utcnow()).days
-        issuer = ", ".join("=".join(x) for rdn in cert.get("issuer", ()) for x in rdn)
-        if left < 0:
-            return {"ok": False, "message": f"Сертификат {host} просрочен {-left} дн. назад."}
-        return {"ok": True if left > 14 else None, "message": f"Сертификат {host} действителен ещё {left} дн.{' Скоро истекает — обновите.' if left <= 14 else ''} Выдан: {issuer[:120]}."}
-    except ssl.SSLCertVerificationError as exc:
-        return {"ok": False, "message": f"Сертификат {host} не проходит проверку: {exc.verify_message}. Outlook не загрузит надстройку; нужен сертификат, которому доверяют рабочие станции."}
-    except OSError as exc:
-        return {"ok": False, "message": f"Нет соединения с {host}:{port} ({exc.strerror or type(exc).__name__}) — сервер не виден с самого сервера приложения (возможно, нет обратного маршрута к собственному адресу)."}
+    return tls_check.probe(host, port, timeout)
 
 
 async def _cfg(request: Request, db: AsyncSession):
@@ -67,12 +55,17 @@ async def status(request: Request, su: SessionUser = Depends(require_admin), db:
     else:
         add("url", "Публичный адрес", True, f"{base}")
         u = urlsplit(base)
-        tls = await asyncio.to_thread(tls_probe, u.hostname or "", u.port or 443) if not getattr(st, "test_transports", {}).get("outlook") else {"ok": True, "message": "проверка пропущена в тесте"}
-        add("tls", "Сертификат HTTPS", tls["ok"], tls["message"])
+        tls = await asyncio.to_thread(tls_probe, u.hostname or "", u.port or 443) if not getattr(st, "test_transports", {}).get("outlook") else {"ok": True, "state": "ok", "message": "проверка пропущена в тесте"}
+        # Режим: HTTPS завершает внешний обратный прокси (запрос пришёл с X-Forwarded-Proto: https) или сам сервер. Решает проверка ПУБЛИЧНОГО адреса; локальный сертификат не требуется.
+        mode = cfg.tls_mode if cfg.tls_mode != "auto" else ("proxy" if request.headers.get("x-forwarded-proto", "").lower() == "https" else "direct")
+        mode_text = "HTTPS завершается на внешнем обратном прокси" if mode == "proxy" else "HTTPS на самом сервере"
+        add("tls", "Сертификат HTTPS" if tls["state"] != "unreachable" else "Внешняя проверка с сервера недоступна", tls["ok"], f"{tls['message']} Режим: {mode_text}"
+            + (" (определён автоматически)." if cfg.tls_mode == "auto" else " (выбран вручную)."))
+        checks[-1]["tls"] = {k: tls.get(k) for k in ("host", "port", "state", "issuer", "subject", "not_after", "days_left")} | {"mode": mode, "client_check_url": f"{base}/api/v1/outlook/config"}
         transport = getattr(st, "test_transports", {}).get("outlook")
         bad: list[str] = []
         try:
-            async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(8.0, connect=5.0), follow_redirects=False) as c:
+            async with httpx.AsyncClient(transport=transport, verify=ssl.create_default_context(), timeout=httpx.Timeout(8.0, connect=5.0), follow_redirects=False) as c:
                 r = await c.get(f"{base}/api/v1/outlook/config")
                 api_ok = r.status_code == 200
                 for path in ASSETS:

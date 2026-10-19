@@ -261,6 +261,19 @@ def test_status_with_https_url_uses_fake_transport(tmp_path, directory):
         assert by["url"]["ok"] is True and by["api"]["ok"] is True and by["files"]["ok"] is False and "icon-64.png" in by["files"]["message"] and by["manifest"]["ok"] is True
 
 
+def test_status_tls_mode_proxy_is_detected_without_local_certificate(tmp_path, directory):
+    """За внешним HTTPS-прокси локальный сертификат не нужен: режим определяется автоматически, адрес/издатель/срок попадают в ответ."""
+    from .conftest import make_settings, running_app
+
+    with running_app(make_settings(tmp_path, app_public_url="https://meet.example.org"), directory, transports={"outlook": httpx.MockTransport(lambda r: httpx.Response(200, json={}))}) as c:
+        login(c, "root")
+        c.put("/api/v1/admin/settings/outlook", json={"enabled": True})
+        by = {x["key"]: x for x in c.get("/api/v1/admin/outlook/status", headers={"X-Forwarded-Proto": "https"}).json()["checks"]}
+        assert by["tls"]["ok"] is True and by["tls"]["tls"]["mode"] == "proxy" and "обратном прокси" in by["tls"]["message"]
+        assert by["tls"]["tls"]["client_check_url"] == "https://meet.example.org/api/v1/outlook/config"
+        assert c.put("/api/v1/admin/settings/outlook", json={"tls_mode": "bogus"}).status_code == 422
+
+
 def test_sync_test_endpoint(client):
     login(client, "root")
     client.put("/api/v1/admin/settings/outlook", json={"sync_mode": "off"})

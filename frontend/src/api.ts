@@ -309,7 +309,8 @@ export interface LdapProfile {
   use_for_users: boolean; use_for_admins: boolean; position: number; uri: string;
 }
 export interface DiagStage { stage: string; ok: boolean | null; message: string; ms?: number }
-export interface OutlookCheck { key: string; title: string; ok: boolean | null; message: string }
+export interface OutlookTls { host: string; port: number; state: string; issuer?: string | null; subject?: string | null; not_after?: string | null; days_left?: number | null; mode: "proxy" | "direct"; client_check_url: string }
+export interface OutlookCheck { key: string; title: string; ok: boolean | null; message: string; tls?: OutlookTls }
 export interface OutlookConference {
   id: string; name: string; organizer: string | null; organizer_email: string | null; start: string; end: string; recurring: boolean; state: string; url: string;
   sync_state: string | null; sync_error: string | null; synced_at: string | null; tracked: boolean; created_at: string;

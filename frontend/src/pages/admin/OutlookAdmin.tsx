@@ -21,12 +21,19 @@ export default function OutlookAdmin() {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
+  const [clientNote, setClientNote] = useState("");
 
   const check = useCallback(async () => {
     setChecking(true); setErr("");
     try { setChecks((await api.admin.outlookStatus()).checks); } catch (e) { setErr((e as ApiError).message); }
     setChecking(false);
   }, []);
+  /** Проверка «с клиентской стороны»: браузер сам проверяет цепочку и имя сервера по системному доверию; сертификат при этом никуда не загружается и ничем не подменяется. */
+  const clientCheck = async (url: string) => {
+    setClientNote("");
+    try { const r = await fetch(url, { cache: "no-store" }); setClientNote(r.ok ? "С этого компьютера публичный HTTPS-адрес открывается: сертификат принят браузером, API надстройки отвечает." : `С этого компьютера адрес открылся, но API ответил HTTP ${r.status}.`); }
+    catch { setClientNote("С этого компьютера публичный HTTPS-адрес не открылся (сертификат не принят, адрес недоступен или блокируется). Подробнее — скрипт Test-OutlookAddin.ps1 из пакета на рабочей станции Outlook."); }
+  };
   const loadLists = useCallback(async () => {
     try { setRows((await api.admin.outlookMeetings()).items); } catch (e) { setErr((e as ApiError).message); }
     try { setLog((await api.admin.journal({ filters: [{ field: "category", op: "eq", value: "outlook" }] }, undefined, 30)).items); } catch { setLog([]); }
@@ -59,8 +66,13 @@ export default function OutlookAdmin() {
           <ul className="stage-list" aria-label="Результаты проверок">
             {checks.map((c) => (
               <li key={c.key} className={c.ok === false ? "bad" : c.ok === null ? "skip" : "ok"}>
-                <span className="stage-mark" aria-hidden>{mark(c.ok)}</span><span><b>{c.title}.</b> {c.message}</span></li>))}
+                <span className="stage-mark" aria-hidden>{mark(c.ok)}</span>
+                <span><b>{c.title}.</b> {c.message}
+                  {c.tls && (
+                    <div className="muted small">Адрес: {c.tls.host}:{c.tls.port}{c.tls.issuer ? ` · издатель: ${c.tls.issuer}` : ""}{c.tls.not_after ? ` · действует до ${fmtDate(c.tls.not_after)}` : ""}{c.tls.days_left != null ? ` (осталось дней: ${c.tls.days_left})` : ""}
+                      {(c.ok !== true) && <> · <button className="btn mini" onClick={() => void clientCheck(c.tls!.client_check_url)}>Проверить с этого компьютера</button></>}</div>)}</span></li>))}
           </ul>)}
+        {clientNote && <div className="alert info" role="status">{clientNote}</div>}
       </div>
 
       <div className="card" aria-label="Пакет надстройки">

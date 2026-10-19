@@ -681,6 +681,7 @@ class OutlookSettings(_Group):
     token_ttl_hours: int = Field(default=168, ge=1, le=720)               # срок действия токена надстройки (потом — повторный вход в окне Outlook)
     max_active_per_user: int = Field(default=100, ge=1, le=1000)
     guest_links: bool = False                                             # пускать по ссылке гостей без учётной записи (в открывшееся окно входа)
+    tls_mode: str = "auto"                                                # где завершается HTTPS: auto (по проверке публичного адреса) | proxy (внешний обратный прокси) | direct (сам сервер); локальный сертификат в приложении не требуется
     mail_kind: str = "exchange"                                           # exchange (локальный Exchange) | m365 (Exchange Online) — подсказки и инструкции; на работу не влияет
     sync_on_send: bool = False                                            # манифест подписывает надстройку на отправку приглашения (Smart Alerts): время и тема уходят на сервер. Нужен Mailbox 1.12
     sync_mode: str = "off"                                                # серверная сверка календаря: off | graph | ews
@@ -691,6 +692,13 @@ class OutlookSettings(_Group):
     ews_url: str = ""                                                     # https://mail.example.org/EWS/Exchange.asmx
     ews_user: str = ""                                                    # учётная запись сверки (роль ApplicationImpersonation либо доступ «Рецензент» к календарям)
     ews_password: str = ""
+
+    @field_validator("tls_mode")
+    @classmethod
+    def _tls_mode(cls, v: str) -> str:
+        if v not in ("auto", "proxy", "direct"):
+            raise ValueError("Режим HTTPS: auto, proxy или direct")
+        return v
 
     @field_validator("public_url")
     @classmethod
