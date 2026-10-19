@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, auditParams, type AdminUser, type ApiError, type AuditFilter, type AuditRow, type AuditVerify, type Meeting, type RecordingRow } from "../../api";
+import { api, auditParams, type AdminUser, type ApiError, type AuditFilter, type AuditRow, type AuditVerify, type Meeting, type RecordingRow, type SessionInfo } from "../../api";
 import MeetingAdminActions from "../../components/MeetingAdminActions";
 import { ConfirmDialog } from "../../components/Dialogs";
 import ClientDiagAdmin from "./ClientDiagAdmin";
@@ -19,6 +19,9 @@ export function UsersAdmin() {
     if (!reset) return;
     try { await api.admin.resetTotp(reset.id, rpw); setReset(null); setRpw(""); list.reload(); } catch (e) { setErr((e as ApiError).message); }
   };
+  const [sessOf, setSessOf] = useState<{ user: AdminUser; items: SessionInfo[] } | null>(null);
+  const showSessions = async (u: AdminUser) => { setErr(""); try { setSessOf({ user: u, items: (await api.admin.userSessions(u.id)).items }); } catch (e) { setErr((e as ApiError).message); } };
+  const endSess = async (u: AdminUser, pub?: string) => { try { await api.admin.endUserSessions(u.id, pub); await showSessions(u); } catch (e) { setErr((e as ApiError).message); } };
   const toggle = async (u: AdminUser) => {
     setErr("");
     try { await api.admin.setUserActive(u.id, !u.is_active); list.reload(); } catch (e) { setErr((e as ApiError).message); }
@@ -29,6 +32,16 @@ export function UsersAdmin() {
       <p className="muted">Локальное представление доменных пользователей: они появляются после первого входа. Отключённый пользователь теряет сессию и не может войти, пока не включён снова. Пароли в системе не хранятся. Права администратора определяются членством в группе AD (LDAP_ADMIN_GROUP_DN).</p>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск по имени или логину, например: иванов" style={{ maxWidth: 360 }} aria-label="Поиск пользователя" />
       {err && <div className="alert error">{err}</div>}
+      {sessOf && (
+        <div className="card" role="dialog" aria-label="Сеансы пользователя">
+          <div className="row"><h3 style={{ margin: 0 }}>Сеансы: {sessOf.user.display_name}</h3><div className="spacer" />
+            <button className="btn mini danger" disabled={!sessOf.items.length} onClick={() => void endSess(sessOf.user)}>Завершить все</button>
+            <button className="btn mini" onClick={() => setSessOf(null)}>Закрыть</button></div>
+          {!sessOf.items.length ? <p className="muted">Активных сеансов нет.</p> : (
+            <ul className="sess-list">{sessOf.items.map((s) => (
+              <li key={s.id}><span><b>{s.device}</b><small className="muted"> · {s.ip || "адрес не определён"} · активность {s.last_seen ? new Date(s.last_seen * 1000).toLocaleString("ru-RU") : "—"}</small></span>
+                <button className="btn mini" onClick={() => void endSess(sessOf.user, s.id)}>Завершить</button></li>))}</ul>)}
+        </div>)}
       {reset && (
         <form className="card form" onSubmit={(e) => { e.preventDefault(); void doReset(); }}>
           <p>Сбросить двухфакторную защиту пользователя <b>{reset.display_name}</b>? Резервные коды тоже будут удалены; он настроит защиту заново при следующем входе (если политика её требует). Действие записывается в аудит.</p>
@@ -43,7 +56,7 @@ export function UsersAdmin() {
             <td>{u.last_login_at ? fmt(u.last_login_at) : "—"}</td>
             <td>{u.totp_enabled ? <>включена <button className="btn mini ghost danger" onClick={() => setReset(u)} title="Пользователь потерял устройство: сбросить, чтобы он настроил 2FA заново">сбросить</button></> : <span className="muted">нет</span>}</td>
             <td>{u.is_active ? "активен" : <span className="badge warn">отключён</span>}</td>
-            <td><button className={`btn ghost ${u.is_active ? "danger" : ""}`} onClick={() => toggle(u)}>{u.is_active ? "Отключить" : "Включить"}</button></td>
+            <td><button className="btn ghost" onClick={() => void showSessions(u)} title="Активные устройства пользователя">Сеансы</button> <button className={`btn ghost ${u.is_active ? "danger" : ""}`} onClick={() => toggle(u)}>{u.is_active ? "Отключить" : "Включить"}</button></td>
           </tr>))}</tbody>
       </table></div>
       <ListFooter loading={list.loading} done={list.done} error={list.error} sentinel={list.sentinel} count={list.items.length} empty="Пользователей не найдено." />

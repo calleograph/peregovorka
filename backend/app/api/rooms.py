@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth.devices import device_kind
 from ..services import asr_state
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Meeting, MeetingParticipant, Room
@@ -106,7 +107,7 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
                     su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     started = time.monotonic()
     try:
-        result = await request.app.state.meetings.join(db, room_id, su, body.password)
+        result = await request.app.state.meetings.join(db, room_id, su, body.password, client_id=request.headers.get("x-client-id", ""), device_kind=device_kind(request.headers.get("user-agent")))
     except JoinError as exc:
         await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.join_denied", target_type="room", target_id=str(room_id),
                         ip=client_ip(request), result="denied", details={"code": exc.code})

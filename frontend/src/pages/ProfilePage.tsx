@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type ApiError, type Profile, type TotpStatus } from "../api";
+import { api, type ApiError, type Profile, type SessionInfo, type TotpStatus } from "../api";
 import TotpSetup from "../components/TotpSetup";
 import Avatar from "../components/Avatar";
 import AvatarCropper from "../components/AvatarCropper";
@@ -8,6 +8,31 @@ import { chatSoundEnabled, playChatSound, setChatSoundEnabled, setSoundVolume, s
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import { fmt } from "../util";
 import { THEMES, getUserTheme, setUserTheme, type ThemeId } from "../site";
+
+/** «Активные устройства»: сессии этой учётной записи; можно завершить любую (в том числе все остальные). Вход с другого устройства сессию на этом не завершает. */
+function ActiveDevices() {
+  const [items, setItems] = useState<SessionInfo[] | null>(null);
+  const [msg, setMsg] = useState("");
+  const load = () => api.mySessions().then((r) => setItems(r.items)).catch((e) => setMsg((e as ApiError).message));
+  useEffect(() => { void load(); }, []);
+  const end = async (id: string) => { try { await api.endSession(id); setMsg("Сеанс завершён."); void load(); } catch (e) { setMsg((e as ApiError).message); } };
+  const others = async () => { try { const r = await api.endOtherSessions(); setMsg(r.ended ? `Завершено сеансов: ${r.ended}.` : "Других сеансов нет."); void load(); } catch (e) { setMsg((e as ApiError).message); } };
+  return (
+    <div className="card" aria-label="Активные устройства">
+      <div className="row"><h2 style={{ margin: 0 }}>Активные устройства</h2><div className="spacer" />
+        {items && items.length > 1 && <button className="btn mini" onClick={() => void others()}>Завершить все остальные</button>}</div>
+      <p className="muted small">Вы можете одновременно работать на нескольких устройствах — вход с телефона не завершает сеанс на компьютере. Незнакомое устройство в списке — завершите его сеанс и смените пароль.</p>
+      {msg && <div className="alert info small" role="status">{msg}</div>}
+      {!items ? <p className="muted">Загрузка…</p> : (
+        <ul className="sess-list">
+          {items.map((s) => (
+            <li key={s.id}><span><b>{s.device}</b>{s.current && <span className="badge ok"> это устройство</span>}
+              <small className="muted"> · {s.ip || "адрес не определён"} · последняя активность {s.last_seen ? fmt(new Date(s.last_seen * 1000).toISOString()) : "—"}</small></span>
+              {!s.current && <button className="btn mini" onClick={() => void end(s.id)}>Завершить</button>}</li>))}
+        </ul>)}
+    </div>
+  );
+}
 
 /** Личные звуковые уведомления комнаты (хранятся в браузере): сообщения чата, поднятая рука, общая громкость. */
 /** Тема оформления этого пользователя (хранится в браузере, как и звуки): «как в системе» по умолчанию, светлая, тёмная и три пастельные. */
@@ -134,6 +159,7 @@ export default function ProfilePage({ onChanged }: { onChanged: (p: Profile) => 
     <section className="profile-page">
       <p className="eyebrow">Личный кабинет</p>
       <h1>{p.display_name}</h1>
+      <ActiveDevices />
       <div className="profile-grid">
         <div className="card profile-card">
           <div className="profile-ava">

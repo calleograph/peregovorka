@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent, Suspense, lazy, useState } from "react";
-import { api, ApiError, type Me, type TotpChallenge } from "../api";
+import { api, ApiError, type Me, type SessionLimitInfo, type TotpChallenge } from "../api";
+import { fmt } from "../util";
 import { CookieNotice, LoginFooter, type BuildInfo } from "../components/ProductInfo";
 import { Icon } from "../components/Icons";
 import { magnet } from "../fx";
@@ -20,7 +21,19 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
   const [busy, setBusy] = useState(false);
   const [challenge, setChallenge] = useState("");
   const [code, setCode] = useState("");
+  const [limit, setLimit] = useState<SessionLimitInfo | null>(null);
   const valid = isValidLogin(login);
+  const onFail = (ae: ApiError) => {
+    if (ae.code === "session_limit" && ae.extra) { setLimit({ ...(ae.extra as unknown as SessionLimitInfo), message: ae.message }); setPassword(""); setChallenge(""); setCode(""); return true; }
+    return false;
+  };
+  const free = async (id: string) => {
+    if (!limit) return;
+    setBusy(true); setError("");
+    try { onLogin(await api.freeSlot(limit.free_token, id)); }
+    catch (err) { setError((err as ApiError).message); if ((err as ApiError).code === "free_expired") setLimit(null); }
+    finally { setBusy(false); }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -31,6 +44,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
       if ((r as TotpChallenge).totp_required) { setChallenge((r as TotpChallenge).challenge); setPassword(""); } else onLogin(r as Me);
     } catch (err) {
       const ae = err as ApiError;
+      if (onFail(ae)) return;
       setError(ae.status === 429 && ae.retryAfter ? `Слишком много неудачных попыток. Повторите через ${Math.max(1, Math.ceil(ae.retryAfter / 60))} мин.` : ae.message);
       setPassword("");
     } finally {
@@ -44,6 +58,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
     try { onLogin(await api.loginTotp(challenge, code.trim())); }
     catch (err) {
       const ae = err as ApiError;
+      if (onFail(ae)) return;
       setError(ae.message);
       setCode("");
       if (ae.code === "totp_expired") { setChallenge(""); }
@@ -62,7 +77,18 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
               : <><span className="px-mark" aria-hidden><Icon name="video" size={34} /></span><div className="px-name">{site.name}</div></>}
             <p className="px-tag">{site.subtitle}</p>
           </div>
-          {challenge ? (
+          {limit ? (
+            <div className="login-card px-form" role="dialog" aria-label="Слишком много активных сеансов">
+              <p className="px-welcome">{limit.message}</p>
+              <ul className="sess-list">
+                {limit.sessions.map((s) => (
+                  <li key={s.id}><span><b>{s.device}</b><small className="muted">{[s.ip || "адрес не определён", s.last_seen ? `активность ${fmt(new Date(s.last_seen * 1000).toISOString())}` : ""].filter(Boolean).join(" · ")}</small></span>
+                    <button className="btn primary mini" disabled={busy} onClick={() => void free(s.id)}>Завершить и войти здесь</button></li>))}
+              </ul>
+              {error && <div className="alert error" role="alert">{error}</div>}
+              <button type="button" className="btn ghost" onClick={() => { setLimit(null); setError(""); }}>Отмена</button>
+            </div>
+          ) : challenge ? (
             <form className="login-card px-form" onSubmit={submitCode} aria-label="Подтверждение входа">
               <p className="px-welcome">Введите шестизначный код из приложения-аутентификатора или резервный код.</p>
               <label>Код подтверждения

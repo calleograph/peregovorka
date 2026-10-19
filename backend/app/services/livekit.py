@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import datetime
 import logging
+import re
 import uuid
 
 from livekit import api as lkapi
@@ -25,8 +26,13 @@ SIP_IDENTITY_PREFIX = "sip_"      # входящий звонок (identity вы
 SERVICE_IDENTITY_PREFIX = "asr-"
 
 
-def user_identity(user_id: uuid.UUID) -> str:
-    return f"{IDENTITY_PREFIX}{user_id.hex}"
+_DEVICE_RE = re.compile(r"^[0-9a-f]{4,12}$")
+
+
+def user_identity(user_id: uuid.UUID, device: str = "") -> str:
+    """`u-<32 hex>` — основное подключение пользователя к встрече; `u-<32 hex>~<метка>` — подключение с ДРУГОГО устройства/вкладки: у каждого устройства свой идентификатор участника,
+    поэтому второй вход не вытесняет первый (раньше одинаковый identity = DUPLICATE_IDENTITY и отключение прежнего устройства)."""
+    return f"{IDENTITY_PREFIX}{user_id.hex}" + (f"~{device}" if device else "")
 
 
 def guest_identity(guest_id: uuid.UUID) -> str:
@@ -37,10 +43,18 @@ def parse_user_identity(identity: str) -> uuid.UUID | None:
     """u-<32 hex> → UUID пользователя; всё остальное (в т.ч. g-*, asr-*) → None."""
     if not identity.startswith(IDENTITY_PREFIX):
         return None
+    base, sep, dev = identity[len(IDENTITY_PREFIX):].partition("~")
+    if sep and not _DEVICE_RE.match(dev):
+        return None
     try:
-        return uuid.UUID(hex=identity[len(IDENTITY_PREFIX):])
+        return uuid.UUID(hex=base)
     except ValueError:
         return None
+
+
+def identity_device(identity: str) -> str:
+    """Метка устройства из `u-<hex>~<метка>`; пусто — основное подключение."""
+    return identity.partition("~")[2]
 
 
 def parse_guest_identity(identity: str) -> uuid.UUID | None:
@@ -90,9 +104,9 @@ def publish_sources(*, camera: bool, screen_share: bool) -> list[str]:
 
 
 def issue_user_token(settings: Settings, *, user_id: uuid.UUID, display_name: str, livekit_room: str,
-                     camera_allowed: bool = True, screen_share_allowed: bool = True, sources: list[str] | None = None) -> str:
+                     camera_allowed: bool = True, screen_share_allowed: bool = True, sources: list[str] | None = None, device: str = "", name_suffix: str = "") -> str:
     """`sources` (роль и режим комнаты — services/roles.py) имеет приоритет; пустой список — токен слушателя (публиковать нельзя)."""
-    return _issue_token(settings, identity=user_identity(user_id), display_name=display_name, livekit_room=livekit_room,
+    return _issue_token(settings, identity=user_identity(user_id, device), display_name=display_name + name_suffix, livekit_room=livekit_room,
                         sources=publish_sources(camera=camera_allowed, screen_share=screen_share_allowed) if sources is None else sources)
 
 

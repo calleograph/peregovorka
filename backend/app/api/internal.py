@@ -79,7 +79,7 @@ async def livekit_webhook(request: Request):
                 await svc.on_participant_joined(db, meeting_id, user_id)
                 await svc.sync_rights_on_join(db, meeting_id, ident, event.participant.permission)
             else:
-                await svc.on_participant_left(db, meeting_id, user_id)
+                await svc.on_participant_left(db, meeting_id, user_id, ident)
     elif event.event == "room_finished" and meeting_id:
         # Комната LiveKit закрылась (все ушли дольше departure_timeout либо её удалили). Встречу НЕ завершаем мгновенно:
         # обновление страницы или обрыв сети — это не конец встречи. Сверяем присутствие; завершит reaper по истечении

@@ -162,12 +162,34 @@ async def patch_user(user_id: uuid.UUID, request: Request, body: dict[str, Any] 
     key = f"user:inactive:{user.id}"
     if user.is_active:
         await redis.delete(key)
-    else:  # действующие сессии прекращаются при ближайшем запросе
+    else:  # действующие сессии прекращаются при ближайшем запросе — и сразу удаляются (на всех устройствах)
         await redis.set(key, "1", ex=request.app.state.settings.session_absolute_timeout_seconds)
+        await request.app.state.sessions.destroy_user(str(user.id))
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="user.activate" if user.is_active else "user.deactivate",
                       target_type="user", target_id=str(user.id), ip=client_ip(request), details={"sam": user.sam_account_name})
     await db.commit()
     return {"id": str(user.id), "is_active": user.is_active}
+
+
+@router.get("/users/{user_id}/sessions")
+async def user_sessions(user_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin)):
+    """Активные сессии пользователя (администратору: устройство, адрес, последняя активность)."""
+    items = [{k: v for k, v in x.items() if k not in ("_key", "current")} for x in await request.app.state.sessions.list_user(str(user_id))]
+    return {"items": items}
+
+
+@router.delete("/users/{user_id}/sessions", status_code=200)
+async def end_user_sessions(user_id: uuid.UUID, request: Request, pub: str | None = Query(default=None, max_length=40), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Принудительно завершить одну (`?pub=`) или все сессии пользователя."""
+    store = request.app.state.sessions
+    if pub:
+        ended = 1 if await store.destroy_pub(str(user_id), pub) else 0
+    else:
+        ended = await store.destroy_user(str(user_id))
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="auth.session_ended", target_type="user", target_id=str(user_id), ip=client_ip(request),
+                      details={"by": "admin", "count": ended, "session": pub})
+    await db.commit()
+    return {"ended": ended}
 
 
 # --------------------------------------------------------------------------- каталог AD

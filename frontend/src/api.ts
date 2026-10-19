@@ -539,10 +539,22 @@ export interface ComponentsInfo {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string, public retryAfter?: number) {
+  constructor(public status: number, public code: string, message: string, public retryAfter?: number, public extra?: Record<string, unknown>) {
     super(message);
   }
 }
+
+/** Идентификатор вкладки/устройства (sessionStorage): по нему сервер отличает подключения одного пользователя к одной встрече. Та же вкладка — тот же участник (в том числе после обрыва сети). */
+export function clientId(): string {
+  try {
+    let v = sessionStorage.getItem("pg.clientId");
+    if (!v) { v = (crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32).padEnd(12, "0"); sessionStorage.setItem("pg.clientId", v); }
+    return v;
+  } catch { return "tab" + Math.random().toString(36).slice(2, 12).padEnd(10, "0"); }
+}
+
+export interface SessionInfo { id: string; device: string; ip: string; created_at: number | null; last_seen: number | null; current: boolean }
+export interface SessionLimitInfo { free_token: string; limit: number; sessions: SessionInfo[]; message: string }
 
 let csrfToken = "";
 export const setCsrf = (t: string) => { csrfToken = t; };
@@ -569,7 +581,7 @@ export const leaveOnUnload = (meetingId: string): void => keepalivePost(guestTok
 export const releaseOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/release`);
 
 async function request<T>(method: string, path: string, body?: unknown, captcha?: string): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", "X-Client-Id": clientId() };
   if (captcha) headers["X-Captcha"] = captcha;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (guestToken) headers["X-Guest-Token"] = guestToken;
@@ -594,7 +606,7 @@ async function request<T>(method: string, path: string, body?: unknown, captcha?
       try { solved = await solveCaptcha(d.challenge as CaptchaChallenge); } catch { /* ниже — обычная ошибка */ }
       if (solved) return request<T>(method, path, body, solved);
     }
-    throw new ApiError(res.status, code, message ?? `Ошибка ${res.status}`, ra);
+    throw new ApiError(res.status, code, message ?? `Ошибка ${res.status}`, ra, typeof d === "object" && d ? (d as Record<string, unknown>) : undefined);
   }
   return data as T;
 }
@@ -692,6 +704,10 @@ export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100):
 
 export const api = {
   login: (login: string, password: string) => request<Me | TotpChallenge>("POST", "/auth/login", { login, password }),
+  freeSlot: (free_token: string, session_id: string) => request<Me>("POST", "/auth/login/free-slot", { free_token, session_id }),
+  mySessions: () => request<{ items: SessionInfo[] }>("GET", "/auth/sessions"),
+  endSession: (id: string) => request<void>("DELETE", `/auth/sessions/${id}`),
+  endOtherSessions: () => request<{ ended: number }>("POST", "/auth/sessions/end-others"),
   loginTotp: (challenge: string, code: string) => request<Me>("POST", "/auth/login/totp", { challenge, code }),
   totp: {
     status: () => request<TotpStatus>("GET", "/auth/totp/status"),
@@ -881,6 +897,8 @@ export const api = {
     saveSettings: (g: SettingsGroup, body: SettingsValues) => request<SettingsValues>("PUT", `/admin/settings/${g}`, body),
     testSettings: (g: SettingsGroup) => request<TestResult>("POST", `/admin/settings/${g}/test`),
     users: (q = "", offset = 0) => request<AdminUser[]>("GET", `/admin/users?q=${encodeURIComponent(q)}&limit=100&offset=${offset}`),
+    userSessions: (id: string) => request<{ items: SessionInfo[] }>("GET", `/admin/users/${id}/sessions`),
+    endUserSessions: (id: string, pub?: string) => request<{ ended: number }>("DELETE", `/admin/users/${id}/sessions${pub ? `?pub=${encodeURIComponent(pub)}` : ""}`),
     setUserActive: (id: string, is_active: boolean) => request<{ id: string; is_active: boolean }>("PATCH", `/admin/users/${id}`, { is_active }),
     search: (kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/admin/directory/search?kind=${kind}&q=${encodeURIComponent(q)}`),
     meetings: (active?: boolean, offset = 0) => request<Meeting[]>("GET", `/admin/meetings?limit=50&offset=${offset}${active === undefined ? "" : `&active=${active}`}`),

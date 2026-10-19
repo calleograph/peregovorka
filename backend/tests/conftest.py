@@ -122,7 +122,12 @@ def client(settings, directory):
 
 
 def login(client: TestClient, user: str, password: str | None = None) -> str:
-    """Входит под пользователем (сбрасывая прежнюю сессию); возвращает CSRF-токен и ставит заголовок."""
+    """Входит под пользователем (завершая прежнюю сессию клиента: иначе тесты упирались бы в лимит одновременных сессий); возвращает CSRF-токен и ставит заголовок."""
+    if client.cookies.get("pg_session") or any(c.name for c in client.cookies.jar):
+        try:
+            client.post("/api/v1/auth/logout")
+        except Exception:  # noqa: BLE001
+            pass
     client.cookies.clear()
     client.headers.pop("X-CSRF-Token", None)
     r = client.post("/api/v1/auth/login", json={"login": user, "password": password or f"{user}-pass"})

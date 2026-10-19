@@ -72,7 +72,7 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
     return { reason: "SignalFailed", message: `Не удалось установить сигнальное соединение (WebSocket) с сервером звонков. Проверьте сеть и адрес сервера. Возможные причины: ${NET_CAUSES}, либо прокси не передаёт WebSocket. Если не уходит — сообщите администратору.` };
   }
   if (msg.includes("duplicate_identity") || msg.includes("duplicate identity")) {
-    return { reason: "DuplicateIdentity", message: "Вы вошли в эту комнату с другого устройства или вкладки — это соединение закрыто." };
+    return { reason: "DuplicateIdentity", message: "В эту комнату уже вошла другая вкладка этого браузера с тем же идентификатором — это соединение закрыто. Вход с другого устройства (телефона, второго компьютера) соединение не закрывает." };
   }
 
   switch (name) {

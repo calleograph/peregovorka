@@ -112,6 +112,10 @@ class Client:
           audio:[...document.querySelectorAll('audio[data-identity]')].map(a=>({id:a.dataset.identity.slice(0,6),muted:a.muted,live:!!(a.srcObject&&a.srcObject.getAudioTracks().some(t=>t.readyState==='live'))}))}))()""")
 
     async def close(self):
+        # сеанс завершается: стенд общий, а число одновременных сеансов одной учётной записи ограничено (5) — без выхода сценарии упирались бы в лимит
+        try:
+            await asyncio.wait_for(self.js("(async () => { try { const me = await (await fetch('/api/v1/auth/me')).json(); await fetch('/api/v1/auth/sessions/end-others', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token}}); await fetch('/api/v1/auth/logout', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token}}); } catch (e) {} })()"), 5)
+        except Exception: pass
         try: await self.ws.close()
         except Exception: pass
         self.proc.terminate()

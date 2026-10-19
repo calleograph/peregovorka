@@ -27,6 +27,7 @@ from . import e2ee as e2ee_svc
 from . import outlook as outlook_svc
 from .access import grant_leases
 from .asr_bridge import AsrBridge
+from ..auth.devices import device_tag
 from .livekit import (
     delete_livekit_room,
     enforce_sources,
@@ -96,7 +97,7 @@ class MeetingService:
             return None
         return (await self.settings_svc.get(db, "general")).temp_room_grace_minutes * 60      # type: ignore[attr-defined]
 
-    async def join(self, db: AsyncSession, room_id: uuid.UUID, su: SessionUser, password: str | None) -> JoinResult:
+    async def join(self, db: AsyncSession, room_id: uuid.UUID, su: SessionUser, password: str | None, *, client_id: str = "", device_kind: str = "") -> JoinResult:
         closed = await db.get(Room, room_id)
         if closed is not None and closed.lifecycle == "closed" and acl_allows(closed, su):
             raise JoinError("room_closed", "Временная переговорка закрыта. Материалы встречи — в «Истории».", 410)
@@ -162,7 +163,18 @@ class MeetingService:
             if self.on_started is not None:
                 self.on_started(meeting.id)
             self._notify("meeting.started", meeting)
-        identity = user_identity(su.user_id)
+        # Устройство/вкладка: первое подключение пользователя к встрече — основной identity, остальные — `u-<hex>~<метка>`; та же вкладка после обрыва получает тот же identity.
+        tag = device_tag(su.session_id, client_id)
+        prim_key = f"mprim:{meeting.id}:{su.user_id}"
+        if not tag:
+            device = ""
+        else:
+            owner = tag if await self._r.set(prim_key, tag, nx=True, ex=STATE_TTL) else await self._r.get(prim_key)
+            device = "" if owner in (tag, None) else tag
+        identity = user_identity(su.user_id, device)
+        devs = f"mdev:{meeting.id}:{su.user_id}"
+        await self._r.sadd(devs, identity)
+        await self._r.expire(devs, STATE_TTL)
         privileged = roles.can_manage_room(room, su)
         if privileged or not roles.is_presentation(room):
             # В презентационной комнате приход рядового зрителя никому не рассылается: при сотне и тысяче зрителей это сотни тысяч сообщений
@@ -179,7 +191,8 @@ class MeetingService:
         # сервер звонков по запросу backend (`update_participant`) уже у подключённого участника. Тогда токен, выданный до отзыва слова, прав не даёт:
         # окна «старый токен позволил опубликовать звук» нет. Права после (пере)подключения определяются заново — webhook и `refresh_rights`.
         token_sources = sources if (privileged or not roles.is_presentation(room)) else []
-        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name, livekit_room=meeting.livekit_room, sources=token_sources)
+        token = issue_user_token(self._s, user_id=su.user_id, display_name=su.display_name, livekit_room=meeting.livekit_room, sources=token_sources,
+                                 device=device, name_suffix=f" ({device_kind})" if device and device_kind else (" (другое устройство)" if device else ""))
         return JoinResult(meeting, room, token, identity, sources=sources, privileged=privileged, floor=floor)
 
     # ------------------------------------------------------------ гость
@@ -294,10 +307,27 @@ class MeetingService:
         return (await db.execute(select(Meeting).where(Meeting.room_id == room_id, Meeting.ended_at.is_(None)))).scalars().first()
 
     # ----------------------------------------------------------------- выход
-    async def leave(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def leave(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID, *, session_id: str = "", client_id: str = "") -> None:
+        """Выход одного устройства: участником во встрече пользователь остаётся, пока подключено хотя бы одно его устройство."""
+        if session_id:
+            ident = await self._device_identity(meeting_id, user_id, device_tag(session_id, client_id))
+            if await self._other_devices(meeting_id, user_id, ident):
+                return
         await self._close_participant(db, meeting_id, user_id)
 
+    async def _device_identity(self, meeting_id: uuid.UUID, user_id: uuid.UUID, tag: str) -> str:
+        owner = await self._r.get(f"mprim:{meeting_id}:{user_id}") if tag else None
+        return user_identity(user_id, "" if owner in (tag, None) else tag)
+
+    async def _other_devices(self, meeting_id: uuid.UUID, user_id: uuid.UUID, leaving: str) -> bool:
+        """Убирает identity уходящего устройства; True — у пользователя во встрече остались другие подключённые устройства."""
+        key = f"mdev:{meeting_id}:{user_id}"
+        if not await self._r.srem(key, leaving):                         # устройство неизвестно (например, пользователь перелогинился): если оно единственное — как раньше, иначе другие остаются
+            return await self._r.scard(key) > 1
+        return bool(await self._r.scard(key))
+
     async def _close_participant(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+        await self._r.delete(f"mdev:{meeting_id}:{user_id}", f"mprim:{meeting_id}:{user_id}")
         now = utcnow()
         rows = (await db.execute(select(MeetingParticipant).where(
             MeetingParticipant.meeting_id == meeting_id, MeetingParticipant.user_id == user_id,
@@ -423,7 +453,9 @@ class MeetingService:
         applied = await set_publish_permission(self._s, meeting.livekit_room, identity, sources)
         return {"sources": sources, "applied": applied}
 
-    async def on_participant_left(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def on_participant_left(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID, identity: str = "") -> None:
+        if identity and await self._other_devices(meeting_id, user_id, identity):
+            return                                                   # отключилось одно устройство, другое ещё во встрече
         await self._close_participant(db, meeting_id, user_id)
 
     # ------------------------------------------------------ сверка и reaper
@@ -436,7 +468,7 @@ class MeetingService:
             for p in list(meeting.participants):
                 if p.left_at is not None:
                     continue
-                here = user_identity(p.user_id) in present
+                here = any(parse_user_identity(i) == p.user_id for i in present)          # любое устройство пользователя
                 if here:
                     p.connected_at = p.connected_at or now
                 elif p.connected_at is not None or now - p.joined_at > connect_deadline:

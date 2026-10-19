@@ -139,7 +139,7 @@ async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 @router.post("/{meeting_id}/leave", status_code=204)
 async def leave_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
-    await request.app.state.meetings.leave(db, meeting_id, su.user_id)
+    await request.app.state.meetings.leave(db, meeting_id, su.user_id, session_id=su.session_id, client_id=request.headers.get("x-client-id", ""))
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.leave", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request))
     request.app.state.journal.emit("room", "leave", user=su.sam_account_name, room=m.room.name, meeting_id=str(meeting_id), ip=client_ip(request))
 

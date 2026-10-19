@@ -17,7 +17,8 @@ from ..profiles.manual import apply_manual
 from ..profiles.service import record_ad
 from ..security.passwords import verify_room_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
-from .sessions import SessionData, SessionStore
+from .devices import device_label
+from .sessions import SessionData, SessionLimit, SessionStore
 from .throttle import LoginThrottle, ThrottledError
 from ..services import totp
 
@@ -61,6 +62,7 @@ class AuthError(Exception):
         super().__init__(code)
         self.code, self.message, self.status, self.retry_after = code, message, status, retry_after
         self.reason = ""
+        self.extra: dict = {}            # дополнительные поля ответа (например, список сессий при достижении лимита)
 
 
 def _th(token: str) -> str:
@@ -109,7 +111,7 @@ class AuthService:
         self._sessions = sessions
         self.settings_svc = None  # services.settings.SettingsService — группы доступа из веб-настроек; задаётся при запуске
 
-    async def login(self, db: AsyncSession, login: str, password: str, ip: str) -> LoginResult:
+    async def login(self, db: AsyncSession, login: str, password: str, ip: str, ua: str = "") -> LoginResult:
         try:
             norm, _ = parse_login(login)
         except DirectoryError:
@@ -123,7 +125,7 @@ class AuthService:
             log.warning("Вход отклонён throttle", extra={"login_hash_only": True, "retry_after": exc.retry_after})
             raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
 
-        local = await self._local_login(db, norm, password, ip)
+        local = await self._local_login(db, norm, password, ip, ua)
         if local is not None:
             return local
 
@@ -152,7 +154,7 @@ class AuthService:
         user = await self._upsert_user(db, identity, is_admin)
         if not user.is_active:  # отключён администратором в системе (независимо от AD)
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
-        res = await self._open(db, user, is_admin=is_admin, groups=sorted(identity.groups), decision=decision, ip=ip)
+        res = await self._open(db, user, is_admin=is_admin, groups=sorted(identity.groups), decision=decision, ip=ip, ua=ua)
         log.info("Вход выполнен" if not res.challenge else "Пароль принят, ожидается код 2FA", extra={"user_id": str(user.id), "is_admin": is_admin})
         return res
 
@@ -165,19 +167,50 @@ class AuthService:
         return cfg
 
     async def _open(self, db: AsyncSession, user: User, *, is_admin: bool, groups: list[str], ip: str, decision: AccessDecision | None = None,
-                    local: bool = False, must_change: bool = False) -> LoginResult:
+                    local: bool = False, must_change: bool = False, ua: str = "") -> LoginResult:
         """Пароль проверен: открыть сессию сразу, потребовать код 2FA (сессии пока нет) или открыть сессию «только для настройки 2FA»."""
         cfg = await self._totp_cfg(db)
         on = cfg is not None and cfg.totp_policy != "off"
         if on and user.totp_enabled and user.totp_secret_enc:
             token = secrets.token_urlsafe(24)
             await self._sessions._r.set(f"totp:chal:{_th(token)}", json.dumps({"user_id": str(user.id), "is_admin": is_admin, "groups": groups, "local": local, "must_change": must_change,
-                                                                           "ip": ip}), ex=CHALLENGE_TTL_S)
+                                                                           "ip": ip, "ua": ua[:400]}), ex=CHALLENGE_TTL_S)
             return LoginResult("", None, user, decision, challenge=token)
         must = bool(on and totp_required(cfg, is_admin=is_admin, groups=groups) and not user.totp_enabled)
-        sid, data = await self._sessions.create(user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name, display_name=user.display_name, is_admin=is_admin,
-                                                groups=groups, local=local, must_change=must_change, must_totp=must)
+        sid, data = await self._create_session(user, cfg, dict(is_admin=is_admin, groups=groups, local=local, must_change=must_change, must_totp=must), ip=ip, ua=ua)
         return LoginResult(sid, data, user, decision)
+
+    async def _create_session(self, user: User, cfg, params: dict, *, ip: str, ua: str, free: str | None = None, force: bool = False) -> tuple[str, SessionData]:
+        """Открывает сессию с учётом лимита одновременных входов (`auth_security.max_sessions`, по умолчанию 5). Лимит достигнут — существующие сессии НЕ завершаются: клиент получает 409
+        с их списком и одноразовым правом `free_token` завершить одну из них (подтверждение личности — пароль и 2FA — уже пройдено) и войти (`finish_free_slot`)."""
+        limit = int(getattr(cfg, "max_sessions", 5)) if cfg is not None else 5
+        try:
+            return await self._sessions.create(user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name, display_name=user.display_name, device=device_label(ua),
+                                               ip=ip, limit=0 if force else limit, free=free, **params)
+        except SessionLimit as exc:
+            token = secrets.token_urlsafe(32)
+            await self._sessions._r.set(f"sess:free:{_th(token)}", json.dumps({"user_id": str(user.id), "params": params, "ip": ip, "ua": ua[:400]}), ex=CHALLENGE_TTL_S)
+            err = AuthError("session_limit", f"Открыто максимальное число сеансов этой учётной записи ({exc.limit}). Завершите один из них, чтобы войти здесь — остальные продолжат работать.", 409)
+            err.extra = {"free_token": token, "limit": exc.limit, "sessions": exc.sessions}
+            raise err from None
+
+    async def finish_free_slot(self, db: AsyncSession, token: str, pub: str) -> LoginResult:
+        """Завершает выбранную сессию пользователя и открывает новую (после session_limit). Токен одноразовый и привязан к пользователю, уже подтвердившему личность."""
+        key = f"sess:free:{_th(token)}"
+        raw = await self._sessions._r.get(key)
+        if raw is None:
+            raise AuthError("free_expired", "Время подтверждения истекло. Войдите заново.", 401)
+        ch = json.loads(raw)
+        user = await db.get(User, uuid_of(ch["user_id"]))
+        if user is None or not user.is_active:
+            await self._sessions._r.delete(key)
+            raise AuthError("free_expired", "Время подтверждения истекло. Войдите заново.", 401)
+        if not await self._sessions.destroy_pub(str(user.id), pub):
+            raise AuthError("session_not_found", "Эта сессия уже завершена или не принадлежит вам. Обновите список.", 404)
+        await self._sessions._r.delete(key)
+        cfg = await self._totp_cfg(db)
+        sid, data = await self._create_session(user, cfg, ch["params"], ip=ch["ip"], ua=ch["ua"])
+        return LoginResult(sid, data, user, None)
 
     async def complete_totp(self, db: AsyncSession, token: str, code: str, ip: str) -> LoginResult:
         """Второй шаг входа: код из приложения или резервный код. Пять попыток на вход, общий счётчик неудач с паролем, повтор принятого кода отклоняется."""
@@ -210,8 +243,9 @@ class AuthService:
         await self._throttle.record_success(norm)
         user.last_login_at = utcnow()
         await db.commit()
-        sid, data = await self._sessions.create(user_id=str(user.id), ad_guid=user.ad_guid, sam=user.sam_account_name, display_name=user.display_name, is_admin=ch["is_admin"],
-                                                groups=ch["groups"], local=ch["local"], must_change=ch["must_change"])
+        cfg2 = await self._totp_cfg(db)
+        sid, data = await self._create_session(user, cfg2, dict(is_admin=ch["is_admin"], groups=ch["groups"], local=ch["local"], must_change=ch["must_change"], must_totp=False),
+                                               ip=ch.get("ip", ip), ua=ch.get("ua", ""))
         return LoginResult(sid, data, user, None, backup_used=used_backup)
 
     async def check_code(self, db: AsyncSession, user: User, code: str) -> tuple[bool, bool]:
@@ -288,7 +322,7 @@ class AuthService:
             return AccessDecision(False, False, "not_in_allowed_groups", True, via, admin_via)
         return AccessDecision(True, is_admin, "ok", bool(access_groups), via, admin_via)
 
-    async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str) -> LoginResult | None:
+    async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str, ua: str = "") -> LoginResult | None:
         """Локальный (аварийный) администратор: проверяется ПЕРВЫМ и не зависит от каталога. Нет такого логина — None (идём в каталог)."""
         row = (await db.execute(select(User).where(User.auth_source == "local", func.lower(User.sam_account_name) == norm.lower()))).scalar_one_or_none()
         if row is None or not row.password_hash:
@@ -301,7 +335,7 @@ class AuthService:
         await self._throttle.record_success(norm)
         row.last_login_at = utcnow()
         await db.commit()
-        res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip)
+        res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip, ua=ua)
         log.info("Вход локального администратора", extra={"user_id": str(row.id)})
         return res
 

@@ -618,6 +618,7 @@ class AuthSecuritySettings(_Group):
     totp_policy: str = "optional"
     totp_groups: str = ""
     totp_issuer: str = Field(default="Peregovorka", max_length=60)
+    max_sessions: int = Field(default=5, ge=0, le=100)             # одновременных входов одной учётной записи (разные устройства и браузеры); 0 — без ограничения. Шестой вход не выбрасывает прежние — предлагает завершить одну сессию
 
     @field_validator("totp_policy")
     @classmethod

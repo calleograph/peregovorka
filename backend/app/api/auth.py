@@ -46,7 +46,7 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     except Exception:  # noqa: BLE001
         login_shown = "(некорректный формат логина)"
     try:
-        result = await request.app.state.auth.login(db, body.login, body.password, ip)
+        result = await request.app.state.auth.login(db, body.login, body.password, ip, request.headers.get("user-agent") or "")
     except AuthError as exc:
         if exc.code in ("invalid_credentials", "throttled"):
             await captcha.note_failure(request, "login")
@@ -63,7 +63,7 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
             journal.emit("auth", "login_locked" if exc.code == "throttled" else "login_failed", level="warn", user=login_shown, ip=ip, client=ua,
                          message=exc.message, data={"code": exc.code, "retry_after": exc.retry_after, "http": exc.status})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message, **exc.extra}, headers=headers) from None
     await captcha.note_success(request, "login")
     if result.challenge:                       # пароль верен, нужен второй фактор: сессию и cookie выдаст /auth/login/totp
         response.headers["Cache-Control"] = "no-store"
@@ -116,11 +116,59 @@ async def login_totp(body: TotpLoginIn, request: Request, response: Response, db
                         result="denied" if exc.code in ("throttled", "totp_expired") else "failure", details={"code": exc.code})
         request.app.state.journal.emit("auth", "totp_failed", level="warn", ip=ip, client=ua, message=exc.message, data={"code": exc.code})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message, **exc.extra}, headers=headers) from None
     if result.backup_used:
         await audit_now(request.app, actor_user_id=result.user.id, actor_name=result.user.display_name, action="auth.backup_code_used", target_type="user",
                         target_id=str(result.user.id), ip=ip)
     return await _open_session(request, response, db, result, ip=ip, ua=ua, second_factor="backup_code" if result.backup_used else "totp")
+
+
+class FreeSlotIn(BaseModel):
+    free_token: str = Field(min_length=10, max_length=100)
+    session_id: str = Field(min_length=4, max_length=40)           # публичный номер сессии из ответа 409 session_limit
+
+
+@router.post("/login/free-slot", response_model=MeOut)
+async def login_free_slot(body: FreeSlotIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """После ответа 409 `session_limit`: завершить выбранную пользователем сессию и войти. Остальные устройства продолжают работать."""
+    origin = request.headers.get("origin")
+    if origin is not None and not origin_allowed(origin, request.app.state.settings):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    ip = client_ip(request)
+    try:
+        result = await request.app.state.auth.finish_free_slot(db, body.free_token, body.session_id)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from None
+    await audit_now(request.app, actor_user_id=result.user.id, actor_name=result.user.display_name, action="auth.session_ended", target_type="user", target_id=str(result.user.id), ip=ip,
+                    details={"by": "self", "reason": "session_limit", "session": body.session_id})
+    return await _open_session(request, response, db, result, ip=ip, ua=parse_client(request.headers.get("user-agent")), second_factor=None)
+
+
+@router.get("/sessions")
+async def my_sessions(request: Request, su: SessionUser = Depends(require_user)):
+    """«Активные устройства»: сессии этой учётной записи (браузер/тип устройства, адрес, последняя активность)."""
+    store = request.app.state.sessions
+    items = [{k: v for k, v in x.items() if k != "_key"} for x in await store.list_user(str(su.user_id), su.session_id)]
+    items.sort(key=lambda x: (not x["current"], -(x["last_seen"] or 0)))
+    return {"items": items}
+
+
+@router.delete("/sessions/{pub}", status_code=204)
+async def end_session(pub: str, request: Request, su: SessionUser = Depends(require_user)):
+    """Завершить конкретную сессию (в том числе текущую = выход). Другие сессии не затрагиваются."""
+    if not await request.app.state.sessions.destroy_pub(str(su.user_id), pub):
+        raise HTTPException(status_code=404, detail="Сессия не найдена или уже завершена")
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="auth.session_ended", target_type="user", target_id=str(su.user_id), ip=client_ip(request),
+                    details={"by": "self", "session": pub})
+
+
+@router.post("/sessions/end-others")
+async def end_other_sessions(request: Request, su: SessionUser = Depends(require_user)):
+    """Завершить все сессии, кроме текущей («выйти на всех остальных устройствах»)."""
+    n = await request.app.state.sessions.destroy_user(str(su.user_id), keep=su.session_id)
+    await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="auth.sessions_ended_others", target_type="user", target_id=str(su.user_id), ip=client_ip(request),
+                    details={"count": n})
+    return {"ended": n}
 
 
 @router.post("/logout", status_code=204)

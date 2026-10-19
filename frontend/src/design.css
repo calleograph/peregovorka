@@ -875,3 +875,8 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .oc h2 { margin: 26px 0 8px; font-size: 20px; }
 .oc a.btn { text-decoration: none; }
 .oc code { word-break: break-all; }
+
+/* Список сеансов (активные устройства, окно «слишком много сеансов») */
+.sess-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.sess-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.sess-list small { display: block; }
