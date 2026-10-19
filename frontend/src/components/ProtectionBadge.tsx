@@ -31,15 +31,18 @@ function Flow({ steps, title }: { steps: { label: string; note?: string; lock?: 
   );
 }
 
-/** Индикатор защиты в шапке комнаты: красная надпись при включённом шифровании, рядом ⓘ с пояснением и схемами. */
-export default function ProtectionBadge({ input }: { input: ProtectionInput }) {
+/**
+ * Индикатор сквозного шифрования (E2EE) в шапке комнаты. В обычной комнате (E2EE выключено) его нет вообще: TLS/WebRTC работают штатно и отдельного значка не требуют.
+ * Показывается «Шифрование включено», когда E2EE реально активно, и предупреждение, если комната его требует, а оно не активно (фактическое состояние защиты). ⓘ открывает пояснение.
+ */
+export default function ProtectionBadge({ input, e2eeExpected = false }: { input: ProtectionInput; e2eeExpected?: boolean }) {
   const [open, setOpen] = useState(false);
+  if (!input.e2ee && !e2eeExpected) return null;
   const p = protectionOf(input);
   return (
     <>
-      <span className={`prot-badge prot-${p.tone}`} title={`Уровень защиты: ${p.kind}`}>
-        <span className="prot-label">{p.label}</span>
-        {p.tone === "red" && <span className="prot-kind">{p.kind}</span>}
+      <span className={`prot-badge ${input.e2ee ? "prot-red" : "prot-warn"}`} title={input.e2ee ? "Сквозное шифрование звука и видео включено" : "Комната требует сквозного шифрования, но оно не активно"}>
+        <span className="prot-label">{input.e2ee ? "🔒 Шифрование включено" : "⚠ Шифрование не активно"}</span>
         <button type="button" className="prot-info" onClick={() => setOpen(true)} aria-label="Что именно защищено: пояснение и схема" title="Что именно защищено">ⓘ</button>
       </span>
       {open && (

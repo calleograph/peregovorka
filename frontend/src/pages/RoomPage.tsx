@@ -515,6 +515,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         if (screenIntendedRef.current && !room.localParticipant.isScreenShareEnabled) stopScreenBookkeeping("connection_lost");
         refresh();
       })
+      .on(RoomEvent.ParticipantEncryptionStatusChanged, (enabled, participant) => { if (participant?.isLocal) setE2eeActive(!!e2eeKeys && enabled); })
+      .on(RoomEvent.EncryptionError, () => setE2eeActive(false))
       .on(RoomEvent.Disconnected, (reason) => {
         setState(ConnectionState.Disconnected);
         phase("DISCONNECTED", `reason=${reason ?? "unknown"}`);
@@ -1189,7 +1191,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
           <span className={`badge ${connOk ? "ok" : "warn"}`}>{connLabel}</span>
-          <ProtectionBadge input={{ https: window.location.protocol === "https:", storage: !!room.encrypt_storage, e2ee: e2eeActive, e2eeRecorder: join.e2ee?.mode === "trusted" }} />
+          <ProtectionBadge input={{ https: window.location.protocol === "https:", storage: !!room.encrypt_storage, e2ee: e2eeActive, e2eeRecorder: join.e2ee?.mode === "trusted" }} e2eeExpected={!!join.e2ee} />
           {quality && connOk && <span className={`badge ${quality.level === "high" ? "ok" : "warn"}`} title={qualityTitle(quality)}>{quality.level === "high" ? "Связь хорошая" : `Видео: ${LEVEL_LABEL[quality.level].toLowerCase()}`}</span>}
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
           {presentation && <span className="badge" title="Участники слушают; говорят руководители и те, кому дали слово">Презентация</span>}
