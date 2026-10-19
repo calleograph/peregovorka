@@ -16,7 +16,7 @@ describe("центр установки Outlook: проверки в брауз�
     expect(inspectManifest(XML("abc", "http://10.0.0.5"), "abc").problems.join()).toMatch(/не по HTTPS|Внутренние/);
   });
   it("перенаправление манифеста — ошибка; недоступный API — ошибка с понятной причиной", async () => {
-    const f = (async (url: string, init?: RequestInit) => {
+    const f = (async (url: string) => {
       if (String(url).endsWith("/config")) throw new TypeError("net");
       if (String(url).endsWith("manifest.xml")) return { type: "opaqueredirect", status: 0, ok: false } as unknown as Response;
       return { ok: true, status: 200 } as Response;
