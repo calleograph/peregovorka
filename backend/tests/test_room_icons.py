@@ -113,3 +113,12 @@ def test_admin_sees_icon_in_room_lists_meetings_and_manage_settings(client, dire
     assert client.get(f"{API}/rooms/{room['id']}/manage").json()["icon"]["key"] == "presentation"
     login(client, "root")
     assert client.get(f"{API}/admin/rooms/{room['id']}").json()["icon"]["key"] == "presentation"
+
+
+def test_icon_out_after_restore_from_config_copy_never_points_to_a_missing_file():
+    """В копию настроек входят ключ библиотеки и вид значка, но не загруженный файл и его версия: восстановленная комната показывает стандартный значок, а не битую картинку."""
+    from types import SimpleNamespace as NS
+    rid = "00000000-0000-0000-0000-000000000001"
+    assert room_icons.icon_out(NS(id=rid, icon_kind="image", icon_key=None, icon_rev=None)) is None
+    assert room_icons.icon_out(NS(id=rid, icon_kind="library", icon_key="shield", icon_rev=None))["key"] == "shield"
+    assert room_icons.icon_out(NS(id=rid, icon_kind=None, icon_key=None, icon_rev=None)) is None
