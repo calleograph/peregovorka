@@ -56,7 +56,7 @@ starlette==1.9.0
 sympy==1.14.0
 tqdm==4.70.1
 transcribe-cpp==0.4.1
-transcribe-cpp-native==0.4.0
+transcribe-cpp-native==0.4.1
 types-protobuf==7.35.1.20260906
 typing-extensions==4.16.0
 typing-inspection==0.4.4
