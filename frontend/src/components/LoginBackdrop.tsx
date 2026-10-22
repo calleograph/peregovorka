@@ -105,7 +105,10 @@ export default function LoginBackdrop() {
     }
     window.addEventListener("resize", onResize);
     theme?.addEventListener?.("change", onTheme);
+    const mo = new MutationObserver(onTheme);                 // смена темы в интерфейсе (data-theme, фирменный акцент) — сетка сразу в новых цветах
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style"] });
     return () => {
+      mo.disconnect();
       running = false; cancelAnimationFrame(raf); window.clearTimeout(t);
       window.removeEventListener("pointermove", onMove);
       document.documentElement.removeEventListener("pointerleave", onLeave);

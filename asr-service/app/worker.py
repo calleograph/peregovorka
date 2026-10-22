@@ -50,6 +50,7 @@ class RoomWorker:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._streams: dict[str, asyncio.Task] = {}  # track sid -> задача конвейера
+        self._sid_of: dict[str, str] = {}             # identity -> sid его текущего микрофонного трека: один конвейер на участника
         self._closing: set[asyncio.Task] = set()  # отменённые, но ещё не завершённые конвейеры
         self._joined_once = False
         self.connected = False
@@ -175,6 +176,12 @@ class RoomWorker:
     def _start_stream(self, rtc, track, sid: str, identity: str) -> None:  # noqa: ANN001
         if sid in self._streams:
             return
+        old = self._sid_of.get(identity)
+        if old and old != sid:
+            # участник переопубликовал микрофон (новый трек), а отписка от старого ещё не пришла: два конвейера одного голоса дали бы двойную стенограмму
+            log.info("Новый трек микрофона участника: прежний конвейер остановлен", extra={"room": self.info.room_name, "identity": identity})
+            self._stop_stream(old)
+        self._sid_of[identity] = sid
         try:
             pipeline = ParticipantPipeline(
                 meeting_id=self.info.meeting_id, room_name=self.info.room_name, identity=identity,
@@ -199,6 +206,9 @@ class RoomWorker:
         log.info("Начата транскрибация трека", extra={"room": self.info.room_name, "identity": identity})
 
     def _stop_stream(self, sid: str) -> None:
+        for ident, cur in list(self._sid_of.items()):
+            if cur == sid:
+                del self._sid_of[ident]
         task = self._streams.pop(sid, None)
         if task:
             task.cancel()

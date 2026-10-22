@@ -1,4 +1,5 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
+import { transcriptionStoppedText } from "../recordingNotice";
 import { api, type Segment } from "../api";
 import { LiveBus, LiveSocket, type LiveEvent, type SocketStatus } from "../liveSocket";
 import { formatTime, mergeSegment, mergeSegments, transcriptCopyText } from "../transcript";
@@ -12,8 +13,10 @@ import { Icon } from "./Icons";
 interface Props {
   meetingId: string;
   enabled: boolean;
-  /** Транскрибация приостановлена руководителем (звонок и запись звука продолжаются). */
+  /** Транскрибация приостановлена руководителем. */
   paused?: boolean;
+  /** Фактически идёт аудиозапись встречи (для честного текста об остановке транскрибации). */
+  recording?: boolean;
   /** Вложения в чат разрешены. */
   canAttach?: boolean;
   /** Транскрибация (ASR) готова к работе. Вход в комнату от неё не зависит. */
@@ -63,7 +66,7 @@ function statusText(s: SocketStatus, now: number): { text: string; cls: "ok" | "
 }
 
 /** Живая транскрибация: история встречи + новые реплики по WebSocket (без перезагрузки страницы). */
-export default function TranscriptPanel({ meetingId, enabled, paused = false, canAttach = true, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal }: Props) {
+export default function TranscriptPanel({ meetingId, enabled, paused = false, recording = false, canAttach = true, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal }: Props) {
   const guest = !!guestToken;
   const [tab, setTab] = useState<Tab>(guest ? "chat" : "transcript");
   const [unread, setUnread] = useState(0);
@@ -170,7 +173,7 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, ca
       {copied && <div className="tp-note small" aria-hidden>{copied}</div>}
       {!split && <div className="row" style={{ justifyContent: "flex-end" }}>{copyBtn}</div>}
       {!enabled && <p className="muted">В этой комнате транскрибация отключена.</p>}
-      {enabled && paused && <div className="alert info" role="status">Транскрибация приостановлена руководителем. Звонок и запись звука продолжаются; реплики за это время в стенограмму не попадут.</div>}
+      {enabled && paused && <div className="alert info" role="status">{transcriptionStoppedText(recording, false)}. Звонок продолжается; реплики за это время в стенограмму не попадут.</div>}
       {enabled && !paused && !asrReady && <div className="alert info" role="status">{asrLost ? "Транскрибация временно недоступна — звонок продолжается. Реплики вернутся, когда сервис распознавания восстановится." : "Транскрибация запускается — звонок уже работает. Реплики появятся, как только сервис распознавания будет готов."}</div>}
       <div className="transcript-list" ref={boxRef} onScroll={onScroll} aria-live="polite">
         {segments.map((s) => (

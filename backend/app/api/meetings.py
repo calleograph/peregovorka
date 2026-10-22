@@ -171,13 +171,13 @@ async def end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 @router.get("/{meeting_id}/transcript", response_model=TranscriptOut)
 async def get_transcript(meeting_id: uuid.UUID, request: Request, after_id: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=2000),
                          su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    await get_meeting_for_user(request, db, meeting_id, su)
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
     rows = (await db.execute(select(TranscriptSegment).where(
         TranscriptSegment.meeting_id == meeting_id, TranscriptSegment.id > after_id)
         .order_by(TranscriptSegment.id).limit(limit + 1))).scalars().unique().all()  # постраничность по id; клиент сортирует по времени
     has_more = len(rows) > limit
     return TranscriptOut(meeting_id=meeting_id, has_more=has_more,
-                         segments=[SegmentOut(**segment_to_dict(s)) for s in rows[:limit]])
+                         segments=[SegmentOut(**segment_to_dict(s, mask=meeting.room.mask_profanity)) for s in rows[:limit]])
 
 
 def _file_response(data: bytes, fmt: str, base: str) -> Response:

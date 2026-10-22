@@ -17,6 +17,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..models import Recording, TranscriptSegment
+from ..services import profanity
 from ..services.segments import segment_to_dict
 from ..services.audit import write_audit
 from ..services.reconcile import mark_missing
@@ -115,7 +116,7 @@ async def subtitles(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Req
         if b <= 0 or (limit > 5.0 and a > limit):
             continue                                                 # реплика вне этой записи
         d = segment_to_dict(s)
-        out.append({"id": d["id"], "start": round(max(a, 0.0), 2), "end": round(max(b, a + 0.2), 2), "speaker": d["display_name"], "text": s.text})
+        out.append({"id": d["id"], "start": round(max(a, 0.0), 2), "end": round(max(b, a + 0.2), 2), "speaker": d["display_name"], "text": profanity.maybe(s.text, meeting.room.mask_profanity)})
     if not out:
         return {"available": False, "reason": "no_overlap", "message": "Субтитры недоступны: реплики стенограммы не попадают на шкалу этой записи.", "scope": scope, "segments": []}
     return {"available": True, "reason": None, "message": None, "scope": scope, "segments": out}

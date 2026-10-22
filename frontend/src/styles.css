@@ -906,3 +906,13 @@ details.group { margin: 8px 0; }
 .board-close { position: absolute; top: 0; right: 0; z-index: 3; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--border, #d0d4dc); background: var(--card, #fff); color: inherit; cursor: pointer; }
 .board-close:hover { background: var(--soft); }
 @media (max-width: 760px), (max-height: 640px) { .board-hint { display: none; } .board-head h2 { font-size: 14px; } }
+/* индикатор связи на плитке */
+.tile-net { position: relative; display: inline-flex; align-items: center; padding: 1px 2px; border-radius: 4px; cursor: help; flex: none; }
+.tile-net svg rect.off { fill: rgba(255, 255, 255, .28); }
+.tile-net.net-ok svg rect.on { fill: #34d07a; }
+.tile-net.net-warn svg rect.on { fill: #f5b83d; }
+.tile-net.net-bad svg rect.on { fill: #ff6b5e; }
+.tile-net.net-lost svg rect { fill: rgba(255, 255, 255, .28); }
+.tile-net .cut { stroke: #ff6b5e; stroke-width: 2; stroke-linecap: round; }
+.tile-net-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; width: max-content; max-width: min(260px, 70vw); padding: 6px 8px; border-radius: 8px;
+  background: rgba(8, 12, 20, .92); color: #fff; font-size: 12px; line-height: 1.35; white-space: normal; }

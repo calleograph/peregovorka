@@ -23,7 +23,11 @@ export function toggleLocalMute(set: Set<string>, identity: string): Set<string>
   return n;
 }
 
-/** Применить к звуковым элементам комнаты: у каждого `data-identity` — кто говорит. */
-export function applyLocalMute(root: ParentNode | null, muted: Set<string>): void {
-  root?.querySelectorAll<HTMLMediaElement>("audio[data-identity], video[data-identity]").forEach((el) => { el.muted = muted.has(el.dataset.identity ?? ""); });
+/** Одно и то же лицо на разных устройствах: identity u-<id> и u-<id>~<метка устройства>. */
+export const sameUser = (a: string, b: string): boolean => !!a && !!b && a.startsWith("u-") && a.split("~")[0] === b.split("~")[0];
+
+/** Применить к звуковым элементам комнаты: у каждого `data-identity` — кто говорит. Свои же другие устройства (`self`) не проигрываются никогда:
+ *  телефон рядом с компьютером иначе воспроизводит ваш голос, микрофон его снова ловит — эхо у всех и двойная стенограмма. */
+export function applyLocalMute(root: ParentNode | null, muted: Set<string>, self = ""): void {
+  root?.querySelectorAll<HTMLMediaElement>("audio[data-identity], video[data-identity]").forEach((el) => { const id = el.dataset.identity ?? ""; el.muted = muted.has(id) || sameUser(id, self); });
 }

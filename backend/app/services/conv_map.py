@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import profanity
 from ..integrations.llm import LlmClient, LlmError
 from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, Protocol, TranscriptSegment, utcnow
@@ -100,11 +101,11 @@ def clock(sec: int) -> str:
 
 
 # --------------------------------------------------------------------------------------------- реплики
-def build_lines(rows: list[TranscriptSegment], started: datetime) -> list[MapLine]:
-    """Реплики встречи со временем от её начала. Реплики за пределами встречи (до начала) прижимаются к нулю."""
+def build_lines(rows: list[TranscriptSegment], started: datetime, mask: bool = False) -> list[MapLine]:
+    """Реплики встречи со временем от её начала. Реплики за пределами встречи (до начала) прижимаются к нулю. mask — скрыть нецензурную лексику (настройка комнаты)."""
     out: list[MapLine] = []
     for r in sorted(rows, key=lambda r: (r.started_at, r.id)):
-        text = " ".join((r.text or "").split())
+        text = " ".join((profanity.maybe(r.text, mask) or "").split())
         if not text:
             continue
         sec = max(0, int((r.started_at - started).total_seconds()))
@@ -644,7 +645,7 @@ class MapService:
             raise MapError("Для этой комнаты включено обезличивание, а карта разговора пока строится только без него (локальной моделью или внешней при выключенном обезличивании).")
         rows = (await db.execute(select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id)
                                  .order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
-        lines = build_lines(list(rows), meeting.started_at)
+        lines = build_lines(list(rows), meeting.started_at, meeting.room.mask_profanity)
         if not lines:
             raise MapError("В стенограмме нет реплик — карту строить не из чего")
         tz = await ps._tz(db)

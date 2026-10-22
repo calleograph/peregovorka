@@ -6,7 +6,7 @@ import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type J
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
 import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
-import { applyLocalMute, loadLocalMuted, saveLocalMuted, toggleLocalMute } from "../localMute";
+import { applyLocalMute, loadLocalMuted, sameUser, saveLocalMuted, toggleLocalMute } from "../localMute";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
 import { ParticipantTile, ScreenStage, moderationItems, pipSupported, toggleFullscreen, togglePip, type PView, type TileActions } from "../components/room/Tiles";
@@ -26,6 +26,8 @@ import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/n
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
 import RoomIcon from "../components/RoomIcon";
+import { transcriptionStoppedText } from "../recordingNotice";
+import { stepNet, type NetRaw, type NetShown } from "../quality/tileNet";
 import SignalBars from "../components/SignalBars";
 import { signalOf } from "../quality/signal";
 import ProtectionBadge from "../components/ProtectionBadge";
@@ -58,7 +60,7 @@ const MAX_REJOIN = 6;
 /** Корзина участника 0..19 по идентификатору: стабильна, не требует случайных чисел. */
 const statBucket = (identity: string): number => { let h = 0; for (let i = 0; i < identity.length; i++) h = (h * 31 + identity.charCodeAt(i)) >>> 0; return h % 20; };
 const REFRESH_MS = 60;         // события звонка (вход, выход, дорожки, говорящий) сливаются в одно обновление списка: при сотнях участников — не по перерисовке на каждое
-const PVIEW_KEYS = ["identity", "name", "local", "mic", "cam", "screen", "speaking", "participant"] as const;
+const PVIEW_KEYS = ["identity", "name", "local", "mic", "cam", "screen", "speaking", "participant", "netKey"] as const;
 const MAX_CONNECT_TRIES = 3;   // первое подключение: до 3 попыток при сетевых/ICE-сбоях
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 const TW_MIN = 240, TW_MAX = 760, TW_DEFAULT = 300;
@@ -118,14 +120,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const toggleLocalMuted = useCallback((identity: string) => {
     const next = toggleLocalMute(localMutedRef.current, identity);
     localMutedRef.current = next; setLocalMuted(next);
-    applyLocalMute(audioBox.current, next);
+    applyLocalMute(audioBox.current, next, roomRef.current?.localParticipant.identity ?? "");
     if (meetingRef.current) saveLocalMuted(meetingRef.current, next);
   }, []);
   const meetingId = join?.meeting_id;
   useEffect(() => {
     if (!meetingId) return;
     const saved = loadLocalMuted(meetingId);                  // после перезагрузки страницы во время встречи заглушённые остаются заглушёнными
-    localMutedRef.current = saved; setLocalMuted(saved); applyLocalMute(audioBox.current, saved);
+    localMutedRef.current = saved; setLocalMuted(saved); applyLocalMute(audioBox.current, saved, roomRef.current?.localParticipant.identity ?? "");
   }, [meetingId]);
   const [cardOf, setCardOf] = useState<{ identity: string; name: string; role?: string } | null>(null);
   const [handSound, setHandSound] = useState(handSoundEnabled);
@@ -271,17 +273,30 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const r = roomRef.current;
     if (!r) return;
     const all: Participant[] = [r.localParticipant, ...Array.from(r.remoteParticipants.values())];
-    const next: PView[] = all.map((p) => ({
-      identity: p.identity, name: tileName(p.identity, p.name, p.attributes), local: p.isLocal, mic: p.isMicrophoneEnabled, cam: p.isCameraEnabled,
-      screen: p.isScreenShareEnabled, speaking: p.isSpeaking, participant: p,
-    }));
+    const now = Date.now(), nets = netRef.current;
+    const next: PView[] = all.map((p) => {
+      const raw = (p.isLocal && r.state !== ConnectionState.Connected ? "lost" : p.connectionQuality) as NetRaw;     // своё переподключение — «нет связи»
+      const net = stepNet(nets.get(p.identity), raw, now);
+      nets.set(p.identity, net);
+      return {
+        identity: p.identity, name: tileName(p.identity, p.name, p.attributes), local: p.isLocal, mic: p.isMicrophoneEnabled, cam: p.isCameraEnabled,
+        screen: p.isScreenShareEnabled, speaking: p.isSpeaking, participant: p, net, netKey: `${net.level}${net.lost ? "x" : ""}`,
+      };
+    });
     setParticipants((prev) => (sameList(prev, next, PVIEW_KEYS) ? prev : next));        // ничего не изменилось — состояние прежнее, перерисовки нет
   }, []);
+  const netRef = useRef(new Map<string, NetShown>());
   const refreshTimer = useRef<number | undefined>(undefined);
   const refresh = useCallback(() => {
     if (refreshTimer.current !== undefined) return;
     refreshTimer.current = window.setTimeout(() => { refreshTimer.current = undefined; refreshNow(); }, REFRESH_MS);
   }, [refreshNow]);
+  // сглаживание индикаторов связи по времени (3 с / 8 с / 15 с): один лёгкий пересчёт раз в 2 с, перерисовка — только если уровень на какой-то плитке сменился
+  useEffect(() => {
+    if (state !== ConnectionState.Connected) return;
+    const t = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(t);
+  }, [state, refresh]);
 
   /** Ошибка действия с устройством: конкретная причина у кнопки + запись в журнал сервера. */
   const fail = useCallback((action: MediaAction, key: CtlKey, event: string, e: unknown) => {
@@ -413,6 +428,16 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     try {
       const prep = prepMicRef.current;
       prepMicRef.current = null;
+      const ownMicElsewhere = [...(roomRef.current?.remoteParticipants.values() ?? [])].some((p) => sameUser(p.identity, lp.identity) && p.isMicrophoneEnabled);
+      if (ownMicElsewhere) {
+        // вы уже говорите с другого устройства: здесь микрофон не включаем (подготовленный поток освобождаем), чтобы не было эха и двойной стенограммы
+        const track = prep ? await prep : null;
+        if (track && !(track instanceof Error)) track.stop();
+        micWantedRef.current = false;
+        setNotice({ kind: "info", text: "Вы уже во встрече с другого устройства, поэтому микрофон здесь выключен. Включите его кнопкой «Микрофон» — на другом устройстве он выключится сам." });
+        refresh();
+        return;
+      }
       if (prep) {
         const track = await prep; // getUserMedia начался сразу после /join и шёл параллельно с подключением
         if (track instanceof Error) throw track;
@@ -504,7 +529,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           const el = track.attach();
           el.dataset.identity = participant.identity;
           const identity = participant.identity;
-          const reapply = () => { el.muted = localMutedRef.current.has(identity); };      // заглушённый для себя остаётся заглушённым и после переподключения/перезагрузки
+          const own = sameUser(identity, roomRef.current?.localParticipant.identity ?? "");      // своё другое устройство: его звук здесь не воспроизводится (нет акустической петли)
+          const reapply = () => { el.muted = own || localMutedRef.current.has(identity); };      // заглушённый для себя остаётся заглушённым и после переподключения/перезагрузки
           reapply();
           el.addEventListener("loadedmetadata", reapply); el.addEventListener("playing", reapply);          // LiveKit при старте воспроизведения сам сбрасывает muted
           audioBox.current.appendChild(el);
@@ -527,7 +553,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       .on(RoomEvent.ParticipantPermissionsChanged, (_prev, p) => { if (p?.isLocal) setPubAllowed(!!p.permissions?.canPublish); })
       .on(RoomEvent.MediaDevicesError, (e) => { fail("device", "device", "device_error", e); })
       .on(RoomEvent.SignalConnected, () => { signalReachedRef.current = true; tl.mark("signalConnected"); setStage("media"); phase("SIGNALING_CONNECTED"); })
-      .on(RoomEvent.ConnectionStateChanged, setState)
+      .on(RoomEvent.ConnectionQualityChanged, () => refresh())            // оценку канала каждого участника рассылает сервер LiveKit — опроса нет
+      .on(RoomEvent.ConnectionStateChanged, (s) => { setState(s); refresh(); })
       .on(RoomEvent.Reconnecting, () => { phase("RECONNECTING"); reportEvent("reconnecting", { meetingId: meetingRef.current ?? undefined }); })
       .on(RoomEvent.Reconnected, () => {
         phase("RECONNECTED");
@@ -791,6 +818,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       if (what === "mic") {
         await lp.setMicrophoneEnabled(!lp.isMicrophoneEnabled);
         micWantedRef.current = lp.isMicrophoneEnabled;
+        // один микрофон на человека: включили здесь — другие ваши устройства в этой встрече выключат свои (событие через сервер, без опроса)
+        if (lp.isMicrophoneEnabled && [...(roomRef.current?.remoteParticipants.values() ?? [])].some((p) => sameUser(p.identity, lp.identity) && p.isMicrophoneEnabled))
+          void api.micOwner(join.meeting_id, lp.identity).catch(() => undefined);
       }
       if (what === "cam") await lp.setCameraEnabled(!lp.isCameraEnabled);
       if (what === "screen") {
@@ -973,7 +1003,13 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     if (st.state === "online") timeline.current.mark("wsOpen");
   }, []);
   const onLive = useCallback((e: LiveEvent) => {
-    if (e.type === "recording_changed") setRecording(e.enabled);
+    if (e.type === "mic_owner") {
+      const lp = roomRef.current?.localParticipant;
+      if (lp && e.identity !== lp.identity && sameUser(e.identity, lp.identity) && lp.isMicrophoneEnabled) {
+        micWantedRef.current = false;
+        void lp.setMicrophoneEnabled(false).then(() => { refresh(); setNotice({ kind: "info", text: "Вы включили микрофон на другом своём устройстве — здесь он выключен, чтобы не было эха и двойной стенограммы." }); });
+      }
+    } else if (e.type === "recording_changed") setRecording(e.enabled);
     else if (e.type === "transcription_changed") setTranscribing(e.enabled);
     else if (e.type === "participant_joined") { if (meetingRef.current) floorSoon(meetingRef.current); }
     else if (e.type === "hand_changed") {
@@ -1158,7 +1194,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       const own: MenuItem[] = p.local ? [{ id: "ownstop", label: "Остановить мой показ", icon: "screenStop", onSelect: () => void toggle("screen") }] : [];
       return <ScreenStage p={p} big={s.big} items={() => [...stageMenu(it), ...own, ...moderationItems(p, tileActions, "screen")]} onOpen={() => st.openLarge(it.key)} />;
     }
-    return <ParticipantTile p={p} compact={!s.big && st.choice.mode !== "grid"} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} avatarUrl={avatars[p.identity]}
+    return <ParticipantTile p={p} compact={!s.big && st.choice.mode !== "grid"} actions={tileActions} meetingId={guest ? undefined : join.meeting_id} avatarUrl={avatars[p.identity]} own={p.local ? quality : null}
                             localMuted={localMuted.has(p.identity)} onLocalMute={toggleLocalMuted} stageItems={() => stageMenu(it)} onOpen={() => openOrBack(it.key)}
                             onCard={p.local ? undefined : (v) => setCardOf({ identity: v.identity, name: v.name, role: v.leader ? "Руководитель" : v.floor ? "Есть слово" : undefined })} />;
   };
@@ -1204,7 +1240,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       submenu: PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: PROFILE_LABELS[pr], checked: curProfile === pr,
         hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : undefined, onSelect: () => void chooseProfile(pr) })) },
     { id: "rec", label: recording ? "Остановить запись" : "Начать запись", icon: recording ? "recordStop" : "record", hint: recording ? "Остановить запись звука встречи (транскрибация не меняется)" : "Начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
-    { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: "Звонок и запись звука продолжаются", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
+    { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: transcribing ? `Звонок продолжается${recording ? ", аудиозапись — тоже" : ""}` : "Реплики снова будут попадать в стенограмму", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
     { id: "muteall", label: "Выключить у всех микрофоны", icon: "micOff", hint: "У вас — нет. Каждый сможет включить свой снова", hidden: !join.client.can_moderate, disabled: stage !== "ready", onSelect: () => void moderate() },
   ];
@@ -1230,7 +1266,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> ИДЁТ ЗАПИСЬ</span>}
           {serverTranscript && !transcribing && (
-            <span className="rec-badge off" title="Транскрибация приостановлена руководителем: звонок и запись звука продолжаются">Транскрибация остановлена</span>
+            <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
           )}
           <div className="spacer" />
           {room.lifetime === "temporary" && !guest && (
@@ -1400,7 +1436,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
       {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}
-      <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
+      <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} recording={recording} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />
     </div>

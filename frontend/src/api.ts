@@ -257,7 +257,7 @@ export interface RoomManage {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
-  transcription_enabled: boolean; mute_on_join: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
+  transcription_enabled: boolean; mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
@@ -451,7 +451,7 @@ export interface RoomAdmin {
   screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
-  mute_on_join: boolean; welcome_message: string | null; moderators: AclEntry[];
+  mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
   room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; board_allowed: boolean; board_access?: string;
   slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
@@ -809,6 +809,7 @@ export const api = {
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
+  micOwner: (meetingId: string, identity: string) => request<void>("POST", `/meetings/${meetingId}/mic-owner`, { identity }),
   setTranscription: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/transcription`, { enabled }),
   floor: (meetingId: string) => request<FloorState>("GET", `/meetings/${meetingId}/floor`),
   /** «Дать слово» / «Забрать слово»: временное право до конца встречи. */

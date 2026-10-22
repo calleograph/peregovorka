@@ -32,3 +32,14 @@ describe("локальное «заглушить для себя»", () => {
     expect(els.map((e) => e.muted)).toEqual([false, false]);
   });
 });
+
+import { sameUser } from "./localMute";
+describe("свои устройства", () => {
+  it("одно лицо на разных устройствах распознаётся по identity, гости и чужие — нет", () => {
+    expect(sameUser("u-abc", "u-abc~12ab34cd")).toBe(true);
+    expect(sameUser("u-abc~11111111", "u-abc~22222222")).toBe(true);
+    expect(sameUser("u-abc", "u-abd")).toBe(false);
+    expect(sameUser("g-abc", "g-abc~1")).toBe(false);
+    expect(sameUser("", "")).toBe(false);
+  });
+});

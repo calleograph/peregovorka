@@ -163,3 +163,29 @@ async def test_worker_awaits_stream_tasks_before_room_release():
     order.append("room_released")
     assert order == ["stream_closed", "room_released"]
     assert not w._streams and not w._closing  # noqa: SLF001
+
+
+async def test_one_pipeline_per_participant_when_microphone_is_republished(monkeypatch):
+    """Участник переопубликовал микрофон, а отписка от прежнего трека ещё не пришла: прежний конвейер останавливается — один голос не распознаётся дважды."""
+    import app.worker as wk
+
+    class FakePipeline:
+        def __init__(self, **kw):
+            self.identity = kw["identity"]
+
+        async def run(self, frames):
+            await asyncio.sleep(30)
+
+    monkeypatch.setattr(wk, "ParticipantPipeline", FakePipeline)
+    w = RoomWorker(AsrSettings(), SessionInfo(meeting_id="mid", room_name="m-abc"), None, None, None)  # type: ignore[arg-type]
+    monkeypatch.setattr(wk, "segmenter_config", lambda s: None)
+    w._start_stream(None, object(), "sid1", "u-aaa")  # noqa: SLF001
+    w._start_stream(None, object(), "sid2", "u-bbb")  # noqa: SLF001
+    first = w._streams["sid1"]  # noqa: SLF001
+    w._start_stream(None, object(), "sid3", "u-aaa")  # noqa: SLF001 — тот же участник, новый трек
+    await asyncio.sleep(0)
+    assert set(w._streams) == {"sid2", "sid3"} and first.cancelled() or first.cancelling()  # noqa: SLF001
+    w._stop_stream("sid1")  # запоздалая отписка от старого трека ничего не ломает
+    assert set(w._streams) == {"sid2", "sid3"}  # noqa: SLF001
+    await w._drain_streams()  # noqa: SLF001
+    assert not w._streams  # noqa: SLF001

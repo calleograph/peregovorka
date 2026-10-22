@@ -17,7 +17,7 @@ const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: nul
 const days = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
 
 interface Form {
-  name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean;
+  name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean; mask_profanity: boolean;
   room_type: RoomType; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off"; camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
@@ -25,7 +25,7 @@ interface Form {
 
 const toForm = (r: RoomManage): Form => ({
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, password: "", clearPassword: false,
-  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
+  welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, mask_profanity: r.mask_profanity ?? true, room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
   camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed, board_allowed: r.board_allowed, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),   // для нового — разумные значения по умолчанию
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",
@@ -62,7 +62,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
     try {
       const r = await api.manage.patch(roomId, {
         name: form.name.trim(), description: form.description.trim() || null, max_participants: form.max_participants,
-        welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, room_type: form.room_type,
+        welcome_message: form.welcome_message.trim() || null, mute_on_join: form.mute_on_join, mask_profanity: form.mask_profanity, room_type: form.room_type,
         record_audio: form.record_audio || form.auto_record, auto_record: form.auto_record, recording_mode: form.recording_mode, encrypt_storage: form.encrypt_storage, e2ee_mode: form.e2ee_mode, camera_allowed: form.camera_allowed,
         screen_share_allowed: form.screen_share_allowed, board_allowed: form.board_allowed, board_access: form.board_access, guest_access_enabled: form.guest_access_enabled,
         acl: form.acl, moderators: form.moderators, mail_delivery: form.mail_delivery,
@@ -114,6 +114,8 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
               {room.has_password && <label className="check"><input type="checkbox" checked={form.clearPassword} onChange={(e) => set("clearPassword", e.target.checked)} /> Убрать пароль</label>}
               <label className="check"><input type="checkbox" checked={form.mute_on_join} onChange={(e) => set("mute_on_join", e.target.checked)} />
                 <span className="check-body">Микрофон при входе выключен<span className="help">Участники заходят без звука и включают микрофон сами.</span></span></label>
+              <label className="check"><input type="checkbox" checked={form.mask_profanity} onChange={(e) => set("mask_profanity", e.target.checked)} />
+                <span className="check-body">Скрывать нецензурную лексику в стенограмме<span className="help">Такие слова заменяются звёздочками в живой стенограмме, субтитрах, истории, выгрузках и письмах. Звук и запись не меняются; настройка сразу действует и для прежних встреч.</span></span></label>
               <label>Приветствие при входе <span className="muted small">(необязательно)</span>
                 <textarea rows={2} value={form.welcome_message} onChange={(e) => set("welcome_message", e.target.value)} maxLength={2000} /></label>
               <RoomIconPicker roomId={roomId} name={form.name} icon={room.icon} onChange={(i) => { const nr = { ...room, icon: i }; setRoom(nr); onSaved?.(nr); }} />

@@ -18,9 +18,10 @@ export type LiveEvent =
   | { type: "stage_changed"; items: { type: StageKind; identity?: string }[]; by: string | null; at: number | null }
   | { type: "share_stopped"; identity: string; by: string; blocked: boolean; was_sharing: boolean }
   | { type: "share_permission"; identity: string; allowed: boolean; by: string }
-  | { type: "camera_stopped"; identity: string; by: string };
+  | { type: "camera_stopped"; identity: string; by: string }
+  | { type: "mic_owner"; user_id: string; identity: string };
 
-export const EVENT_TYPES = new Set(["segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved", "stage_changed", "share_stopped", "share_permission", "camera_stopped"]);
+export const EVENT_TYPES = new Set(["mic_owner", "segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved", "stage_changed", "share_stopped", "share_permission", "camera_stopped"]);
 // Каждый тип из LiveEvent обязан быть здесь, иначе событие молча отбрасывается (так «рука» и «печатает» годами не доходили до остальных; охрана — liveEvents.test.ts)
 
 /** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */

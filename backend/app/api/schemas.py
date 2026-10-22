@@ -201,6 +201,7 @@ class RoomAdminOut(BaseModel):
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
+    mask_profanity: bool = True
     welcome_message: str | None = None
     room_type: str = "regular"
     auto_record: bool = False
@@ -239,6 +240,7 @@ class RoomCreateIn(BaseModel):
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool = False
+    mask_profanity: bool = True
     welcome_message: str | None = Field(default=None, max_length=2000)
     room_type: str = Field(default="regular", pattern="^(regular|presentation)$")
     auto_record: bool = False
@@ -280,6 +282,7 @@ class RoomPatchIn(BaseModel):
     llm_profile_id: uuid.UUID | None = None
     anonymizer_profile_id: uuid.UUID | None = None
     mute_on_join: bool | None = None
+    mask_profanity: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
     room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
     auto_record: bool | None = None

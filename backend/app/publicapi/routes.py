@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services import profanity
 from ..auth.deps import client_ip, get_db
 from ..models import (ConversationMap, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User)
 from ..services.audit import write_audit
@@ -379,8 +380,8 @@ def _speaker(seg: TranscriptSegment) -> SpeakerOut:
     return SpeakerOut(name="Неизвестный участник", type="unknown")
 
 
-def _segment_out(s: TranscriptSegment) -> SegmentOut:
-    return SegmentOut(id=s.id, started_at=_utc(s.started_at), ended_at=_utc(s.ended_at), speaker=_speaker(s), text=s.text, language=s.language)
+def _segment_out(s: TranscriptSegment, mask: bool = False) -> SegmentOut:
+    return SegmentOut(id=s.id, started_at=_utc(s.started_at), ended_at=_utc(s.ended_at), speaker=_speaker(s), text=profanity.maybe(s.text, mask), language=s.language)
 
 
 @router.get("/meetings/{meeting_id}/transcript", tags=["transcripts"], summary="Стенограмма: JSON (с курсором) или текст (txt, md, vtt, srt)", responses={**ERR, 200: {
@@ -406,7 +407,7 @@ async def transcript(meeting_id: str, request: Request, format: Literal["json", 
         rows = (await db.execute(base.limit(n + 1))).scalars().unique().all()
         page = rows[:n]
         nxt = cursor.encode(_utc(page[-1].started_at).isoformat(), page[-1].id) if len(rows) > n else None
-        return TranscriptPage(meeting_id=ids.pub("meeting", m.id), items=[_segment_out(s) for s in page], next_cursor=nxt)
+        return TranscriptPage(meeting_id=ids.pub("meeting", m.id), items=[_segment_out(s, m.room.mask_profanity) for s in page], next_cursor=nxt)
     ps = request.app.state.protocols
     tz = await ps._tz(db)  # noqa: SLF001
     if format == "txt":
@@ -414,7 +415,7 @@ async def transcript(meeting_id: str, request: Request, format: Literal["json", 
     rows = (await db.execute(base.limit(MAX_EXPORT_SEGMENTS + 1))).scalars().unique().all()
     if len(rows) > MAX_EXPORT_SEGMENTS:
         raise ApiError(413, "too_large", "Стенограмма слишком велика для текстового формата: используйте format=json и курсор.")
-    items = [(_utc(s.started_at), _utc(s.ended_at), author_name(s) or "Неизвестный участник", s.text) for s in rows]
+    items = [(_utc(s.started_at), _utc(s.ended_at), author_name(s) or "Неизвестный участник", profanity.maybe(s.text, m.room.mask_profanity)) for s in rows]
     origin = _utc(m.started_at)
     if format == "vtt":
         return Response(render.to_vtt(items, origin), media_type="text/vtt; charset=utf-8")

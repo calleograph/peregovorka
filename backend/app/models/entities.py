@@ -134,6 +134,8 @@ class Room(Base):
     # speakers — руководители и те, кому дали слово; leaders — правят только руководители, остальные смотрят; private — доска только у руководителей
     # (остальные её не видят и не получают её изменений).
     board_access: Mapped[str] = mapped_column(String(10), default="auto", server_default="auto", nullable=False)
+    # Скрывать нецензурную лексику в стенограмме (выдача: живая стенограмма, история, субтитры, выгрузки, письма, материалы для протокола); исходный текст хранится как есть.
+    mask_profanity: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Значок комнаты: NULL — стандартный (цветной квадрат с буквами); library — из встроенной библиотеки (icon_key); image — загруженное изображение (файл в каталоге данных, icon_rev — его хэш).
     icon_kind: Mapped[str | None] = mapped_column(String(10))
     icon_key: Mapped[str | None] = mapped_column(String(40))

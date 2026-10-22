@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { netDetail, netLabel, type NetShown, type RecvStats } from "../../quality/tileNet";
 import { Participant, Track } from "livekit-client";
 import { Icon } from "../Icons";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
@@ -12,6 +13,8 @@ export interface PView {
   floor?: boolean; leader?: boolean;
   /** Поднята рука; номер в очереди (1 — раньше всех). */
   hand?: boolean; handOrder?: number;
+  /** Качество связи участника до медиасервера (сглаженное, quality/tileNet.ts); netKey — для сравнения без лишних перерисовок. */
+  net?: NetShown; netKey?: string;
 }
 
 /** Действия руководителя над участником; нет обработчика — нет и пункта меню. Права всё равно проверяет сервер. */
@@ -84,6 +87,41 @@ export function VideoTile({ p, source, className = "video", onSize }: {
 
 /** Состояние устройства — текстом и цветом, а не только иконкой: видно издалека и без подсказок. */
 /** Индикатор микрофона: контейнер фиксированного размера (28×28), внутри меняется только состояние — размер строки при речи не меняется. */
+/** Значок качества связи на плитке: полоски как у мобильной сети, «нет связи» — перечёркнутый. Подробности — по наведению или нажатию; приём у этого браузера
+ *  считается только тогда (один вызов getStats по дорожкам участника), фоновой нагрузки нет. */
+function NetBars({ p, own }: { p: PView; own?: { rttMs?: number; lossPct?: number } | null }) {
+  const [recv, setRecv] = useState<RecvStats | null>(null);
+  const [open, setOpen] = useState(false);
+  const { net: s } = p;
+  const probe = async () => {
+    if (p.local) return;
+    try {
+      let lost = 0, got = 0, jitter = 0, n = 0;
+      for (const pub of p.participant.trackPublications.values()) {
+        const t = pub.track as unknown as { getReceiverStats?: () => Promise<{ packetsLost?: number; packetsReceived?: number; jitter?: number } | undefined> } | undefined;
+        const st = await t?.getReceiverStats?.();
+        if (!st) continue;
+        lost += st.packetsLost ?? 0; got += st.packetsReceived ?? 0; jitter += (st.jitter ?? 0) * 1000; n++;
+      }
+      setRecv(n ? { lossPct: got + lost > 0 ? (lost / (got + lost)) * 100 : 0, jitterMs: jitter / n } : null);
+    } catch { setRecv(null); }
+  };
+  const text = netDetail(s, recv, p.local ? own ?? null : null);
+  const lvl = s?.lost ? -1 : s?.level ?? 0;
+  const tone = lvl === -1 ? "lost" : lvl >= 3 ? "ok" : lvl === 2 ? "warn" : lvl === 1 ? "bad" : "none";
+  return (
+    <span className={`tile-net net-${tone}`} title={text} role="img" aria-label={netLabel(s)} tabIndex={0}
+          onMouseEnter={() => void probe()} onFocus={() => void probe()}
+          onClick={(e) => { e.stopPropagation(); void probe(); setOpen((o) => !o); }} onKeyDown={(e) => e.stopPropagation()}>
+      <svg viewBox="0 0 16 14" width="16" height="14" aria-hidden>
+        {[0, 1, 2, 3].map((i) => <rect key={i} x={i * 4} y={11 - i * 3} width="3" height={3 + i * 3} rx="0.7" className={lvl > i ? "on" : "off"} />)}
+        {lvl === -1 && <path d="M1 1 15 13" className="cut" />}
+      </svg>
+      {open && <span className="tile-net-pop" role="status">{text}</span>}
+    </span>
+  );
+}
+
 function MicIndicator({ on, speaking, name }: { on: boolean; speaking: boolean; name: string }) {
   const text = on ? (speaking ? "говорит" : "микрофон включён") : "без звука";
   return (
@@ -98,7 +136,9 @@ function State({ on, onText, offText, kind }: { on: boolean; onText: string; off
   return <span className={`state ${kind} ${on ? "on" : "off"}`} title={on ? onText : offText}><span aria-hidden>{kind === "mic" ? (on ? "🎙" : "🔇") : on ? "📷" : "🚫"}</span> {on ? onText : offText}</span>;
 }
 
-export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatarUrl, localMuted, onLocalMute, stageItems, onOpen }: {
+export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatarUrl, localMuted, onLocalMute, stageItems, onOpen, own }: {
+  /** Свои замеры (для своей плитки): задержка и потери исходящего потока. */
+  own?: { rttMs?: number; lossPct?: number } | null;
   p: PView; compact?: boolean; actions?: TileActions; onCard?: (p: PView) => void; meetingId?: string; avatarUrl?: string; localMuted?: boolean; onLocalMute?: (identity: string) => void;
   /** Пункты сцены (крупно, закрепить, показать всем…) — от владельца раскладки. */
   stageItems?: () => MenuItem[];
@@ -153,6 +193,7 @@ export function ParticipantTile({ p, compact, actions, onCard, meetingId, avatar
       <div className="tile-foot">
         <span className="tile-name">{p.name}{p.local ? " (вы)" : ""}</span>
         <MicIndicator on={p.mic} speaking={p.speaking} name={p.name} />
+        <NetBars p={p} own={own} />
         {!compact && <State kind="cam" on={p.cam} onText="камера" offText="камера выкл." />}
         {p.screen && <span className="state screen on" title="Показывает экран">🖥 экран</span>}
       </div>

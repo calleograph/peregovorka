@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from . import profanity
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
@@ -269,7 +270,7 @@ class ProtocolService:
         names = list(latest.values()) + [f"{g.display_name} (гость)" for g in guests]
         return render_transcript(
             meeting.room.name, meeting.started_at, meeting.ended_at, names,
-            [(r.started_at, author_name(r) or "Неизвестный участник", r.text) for r in rows], tz)
+            [(r.started_at, author_name(r) or "Неизвестный участник", profanity.maybe(r.text, meeting.room.mask_profanity)) for r in rows], tz)
 
     async def has_materials(self, meeting_id: uuid.UUID) -> bool:
         """Есть ли что обрабатывать: реплики, сообщения чата или схема на доске."""

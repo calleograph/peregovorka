@@ -107,6 +107,21 @@ async def hands_list(meeting_id: uuid.UUID, request: Request, actor: Actor = Dep
     return {"hands": await _hands(request, meeting_id)}
 
 
+@router.post("/{meeting_id}/mic-owner", status_code=204)
+async def mic_owner(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
+    """Один микрофон на человека: пользователь включил микрофон на устройстве `identity` — его ДРУГИЕ устройства в этой встрече выключат свои микрофоны
+    (событие mic_owner; каждое устройство решает само). Так нет акустической петли между телефоном и компьютером рядом и двойной стенограммы. Подключение
+    нескольких устройств не ограничивается; чужими устройствами управлять нельзя — identity должна принадлежать вызывающему."""
+    meeting = await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    if meeting.ended_at is not None or actor.is_guest:
+        raise HTTPException(status_code=409, detail="Встреча завершена или вход гостевой")
+    identity = str(body.get("identity") or "")
+    if parse_user_identity(identity) != actor.user.user_id:
+        raise HTTPException(status_code=403, detail="Это не ваше устройство")
+    await _rate(request, "mic", actor, meeting_id, HAND_RATE)
+    await events.publish(request.app.state.redis, meeting_id, {"type": "mic_owner", "user_id": str(actor.user.user_id), "identity": identity})
+
+
 @router.post("/{meeting_id}/hand")
 async def hand_set(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
     """Поднять/опустить руку. `raised` — состояние; `identity` (только руководитель) — опустить руку другому участнику. Состояние хранится до конца встречи."""

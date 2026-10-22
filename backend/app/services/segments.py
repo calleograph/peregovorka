@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import GuestParticipant, Meeting, MeetingParticipant, TranscriptSegment, User
 from . import events
 from .livekit import SERVICE_IDENTITY_PREFIX, SIP_IDENTITY_PREFIX, parse_guest_identity, parse_meeting_room_name, parse_phone_identity, parse_user_identity
+from . import profanity
 
 log = logging.getLogger("app.segments")
 
@@ -34,7 +35,8 @@ def author_name(seg: TranscriptSegment) -> str | None:
     return None
 
 
-def segment_to_dict(seg: TranscriptSegment, display_name: str | None = None) -> dict:
+def segment_to_dict(seg: TranscriptSegment, display_name: str | None = None, *, mask: bool = False) -> dict:
+    """mask — скрыть нецензурную лексику (настройка комнаты; исходный текст в базе не меняется)."""
     name = display_name if display_name is not None else author_name(seg)
     return {
         "id": seg.id,
@@ -46,7 +48,7 @@ def segment_to_dict(seg: TranscriptSegment, display_name: str | None = None) -> 
         "identity": seg.participant_identity,
         "started_at": seg.started_at.isoformat(),
         "ended_at": seg.ended_at.isoformat(),
-        "text": seg.text,
+        "text": profanity.maybe(seg.text, mask),
         "language": seg.language,
     }
 
@@ -129,5 +131,5 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
         await db.rollback()
         return IngestResult.DUPLICATE
     await db.refresh(seg)
-    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (guest.label if guest else None))})
+    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (guest.label if guest else None), mask=meeting.room.mask_profanity)})
     return IngestResult.STORED

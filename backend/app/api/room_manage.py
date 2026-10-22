@@ -38,7 +38,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode")
+                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode", "mask_profanity")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -65,6 +65,7 @@ class RoomManageOut(BaseModel):
     recording_mode: str = "audio"
     transcription_enabled: bool
     mute_on_join: bool
+    mask_profanity: bool = True          # скрывать нецензурную лексику в стенограмме
     welcome_message: str | None
     guest_access_enabled: bool
     auto_map_mode: str = "inherit"       # карта разговора после встречи: inherit — как в системных настройках, on / off
@@ -108,6 +109,7 @@ class RoomManagePatch(BaseModel):
     record_audio: bool | None = None
     recording_mode: str | None = Field(default=None, pattern="^(audio|audio_video|off)$")
     mute_on_join: bool | None = None
+    mask_profanity: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
     guest_access_enabled: bool | None = None
     auto_map_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")
@@ -158,7 +160,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
         board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode,
-        transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, welcome_message=room.welcome_message,
+        transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
         moderators=[{"subject_type": m.subject_type, "subject_ref": m.subject_ref, "display_name": m.display_name} for m in room.moderators],

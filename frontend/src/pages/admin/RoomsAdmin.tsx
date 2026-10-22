@@ -11,7 +11,7 @@ interface Form {
   password: string; clearPassword: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; text_retention_days: string; audio_retention_days: string;
   protocol_instructions: string; acl: AclEntry[]; moderators: AclEntry[]; history_access: HistoryAccess;
-  anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; welcome_message: string;
+  anonymize_mode: AnonymizeMode; llm_profile_id: string; anonymizer_profile_id: string; mute_on_join: boolean; mask_profanity: boolean; welcome_message: string;
   guest_access_enabled: boolean; guest_token: string | null; room_type: RoomType; auto_record: boolean; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; board_allowed: boolean; board_access: string; slug_history?: string[];
 }
 
@@ -19,7 +19,7 @@ const empty: Form = {
   slug: "", name: "", description: "", is_enabled: true, max_participants: 20, password: "", clearPassword: false,
   transcription_enabled: true, record_audio: false, camera_allowed: true, screen_share_allowed: true,
   text_retention_days: "", audio_retention_days: "", protocol_instructions: "", acl: [], moderators: [], history_access: "admin",
-  anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "", mute_on_join: false, welcome_message: "",
+  anonymize_mode: "inherit", llm_profile_id: "", anonymizer_profile_id: "", mute_on_join: false, mask_profanity: true, welcome_message: "",
   guest_access_enabled: false, guest_token: null, room_type: "regular", auto_record: false, encrypt_storage: false, e2ee_mode: "off", board_allowed: true, board_access: "auto",
 };
 
@@ -35,7 +35,7 @@ function toForm(r: RoomAdmin): Form {
     text_retention_days: r.text_retention_days?.toString() ?? "", audio_retention_days: r.audio_retention_days?.toString() ?? "",
     protocol_instructions: r.protocol_instructions ?? "", acl: r.acl, moderators: r.moderators ?? [], history_access: r.history_access ?? "admin",
     anonymize_mode: r.anonymize_mode ?? "inherit", llm_profile_id: r.llm_profile_id ?? "", anonymizer_profile_id: r.anonymizer_profile_id ?? "",
-    mute_on_join: r.mute_on_join ?? false, welcome_message: r.welcome_message ?? "",
+    mute_on_join: r.mute_on_join ?? false, mask_profanity: r.mask_profanity ?? true, welcome_message: r.welcome_message ?? "",
     guest_access_enabled: r.guest_access_enabled ?? false, guest_token: r.guest_token ?? null,
     room_type: r.room_type ?? "regular", auto_record: r.auto_record ?? false, encrypt_storage: r.encrypt_storage ?? false, e2ee_mode: r.e2ee_mode ?? "off", board_allowed: r.board_allowed ?? true, board_access: r.board_access && r.board_access !== "auto" ? r.board_access : ((r.board_allowed ?? true) ? "auto" : "leaders"), slug_history: r.slug_history ?? [] };
 }
@@ -111,7 +111,7 @@ export default function RoomsAdmin() {
       audio_retention_days: days(form.audio_retention_days), protocol_instructions: form.protocol_instructions || null,
       acl: form.acl, moderators: form.moderators, history_access: form.history_access,
       anonymize_mode: form.anonymize_mode, llm_profile_id: form.llm_profile_id || null, anonymizer_profile_id: form.anonymizer_profile_id || null,
-      mute_on_join: form.mute_on_join, welcome_message: form.welcome_message.trim() || null,
+      mute_on_join: form.mute_on_join, mask_profanity: form.mask_profanity, welcome_message: form.welcome_message.trim() || null,
       guest_access_enabled: form.guest_access_enabled,
     };
     try {
@@ -233,6 +233,8 @@ export default function RoomsAdmin() {
               <fieldset className="group"><legend>Порядок на встрече</legend>
                 <label className="check"><input type="checkbox" checked={form.mute_on_join} onChange={(e) => set("mute_on_join", e.target.checked)} />
                   <span className="check-body">Микрофон при входе выключен<span className="help">Участники заходят без звука и включают микрофон сами. Удобно для больших встреч и собраний: нет шума при подключении. Руководитель может выключить звук у всех одной кнопкой.</span></span></label>
+                <label className="check"><input type="checkbox" checked={form.mask_profanity} onChange={(e) => set("mask_profanity", e.target.checked)} />
+                  <span className="check-body">Скрывать нецензурную лексику в стенограмме<span className="help">Такие слова заменяются звёздочками в живой стенограмме, субтитрах, истории, выгрузках и письмах. Звук и запись не меняются; настройка сразу действует и для прежних встреч.</span></span></label>
               </fieldset>
             </div>
           )}
