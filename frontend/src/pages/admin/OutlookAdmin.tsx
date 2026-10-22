@@ -11,6 +11,10 @@ const STATE: Record<string, string> = { waiting: "ждёт начала", open: 
  * Интеграции → Microsoft Outlook: состояние и проверки, пакет надстройки для этого сервера, настройки, серверная сверка календаря, инструкции администратору Exchange,
  * история созданных конференций и журнал ошибок надстройки.
  */
+const EVENT_LABEL: Record<string, string> = {
+  addin_ok: "конференция добавлена", addin_error: "ошибка надстройки", addin_legacy: "кнопка старого манифеста (обновите манифест)", addin_login_failed: "вход в панели не выполнен",
+};
+
 export default function OutlookAdmin() {
   const [checks, setChecks] = useState<OutlookCheck[] | null>(null);
   const [compat, setCompat] = useState<OutlookCenterInfo["compat"] | null>(null);
@@ -157,12 +161,12 @@ export default function OutlookAdmin() {
 
       <div className="card" aria-label="Журнал ошибок надстройки">
         <div className="row"><h3 style={{ margin: 0 }}>Журнал надстройки и сверки</h3><div className="spacer" /><button className="btn mini" onClick={() => void loadLists()}>Обновить</button></div>
-        <p className="muted small">Сообщения, которые пользователь видел в уведомлении Outlook, и итоги серверной сверки. Полный журнал — «Хранение и журналы → Журнал событий», категория outlook.</p>
+        <p className="muted small">Ошибки, которые пользователь видел в панели или уведомлении Outlook (этап и код в квадратных скобках, в скобках — клиент Outlook и поддерживаемые наборы API), и итоги серверной сверки. Полный журнал — «Хранение и журналы → Журнал событий», категория outlook.</p>
         {log && !log.length && <p className="muted">Ошибок нет.</p>}
         {log && log.length > 0 && (
           <ul className="stage-list">{log.map((l) => (
             <li key={l.id} className={l.level === "warn" || l.level === "error" ? "bad" : "ok"}><span className="stage-mark" aria-hidden>{l.level === "info" ? "•" : "!"}</span>
-              <span>{fmtDate(l.at)} · {l.event}{l.user ? ` · ${l.user}` : ""}{l.room ? ` · ${l.room}` : ""}{l.message ? ` — ${l.message}` : ""}</span></li>))}</ul>)}
+              <span>{fmtDate(l.at)} · {EVENT_LABEL[l.event] ?? l.event}{l.user ? ` · ${l.user}` : ""}{l.room ? ` · ${l.room}` : ""}{l.message ? ` — ${l.message}` : ""}{l.client ? <span className="muted small"> ({l.client})</span> : null}</span></li>))}</ul>)}
       </div>
     </section>
   );

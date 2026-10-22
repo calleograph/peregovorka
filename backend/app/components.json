@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.29.0",
- "reviewed_at": "2026-10-19",
+ "release": "0.30.0",
+ "reviewed_at": "2026-10-23",
  "components": [
   {
    "key": "livekit_server",
@@ -55,7 +55,7 @@
    "group": "Видеосвязь и телефония",
    "pinned": "v1.20.0",
    "tested": "v1.20.0",
-   "reviewed_latest": "1.20.0",
+   "reviewed_latest": "1.21.0",
    "source": {
     "type": "docker",
     "registry": "hub",
@@ -88,7 +88,14 @@
     "repo": "livekit/sip"
    },
    "bundle": "livekit",
-   "digest": "sha256:e675638b7678eadb19d48c7a8865149d1b7c23a95b2e3c6fae173684d70c62fc"
+   "digest": "sha256:e675638b7678eadb19d48c7a8865149d1b7c23a95b2e3c6fae173684d70c62fc",
+   "deferred": {
+    "version": "1.21.0",
+    "reason": "Комплект LiveKit (сервер, SIP, SDK) проверяется вместе, а SIP — только с настоящей АТС (транк, входящий и исходящий вызов, OPTIONS); стенда АТС у разработчика нет, непроверенная минорная версия SIP в релиз не включается.",
+    "issue": "DEP-7",
+    "recheck": "2026-12-01",
+    "plan": "Поднять livekit/sip 1.21.0 с LiveKit и Redis, пройти SIP-проверки из docs/SIP.md на тестовой АТС, обновить compat.env и образ."
+   }
   },
   {
    "key": "livekit_client_js",
@@ -255,9 +262,9 @@
    "key": "transcribe_cpp",
    "title": "transcribe-cpp (движок GGUF)",
    "group": "Распознавание речи и модели",
-   "pinned": "0.4.0",
-   "tested": "0.4.0",
-   "reviewed_latest": "0.4.0",
+   "pinned": "0.4.1",
+   "tested": "0.4.1",
+   "reviewed_latest": "0.4.1",
    "source": {
     "type": "pypi",
     "name": "transcribe-cpp"
@@ -410,7 +417,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11723",
+   "reviewed_latest": "server-b11804",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -439,7 +446,7 @@
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
    "deferred": {
-    "version": "server-b11723",
+    "version": "server-b11804",
     "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
     "issue": "DEP-1",
     "recheck": "2026-11-16",
@@ -489,7 +496,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+   "digest": "sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -504,7 +511,7 @@
    "group": "Backend",
    "pinned": "0.149.0",
    "tested": "0.149.0",
-   "reviewed_latest": "0.149.0",
+   "reviewed_latest": "0.161.0",
    "source": {
     "type": "pypi",
     "name": "fastapi"
@@ -525,6 +532,13 @@
    "runtime": {
     "service": "backend",
     "python_package": "fastapi"
+   },
+   "deferred": {
+    "version": "0.161.0",
+    "reason": "С 0.149.0 вышло 12 выпусков FastAPI 0.x за четыре дня (для 0.x минор считается мажором): нужен разбор изменений и полный регресс backend, ASR, живых сценариев и нагрузочной матрицы, а релиз 0.30.0 — исправление надстройки Outlook; смешивать их нельзя.",
+    "issue": "DEP-6",
+    "recheck": "2026-11-20",
+    "plan": "Прочитать release notes 0.150–0.161, обновить constraints backend и ASR, прогнать полный набор тестов, живые сценарии и tests/perf, включить в ближайшем релизе после проверки."
    }
   },
   {
@@ -560,9 +574,9 @@
    "key": "sqlalchemy",
    "title": "SQLAlchemy",
    "group": "Backend",
-   "pinned": "2.1.5",
-   "tested": "2.1.5",
-   "reviewed_latest": "2.1.5",
+   "pinned": "2.1.6",
+   "tested": "2.1.6",
+   "reviewed_latest": "2.1.6",
    "source": {
     "type": "pypi",
     "name": "sqlalchemy"
@@ -608,9 +622,9 @@
    "key": "alembic",
    "title": "Alembic",
    "group": "Backend",
-   "pinned": "1.20.0",
-   "tested": "1.20.0",
-   "reviewed_latest": "1.20.0",
+   "pinned": "1.20.1",
+   "tested": "1.20.1",
+   "reviewed_latest": "1.20.1",
    "source": {
     "type": "pypi",
     "name": "alembic"
@@ -661,9 +675,9 @@
    "key": "pydantic_settings",
    "title": "pydantic-settings",
    "group": "Backend",
-   "pinned": "2.16.0",
-   "tested": "2.16.0",
-   "reviewed_latest": "2.16.0",
+   "pinned": "2.16.1",
+   "tested": "2.16.1",
+   "reviewed_latest": "2.16.1",
    "source": {
     "type": "pypi",
     "name": "pydantic-settings"
@@ -988,7 +1002,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+   "digest": "sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
@@ -1087,9 +1101,9 @@
    "key": "vite",
    "title": "Vite",
    "group": "Frontend",
-   "pinned": "8.3.4",
-   "tested": "8.3.4",
-   "reviewed_latest": "8.3.4",
+   "pinned": "8.3.5",
+   "tested": "8.3.5",
+   "reviewed_latest": "8.3.5",
    "source": {
     "type": "npm",
     "name": "vite"
@@ -1196,7 +1210,7 @@
     "repo": "library/node",
     "suffix": "-alpine"
    },
-   "digest": "sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f",
+   "digest": "sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53",
    "note": "Вместе с Node поставляется npm 11.",
    "deferred": {
     "version": "26",
@@ -1278,7 +1292,7 @@
     "registry": "hub",
     "repo": "library/alpine"
    },
-   "digest": "sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+   "digest": "sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35"
   },
   {
    "key": "drawio",
@@ -1349,7 +1363,7 @@
     "repo": "library/postgres",
     "suffix": "-alpine"
    },
-   "digest": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+   "digest": "sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36",
    "deferred": {
     "version": "18",
     "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",
@@ -1398,7 +1412,7 @@
     "repo": "library/redis",
     "suffix": "-alpine"
    },
-   "digest": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+   "digest": "sha256:57e4255cc971b1c8d6f8a6ca283ac01bc3ecdd914273ef6bfaede87aaecd6541",
    "deferred": {
     "version": "8",
     "reason": "Мажорное обновление: нужна проверка совместимости Redis 8 с очередями ASR, сессиями, E2EE-ключами и LiveKit SIP на стенде и оценка условий лицензии.",
@@ -1508,9 +1522,13 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-19",
+  "checked_at": "2026-10-23",
   "source": "osv.dev",
   "advisories": {
+   "certifi==2026.10.18": [
+    "GHSA-6q48-6c7w-9gw2",
+    "PYSEC-2026-4320"
+   ],
    "onnx==1.19.1": [
     "GHSA-3r9x-f23j-gc73",
     "GHSA-538c-55jv-c5g9",

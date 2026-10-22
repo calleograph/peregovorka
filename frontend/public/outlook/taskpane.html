@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peregovorka — конференция для встречи</title>
+  <link rel="stylesheet" href="/outlook/outlook.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="/outlook/commands.js"></script>
+  <script src="/outlook/taskpane.js" defer></script>
+</head>
+<body class="tp" data-state="loading">
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10.5 6-3.5v10l-6-3.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-dash" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+  </svg>
+
+  <header class="tp-head">
+    <img class="tp-logo" src="/outlook/icon-64.png" width="32" height="32" alt="">
+    <div class="tp-brand">
+      <h1>Peregovorka</h1>
+      <p>Видеоконференция для встречи</p>
+    </div>
+  </header>
+
+  <main class="tp-main">
+    <section class="meet" aria-label="Встреча">
+      <p class="meet-subj" id="subj"><span class="skel"></span></p>
+      <p class="meet-when" id="when-row"><svg class="ico" aria-hidden="true"><use href="#i-cal"/></svg><span id="when"><span class="skel short"></span></span><span class="tag" id="series" hidden>серия</span></p>
+    </section>
+
+    <div class="acct" id="acct" data-auth="unknown">
+      <span class="acct-dot" aria-hidden="true"></span>
+      <span class="acct-text" id="acct-text">Проверяем вход…</span>
+      <button class="linkbtn" id="logout" type="button" hidden>Выйти</button>
+    </div>
+
+    <form class="login" id="login" autocomplete="on" novalidate hidden>
+      <label for="lg-user">Логин</label>
+      <input id="lg-user" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="ivanov или ivanov@example.org" required>
+      <label for="lg-pass">Пароль</label>
+      <input id="lg-pass" name="password" type="password" autocomplete="current-password" required>
+      <button class="btn-main" id="lg-go" type="submit"><span class="spinner" aria-hidden="true"></span><span id="lg-label">Войти</span></button>
+      <button class="linkbtn" id="lg-window" type="button" title="Вход в отдельном окне: код подтверждения (2FA), проверка «не робот», корпоративный вход">Войти через окно</button>
+    </form>
+
+    <button class="btn-main" id="go" type="button" disabled>
+      <svg class="ico" aria-hidden="true"><use href="#i-cam"/></svg>
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="go-label">Подготовка…</span>
+    </button>
+
+    <ol class="steps" id="steps" aria-label="Ход операции" hidden>
+      <li data-step="meeting"><span>Встреча</span></li>
+      <li data-step="auth"><span>Вход</span></li>
+      <li data-step="api"><span>Комната</span></li>
+      <li data-step="invite"><span>Приглашение</span></li>
+    </ol>
+
+    <div class="msg" id="msg" role="alert" hidden>
+      <svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>
+      <div><p class="msg-title" id="msg-title"></p><p class="msg-text" id="msg-text"></p></div>
+    </div>
+
+    <section class="result" id="result" aria-label="Конференция" hidden>
+      <p class="result-title" id="result-title"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Конференция в приглашении</span></p>
+      <div class="linkbox">
+        <a id="link" href="#" target="_blank" rel="noopener"></a>
+        <button class="iconbtn" id="copy" type="button" title="Копировать ссылку" aria-label="Копировать ссылку"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        <a class="iconbtn" id="open" href="#" target="_blank" rel="noopener" title="Открыть конференцию" aria-label="Открыть конференцию"><svg class="ico" aria-hidden="true"><use href="#i-open"/></svg></a>
+      </div>
+      <a class="open-link" id="open-text" href="#" target="_blank" rel="noopener"><svg class="ico" aria-hidden="true"><use href="#i-open"/></svg>Открыть конференцию</a>
+      <ul class="checks">
+        <li id="chk-body"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Ссылка в тексте приглашения</span></li>
+        <li id="chk-loc"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Ссылка в поле «Место»</span></li>
+      </ul>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <details class="tech" id="tech" hidden>
+      <summary>Подробности для администратора</summary>
+      <dl id="tech-list"></dl>
+    </details>
+  </main>
+  <p class="sr" id="live" role="status" aria-live="polite"></p>
+</body>
+</html>

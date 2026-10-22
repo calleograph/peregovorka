@@ -68,6 +68,24 @@ def test_addin_log_goes_to_journal_and_needs_token(client):
     assert "Не удалось вставить ссылку" in json.dumps(items, ensure_ascii=False)
 
 
+def test_addin_me_logout_and_structured_log(client):
+    _enable(client)
+    h = _token(client)
+    _anon(client)
+    me = client.get(f"{O}/me", headers=h)
+    assert me.status_code == 200 and me.json()["enabled"] is True and me.json()["name"]
+    # этап, код и клиент Outlook попадают в журнал; недопустимый код отбрасывается
+    assert client.post(f"{O}/log", json={"message": "Встреча прошла", "where": "meeting", "code": "in_past", "client": "Outlook 16.0 · PC · Mailbox 1.5"}, headers=h).status_code == 204
+    assert client.post(f"{O}/log", json={"message": "странный код", "where": "api", "code": "<script>"}, headers=h).status_code == 204
+    client.portal.call(client.app_obj.state.journal.flush)
+    _anon(client)
+    assert client.delete(f"{O}/token", headers=h).status_code == 204                    # выход отзывает токен сразу
+    assert client.get(f"{O}/me", headers=h).status_code == 401
+    login(client, "root")
+    dump = json.dumps(client.get("/api/v1/admin/journal", params={"category": "outlook", "limit": 20}).json(), ensure_ascii=False)
+    assert "[meeting/in_past] Встреча прошла" in dump and "Mailbox 1.5" in dump and "<script>" not in dump
+
+
 # ------------------------------------------------------------------------------------------------ Graph
 def graph_transport(event: dict | int, calls: list | None = None):
     def h(req: httpx.Request) -> httpx.Response:

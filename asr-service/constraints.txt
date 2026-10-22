@@ -43,7 +43,7 @@ protobuf==7.36.2
 pycparser==3.11
 pydantic==2.14.1
 pydantic-core==2.50.1
-pydantic-settings==2.16.0
+pydantic-settings==2.16.1
 pyjwt==2.15.1
 python-dotenv==1.2.4
 pyyaml==6.0.3
@@ -55,7 +55,7 @@ soundfile==0.14.0
 starlette==1.9.0
 sympy==1.14.0
 tqdm==4.70.1
-transcribe-cpp==0.4.0
+transcribe-cpp==0.4.1
 transcribe-cpp-native==0.4.0
 types-protobuf==7.35.1.20260906
 typing-extensions==4.16.0

@@ -32,7 +32,7 @@ window.Office = {
   },
 };
 """
-PRESS = "new Promise(res => window.__handler({completed: (o) => res(o.allowEvent)}))"
+PRESS = "new Promise(res => window.__handler({completed: (o) => res(!o || o.allowEvent !== false)}))"      # команда завершается без allowEvent (оно — только для OnSend)
 LOADJS = "new Promise(res => { const s = document.createElement('script'); s.src = '/outlook/commands.js'; s.onload = () => res(true); s.onerror = () => res(false); document.head.appendChild(s); })"
 
 

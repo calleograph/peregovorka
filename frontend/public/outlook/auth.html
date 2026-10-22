@@ -9,9 +9,13 @@
   <script src="/outlook/auth.js" defer></script>
 </head>
 <body>
-  <main>
-    <h1>Peregovorka</h1>
-    <p id="status" role="status">Проверяем вход…</p>
+  <main class="auth" id="auth">
+    <div class="auth-box">
+      <img src="/outlook/icon-64.png" width="48" height="48" alt="">
+      <h1>Peregovorka</h1>
+      <span class="spinner" aria-hidden="true"></span>
+      <p id="status" role="status">Проверяем вход…</p>
+    </div>
   </main>
 </body>
 </html>

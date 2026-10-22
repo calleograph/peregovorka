@@ -29,7 +29,7 @@ from ..services.audit import write_audit
 from ..services.outlook_package import build_package
 
 router = APIRouter(prefix="/admin/outlook", tags=["admin-outlook"])
-ASSETS = ("/outlook/commands.html", "/outlook/commands.js", "/outlook/auth.html", "/outlook/icon-64.png")
+ASSETS = ("/outlook/taskpane.html", "/outlook/taskpane.js", "/outlook/commands.html", "/outlook/commands.js", "/outlook/auth.html", "/outlook/icon-64.png")
 
 
 def tls_probe(host: str, port: int, timeout: float = 6.0) -> dict:

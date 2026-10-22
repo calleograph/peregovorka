@@ -94,6 +94,8 @@ class LoginResult:
     user: User
     decision: AccessDecision | None = None
     challenge: str | None = None        # пароль верен, но нужен код 2FA: сессии ещё нет, её откроет /auth/login/totp
+    params: dict | None = None          # без сессии (open_session=False): права для выдачи токена надстройки — is_admin, groups, local
+    needs_browser: str | None = None    # без сессии: нужен вход в браузере — 2FA, её настройка или смена пароля
     backup_used: bool = False
 
 
@@ -111,7 +113,8 @@ class AuthService:
         self._sessions = sessions
         self.settings_svc = None  # services.settings.SettingsService — группы доступа из веб-настроек; задаётся при запуске
 
-    async def login(self, db: AsyncSession, login: str, password: str, ip: str, ua: str = "") -> LoginResult:
+    async def login(self, db: AsyncSession, login: str, password: str, ip: str, ua: str = "", *, open_session: bool = True) -> LoginResult:
+        """open_session=False — только проверка личности и допуска (вход в боковой панели Outlook: сеанс браузера не открывается и не занимает место в лимите сеансов)."""
         try:
             norm, _ = parse_login(login)
         except DirectoryError:
@@ -125,7 +128,7 @@ class AuthService:
             log.warning("Вход отклонён throttle", extra={"login_hash_only": True, "retry_after": exc.retry_after})
             raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
 
-        local = await self._local_login(db, norm, password, ip, ua)
+        local = await self._local_login(db, norm, password, ip, ua, open_session=open_session)
         if local is not None:
             return local
 
@@ -154,7 +157,7 @@ class AuthService:
         user = await self._upsert_user(db, identity, is_admin)
         if not user.is_active:  # отключён администратором в системе (независимо от AD)
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
-        res = await self._open(db, user, is_admin=is_admin, groups=sorted(identity.groups), decision=decision, ip=ip, ua=ua)
+        res = await self._open(db, user, is_admin=is_admin, groups=sorted(identity.groups), decision=decision, ip=ip, ua=ua, open_session=open_session)
         log.info("Вход выполнен" if not res.challenge else "Пароль принят, ожидается код 2FA", extra={"user_id": str(user.id), "is_admin": is_admin})
         return res
 
@@ -167,10 +170,14 @@ class AuthService:
         return cfg
 
     async def _open(self, db: AsyncSession, user: User, *, is_admin: bool, groups: list[str], ip: str, decision: AccessDecision | None = None,
-                    local: bool = False, must_change: bool = False, ua: str = "") -> LoginResult:
+                    local: bool = False, must_change: bool = False, ua: str = "", open_session: bool = True) -> LoginResult:
         """Пароль проверен: открыть сессию сразу, потребовать код 2FA (сессии пока нет) или открыть сессию «только для настройки 2FA»."""
         cfg = await self._totp_cfg(db)
         on = cfg is not None and cfg.totp_policy != "off"
+        if not open_session:
+            need = "totp" if on and user.totp_enabled and user.totp_secret_enc else "totp_setup" if on and totp_required(cfg, is_admin=is_admin, groups=groups) and not user.totp_enabled \
+                else "password_change" if must_change else None
+            return LoginResult("", None, user, decision, params=dict(is_admin=is_admin, groups=groups, local=local), needs_browser=need)
         if on and user.totp_enabled and user.totp_secret_enc:
             token = secrets.token_urlsafe(24)
             await self._sessions._r.set(f"totp:chal:{_th(token)}", json.dumps({"user_id": str(user.id), "is_admin": is_admin, "groups": groups, "local": local, "must_change": must_change,
@@ -322,7 +329,7 @@ class AuthService:
             return AccessDecision(False, False, "not_in_allowed_groups", True, via, admin_via)
         return AccessDecision(True, is_admin, "ok", bool(access_groups), via, admin_via)
 
-    async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str, ua: str = "") -> LoginResult | None:
+    async def _local_login(self, db: AsyncSession, norm: str, password: str, ip: str, ua: str = "", *, open_session: bool = True) -> LoginResult | None:
         """Локальный (аварийный) администратор: проверяется ПЕРВЫМ и не зависит от каталога. Нет такого логина — None (идём в каталог)."""
         row = (await db.execute(select(User).where(User.auth_source == "local", func.lower(User.sam_account_name) == norm.lower()))).scalar_one_or_none()
         if row is None or not row.password_hash:
@@ -335,7 +342,7 @@ class AuthService:
         await self._throttle.record_success(norm)
         row.last_login_at = utcnow()
         await db.commit()
-        res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip, ua=ua)
+        res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip, ua=ua, open_session=open_session)
         log.info("Вход локального администратора", extra={"user_id": str(row.id)})
         return res
 

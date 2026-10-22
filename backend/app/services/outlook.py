@@ -32,6 +32,7 @@ PREFIX = "ol-"
 CODE_LEN = 20
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 TOKEN_PREFIX = "pgo_"
+MAX_TOKEN_LIFETIME_S = 30 * 24 * 3600         # продление входа надстройки не делает его бессрочным: через 30 дней от входа — снова пароль
 MAX_SINGLE = timedelta(hours=24)
 MAX_AHEAD = timedelta(days=730)
 
@@ -45,11 +46,28 @@ def _tok_key(token: str) -> str:
     return "outlook:tok:" + hashlib.sha256(token.encode()).hexdigest()
 
 
-async def issue_token(redis, su: SessionUser, ttl_hours: int) -> tuple[str, int]:
+async def issue_token(redis, su: SessionUser, ttl_hours: int, *, born: float | None = None) -> tuple[str, int]:
     token = TOKEN_PREFIX + secrets.token_urlsafe(32)
-    payload = {"uid": str(su.user_id), "ad": su.ad_guid, "sam": su.sam_account_name, "name": su.display_name, "admin": su.is_admin, "groups": sorted(su.groups), "local": su.local}
-    await redis.set(_tok_key(token), json.dumps(payload), ex=ttl_hours * 3600)
-    return token, ttl_hours * 3600
+    payload = {"uid": str(su.user_id), "ad": su.ad_guid, "sam": su.sam_account_name, "name": su.display_name, "admin": su.is_admin, "groups": sorted(su.groups), "local": su.local,
+               "born": born or utcnow().timestamp()}
+    ttl = ttl_hours * 3600
+    if born:                                                              # продление: не дольше предела от первоначального входа
+        ttl = min(ttl, int(born + MAX_TOKEN_LIFETIME_S - utcnow().timestamp()))
+    await redis.set(_tok_key(token), json.dumps(payload), ex=max(ttl, 1))
+    return token, max(ttl, 1)
+
+
+async def refresh_token(redis, token: str, ttl_hours: int) -> tuple[str, int] | None:
+    """Продление входа надстройки: новый токен с тем же пользователем, прежний отзывается сразу. None — токен недействителен или исчерпан предел от первоначального входа."""
+    su = await principal(redis, token)
+    if su is None:
+        return None
+    born = float(json.loads(await redis.get(_tok_key(token)) or "{}").get("born") or utcnow().timestamp())
+    if born + MAX_TOKEN_LIFETIME_S - utcnow().timestamp() < 3600:
+        return None
+    new = await issue_token(redis, su, ttl_hours, born=born)
+    await revoke(redis, token)
+    return new
 
 
 async def principal(redis, token: str) -> SessionUser | None:
@@ -259,7 +277,9 @@ def addin_id(base: str) -> str:
 
 
 def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
-    """Манифест надстройки (add-in only manifest, поставщик онлайн-встреч). Идентификатор стабилен для адреса, поэтому обновление манифеста заменяет надстройку."""
+    """Манифест надстройки (add-in only manifest). Кнопка «Добавить конференцию» открывает боковую панель (ShowTaskpane, Mailbox 1.3): видно, что происходит, есть вход,
+    ошибки и повтор. Идентификатор стабилен для адреса, поэтому обновление манифеста заменяет надстройку. FunctionFile остаётся (обязателен для DesktopFormFactor,
+    обработчик отправки и кнопка старых манифестов живут в commands.js)."""
     gid = addin_id(base)
     n = [int(x) for x in re.findall(r"\d+", version)[:3]] + [0, 0, 0]
     v = f"{n[0] + 1}.{n[1]}.{n[2]}.0"                 # Office требует версию манифеста не ниже 1.0: старшая часть увеличена на единицу (растёт вместе с версией приложения)
@@ -284,12 +304,12 @@ def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0" xsi:type="MailApp">
   <Id>{gid}</Id>
   <Version>{v}</Version>
-  <ProviderName>Peregovorka</ProviderName>
+  <ProviderName>calleograph</ProviderName>
   <DefaultLocale>ru-RU</DefaultLocale>
   <DisplayName DefaultValue="Peregovorka"/>
   <Description DefaultValue="Видеоконференция Peregovorka в приглашении Outlook"/>
   <IconUrl DefaultValue="{b}/outlook/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="{b}/outlook/icon-80.png"/>
+  <HighResolutionIconUrl DefaultValue="{b}/outlook/icon-128.png"/>
   <SupportUrl DefaultValue="{b}"/>
   <AppDomains>
     <AppDomain>{b}</AppDomain>
@@ -339,12 +359,16 @@ def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
                     </Supertip>
                     <Icon>
                       <bt:Image size="16" resid="icon-16"/>
+                      <bt:Image size="20" resid="icon-20"/>
+                      <bt:Image size="24" resid="icon-24"/>
                       <bt:Image size="32" resid="icon-32"/>
+                      <bt:Image size="40" resid="icon-40"/>
+                      <bt:Image size="48" resid="icon-48"/>
                       <bt:Image size="64" resid="icon-64"/>
                       <bt:Image size="80" resid="icon-80"/>
                     </Icon>
-                    <Action xsi:type="ExecuteFunction">
-                      <FunctionName>insertPeregovorkaMeeting</FunctionName>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="residTaskpane"/>
                     </Action>
                   </Control>
                 </Group>
@@ -356,19 +380,24 @@ def manifest_xml(base: str, version: str, *, sync_on_send: bool = False) -> str:
       <Resources>
         <bt:Images>
           <bt:Image id="icon-16" DefaultValue="{b}/outlook/icon-16.png"/>
+          <bt:Image id="icon-20" DefaultValue="{b}/outlook/icon-20.png"/>
+          <bt:Image id="icon-24" DefaultValue="{b}/outlook/icon-24.png"/>
           <bt:Image id="icon-32" DefaultValue="{b}/outlook/icon-32.png"/>
+          <bt:Image id="icon-40" DefaultValue="{b}/outlook/icon-40.png"/>
+          <bt:Image id="icon-48" DefaultValue="{b}/outlook/icon-48.png"/>
           <bt:Image id="icon-64" DefaultValue="{b}/outlook/icon-64.png"/>
           <bt:Image id="icon-80" DefaultValue="{b}/outlook/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="residFunctionFile" DefaultValue="{b}/outlook/commands.html"/>{urls}
+          <bt:Url id="residFunctionFile" DefaultValue="{b}/outlook/commands.html"/>
+          <bt:Url id="residTaskpane" DefaultValue="{b}/outlook/taskpane.html"/>{urls}
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="residDescription" DefaultValue="Peregovorka"/>
           <bt:String id="residLabel" DefaultValue="Добавить конференцию"/>
         </bt:ShortStrings>
         <bt:LongStrings>
-          <bt:String id="residTooltip" DefaultValue="Добавить в приглашение видеоконференцию Peregovorka и ссылку для участников."/>
+          <bt:String id="residTooltip" DefaultValue="Открыть панель Peregovorka: создать видеоконференцию и добавить ссылку в приглашение."/>
         </bt:LongStrings>
       </Resources>
     </VersionOverrides>

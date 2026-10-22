@@ -14,7 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
-from ..models import Meeting, Room, utcnow
+from ..auth.service import AuthError
+from ..config import origin_allowed
+from ..services import captcha
+from ..models import Meeting, Room, User, utcnow
 from ..services import outlook as ol
 from ..services import outlook_compat as compat
 from ..services import outlook_diag as od
@@ -31,9 +34,18 @@ async def _cfg(request: Request, db: AsyncSession):
     return await request.app.state.settings_svc.get(db, "outlook")
 
 
-async def _addin_user(request: Request) -> SessionUser:
+def _bearer(request: Request) -> str:
     h = request.headers.get("authorization", "")
-    su = await ol.principal(request.app.state.redis, h[7:].strip()) if h.lower().startswith("bearer ") else None
+    return h[7:].strip() if h.lower().startswith("bearer ") else ""
+
+
+async def _addin_user(request: Request, db: AsyncSession | None = None) -> SessionUser:
+    su = await ol.principal(request.app.state.redis, _bearer(request)) if _bearer(request) else None
+    if su is not None and db is not None:                                 # учётную запись отключили после входа — токен больше не действует
+        u = await db.get(User, su.user_id)
+        if u is None or not u.is_active:
+            await ol.revoke(request.app.state.redis, _bearer(request))
+            su = None
     if su is None:
         raise HTTPException(status_code=401, detail={"code": "token_invalid", "message": "Нужен вход: токен надстройки истёк или не выдан."})
     r = request.app.state.redis
@@ -103,10 +115,59 @@ async def token(request: Request, su: SessionUser = Depends(require_user), db: A
     return Response('{"token":"%s","expires_in":%d}' % (tok, ttl), media_type="application/json", headers={"Cache-Control": "no-store"})
 
 
+@router.post("/login")
+async def addin_login(request: Request, body: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    """Вход в боковой панели Outlook логином и паролем: сразу выдаётся токен надстройки, сеанс браузера не открывается (cookie в панели Outlook ненадёжны).
+    Те же проверки, что у обычного входа: ограничение попыток, CAPTCHA, правила допуска, аудит. Если нужен второй фактор, его настройка или смена пароля — ответ 409
+    `browser_required`: панель предлагает продолжить вход в окне (`/outlook/auth.html`), где эти шаги проходят как в браузере."""
+    origin = request.headers.get("origin")
+    if origin is not None and not origin_allowed(origin, request.app.state.settings):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    cfg = await _cfg(request, db)
+    if not cfg.enabled:
+        raise HTTPException(status_code=404, detail="Интеграция с Outlook отключена.")
+    login_, password = str(body.get("login") or "")[:256], str(body.get("password") or "")
+    ip = client_ip(request)
+    await captcha.guard(request, "login")
+    try:
+        res = await request.app.state.auth.login(db, login_, password, ip, request.headers.get("user-agent") or "", open_session=False)
+    except AuthError as exc:
+        if exc.code in ("invalid_credentials", "throttled"):
+            await captcha.note_failure(request, "login")
+        request.app.state.journal.emit("outlook", "addin_login_failed", level="warn", ip=ip, message=exc.message, data={"code": exc.code, "where": "panel"})
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
+    await captcha.note_success(request, "login")
+    if res.needs_browser:
+        raise HTTPException(status_code=409, detail={"code": "browser_required", "reason": res.needs_browser, "message": "Для вашей учётной записи нужен дополнительный шаг входа."})
+    u, p = res.user, res.params or {}
+    su = SessionUser(session_id="outlook", user_id=u.id, ad_guid=u.ad_guid, sam_account_name=u.sam_account_name, display_name=u.display_name, is_admin=bool(p.get("is_admin")),
+                     groups=frozenset(p.get("groups") or []), csrf="", local=bool(p.get("local")))
+    if not ol.allowed(cfg, su):
+        raise HTTPException(status_code=403, detail="Создавать конференции из Outlook вам не разрешено.")
+    tok, ttl = await ol.issue_token(request.app.state.redis, su, cfg.token_ttl_hours)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.token", target_type="user", target_id=str(su.user_id), ip=ip, details={"via": "panel"})
+    await db.commit()
+    return Response('{"token":"%s","expires_in":%d}' % (tok, ttl), media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/token/refresh")
+async def refresh(request: Request, db: AsyncSession = Depends(get_db)):
+    """Продление входа: панель вызывает, когда прошла половина срока токена. Права проверяются заново; предел — 30 дней от входа паролем, затем снова вход."""
+    su = await _addin_user(request, db)
+    cfg = await _cfg(request, db)
+    if not cfg.enabled or not ol.allowed(cfg, su):
+        raise HTTPException(status_code=403, detail="Создавать конференции из Outlook вам не разрешено.")
+    new = await ol.refresh_token(request.app.state.redis, _bearer(request), cfg.token_ttl_hours)
+    if new is None:
+        raise HTTPException(status_code=401, detail={"code": "token_invalid", "message": "Срок входа истёк: войдите снова."})
+    return Response('{"token":"%s","expires_in":%d}' % new, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
 @router.post("/meetings")
 async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSession = Depends(get_db)):
     """Создать запланированную конференцию для события календаря (идемпотентно по `key`) или вернуть уже связанную; обновляет время и название."""
-    su = await _addin_user(request)
+    su = await _addin_user(request, db)
     cfg = await _cfg(request, db)
     s = request.app.state
     try:
@@ -123,18 +184,44 @@ async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSess
     return _out(room, ol.public_url(s.settings.app_public_url, cfg), cfg, created)
 
 
+@router.get("/me")
+async def addin_me(request: Request, db: AsyncSession = Depends(get_db)):
+    """Кто вошёл по токену надстройки: боковая панель проверяет вход при открытии (401 — токен истёк или отозван)."""
+    su = await _addin_user(request, db)
+    cfg = await _cfg(request, db)
+    return {"name": su.display_name, "enabled": cfg.enabled}
+
+
+@router.delete("/token", status_code=204)
+async def addin_logout(request: Request):
+    """Выход из надстройки: токен отзывается сразу, а не по истечении срока."""
+    h = request.headers.get("authorization", "")
+    if h.lower().startswith("bearer "):
+        await ol.revoke(request.app.state.redis, h[7:].strip())
+
+
+_LOG_CODE = re.compile(r"^[a-z0-9_]{1,40}$")
+
+
 @router.post("/log", status_code=204)
 async def addin_log(request: Request, body: dict = Body(...)):
-    """Ошибки надстройки (то, что пользователь видит в уведомлении) попадают в журнал событий: «Администрирование → Интеграции → Microsoft Outlook»."""
+    """Ошибки надстройки попадают в журнал событий («Администрирование → Интеграции → Microsoft Outlook»): этап, код ошибки, тип и версия клиента Outlook. Без токенов и тела письма."""
     su = await _addin_user(request)
     msg = " ".join(str(body.get("message") or "").split())[:300]
-    if msg:
-        request.app.state.journal.emit("outlook", "addin_error", level="warn", user=su.display_name, ip=client_ip(request), message=msg, data={"where": str(body.get("where") or "")[:40]})
+    if not msg:
+        return
+    code = str(body.get("code") or "").strip().lower()
+    code = code if _LOG_CODE.match(code) else ""
+    where = str(body.get("where") or "")[:40]
+    event = "addin_legacy" if code == "legacy_manifest" else "addin_ok" if code == "ok" else "addin_error"      # ok — итог успешной операции (без секретов)
+    request.app.state.journal.emit("outlook", event, level="warn" if event == "addin_error" else "info", user=su.display_name, ip=client_ip(request),
+                                   client=" ".join(str(body.get("client") or "").split())[:160] or None,
+                                   message=f"[{where}/{code}] {msg}" if code else msg, data={"where": where, "code": code})
 
 
 @router.get("/meetings/by-key/{key}")
 async def by_key(key: str, request: Request, db: AsyncSession = Depends(get_db)):
-    su = await _addin_user(request)
+    su = await _addin_user(request, db)
     cfg = await _cfg(request, db)
     room = await ol.find_by_key(db, su.user_id, key) if ol.KEY_RE.match(key) else None
     if room is None:
@@ -144,7 +231,7 @@ async def by_key(key: str, request: Request, db: AsyncSession = Depends(get_db))
 
 @router.patch("/meetings/{room_id}")
 async def update_meeting(room_id: uuid.UUID, request: Request, body: dict = Body(...), db: AsyncSession = Depends(get_db)):
-    su = await _addin_user(request)
+    su = await _addin_user(request, db)
     cfg = await _cfg(request, db)
     try:
         room = await ol.owned(db, su, room_id)
@@ -162,7 +249,7 @@ async def update_meeting(room_id: uuid.UUID, request: Request, body: dict = Body
 
 @router.delete("/meetings/{room_id}", status_code=204)
 async def cancel_meeting(room_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db)):
-    su = await _addin_user(request)
+    su = await _addin_user(request, db)
     try:
         room = await ol.owned(db, su, room_id)
     except TempRoomError as exc:

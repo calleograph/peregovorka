@@ -207,7 +207,12 @@ def test_manifest_is_valid_xml_with_stable_id_and_https(client):
     import xml.etree.ElementTree as ET
     root = ET.fromstring(r.content)
     text = r.text
-    assert "https://peregovorka.example.org/outlook/commands.html" in text and "insertPeregovorkaMeeting" in text and "AppointmentOrganizerCommandSurface" in text
+    assert "https://peregovorka.example.org/outlook/commands.html" in text and "AppointmentOrganizerCommandSurface" in text
+    # кнопка открывает боковую панель (видимый ход операции, вход, ошибки и повтор), а не скрытую функцию
+    assert '<Action xsi:type="ShowTaskpane">' in text and 'DefaultValue="https://peregovorka.example.org/outlook/taskpane.html"' in text and "ExecuteFunction" not in text
+    assert "<ProviderName>calleograph</ProviderName>" in text
+    for size in (16, 20, 24, 32, 40, 48, 64, 80):
+        assert f'DefaultValue="https://peregovorka.example.org/outlook/icon-{size}.png"' in text
     assert "http://" not in text.replace("http://schemas.microsoft.com", "").replace("http://www.w3.org", "")
     gid = root.find("{http://schemas.microsoft.com/office/appforoffice/1.1}Id").text
     assert gid == client.get(f"{O}/manifest.xml").text.split("<Id>")[1].split("</Id>")[0]       # идентификатор стабилен
