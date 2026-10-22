@@ -318,9 +318,17 @@ def test_no_database_connection_is_held_while_the_model_is_working(tmp_path, dir
     seen: list[int] = []
     app_ref: dict = {}
 
-    def llm(req: httpx.Request) -> httpx.Response:
+    async def llm(req: httpx.Request) -> httpx.Response:
+        # Пул общий: в самый момент вызова соединение может ещё закрывать HTTP-запрос, запустивший задачу (его сеанс закрывается после ответа).
+        # Поэтому берётся минимум за 1 с: если соединение держит САМА задача, оно занято всё время обращения к модели и минимум останется ≥ 1.
         eng = app_ref["app"].state.engine.sync_engine
-        seen.append(eng.pool.checkedout())
+        held = eng.pool.checkedout()
+        for _ in range(20):
+            if held == 0:
+                break
+            await asyncio.sleep(0.05)                                                # цикл событий свободен: запрос успевает закрыть свой сеанс
+            held = min(held, eng.pool.checkedout())
+        seen.append(held)
         return topics_llm(req)
 
     with running_app(make_settings(tmp_path), directory, transports={"llm": httpx.MockTransport(llm)}) as c:
