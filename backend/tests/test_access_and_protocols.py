@@ -11,7 +11,7 @@ import pytest
 
 from app.services.export_docs import find_fonts, md_to_plain, parse_markdown, to_docx, to_pdf
 
-from .conftest import login, make_room, make_settings, put_settings, running_app
+from .conftest import held_connections, login, make_room, make_settings, put_settings, running_app
 from .test_admin_features import _drain, anon_ok
 from .test_transcripts import _feed_and_consume, _join, _segment
 
@@ -332,12 +332,12 @@ def test_protocol_generation_holds_no_database_connection_while_anonymizer_and_m
     held: list[tuple[str, int]] = []
     ref: dict = {}
 
-    def llm(req: httpx.Request) -> httpx.Response:
-        held.append(("llm", ref["app"].state.engine.sync_engine.pool.checkedout()))
+    async def llm(req: httpx.Request) -> httpx.Response:
+        held.append(("llm", await held_connections(ref["app"].state.engine)))
         return LLM_OK(req)
 
-    def anon(req: httpx.Request) -> httpx.Response:
-        held.append(("anonymizer", ref["app"].state.engine.sync_engine.pool.checkedout()))
+    async def anon(req: httpx.Request) -> httpx.Response:
+        held.append(("anonymizer", await held_connections(ref["app"].state.engine)))
         return anon_ok(req)
 
     with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon), "llm": httpx.MockTransport(llm)}) as c:

@@ -13,7 +13,7 @@ from app.services import conv_map as cm
 from app.services.extraction import Line
 from app.services.settings import LlmSettings
 
-from .conftest import login, make_room, make_settings, put_settings, running_app
+from .conftest import held_connections, login, make_room, make_settings, put_settings, running_app
 from .test_admin_features import _drain
 from .test_transcripts import _feed_and_consume, _join, _segment
 
@@ -319,15 +319,7 @@ def test_no_database_connection_is_held_while_the_model_is_working(tmp_path, dir
     app_ref: dict = {}
 
     async def llm(req: httpx.Request) -> httpx.Response:
-        # Пул общий: в самый момент вызова соединение может ещё закрывать HTTP-запрос, запустивший задачу (его сеанс закрывается после ответа).
-        # Поэтому берётся минимум за 1 с: если соединение держит САМА задача, оно занято всё время обращения к модели и минимум останется ≥ 1.
-        eng = app_ref["app"].state.engine.sync_engine
-        held = eng.pool.checkedout()
-        for _ in range(20):
-            if held == 0:
-                break
-            await asyncio.sleep(0.05)                                                # цикл событий свободен: запрос успевает закрыть свой сеанс
-            held = min(held, eng.pool.checkedout())
+        held = await held_connections(app_ref["app"].state.engine)
         seen.append(held)
         return topics_llm(req)
 

@@ -196,3 +196,20 @@ def _reset_ews_caches():
     from app.services import outlook_sync as _os
     _os._AUTH_CACHE.clear(); _os._MODE_CACHE.clear()
     yield
+
+
+async def held_connections(engine) -> int:
+    """Сколько соединений пула занято во время сетевого обращения (обезличиватель, модель). Пул общий: в этот миг соединение может ещё закрывать
+    HTTP-запрос, запустивший задачу, или короткая фоновая запись — поэтому берётся минимум за 1 с. Если соединение держит САМА задача, оно занято
+    всё время обращения, и минимум останется ≥ 1 (регрессия 0.25.0 ловится)."""
+    import asyncio  # noqa: PLC0415
+
+    pool = engine.sync_engine.pool
+    held = pool.checkedout()
+    for _ in range(20):
+        if held == 0:
+            break
+        await asyncio.sleep(0.05)
+        held = min(held, pool.checkedout())
+    return held
+
