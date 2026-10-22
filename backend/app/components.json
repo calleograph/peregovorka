@@ -496,7 +496,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2",
+   "digest": "sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -511,7 +511,7 @@
    "group": "Backend",
    "pinned": "0.149.0",
    "tested": "0.149.0",
-   "reviewed_latest": "0.161.0",
+   "reviewed_latest": "0.161.1",
    "source": {
     "type": "pypi",
     "name": "fastapi"
@@ -534,7 +534,7 @@
     "python_package": "fastapi"
    },
    "deferred": {
-    "version": "0.161.0",
+    "version": "0.161.1",
     "reason": "С 0.149.0 вышло 12 выпусков FastAPI 0.x за четыре дня (для 0.x минор считается мажором): нужен разбор изменений и полный регресс backend, ASR, живых сценариев и нагрузочной матрицы, а релиз 0.30.0 — исправление надстройки Outlook; смешивать их нельзя.",
     "issue": "DEP-6",
     "recheck": "2026-11-20",
@@ -1002,7 +1002,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2",
+   "digest": "sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
@@ -1525,10 +1525,6 @@
   "checked_at": "2026-10-23",
   "source": "osv.dev",
   "advisories": {
-   "certifi==2026.10.18": [
-    "GHSA-6q48-6c7w-9gw2",
-    "PYSEC-2026-4320"
-   ],
    "onnx==1.19.1": [
     "GHSA-3r9x-f23j-gc73",
     "GHSA-538c-55jv-c5g9",
