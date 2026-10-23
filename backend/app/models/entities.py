@@ -17,7 +17,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, joinedload, mapped_column, raiseload, relationship
 
 from .base import Base, BigIntPK, JSONType, UTCDateTime, utcnow
 
@@ -1035,3 +1035,8 @@ class SipCall(Base):
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     duration_s: Mapped[int | None] = mapped_column(Integer)
     end_reason: Mapped[str | None] = mapped_column(String(20))                           # hangup | remote | meeting_end | limit | lost
+
+
+# Встреча для проверки доступа и частых запросов (чат, стенограмма, вход, выход, подписка на события): комната с ACL и руководителями — одним запросом
+# вместо трёх, список участников не загружается (их бывают сотни, а обращается каждый; обращение к нему при такой загрузке — ошибка, а не скрытый запрос).
+MEETING_LITE = (raiseload(Meeting.participants), joinedload(Meeting.room).joinedload(Room.acl), joinedload(Meeting.room).joinedload(Room.moderators))

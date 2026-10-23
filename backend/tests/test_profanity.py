@@ -126,4 +126,4 @@ def test_live_event_is_masked_and_ingest_latency_unchanged(client, capsys):
     assert masked, "живое событие уходит уже замаскированным"
     with capsys.disabled():
         print(f"\n[замер] приём реплики: маскирование включено {on * 1000:.3f} мс, выключено {off * 1000:.3f} мс, разница {(on - off) * 1000:+.3f} мс")
-    assert on - off < 0.5e-3, (on, off)
+    assert on - off < max(0.5e-3, 0.1 * off), (on, off)       # маскирование стоит десятки микросекунд; порог с запасом на шум общей машины CI

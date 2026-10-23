@@ -87,17 +87,21 @@ async def _room_context(db: AsyncSession, target_type: str, target_id: str) -> d
     try:
         import uuid  # noqa: PLC0415
 
+        from sqlalchemy import select  # noqa: PLC0415
+
         from ..models import Meeting, Protocol, Recording  # noqa: PLC0415
 
         uid = uuid.UUID(str(target_id))
         if target_type == "room":
             return {"room_id": str(uid)}
-        m = None
-        if target_type == "meeting":
-            m = await db.get(Meeting, uid)
-        elif target_type in ("protocol", "recording"):
-            obj = await db.get(Protocol if target_type == "protocol" else Recording, uid)
-            m = await db.get(Meeting, obj.meeting_id) if obj is not None and getattr(obj, "meeting_id", None) else None
+        if target_type in ("protocol", "recording"):
+            src = Protocol if target_type == "protocol" else Recording
+            uid = (await db.execute(select(src.meeting_id).where(src.id == uid))).scalar()
+            if uid is None:
+                return {}
+        elif target_type != "meeting":
+            return {}
+        m = (await db.execute(select(Meeting.id, Meeting.room_id).where(Meeting.id == uid))).first()     # два поля: объект встречи тянул бы всех участников
         return {"room_id": str(m.room_id), "meeting_id": str(m.id)} if m is not None else {}
     except Exception:  # noqa: BLE001
         return {}

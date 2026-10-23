@@ -2,6 +2,7 @@ from __future__ import annotations
 from ..services import asr_state
 
 import asyncio
+import time
 
 import httpx
 from fastapi import APIRouter, Request
@@ -51,11 +52,30 @@ async def db_ready(request: Request):
     return JSONResponse({"status": ("degraded" if pg.get("saturated") else "ready") if ok else "unavailable", "postgres": pg, "redis": rd}, status_code=200 if ok else 503)
 
 
+READY_TTL_S = 2.0      # результат общий для всех вызовов за это время
+
+
 @router.get("/health/ready")
 async def ready(request: Request):
     """PostgreSQL, Redis и LiveKit обязательны (503 при сбое). ASR необязателен: без него
-    комнаты работают, нет только транскрипции — тогда статус degraded (200)."""
+    комнаты работают, нет только транскрипции — тогда статус degraded (200).
+    Страница комнаты опрашивает этот адрес у каждого участника (готовность ASR): проверка выполняется не чаще раза в READY_TTL_S на процесс,
+    пока проверка идёт, остальные получают прежний результат (ждёт только самый первый вызов) — иначе тысячи участников давали бы сотни обращений
+    в секунду к LiveKit и служебному пулу базы, а медленная проверка задерживала бы всех."""
     app = request.app
+    st = app.state
+    if not hasattr(st, "ready_lock"):
+        st.ready_lock, st.ready_cache = asyncio.Lock(), None
+    stale = st.ready_cache is None or time.monotonic() - st.ready_cache[0] >= READY_TTL_S
+    if stale and not (st.ready_lock.locked() and st.ready_cache is not None):      # проверка уже идёт — отдаём прежний результат, а не ждём её
+        async with st.ready_lock:
+            if st.ready_cache is None or time.monotonic() - st.ready_cache[0] >= READY_TTL_S:
+                st.ready_cache = (time.monotonic(), *await _ready_check(app))
+    _, body, code = st.ready_cache
+    return JSONResponse(body, status_code=code)
+
+
+async def _ready_check(app) -> tuple[dict, int]:
     checks: dict[str, dict] = {}
 
     checks["postgres"] = await _postgres(app)
@@ -85,7 +105,7 @@ async def ready(request: Request):
     required_ok = all(checks[k]["ok"] for k in ("postgres", "redis", "livekit"))
     degraded = (not checks["asr"]["ok"]) or bool(checks["postgres"].get("saturated"))
     status = "ready" if required_ok and not degraded else ("degraded" if required_ok else "unavailable")
-    return JSONResponse({"status": status, "checks": checks}, status_code=200 if required_ok else 503)
+    return {"status": status, "checks": checks}, 200 if required_ok else 503
 
 
 @router.get("/public/privacy")

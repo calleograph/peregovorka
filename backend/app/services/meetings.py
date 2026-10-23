@@ -16,11 +16,12 @@ from datetime import timedelta
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser
 from ..config import Settings
-from ..models import GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
+from ..models import MEETING_LITE, GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
 from . import events, roles, temp_rooms
 from . import e2ee as e2ee_svc
@@ -98,7 +99,7 @@ class MeetingService:
         return (await self.settings_svc.get(db, "general")).temp_room_grace_minutes * 60      # type: ignore[attr-defined]
 
     async def join(self, db: AsyncSession, room_id: uuid.UUID, su: SessionUser, password: str | None, *, client_id: str = "", device_kind: str = "") -> JoinResult:
-        closed = await db.get(Room, room_id)
+        closed = await db.get(Room, room_id, options=(joinedload(Room.acl), joinedload(Room.moderators)))     # ACL и руководители — тем же запросом
         if closed is not None and closed.lifecycle == "closed" and acl_allows(closed, su):
             raise JoinError("room_closed", "Временная переговорка закрыта. Материалы встречи — в «Истории».", 410)
         try:
@@ -234,7 +235,7 @@ class MeetingService:
 
     async def rejoin_guest(self, db: AsyncSession, guest: GuestParticipant) -> JoinResult:
         """Повторная выдача токена гостю с действующей сессией (обновление страницы, обрыв сети)."""
-        meeting = await db.get(Meeting, guest.meeting_id)
+        meeting = await db.get(Meeting, guest.meeting_id, options=MEETING_LITE)
         if meeting is None or meeting.ended_at is not None:
             raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
         if guest.left_at is not None:
@@ -276,7 +277,7 @@ class MeetingService:
         return len(guests)
 
     async def on_guest_joined(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)
         guest = await db.get(GuestParticipant, guest_id)
         if meeting is None or meeting.ended_at is not None or guest is None or guest.meeting_id != meeting_id:
             return
@@ -303,8 +304,10 @@ class MeetingService:
         await self._r.delete(key)
 
     @staticmethod
-    async def _active_meeting(db: AsyncSession, room_id: uuid.UUID) -> Meeting | None:
-        return (await db.execute(select(Meeting).where(Meeting.room_id == room_id, Meeting.ended_at.is_(None)))).scalars().first()
+    async def _active_meeting(db: AsyncSession, room_id: uuid.UUID, *, participants: bool = False) -> Meeting | None:
+        """participants=False: список участников не загружается (обращение к нему — ошибка). Вход выполняет каждый участник, а во встрече их бывают сотни."""
+        stmt = select(Meeting).where(Meeting.room_id == room_id, Meeting.ended_at.is_(None))
+        return (await db.execute(stmt if participants else stmt.options(*MEETING_LITE))).unique().scalars().one_or_none()     # активная встреча комнаты одна (уникальный индекс)
 
     # ----------------------------------------------------------------- выход
     async def leave(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID, *, session_id: str = "", client_id: str = "") -> None:
@@ -341,11 +344,11 @@ class MeetingService:
 
     async def _quiet_presence(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str) -> bool:
         """Приход/уход рядового зрителя презентационной комнаты не рассылается (см. join); руководителей это не касается."""
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)
         return meeting is not None and roles.is_presentation(meeting.room) and not await self.is_privileged(meeting_id, identity)
 
     async def _update_emptiness(self, db: AsyncSession, meeting_id: uuid.UUID) -> None:
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)     # уход каждого участника: список всех не нужен
         if meeting is None or meeting.ended_at is not None:
             return
         open_count = (await db.execute(select(func.count()).select_from(MeetingParticipant).where(
@@ -406,7 +409,7 @@ class MeetingService:
 
     # ------------------------------------------------- присутствие (webhook)
     async def on_participant_joined(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)          # приходит на подключение каждого участника
         if meeting is None or meeting.ended_at is not None:
             return
         row = (await db.execute(select(MeetingParticipant).where(
@@ -430,7 +433,7 @@ class MeetingService:
         `participant_joined`, дополнительно клиент вызывает `refresh_rights`); тот, у кого слова нет, не получит их ни при каком токене. Если права шире
         нужных (токен выдан прежней версией приложения, показ экрана запрещён позже) — урезаются и опубликованные дорожки снимаются (`enforce_sources`).
         Руководители пропускаются. Возвращает True, если права пришлось изменить."""
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)
         if meeting is None or meeting.ended_at is not None or not roles.is_presentation(meeting.room) or await self.is_privileged(meeting_id, identity):
             return False
         granted = permission_sources(permission)
@@ -514,7 +517,7 @@ class MeetingService:
         cfg = await self.settings_svc.get(db, "general")
         now, n = utcnow(), 0
         for room in rooms:
-            meeting = await self._active_meeting(db, room.id)
+            meeting = await self._active_meeting(db, room.id, participants=True)       # end() проходит по участникам
             if meeting is not None:
                 if now - meeting.started_at >= timedelta(hours=cfg.temp_room_max_hours):      # type: ignore[attr-defined]
                     await self.end(db, meeting, "temp_ttl", kick=True)

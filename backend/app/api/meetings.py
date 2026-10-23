@@ -5,14 +5,13 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import false as sa_false
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, literal_column, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
-from ..models import (GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
-                      TranscriptSegment)
-from ..services.access import can_access_meeting, release_lease
+from ..models import (MEETING_LITE, GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
+                      TranscriptSegment, User)
+from ..services.access import accessible_history, can_access_meeting, release_lease
 from ..services import roles
 from ..services.room_icons import icon_out
 from ..services.audit import audit_now, write_audit
@@ -64,15 +63,14 @@ async def meeting_counts(db: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UU
     out: dict[uuid.UUID, dict] = {i: {} for i in ids}
     if not ids:
         return out
+    parts = []
     for key, model, extra in (("segments", TranscriptSegment, None), ("recordings", Recording, None),
                               ("protocols", Protocol, Protocol.kind.in_(KINDS)), ("chat_messages", MeetingChatMessage, None)):
-        stmt = select(model.meeting_id, func.count()).where(model.meeting_id.in_(ids)).group_by(model.meeting_id)
-        if extra is not None:
-            stmt = stmt.where(extra)
-        for mid, n in (await db.execute(stmt)).all():
-            out[mid][key] = n
-    for mid, shapes in (await db.execute(select(MeetingWhiteboard.meeting_id, MeetingWhiteboard.shapes).where(MeetingWhiteboard.meeting_id.in_(ids)))).all():
-        out[mid]["whiteboard_shapes"] = shapes
+        stmt = select(literal_column(f"'{key}'").label("k"), model.meeting_id.label("m"), func.count().label("n")).where(model.meeting_id.in_(ids)).group_by(model.meeting_id)
+        parts.append(stmt.where(extra) if extra is not None else stmt)
+    parts.append(select(literal_column("'whiteboard_shapes'").label("k"), MeetingWhiteboard.meeting_id.label("m"), MeetingWhiteboard.shapes.label("n")).where(MeetingWhiteboard.meeting_id.in_(ids)))
+    for key, mid, n in (await db.execute(union_all(*parts))).all():         # один запрос вместо пяти: история открывается часто
+        out[mid][key] = n
     return out
 
 
@@ -84,9 +82,10 @@ async def meeting_guests(db: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UU
     return out
 
 
-async def get_meeting_for_user(request: Request, db: AsyncSession, meeting_id: uuid.UUID, su: SessionUser) -> Meeting:
-    """Доступ — по правилам services/access.py (знание id/URL доступа не даёт). Иначе 404 без перечисления."""
-    meeting = await db.get(Meeting, meeting_id)
+async def get_meeting_for_user(request: Request, db: AsyncSession, meeting_id: uuid.UUID, su: SessionUser, *, participants: bool = True) -> Meeting:
+    """Доступ — по правилам services/access.py (знание id/URL доступа не даёт). Иначе 404 без перечисления.
+    participants=False — список участников не загружается (обращение к нему — ошибка): для частых запросов."""
+    meeting = await db.get(Meeting, meeting_id, options=() if participants else MEETING_LITE)
     if meeting is None or not await can_access_meeting(db, request.app.state.redis, meeting, su):
         raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
     return meeting
@@ -102,14 +101,9 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
     if su.is_admin:
         meetings = list((await db.execute(stmt.limit(limit).offset(offset))).scalars().unique())
     else:
-        mine = select(MeetingParticipant.meeting_id).where(MeetingParticipant.user_id == su.user_id)
-        granted = select(MeetingGrant.meeting_id).where(MeetingGrant.user_id == su.user_id)
-        # встречи комнат, которыми человек руководит, видны ему в истории даже без участия в них
-        led = [r.id for r in (await db.execute(select(Room))).scalars().unique() if roles.is_room_leader(r, su)]
-        cond = Meeting.id.in_(mine) | Meeting.id.in_(granted) | (Meeting.room_id.in_(led) if led else sa_false())
-        cand = (await db.execute(stmt.where(cond).limit(400))).scalars().unique().all()
-        allowed = [m for m in cand if await can_access_meeting(db, request.app.state.redis, m, su)]
-        meetings = allowed[offset:offset + limit]
+        page = (await accessible_history(db, request.app.state.redis, su, room_id=room_id))[offset:offset + limit]
+        found = {m.id: m for m in (await db.execute(select(Meeting).where(Meeting.id.in_(page)))).scalars().unique()} if page else {}
+        meetings = [found[i] for i in page if i in found]
     ids = [m.id for m in meetings]
     counts, guests = await meeting_counts(db, ids), await meeting_guests(db, ids)
     return [meeting_out(m, counts.get(m.id), guests.get(m.id)) for m in meetings]
@@ -119,13 +113,10 @@ async def list_meetings(request: Request, room_id: uuid.UUID | None = None, limi
 async def meeting_avatars(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Аватарки участников встречи для плиток в комнате: {identity в LiveKit: адрес с версией}. Только у тех, у кого аватарка есть (у остальных — инициалы).
     Адрес версионный: браузер кэширует картинку надолго, а при смене фото адрес меняется. Доступ — как к самой встрече."""
-    meeting = await get_meeting_for_user(request, db, meeting_id, su)
-    out: dict[str, str] = {}
-    for p in meeting.participants:
-        url = avatar_url(p.user)
-        if url:
-            out[p.user.livekit_identity] = url
-    return out
+    await get_meeting_for_user(request, db, meeting_id, su, participants=False)      # вызывает каждый входящий: только люди с аватаркой, а не вся встреча
+    users = (await db.execute(select(User).where(User.avatar_mime.is_not(None), User.id.in_(
+        select(MeetingParticipant.user_id).where(MeetingParticipant.meeting_id == meeting_id))))).scalars().all()
+    return {u.livekit_identity: url for u in users if (url := avatar_url(u))}
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)
@@ -140,7 +131,7 @@ async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 
 @router.post("/{meeting_id}/leave", status_code=204)
 async def leave_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    m = await get_meeting_for_user(request, db, meeting_id, su)
+    m = await get_meeting_for_user(request, db, meeting_id, su, participants=False)      # выходит каждый: список участников не нужен
     await request.app.state.meetings.leave(db, meeting_id, su.user_id, session_id=su.session_id, client_id=request.headers.get("x-client-id", ""))
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.leave", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request))
     request.app.state.journal.emit("room", "leave", user=su.sam_account_name, room=m.room.name, meeting_id=str(meeting_id), ip=client_ip(request))
@@ -171,7 +162,7 @@ async def end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 @router.get("/{meeting_id}/transcript", response_model=TranscriptOut)
 async def get_transcript(meeting_id: uuid.UUID, request: Request, after_id: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=2000),
                          su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    meeting = await get_meeting_for_user(request, db, meeting_id, su, participants=False)
     rows = (await db.execute(select(TranscriptSegment).where(
         TranscriptSegment.meeting_id == meeting_id, TranscriptSegment.id > after_id)
         .order_by(TranscriptSegment.id).limit(limit + 1))).scalars().unique().all()  # постраничность по id; клиент сортирует по времени

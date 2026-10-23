@@ -211,8 +211,8 @@ async def leave(request: Request, actor: Actor = Depends(require_actor), db: Asy
 @router.get("/session")
 async def session(request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
     _require_guest(actor)
-    from ..models import Meeting  # noqa: PLC0415
+    from ..models import MEETING_LITE, Meeting  # noqa: PLC0415
 
-    meeting = await db.get(Meeting, uuid.UUID(actor.guest.meeting_id))
+    meeting = await db.get(Meeting, uuid.UUID(actor.guest.meeting_id), options=MEETING_LITE)
     return {"guest_id": str(actor.id), "display_name": actor.display_name, "meeting_id": actor.guest.meeting_id,
             "meeting_active": bool(meeting and meeting.ended_at is None), "ts": time.time()}

@@ -18,7 +18,7 @@ from ..services import e2ee as e2ee_svc
 from ..services.audit import audit_now, write_audit
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
-from ..services.rooms import acl_allows, find_by_ref, list_accessible_rooms
+from ..services.rooms import accessible_room_views, acl_allows, find_by_ref
 from .clientcfg import build_client_config
 from .schemas import ActiveMeetingOut, E2EEOut, JoinIn, JoinOut, RoomOut
 
@@ -42,11 +42,11 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
 
 @router.get("", response_model=list[RoomOut])
 async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    rooms = await list_accessible_rooms(db, su)
+    rooms = await accessible_room_views(db, su)
     if not rooms:
         return []
-    active = {m.room_id: m for m in (await db.execute(
-        select(Meeting).where(Meeting.room_id.in_([r.id for r in rooms]), Meeting.ended_at.is_(None)))).scalars()}
+    active = {m.room_id: m for m in (await db.execute(       # только нужные поля: объект встречи тянул бы всех её участников
+        select(Meeting.id, Meeting.room_id, Meeting.started_at).where(Meeting.room_id.in_([r.id for r in rooms]), Meeting.ended_at.is_(None)))).all()}
     counts: dict[uuid.UUID, int] = {}
     if active:
         rows = await db.execute(
@@ -64,7 +64,7 @@ async def resolve_room(ref: str, su: SessionUser = Depends(require_user), db: As
     room, canonical = await find_by_ref(db, ref)
     if room is None or not room.is_enabled or not acl_allows(room, su):
         raise HTTPException(status_code=404, detail="Комната не найдена или недоступна")
-    active = (await db.execute(select(Meeting).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).scalars().first()
+    active = (await db.execute(select(Meeting.id, Meeting.started_at).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).first()
     people = 0
     if active is not None:
         people = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(

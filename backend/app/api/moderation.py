@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.guests import Actor, require_actor
-from ..models import Meeting
+from ..models import MEETING_LITE, Meeting
 from ..services import roles
 from ..services.access import can_access_meeting, can_access_meeting_actor
 from ..services.audit import write_audit
@@ -79,7 +79,7 @@ def _join_error(exc: JoinError) -> HTTPException:
 @router.get("/{meeting_id}/floor")
 async def floor_state(meeting_id: uuid.UUID, request: Request, actor: Actor = Depends(require_actor), db: AsyncSession = Depends(get_db)):
     """Кому сейчас дано слово и кто руководитель (для пометок в списке участников). Видят все участники встречи."""
-    meeting = await db.get(Meeting, meeting_id)
+    meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)           # запрашивает каждый входящий
     if meeting is None or not await can_access_meeting_actor(db, request.app.state.redis, meeting, actor):
         raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
     svc = request.app.state.meetings

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser
-from ..models import Room
+from ..models import Room, RoomAcl, RoomModerator
 
 
 class RoomNotFound(Exception):
@@ -87,9 +87,37 @@ def acl_allows(room: Room, su: SessionUser) -> bool:
     return False
 
 
-async def list_accessible_rooms(db: AsyncSession, su: SessionUser) -> list[Room]:
-    rooms = (await db.execute(select(Room).where(Room.is_enabled.is_(True), Room.lifecycle != "closed").order_by(Room.name))).scalars().all()
-    return [r for r in rooms if acl_allows(r, su) and ((r.room_type != "peer" and r.scheduled_start is None) or _peer_visible(r, su))]
+def _listed(r, su: SessionUser) -> bool:
+    return acl_allows(r, su) and ((r.room_type != "peer" and r.scheduled_start is None) or _peer_visible(r, su))
+
+
+class RoomView:
+    """Комната только для чтения — строка таблицы без объекта ORM, поля те же, что у Room, плюс acl и moderators (строки своих таблиц).
+    Для списка комнат, который опрашивает каждая открытая страница: объекты ORM обходились втрое дороже."""
+    __slots__ = ("_row", "acl", "moderators")
+
+    def __init__(self, row, acl: list, moderators: list):
+        self._row, self.acl, self.moderators = row, acl, moderators
+
+    def __getattr__(self, name: str):
+        try:
+            return self._row[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+async def accessible_room_views(db: AsyncSession, su: SessionUser) -> list[RoomView]:
+    """Комнаты, которые человек видит в списке (правило _listed), без объектов ORM: три запроса Core на весь список."""
+    t = Room.__table__
+    live = (t.c.is_enabled.is_(True), t.c.lifecycle != "closed")
+    rows = (await db.execute(select(t).where(*live).order_by(t.c.name))).mappings().all()
+    acl: dict = {}
+    mods: dict = {}
+    for target, table in ((acl, RoomAcl.__table__), (mods, RoomModerator.__table__)):
+        for e in (await db.execute(select(table).join(t, t.c.id == table.c.room_id).where(*live).order_by(table.c.id))).all():
+            target.setdefault(e.room_id, []).append(e)
+    views = [RoomView(r, acl.get(r["id"], []), mods.get(r["id"], [])) for r in rows]
+    return [v for v in views if _listed(v, su)]
 
 
 async def get_accessible_room(db: AsyncSession, room_id: uuid.UUID, su: SessionUser) -> Room:

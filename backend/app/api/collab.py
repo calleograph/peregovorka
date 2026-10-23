@@ -15,13 +15,13 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db
 from ..auth.guests import Actor, require_actor
-from ..models import ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
+from ..models import MEETING_LITE, ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services import events, roles, whiteboard as wb
 from ..services.audit import audit_now, write_audit
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
@@ -43,7 +43,7 @@ _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]"
 
 
 async def _meeting_for_actor(request: Request, db: AsyncSession, meeting_id: uuid.UUID, actor: Actor, *, write: bool = False) -> Meeting:
-    meeting = await db.get(Meeting, meeting_id)
+    meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)   # участники здесь не нужны: чат и события идут часто
     if meeting is None or not await can_access_meeting_actor(db, request.app.state.redis, meeting, actor):
         raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
     if write and meeting.ended_at is not None:
@@ -259,7 +259,7 @@ async def chat_list(meeting_id: uuid.UUID, request: Request, after_id: int = Que
         has_more = len(rows) > limit
         rows = list(reversed(rows[:limit]))
     atts = await attachments_by_message(db, [m.id for m in rows])
-    return {"messages": [chat_out(m, atts.get(m.id)) for m in rows], "has_more": has_more}
+    return JSONResponse({"messages": [chat_out(m, atts.get(m.id)) for m in rows], "has_more": has_more})   # уже готово к JSON: без обхода jsonable_encoder
 
 
 @router.post("/{meeting_id}/chat", status_code=201)
@@ -296,8 +296,7 @@ async def chat_post(meeting_id: uuid.UUID, request: Request, body: dict[str, Any
     await db.flush()
     for a in atts:
         a.message_id = msg.id
-    await db.commit()
-    await db.refresh(msg)
+    await db.commit()                     # id и время назначены при flush, перечитывать строку не нужно
     out = chat_out(msg, atts)
     await events.publish(request.app.state.redis, meeting_id, {"type": "chat_message", "message": out})
     return out

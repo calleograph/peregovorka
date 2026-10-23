@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import GuestParticipant, Meeting, MeetingParticipant, TranscriptSegment, User
+from ..models import MEETING_LITE, GuestParticipant, Meeting, MeetingParticipant, TranscriptSegment, User
 from . import events
 from .livekit import SERVICE_IDENTITY_PREFIX, SIP_IDENTITY_PREFIX, parse_guest_identity, parse_meeting_room_name, parse_phone_identity, parse_user_identity
 from . import profanity
@@ -82,7 +82,7 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
     if meeting_id is None or not text or identity.startswith(SERVICE_IDENTITY_PREFIX) or ended < started:
         return IngestResult.REJECTED
 
-    meeting = await db.get(Meeting, meeting_id)
+    meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)       # на каждую реплику: список участников не нужен
     if meeting is None:
         log.warning("Сегмент для неизвестной встречи", extra={"meeting_id": str(meeting_id)})
         return IngestResult.REJECTED

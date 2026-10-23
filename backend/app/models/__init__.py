@@ -1,5 +1,6 @@
 from .base import Base, utcnow
 from .entities import (
+    MEETING_LITE,
     ApiClient,
     ApiIdempotency,
     ApiJob,

@@ -16,6 +16,10 @@ ap.add_argument("--users", type=int, default=100); ap.add_argument("--duration",
 ap.add_argument("--rooms", type=int, default=0); ap.add_argument("--heavy", type=int, default=6, help="одновременных формирований материалов"); ap.add_argument("--pids", default="", help="pid процессов сервера (через запятую) для замера CPU/RSS")
 ap.add_argument("--out", default=""); ap.add_argument("--max-5xx-pct", type=float, default=-1, help="порог для кода возврата (регрессионная проверка); -1 — без проверки")
 ap.add_argument("--max-idle-tx-s", type=float, default=-1)
+ap.add_argument("--profile", choices=("heavy", "client"), default="heavy",
+                help="heavy — случайное действие раз в --think с (прежняя матрица); client — как настоящий браузер: вход в комнату, WebSocket, опросы страницы комнаты и списка комнат")
+ap.add_argument("--lobby-pct", type=float, default=15, help="client: доля людей на странице списка комнат (остальные во встречах), %%")
+ap.add_argument("--ramp", type=float, default=20, help="client: за сколько секунд приходят все участники встреч (начало собраний)")
 A = ap.parse_args()
 
 class Resp:
@@ -49,6 +53,7 @@ class Client:
 
 lat: dict[str, list[float]] = defaultdict(list); codes: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int)); errors: list[str] = []
 pg_samples: list[dict] = []; res_samples: list[dict] = []
+ws_stats = {"opened": 0, "failed": 0, "events": 0, "dropped": 0}
 
 
 class VU:
@@ -127,6 +132,71 @@ async def vu_loop(u: VU, room: dict, stop: float) -> None:
         await u.req("leave", "POST", f"/api/v1/meetings/{mid}/leave")
 
 
+async def client_room_loop(u: VU, room: dict, stop: float) -> None:
+    """Участник встречи, как страница комнаты в браузере: вход (resolve, join, аватарки, слово, руки, чат, стенограмма, события жизненного цикла),
+    WebSocket с подпиской на встречу и пингом раз в 30 с, /health/ready раз в 15 с, метрики раз в 30 с, сообщение в чат в среднем раз в 2 мин."""
+    await asyncio.sleep(random.uniform(0, A.ramp))           # люди приходят не в одну миллисекунду
+    await u.req("resolve", "GET", f"/api/v1/rooms/resolve/{room['slug']}")
+    r = await u.req("join", "POST", f"/api/v1/rooms/{room['id']}/join", json={})
+    if r is None or r.status_code != 200:
+        return
+    mid = r.json()["meeting_id"]
+    for kind, path in (("avatars", f"/meetings/{mid}/avatars"), ("floor", f"/meetings/{mid}/floor"), ("hands", f"/meetings/{mid}/hands"),
+                       ("chat_read", f"/meetings/{mid}/chat?limit=100"), ("transcript", f"/meetings/{mid}/transcript?after_id=0")):
+        await u.req(kind, "GET", "/api/v1" + path)
+    for ev in ("join_attempt", "join_ok", "backend_ws_connected"):
+        await u.req("client_event", "POST", "/api/v1/client/events", json={"event": ev, "meeting_id": mid})
+    ws = None
+    try:
+        ws = await u.c.s.ws_connect(A.url.replace("http", "ws", 1) + "/api/v1/ws", headers={"Cookie": u.cookie}, heartbeat=None)
+        await ws.send_str(json.dumps({"type": "subscribe", "meeting_id": mid}))
+        ws_stats["opened"] += 1
+    except Exception as exc:  # noqa: BLE001
+        ws_stats["failed"] += 1; errors.append(f"ws: {type(exc).__name__}"); ws = None
+
+    async def drain():
+        while ws is not None and not ws.closed:
+            m = await ws.receive()
+            if m.type == aiohttp.WSMsgType.TEXT:
+                ws_stats["events"] += 1
+            elif m.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                if time.monotonic() < stop:
+                    ws_stats["dropped"] += 1
+                return
+    reader = asyncio.create_task(drain())
+    nxt = {"ready": time.monotonic() + random.uniform(0, 15), "metrics": time.monotonic() + random.uniform(0, 30), "ping": time.monotonic() + 30,
+           "chat": time.monotonic() + random.expovariate(1 / 120)}
+    while time.monotonic() < stop:
+        k = min(nxt, key=nxt.get)
+        await asyncio.sleep(max(0.0, nxt[k] - time.monotonic()))
+        if time.monotonic() >= stop:
+            break
+        if k == "ready":
+            await u.req("health_ready", "GET", "/api/v1/health/ready"); nxt[k] += 15
+        elif k == "metrics":
+            await u.req("client_metrics", "POST", "/api/v1/client/metrics", json={"meeting_id": mid, "rtt_ms": 40, "packet_loss_pct": 0.1, "jitter_ms": 5}); nxt[k] += 30
+        elif k == "ping":
+            if ws is not None and not ws.closed:
+                await ws.send_str('{"type":"ping"}')
+            nxt[k] += 30
+        else:
+            await u.req("chat_send", "POST", f"/api/v1/meetings/{mid}/chat", json={"text": f"сообщение {uuid.uuid4().hex[:6]}"}); nxt[k] += random.expovariate(1 / 120)
+    reader.cancel()
+    if ws is not None:
+        await ws.close()
+    await u.req("leave", "POST", f"/api/v1/meetings/{mid}/leave")
+
+
+async def client_lobby_loop(u: VU, stop: float) -> None:
+    """Страница списка комнат: обновление раз в 10 с («кто сейчас в комнате»), изредка история встреч."""
+    await asyncio.sleep(random.uniform(0, 10))
+    while time.monotonic() < stop:
+        await u.req("rooms", "GET", "/api/v1/rooms")
+        if random.random() < 0.1:
+            await u.req("history", "GET", "/api/v1/meetings?limit=30&offset=0")
+        await asyncio.sleep(10)
+
+
 async def admin_loop(c: Client, stop: float) -> None:
     a = VU(-2, c); await a.login("root")
     while time.monotonic() < stop:
@@ -202,13 +272,17 @@ async def main() -> int:
         stop = time.monotonic() + A.duration
         tasks = [asyncio.create_task(sample_pg(stop + 5)), asyncio.create_task(sample_res(stop)), asyncio.create_task(admin_loop(c, stop))]
         tasks += [asyncio.create_task(heavy_loop(c, seeds, stop, k)) for k in range(A.heavy)]
-        tasks += [asyncio.create_task(vu_loop(u, rooms[u.i % len(rooms)], stop)) for u in users]
+        if A.profile == "client":
+            lobby = set(random.sample(range(len(users)), int(len(users) * A.lobby_pct / 100)))
+            tasks += [asyncio.create_task(client_lobby_loop(u, stop) if k in lobby else client_room_loop(u, rooms[u.i % len(rooms)], stop)) for k, u in enumerate(users)]
+        else:
+            tasks += [asyncio.create_task(vu_loop(u, rooms[u.i % len(rooms)], stop)) for u in users]
         await asyncio.gather(*tasks, return_exceptions=True)
         # дожидаемся окончания тяжёлых заданий и фиксируем состояние
         await asyncio.sleep(8)
     finally:
         await c.close()
-    report = {"users": A.users, "logged_in": len(users), "duration_s": A.duration, "login_s": round(login_s, 1), "heavy_parallel": A.heavy, "endpoints": {}}
+    report = {"profile": A.profile, "ramp_s": A.ramp if A.profile == "client" else None, "websocket": ws_stats, "users": A.users, "logged_in": len(users), "duration_s": A.duration, "login_s": round(login_s, 1), "heavy_parallel": A.heavy, "endpoints": {}}
     total = bad5 = 0
     for k, xs in sorted(lat.items()):
         n = len(xs); c5 = sum(v for code, v in codes[k].items() if code >= 500 or code == 0); total += n; bad5 += c5
@@ -216,7 +290,7 @@ async def main() -> int:
                                   "codes": dict(codes[k]), "errors_5xx_or_net": c5}
     user_total = sum(len(v) for k, v in lat.items() if not k.startswith(("heavy", "setup")))
     user_bad = sum(sum(v for code, v in codes[k].items() if code >= 500 or code == 0) for k in lat if not k.startswith(("heavy", "setup")))
-    allu = [x for k, v in lat.items() if not k.startswith(("heavy", "setup", "login", "join", "leave")) for x in v]          # установившийся режим: без пика входа и подключения к комнатам
+    allu = [x for k, v in lat.items() if not k.startswith(("heavy", "setup", "login", "join", "leave", "resolve", "avatars", "floor", "hands", "client_event")) for x in v]          # установившийся режим: без пика входа и подключения к комнатам
     report["total_requests"], report["errors_5xx_or_net"] = total, bad5
     report["user_requests"], report["user_errors_pct"] = user_total, round(100 * user_bad / max(1, user_total), 3)
     report["user_latency_ms"] = {"p50": round(pct(allu, .5) * 1000), "p95": round(pct(allu, .95) * 1000), "p99": round(pct(allu, .99) * 1000)}

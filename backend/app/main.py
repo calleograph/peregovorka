@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
+from starlette.datastructures import MutableHeaders
 
 from .services.avatars import AvatarStore
 from .services.room_icons import RoomIconStore
@@ -79,6 +80,54 @@ def make_redis(settings: Settings) -> Redis:
     plan = pool_plan(settings, background=False)
     limit = settings.redis_max_connections or max(200, 3 * (plan["pool_size"] + plan["max_overflow"]))
     return Redis(connection_pool=BlockingConnectionPool.from_url(settings.effective_redis_url, max_connections=limit, timeout=settings.db_pool_timeout_s, decode_responses=True))
+
+
+class RequestContext:
+    """Идентификатор запроса, контекст журнала аудита и базы, заголовки безопасности, строка журнала на каждый запрос API.
+    Чистый ASGI, а не @app.middleware("http"): тот запускает обработчик отдельной задачей с потоками памяти — заметная доля цены лёгкого запроса."""
+
+    def __init__(self, app, settings: Settings):
+        self.app, self.settings = app, settings
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        path = scope["path"]
+        incoming = request.headers.get("x-request-id", "")
+        rid = incoming if _RID_RE.match(incoming) else uuid.uuid4().hex[:16]
+        token = request_id_var.set(rid)
+        ctx_token = audit_ctx.set({"ip": client_ip(request), "user_agent": (request.headers.get("user-agent") or "")[:300] or None,
+                                   "session": session_fingerprint(request.cookies.get(self.settings.cookie_name))})
+        started = time.perf_counter()
+        db_ctx = db_health.db_context.set(f"{scope['method']} {path}")
+        status = 0
+
+        async def send_with_headers(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+                h = MutableHeaders(scope=message)
+                h["X-Request-ID"] = rid
+                h.setdefault("X-Content-Type-Options", "nosniff")
+                h.setdefault("Referrer-Policy", "same-origin")
+                if path.startswith("/api/"):
+                    h.setdefault("Cache-Control", "no-store")  # ответы API (персональные данные, токены) не кэшируются
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_headers)
+        except Exception:
+            log.exception("Необработанная ошибка", extra={"path": path, "method": scope["method"]})
+            raise
+        finally:
+            request_id_var.reset(token)
+            audit_ctx.reset(ctx_token)
+            db_health.db_context.reset(db_ctx)
+        if path.startswith("/api/") and not path.startswith("/api/v1/health"):
+            log.info("http", extra={"method": scope["method"], "path": path, "status": status,
+                                    "ms": int((time.perf_counter() - started) * 1000), "request_id_echo": rid})
 
 
 def create_app(
@@ -309,33 +358,7 @@ def create_app(
         openapi_url="/api/v1/openapi.json" if settings.docs_enabled else None,
     )
 
-    @app.middleware("http")
-    async def request_context(request: Request, call_next):
-        incoming = request.headers.get("x-request-id", "")
-        rid = incoming if _RID_RE.match(incoming) else uuid.uuid4().hex[:16]
-        token = request_id_var.set(rid)
-        ctx_token = audit_ctx.set({"ip": client_ip(request), "user_agent": (request.headers.get("user-agent") or "")[:300] or None,
-                                   "session": session_fingerprint(request.cookies.get(settings.cookie_name))})
-        started = time.perf_counter()
-        db_ctx = db_health.db_context.set(f"{request.method} {request.url.path}")
-        try:
-            response = await call_next(request)
-        except Exception:
-            log.exception("Необработанная ошибка", extra={"path": request.url.path, "method": request.method})
-            raise
-        finally:
-            request_id_var.reset(token)
-            audit_ctx.reset(ctx_token)
-            db_health.db_context.reset(db_ctx)
-        response.headers["X-Request-ID"] = rid
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
-        if request.url.path.startswith("/api/"):
-            response.headers.setdefault("Cache-Control", "no-store")  # ответы API (персональные данные, токены) не кэшируются
-        if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/v1/health"):
-            log.info("http", extra={"method": request.method, "path": request.url.path, "status": response.status_code,
-                                    "ms": int((time.perf_counter() - started) * 1000), "request_id_echo": rid})
-        return response
+    app.add_middleware(RequestContext, settings=settings)
 
     from fastapi.responses import JSONResponse as _JSON
     from sqlalchemy import exc as sa_exc

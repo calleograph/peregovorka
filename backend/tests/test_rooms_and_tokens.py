@@ -136,6 +136,30 @@ def test_join_works_when_asr_is_down(client):
     assert r.json()["checks"]["postgres"]["ok"] and r.json()["checks"]["redis"]["ok"]
 
 
+def test_readiness_is_shared_between_callers(client, monkeypatch):
+    """Каждый участник комнаты опрашивает /health/ready: проверка зависимостей (LiveKit, служебный пул базы) — не чаще раза в READY_TTL_S на процесс."""
+    from app.api import health
+    calls = []
+
+    async def fake(app):
+        calls.append(1)
+        return {"status": "ready", "checks": {}}, 200
+    monkeypatch.setattr(health, "_ready_check", fake)
+    for _ in range(5):
+        assert client.get("/api/v1/health/ready").status_code == 200
+    assert len(calls) == 1
+    st = client.app_obj.state
+    st.ready_cache = (st.ready_cache[0] - health.READY_TTL_S, *st.ready_cache[1:])      # время истекло — следующий вызов проверяет заново
+    client.get("/api/v1/health/ready")
+    assert len(calls) == 2
+    st.ready_cache = (st.ready_cache[0] - health.READY_TTL_S, *st.ready_cache[1:])
+    client.portal.call(st.ready_lock.acquire)          # проверка «идёт» — ответ без ожидания, прежним результатом
+    try:
+        assert client.get("/api/v1/health/ready").json()["status"] == "ready" and len(calls) == 2
+    finally:
+        client.portal.call(st.ready_lock.release)
+
+
 def test_manual_end_stops_asr_and_blocks_foreign_users(client):
     room = make_room(client)
     login(client, "alice")

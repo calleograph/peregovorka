@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..auth.deps import SessionUser
 from ..config import origin_allowed
-from ..models import Meeting, MeetingParticipant
+from ..models import MEETING_LITE, Meeting, MeetingParticipant
 from ..services import events, roles
 from ..services.access import can_access_meeting
 
@@ -31,7 +31,7 @@ GUEST_AUTH_TIMEOUT = 10
 async def _can_subscribe(app, su: SessionUser | None, guest, meeting_id: uuid.UUID) -> tuple[bool, bool]:
     """(можно ли подписаться, руководитель ли подписчик). Руководителям отдаются события, помеченные `leaders_only` (закрытая доска)."""
     async with app.state.session_maker() as db:
-        meeting = await db.get(Meeting, meeting_id)
+        meeting = await db.get(Meeting, meeting_id, options=MEETING_LITE)   # во встрече бывают сотни участников, а подписывается каждый
         if meeting is None:
             return False, False
         if guest is not None:
