@@ -13,6 +13,7 @@ const STATE: Record<string, string> = { waiting: "ждёт начала", open: 
  */
 const EVENT_LABEL: Record<string, string> = {
   addin_ok: "конференция добавлена", addin_error: "ошибка надстройки", addin_legacy: "кнопка старого манифеста (обновите манифест)", addin_login_failed: "вход в панели не выполнен",
+  addin_boot: "панель открыта (среда клиента)", addin_ready: "панель запущена Office", addin_init_timeout: "Office не запустил панель (причина в сообщении)", addin_init_failed: "панель не запустилась",
 };
 
 export default function OutlookAdmin() {

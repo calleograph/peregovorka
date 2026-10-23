@@ -23,9 +23,25 @@
     done({ error: text, code: code });
   }
 
+  /* fetch, а где его нет (Internet Explorer 11) — XMLHttpRequest с тем же видом ответа ({status, json()}) */
+  function request(url, opts) {
+    if (typeof window.fetch === "function") return fetch(url, opts);
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest(), h, hs = (opts && opts.headers) || {};
+      x.open((opts && opts.method) || "GET", url, true);
+      x.withCredentials = true;
+      for (h in hs) { if (hs.hasOwnProperty(h)) x.setRequestHeader(h, hs[h]); }
+      x.onload = function () {
+        resolve({ status: x.status, json: function () { return new Promise(function (ok, bad) { try { ok(JSON.parse(x.responseText || "{}")); } catch (e) { bad(e); } }); } });
+      };
+      x.onerror = function () { reject(new Error("network")); };
+      x.send((opts && opts.body) || null);
+    });
+  }
+
   function get(url, opts) {
     /* сервер может зависнуть за прокси: окно не ждёт дольше 20 с */
-    return Promise.race([fetch(url, opts), new Promise(function (_, reject) { setTimeout(function () { reject(new Error("timeout")); }, 20000); })]);
+    return Promise.race([request(url, opts), new Promise(function (_, reject) { setTimeout(function () { reject(new Error("timeout")); }, 20000); })]);
   }
 
   function run() {
