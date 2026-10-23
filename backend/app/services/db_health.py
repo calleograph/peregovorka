@@ -22,6 +22,7 @@ db_context: contextvars.ContextVar[str] = contextvars.ContextVar("db_context", d
 class DbStats:
     pool_timeouts: int = 0              # запросы, которым не хватило соединения (ответили 503)
     db_unavailable: int = 0             # ответы 503 из-за недоступности PostgreSQL
+    redis_unavailable: int = 0          # ответы 503 из-за недоступности Redis (после повторов клиента)
     long_holds: int = 0                 # соединения, удержанные дольше порога
     longest_hold_s: float = 0.0
     last_long_hold: dict | None = None
@@ -91,7 +92,7 @@ async def pg_activity(engine: AsyncEngine | None) -> dict:
 
 
 async def snapshot(stats: DbStats, health_engine: AsyncEngine | None) -> dict:
-    out: dict = {"pools": {k: pool_info(e) for k, e in stats.engines.items()}, "pool_timeouts": stats.pool_timeouts, "db_unavailable": stats.db_unavailable,
+    out: dict = {"pools": {k: pool_info(e) for k, e in stats.engines.items()}, "pool_timeouts": stats.pool_timeouts, "db_unavailable": stats.db_unavailable, "redis_unavailable": stats.redis_unavailable,
                  "long_holds": stats.long_holds, "longest_hold_s": stats.longest_hold_s, "last_long_hold": stats.last_long_hold}
     try:
         out["postgres"] = {"ok": True, **await asyncio.wait_for(pg_activity(health_engine), 4)}

@@ -177,3 +177,18 @@ def test_manual_end_stops_asr_and_blocks_foreign_users(client):
     again = client.post(f"/api/v1/rooms/{room['id']}/join", json={}).json()["meeting_id"]
     assert again != mid
     assert STAFF_GROUP
+
+
+def test_redis_outage_is_503_with_retry_after_not_500(client, monkeypatch):
+    """Redis недоступен дольше повторов клиента: запрос получает 503 с Retry-After (а не 500 с трассировкой) и учитывается в «Производительности»."""
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    login(client, "alice")
+    app = client.app_obj
+
+    async def down(*a, **kw):
+        raise RedisConnectionError("Error 111 connecting")
+    monkeypatch.setattr(app.state.sessions, "get", down)
+    r = client.get("/api/v1/rooms")
+    assert r.status_code == 503 and r.headers.get("Retry-After") == "5"
+    assert app.state.db_stats.redis_unavailable == 1

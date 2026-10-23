@@ -9,6 +9,8 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
+import socket
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -19,7 +21,9 @@ KEY = "peregovorka:background-leader"
 
 class Leader:
     def __init__(self, redis: Any, lease_s: float = 30, instance_id: str | None = None, poll_s: float | None = None):
-        self._r, self.lease_s, self.id = redis, (max(10, lease_s) if poll_s is None else lease_s), instance_id or uuid.uuid4().hex[:12]
+        # узел и процесс в идентификаторе: в «Производительности» и в Redis видно, какой контейнер и процесс сейчас ведущий
+        self._r, self.lease_s = redis, (max(10, lease_s) if poll_s is None else lease_s)
+        self.id = instance_id or f"{socket.gethostname()[:24]}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
         self._poll = poll_s or self.lease_s / 3
         self._items: list[tuple[str, Callable[[], Any], Callable[[], Awaitable[None] | None] | None]] = []
         self._running: dict[str, Any] = {}

@@ -5,7 +5,7 @@
 Что НЕ проверяет: медиа (LiveKit) — это отдельное испытание с настоящим SFU и клиентами; здесь — приложение, база и очереди."""
 from __future__ import annotations
 
-import argparse, asyncio, json, random, statistics, sys, time, uuid
+import argparse, asyncio, contextlib, json, random, statistics, sys, time, uuid
 from collections import defaultdict
 
 import aiohttp
@@ -53,7 +53,9 @@ class Client:
 
 lat: dict[str, list[float]] = defaultdict(list); codes: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int)); errors: list[str] = []
 pg_samples: list[dict] = []; res_samples: list[dict] = []
-ws_stats = {"opened": 0, "failed": 0, "events": 0, "dropped": 0}
+ws_stats = {"opened": 0, "failed": 0, "events": 0, "dropped": 0, "reconnected": 0}
+T0 = [0.0]                                    # начало установившегося режима: от него считается шкала ошибок по 5 с
+timeline: dict[int, list[int]] = defaultdict(lambda: [0, 0])
 
 
 class VU:
@@ -69,8 +71,12 @@ class VU:
             r = await self.c.request(method, A.url + path, headers=h, timeout=60, **kw)
         except Exception as exc:  # noqa: BLE001
             lat[kind].append(time.perf_counter() - t0); codes[kind][0] += 1; errors.append(f"{kind}: {type(exc).__name__}")
+            if T0[0]:
+                timeline[int((time.monotonic() - T0[0]) // 5)][1] += 1
             return None
         lat[kind].append(time.perf_counter() - t0); codes[kind][r.status_code] += 1
+        if T0[0]:
+            timeline[int((time.monotonic() - T0[0]) // 5)][1 if r.status_code >= 500 else 0] += 1
         if r.status_code >= 400:
             errors.append(f"{kind}: HTTP {r.status_code} {r.text[:90]}")
         return r
@@ -147,22 +153,34 @@ async def client_room_loop(u: VU, room: dict, stop: float) -> None:
     for ev in ("join_attempt", "join_ok", "backend_ws_connected"):
         await u.req("client_event", "POST", "/api/v1/client/events", json={"event": ev, "meeting_id": mid})
     ws = None
-    try:
-        ws = await u.c.s.ws_connect(A.url.replace("http", "ws", 1) + "/api/v1/ws", headers={"Cookie": u.cookie}, heartbeat=None)
-        await ws.send_str(json.dumps({"type": "subscribe", "meeting_id": mid}))
+
+    async def connect() -> bool:
+        nonlocal ws
+        try:
+            ws = await u.c.s.ws_connect(A.url.replace("http", "ws", 1) + "/api/v1/ws", headers={"Cookie": u.cookie}, heartbeat=None)
+            await ws.send_str(json.dumps({"type": "subscribe", "meeting_id": mid}))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            ws_stats["failed"] += 1; errors.append(f"ws: {type(exc).__name__}"); ws = None
+            return False
+    if await connect():
         ws_stats["opened"] += 1
-    except Exception as exc:  # noqa: BLE001
-        ws_stats["failed"] += 1; errors.append(f"ws: {type(exc).__name__}"); ws = None
 
     async def drain():
-        while ws is not None and not ws.closed:
+        while time.monotonic() < stop:
+            if ws is None or ws.closed:                      # как браузер: переподключение через 1–3 с и повторная подписка
+                await asyncio.sleep(random.uniform(1, 3))
+                if time.monotonic() < stop and await connect():
+                    ws_stats["reconnected"] += 1
+                continue
             m = await ws.receive()
             if m.type == aiohttp.WSMsgType.TEXT:
                 ws_stats["events"] += 1
             elif m.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                 if time.monotonic() < stop:
                     ws_stats["dropped"] += 1
-                return
+                with contextlib.suppress(Exception):
+                    await ws.close()
     reader = asyncio.create_task(drain())
     nxt = {"ready": time.monotonic() + random.uniform(0, 15), "metrics": time.monotonic() + random.uniform(0, 30), "ping": time.monotonic() + 30,
            "chat": time.monotonic() + random.expovariate(1 / 120)}
@@ -270,6 +288,7 @@ async def main() -> int:
         login_s = time.monotonic() - t0
         print(f"вошло {len(users)} из {A.users} за {login_s:.1f} с", flush=True)
         stop = time.monotonic() + A.duration
+        T0[0] = time.monotonic()
         tasks = [asyncio.create_task(sample_pg(stop + 5)), asyncio.create_task(sample_res(stop)), asyncio.create_task(admin_loop(c, stop))]
         tasks += [asyncio.create_task(heavy_loop(c, seeds, stop, k)) for k in range(A.heavy)]
         if A.profile == "client":
@@ -300,6 +319,7 @@ async def main() -> int:
     if res_samples:
         report["server"] = {"cpu_pct_avg": round(statistics.mean(s["cpu"] for s in res_samples)), "cpu_pct_max": round(max(s["cpu"] for s in res_samples)), "rss_mb_max": round(max(s["rss_mb"] for s in res_samples))}
     report["error_samples"] = sorted(set(errors))[:8]
+    report["timeline_5s"] = [[k * 5, v[0], v[1]] for k, v in sorted(timeline.items())]       # [секунда, ответов без 5xx, 5xx и ошибок сети]
     print(json.dumps(report, ensure_ascii=False, indent=1))
     if A.out:
         open(A.out, "w", encoding="utf-8").write(json.dumps(report, ensure_ascii=False, indent=1))
