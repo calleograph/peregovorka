@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,6 +21,7 @@ from ..models import Recording, TranscriptSegment
 from ..services import profanity
 from ..services.segments import segment_to_dict
 from ..services.audit import write_audit
+from ..services.transfer import READ_QUIET_S
 from ..services.reconcile import mark_missing
 from ..services.storage import StorageError, StorageNotFound
 from .meetings import can_edit_protocol, get_meeting_for_user
@@ -157,12 +159,16 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
                           target_type="recording", target_id=str(rec.id), ip=client_ip(request), details={"kind": rec.kind, "meeting_id": str(meeting.id)})
         await db.commit()
     ps = request.app.state.protocols
-    ps.touch_read(rec.id)                                    # пока читают (и 2 минуты после), перенос между хранилищами не удаляет файл-источник
+    await ps.mark_read(rec.id, READ_QUIET_S)                 # пока читают (и 2 минуты после), перенос между хранилищами не удаляет файл-источник — в любом процессе
 
     async def tracked():
         ps.read_begin(rec.id)
+        marked = time.monotonic()
         try:
             async for chunk in iterate_in_threadpool(reader(start, end)):
+                if time.monotonic() - marked > 30:          # долгое скачивание: признак продлевается
+                    marked = time.monotonic()
+                    await ps.mark_read(rec.id, READ_QUIET_S)
                 yield chunk
         finally:
             ps.read_end(rec.id)

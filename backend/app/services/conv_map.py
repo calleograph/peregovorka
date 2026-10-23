@@ -517,15 +517,15 @@ class MapService:
                 raise
         return rec
 
-    def start(self, map_id: uuid.UUID) -> None:
-        if map_id in self._active:                             # задание этой карты уже запущено (одновременный повторный запрос): второго не создаём
+    async def start(self, map_id: uuid.UUID) -> None:
+        if map_id in self._active or not await self.ps.claim(f"map-{map_id}"):     # уже запущено здесь или в другом процессе: второго задания не создаём
             return
         self._active.add(map_id)
         self.ps.spawn(self.run(map_id), f"map-{map_id}")
 
     async def refresh(self, db: AsyncSession, rec: ConversationMap | None) -> ConversationMap | None:
-        """Запись «в очереди/строится», которой нет среди задач этого процесса (сервис перезапускали), — не вечное «Обрабатывается», а понятная ошибка."""
-        if rec is not None and rec.status in ("pending", "running") and rec.id not in self._active:
+        """Запись «в очереди/строится», задания которой нет ни в одном процессе (сервис перезапускали), — не вечное «Обрабатывается», а понятная ошибка."""
+        if rec is not None and rec.status in ("pending", "running") and rec.id not in self._active and not await self.ps.job_alive(f"map-{rec.id}"):
             rec.status, rec.error = "failed", "Формирование прервано перезапуском сервиса. Нажмите «Пересоздать»."
             rec.meta = {**(rec.meta or {}), "failed": True, "interrupted": True}
             await db.commit()
@@ -542,7 +542,7 @@ class MapService:
             if not want or not await self.ps.has_materials(meeting_id):
                 return
             rec = await self.request(db, meeting_id, "auto")
-        self.start(rec.id)
+        await self.start(rec.id)
 
     # ------------------------------------------------------------------ выполнение
     async def run(self, map_id: uuid.UUID) -> None:

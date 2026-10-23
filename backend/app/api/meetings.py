@@ -271,7 +271,7 @@ async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUse
                              .order_by(Protocol.created_at.desc()))).scalars().all()
     can = can_edit_protocol(meeting, su)
     ps = request.app.state.protocols
-    return [_protocol_dict(p, can_edit=can, live=ps.live_progress(p.id)) for p in rows]
+    return [_protocol_dict(p, can_edit=can, live=await ps.live_progress(p.id) if p.status in ("pending", "running") else None) for p in rows]
 
 
 @router.get("/{meeting_id}/protocols/default-instruction")
@@ -350,7 +350,7 @@ async def cancel_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
     if p.status not in ("pending", "running"):
         raise HTTPException(status_code=409, detail="Формирование уже завершено")
     ps = request.app.state.protocols
-    live = ps.cancel(protocol_id)
+    live = await ps.cancel(protocol_id)
     if not live:
         await ps.recover_orphans()                       # живой задачи нет (сервер перезапускали): документ закрывается как прерванный
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.cancel", target_type="meeting", target_id=str(meeting_id),
@@ -371,7 +371,7 @@ async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUI
 async def get_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user),
                        db: AsyncSession = Depends(get_db)):
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
-    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su), live=request.app.state.protocols.live_progress(p.id))
+    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su), live=await request.app.state.protocols.live_progress(p.id) if p.status in ("pending", "running") else None)
 
 
 @router.patch("/{meeting_id}/protocols/{protocol_id}")

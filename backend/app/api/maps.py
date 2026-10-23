@@ -87,7 +87,7 @@ async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.recreate" if again else "map.create", target_type="meeting",
                       target_id=str(meeting_id), ip=client_ip(request), details={"model": plan["model"], "model_source": plan["source"]})
     await db.commit()
-    maps.start(rec.id)
+    await maps.start(rec.id)
     return {"status": "pending"}
 
 

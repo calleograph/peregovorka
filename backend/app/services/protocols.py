@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 import uuid
@@ -43,6 +44,14 @@ from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
 log = logging.getLogger("app.protocols")
+
+SHARED_JOBS = ("protocol-", "map-")      # задания, состояние которых видят все процессы (реестр в Redis)
+JOB_ALIVE_TTL_S, JOB_BEAT_S = 20, 5
+FILES_BUSY_TTL_S = 6 * 3600              # страховка: признак «файлы обрабатываются» упавшего процесса истекает сам
+
+
+def job_key(name: str) -> str:
+    return f"job:alive:{name}"
 
 
 EXTERNAL_FRAGMENT_CHARS = 12000      # размер фрагмента для структурного режима внешней модели (проходы по фрагментам, а не одним огромным запросом)
@@ -224,6 +233,8 @@ class ProtocolService:
         self._tasks: set[asyncio.Task] = set()
         self._live: dict[uuid.UUID, Budget] = {}          # идущие задания: время и этап для интерфейса
         self._cancel_requested: set[uuid.UUID] = set()    # задания, которые остановил пользователь (остановка сервера — не отмена)
+        self.redis = None                          # реестр живых заданий для всех процессов и экземпляров (задаётся при запуске приложения)
+        self._beats: set[asyncio.Task] = set()
         self._reads: dict[uuid.UUID, int] = {}
         self._last_read: dict[uuid.UUID, float] = {}
         self._busy: dict[uuid.UUID, int] = {}      # встречи, чьи файлы сейчас обрабатываются (финализация, сведение, выгрузка): их нельзя переносить между хранилищами
@@ -239,7 +250,64 @@ class ProtocolService:
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        if self.redis is not None and name.startswith(SHARED_JOBS):
+            beat = asyncio.create_task(self._beat(task, name), name=f"beat-{name}")
+            self._beats.add(beat)
+            beat.add_done_callback(self._beats.discard)
         return task
+
+    # ------------------------------------------- живые задания во всех процессах (BACKEND_WORKERS > 1, несколько экземпляров)
+    async def _beat(self, task: asyncio.Task, name: str) -> None:
+        """Пока задание идёт, его ключ в Redis продлевается (с ходом выполнения для интерфейса), а просьба остановить его из другого процесса — исполняется здесь.
+        Процесс упал — ключ истекает через JOB_ALIVE_TTL_S, и задание считается прерванным."""
+        key = job_key(name)
+        warned = False
+        try:
+            while not task.done():
+                try:
+                    await self.redis.set(key, json.dumps(self._local_progress(name)), ex=JOB_ALIVE_TTL_S)
+                    if await self.redis.get(f"job:cancel:{name}"):
+                        await self.redis.delete(f"job:cancel:{name}")
+                        self._cancel_local(name)
+                except Exception:  # noqa: BLE001 — Redis недоступен: задание продолжается, страдают только сведения для других процессов
+                    if not warned:
+                        log.warning("Не удалось отметить живое задание в Redis", extra={"job": name}, exc_info=True)
+                        warned = True
+                await asyncio.wait({task}, timeout=JOB_BEAT_S)
+        finally:
+            with contextlib.suppress(Exception):
+                await self.redis.delete(key)
+
+    def _local_task(self, name: str) -> asyncio.Task | None:
+        return next((t for t in self._tasks if t.get_name() == name and not t.done()), None)
+
+    def _local_progress(self, name: str) -> dict | None:
+        if not name.startswith("protocol-"):
+            return None
+        b = self._live.get(uuid.UUID(name.removeprefix("protocol-")))
+        return None if b is None else {"elapsed_s": round(b.elapsed()), "limit_s": int(b.max_s), "target_s": int(b.target_s), **b.progress}
+
+    async def job_alive(self, name: str) -> bool:
+        """Задание идёт в этом или любом другом процессе."""
+        if self._local_task(name) is not None:
+            return True
+        if self.redis is None:
+            return False
+        try:
+            return bool(await self.redis.exists(job_key(name)))
+        except Exception:  # noqa: BLE001 — не знаем наверняка: не объявляем задание прерванным
+            return True
+
+    async def claim(self, name: str) -> bool:
+        """Занять задание до запуска (повторный запрос в другом процессе не запустит второе такое же). False — уже идёт."""
+        if self._local_task(name) is not None:
+            return False
+        if self.redis is None:
+            return True
+        try:
+            return bool(await self.redis.set(job_key(name), "null", nx=True, ex=JOB_ALIVE_TTL_S))
+        except Exception:  # noqa: BLE001
+            return True
 
     async def drain(self) -> None:
         while self._tasks:      # задачи могут порождать другие (финализация → карта разговора): ждём, пока не опустеет
@@ -305,9 +373,6 @@ class ProtocolService:
         self._reads[rec_id] = self._reads.get(rec_id, 0) + 1
         self._last_read[rec_id] = time.monotonic()
 
-    def touch_read(self, rec_id: uuid.UUID) -> None:
-        self._last_read[rec_id] = time.monotonic()
-
     def read_end(self, rec_id: uuid.UUID) -> None:
         n = self._reads.get(rec_id, 0) - 1
         if n > 0:
@@ -326,6 +391,7 @@ class ProtocolService:
 
     def hold(self, meeting_id: uuid.UUID) -> None:
         self._busy[meeting_id] = self._busy.get(meeting_id, 0) + 1
+        self._shared(self._busy_shared(meeting_id, +1))
 
     def release(self, meeting_id: uuid.UUID) -> None:
         n = self._busy.get(meeting_id, 0) - 1
@@ -333,9 +399,59 @@ class ProtocolService:
             self._busy[meeting_id] = n
         else:
             self._busy.pop(meeting_id, None)
+        self._shared(self._busy_shared(meeting_id, -1))
 
     def is_busy(self, meeting_id: uuid.UUID) -> bool:
         return meeting_id in self._busy
+
+    # «файлы встречи обрабатываются» и «запись слушают» — для переноса между хранилищами, который выполняет ведущий процесс: обработка и
+    # воспроизведение идут в любом процессе, поэтому признаки дублируются в Redis (процесс упал — признак истекает сам; перенос лишь подождёт)
+    def _shared(self, coro) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:                       # вызов вне цикла событий (тесты, синхронный код): признак только в этом процессе
+            loop = None
+        if self.redis is None or loop is None:
+            coro.close()
+            return
+        task = loop.create_task(coro)
+        self._beats.add(task)
+        task.add_done_callback(self._beats.discard)
+
+    async def _busy_shared(self, meeting_id: uuid.UUID, delta: int) -> None:
+        try:
+            key = f"files:busy:{meeting_id}"
+            async with self.redis.pipeline(transaction=False) as p:
+                p.incrby(key, delta)
+                p.expire(key, FILES_BUSY_TTL_S)
+                n, _ = await p.execute()
+            if int(n) <= 0:
+                await self.redis.delete(key)
+        except Exception:  # noqa: BLE001
+            log.warning("Не удалось отметить обработку файлов встречи в Redis", exc_info=True)
+
+    async def mark_read(self, rec_id: uuid.UUID, quiet_s: float) -> None:
+        """Запись слушают/скачивают: в течение quiet_s её файл-источник не удаляется ни одним процессом."""
+        self._last_read[rec_id] = time.monotonic()
+        if self.redis is not None:
+            with contextlib.suppress(Exception):
+                await self.redis.set(f"files:read:{rec_id}", "1", ex=int(quiet_s))
+
+    async def files_busy(self, meeting_id: uuid.UUID) -> bool:
+        if self.is_busy(meeting_id) or self.redis is None:
+            return self.is_busy(meeting_id)
+        try:
+            return int(await self.redis.get(f"files:busy:{meeting_id}") or 0) > 0
+        except Exception:  # noqa: BLE001 — не знаем: считаем занятыми, перенос подождёт
+            return True
+
+    async def recently_read(self, rec_id: uuid.UUID, quiet_s: float) -> bool:
+        if self.is_read(rec_id, quiet_s) or self.redis is None:
+            return self.is_read(rec_id, quiet_s)
+        try:
+            return bool(await self.redis.exists(f"files:read:{rec_id}"))
+        except Exception:  # noqa: BLE001
+            return True
 
     async def finalize(self, meeting_id: uuid.UUID) -> None:
         self.hold(meeting_id)
@@ -695,32 +811,46 @@ class ProtocolService:
         self._live.pop(protocol_id, None)
         await self._notify_document(protocol_id)
 
-    def live_progress(self, protocol_id: uuid.UUID) -> dict | None:
-        """Ход идущего задания для интерфейса: прошедшее время, предел, этап и обработанные фрагменты. None — задание не идёт."""
-        b = self._live.get(protocol_id)
-        if b is None:
+    async def live_progress(self, protocol_id: uuid.UUID) -> dict | None:
+        """Ход идущего задания для интерфейса: прошедшее время, предел, этап и обработанные фрагменты — из любого процесса. None — задание не идёт или ещё в очереди."""
+        name = f"protocol-{protocol_id}"
+        if self._local_task(name) is not None or self.redis is None:
+            return self._local_progress(name)
+        try:
+            raw = await self.redis.get(job_key(name))
+        except Exception:  # noqa: BLE001
             return None
-        return {"elapsed_s": round(b.elapsed()), "limit_s": int(b.max_s), "target_s": int(b.target_s), **b.progress}
+        return json.loads(raw) if raw else None
 
-    def cancel(self, protocol_id: uuid.UUID) -> bool:
-        """Остановить формирование по просьбе пользователя: идущий запрос к модели отменяется (соединение закрывается), новые не отправляются.
-        False — живой задачи нет (документ уже готов или задание осиротело: его закрывает `recover_orphans`)."""
-        task = next((t for t in self._tasks if t.get_name() == f"protocol-{protocol_id}"), None)
-        if task is None or task.done():
+    def _cancel_local(self, name: str) -> bool:
+        task = self._local_task(name)
+        if task is None:
             return False
-        self._cancel_requested.add(protocol_id)
+        if name.startswith("protocol-"):
+            self._cancel_requested.add(uuid.UUID(name.removeprefix("protocol-")))
         task.cancel()
+        return True
+
+    async def cancel(self, protocol_id: uuid.UUID) -> bool:
+        """Остановить формирование по просьбе пользователя: идущий запрос к модели отменяется (соединение закрывается), новые не отправляются.
+        Задание в другом процессе останавливает его владелец (флаг в Redis, не позже JOB_BEAT_S). False — живой задачи нет нигде
+        (документ уже готов или задание осиротело: его закрывает `recover_orphans`)."""
+        name = f"protocol-{protocol_id}"
+        if self._cancel_local(name):
+            return True
+        if not await self.job_alive(name):
+            return False
+        await self.redis.set(f"job:cancel:{name}", "1", ex=JOB_ALIVE_TTL_S * 3)
         return True
 
     async def recover_orphans(self) -> int:
         """Документы, которые числятся «в очереди» или «в работе», но живой задачи у них нет (сервер перезапускали): переводятся в конечное состояние.
         Стенограммы и материалы встречи не затрагиваются; пользователь может сформировать документ заново."""
-        live = {t.get_name() for t in self._tasks}
         n = 0
         async with self._sm() as db:
             rows = (await db.execute(select(Protocol).where(Protocol.status.in_(("pending", "running")), Protocol.kind.in_(("protocol", "summary"))))).scalars().all()
             for rec in rows:
-                if f"protocol-{rec.id}" in live:
+                if await self.job_alive(f"protocol-{rec.id}"):        # идёт здесь или в другом процессе/экземпляре — не трогаем
                     continue
                 rec.status, rec.error = "failed", "Формирование прервано перезапуском сервера. Нажмите «Сформировать заново»: стенограмма и материалы встречи не затронуты."
                 rec.meta = {**(rec.meta or {}), "failed": True, "error_code": "interrupted"}

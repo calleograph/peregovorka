@@ -239,7 +239,7 @@ class TransferService:
             raise _skip("встреча ещё идёт")
         if (utcnow() - meeting.ended_at).total_seconds() < SETTLE_S:
             raise _skip("встреча завершилась только что: материалы ещё обрабатываются")
-        if self._ps.is_busy(rec.meeting_id):
+        if await self._ps.files_busy(rec.meeting_id):
             raise _skip("файлы встречи обрабатываются (финализация, сведение общей записи или выгрузка)")
         building = (await db.execute(select(Recording.id).where(Recording.meeting_id == rec.meeting_id, Recording.kind == "mix_audio", Recording.status == "processing").limit(1))).first()
         if building:
@@ -358,7 +358,7 @@ class TransferService:
                 try:
                     if rec is None:
                         item.cleanup_at = None
-                    elif self._ps.is_busy(rec.meeting_id) or self._ps.is_read(rec.id, READ_QUIET_S):
+                    elif await self._ps.files_busy(rec.meeting_id) or await self._ps.recently_read(rec.id, READ_QUIET_S):
                         item.cleanup_at = utcnow() + timedelta(seconds=60)     # файл читают (слушают запись) или обрабатывают — повторим позже
                     elif await self._clean_one(db, rec, direction):
                         removed += 1

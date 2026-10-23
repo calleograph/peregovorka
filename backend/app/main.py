@@ -183,6 +183,7 @@ def create_app(
         app.state.db_stats = db_stats
         app.state.health_engine = health_engine
         app.state.redis = redis
+        protocols.redis = redis                           # реестр живых заданий (протоколы, карты): ход, отмена и «сироты» — во всех процессах
         app.state.event_hub = EventHub(redis)             # единый подписчик Redis для всех WebSocket (services/events.py)
         app.state.event_hub.start()
         app.state.perf = PerfHub(settings, redis, session_maker)          # показатели нагрузки и очередь тяжёлых фоновых задач (services/perf.py)
@@ -318,6 +319,15 @@ def create_app(
             leader.register("auto-update", _task("auto-update", lambda: run_autoupdate(app.state.autoupdate)))
             leader.register("auto-backup", _task("auto-backup", lambda: run_auto_backup(app.state.auto_backup)))
             leader.register("retention", _task("retention", lambda: run_retention(bg_sm, protocols)))
+
+            async def _job_orphans():
+                while True:                                   # процесс-владелец упал: его ключ истёк — документ закрывается как прерванный (раньше — только при перезапуске)
+                    await asyncio.sleep(60)
+                    try:
+                        await protocols.recover_orphans()
+                    except Exception:  # noqa: BLE001
+                        log.warning("Не удалось закрыть прерванные формирования документов", exc_info=True)
+            leader.register("job-orphans", _task("job-orphans", _job_orphans))
             leader.register("asr-model-sync", _task("asr-model-sync", lambda: run_asr_sync(bg_sm, settings_svc, redis)))
             leader.register("journal-retention", _task("journal-retention", lambda: run_journal_retention(journal)))
             leader.register("mail-queue", _task("mail-queue", lambda: run_mail_queue(bg_sm, delivery)))

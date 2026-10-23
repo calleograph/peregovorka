@@ -438,7 +438,7 @@ class DeliveryService:
                     rec = await maps.request(db, meeting_id, "автоматическая рассылка")
                 except Exception:  # noqa: BLE001
                     return
-                maps.start(rec.id)
+                await maps.start(rec.id)
         waited = 0
         while waited < limit_s:
             async with self._sm() as db:
