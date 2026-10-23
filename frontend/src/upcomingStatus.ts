@@ -42,11 +42,11 @@ export function dayLabel(iso: string, now: number, tz?: string): string {
 /** Дата и время встречи: «Сегодня · 15:00–15:30»; через полночь — «Сегодня 23:30 – Завтра 00:30». */
 export function whenLabel(m: Pick<UpcomingMeeting, "start" | "end" | "recurring" | "kind">, now: number, tz?: string): string {
   if (m.kind !== "scheduled") return `Создана ${dayLabel(m.start, now, tz).toLowerCase()} в ${hhmm(m.start, tz)}`;
-  if (m.recurring) return `Повторяющаяся · начало в ${hhmm(m.start, tz)}`;
-  const d1 = dayLabel(m.start, now, tz);
-  if (!m.end) return `${d1} · ${hhmm(m.start, tz)}`;
+  if (m.recurring && !m.end) return `Повторяющаяся · начало в ${hhmm(m.start, tz)}`;
+  const d1 = dayLabel(m.start, now, tz), pre = m.recurring ? "Серия · " : "";       // у серии — ближайшее занятие
+  if (!m.end) return `${pre}${d1} · ${hhmm(m.start, tz)}`;
   const d2 = dayLabel(m.end, now, tz);
-  return d1 === d2 ? `${d1} · ${hhmm(m.start, tz)}–${hhmm(m.end, tz)}` : `${d1} ${hhmm(m.start, tz)} – ${d2} ${hhmm(m.end, tz)}`;
+  return pre + (d1 === d2 ? `${d1} · ${hhmm(m.start, tz)}–${hhmm(m.end, tz)}` : `${d1} ${hhmm(m.start, tz)} – ${d2} ${hhmm(m.end, tz)}`);
 }
 
 /** Состояние и строка отсчёта: «Через 2 ч 15 мин», «Через 18 мин», «Начало через 45 сек», «Встреча идёт · 12 мин». */
@@ -57,7 +57,7 @@ export function meetingState(m: UpcomingMeeting, now: number, tz?: string): { st
     return { state: "live", text: min >= 1 ? `Встреча идёт · ${span(min * 60_000)}` : "Встреча только началась" };
   }
   if (m.kind !== "scheduled") return { state: "open", text: "Комната открыта · сейчас в ней никого нет" };
-  if (m.recurring) return { state: "scheduled", text: "Серия встреч: вход открыт, время — по календарю" };
+  if (m.recurring && !m.end) return { state: "scheduled", text: "Серия встреч: вход открыт, время — по календарю" };
   const start = new Date(m.start).getTime();
   const ended = m.last_ended_at && new Date(m.last_ended_at).getTime() >= start && now >= start;
   if ((m.end && now >= new Date(m.end).getTime()) || ended) {
@@ -71,7 +71,7 @@ export function meetingState(m: UpcomingMeeting, now: number, tz?: string): { st
 
 /** Как часто перерисовывать отсчёт: раз в секунду, только когда у какой-то встречи меньше двух минут до начала; иначе раз в 15 секунд. */
 export function tickMs(items: UpcomingMeeting[], now: number): number {
-  return items.some((m) => !m.cancelled && !m.live && m.kind === "scheduled" && !m.recurring && Math.abs(new Date(m.start).getTime() - now) < 120_000) ? 1000 : 15_000;
+  return items.some((m) => !m.cancelled && !m.live && m.kind === "scheduled" && !!m.end && Math.abs(new Date(m.start).getTime() - now) < 120_000) ? 1000 : 15_000;
 }
 
 /** Кнопка карточки: «Войти» — вход уже открыт и он разрешён; «Открыть встречу» — страница встречи (до открытия — обратный отсчёт); null — кнопки нет. */

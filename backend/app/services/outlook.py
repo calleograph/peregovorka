@@ -258,6 +258,20 @@ async def set_invitees(db: AsyncSession, room: Room, attendees: list[tuple[str, 
     return changed
 
 
+def apply_recurrence(room: Room, raw) -> bool:
+    """Шаблон серии от надстройки (Office.js): у разовой встречи сбрасывается; неверный или отсутствующий — прежний не трогаем."""
+    from . import recurrence as rc  # noqa: PLC0415
+
+    if not room.recurring:
+        changed, room.outlook_recurrence = room.outlook_recurrence is not None, None
+        return changed
+    pat = rc.from_office(raw)
+    if pat is None or pat == room.outlook_recurrence:
+        return False
+    room.outlook_recurrence = pat
+    return True
+
+
 async def cancel(db: AsyncSession, room: Room) -> bool:
     if room.cancelled_at is not None:
         return False

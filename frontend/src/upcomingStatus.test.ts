@@ -41,8 +41,11 @@ describe("Предстоящие встречи: отсчёт и состоян�
     expect(meetingState(m({ cancelled: true, live: { started_at: iso(-1), participants: 1 } }), NOW).state).toBe("cancelled");
   });
 
-  it("серия и временная комната: без ложного отсчёта", () => {
-    expect(meetingState(m({ recurring: true }), NOW).state).toBe("scheduled");
+  it("серия: с известным ближайшим занятием — как разовая встреча (отсчёт, «Серия ·»); без шаблона и временная комната — без ложного отсчёта", () => {
+    expect(meetingState(m({ recurring: true, start: iso(10), end: iso(40), opens_at: null }), NOW)).toEqual({ state: "soon", text: "Через 10 мин" });
+    expect(whenLabel(m({ recurring: true, start: "2026-10-24T07:00:00Z", end: "2026-10-24T08:00:00Z" }), NOW, "UTC")).toBe("Серия · Завтра · 07:00–08:00");
+    expect(meetingState(m({ recurring: true, end: null }), NOW)).toEqual({ state: "scheduled", text: "Серия встреч: вход открыт, время — по календарю" });
+    expect(whenLabel(m({ recurring: true, start: "2026-10-01T07:00:00Z", end: null }), NOW, "UTC")).toBe("Повторяющаяся · начало в 07:00");
     expect(meetingState(m({ kind: "temporary", end: null, opens_at: null }), NOW).state).toBe("open");
   });
 

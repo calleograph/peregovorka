@@ -243,6 +243,17 @@
     return item;
   }
 
+  /** Шаблон серии из Office.js (Recurrence + SeriesTime) — простым объектом для сервера: тип, параметры, даты, время начала, длительность. Сбой — null. */
+  function plainRecurrence(r) {
+    if (!r || !r.recurrenceType) return null;
+    try {
+      var st = r.seriesTime;
+      var call = function (name) { return st && typeof st[name] === "function" ? st[name]() : null; };
+      return { type: r.recurrenceType, props: r.recurrenceProperties || {}, start_date: call("getStartDate"), end_date: call("getEndDate"),
+        start_time: call("getStartTime"), duration: call("getDuration") };
+    } catch (e) { return null; }
+  }
+
   /** Тема, начало, окончание, серия текущей встречи (в окне редактирования — то, что сейчас в форме, даже несохранённое). */
   function readMeeting(item) {
     return Promise.all([
@@ -251,7 +262,7 @@
       asyncCall(function (cb) { item.end.getAsync(cb); }, "meeting"),
       item.recurrence && item.recurrence.getAsync ? asyncCall(function (cb) { item.recurrence.getAsync(cb); }, "meeting").catch(function () { return null; }) : Promise.resolve(null),
     ]).then(function (v) {
-      return { subject: v[0] || "", start: v[1], end: v[2], recurring: !!v[3] };
+      return { subject: v[0] || "", start: v[1], end: v[2], recurring: !!v[3], recurrence: plainRecurrence(v[3]) };
     });
   }
 
@@ -296,6 +307,7 @@
       if (rest) payload.rest_id = rest;
       try { if (item.seriesId) payload.series_id = item.seriesId; } catch (e) { /* не критично */ }
       if (v[2]) payload.attendees = v[2];
+      if (m.recurrence) payload.recurrence = m.recurrence;
       return payload;
     });
   }

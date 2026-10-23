@@ -34,6 +34,8 @@ async def main():
         S.check("блок «Предстоящие встречи» над постоянными переговорками", g["up"] and g["above"], str(g)[:300])
         S.check("временные комнаты и встречи из календаря не попадают в каталог постоянных", not set(g["names"]) & set(g["permNames"]) and "Разбор инцидента" not in g["permNames"], str(g)[:300])
         S.check("статусы различаются: идёт, скоро начнётся, запланирована, отменена", {"Идёт", "Скоро начнётся", "Запланирована", "Отменена"} <= set(g["states"]), str(g["states"]))
+        ser = await A.js("(() => { const c = [...document.querySelectorAll('.upc-card')].find(x => x.querySelector('.upc-title').textContent === 'Еженедельный обзор проектов'); return c ? [c.querySelector('.upc-when').textContent, c.querySelector('.upc-count').textContent] : null; })()")
+        S.check("серия: ближайшее занятие с датой и отсчётом («Серия · …», «Через …»)", bool(ser) and "Серия ·" in ser[0] and "Через" in ser[1], str(ser))
         t1 = await A.js(f"({COUNT_OF})('Встреча через минуту {S.RUN_ID}')"); await asyncio.sleep(3.2); t2 = await A.js(f"({COUNT_OF})('Встреча через минуту {S.RUN_ID}')")
         S.check("отсчёт идёт сам, без перезагрузки: «Начало через N сек» меняется", bool(t1 and t2 and "сек" in t1 and t1 != t2), f"{t1} → {t2}")
         # полный список приглашённых у организатора — с адресами
