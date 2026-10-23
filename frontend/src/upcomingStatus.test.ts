@@ -6,7 +6,7 @@ const NOW = Date.parse("2026-10-23T12:00:00Z");
 const iso = (minFromNow: number) => new Date(NOW + minFromNow * 60_000).toISOString();
 const m = (over: Partial<UpcomingMeeting> = {}): UpcomingMeeting => ({
   id: "1", slug: "ol-x", name: "Планёрка", kind: "scheduled", start: iso(60), end: iso(90), opens_at: iso(50), recurring: false, organizer: "Алиса", cancelled: false,
-  live: null, last_ended_at: null, invitees: { count: 0, names: [], can_list: true }, mine: true, can_join: true, can_manage: true, has_password: false, url: "/m/x", sync: null, ...over,
+  live: null, last_ended_at: null, invitees: { count: 0, names: [], can_list: true }, mine: true, can_join: true, can_manage: true, has_password: false, url: "/m/x", sync: null, guest_token: null, ...over,
 });
 
 describe("Предстоящие встречи: отсчёт и состояние", () => {
