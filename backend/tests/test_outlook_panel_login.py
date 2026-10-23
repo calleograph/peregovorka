@@ -64,3 +64,27 @@ def test_deactivated_user_loses_addin_access_immediately(client):
     _anon(client)
     assert client.get(f"{O}/me", headers=h).status_code == 401
     assert client.post(f"{O}/meetings", json=_body(), headers=h).status_code == 401
+
+
+def test_addin_self_diagnostics_beacon_is_logged_without_login_and_sanitized(client):
+    """boot.js: маячок запуска надстройки без входа — в журнал Outlook с техническими признаками; посторонние события и символы отбрасываются."""
+    from app.models import EventLog
+    from sqlalchemy import select
+
+    r = client.get("/api/v1/outlook/diag", params={"e": "init_timeout", "pg": "taskpane", "dm": "7", "p": "undefined", "f": "undefined", "o": "undefined",
+                                                    "oc": "0", "ms": "10003", "why": "режим совместимости <script>alert(1)</script>"},
+                   headers={"User-Agent": "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 10.0; Trident/7.0; Microsoft Outlook 16.0)"})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/gif" and r.headers["cache-control"] == "no-store"
+    assert client.get("/api/v1/outlook/diag", params={"e": "evil", "pg": "x"}).status_code == 200     # неизвестное событие — тихо игнорируется
+    app = client.app_obj
+
+    async def rows():
+        await app.state.journal.flush()
+        async with app.state.session_maker() as db:
+            return (await db.execute(select(EventLog).where(EventLog.category == "outlook"))).scalars().all()
+    got = client.portal.call(rows)
+    assert [r.event for r in got] == ["addin_init_timeout"]
+    m = got[0].message
+    assert "режим IE 7" in m and "Office.js не загружена" in m and "страница taskpane" in m
+    assert "<" not in m and "script>" not in m
+    assert "MSIE 7.0" in (got[0].client or "")

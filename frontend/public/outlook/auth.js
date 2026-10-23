@@ -23,14 +23,62 @@
     done({ error: text, code: code });
   }
 
+  /* fetch, а где его нет (Internet Explorer 11) — XMLHttpRequest с тем же видом ответа ({status, json()}) */
+  function request(url, opts) {
+    if (typeof window.fetch === "function") return fetch(url, opts);
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest(), h, hs = (opts && opts.headers) || {};
+      x.open((opts && opts.method) || "GET", url, true);
+      x.withCredentials = true;
+      for (h in hs) { if (hs.hasOwnProperty(h)) x.setRequestHeader(h, hs[h]); }
+      x.onload = function () {
+        resolve({ status: x.status, json: function () { return new Promise(function (ok, bad) { try { ok(JSON.parse(x.responseText || "{}")); } catch (e) { bad(e); } }); } });
+      };
+      x.onerror = function () { reject(new Error("network")); };
+      x.send((opts && opts.body) || null);
+    });
+  }
+
   function get(url, opts) {
     /* сервер может зависнуть за прокси: окно не ждёт дольше 20 с */
-    return Promise.race([fetch(url, opts), new Promise(function (_, reject) { setTimeout(function () { reject(new Error("timeout")); }, 20000); })]);
+    return Promise.race([request(url, opts), new Promise(function (_, reject) { setTimeout(function () { reject(new Error("timeout")); }, 20000); })]);
+  }
+
+  function toApp() { location.replace("/?next=" + encodeURIComponent("/outlook/auth.html")); }
+
+  /* Нет сеанса браузера: логин и пароль прямо в окне (тот же серверный вход, что у панели: ограничения попыток, CAPTCHA, правила допуска, аудит).
+     Нужен дополнительный шаг (2FA, CAPTCHA, смена пароля) — основное приложение. */
+  function showForm() {
+    var form = document.getElementById("form"), btn = document.getElementById("submit");
+    if (!form) { toApp(); return; }
+    say("Войдите учётной записью Peregovorka.", false);
+    var sp = document.querySelector(".spinner"); if (sp) sp.style.display = "none";
+    form.hidden = false;
+    document.getElementById("login").focus();
+    form.onsubmit = function (ev) {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      var login = document.getElementById("login").value, pw = document.getElementById("password").value;
+      if (!login || !pw) { say("Введите логин и пароль.", true); return false; }
+      btn.disabled = true; say("Проверяем…", false);
+      get("/api/v1/outlook/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login: login, password: pw }) }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          var d = (j && j.detail) || {};
+          if (r.status === 200 && j.token) { say("Готово, возвращаемся в Outlook…", false); done({ token: j.token, expires_in: j.expires_in }); return; }
+          if (r.status === 409 || r.status === 428) { say("Нужен дополнительный шаг входа…", false); toApp(); return; }
+          btn.disabled = false;
+          document.getElementById("password").value = "";
+          say(String(d.message || (typeof d === "string" ? d : "") || (r.status === 401 ? "Неверный логин или пароль." : "Не удалось войти.")), true);
+          var box = document.getElementById("auth"); if (box) box.className = "auth";
+        });
+      }, function () { btn.disabled = false; say("Сервер не отвечает. Повторите попытку.", true); });
+      return false;
+    };
   }
 
   function run() {
+    var browserStep = /[?&]step=browser/.test(location.search);
     get("/api/v1/auth/me", { credentials: "same-origin" }).then(function (r) {
-      if (r.status === 401) { location.replace("/?next=" + encodeURIComponent("/outlook/auth.html")); return null; }
+      if (r.status === 401) { if (browserStep) toApp(); else showForm(); return null; }
       if (r.status >= 500) throw new Error("server");
       return r.json().then(function (me) {
         say("Выдаём доступ для Outlook…", false);

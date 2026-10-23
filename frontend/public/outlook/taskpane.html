@@ -2,9 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <!-- Классический Outlook 2016/2019 показывает надстройку в Internet Explorer 11; сайт во внутренней сети IE открыл бы в режиме совместимости (IE7),
+       где Office.js не запускается («Ошибка надстройки»). Сервер дополнительно отдаёт заголовок X-UA-Compatible. -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Peregovorka — конференция для встречи</title>
   <link rel="stylesheet" href="/outlook/outlook.css">
+  <script src="/outlook/boot.js"></script>
+  <script src="/outlook/polyfill.js"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="/outlook/commands.js"></script>
   <script src="/outlook/taskpane.js" defer></script>
@@ -31,7 +36,7 @@
   <main class="tp-main">
     <section class="meet" aria-label="Встреча">
       <p class="meet-subj" id="subj"><span class="skel"></span></p>
-      <p class="meet-when" id="when-row"><svg class="ico" aria-hidden="true"><use href="#i-cal"/></svg><span id="when"><span class="skel short"></span></span><span class="tag" id="series" hidden>серия</span></p>
+      <p class="meet-when" id="when-row"><svg class="ico" aria-hidden="true"><use href="#i-cal" xlink:href="#i-cal"/></svg><span id="when"><span class="skel short"></span></span><span class="tag" id="series" hidden>серия</span></p>
     </section>
 
     <div class="acct" id="acct" data-auth="unknown">
@@ -50,7 +55,7 @@
     </form>
 
     <button class="btn-main" id="go" type="button" disabled>
-      <svg class="ico" aria-hidden="true"><use href="#i-cam"/></svg>
+      <svg class="ico" aria-hidden="true"><use href="#i-cam" xlink:href="#i-cam"/></svg>
       <span class="spinner" aria-hidden="true"></span>
       <span id="go-label">Подготовка…</span>
     </button>
@@ -63,21 +68,21 @@
     </ol>
 
     <div class="msg" id="msg" role="alert" hidden>
-      <svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>
+      <svg class="ico" aria-hidden="true"><use href="#i-alert" xlink:href="#i-alert"/></svg>
       <div><p class="msg-title" id="msg-title"></p><p class="msg-text" id="msg-text"></p></div>
     </div>
 
     <section class="result" id="result" aria-label="Конференция" hidden>
-      <p class="result-title" id="result-title"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Конференция в приглашении</span></p>
+      <p class="result-title" id="result-title"><svg class="ico" aria-hidden="true"><use href="#i-check" xlink:href="#i-check"/></svg><span>Конференция в приглашении</span></p>
       <div class="linkbox">
         <a id="link" href="#" target="_blank" rel="noopener"></a>
-        <button class="iconbtn" id="copy" type="button" title="Копировать ссылку" aria-label="Копировать ссылку"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg></button>
-        <a class="iconbtn" id="open" href="#" target="_blank" rel="noopener" title="Открыть конференцию" aria-label="Открыть конференцию"><svg class="ico" aria-hidden="true"><use href="#i-open"/></svg></a>
+        <button class="iconbtn" id="copy" type="button" title="Копировать ссылку" aria-label="Копировать ссылку"><svg class="ico" aria-hidden="true"><use href="#i-copy" xlink:href="#i-copy"/></svg></button>
+        <a class="iconbtn" id="open" href="#" target="_blank" rel="noopener" title="Открыть конференцию" aria-label="Открыть конференцию"><svg class="ico" aria-hidden="true"><use href="#i-open" xlink:href="#i-open"/></svg></a>
       </div>
-      <a class="open-link" id="open-text" href="#" target="_blank" rel="noopener"><svg class="ico" aria-hidden="true"><use href="#i-open"/></svg>Открыть конференцию</a>
+      <a class="open-link" id="open-text" href="#" target="_blank" rel="noopener"><svg class="ico" aria-hidden="true"><use href="#i-open" xlink:href="#i-open"/></svg>Открыть конференцию</a>
       <ul class="checks">
-        <li id="chk-body"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Ссылка в тексте приглашения</span></li>
-        <li id="chk-loc"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Ссылка в поле «Место»</span></li>
+        <li id="chk-body"><svg class="ico" aria-hidden="true"><use href="#i-check" xlink:href="#i-check"/></svg><span>Ссылка в тексте приглашения</span></li>
+        <li id="chk-loc"><svg class="ico" aria-hidden="true"><use href="#i-check" xlink:href="#i-check"/></svg><span>Ссылка в поле «Место»</span></li>
       </ul>
       <p class="hint" id="hint"></p>
     </section>

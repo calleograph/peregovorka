@@ -29,10 +29,11 @@
 
   /* --------------------------------------------------------------- чистые функции (проверяются тестами) */
   function newKey() {
-    var c = root.crypto;
+    var c = root.crypto || root.msCrypto;              /* msCrypto — Internet Explorer 11 (классический Outlook 2016/2019) */
     if (c && typeof c.randomUUID === "function") return c.randomUUID().replace(/-/g, "") + "pg";
-    var s = "";
-    for (var i = 0; i < 34; i++) s += "abcdefghijklmnopqrstuvwxyz0123456789".charAt(Math.floor(Math.random() * 36));
+    var s = "", abc = "abcdefghijklmnopqrstuvwxyz0123456789", buf = null, i;
+    if (c && typeof c.getRandomValues === "function" && typeof Uint8Array !== "undefined") { buf = new Uint8Array(34); c.getRandomValues(buf); }
+    for (i = 0; i < 34; i++) s += abc.charAt(buf ? buf[i] % 36 : Math.floor(Math.random() * 36));
     return s;
   }
 
@@ -300,7 +301,8 @@
     });
   }
 
-  function login() {
+  /** step = "browser": панель уже знает, что нужен дополнительный шаг (2FA, CAPTCHA) — окно сразу открывает основное приложение, без своей формы. */
+  function login(step) {
     return new Promise(function (resolve, reject) {
       var dlg = null;
       var settled = false;
@@ -313,7 +315,7 @@
       };
       var waitTimer = setTimeout(function () { finish(reject, PgError(dlg ? "auth_timeout" : "dialog_failed", "auth", "окно входа не ответило")); }, T.dialogOpen);
       try {
-        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html", { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
+        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html" + (step ? "?step=" + step : ""), { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
           if (res.status !== Office.AsyncResultStatus.Succeeded) {
             finish(reject, PgError("dialog_failed", "auth", res.error ? res.error.code + " " + res.error.message : ""));
             return;
@@ -342,8 +344,31 @@
     });
   }
 
+  /* Запрос через XMLHttpRequest — там, где нет fetch (Internet Explorer 11 в классическом Outlook 2016/2019): тот же итог {status, body}. */
+  function xhr(method, url, headers, body, ms, stage) {
+    return new Promise(function (resolve, reject) {
+      var x = new root.XMLHttpRequest(), h;
+      x.open(method, url, true);
+      for (h in headers) { if (headers.hasOwnProperty(h)) x.setRequestHeader(h, headers[h]); }
+      x.timeout = ms;
+      x.onload = function () {
+        var j = {};
+        try { j = x.responseText ? JSON.parse(x.responseText) : {}; } catch (e) { j = {}; }
+        resolve({ status: x.status, body: j });
+      };
+      x.onerror = function () { reject(PgError("network", stage, "XMLHttpRequest")); };
+      x.ontimeout = function () { reject(PgError("timeout", stage)); };
+      x.send(body ? JSON.stringify(body) : null);
+    });
+  }
+
   function http(method, path, token, body, ms, stage) {
-    if (typeof root.fetch !== "function") return Promise.reject(PgError("legacy_browser", stage || "api"));
+    if (typeof root.fetch !== "function") {
+      if (!root.XMLHttpRequest) return Promise.reject(PgError("legacy_browser", stage || "api"));
+      var hx = { "Content-Type": "application/json" };
+      if (token) hx.Authorization = "Bearer " + token;
+      return timeout(xhr(method, API + path, hx, body, ms || T.api, stage || "api"), (ms || T.api) + 1000, "timeout", stage || "api");
+    }
     var ctl = typeof AbortController === "function" ? new AbortController() : null;
     var headers = { "Content-Type": "application/json" };
     if (token) headers.Authorization = "Bearer " + token;

@@ -1420,7 +1420,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
          </div>
         </div>
         {devPop && roomRef.current && (
-          <div className="dev-pop" role="dialog" aria-label="Устройства" style={{ left: devPop.left, bottom: devPop.bottom }}>
+          <div className="dev-pop" role="dialog" aria-label="Устройства" style={{ left: devPop.left, bottom: devPop.bottom, maxHeight: `min(560px, calc(100dvh - ${devPop.bottom}px - var(--hdr, 57px) - 8px))` }}>
             <div className="dev-head"><span>Устройства</span><button type="button" className="icon-btn" onClick={() => setDevPop(null)} aria-label="Закрыть"><Icon name="close" size={16} /></button></div>
             <DevicePanel room={roomRef.current} prefs={micPrefs} onPrefs={applyMicPrefs} inline />
           </div>

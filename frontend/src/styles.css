@@ -914,5 +914,5 @@ details.group { margin: 8px 0; }
 .tile-net.net-bad svg rect.on { fill: #ff6b5e; }
 .tile-net.net-lost svg rect { fill: rgba(255, 255, 255, .28); }
 .tile-net .cut { stroke: #ff6b5e; stroke-width: 2; stroke-linecap: round; }
-.tile-net-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; width: max-content; max-width: min(260px, 70vw); padding: 6px 8px; border-radius: 8px;
+.tile-net-pop { position: fixed; z-index: 80; width: max-content; max-width: min(260px, 70vw); padding: 6px 8px; border-radius: 8px;
   background: rgba(8, 12, 20, .92); color: #fff; font-size: 12px; line-height: 1.35; white-space: normal; }

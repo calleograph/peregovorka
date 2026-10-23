@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..config import origin_allowed
+from ..auth.throttle import within_limit
 from ..services import captcha
 from ..models import Meeting, Room, User, utcnow
 from ..services import outlook as ol
@@ -217,6 +218,34 @@ async def addin_log(request: Request, body: dict = Body(...)):
     request.app.state.journal.emit("outlook", event, level="warn" if event == "addin_error" else "info", user=su.display_name, ip=client_ip(request),
                                    client=" ".join(str(body.get("client") or "").split())[:160] or None,
                                    message=f"[{where}/{code}] {msg}" if code else msg, data={"where": where, "code": code})
+
+
+_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+_DIAG_EVENTS = {"boot": ("addin_boot", "info"), "ready": ("addin_ready", "info"), "init_timeout": ("addin_init_timeout", "warn"), "init_failed": ("addin_init_failed", "warn")}
+_DIAG_SAFE = re.compile(r"[^0-9A-Za-zА-Яа-яЁё .,:;()/_+=«»—-]")
+
+
+@router.get("/diag")
+async def addin_diag(request: Request):
+    """Самодиагностика запуска надстройки (frontend/public/outlook/boot.js): в какой среде Outlook открыл страницу и запустил ли её Office. Без входа — так
+    видна и неудачная инициализация, когда токена ещё нет; только известные события и технические признаки (режим документа IE, наличие Promise/fetch,
+    загрузка Office.js, тип клиента), значения укорачиваются и очищаются, частота ограничена. Ответ — прозрачная картинка 1×1 (маячок работает и в старом IE)."""
+    q = request.query_params
+    ev = _DIAG_EVENTS.get(q.get("e", ""))
+    pic = Response(_GIF, media_type="image/gif", headers={"Cache-Control": "no-store"})
+    if ev is None or not await within_limit(request.app.state.redis, f"rl:outlook-diag:{client_ip(request)}", 120, 600):
+        return pic
+    def v(k: str, n: int = 40) -> str:
+        return _DIAG_SAFE.sub("", q.get(k, ""))[:n]
+    page = v("pg", 12) if v("pg", 12) in ("taskpane", "commands", "auth") else "?"
+    dm = v("dm", 4)
+    parts = [f"страница {page}", f"режим IE {dm}" if dm else "", f"Promise {v('p', 10)}", f"fetch {v('f', 10)}",
+             "Office.js не загружена" if v("o", 10) == "undefined" else "Office.js загружена", "контекст Office есть" if v("oc", 2) == "1" else "контекста Office нет",
+             f"через {v('ms', 7)} мс", v("why", 160), f"клиент {v('h', 20)} {v('pl', 20)} {v('cl', 60)}".strip() if v("h", 20) or v("cl", 60) else "",
+             f"код {v('code', 30)}/{v('st', 20)}" if v("code", 30) else ""]
+    request.app.state.journal.emit("outlook", ev[0], level=ev[1], ip=client_ip(request), client=" ".join((request.headers.get("user-agent") or "").split())[:160] or None,
+                                   message="; ".join(p for p in parts if p), data={"page": page, "documentMode": dm, "event": q.get("e")})
+    return pic
 
 
 @router.get("/meetings/by-key/{key}")

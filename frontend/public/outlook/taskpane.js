@@ -283,7 +283,7 @@
     st.err = null;
     st.step = "auth";
     render();
-    P.login().then(afterLogin, loginFailed);              // окно открывается по нажатию: браузер Outlook не блокирует его
+    P.login("browser").then(afterLogin, loginFailed);     // окно открывается по нажатию: браузер Outlook не блокирует его; нужен доп. шаг — сразу основное приложение
   }
 
   function logout() {
@@ -402,7 +402,9 @@
       if (st.csp.length === 1) P.report(st.token, "csp", "csp_blocked", st.csp[0]);
     });
     if (typeof Office === "undefined") { fail(P.PgError("office_js_missing", "init")); st.ready = true; render(); return; }
-    P.ready().then(function () {
+    P.ready().then(function (info) {
+      var B = window.PG_BOOT;                       /* сторож boot.js: запуск состоялся; среда — в журнал сервера (тип и версия клиента, без личных данных) */
+      if (B) { B.ready = true; try { B.beacon("ready", { h: (info && info.host) || "", pl: (info && info.platform) || "", cl: P.clientInfo() }); } catch (e) { /* только диагностика */ } }
       applyTheme();
       try { st.client = P.clientInfo(); } catch (e) { st.client = ""; }
       st.item = P.currentItem();
@@ -416,6 +418,7 @@
       if (!st.room && st.auth === "ok" && !st.timeBad && !st.err) run();
     }).then(null, function (e) {
       st.ready = true;
+      if (window.PG_BOOT && !window.PG_BOOT.ready) { window.PG_BOOT.ready = true; window.PG_BOOT.beacon("init_failed", { code: (e && e.code) || "", st: (e && e.stage) || "" }); }
       fail(e);
       render();
     });
