@@ -44,10 +44,16 @@ async def record(redis: Redis, name: str, ms: float | int | None) -> None:
         return
     if not (0 <= v <= MAX_MS) or math.isnan(v):
         return
-    k = key(name)
-    await redis.lpush(k, f"{v:.0f}")
-    await redis.ltrim(k, 0, KEEP - 1)
-    await redis.expire(k, TTL_SECONDS)
+    await push_capped(redis, key(name), f"{v:.0f}", KEEP, TTL_SECONDS)
+
+
+async def push_capped(redis: Redis, key_: str, value: str, keep: int, ttl: int) -> None:
+    """Последние keep значений списка со сроком жизни — одним обращением к Redis (конвейер), а не тремя: вызывается на каждом входе и отчёте клиента."""
+    async with redis.pipeline(transaction=False) as p:
+        p.lpush(key_, value)
+        p.ltrim(key_, 0, keep - 1)
+        p.expire(key_, ttl)
+        await p.execute()
 
 
 def _stats(values: list[float]) -> dict:

@@ -186,7 +186,7 @@ jobs:
           rc=0
           python tests/perf/race_join.py http://127.0.0.1:18080 30 > race.out 2>&1 || { rc=1; echo "::error title=race_join::$(tail -c 500 race.out | tr '\n' ' ')"; }
           python tests/perf/loadtest.py --users 60 --duration 25 --heavy 6 --pg postgresql://postgres:pw@127.0.0.1:5432/pg --max-5xx-pct 1.0 --max-idle-tx-s 10 --out perf.json > load.out 2>&1 || { rc=1; echo "::error title=loadtest::$(tail -c 900 load.out | tr '\n' ' ')"; }
-          [ $rc = 0 ] || echo "::error title=server.log::$(grep -c Traceback server.log) трассировок; $(tail -c 400 server.log | tr '\n' ' ')"
+          [ $rc = 0 ] || echo "::error title=server.log::$(grep -c Traceback server.log) трассировок; первая: $(grep -m1 -A40 Traceback server.log | grep -E '^  File|Error|error' | tail -6 | tr '\n' ' ' | cut -c1-900); ошибки: $(grep -o '"msg": "[^"]*"' server.log | sort | uniq -c | sort -rn | head -5 | tr '\n' ' ')"
           exit $rc
       - if: always()
         uses: actions/upload-artifact@v4

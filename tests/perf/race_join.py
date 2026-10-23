@@ -19,8 +19,11 @@ async def main() -> int:
 
         async def join(u):
             async with s.post(B + f"/api/v1/rooms/{room['id']}/join", json={}, headers={"Cookie": u[0], "X-CSRF-Token": u[1]}) as r:
-                if r.status == 409 and "room_full" in await r.text():
+                body = await r.text()
+                if r.status == 409 and "room_full" in body:
                     return "room_full"                      # предел участников комнаты — штатный отказ, не ошибка гонки
+                if r.status != 200:
+                    print(r.status, body[:200], flush=True)     # для разбора в CI: что именно ответил сервер
                 return r.status
         res = collections.Counter(await asyncio.gather(*[join(u) for u in us]))
         print(dict(res))

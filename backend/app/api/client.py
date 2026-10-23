@@ -90,10 +90,7 @@ def _str(v: Any, n: int) -> str | None:
 
 
 async def _push(request: Request, key: str, item: dict, keep: int = 200) -> None:
-    r = request.app.state.redis
-    await r.lpush(key, json.dumps(item, ensure_ascii=False))
-    await r.ltrim(key, 0, keep - 1)
-    await r.expire(key, 86400)
+    await timings.push_capped(request.app.state.redis, key, json.dumps(item, ensure_ascii=False), keep, 86400)
 
 
 @router.post("/events", status_code=204)

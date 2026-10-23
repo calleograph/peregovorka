@@ -106,11 +106,19 @@ class RoomView:
             raise AttributeError(name) from None
 
 
+# Поля, которые читают список комнат (api.rooms.room_out, значок) и правило видимости (_listed): остальные ~40 столбцов (JSON, даты, SIP, LLM…)
+# разбирать на каждый опрос списка незачем. Новое поле в room_out без этого списка — ошибка, её ловит test_room_list_without_orm_matches_orm_rule.
+_LIST_COLUMNS = ("id", "slug", "name", "description", "max_participants", "password_hash", "transcription_enabled", "record_audio", "camera_allowed",
+                 "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record", "encrypt_storage", "e2ee_mode", "lifetime", "lifecycle",
+                 "auto_close_at", "created_by_name", "created_by_user_id", "mute_on_join", "guest_token", "guest_access_enabled", "icon_kind", "icon_key",
+                 "icon_rev", "scheduled_start", "peer_access")
+
+
 async def accessible_room_views(db: AsyncSession, su: SessionUser) -> list[RoomView]:
     """Комнаты, которые человек видит в списке (правило _listed), без объектов ORM: три запроса Core на весь список."""
     t = Room.__table__
     live = (t.c.is_enabled.is_(True), t.c.lifecycle != "closed")
-    rows = (await db.execute(select(t).where(*live).order_by(t.c.name))).mappings().all()
+    rows = (await db.execute(select(*(t.c[n] for n in _LIST_COLUMNS)).where(*live).order_by(t.c.name))).mappings().all()
     acl: dict = {}
     mods: dict = {}
     for target, table in ((acl, RoomAcl.__table__), (mods, RoomModerator.__table__)):

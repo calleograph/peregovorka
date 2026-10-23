@@ -174,8 +174,10 @@ class MeetingService:
             device = "" if owner in (tag, None) else tag
         identity = user_identity(su.user_id, device)
         devs = f"mdev:{meeting.id}:{su.user_id}"
-        await self._r.sadd(devs, identity)
-        await self._r.expire(devs, STATE_TTL)
+        async with self._r.pipeline(transaction=False) as p:          # одно обращение к Redis вместо двух: вход выполняет каждый
+            p.sadd(devs, identity)
+            p.expire(devs, STATE_TTL)
+            await p.execute()
         privileged = roles.can_manage_room(room, su)
         if privileged or not roles.is_presentation(room):
             # В презентационной комнате приход рядового зрителя никому не рассылается: при сотне и тысяче зрителей это сотни тысяч сообщений
@@ -186,8 +188,10 @@ class MeetingService:
         if not roles.can_manage_room(room, su) and await self.share_blocked(meeting.id, identity):
             sources = self.without_share(sources)          # ведущий запретил этому участнику показ экрана до конца встречи — действует и после переподключения
         if privileged:
-            await self._r.sadd(self._priv_key(meeting.id), identity)
-            await self._r.expire(self._priv_key(meeting.id), STATE_TTL)
+            async with self._r.pipeline(transaction=False) as p:
+                p.sadd(self._priv_key(meeting.id), identity)
+                p.expire(self._priv_key(meeting.id), STATE_TTL)
+                await p.execute()
         # Токен рядового участника презентации ВСЕГДА без права публикации (даже если у него сейчас есть слово): права выступающего ему выдаёт
         # сервер звонков по запросу backend (`update_participant`) уже у подключённого участника. Тогда токен, выданный до отзыва слова, прав не даёт:
         # окна «старый токен позволил опубликовать звук» нет. Права после (пере)подключения определяются заново — webhook и `refresh_rights`.
