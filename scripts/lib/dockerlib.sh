@@ -175,7 +175,8 @@ _build_ticker() { # log svc parent_pid
   while sleep "${BUILD_TICK:-60}"; do
     kill -0 "$parent" 2>/dev/null || exit 0
     cur="$(fsize "$log" 2>/dev/null || echo 0)"; mins=$(( ($(date +%s) - start) / 60 ))
-    last="$(tail -c 3000 "$log" 2>/dev/null | tr '' '
+    last="$(tail -c 3000 "$log" 2>/dev/null | tr '
+' '
 ' | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-110)"
     printf '%s[i]%s сборка %s идёт %d мин (лог +%d КБ за интервал). Последняя строка: %s
 ' "$C_DIM" "$C_OFF" "$svc" "$mins" $(( (cur - prev) / 1024 )) "${last:-—}" >&2
@@ -197,35 +198,56 @@ _compose_build_one() { # _compose_build_one svc mode log
 }
 
 # build_images [svc…] — собирает только то, что нужно. Возврат 0/1; сообщения: stage=build service=… subsystem=…
+# Предел: попыток на компонент — BUILD_ATTEMPTS (3), суммарное время сборки — BUILD_BUDGET_S (5400 с): повторов без конца нет.
+_build_status() { declare -F upd_state_set >/dev/null && upd_state_set "build_$1" "$2" 2>/dev/null; return 0; }
 build_images() {
-  local want=("$@") s kind log mode
+  local want=("$@") s kind log mode deadline
   [ ${#want[@]} -gt 0 ] || want=("${BUILD_SERVICES[@]}")
   [ -n "$SELECTED_BUILD_MODE" ] || select_build_mode || return 1
   mkdir -p "${DATA_ROOT}/state"
+  deadline=$(( $(date +%s) + ${BUILD_BUDGET_S:-5400} ))
+  export BUILD_NETWORK="${BUILD_NETWORK:-default}"
   for s in "${want[@]}"; do
-    if ! build_needed "$s"; then ok "stage=build service=$s: образ $(svc_image "$s") актуален (исходники не менялись) — пропуск"; continue; fi
+    if ! build_needed "$s"; then ok "stage=build service=$s: образ $(svc_image "$s") актуален (исходники не менялись) — пропуск"; _build_status "$s" "готов, использован без пересборки ($(svc_image "$s"))"; continue; fi
     log="${DATA_ROOT}/state/build-$s.log"; mode="$SELECTED_BUILD_MODE"
     info "stage=build service=$s builder=$mode → $(svc_image "$s")"
-    local attempt=1 built=0
+    local attempt=1 built=0 n="${BUILD_ATTEMPTS:-3}" t0; t0=$(date +%s)
     while :; do
       if _compose_build_one "$s" "$mode" "$log"; then built=1; break; fi
       kind="$(classify_build_error < "$log")"
-      if [ "$kind" = "network" ] && [ "$attempt" -lt 3 ]; then
-        warn "stage=build service=$s: временная сетевая ошибка registry/CDN (попытка $attempt/3) — повтор через ${PULL_RETRY_PAUSE:-10}с; кэш слоёв сохраняется"
+      if [ "$kind" = "network" ] && [ "$attempt" -lt "$n" ] && [ "$(date +%s)" -lt "$deadline" ]; then
+        # Повторная проверка источников компонента: доступны только из сети хоста — сборка переводится туда (системные настройки не меняются);
+        # недоступны совсем — повторы бесполезны (остановка с диагнозом); доступны — сбой был временным, повтор.
+        if [ "$BUILD_NETWORK" != host ] && declare -F netcheck_build_sources >/dev/null; then
+          if netcheck_build_sources HEAD "$s" >/dev/null 2>&1; then
+            if [ "$BUILD_NETWORK" = host ]; then
+              warn "stage=build service=$s: источник недоступен из сети сборки, но доступен из сети хоста — повтор сборки в сети хоста (BUILD_NETWORK=host)"
+              declare -F upd_action >/dev/null && upd_action "сборка $s: источник доступен только из сети хоста — сборка переведена в сеть хоста"
+            fi
+          else
+            NET_DIAG="$(printf '%s\n' "${NETCHECK_LINES[@]}" | grep '^FAIL' | head -2 | tr '\n' ' ')"
+            warn "stage=build service=$s: источник зависимостей недоступен и при повторной проверке — повторы бесполезны: ${NET_DIAG:-см. журнал сборки}"
+            break
+          fi
+        fi
+        warn "stage=build service=$s: временная сетевая ошибка registry/CDN (попытка $attempt/$n) — повтор через ${PULL_RETRY_PAUSE:-10}с; готовые слои сохраняются"
+        declare -F upd_action >/dev/null && upd_action "сборка $s: сетевая ошибка, повтор $((attempt + 1))/$n"
         sleep "${PULL_RETRY_PAUSE:-10}"; attempt=$((attempt+1)); continue
       fi
       break
     done
-    if [ "$built" -eq 1 ]; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово"; continue; fi
+    if [ "$built" -eq 1 ]; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово"; _build_status "$s" "собран ($(svc_image "$s"), попыток: $attempt, $(( $(date +%s) - t0 )) с)"; continue; fi
     if [ "$kind" = "infra" ] && [ "$mode" = "buildkit" ] && [ "${BUILD_MODE:-auto}" = "auto" ]; then
       warn "FALLBACK: сборка $s через BuildKit упала на уровне Docker/containerd (не из-за Dockerfile) — повтор через legacy builder"
       report_stale_mounts warn
       SELECTED_BUILD_MODE=legacy
-      if _compose_build_one "$s" legacy "$log"; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово (legacy builder)"; continue; fi
+      if _compose_build_one "$s" legacy "$log"; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово (legacy builder)"; _build_status "$s" "собран (legacy builder после сбоя BuildKit)"; continue; fi
       kind="$(classify_build_error < "$log")"
     fi
+    _build_status "$s" "ОШИБКА ($kind) после $attempt попыт.; лог $log${NET_DIAG:+; источник: $NET_DIAG}"
+    BUILD_FAILED_SVC="$s"; BUILD_FAILED_KIND="$kind"
     case "$kind" in
-      network) fail "FAIL stage=build service=$s subsystem=registry-network (сеть/registry/зеркала пакетов недоступны после 3 попыток, НЕ ошибка проекта). Лог: $log" ;;
+      network) fail "FAIL stage=build service=$s subsystem=registry-network (сеть/registry/зеркала пакетов недоступны после $attempt попыт., НЕ ошибка проекта)${NET_DIAG:+: $NET_DIAG}. Лог: $log" ;;
       infra)   fail "FAIL stage=build service=$s subsystem=docker-build (инфраструктура Docker/containerd, НЕ ошибка проекта). Лог: $log"; report_stale_mounts warn ;;
       project) fail "FAIL stage=build service=$s subsystem=dockerfile/project (ошибка сборки проекта). Лог: $log" ;;
       *)       fail "FAIL stage=build service=$s subsystem=unknown (см. лог: $log)" ;;
@@ -253,4 +275,24 @@ check_web_image_config() {
   if out="$(docker run --rm --entrypoint nginx "$img" -t 2>&1)"; then ok "web nginx: конфигурация образа корректна (nginx -t)"; return 0; fi
   fail "web nginx: nginx -t в образе $img не прошёл:"; printf '%s\n' "$out" | sed 's/^/    /' >&2
   return 1
+}
+
+# Перед переключением: каждый образ собран из ЭТОГО кода — commit внутри образа равен IMAGE_TAG, отпечаток исходников совпадает с текущим.
+# Иначе (образ остался от другой сборки, тег переписан вручную) запуск смешал бы версии. Печатает расхождения; код 1 — есть расхождение.
+check_built_images_consistent() {
+  local s c img bad=0
+  for s in backend asr web; do
+    img="$(svc_image "$s")"
+    image_exists "$s" || { fail "Согласованность: нет образа $img"; bad=1; continue; }
+    if [ "$s" = web ]; then
+      c="$(docker run --rm --entrypoint cat "$img" /usr/share/nginx/html/version.json 2>/dev/null | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')"
+    else
+      c="$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$img" 2>/dev/null | sed -n 's/^APP_GIT_COMMIT=//p' | head -1)"
+    fi
+    if [ "${c:0:12}" != "${IMAGE_TAG:0:12}" ]; then fail "Согласованность: в образе $img commit «${c:-нет сведений}», а устанавливается ${IMAGE_TAG:0:12}"; bad=1; continue; fi
+    if [ "$(fp_get "$s")" != "$(src_fingerprint "$s")" ]; then fail "Согласованность: образ $img собран из других исходников, чем в рабочей копии"; bad=1; continue; fi
+  done
+  image_exists livekit || { fail "Согласованность: нет образа $(svc_image livekit)"; bad=1; }
+  [ "$bad" -eq 0 ] && ok "Согласованность: backend, asr, web собраны из ${IMAGE_TAG:0:12}, LiveKit $(svc_image livekit)"
+  return "$bad"
 }

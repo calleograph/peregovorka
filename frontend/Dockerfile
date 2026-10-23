@@ -7,6 +7,11 @@ FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 ENV NPM_CONFIG_FETCH_RETRIES=5 NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=60000
+# Node.js 20+ при подключении перебирает IPv6/IPv4 с паузой 250 мс на адрес: без маршрута IPv6 и на канале с задержкой npm получает ETIMEDOUT,
+# хотя curl/wget в той же сети работают. IPv4 первым и 2 с на попытку адреса; не больше 6 одновременных соединений npm (ограничители скорости
+# и DPI реже обрывают загрузку). Ту же NODE_OPTIONS применяет проверка источников перед сборкой (scripts/lib/netcheck.sh).
+ENV NODE_OPTIONS="--dns-result-order=ipv4first --network-family-autoselection-attempt-timeout=2000"
+ENV NPM_CONFIG_MAXSOCKETS=6
 RUN for i in 1 2 3 4; do npm ci --no-audit --no-fund && ok=1 && break; echo "npm ci: сбой, повтор $i/4"; sleep $((i * 10)); done; [ "${ok:-0}" = 1 ]
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public

@@ -162,6 +162,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/dockerlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/updatelib.sh"
 # shellcheck source=autorepair.sh
 source "$(dirname "${BASH_SOURCE[0]}")/autorepair.sh"
+# shellcheck source=netcheck.sh
+source "$(dirname "${BASH_SOURCE[0]}")/netcheck.sh"
+# shellcheck source=updtxn.sh
+source "$(dirname "${BASH_SOURCE[0]}")/updtxn.sh"
+# shellcheck source=mask.sh
+source "$(dirname "${BASH_SOURCE[0]}")/mask.sh"
 
 # shellcheck source=verifylib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"

@@ -74,6 +74,7 @@ services:
   livekit:
     build:
       context: ./livekit
+      network: ${BUILD_NETWORK:-default}   # сеть шагов RUN при сборке; host — если источники доступны только из сети хоста (scripts/lib/netcheck.sh)
       args:
         LIVEKIT_IMAGE_TAG: ${LIVEKIT_IMAGE_TAG:?}
     image: ${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG}
@@ -127,6 +128,7 @@ services:
   backend:
     build:
       context: ../backend
+      network: ${BUILD_NETWORK:-default}   # сеть шагов RUN при сборке; host — если источники доступны только из сети хоста (scripts/lib/netcheck.sh)
       args:
         APP_VERSION: ${APP_VERSION:-0.0.0}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
@@ -234,6 +236,7 @@ services:
   asr:
     build:
       context: ../asr-service
+      network: ${BUILD_NETWORK:-default}   # сеть шагов RUN при сборке; host — если источники доступны только из сети хоста (scripts/lib/netcheck.sh)
       args:
         TORCH_INDEX_URL: ${ASR_TORCH_INDEX_URL:?}
         GIGAAM_GIT_COMMIT: ${GIGAAM_GIT_COMMIT:?}
@@ -356,6 +359,7 @@ services:
   web:
     build:
       context: ../frontend
+      network: ${BUILD_NETWORK:-default}   # сеть шагов RUN при сборке; host — если источники доступны только из сети хоста (scripts/lib/netcheck.sh)
       args:
         APP_VERSION: ${APP_VERSION:-0.0.0}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
