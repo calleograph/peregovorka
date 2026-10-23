@@ -7,6 +7,22 @@ export interface TotpChallenge { totp_required: true; challenge: string }
 export interface TotpStatus { available: boolean; policy: string; enabled: boolean; required: boolean; backup_left: number; enabled_at: string | null }
 export interface ActiveMeeting { id: string; started_at: string; participants: number }
 export interface RoomIconInfo { kind: "library" | "image"; key: string | null; url: string | null }
+/** «Предстоящие встречи»: конференция из календаря Outlook или временная комната (GET /rooms/upcoming). Время — моменты UTC; отсчёт считает браузер. */
+export interface UpcomingMeeting {
+  id: string; slug: string; name: string; kind: "scheduled" | "temporary" | "peer";
+  start: string; end: string | null; opens_at: string | null; recurring: boolean; organizer: string | null; cancelled: boolean;
+  live: { started_at: string; participants: number } | null; last_ended_at: string | null;
+  /** names — первые имена (null: список этому пользователю не показывается); can_list — можно открыть полный список */
+  invitees: { count: number; names: string[] | null; can_list: boolean };
+  mine: boolean; can_join: boolean; can_manage: boolean; has_password: boolean; url: string;
+  /** гостевая ссылка временной комнаты — только тому, кто управляет встречей и если гостевой вход включён */
+  guest_token: string | null;
+  /** сверка с календарём: последнее подтверждённое состояние и его время (error — календарь недоступен, показано прежнее) */
+  sync: { state: "ok" | "error" | "missing"; at: string | null } | null;
+}
+export interface UpcomingList { server_time: string; items: UpcomingMeeting[] }
+export interface Invitee { name: string | null; email: string | null; optional: boolean; employee: boolean }
+
 export interface Room {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; max_participants: number;
@@ -744,6 +760,8 @@ export const api = {
   logout: () => request<void>("POST", "/auth/logout"),
   me: () => request<Me>("GET", "/auth/me"),
   rooms: () => request<Room[]>("GET", "/rooms"),
+  upcoming: () => request<UpcomingList>("GET", "/rooms/upcoming"),
+  invitees: (roomId: string) => request<{ items: Invitee[] }>("GET", `/rooms/${roomId}/invitees`),
   resolveRoom: (ref: string) => request<RoomRef>("GET", `/rooms/resolve/${encodeURIComponent(ref)}`),
   temporaryPolicy: () => request<TempRoomPolicy>("GET", "/rooms/temporary/policy"),
   createTemporaryRoom: (name: string) => request<Room>("POST", "/rooms/temporary", { name }),

@@ -179,6 +179,7 @@ async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSess
     except TempRoomError as exc:
         _fail(exc)
     _link(room, body)
+    await ol.set_invitees(db, room, ol.parse_attendees(body.get("attendees")), "addin")     # кто приглашён — для «Предстоящих встреч» (нет в запросе — список не меняется)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.create" if created else "outlook.sync", target_type="room", target_id=str(room.id),
                       ip=client_ip(request), details={"start": room.scheduled_start.isoformat(), "end": room.scheduled_end.isoformat(), "recurring": room.recurring})
     await db.commit()
@@ -269,6 +270,8 @@ async def update_meeting(room_id: uuid.UUID, request: Request, body: dict = Body
                                       recurring=bool(body.get("recurring", room.recurring)))
     except TempRoomError as exc:
         _fail(exc)
+    if await ol.set_invitees(db, room, ol.parse_attendees(body.get("attendees")), "addin"):
+        await db.commit()
     if changed:
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.reschedule", target_type="room", target_id=str(room.id), ip=client_ip(request),
                           details={"start": room.scheduled_start.isoformat(), "end": room.scheduled_end.isoformat()})

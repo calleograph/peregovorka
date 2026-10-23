@@ -112,6 +112,7 @@ TABLES: dict[str, TablePolicy] = {
     "app_settings": TablePolicy(False, "переносится отдельным разделом «настройки» (по группам, см. GROUPS_POLICY)"),
     # ------------------------------------------------------------------------------ не переносятся
     "users": TablePolicy(False, "пользователи принадлежат конкретному серверу и каталогу; локальный администратор нового сервера сохраняется и после импорта"),
+    "room_invitees": TablePolicy(False, "приглашённые на конференции из календаря — данные встреч; временные комнаты не переносятся"),
     "guest_participants": TablePolicy(False, "данные встреч"), "meetings": TablePolicy(False, "данные встреч"), "meeting_participants": TablePolicy(False, "данные встреч"),
     "meeting_grants": TablePolicy(False, "данные встреч"), "meeting_chat_messages": TablePolicy(False, "переписка встреч"), "meeting_chat_attachments": TablePolicy(False, "вложения чата"),
     "meeting_whiteboards": TablePolicy(False, "схемы встреч"), "transcript_segments": TablePolicy(False, "стенограммы"), "protocols": TablePolicy(False, "протоколы и резюме встреч"),

@@ -90,10 +90,11 @@ def test_authorized_user_creates_a_temporary_room_and_becomes_its_leader(client)
     assert room["lifetime"] == "temporary" and room["lifecycle"] == "active" and room["slug"].startswith("tmp-") and len(room["slug"]) == 10 and room["name"] == "Планёрка"
     mg = client.get(f"{API}/rooms/{room['id']}/manage")
     assert mg.status_code == 200, "создатель — руководитель"
-    assert [x["id"] for x in client.get(f"{API}/rooms").json()] == [room["id"]]
+    assert [x["id"] for x in client.get(f"{API}/rooms/upcoming").json()["items"]] == [room["id"]], "временная комната — в «Предстоящих встречах»"
+    assert client.get(f"{API}/rooms").json() == [], "в каталоге постоянных переговорок временных нет"
     assert client.get(f"{API}/rooms/resolve/{room['slug']}").json()["id"] == room["id"]
     login(client, "bob")
-    assert client.get(f"{API}/rooms").json() == [] and client.get(f"{API}/rooms/resolve/{room['slug']}").status_code == 404, "чужие пользователи комнату не видят"
+    assert client.get(f"{API}/rooms/upcoming").json()["items"] == [] and client.get(f"{API}/rooms/resolve/{room['slug']}").status_code == 404, "чужие пользователи комнату не видят"
     assert room_row(client, room["id"])["lifetime"] == "temporary"
 
 

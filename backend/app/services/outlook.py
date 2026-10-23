@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser
-from ..models import Room, RoomAcl, RoomModerator, utcnow
+from ..models import Room, RoomAcl, RoomInvitee, RoomModerator, User, utcnow
 from .rooms import slug_taken
 from .settings import GeneralSettings, OutlookSettings
 from .temp_rooms import TempRoomError, close as close_room
@@ -35,6 +35,8 @@ TOKEN_PREFIX = "pgo_"
 MAX_TOKEN_LIFETIME_S = 30 * 24 * 3600         # продление входа надстройки не делает его бессрочным: через 30 дней от входа — снова пароль
 MAX_SINGLE = timedelta(hours=24)
 MAX_AHEAD = timedelta(days=730)
+MAX_INVITEES = 500
+EMAIL_RE = re.compile(r"^[^@\s<>\"']{1,120}@[A-Za-z0-9.-]{1,120}\.[A-Za-z0-9-]{2,63}$")
 
 
 def new_code() -> str:
@@ -203,6 +205,57 @@ async def reschedule(db: AsyncSession, room: Room, cfg: OutlookSettings, *, subj
         await db.refresh(room)
         return True
     return False
+
+
+# ------------------------------------------------------------------------------------------------ приглашённые
+def parse_attendees(raw) -> list[tuple[str, str | None, bool]] | None:
+    """Приглашённые из надстройки или календаря: [(адрес строчными, имя, необязательный)] без повторов и неверных адресов. None — сведений нет:
+    список тогда не трогаем (старая надстройка, не удалось прочитать)."""
+    if not isinstance(raw, list):
+        return None
+    out: list[tuple[str, str | None, bool]] = []
+    seen: set[str] = set()
+    for a in raw[:MAX_INVITEES]:
+        if not isinstance(a, dict):
+            continue
+        email = str(a.get("email") or "").strip().lower()
+        if not EMAIL_RE.match(email) or email in seen:
+            continue
+        seen.add(email)
+        name = " ".join(str(a.get("name") or "").split())[:300] or None
+        out.append((email, None if name and name.lower() == email else name, bool(a.get("optional"))))
+    return out
+
+
+async def set_invitees(db: AsyncSession, room: Room, attendees: list[tuple[str, str | None, bool]] | None, source: str, *, prune: bool = True) -> bool:
+    """Список приглашённых — последний подтверждённый (кнопка или отправка приглашения в Outlook, серверная сверка с календарём). Организатор в список
+    не входит. prune=False — только добавить и обновить (календарь вернул не все адреса). Коммит — у вызывающего. Возвращает, изменилось ли что-то."""
+    if attendees is None:
+        return False
+    org = (room.outlook_organizer or "").lower()
+    want = {e: (n, o) for e, n, o in attendees if e != org}
+    have = {i.email: i for i in (await db.execute(select(RoomInvitee).where(RoomInvitee.room_id == room.id))).scalars()}
+    users: dict[str, uuid.UUID] = {}
+    if want:
+        for uid, mail in (await db.execute(select(User.id, User.email).where(func.lower(User.email).in_(list(want))))).all():
+            users[mail.lower()] = uid
+    changed = False
+    for email, inv in have.items():
+        if (prune and email not in want) or (inv.user_id is not None and inv.user_id == room.created_by_user_id):
+            await db.delete(inv)
+            changed = True
+    for email, (name, optional) in want.items():
+        uid = users.get(email)
+        if uid is not None and uid == room.created_by_user_id:          # организатор под другим адресом
+            continue
+        inv = have.get(email)
+        if inv is None:
+            db.add(RoomInvitee(room_id=room.id, email=email, name=name, user_id=uid, optional=optional, source=source))
+            changed = True
+        elif (inv.name, inv.user_id, inv.optional) != (name or inv.name, uid or inv.user_id, optional):
+            inv.name, inv.user_id, inv.optional, inv.source = name or inv.name, uid or inv.user_id, optional, source
+            changed = True
+    return changed
 
 
 async def cancel(db: AsyncSession, room: Room) -> bool:

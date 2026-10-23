@@ -153,9 +153,9 @@ def test_scheduled_room_hidden_from_lists_but_open_by_link_to_employees(client):
     _anon(client)
     j = client.post(f"{O}/meetings", json=_body(), headers=h).json()
     login(client, "alice")
-    assert j["id"] in [r["id"] for r in client.get("/api/v1/rooms").json()]
+    assert j["id"] in [r["id"] for r in client.get("/api/v1/rooms/upcoming").json()["items"]] and j["id"] not in [r["id"] for r in client.get("/api/v1/rooms").json()]
     login(client, "bob")
-    assert j["id"] not in [r["id"] for r in client.get("/api/v1/rooms").json()]
+    assert j["id"] not in [r["id"] for r in client.get("/api/v1/rooms/upcoming").json()["items"]]
     slug = "ol-" + j["url"].rsplit("/", 1)[1]
     assert client.get(f"/api/v1/rooms/resolve/{slug}").status_code == 200                      # по ссылке сотрудник находит комнату
 

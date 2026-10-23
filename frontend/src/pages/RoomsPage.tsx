@@ -1,6 +1,6 @@
-import { type CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, type ApiError, type PeerPolicy, type Room, type TempRoomPolicy } from "../api";
+import { api, type ApiError, type PeerPolicy, type Room, type TempRoomPolicy, type UpcomingMeeting } from "../api";
 import { useSite } from "../site";
 import { Icon } from "../components/Icons";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
@@ -10,6 +10,8 @@ import { Modal } from "../components/Dialogs";
 import { PeerCreateDialog, PeerManageDialog } from "../components/PeerRooms";
 import { magnet, spotlight, tint } from "../fx";
 import RoomIcon from "../components/RoomIcon";
+import UpcomingSection from "../components/UpcomingMeetings";
+import { meetingState, span, tickMs } from "../upcomingStatus";
 
 /** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
 function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: () => void }) {
@@ -35,8 +37,9 @@ function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: 
   );
 }
 
-type Filter = "all" | "live" | "free" | "temp";
-const FILTERS: [Filter, string][] = [["all", "Все"], ["live", "Идёт встреча"], ["free", "Свободные"], ["temp", "Временные"]];
+type Filter = "all" | "upcoming" | "permanent" | "live" | "free";
+const FILTERS: [Filter, string][] = [["all", "Все"], ["upcoming", "Предстоящие"], ["permanent", "Постоянные"], ["live", "Идёт встреча"], ["free", "Свободные"]];
+const UPCOMING_POLL_MS = 30_000;        // сверка с сервером; отсчёт между сверками считает браузер
 
 type View = "tiles" | "list";
 const VIEW_KEY = "pg:roomsView";
@@ -160,6 +163,10 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [view, setView] = useState<View>(() => { try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "tiles"; } catch { return "tiles"; } });
   const [toast, showToast] = useToast();
+  const [upcoming, setUpcoming] = useState<UpcomingMeeting[]>([]);
+  const skew = useRef(0);                                   // часы сервера минус часы браузера: отсчёт не зависит от неточных часов компьютера
+  const [now, setNow] = useState(() => Date.now());
+  const [mineOnly, setMineOnly] = useState(true);           // администратор: по умолчанию только свои встречи
   const pickView = (v: View) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* хранилище недоступно — выбор не запомнится */ } };
 
   useEffect(() => { void api.temporaryPolicy().then(setPolicy).catch(() => undefined); }, [tempOpen]);
@@ -170,20 +177,47 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     const t = window.setInterval(load, 10000); // «кто сейчас в комнате» обновляется без перезагрузки
     return () => window.clearInterval(t);
   }, []);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.upcoming().then((r) => {
+      if (!alive) return;
+      skew.current = new Date(r.server_time).getTime() - Date.now();
+      setUpcoming(r.items); setNow(Date.now() + skew.current);
+    }).catch(() => undefined);                                     // встречи недоступны — страница работает с постоянными комнатами
+    load();
+    const t = window.setInterval(load, UPCOMING_POLL_MS);
+    const vis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { alive = false; window.clearInterval(t); document.removeEventListener("visibilitychange", vis); };
+  }, []);
+  useEffect(() => {                                                // отсчёт: раз в секунду у самой границы начала, иначе раз в 15 с
+    const t = window.setTimeout(() => setNow(Date.now() + skew.current), tickMs(upcoming, now));
+    return () => window.clearTimeout(t);
+  }, [upcoming, now]);
 
   const shown = useMemo(() => (rooms ?? []).filter((r) => {
+    if (filter === "upcoming") return false;
     if (q.trim() && !`${r.name} ${r.description ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())) return false;
     if (filter === "live") return !!r.active_meeting;
     if (filter === "free") return !r.active_meeting;
-    if (filter === "temp") return r.lifetime === "temporary";
     return true;
   }), [rooms, q, filter]);
+  const adminView = isAdmin && upcoming.some((m) => !m.mine);
+  const meetings = useMemo(() => upcoming.filter((m) => {
+    if (adminView && mineOnly && !m.mine) return false;
+    if (filter === "permanent" || filter === "free") return false;
+    if (filter === "live" && !m.live) return false;
+    return !q.trim() || `${m.name} ${m.organizer ?? ""}`.toLowerCase().includes(q.trim().toLowerCase());
+  }), [upcoming, adminView, mineOnly, filter, q]);
+  const next = upcoming.find((m) => m.mine && !m.cancelled && !m.live && m.kind === "scheduled" && !m.recurring && new Date(m.start).getTime() > now);
 
   if (error) return <div className="alert error">{error}</div>;
   if (!rooms) return <div className="rooms-page"><div className="grid rooms-grid" aria-busy="true">{[0, 1, 2].map((i) => <div key={i} className="room-card rc skeleton" style={{ "--i": i } as CSSProperties} />)}</div></div>;
 
   const liveCount = rooms.filter((r) => r.active_meeting).length;
   const canTemp = !!policy?.enabled;
+  const anything = rooms.length > 0 || upcoming.length > 0;
+  const showUpcoming = meetings.length > 0 || (adminView && mineOnly && filter !== "permanent" && filter !== "free" && !q.trim());    // у администратора — хотя бы переключатель «Все встречи организации»
   return (
     <section className="rooms-page">
       <header className="rooms-hero">
@@ -191,7 +225,8 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
           <p className="eyebrow">{site.org.short || site.name}</p>
           <h1>Переговорки</h1>
           <p className="lead">
-            {rooms.length === 0 ? "Для вас пока нет доступных комнат." : liveCount > 0 ? `Сейчас идут встречи: ${liveCount}. Выберите комнату, чтобы присоединиться или начать новую.` : "Выберите комнату, чтобы начать встречу. Речь будет записана в стенограмму и станет протоколом."}
+            {next && meetingState(next, now).state !== "ended" ? <>Ближайшая встреча — «{next.name}» через {span(new Date(next.start).getTime() - now)}. </> : null}
+            {!anything ? "Для вас пока нет доступных комнат." : liveCount > 0 ? `Сейчас идут встречи: ${liveCount}. Выберите комнату, чтобы присоединиться или начать новую.` : "Выберите комнату, чтобы начать встречу. Речь будет записана в стенограмму и станет протоколом."}
           </p>
         </div>
         {peerPolicy?.enabled && (
@@ -210,9 +245,9 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
         )}
       </header>
 
-      {rooms.length > 0 && (
+      {anything && (
         <div className="rooms-toolbar">
-          <label className="search"><Icon name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти комнату" aria-label="Найти комнату" /></label>
+          <label className="search"><Icon name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти встречу или комнату" aria-label="Найти встречу или комнату" /></label>
           <div className="seg viewseg" role="group" aria-label="Вид списка">
             <button type="button" aria-pressed={view === "tiles"} onClick={() => pickView("tiles")} title="Плитки"><Icon name="grid" size={15} /> Плитка</button>
             <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Компактные карточки в несколько колонок"><Icon name="list" size={15} /> Компактно</button>
@@ -223,21 +258,25 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
         </div>
       )}
 
-      {rooms.length === 0 && (
+      {showUpcoming && <UpcomingSection items={meetings} now={now} view={view} mineOnly={adminView ? mineOnly : null} onMineOnly={setMineOnly}
+                                         othersCount={adminView ? upcoming.filter((m) => !m.mine).length : 0} actions={{ onCopy: showToast, onManagePeer: setPeerManage }} />}
+      {showUpcoming && filter !== "upcoming" && rooms.length > 0 && <div className="rooms-section-h"><h2>Постоянные переговорки <span className="muted">{shown.length}</span></h2></div>}
+      {!anything && (
         <div className="empty">
           <div className="empty-art" aria-hidden><Icon name="users" size={34} /></div>
           <h2>Доступных комнат нет</h2>
           <p className="muted">Обратитесь к администратору, чтобы вам открыли доступ{canTemp ? ", либо создайте временную переговорку для быстрой встречи" : ""}.</p>
         </div>
       )}
-      {rooms.length > 0 && shown.length === 0 && <p className="muted">По этому запросу комнат нет. Измените поиск или фильтр.</p>}
+      {anything && shown.length === 0 && !showUpcoming && <p className="muted">По этому запросу ничего нет. Измените поиск или фильтр.</p>}
+      {rooms.length === 0 && upcoming.length > 0 && filter !== "upcoming" && <p className="muted small">Постоянных переговорок для вас нет.</p>}
       {view === "tiles"
         ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} onManagePeer={setPeerManage} />)}</div>
         : <div className="rooms-compact" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} onManagePeer={setPeerManage} />)}</div>}
       {toast}
       {tempOpen && policy && <TempRoomDialog policy={policy} onClose={() => setTempOpen(false)} />}
       {peerOpen && peerPolicy && <PeerCreateDialog policy={peerPolicy} onClose={() => setPeerOpen(false)} />}
-      {peerManage && <PeerManageDialog roomId={peerManage} onClose={() => setPeerManage(null)} onChanged={() => void api.rooms().then(setRooms).catch(() => undefined)} />}
+      {peerManage && <PeerManageDialog roomId={peerManage} onClose={() => setPeerManage(null)} onChanged={() => void api.upcoming().then((r) => setUpcoming(r.items)).catch(() => undefined)} />}
     </section>
   );
 }

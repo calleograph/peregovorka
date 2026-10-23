@@ -52,11 +52,12 @@ def test_first_visit_by_link_creates_room_and_second_user_joins_it_equally(clien
 def test_peer_room_not_listed_for_others_but_listed_for_owner_and_admin(client):
     _enable(client)
     rid = _open(client, "alice").json()["id"]
-    assert rid in [r["id"] for r in client.get("/api/v1/rooms").json()]
+    up = lambda: [r["id"] for r in client.get("/api/v1/rooms/upcoming").json()["items"]]      # noqa: E731
+    assert rid in up() and rid not in [r["id"] for r in client.get("/api/v1/rooms").json()], "временная комната — в «Предстоящих», не в каталоге переговорок"
     login(client, "bob")
-    assert rid not in [r["id"] for r in client.get("/api/v1/rooms").json()]
+    assert rid not in up()
     login(client, "root")
-    assert rid in [r["id"] for r in client.get("/api/v1/rooms").json()]
+    assert rid in up()
     regular = make_room(client)                                                # обычные комнаты и их доступ не изменились
     login(client, "alice")
     assert regular["id"] in [r["id"] for r in client.get("/api/v1/rooms").json()]

@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.devices import device_kind
 from ..services import asr_state
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
-from ..models import Meeting, MeetingParticipant, Room
-from ..services import roles, temp_rooms, timings
+from ..models import Meeting, MeetingParticipant, Room, utcnow
+from ..services import roles, temp_rooms, timings, upcoming
 from ..services import captcha
 from ..services.room_icons import icon_out
 from ..services import e2ee as e2ee_svc
@@ -55,6 +55,26 @@ async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession =
             .group_by(MeetingParticipant.meeting_id))
         counts = {mid: n for mid, n in rows}
     return [await room_out(db, r, active.get(r.id), counts.get(active[r.id].id, 0) if r.id in active else 0, su) for r in rooms]
+
+
+@router.get("/upcoming")
+async def upcoming_meetings(su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """«Предстоящие встречи»: запланированные конференции из календаря и временные комнаты, о которых человеку можно знать (services.upcoming).
+    Время сервера — для обратного отсчёта в браузере без частых запросов."""
+    now = utcnow()
+    return {"server_time": now, "items": await upcoming.upcoming(db, su, now)}
+
+
+@router.get("/{room_id}/invitees")
+async def meeting_invitees(room_id: uuid.UUID, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Полный список приглашённых встречи: организатору, руководителям, администратору и приглашённым; адреса почты — только первым трём."""
+    try:
+        items = await upcoming.invitees(db, su, room_id)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Список приглашённых видят организатор, руководители встречи и сами приглашённые") from None
+    if items is None:
+        raise HTTPException(status_code=404, detail="Встреча не найдена или недоступна")
+    return {"items": items}
 
 
 @router.get("/resolve/{ref}")
