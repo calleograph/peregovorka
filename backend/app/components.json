@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.33.0",
+ "release": "0.34.0",
  "reviewed_at": "2026-10-23",
  "components": [
   {
@@ -511,7 +511,7 @@
    "group": "Backend",
    "pinned": "0.149.0",
    "tested": "0.149.0",
-   "reviewed_latest": "0.161.1",
+   "reviewed_latest": "0.162.0",
    "source": {
     "type": "pypi",
     "name": "fastapi"
@@ -534,7 +534,7 @@
     "python_package": "fastapi"
    },
    "deferred": {
-    "version": "0.161.1",
+    "version": "0.162.0",
     "reason": "С 0.149.0 вышло 12 выпусков FastAPI 0.x за четыре дня (для 0.x минор считается мажором): нужен разбор изменений и полный регресс backend, ASR, живых сценариев и нагрузочной матрицы, а релиз 0.30.0 — исправление надстройки Outlook; смешивать их нельзя.",
     "issue": "DEP-6",
     "recheck": "2026-11-20",
@@ -1300,7 +1300,7 @@
    "group": "Frontend",
    "pinned": "v32.5.5",
    "tested": "v32.5.5",
-   "reviewed_latest": "v32.5.5",
+   "reviewed_latest": "v32.6.1",
    "source": {
     "type": "github-release",
     "repo": "jgraph/drawio"
@@ -1321,6 +1321,13 @@
      "/usr/share/nginx/html/drawio/VERSION"
     ],
     "regex": "v(\\d+\\.\\d+\\.\\d+)"
+   },
+   "deferred": {
+    "version": "v32.6.1",
+    "reason": "Вышла 21–23.10.2026, в день ревизии 0.34.0: новые функции и ускорения редактора, исправлений безопасности в списке изменений нет. Доска встраивается в страницу встречи и проверяется живым сценарием с настоящим draw.io; этот выпуск — главная страница, смешивать их не стоит.",
+    "issue": "DEP-8",
+    "recheck": "2026-11-06",
+    "plan": "Собрать статику v32.6.x (frontend/drawio/prune.sh), пройти живые сценарии доски и выгрузки, сборку образа web (CI web-image), обновить DRAWIO_VERSION."
    }
   },
   {
