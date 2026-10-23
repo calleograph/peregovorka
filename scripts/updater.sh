@@ -21,6 +21,8 @@
 set -uo pipefail
 # Как systemd завершил службу (переменные ExecStopPost) — запоминаем до того, как общие библиотеки и сам скрипт задействуют такие же имена.
 SD_RESULT="${SERVICE_RESULT:-}"; SD_EXIT_CODE="${EXIT_CODE:-}"; SD_EXIT_STATUS="${EXIT_STATUS:-}"
+# run: сигнал остановки до установки обработчика в cmd_run (загрузка библиотек, в том числе сразу после самоперезапуска exec) не убивает процесс молча — запоминается
+[ "${1:-run}" = run ] && trap 'STOP_EARLY=1' INT TERM
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 CMD="${1:-run}"; [ $# -gt 0 ] && shift
@@ -293,6 +295,7 @@ cmd_run() {
   fi
   info "Исполнитель обновлений запущен: проект $COMPOSE_PROJECT_NAME, каталог обмена $CH, процесс $$ (uid $(id -u)${INVOCATION_ID:+, служба systemd}). Остановка — Ctrl+C."
   trap 'STATE="stopped"; write_status; stop_pulse final; exit 0' INT TERM
+  [ -n "${STOP_EARLY:-}" ] && { STATE="stopped"; write_status; stop_pulse final; exit 0; }
   local last_check=0 last_scan=0 now
   start_pulse
   STATE="idle"; write_status
