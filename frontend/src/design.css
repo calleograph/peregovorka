@@ -686,6 +686,33 @@ body.in-room .rbar .rbtn.rec { animation: none; }
 .dev-pop .cols { display: grid; gap: 8px; }
 .dev-pop label { display: grid; gap: 3px; font-size: 13px; }
 .dev-pop select { width: 100%; }
+/* окно «Устройства» — плотно: без второй рамки обычного режима, строка «кружок + подпись», мелкие пояснения (на 13–14" всё видно с одной прокруткой) */
+.dev-pop .devices { margin: 0; padding: 0; border: 0; background: none; }
+.dev-pop .devices .cols { margin-top: 0; gap: 6px; }
+.dev-pop .devices label, .dev-pop .mic-prefs label.check { margin: 0; }
+.dev-pop .devices .cols label { gap: 2px; }
+.dev-pop select { padding: 4px 8px; min-height: 30px; font-size: 13px; }
+.dev-pop .mic-prefs { margin: 10px 0 0; padding: 6px 10px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.dev-pop .mic-prefs legend { padding: 0 4px; font-size: 12.5px; font-weight: 600; }
+.dev-pop .noise-modes { display: grid; gap: 4px; margin-bottom: 6px; }
+.dev-pop .noise-title { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.dev-pop label.check { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 2px 0; }
+.dev-pop label.check input { width: auto; flex: none; margin: 2px 0 0; }
+.dev-pop .check-body { font-size: 13px; font-weight: 500; gap: 1px; }
+.dev-pop .check-body .help { font-size: 11.5px; line-height: 1.35; font-weight: 400; }
+
+/* невысокие экраны ноутбуков 13–14" (окно браузера ≤ 720 px по высоте): шапка сайта и заголовок комнаты тоньше — высота отдаётся сцене;
+   уведомления встречи — сверху сцены, а не поверх имён участников и панели кнопок */
+@media (max-height: 720px) and (min-width: 1001px) {
+  body.in-room header.topbar { padding-top: 4px; padding-bottom: 4px; }
+  body.in-room main { padding-top: 4px; padding-bottom: 4px; }
+  body.in-room .room-wrap { height: calc(100vh - var(--hdr, 48px) - 8px); height: calc(100dvh - var(--hdr, 48px) - 8px); min-height: 360px; }
+  body.in-room .stage { gap: 4px; }
+  body.in-room .room-head h1 { font-size: 16px; }
+  body.in-room .room-head .btn.mini { padding: 2px 8px; }
+  .st-toasts { bottom: auto; top: 10px; }
+  .dev-pop .check-body .help { font-size: 11px; }
+}
 
 /* развёрнутая доска: личный режим — вся площадь окна, без правой панели и шапки, лента участников узкая */
 body.in-room .room-wrap.board-focus { grid-template-columns: minmax(0, 1fr); }

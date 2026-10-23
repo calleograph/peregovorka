@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { netDetail, netLabel, type NetShown, type RecvStats } from "../../quality/tileNet";
 import { Participant, Track } from "livekit-client";
 import { Icon } from "../Icons";
@@ -91,8 +92,23 @@ export function VideoTile({ p, source, className = "video", onSize }: {
  *  считается только тогда (один вызов getStats по дорожкам участника), фоновой нагрузки нет. */
 function NetBars({ p, own }: { p: PView; own?: { rttMs?: number; lossPct?: number } | null }) {
   const [recv, setRecv] = useState<RecvStats | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<{ right: number; bottom: number } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
   const { net: s } = p;
+  // подсказка — в document.body: плитка обрезает содержимое (overflow: hidden), а ячейки сцены сдвигаются transform, поэтому fixed внутри них не помогает
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (!(e instanceof KeyboardEvent) || e.key === "Escape") setOpen(null); };
+    const t = setTimeout(() => document.addEventListener("click", close), 0);
+    document.addEventListener("keydown", close);
+    window.addEventListener("resize", close);
+    return () => { clearTimeout(t); document.removeEventListener("click", close); document.removeEventListener("keydown", close); window.removeEventListener("resize", close); };
+  }, [open]);
+  const toggle = () => setOpen((o) => {
+    if (o) return null;
+    const r = ref.current?.getBoundingClientRect();
+    return r ? { right: Math.max(8, window.innerWidth - r.right), bottom: window.innerHeight - r.top + 6 } : null;
+  });
   const probe = async () => {
     if (p.local) return;
     try {
@@ -110,14 +126,14 @@ function NetBars({ p, own }: { p: PView; own?: { rttMs?: number; lossPct?: numbe
   const lvl = s?.lost ? -1 : s?.level ?? 0;
   const tone = lvl === -1 ? "lost" : lvl >= 3 ? "ok" : lvl === 2 ? "warn" : lvl === 1 ? "bad" : "none";
   return (
-    <span className={`tile-net net-${tone}`} title={text} role="img" aria-label={netLabel(s)} tabIndex={0}
+    <span ref={ref} className={`tile-net net-${tone}`} title={open ? undefined : text} role="img" aria-label={netLabel(s)} tabIndex={0}
           onMouseEnter={() => void probe()} onFocus={() => void probe()}
-          onClick={(e) => { e.stopPropagation(); void probe(); setOpen((o) => !o); }} onKeyDown={(e) => e.stopPropagation()}>
+          onClick={(e) => { e.stopPropagation(); void probe(); toggle(); }} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void probe(); toggle(); } }}>
       <svg viewBox="0 0 16 14" width="16" height="14" aria-hidden>
         {[0, 1, 2, 3].map((i) => <rect key={i} x={i * 4} y={11 - i * 3} width="3" height={3 + i * 3} rx="0.7" className={lvl > i ? "on" : "off"} />)}
         {lvl === -1 && <path d="M1 1 15 13" className="cut" />}
       </svg>
-      {open && <span className="tile-net-pop" role="status">{text}</span>}
+      {open && createPortal(<span className="tile-net-pop" role="status" style={{ right: open.right, bottom: open.bottom }}>{text}</span>, document.body)}
     </span>
   );
 }
