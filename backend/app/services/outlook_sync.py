@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Room, utcnow
 from . import ews_auth
 from . import outlook as ol
+from . import recurrence as rc
 from .temp_rooms import TempRoomError
 
 log = logging.getLogger("app.outlook_sync")
@@ -52,6 +53,7 @@ class EventInfo:
     end: datetime | None = None
     attendees: list | None = None          # [(адрес, имя, необязательный)]; None — календарь их не вернул
     attendees_complete: bool = True        # все адреса разобраны (иначе прежних приглашённых не удаляем)
+    recurrence: dict | None = None          # шаблон серии в виде Microsoft Graph (patternedRecurrence); EWS приводится к нему же
 
 
 def _utc(text: str) -> datetime:
@@ -83,7 +85,7 @@ class GraphClient:
         try:
             async with self._http() as c:
                 tok = await self._token(c)
-                r = await c.get(f"{self._api}/users/{quote(organizer)}/events/{quote(rest_id, safe='')}", params={"$select": "subject,start,end,isCancelled,attendees"},
+                r = await c.get(f"{self._api}/users/{quote(organizer)}/events/{quote(rest_id, safe='')}", params={"$select": "subject,start,end,isCancelled,attendees,recurrence"},
                                 headers={"Authorization": f"Bearer {tok}", "Prefer": 'outlook.timezone="UTC"'})
         except httpx.HTTPError as exc:
             raise CalendarError(f"Нет связи с Microsoft Graph ({type(exc).__name__}).") from None
@@ -98,7 +100,7 @@ class GraphClient:
         people = [{"email": (a.get("emailAddress") or {}).get("address"), "name": (a.get("emailAddress") or {}).get("name"), "optional": a.get("type") == "optional"} for a in raw]
         att = ol.parse_attendees(people) if "attendees" in j else None
         return EventInfo(True, bool(j.get("isCancelled")), j.get("subject") or "", _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]), att,
-                         att is None or len(att) == len(people))
+                         att is None or len(att) == len(people), j.get("recurrence") if isinstance(j.get("recurrence"), dict) else None)
 
     async def probe(self, mailbox: str) -> str:
         """Проверка доступа: вход приложения и чтение календаря указанного почтового ящика. Возвращает пояснение; при ошибке — CalendarError."""
@@ -304,7 +306,7 @@ class EwsClient:
             raise CalendarError("У события нет идентификатора EWS.")
         body = ('<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/>'
                 '<t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsCancelled"/><t:FieldURI FieldURI="calendar:RequiredAttendees"/>'
-                '<t:FieldURI FieldURI="calendar:OptionalAttendees"/></t:AdditionalProperties></m:ItemShape>'
+                '<t:FieldURI FieldURI="calendar:OptionalAttendees"/><t:FieldURI FieldURI="calendar:Recurrence"/></t:AdditionalProperties></m:ItemShape>'
                 f'<m:ItemIds><t:ItemId Id="{escape(ews_id, {chr(34): "&quot;"})}"/></m:ItemIds></m:GetItem>')
         root, cls, code, mode = await self._with_mode(lambda _m: body, organizer)
         if cls == "Success":
@@ -315,7 +317,7 @@ class EwsClient:
                       for kind in ("Required", "Optional") for a in it.findall(f"t:{kind}Attendees/t:Attendee", NS)]
             att = ol.parse_attendees(people)
             return EventInfo(True, (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", it.findtext("t:Subject", "", NS) or "",
-                             _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), att, len(att or []) == len(people))
+                             _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), att, len(att or []) == len(people), _ews_recurrence(it))
         if code in ("ErrorItemNotFound", "ErrorInvalidIdMalformed", "ErrorInvalidId"):
             return EventInfo(False) if code == "ErrorItemNotFound" else self._bad_id()
         if code in _DENIED:
@@ -340,6 +342,33 @@ class EwsClient:
         if code in _DENIED:
             raise CalendarError(f"{login} " + self._denied(mode).args[0])
         raise CalendarError(f"{login} EWS ответил ошибкой {code or 'неизвестной'}.")
+
+
+_EWS_PATTERN = {"DailyRecurrence": "daily", "WeeklyRecurrence": "weekly", "AbsoluteMonthlyRecurrence": "absoluteMonthly", "RelativeMonthlyRecurrence": "relativeMonthly",
+                "AbsoluteYearlyRecurrence": "absoluteYearly", "RelativeYearlyRecurrence": "relativeYearly"}
+
+
+def _ews_recurrence(it: ET.Element) -> dict | None:
+    """EWS `Recurrence` → та же форма, что у Microsoft Graph (pattern + range): разбор шаблона один для обоих источников."""
+    rec = it.find("t:Recurrence", NS)
+    if rec is None:
+        return None
+    pat: dict = {}
+    for tag, kind in _EWS_PATTERN.items():
+        el = rec.find(f"t:{tag}", NS)
+        if el is not None:
+            pat = {"type": kind, "interval": int(el.findtext("t:Interval", "1", NS) or 1), "daysOfWeek": (el.findtext("t:DaysOfWeek", "", NS) or "").split(),
+                   "dayOfMonth": int(el.findtext("t:DayOfMonth", "0", NS) or 0) or None, "index": (el.findtext("t:DayOfWeekIndex", "", NS) or "").lower() or None,
+                   "month": el.findtext("t:Month", "", NS) or None}
+            break
+    rng: dict = {}
+    for tag, kind in (("NoEndRecurrence", "noEnd"), ("EndDateRecurrence", "endDate"), ("NumberedRecurrence", "numbered")):
+        el = rec.find(f"t:{tag}", NS)
+        if el is not None:
+            rng = {"type": kind, "startDate": (el.findtext("t:StartDate", "", NS) or "")[:10], "endDate": (el.findtext("t:EndDate", "", NS) or "")[:10] or None,
+                   "numberOfOccurrences": int(el.findtext("t:NumberOfOccurrences", "0", NS) or 0) or None}
+            break
+    return {"pattern": pat, "range": rng} if pat and rng else None
 
 
 def _default_verify():
@@ -386,6 +415,10 @@ async def reconcile_room(db: AsyncSession, room: Room, cfg: Any, client, now: da
                 result = "error"
         if ev.attendees is not None:
             await ol.set_invitees(db, room, ev.attendees, "calendar", prune=ev.attendees_complete)
+        if room.recurring and ev.recurrence:
+            pat = rc.from_graph(ev.recurrence, ev.start, ev.end, room.outlook_tz)
+            if pat is not None:
+                room.outlook_recurrence = pat
         if result != "error":
             room.outlook_sync_error = None
     room.outlook_synced_at = now

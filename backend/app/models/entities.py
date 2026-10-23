@@ -123,6 +123,8 @@ class Room(Base):
     outlook_sync_state: Mapped[str | None] = mapped_column(String(12))      # ok | error | missing
     outlook_sync_error: Mapped[str | None] = mapped_column(String(300))
     recurring: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Шаблон повторения серии (services/recurrence.py): по нему «Предстоящие встречи» показывают ближайшее занятие. None — неизвестен.
+    outlook_recurrence: Mapped[dict | None] = mapped_column(JSONType)
     cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)

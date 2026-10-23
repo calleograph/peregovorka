@@ -257,3 +257,41 @@ def test_finished_meeting_leaves_upcoming_by_schedule_and_stays_in_history(clien
     assert _item(client, "alice", j["id"]) is None, "закрытая по расписанию — не «предстоящая»"
     login(client, "alice")
     assert a["meeting_id"] in [m["id"] for m in client.get(f"{API}/meetings").json()], "встреча и её материалы — в «Истории»"
+
+
+def test_series_shows_its_next_session_by_pattern_and_calendar_sync_updates_the_pattern(client):
+    """Серия с шаблоном: в «Предстоящих» — ближайшее занятие (время и сортировка вместе с разовыми); шаблон обновляют надстройка и сверка (Graph, EWS)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    soon = (now + timedelta(hours=2)).astimezone(timezone.utc)
+    rec = {"type": "daily", "props": {"interval": 1}, "start_date": (now - timedelta(days=3)).date().isoformat(), "end_date": None,
+           "start_time": soon.strftime("%H:%M"), "duration": 30}
+    j, h, b = _schedule(client, recurring=True, recurrence=rec, tz="UTC")
+    single, *_ = _schedule(client, **_body(start_in=60 * 5, length=30))
+    items = _up(client, "alice")["items"]
+    it = next(x for x in items if x["id"] == j["id"])
+    assert it["recurring"] and it["end"] and it["start"].startswith(soon.strftime("%Y-%m-%dT%H:%M")), it
+    ids = [x["id"] for x in items]
+    assert ids.index(j["id"]) < ids.index(single["id"]), "занятие серии через 2 ч — раньше разовой встречи через 5 ч"
+    # мусорный шаблон от клиента не затирает хороший
+    client.post(f"{O}/meetings", json={**b, "recurrence": {"type": "hourly"}}, headers=h)
+    assert _db(client, lambda db: db.get(Room, uuid.UUID(j["id"]))).outlook_recurrence["type"] == "daily"
+    # Graph: серия стала еженедельной по понедельникам 10:00 UTC
+    g = ev(now, now + timedelta(minutes=45))
+    g["recurrence"] = {"pattern": {"type": "weekly", "interval": 1, "daysOfWeek": ["monday"]}, "range": {"type": "noEnd", "startDate": "2026-09-07"}}
+    g["start"]["dateTime"], g["end"]["dateTime"] = "2026-09-07T10:00:00.0000000", "2026-09-07T10:45:00.0000000"
+    assert _run(client, graph_transport(g))["checked"] >= 1
+    row = _db(client, lambda db: db.get(Room, uuid.UUID(j["id"])))
+    assert row.outlook_recurrence["type"] == "weekly" and row.outlook_recurrence["days"] == [0] and row.outlook_recurrence["minutes"] == 45
+    st = _item(client, "alice", j["id"])
+    assert datetime.fromisoformat(st["start"].replace("Z", "+00:00")).weekday() == 0 and st["start"][11:16] == "10:00"
+    # EWS: последний четверг месяца
+    item = ews_item(now, now + timedelta(hours=1)).replace("</t:CalendarItem>", "<t:Recurrence><t:RelativeMonthlyRecurrence><t:Interval>1</t:Interval><t:DaysOfWeek>Thursday</t:DaysOfWeek>"
+                                                          "<t:DayOfWeekIndex>Last</t:DayOfWeekIndex></t:RelativeMonthlyRecurrence><t:NoEndRecurrence><t:StartDate>2026-09-01+03:00</t:StartDate>"
+                                                          "</t:NoEndRecurrence></t:Recurrence></t:CalendarItem>")
+    assert _run(client, ews_transport(ews_response(item=item)), mode="ews")["checked"] >= 1
+    row = _db(client, lambda db: db.get(Room, uuid.UUID(j["id"])))
+    assert row.outlook_recurrence["type"] == "monthly_nth" and row.outlook_recurrence["nth"] == 5 and row.outlook_recurrence["days"] == [3] and row.outlook_recurrence["start"] == "2026-09-01"
+    # встречу сделали разовой — шаблон сбрасывается
+    client.post(f"{O}/meetings", json={**b, "recurring": False, "start": iso(now + timedelta(hours=1)), "end": iso(now + timedelta(hours=2))}, headers=h)
+    assert _db(client, lambda db: db.get(Room, uuid.UUID(j["id"]))).outlook_recurrence is None

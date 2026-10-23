@@ -229,6 +229,17 @@ describe("ядро и скрытые команды на фиктивном Offi
     expect(JSON.parse(calls("/meetings").at(-1)![1].body).attendees).toEqual([{ email: "carol@example.org", name: "Carol", optional: false }]);
   });
 
+  it("серия: шаблон повторения уходит на сервер простым объектом (методы SeriesTime вызваны), у разовой встречи — нет", async () => {
+    const item = G.Office.context.mailbox.item;
+    expect("recurrence" in (await mod.prepare(item)).payload).toBe(false);
+    const series = { recurrenceType: "weekly", recurrenceProperties: { interval: 1, days: ["mon", "thu"] }, recurrenceTimeZone: { name: "Russian Standard Time" },
+      seriesTime: { getStartDate: () => "2026-10-01", getEndDate: () => null, getStartTime: () => "09:30", getDuration: () => 45 } };
+    item.recurrence = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: series }) };
+    const p = (await mod.prepare(item)).payload;
+    expect(p.recurring).toBe(true);
+    expect(p.recurrence).toEqual({ type: "weekly", props: { interval: 1, days: ["mon", "thu"] }, start_date: "2026-10-01", end_date: null, start_time: "09:30", duration: 45 });
+  });
+
   it("прошедшая встреча отклоняется до запроса к серверу понятной ошибкой", async () => {
     const item = G.Office.context.mailbox.item;
     item.start = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: new Date(Date.now() - 5 * 3600_000) }) };

@@ -54,7 +54,10 @@ live = meet("Ежедневный стендап", now - timedelta(minutes=8), 3
 alice.post(f"{API}/rooms/{live['id']}/join", json={}).raise_for_status()          # «Идёт» — по фактической встрече
 cancelled = meet("Встреча с поставщиком", now + timedelta(hours=5), 45, people=PEOPLE[2:4])
 addin.delete(f"{API}/outlook/meetings/{cancelled['id']}").raise_for_status()
-meet("Еженедельный обзор проектов", now + timedelta(days=2), 60, people=PEOPLE, recurring=True)
+first = now + timedelta(days=2)
+meet("Еженедельный обзор проектов", first, 60, people=PEOPLE, recurring=True, tz="UTC",       # серия с шаблоном: на главной — ближайшее занятие
+     recurrence={"type": "weekly", "props": {"interval": 1, "days": [("mon", "tue", "wed", "thu", "fri", "sat", "sun")[first.weekday()]]},
+                 "start_date": first.date().isoformat(), "end_date": None, "start_time": first.strftime("%H:%M"), "duration": 60})
 bob = session("bob", "bob-pass")
 bob.post(f"{API}/rooms/temporary", json={"name": "Срочный созвон по инциденту"})
 print("Готово: встречи созданы")

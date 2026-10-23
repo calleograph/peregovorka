@@ -19,12 +19,13 @@ from ..auth.deps import SessionUser
 from ..models import Meeting, MeetingParticipant, Room, RoomAcl, RoomInvitee, RoomModerator, User
 from . import outlook as ol
 from . import peer_rooms
+from . import recurrence as rc
 from .rooms import RoomView, _listed, _matches, acl_allows
 
 CANCELLED_SHOWN = timedelta(days=7)        # отменённая встреча видна со статусом «Отменена», пока не прошло её время (но не дольше недели после отмены)
 PREVIEW = 3                                 # сколько имён приглашённых в карточке; остальные — «+N»
 _COLS = ("id", "slug", "name", "room_type", "lifetime", "lifecycle", "created_by_user_id", "created_by_name", "created_at", "peer_access", "password_hash", "guest_token", "guest_access_enabled",
-         "scheduled_start", "scheduled_end", "join_opens_at", "recurring", "cancelled_at", "outlook_sync_state", "outlook_synced_at")
+         "scheduled_start", "scheduled_end", "join_opens_at", "recurring", "cancelled_at", "outlook_sync_state", "outlook_synced_at", "outlook_recurrence", "outlook_tz")
 
 
 async def _my_email(db: AsyncSession, su: SessionUser) -> str:
@@ -103,10 +104,14 @@ async def upcoming(db: AsyncSession, su: SessionUser, now: datetime) -> list[dic
     for v, mine, names, emails in shown:
         m = live.get(v.id)
         scheduled = v.scheduled_start is not None
+        start, end, opens = v.scheduled_start or v.created_at, v.scheduled_end, v.join_opens_at
+        if v.recurring:              # серия: ближайшее занятие по шаблону (вход у серии открыт всегда); шаблона нет — время первого занятия без окончания
+            nxt = rc.next_occurrence(v.outlook_recurrence, v.outlook_tz, now)
+            start, end, opens = (nxt[0], nxt[1], None) if nxt else (start, None, None)
         out.append({
             "id": str(v.id), "slug": v.slug, "name": v.name,
             "kind": "scheduled" if scheduled else ("peer" if v.room_type == peer_rooms.ROOM_TYPE else "temporary"),
-            "start": v.scheduled_start or v.created_at, "end": v.scheduled_end, "opens_at": v.join_opens_at, "recurring": bool(v.recurring),
+            "start": start, "end": end, "opens_at": opens, "recurring": bool(v.recurring),
             "organizer": v.created_by_name, "cancelled": v.cancelled_at is not None,
             "live": {"started_at": m.started_at, "participants": people.get(m.id, 0)} if m is not None else None,
             "last_ended_at": last_end.get(v.id),
@@ -115,8 +120,8 @@ async def upcoming(db: AsyncSession, su: SessionUser, now: datetime) -> list[dic
             "guest_token": v.guest_token if emails and v.guest_access_enabled and not scheduled else None,      # у конференции из календаря гости входят по той же ссылке /m/
             "url": _url(v), "sync": {"state": v.outlook_sync_state, "at": v.outlook_synced_at} if scheduled and v.outlook_sync_state else None,
         })
-    # ближайшие первыми: идущие — по фактическому началу; у серии следующего занятия сервер не знает, поэтому серии — после разовых встреч
-    out.sort(key=lambda x: (x["recurring"] and x["live"] is None, x["live"]["started_at"] if x["live"] else x["start"]))
+    # ближайшие первыми: идущие — по фактическому началу, серии — по ближайшему занятию; серия без шаблона (занятие неизвестно) — после остальных
+    out.sort(key=lambda x: (x["recurring"] and x["live"] is None and x["end"] is None, x["live"]["started_at"] if x["live"] else x["start"]))
     return out
 
 

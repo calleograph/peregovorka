@@ -209,7 +209,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     if (filter === "live" && !m.live) return false;
     return !q.trim() || `${m.name} ${m.organizer ?? ""}`.toLowerCase().includes(q.trim().toLowerCase());
   }), [upcoming, adminView, mineOnly, filter, q]);
-  const next = upcoming.find((m) => m.mine && !m.cancelled && !m.live && m.kind === "scheduled" && !m.recurring && new Date(m.start).getTime() > now);
+  const next = upcoming.find((m) => m.mine && !m.cancelled && !m.live && m.kind === "scheduled" && !!m.end && new Date(m.start).getTime() > now);
 
   if (error) return <div className="alert error">{error}</div>;
   if (!rooms) return <div className="rooms-page"><div className="grid rooms-grid" aria-busy="true">{[0, 1, 2].map((i) => <div key={i} className="room-card rc skeleton" style={{ "--i": i } as CSSProperties} />)}</div></div>;
