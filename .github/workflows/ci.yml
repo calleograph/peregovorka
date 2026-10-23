@@ -189,7 +189,7 @@ jobs:
           [ $rc = 0 ] || echo "::error title=server.log::$(grep -c Traceback server.log) трассировок; первая: $(grep -m1 -A40 Traceback server.log | grep -E '^  File|Error|error' | tail -6 | tr '\n' ' ' | cut -c1-900); ошибки: $(grep -o '"msg": "[^"]*"' server.log | sort | uniq -c | sort -rn | head -5 | tr '\n' ' ')"
           exit $rc
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with: { name: perf-smoke, path: "perf.json\nserver.log" }
 
   clean-os:
