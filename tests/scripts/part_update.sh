@@ -146,6 +146,8 @@ LIVEKIT_IMAGE_TAG=latest
 LDAP_BIND_PASSWORD=Sup3r\$ecret#Pass
 APP_MASTER_KEY=masterkey123456
 WEB_PORT=18480
+POSTGRES_DB=pgupd
+POSTGRES_USER=pgupd
 EOF
   chmod 600 "$TMP/cl/.env"
 }
@@ -179,16 +181,27 @@ OUTL="$(cd "$TMP/cl" && env PATH="$BIN:$PATH" bash "$UPD" --dry-run 2>&1)"; RCL=
 t "локальные изменения, dry-run: код 0, сообщение «будут сохранены», файлы на месте, stash нет" bash -c '[ "$1" -eq 0 ] && grep -q "будут сохранены" <<<"$2" && [ -f "$3/README.local" ] && grep -q "изменение" "$3/.env.example" && [ -z "$(git -C "$3" stash list)" ]' _ "$RCL" "$OUTL" "$TMP/cl"
 t "локальные изменения: секреты не напечатаны" bash -c '! grep -qE "Sup3r|masterkey123456" <<<"$1"' _ "$OUTL"
 
-# подставной docker без контейнеров; FAIL_BUILD=1 — сборка образов падает; HEALTHY_DB=1 — PostgreSQL и Redis работают, сервисы приложения не поднимаются
+# подставной docker без контейнеров; FAIL_BUILD=1 — сборка образов падает; HEALTHY_DB=1 — PostgreSQL и Redis работают, сервисы приложения не поднимаются;
+# FAKE_COMMIT — commit внутри собранных образов (по умолчанию IMAGE_TAG — образы из устанавливаемого кода);
+# FAKE_DB — файл с ревизией «базы»: alembic current/upgrade (head = 0002), pg_dump/pg_restore переносят ревизию, запросы psql пишутся в $FAKE_DB.sql
 UBIN="$TMP/ubin"; mkdir -p "$UBIN"
 cat > "$UBIN/docker" <<'DOCK'
 #!/usr/bin/env bash
 case "$1" in
   version) echo 29.1.3 ;;
   compose) case "$2" in version) echo 2.40.3 ;; esac; [ -n "${FAIL_BUILD:-}" ] && [[ " $* " == *" build "* ]] && exit 1
+           if [ -n "${FAKE_DB:-}" ]; then case " $* " in
+             *" alembic current "*) cat "$FAKE_DB"; exit 0 ;;
+             *" alembic heads "*) echo "0002 (head)"; exit 0 ;;
+             *" alembic upgrade "*) echo 0002 > "$FAKE_DB"; exit 0 ;;
+             *" pg_dump "*) echo "dump-of-$(cat "$FAKE_DB")"; exit 0 ;;
+             *" pg_restore "*) sed 's/^dump-of-//' > "$FAKE_DB"; exit 0 ;;
+             *" psql "*) echo "${@: -1}" >> "$FAKE_DB.sql"; exit 0 ;;
+           esac; fi
            if [ -n "${HEALTHY_DB:-}" ] && [[ " $* " == *" ps -q "* ]]; then case "${@: -1}" in postgres|redis) echo "cid-${@: -1}" ;; esac; fi; exit 0 ;;
   info) echo overlayfs ;;
-  image) exit 0 ;;
+  image) [[ " $* " == *" -f "* ]] && echo "APP_GIT_COMMIT=${FAKE_COMMIT:-${IMAGE_TAG:-}}"; exit 0 ;;
+  run) [[ " $* " == *version.json* ]] && echo "{\"commit\":\"${FAKE_COMMIT:-${IMAGE_TAG:-}}\"}"; exit 0 ;;
   inspect) [ -n "${HEALTHY_DB:-}" ] && [[ "${@: -1}" == cid-* ]] || exit 1; [[ "$3" == *Health* ]] && echo healthy || echo running ;;
   *) exit 0 ;;
 esac
@@ -204,15 +217,24 @@ t "автопочинка: та же копия в git stash, рабочая к�
 t "сбой сборки: код 1, этап назван, код возвращён на прежнюю версию" bash -c '[ "$1" -eq 1 ] && grep -q "Обновление остановлено на этапе" <<<"$2" && grep -q "код возвращён на прежнюю версию" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCB" "$OUTB" "$TMP/cl" "$H0"
 t "сбой сборки: маркер прерванного обновления снят (повтор начнётся с начала), итог записан" bash -c '[ ! -e "$1/state/update-in-progress" ] && grep -q "^result=failed_at_.*_restored_previous$" "$1/state/last-update.state"' _ "$TMP/upd-data"
 
+# 1а) образы собраны не из устанавливаемого кода (другой commit внутри): одна пересборка, затем остановка ДО переключения, код возвращён
+OUTM="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" FAKE_COMMIT=0000deadbeef bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCM=$?
+t "несоответствие версии образов и кода: пересборка один раз, затем остановка до переключения; код возвращён" bash -c '[ "$1" -eq 1 ] && grep -q "commit «0000deadbeef», а устанавливается" <<<"$2" && grep -q "пересобираю их один раз" <<<"$2" && grep -q "не согласованы с целевой версией" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCM" "$OUTM" "$TMP/cl" "$H0"
+
 # 2) база не поднялась перед миграциями: тоже до перезапуска сервисов — код возвращается, сервер на прежней версии
 OUTP="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCP=$?
 t "PostgreSQL/Redis не готовы перед миграциями: код 1, код возвращён на прежнюю версию" bash -c '[ "$1" -eq 1 ] && grep -q "PostgreSQL/Redis не стали healthy" <<<"$2" && grep -q "код возвращён на прежнюю версию" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCP" "$OUTP" "$TMP/cl" "$H0"
 
-# 3) миграция выполнена, а проверка после неё / сервисы новой версии не в порядке: автоматический откат кода и образов (rollback.sh)
-OUTR="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" HEALTHY_DB=1 bash "$UPD" --yes --no-backup --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCR=$?
+# 3) миграция выполнена (копия снята при остановленном приложении), а сервисы новой версии не заработали:
+#    база ТОЧНО возвращается к копии (текущая переименована), затем откат кода и образов (rollback.sh) — сервер снова на прежней версии
+FDB="$TMP/fake-db"; echo 0001 > "$FDB"; rm -f "$FDB.sql"
+OUTR="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" HEALTHY_DB=1 FAKE_DB="$FDB" bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCR=$?
 t "обновление: дошло до миграций и проверки после них, код 1" eq "$RCR" 1
 t "после слияния продолжает НОВАЯ версия скрипта (фаза 2) и печатает прогресс этапов" bash -c 'grep -q "Продолжает уже НОВАЯ версия" <<<"$1" && grep -q "Миграции базы данных" <<<"$1"' _ "$OUTR"
-t "после изменения схемы — автоматический откат кода и образов (rollback.sh), код снова прежний" bash -c 'grep -q "откатываю код и образы" <<<"$1" && [ "$(git -C "$2" rev-parse HEAD)" = "$3" ]' _ "$OUTR" "$TMP/cl" "$H0"
+t "миграция 0001 → 0002 выполнена после копии БД" bash -c 'grep -q "Ревизия БД: текущая 0001 · целевая (head) 0002" <<<"$1" && grep -q "схема БД обновлена" "$2/state/update-actions.log"' _ "$OUTR" "$TMP/upd-data"
+t "сбой после миграции: база точно возвращена к копии (прежняя переименована, не удалена), ревизия снова 0001" bash -c 'grep -q "БД возвращена к состоянию до обновления" <<<"$1" && grep -q "RENAME TO \"pgupd_failed_" "$2.sql" && ! grep -q "DROP DATABASE" "$2.sql" && [ "$(cat "$2")" = 0001 ]' _ "$OUTR" "$FDB"
+t "после возврата базы — автоматический откат кода и образов (rollback.sh, схема совместима), код снова прежний" bash -c 'grep -q "откатываю код и образы" <<<"$1" && grep -q "Ревизия БД 0001 известна коду" <<<"$1" && [ "$(git -C "$2" rev-parse HEAD)" = "$3" ]' _ "$OUTR" "$TMP/cl" "$H0"
+t "единый отчёт: итог, этап, действия (копия, миграция, возврат БД, откат), сборка по компонентам" bash -c 'r="$1/updater/report.txt"; grep -q "^ИТОГ: " "$r" && grep -q "^Этап остановки: " "$r" && grep -q "БД возвращена к резервной копии" "$r" && grep -q "откат кода и образов" "$r" && grep -q "^Схема БД: *0001" "$r" && ! grep -q "^  *$" "$r" && grep -q "^  web: " "$r" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert not d[\"ok\"] and d[\"actions\"]" "$1/updater/report.json" && ! grep -qE "Sup3r|masterkey123456" "$r"' _ "$TMP/upd-data"
 t "сборка: commit и время сборки передаются образам (IMAGE_TAG/версия из git, не unknown)" bash -c '! grep -q "commit=unknown" <<<"$1" && grep -q "stage=build" <<<"$1"' _ "$OUTR"
 t ".env: резервная копия с правами 600 и ИДЕНТИЧНОЙ прежней копией" bash -c 'b="$(ls "$1"/.env.backup-* 2>/dev/null | head -1)"; [ -n "$b" ] && grep -qF "Sup3r\$ecret#Pass" "$b" && grep -q "^LIVEKIT_IMAGE_TAG=latest$" "$b" && { [ "$(uname -s)" != Linux ] || [ "$(stat -c %a "$b")" = 600 ]; }' _ "$TMP/cl"
 t ".env: прежние значения и секреты не изменены, добавлен только безопасный параметр" bash -c 'e="$1/.env"; grep -qF "LDAP_BIND_PASSWORD=Sup3r\$ecret#Pass" "$e" && grep -q "^APP_MASTER_KEY=masterkey123456$" "$e" && grep -q "^NEW_SAFE_PARAM=42$" "$e" && ! grep -q "NEW_ADMIN_PASSWORD" "$e" && ! grep -q "NEW_LISTEN_PORT" "$e"' _ "$TMP/cl"
@@ -220,6 +242,11 @@ t ".env: LiveKit закреплён на проверенной версии (la
 t "состояние для отката записано: предыдущий commit, копия .env" bash -c 'f="$1/state/last-update.state"; grep -q "^previous_git_commit=$2$" "$f" && grep -q "^env_backup=.*env.backup-" "$f" && grep -qE "^result=(failed_at_|rolled_back_to_)" "$f"' _ "$TMP/upd-data" "$H0"
 t "опасных операций нет: ни reset --hard, ни удаления DATA_ROOT/томов в скриптах обновления" bash -c '! grep -nE "reset --hard|rm -rf[^#]*(DATA_ROOT|models|volumes)|docker volume rm|compose down -v|system prune" "$1/scripts/update.sh" "$1/scripts/rollback.sh" "$1/scripts/lib/updatelib.sh" "$1/scripts/lib/autorepair.sh" | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#"' _ "$ROOT"
 t "update.sh не вызывает install.sh и не пересоздаёт .env (cp .env.example → .env отсутствует)" bash -c '! grep -nE "(bash|exec|\./|REPO_ROOT/)scripts/install\.sh" "$1/scripts/update.sh" && ! grep -nE "(cp|mv|cat >|tee) .*\"\$ENV_FILE\"" "$1/scripts/update.sh" | grep -v backup' _ "$ROOT"
+
+# 3б) нужна миграция, а копия отключена (--no-backup): остановка ДО изменения схемы, код возвращён, схема не тронута
+echo 0001 > "$FDB"
+OUTX="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" HEALTHY_DB=1 FAKE_DB="$FDB" bash "$UPD" --yes --no-backup --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCX=$?
+t "миграция без резервной копии не выполняется: остановка до изменения схемы, схема 0001, код прежний" bash -c '[ "$1" -eq 1 ] && grep -q "резервная копия отключена (--no-backup)" <<<"$2" && [ "$(cat "$3")" = 0001 ] && [ "$(git -C "$4" rev-parse HEAD)" = "$5" ]' _ "$RCX" "$OUTX" "$FDB" "$TMP/cl" "$H0"
 
 # 4) повтор после прерывания (процесс убит после переключения кода): распознаётся и продолжается с фазы 2 без повторного слияния
 git -C "$TMP/cl" checkout -q --detach "$T1"; : > "$TMP/upd-data/state/update-in-progress"

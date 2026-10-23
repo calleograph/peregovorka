@@ -525,6 +525,14 @@ export interface UpdatesOverview {
   outcome: UpdateOutcome | null; helper: HelperInfo;
   can_update: boolean; reasons: string[]; up_to_date: boolean; commands: Record<string, string>;
   history: UpdateAttempt[]; last_success: UpdateAttempt | null; changes?: UpdateChanges | null;
+  /** согласованность установки: код на сервере ↔ работающая версия ↔ схема БД (прерванное обновление — не «актуально») */
+  deploy: { code: string | null; running: string | null; schema_current: string | null; schema_head: string | null; consistent: boolean; problems: string[] };
+  report: UpdateReport | null;
+}
+/** Единый отчёт последнего обновления (scripts/update.sh → report.json; секреты скрыты при записи) */
+export interface UpdateReport {
+  result: string; ok: boolean; cause: string; stage: string; advice: string; running: string; target: string; previous: string;
+  actions: string[]; build: string[]; services: string[]; sources: string[]; text: string;
 }
 export interface AutoUpdateLast { at: number; result: "updated" | "no_update" | "failed" | "deferred" | "skipped" | string; from_version?: string | null; to_version?: string | null; duration_s?: number | null; error?: string; detail?: string }
 export interface AutoUpdateInfo {

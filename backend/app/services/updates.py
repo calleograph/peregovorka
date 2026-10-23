@@ -7,6 +7,7 @@
     updater  →  status.json   «пульс» исполнителя и состояние текущего обновления (этап, код завершения)
     updater  →  remote.json   что нового в репозитории (список commit'ов, миграции, параметры .env)
     updater  →  update.log    построчный вывод scripts/update.sh (его показывает окно обновления)
+    update.sh →  report.json  единый отчёт последнего обновления (итог, этап, причина, автоматические действия, сборка, сервисы; секреты скрыты)
 
 Исполнитель (служба от root) выполняет только фиксированный набор действий: `check`, `scan`, `update` (scripts/update.sh --yes с разрешёнными флагами)
 и `repair` с ID из белого списка REPAIR_IDS (зеркало scripts/lib/repairlib.sh; совпадение проверяется тестом). Произвольные команды из
@@ -19,8 +20,12 @@ import logging
 import re
 import time
 import uuid
+from functools import cache
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 log = logging.getLogger("app.updates")
@@ -31,9 +36,11 @@ LOG_CHUNK = 64 * 1024
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 # Белый список исправлений («Исправить автоматически»): зеркало REPAIR_IDS в scripts/lib/repairlib.sh. Backend передаёт исполнителю только эти ID.
-REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "image_commit", "migrations", "reverify", "llm_model", "sip_enable", "sip_disable")
+REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "deploy_incomplete", "image_commit", "migrations", "reverify", "llm_model", "sip_enable", "sip_disable")
 BUSY_STATES = ("updating", "repairing")
 
+STARTED_AT = time.time()          # запуск процесса: сведения помощника старше него могут описывать прежний код
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 REPO = "calleograph/peregovorka"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -95,6 +102,9 @@ class Channel:
         if r and r.get("checked_at"):
             r["age_s"] = int(time.time() - float(r["checked_at"]))
         return r
+
+    def report(self) -> dict | None:
+        return self._json("report.json")
 
     # ----------------------------------------------------------- «что изменилось» в конкретном переходе версий
     def _changes_path(self, from_v: str, to_v: str) -> Path | None:
@@ -260,3 +270,42 @@ def compare(installed: str | None, latest: str | None) -> str:
     if not a or not b:
         return "unknown"
     return "ok" if a == b else "newer" if a < b else "ahead"
+
+
+# ------------------------------------------------------------------ согласованность установки: код ↔ работающая версия ↔ схема БД
+@cache
+def schema_head() -> str | None:
+    """Ревизия head миграций, лежащих в этом образе (без запуска alembic). Несколько head или ошибка разбора — None («неизвестно»)."""
+    try:
+        from alembic.config import Config  # noqa: PLC0415
+        from alembic.script import ScriptDirectory  # noqa: PLC0415
+
+        cfg = Config()
+        cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
+        heads = ScriptDirectory.from_config(cfg).get_heads()
+        return heads[0] if len(heads) == 1 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def schema_current(db: AsyncSession) -> str | None:
+    try:
+        return (await db.execute(text("SELECT version_num FROM alembic_version"))).scalar_one_or_none()
+    except Exception:  # noqa: BLE001
+        await db.rollback()
+        return None
+
+
+def deploy_state(remote: dict | None, running: str | None, cur: str | None, head: str | None) -> dict:
+    """Установка согласована, если код на сервере (git HEAD по данным помощника) совпадает с версией работающего backend, а схема БД — с head.
+    Иначе это незавершённое развёртывание (код новый, контейнеры или схема — прежние): «актуально» показывать нельзя.
+    Сведения помощника, снятые ДО запуска этого процесса, могут описывать прежний код — по ним расхождение не объявляется. Неизвестное — не расхождение."""
+    code = str((remote or {}).get("current") or "")[:12]
+    run = "" if (running or "unknown") == "unknown" else str(running)[:12]
+    fresh = float((remote or {}).get("checked_at") or 0) >= STARTED_AT
+    problems = []
+    if code and run and fresh and code != run:
+        problems.append(f"код на сервере — {code}, а работают компоненты версии {run}")
+    if cur and head and cur != head:
+        problems.append(f"схема базы данных на ревизии {cur}, программа ожидает {head}")
+    return {"code": code or None, "running": run or None, "schema_current": cur, "schema_head": head, "consistent": not problems, "problems": problems}

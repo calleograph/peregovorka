@@ -11,7 +11,7 @@
 if [ -n "${_VM_REPAIRLIB_LOADED:-}" ]; then return 0; fi
 _VM_REPAIRLIB_LOADED=1
 
-REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing image_commit migrations reverify llm_model sip_enable sip_disable)
+REPAIR_IDS=(data_dirs nginx_site sysctl prereq_missing deploy_incomplete image_commit migrations reverify llm_model sip_enable sip_disable)
 BACKEND_UID=10001
 
 repair_id_valid() { local i; for i in "${REPAIR_IDS[@]}"; do [ "$i" = "$1" ] && return 0; done; return 1; }
@@ -24,6 +24,7 @@ repair_text() {
     nginx_site) echo "Настройка веб-сервера устарела|${REPAIR_DETAIL:-Конфигурация веб-сервера, созданная Peregovorka, отличается от актуальной.} Возможны обрывы связи в комнатах или недоступность сайта.|Обновить конфигурацию Peregovorka на веб-сервере (с проверкой и автоматическим откатом при ошибке)" ;;
     sysctl) echo "Параметры сети сервера ниже рекомендованных|${REPAIR_DETAIL:-Системные параметры для звука и видео ниже рекомендованных.} Возможны потери звука в комнатах при нагрузке.|Применить рекомендованные параметры (отдельный файл настроек Peregovorka, без чужих файлов)" ;;
     prereq_missing) echo "На сервере не хватает нужных программ|${REPAIR_DETAIL:-Не установлены программы, нужные Peregovorka.} Без них обновление и сборка могут не работать.|Установить недостающее из официальных репозиториев" ;;
+    deploy_incomplete) echo "Обновление установлено не полностью|${REPAIR_DETAIL:-Код на сервере новее работающих компонентов или схемы базы данных.} Так бывает после прерванного обновления: страница обновлений не должна считать такую установку актуальной.|Завершить развёртывание той же версии: собрать недостающие образы, сделать резервную копию и миграции, перезапустить сервисы и проверить" ;;
     image_commit) echo "Версия работающих компонентов не определена|${REPAIR_DETAIL:-Компоненты собраны без сведений о версии.} Непонятно, какой именно код работает.|Пересобрать компоненты и перезапустить" ;;
     migrations) echo "База данных не обновлена до текущей версии|${REPAIR_DETAIL:-Структура базы данных отстаёт от программы.} Часть функций может не работать.|Применить обновление структуры базы (с резервной копией)" ;;
     llm_model) echo "Локальная языковая модель не готова|${REPAIR_DETAIL:-Модель Qwen3 1.7B не загружена или повреждена.} Краткие протоколы и резюме на локальной модели не будут работать (внешняя LLM и остальная система — работают).|Скачать модель заново (с проверкой размера и контрольной суммы) и запустить её контейнер" ;;
@@ -110,6 +111,12 @@ repair_detect_image_commit() {
     if [ "$raw" = unknown ]; then REPAIR_DETAIL="Компонент «$s» собран без сведений о версии."; return 0; fi
   done
   return 1
+}
+
+repair_detect_deploy_incomplete() {
+  repair_docker_up || return 1
+  deploy_mismatch && [ "$DEPLOY_STALE_SVCS" -gt 0 ] || return 1     # только схема отстаёт — это проблема «migrations»
+  REPAIR_DETAIL="Расхождение: ${DEPLOY_DIFF}."
 }
 
 repair_detect_migrations() {
@@ -227,6 +234,9 @@ repair_apply_image_commit() {
   return 0
 }
 
+# штатное обновление на ТУ ЖЕ версию (commit закреплён): update.sh сам видит расхождение и доводит развёртывание; при сбое — его автовосстановление
+repair_apply_deploy_incomplete() { "$REPO_ROOT/scripts/update.sh" --yes --env "$ENV_FILE" --ref "$(git -C "$REPO_ROOT" rev-parse HEAD)"; }
+
 repair_apply_migrations() {
   [ -x "$REPO_ROOT/scripts/backup.sh" ] && { "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label pre-repair || { fail "Резервная копия БД не создана — миграции не выполняются"; return 1; }; }
   dc run --rm --no-deps backend alembic upgrade head || return 1
@@ -269,7 +279,41 @@ repair_apply_reverify() {
   repair_verify_record fail; return 1
 }
 
-repair_apply() { # repair_apply ID
-  repair_id_valid "$1" || { fail "Неизвестное исправление"; return 2; }
-  "repair_apply_$1"
+# repair_manual ID — что делать администратору, если автоматически исправить не удалось
+repair_manual() {
+  case "$1" in
+    data_dirs) echo "Проверьте, что каталог данных (DATA_ROOT в .env) находится на локальном диске, доступном для записи, и повторите исправление." ;;
+    nginx_site) echo "Веб-сервер отклонил новую конфигурацию — прежняя оставлена. Если файл сайта Peregovorka правили вручную, перенесите правки в настройки установки и повторите." ;;
+    sysctl) echo "Параметры ядра на этом сервере менять нельзя (контейнер или хостинг) — их применяет администратор хоста; значения покажет scripts/tune-kernel.sh." ;;
+    prereq_missing) echo "Нет доступа к репозиториям пакетов — установите программы из списка выше вручную и повторите." ;;
+    deploy_incomplete|image_commit) echo "Причина и этап — в отчёте обновления (раздел «Обновления»); устраните её и запустите исправление или обновление снова (повтор безопасен)." ;;
+    migrations) echo "Миграция не применилась; резервная копия базы — в каталоге резервных копий. Причина — в журнале выше; после её устранения повторите." ;;
+    llm_model) echo "Нет доступа к источнику модели или образа — скачайте их вручную по инструкции из документации локальной LLM." ;;
+    sip_enable|sip_disable) echo "Причина — в журнале службы livekit-sip (scripts/logs.sh livekit-sip)." ;;
+    *) echo "Строки с ошибками в журнале выше называют компонент и причину." ;;
+  esac
+}
+
+# repair_apply ID — диагностика → подтверждённая причина → безопасное исправление → повторная проверка. Если проблема уже не подтверждается,
+# ничего не меняется; если исправить не удалось или проблема осталась — объяснение и что делать вручную.
+repair_apply() {
+  local id="$1" t check=0
+  repair_id_valid "$id" || { fail "Неизвестное исправление"; return 2; }
+  t="$(REPAIR_DETAIL=""; repair_text "$id")"
+  case "$id" in reverify|sip_disable) ;; *) declare -F "repair_detect_$id" >/dev/null && check=1 ;; esac   # это действия, а не поиск неисправности
+  if [ "$check" = 1 ]; then
+    info "1) Диагностика: ${t%%|*}"
+    REPAIR_DETAIL=""
+    if ! "repair_detect_$id" 2>/dev/null; then ok "Проблема сейчас не подтверждается — ничего не изменено"; return 0; fi
+    info "2) Причина подтверждена: ${REPAIR_DETAIL:-$(cut -d'|' -f2 <<<"$t")}"
+  fi
+  info "$([ "$check" = 1 ] && echo "3) ")Исправление: ${t##*|}"
+  if ! "repair_apply_$id"; then fail "Исправить автоматически не удалось. $(repair_manual "$id")"; return 1; fi
+  if [ "$check" = 1 ]; then
+    info "4) Повторная проверка"
+    REPAIR_DETAIL=""
+    if "repair_detect_$id" 2>/dev/null; then fail "Проблема осталась после исправления${REPAIR_DETAIL:+: $REPAIR_DETAIL}. $(repair_manual "$id")"; return 1; fi
+    ok "Повторная проверка: проблема устранена"
+  fi
+  return 0
 }

@@ -18,7 +18,8 @@ SELECTED_BUILD_MODE=""
 #  infra   — сбой подсистемы Docker/containerd/диска (экспорт образа, snapshot, mount, место).
 classify_build_error() {
   local t; t="$(cat)"
-  if grep -qiE 'failed to copy: read tcp|tls handshake timeout|i/o timeout|connection timed out|temporary failure in name resolution|read timed out|readtimeouterror|connection reset by peer|unexpected eof|net/http: request canceled|dial tcp.*(timeout|refused)|toomanyrequests|received unexpected http status: 50[234]' <<<"$t"; then
+  # Сетевые сбои менеджеров пакетов внутри RUN (npm/pip/apt/git) BuildKit дополняет строкой «did not complete successfully» — поэтому сеть проверяется первой.
+  if grep -qiE 'failed to copy: read tcp|tls handshake timeout|i/o timeout|connection timed out|temporary failure in name resolution|read timed out|readtimeouterror|connection reset by peer|unexpected eof|net/http: request canceled|dial tcp.*(timeout|refused)|toomanyrequests|received unexpected http status: 50[234]|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ESOCKETTIMEDOUT)\b|socket hang up|npm (err!|error) network|httpsconnectionpool|connecttimeouterror|newconnectionerror|proxyerror|temporary failure resolving|could not resolve host|failed to connect to .* port|rpc failed|gnutls_handshake|early eof' <<<"$t"; then
     echo network; return
   fi
   if grep -qiE 'did not complete successfully|dockerfile parse error|unknown instruction|failed to read dockerfile|failed to compute cache key|COPY failed|lstat .*no such file|not found in build context' <<<"$t" \

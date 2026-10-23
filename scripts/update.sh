@@ -83,7 +83,8 @@ upd_autorecover() {
   [ -n "$prev" ] || return 0
   # 1) схема БД уже изменена — вернуть базу ТОЧНО к копии, снятой при остановленном приложении (данные после неё не писались)
   if [ "${SCHEMA_CHANGED:-0}" = 1 ]; then
-    if [ "$(upd_state_get backup_after_stop)" = 1 ] && upd_db_restore_exact "$(upd_state_get db_backup)"; then SCHEMA_CHANGED=0
+    if [ "$(upd_state_get backup_after_stop)" = 1 ] && upd_db_restore_exact "$(upd_state_get db_backup)"; then
+      SCHEMA_CHANGED=0; alembic_verify run >/dev/null 2>&1; upd_state_set alembic_after "${ALEMBIC_CUR:-}"   # ревизия восстановленной базы — в отчёт
     else warn "Автовосстановление: схема БД изменена, а точной копии до миграции нет — прежний код поверх новой схемы не запускается (см. отчёт)"; fi
   fi
   [ "$prev" != "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ] || return 0
@@ -103,6 +104,9 @@ upd_autorecover() {
       rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_rolled_back"
       upd_action "выполнен откат кода и образов на ${prev:0:12}"
       ok "Автовосстановление: прежняя версия ${prev:0:12} снова работает."
+    elif [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" = "$prev" ]; then
+      upd_action "выполнен откат кода и образов на ${prev:0:12}, но сервисы прежней версии не стали работоспособными (см. журнал)"
+      warn "Автовосстановление: код и образы возвращены на ${prev:0:12}, но сервисы не стали работоспособными — см. отчёт и scripts/logs.sh <сервис>"
     else
       upd_action "откат на ${prev:0:12} не выполнен (см. журнал)"
       warn "Автовосстановление: откат невозможен (нет образов прежней версии или сервисы не запустились) — см. отчёт и docs/INSTALL_AND_UPDATE.md (Rollback)"
@@ -165,8 +169,13 @@ phase1() {
   if [ "$OLD" = "$TARGET" ]; then
     ok "Новых commit'ов нет — установка на актуальной версии."
     if [ "$FORCE" -eq 0 ] && [ "$PULL" -eq 0 ]; then
-      info "Выполняю только проверку состояния (verify). Пересобрать образы на том же commit: ./scripts/update.sh --force-build"
-      exec "$REPO_ROOT/scripts/verify.sh" --env "$ENV_FILE"
+      if [ "$DRY_RUN" != "1" ] && deploy_mismatch; then
+        warn "Развёртывание этой версии не завершено: ${DEPLOY_DIFF} — довожу установку до кода на сервере (сборка, копия БД и миграции, перезапуск, проверка)"
+        upd_action "развёртывание не было завершено (${DEPLOY_DIFF}) — выполняется заново"
+      else
+        info "Выполняю только проверку состояния (verify). Пересобрать образы на том же commit: ./scripts/update.sh --force-build"
+        exec "$REPO_ROOT/scripts/verify.sh" --env "$ENV_FILE"
+      fi
     fi
   else
     log "Новые commit'ы ($(git -C "$REPO_ROOT" rev-list --count "$OLD..$TARGET")):"
@@ -183,7 +192,7 @@ phase1() {
   else
     netcheck_build_sources "$TARGET"; NCRC=$?
     printf '%s\n' "${NETCHECK_LINES[@]}" | sed 's/^/  /'
-    [ "$DRY_RUN" = "1" ] || printf '%s\n' "${NETCHECK_LINES[@]}" > "$DATA_ROOT/state/netcheck.txt" 2>/dev/null
+    [ "$DRY_RUN" = "1" ] || printf '%s\n' "${NETCHECK_LINES[@]}" | sed '/^[[:space:]]*$/d' > "$DATA_ROOT/state/netcheck.txt" 2>/dev/null
     [ "${BUILD_NETWORK:-default}" = host ] && { upd_action "источники доступны только из сети хоста — сборка пойдёт в сети хоста (BUILD_NETWORK=host)"; export BUILD_NETWORK; }
     case "$NETCHECK_STATUS" in
       ok) ok "Все источники сборки доступны и отдают данные" ;;
@@ -324,14 +333,17 @@ phase2() {
   UPD_SERVICES=("${sv[@]}")
   alembic_verify run >/dev/null 2>&1; log "Ревизия БД: текущая ${ALEMBIC_CUR:-—} · целевая (head) ${ALEMBIC_HEAD:-—}"
   NEED_MIG=1; [ -n "${ALEMBIC_CUR:-}" ] && [ "${ALEMBIC_CUR:-}" = "${ALEMBIC_HEAD:-x}" ] && NEED_MIG=0
-  if [ "$NO_BACKUP" -eq 1 ]; then warn "Backup БД отключён (--no-backup) — при сбое миграции точный возврат базы невозможен"
+  if [ "$NO_BACKUP" -eq 1 ]; then
+    # без копии неудачную миграцию не отменить — останавливаемся ДО необратимого шага (код вернётся, прежние контейнеры не тронуты)
+    [ "$NEED_MIG" -eq 1 ] && stop_update "Нужны миграции схемы БД, а резервная копия отключена (--no-backup): при сбое базу не вернуть — обновление остановлено до изменения схемы. Повторите без --no-backup"
+    warn "Backup БД отключён (--no-backup) — миграций нет, схема не меняется"
   else
     # Миграция: приложение останавливается ДО копии — после неё в базу никто не пишет, и при неудаче база возвращается к копии без потерь
     [ "$NEED_MIG" -eq 1 ] && { upd_app_stop || stop_update "Не удалось остановить приложение перед резервной копией"; }
     "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label "pre-${OLD12:-update}" || stop_update "Резервная копия БД не создана — без неё миграции не выполняются"
     BK="$(ls -1t "${BACKUP_DIR:-$DATA_ROOT/backups}/${COMPOSE_PROJECT_NAME}"-db-*.dump 2>/dev/null | head -1)"
     [ -n "$BK" ] && upd_state_set db_backup "$BK"
-    upd_state_set backup_after_stop "$([ "$NEED_MIG" -eq 1 ] && [ "$(upd_state_get app_stopped)" = 1 ] && echo 1 || echo 0)"
+    upd_state_set backup_after_stop "$NEED_MIG"                       # при миграции копия снята, когда приложение уже остановлено (или не запущено)
   fi
 
   step "Миграции базы данных (Alembic)"

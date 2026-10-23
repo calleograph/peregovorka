@@ -95,6 +95,35 @@ async def test_rtc_v1_without_join_request_is_a_route_check_not_a_proxy_problem(
     assert diagnostics.rtc_v1_route({"ok": False, "status": 400, "body": "bad token"})["ok"] is False
 
 
+
+async def test_rtc_v1_400_without_join_request_is_rechecked_with_invalid_token():
+    """400 без «join_request» → перепроверка неверным токеном: 401 «invalid authorization token» = маршрут есть; чужой 401, 403, 404 — ошибки."""
+    from websockets.asyncio.server import serve
+
+    async def handler(ws):
+        await asyncio.sleep(0.05)
+
+    def server(answer_invalid):
+        def process(conn, request):
+            if "access_token=invalid" in request.path:
+                return conn.respond(*answer_invalid)
+            return conn.respond(400, "Bad Request\n")
+        return process
+
+    cases = {"livekit": ((401, "invalid authorization token\n"), True), "чужой 401": ((401, "Unauthorized\n"), False),
+             "403": ((403, "forbidden\n"), False), "404": ((404, "not found\n"), False)}
+    for name, (answer, expected) in cases.items():
+        async with serve(handler, "127.0.0.1", 0, process_request=server(answer)) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            res = await diagnostics.rtc_v1_check(f"ws://127.0.0.1:{port}/rtc/v1?access_token=SECRETTOKEN")
+        assert res["ok"] is expected, (name, res)
+        assert res["status"] == 400 and "SECRETTOKEN" not in str(res), name
+        if expected:
+            assert res["route_exists"] is True and "invalid authorization token" in res["hint"]
+    gone = await diagnostics.rtc_v1_check("ws://127.0.0.1:9/rtc/v1?access_token=T")
+    assert gone["ok"] is False and gone["stage"] == "tcp"
+
+
 def _lk(**kw):
     ok = {"ok": True, "status": 101}
     bad = {"ok": False, "status": 400, "hint": "HTTP 400: boom", "body": "boom"}
