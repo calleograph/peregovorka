@@ -301,7 +301,8 @@
     });
   }
 
-  function login() {
+  /** step = "browser": панель уже знает, что нужен дополнительный шаг (2FA, CAPTCHA) — окно сразу открывает основное приложение, без своей формы. */
+  function login(step) {
     return new Promise(function (resolve, reject) {
       var dlg = null;
       var settled = false;
@@ -314,7 +315,7 @@
       };
       var waitTimer = setTimeout(function () { finish(reject, PgError(dlg ? "auth_timeout" : "dialog_failed", "auth", "окно входа не ответило")); }, T.dialogOpen);
       try {
-        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html", { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
+        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html" + (step ? "?step=" + step : ""), { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
           if (res.status !== Office.AsyncResultStatus.Succeeded) {
             finish(reject, PgError("dialog_failed", "auth", res.error ? res.error.code + " " + res.error.message : ""));
             return;

@@ -160,3 +160,9 @@ button { font: inherit; color: inherit; }
 
 /* сведения самодиагностики (boot.js): видны, если Office не запустил надстройку; без переменных — работает и в IE */
 .pg-diag { display: none; margin: 12px; padding: 10px 12px; border: 1px solid #e0b04a; border-radius: 7px; background: #faf2d9; color: #6b4e0e; font: 13px/1.45 "Segoe UI", Arial, sans-serif; }
+/* форма входа в окне (auth.html): обычные значения рядом с переменными — работает и во встроенном IE 11 */
+.auth-form { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; text-align: left; }
+.auth-form[hidden] { display: none; }
+.auth-form label { display: block; margin: 10px 0 4px; font-size: 13px; color: #576275; color: var(--muted); }
+.auth-form input { display: block; box-sizing: border-box; width: 100%; padding: 8px 10px; font: inherit; border: 1px solid #b9c2d0; border: 1px solid var(--line-strong); border-radius: 7px; background: #ffffff; background: var(--surface); color: #161b26; color: var(--text); }
+.auth-form .btn { display: block; width: 100%; margin-top: 14px; }

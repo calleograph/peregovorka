@@ -20,6 +20,14 @@
       <h1>Peregovorka</h1>
       <span class="spinner" aria-hidden="true"></span>
       <p id="status" role="status">Проверяем вход…</p>
+      <!-- вход логином и паролем прямо в окне: работает и во встроенном IE 11 классического Outlook, где основное приложение не открывается -->
+      <form id="form" class="auth-form" hidden>
+        <label for="login">Логин</label>
+        <input id="login" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        <label for="password">Пароль</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button id="submit" class="btn primary" type="submit">Войти</button>
+      </form>
     </div>
   </main>
 </body>

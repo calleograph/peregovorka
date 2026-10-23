@@ -30,7 +30,7 @@ FAKE = r"""
       diagnostics: {host: 'Outlook', version: '16.0.18129', platform: 'PC'},
       officeTheme: get('dark', false) ? {bodyBackgroundColor: '#1f1f1f'} : {bodyBackgroundColor: '#ffffff'},
       requirements: {isSetSupported: (n, v) => (n === 'Mailbox' && parseFloat(v.split('.')[1]) <= 8) || (n === 'DialogApi' && v === '1.1')},
-      ui: {displayDialogAsync: (url, o, cb) => { const d = get('dialogs', []); d.push(url); put('dialogs', d);
+      ui: {messageParent: (m) => put('sent', m), displayDialogAsync: (url, o, cb) => { const d = get('dialogs', []); d.push(url); put('dialogs', d);
         cb({status: 'succeeded', value: {addEventHandler: (t, f) => { if (t === 'e') setTimeout(() => f({error: 12006}), 300); }, close: () => {}}}); }},
       mailbox: {
         userProfile: {emailAddress: 'owner@example.org'}, convertToRestId: (id) => 'rest-' + id, diagnostics: {hostName: 'Outlook', hostVersion: '16.0.18129'},
@@ -65,7 +65,7 @@ async def main():
         await R.start()
         S.check("интеграция включена (по умолчанию вход действует 7 суток)", await R.js(f"{ENABLE}({{}})") == 200)
         await A.start()
-        await A.js("fetch('/api/v1/auth/logout', {method: 'POST'})")                          # панель не зависит от сеанса браузера
+        S.check("сеанса браузера нет: панель от него не зависит", await A.js("(async () => { const me = await (await fetch('/api/v1/auth/me')).json(); await fetch('/api/v1/auth/logout', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token}}); return (await fetch('/api/v1/auth/me')).status; })()") == 401)
         await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*cdn.office.net*"])
         await A.send("Page.addScriptToEvaluateOnNewDocument", source=FAKE)
         await A.send("Emulation.setDeviceMetricsOverride", width=320, height=640, deviceScaleFactor=1, mobile=False)
@@ -164,8 +164,21 @@ async def main():
         await A.js("document.getElementById('lg-window').click()"); await asyncio.sleep(1.0)
         dl = await A.js("window.__m.get('dialogs', [])")
         S.check("окно входа открыто на странице этого сервера; закрытие окна — «Вход отменён», без критической ошибки",
-                dl and dl[-1].endswith("/outlook/auth.html") and "Вход отменён" in ((await A.js(STATE))["msg"] or ""), str(dl))
+                dl and dl[-1].endswith("/outlook/auth.html?step=browser") and "Вход отменён" in ((await A.js(STATE))["msg"] or ""), str(dl))
         await R.js(f"{SECURITY}({{totp_policy: 'optional'}})")
+        # 13а: окно входа (старый манифест ExecuteFunction и прочие пути) без сеанса браузера — своя форма логина и пароля, без основного приложения
+        #      (основное приложение не работает во встроенном IE 11 классического Outlook); неверный пароль — ошибка в окне, верный — токен уходит в Outlook
+        await A.goto("/outlook/auth.html", 0.5); await A.wait_for("!document.getElementById('form').hidden", 10)
+        S.check("окно входа без сеанса: своя форма «Логин/Пароль/Войти», а не переход на основное приложение",
+                (await A.js("location.pathname")) == "/outlook/auth.html" and not await A.js("document.getElementById('form').hidden"))
+        await type_("#login", "alice"); await type_("#password", "wrong-pass"); await A.js("document.getElementById('submit').click()")
+        await A.wait_for("document.getElementById('status').className === 'err'", 10)
+        S.check("окно входа: неверный пароль — понятная ошибка в окне, токена нет", not await A.js("window.__m.get('sent', null)"), await A.js("document.getElementById('status').textContent"))
+        await type_("#password", "alice-pass"); await A.js("document.getElementById('submit').click()")
+        await A.wait_for("window.__m.get('sent', null) !== null", 10)
+        sent = json.loads(await A.js("window.__m.get('sent', null)"))
+        S.check("окно входа: верный пароль — токен надстройки передан в Outlook (messageParent)", str(sent.get("token", "")).startswith("pgo_") and sent.get("expires_in", 0) > 3600, str(sent)[:80])
+        await A.js("window.__m.put('sent', null)"); await open_panel()                         # дальше — снова панель
         # 14: ширины и тёмная тема
         for w in (300, 360, 480):
             await A.send("Emulation.setDeviceMetricsOverride", width=w, height=600, deviceScaleFactor=1, mobile=False); await asyncio.sleep(0.4)

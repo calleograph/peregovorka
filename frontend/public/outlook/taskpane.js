@@ -283,7 +283,7 @@
     st.err = null;
     st.step = "auth";
     render();
-    P.login().then(afterLogin, loginFailed);              // окно открывается по нажатию: браузер Outlook не блокирует его
+    P.login("browser").then(afterLogin, loginFailed);     // окно открывается по нажатию: браузер Outlook не блокирует его; нужен доп. шаг — сразу основное приложение
   }
 
   function logout() {
