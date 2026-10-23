@@ -21,6 +21,8 @@
 set -uo pipefail
 # Как systemd завершил службу (переменные ExecStopPost) — запоминаем до того, как общие библиотеки и сам скрипт задействуют такие же имена.
 SD_RESULT="${SERVICE_RESULT:-}"; SD_EXIT_CODE="${EXIT_CODE:-}"; SD_EXIT_STATUS="${EXIT_STATUS:-}"
+# run: сигнал остановки до установки обработчика в cmd_run (загрузка библиотек, в том числе сразу после самоперезапуска exec) не убивает процесс молча — запоминается
+[ "${1:-run}" = run ] && trap 'STOP_EARLY=1' INT TERM
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 CMD="${1:-run}"; [ $# -gt 0 ] && shift
@@ -188,7 +190,7 @@ do_update() { # do_update FORCE PULL
   STATE="updating"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_NAME="запуск"; write_status
   reset_log
   printf '=== Обновление запущено %s (запросил: %s) ===\n$ scripts/update.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" "${args[*]}" >> "$LOG"
-  (cd "$REPO_ROOT" && clean_exec UPDATE_SOURCE=web UPDATE_BY="$BY" "$REPO_ROOT/scripts/update.sh" "${args[@]}" 2>&1) | strip_ansi | pump_log
+  (cd "$REPO_ROOT" && clean_exec UPDATE_SOURCE=web UPDATE_BY="$BY" "$REPO_ROOT/scripts/update.sh" "${args[@]}" 2>&1) | strip_ansi | mask_stream | pump_log
   rc="${PIPESTATUS[0]}"
   # последний этап берём из журнала (цикл разбора выполнялся в подоболочке)
   line="$(grep -E '^\[[0-9]+/[0-9]+\][[:space:]]' "$LOG" 2>/dev/null | tail -1)"
@@ -222,7 +224,7 @@ do_repair() { # do_repair ID — одно исправление из белог
   STATE="repairing"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_TOTAL=1; STEP_NAME="Исправление"; write_status
   reset_log
   printf '=== Исправление «%s» запущено %s (запросил: %s) ===\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" >> "$LOG"
-  ( fresh_env; DRY_RUN=0; repair_apply "$id" 2>&1 ) | strip_ansi | pump_log
+  ( fresh_env; DRY_RUN=0; repair_apply "$id" 2>&1 ) | strip_ansi | mask_stream | pump_log
   rc="${PIPESTATUS[0]}"
   FINISHED="$(date +%s)"; EXIT_CODE="$rc"; STATE="idle"; STEP_NO=1
   if [ "$rc" -eq 0 ]; then RESULT="ok"; else RESULT="failed"; fi
@@ -293,6 +295,7 @@ cmd_run() {
   fi
   info "Исполнитель обновлений запущен: проект $COMPOSE_PROJECT_NAME, каталог обмена $CH, процесс $$ (uid $(id -u)${INVOCATION_ID:+, служба systemd}). Остановка — Ctrl+C."
   trap 'STATE="stopped"; write_status; stop_pulse final; exit 0' INT TERM
+  [ -n "${STOP_EARLY:-}" ] && { STATE="stopped"; write_status; stop_pulse final; exit 0; }
   local last_check=0 last_scan=0 now
   start_pulse
   STATE="idle"; write_status

@@ -10,7 +10,7 @@
 #   блок `keys:` конфигурации LiveKit (ключ: секрет);
 #   JSON-пары "password": "…" / "token": "…" и т.п.
 # Строки со «временными» параметрами (…_SECONDS, …_TTL…, …_FAILURES, …_LENGTH, …_PORT) не трогаются: это не секреты.
-# Нужен GNU sed (Linux; Git Bash под Windows тоже подходит).
+# Нужен GNU sed (Linux; Git Bash под Windows тоже подходит). Вывод построчный, без буферизации: годится для журнала, который читают по ходу работы.
 
 mask_stream() {
   awk '
@@ -22,8 +22,8 @@ mask_stream() {
       else if (line ~ /^[ \t]*[^ \t:#][^:]*:[ \t]*[^ \t]/) { sub(/:[ \t]*[^ \t].*$/, ": ***", line); print line; next }
     }
     line ~ /^[ \t]*keys:[ \t]*$/ { match(line, /^[ \t]*/); keys_indent = RLENGTH; inkeys = 1 }
-    { print line }
-  ' | sed -E \
+    { print line; fflush() }
+  ' | sed -u -E \
     -e '/^[[:space:]]*[A-Za-z0-9_.-]*(_SECONDS|_TTL|_TTL_[A-Za-z]+|_FAILURES|_LENGTH|_PORT)[[:space:]]*[=:]/Ib' \
     -e 's/^([[:space:]]*(export[[:space:]]+)?-?[[:space:]]*[A-Za-z0-9_.-]*(PASSWORD|PASSWD|SECRET|TOKEN|KEY|CREDENTIAL|PRIVATE|AUTHORIZATION)[A-Za-z0-9_.-]*[[:space:]]*[=:][[:space:]]*).+$/\1***/I' \
     -e 's/("[A-Za-z0-9_.-]*(password|passwd|secret|token|key|credential|authorization)[A-Za-z0-9_.-]*"[[:space:]]*:[[:space:]]*)"[^"]*"/\1"***"/Ig' \

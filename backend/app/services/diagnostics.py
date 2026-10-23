@@ -224,6 +224,22 @@ def rtc_v1_route(res: dict) -> dict:
     return res
 
 
+async def rtc_v1_check(url: str) -> dict:
+    """Маршрут /rtc/v1 по адресу url (с тестовым токеном). 400 без «join_request» (прокси или версия LiveKit формулируют иначе) сам по себе поломку
+    не доказывает: тот же адрес с заведомо неверным токеном LiveKit отклоняет своим 401 «invalid authorization token» — значит, запрос доходит
+    до LiveKit и маршрут есть. 404, 5xx, страницы прокси и ошибки соединения остаются ошибками."""
+    res = rtc_v1_route(await ws_handshake(url))
+    if res.get("ok") or res.get("status") != 400:
+        return res
+    probe = await ws_handshake(url.split("?", 1)[0] + "?access_token=invalid")
+    if probe.get("status") == 401 and "invalid authorization token" in (probe.get("body") or "").lower():
+        body = res.get("body") or ""
+        return {**res, "ok": True, "route_exists": True,
+                "hint": "маршрут /rtc/v1 существует: LiveKit отвечает (с неверным токеном — 401 «invalid authorization token»); "
+                        "на запрос с тестовым токеном вернулся HTTP 400" + (f" («{body}»)" if body else "")}
+    return res
+
+
 async def livekit_checks(settings: Settings) -> dict:
     """/rtc/v1 без 404 (иначе SDK уходит в медленный fallback), WebSocket напрямую и через публичный адрес, RTC TCP/UDP."""
     out: dict[str, Any] = {}
@@ -234,11 +250,11 @@ async def livekit_checks(settings: Settings) -> dict:
         return {"error": f"не удалось выдать тестовый токен: {type(exc).__name__}"}
     q = f"?access_token={tok}&auto_subscribe=0&sdk=python&protocol=15&version=diag"
     # 1) маршрут /rtc/v1 (не 404 — иначе SDK уходит в медленный запасной путь); 2) настоящий WebSocket Upgrade на /rtc с тем же токеном (101)
-    out["rtc_v1_internal"] = rtc_v1_route(await ws_handshake(ws_url(settings.livekit_http_url, "/rtc/v1" + q)))
+    out["rtc_v1_internal"] = await rtc_v1_check(ws_url(settings.livekit_http_url, "/rtc/v1" + q))
     out["rtc_ws_internal"] = await ws_handshake(ws_url(settings.livekit_http_url, "/rtc" + q))
     if settings.livekit_public_url:
         pub = settings.livekit_public_url.rstrip("/")
-        out["rtc_v1_public"] = rtc_v1_route(await ws_handshake(ws_url(pub, "/rtc/v1" + q)))
+        out["rtc_v1_public"] = await rtc_v1_check(ws_url(pub, "/rtc/v1" + q))
         out["rtc_ws_public"] = await ws_handshake(ws_url(pub, "/rtc" + q))
         out["rtc_v1_public"]["url"] = out["rtc_ws_public"]["url"] = pub
         out["rtc_ws_public"]["note"] = "проверено из контейнера backend: набор доверенных сертификатов на устройствах пользователей может отличаться"

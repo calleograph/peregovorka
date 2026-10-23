@@ -159,6 +159,26 @@ upd_save_prev_images() { # OLD12
   done
 }
 
+# deploy_mismatch → код 0, если установка НЕ согласована: работающие backend/asr/web запущены не из образов кода на сервере (git HEAD)
+# или схема БД отстаёт от кода (так бывает после прерванного обновления: код новый, контейнеры старые). DEPLOY_DIFF — что именно.
+# DEPLOY_STALE_SVCS — сколько сервисов работают не из образов этого кода. Не запущенный сервис и неизвестные сведения расхождением не считаются.
+deploy_mismatch() {
+  local head s cid img tag diffs=()
+  DEPLOY_DIFF=""; DEPLOY_STALE_SVCS=0
+  head="$(git_head_commit "$REPO_ROOT")"; [ -n "$head" ] || return 1
+  for s in backend asr web; do
+    cid="$(dc ps -q "$s" 2>/dev/null | head -1)"; [ -n "$cid" ] || continue
+    img="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)"; tag="${img##*:}"; tag="${tag#prev-}"
+    [ "$tag" != "$img" ] && [[ "$tag" =~ ^[0-9a-f]{7,40}$ ]] || continue
+    [ "${tag:0:12}" = "${head:0:12}" ] || { diffs+=("$s работает из образа версии ${tag:0:12}"); DEPLOY_STALE_SVCS=$((DEPLOY_STALE_SVCS + 1)); }
+  done
+  if [ -n "$(dc ps -q backend 2>/dev/null | head -1)" ] && ! alembic_verify exec >/dev/null 2>&1 && [ -n "${ALEMBIC_CUR:-}" ] && [ -n "${ALEMBIC_HEAD:-}" ]; then
+    diffs+=("схема БД на ревизии ${ALEMBIC_CUR}, код ожидает ${ALEMBIC_HEAD}"); fi
+  [ "${#diffs[@]}" -gt 0 ] || return 1
+  DEPLOY_DIFF="код на сервере ${head:0:12}, $(printf '%s, ' "${diffs[@]}")"; DEPLOY_DIFF="${DEPLOY_DIFF%, }"
+  return 0
+}
+
 # ---------------------------------------------------------------------------------- миграции и откат
 # Известна ли ревизия БД коду указанного commit (есть ли файл миграции с такой ревизией в backend/migrations/versions)
 upd_rev_in_commit() { # REV COMMIT

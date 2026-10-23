@@ -82,6 +82,28 @@ t "окружение: все жизненные скрипты вызывают
 t "исправления: неизвестный ID отвергается, известные принимаются" bash -c 'source "$1/scripts/lib/repairlib.sh"; ! repair_id_valid "rm -rf /" && ! repair_id_valid "" && ! repair_id_valid "../update" && repair_id_valid data_dirs && repair_id_valid nginx_site && repair_id_valid sysctl' _ "$ROOT"
 t "исправления: repair_apply с неизвестным ID ничего не выполняет" bash -c 'source "$1/scripts/lib/common.sh"; ! repair_apply "x; touch $2/pwned" >/dev/null 2>&1 && [ ! -e "$2/pwned" ]' _ "$ROOT" "$PQ"
 t "исправления: у каждой проблемы есть описание из трёх частей без команд Linux" bash -c 'source "$1/scripts/lib/repairlib.sh"; for i in "${REPAIR_IDS[@]}"; do t="$(repair_text "$i")"; [ "$(tr -cd "|" <<<"$t" | wc -c)" -ge 2 ] || exit 1; ! grep -qE "sudo|chown|chmod|sysctl|nginx -t|docker compose" <<<"$t" || exit 2; done' _ "$ROOT"
+# подставные dc/docker/alembic: какие образы у запущенных сервисов и какая ревизия БД
+dmm() { bash -c 'source "$1/scripts/lib/common.sh"; REPO_ROOT="$1"; COMPOSE_PROJECT_NAME=pgt; H="$(git_head_commit "$1")"
+  dc() { [ "$1 $2" = "ps -q" ] && case "$3" in backend) echo cid-backend ;; web) echo cid-web ;; esac; return 0; }
+  docker() { case "$4" in cid-backend) echo "pgt-backend:$H" ;; cid-web) echo "pgt-web:${WEB_TAG:-$H}" ;; esac; }
+  alembic_verify() { ALEMBIC_CUR="${CUR:-0002}"; ALEMBIC_HEAD=0002; [ "$ALEMBIC_CUR" = "$ALEMBIC_HEAD" ]; }
+  WEB_TAG="$2"; CUR="$3"; if deploy_mismatch; then printf "да|%s|%s" "$DEPLOY_STALE_SVCS" "$DEPLOY_DIFF"; else printf нет; fi' _ "$ROOT" "$1" "${2:-}"; }
+export -f dmm
+t "согласованность установки: код, образы работающих сервисов и схема БД совпадают — расхождения нет; образ «dev» (ручная сборка) не считается" bash -c '[ "$(dmm "")" = нет ] && [ "$(dmm dev)" = нет ]'
+t "согласованность установки: web работает из образа другой версии — расхождение названо (сервис и версия)" bash -c 'r="$(dmm 0123456789ab)"; [[ "$r" == "да|1|"*"web работает из образа версии 0123456789ab"* ]] && [[ "$r" == *"код на сервере "* ]]'
+t "согласованность установки: схема БД отстаёт — расхождение (без устаревших сервисов: это исправление «migrations»)" bash -c 'r="$(dmm "" 0001)"; [[ "$r" == "да|0|"*"схема БД на ревизии 0001, код ожидает 0002"* ]]'
+t "update.sh: «новых коммитов нет» при незавершённом развёртывании — не «актуально», а доведение установки" bash -c 'grep -q "deploy_mismatch" "$1/scripts/update.sh" && grep -q "Развёртывание этой версии не завершено" "$1/scripts/update.sh"' _ "$ROOT"
+# «Исправить автоматически»: диагностика → подтверждённая причина → исправление → повторная проверка; иначе — что делать вручную
+rpa() { bash -c 'source "$1/scripts/lib/common.sh"; N=0; MODE="$2"
+  repair_detect_sysctl() { N=$((N+1)); case "$MODE" in absent) return 1 ;; fixed) [ "$N" -eq 1 ] && REPAIR_DETAIL="мало буферов" && return 0; return 1 ;; *) REPAIR_DETAIL="мало буферов"; return 0 ;; esac; }
+  repair_apply_sysctl() { echo APPLIED; [ "$MODE" != applyfail ]; }
+  repair_apply sysctl 2>&1; echo "rc=$?"' _ "$ROOT" "$1"; }
+export -f rpa
+t "исправление: проблема уже не подтверждается — ничего не меняется" bash -c 'r="$(rpa absent)"; grep -q "не подтверждается" <<<"$r" && ! grep -q APPLIED <<<"$r" && grep -q "rc=0" <<<"$r"'
+t "исправление: диагностика → причина → исправление → повторная проверка подтверждает устранение" bash -c 'r="$(rpa fixed)"; grep -q "1) Диагностика" <<<"$r" && grep -q "2) Причина подтверждена: мало буферов" <<<"$r" && grep -q APPLIED <<<"$r" && grep -q "проблема устранена" <<<"$r" && grep -q "rc=0" <<<"$r"'
+t "исправление: проблема осталась после исправления — ошибка и что делать вручную" bash -c 'r="$(rpa stays)"; grep -q "Проблема осталась после исправления: мало буферов" <<<"$r" && grep -q "администратор хоста" <<<"$r" && grep -q "rc=1" <<<"$r"'
+t "исправление: исправить не удалось — объяснение и ручные шаги" bash -c 'r="$(rpa applyfail)"; grep -q "Исправить автоматически не удалось" <<<"$r" && grep -q "rc=1" <<<"$r"'
+t "исправления: для каждого ID есть ручные шаги на случай неудачи" bash -c 'source "$1/scripts/lib/repairlib.sh"; for i in "${REPAIR_IDS[@]}"; do [ -n "$(repair_manual "$i")" ] || exit 1; done' _ "$ROOT"
 mkdir -p "$PQ/data/updater" "$PQ/data/state"
 t "исправления: каталог данных без нужного владельца/режима обнаруживается" bash -c 'source "$1/scripts/lib/common.sh"; DATA_ROOT="$2/data"; repair_detect_data_dirs && grep -q "recordings" <<<"$REPAIR_DETAIL"' _ "$ROOT" "$PQ"
 t "исправления: repairs.json — корректный JSON с тремя фразами" bash -c 'source "$1/scripts/lib/common.sh"; DATA_ROOT="$2/data"; INSTALL_PROFILE=shared-host; repair_scan; repair_json > "$2/repairs.json"; grep -q "\"items\":\[" "$2/repairs.json" && grep -q "\"meaning\"" "$2/repairs.json"; if [ -n "$3" ]; then "$3" -c "import json,sys; d=json.load(open(sys.argv[1], encoding=\"utf-8\")); assert d[\"items\"][0][\"fix\"]" "$2/repairs.json"; fi' _ "$ROOT" "$PQ" "${PYJ:-}"

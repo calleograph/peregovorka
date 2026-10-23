@@ -67,6 +67,24 @@ _listening() { # _listening tcp|udp порт → 0 если слушается
 
 _curl_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 
+# nginx_vhost_probe ПОРТ ИМЯ → NGX_SCHEME (https|http|пусто), NGX_CODE, NGX_NOTE. Host nginx может слушать порт с TLS (listen … ssl) или без:
+# сначала HTTPS с SNI и Host имени сайта (--resolve имя → 127.0.0.1; проверка сертификата не отключается), затем HTTP с Host.
+# Ответ 400 «The plain HTTP request was sent to HTTPS port» — признак HTTPS-порта, а не неисправности сайта.
+nginx_vhost_probe() {
+  local port="$1" name="$2" rc bf
+  NGX_SCHEME=""; NGX_CODE=000; NGX_NOTE=""
+  NGX_CODE="$(curl -s -o /dev/null -m 8 -w '%{http_code}' --resolve "${name}:${port}:127.0.0.1" "https://${name}:${port}/healthz" 2>/dev/null)"; rc=$?
+  if [ "$rc" -eq 0 ]; then NGX_SCHEME=https; return 0; fi
+  case "$rc" in 51|58|60|77|83) NGX_SCHEME=https; NGX_CODE=000
+    NGX_NOTE="порт ${port} отвечает по HTTPS, но этот сервер не доверяет сертификату имени ${name} (curl $rc): маршрут к web отсюда не проверен, доверие к сертификату — в проверке TLS"; return 0 ;; esac
+  bf="$(mktemp 2>/dev/null || echo "/tmp/ngx-body.$$")"
+  NGX_CODE="$(curl -s -o "$bf" -m 8 -w '%{http_code}' -H "Host: ${name}" "http://127.0.0.1:${port}/healthz" 2>/dev/null || echo 000)"
+  if [ "$NGX_CODE" = 400 ] && grep -qi 'plain HTTP request was sent to HTTPS port' "$bf" 2>/dev/null; then
+    NGX_SCHEME=https; NGX_CODE=000; NGX_NOTE="порт ${port} — HTTPS, но TLS-соединение с именем ${name} не установлено (curl $rc): нет server_name/сертификата для этого имени в site-файле"
+  elif [ "$NGX_CODE" != 000 ]; then NGX_SCHEME=http; fi
+  rm -f "$bf"; return 0
+}
+
 # ------------------------------------------------------------------ WebSocket / TLS / совместимость
 # ws_upgrade_probe URL [ТАЙМАУТ] → WS_CODE (HTTP-код ответа на НАСТОЯЩИЙ WebSocket Upgrade; 101 = сервер и прокси его пропускают) и WS_BODY
 # (первые 200 байт тела ответа без переводов строк). Вызывать НАПРЯМУЮ. URL подаётся curl через stdin (-K -), чтобы токен из query
@@ -305,8 +323,10 @@ verify_deployment() {
     compat_check; if [ "$COMPAT_STATUS" = OK ]; then v_ok "$COMPAT_NOTE"; else v_warn "$COMPAT_NOTE"; fi
     code="$(_curl_code "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/")"; [ "$code" = 200 ] && v_ok "LiveKit HTTP healthy ($code)" || v_fail "LiveKit HTTP 127.0.0.1:${LIVEKIT_HTTP_PORT}: $code"
     if [ "${NGINX_MANAGE:-no}" = "yes" ]; then
-      code="$(_curl_code -H "Host: ${NGINX_SERVER_NAME}" "http://127.0.0.1:${NGINX_LISTEN_PORT}/healthz")"
-      [ "$code" = 200 ] && v_ok "Локальный reverse proxy (host nginx :${NGINX_LISTEN_PORT}) → web: $code" || v_fail "host nginx :${NGINX_LISTEN_PORT} → web вернул $code (nginx-site не активен или не перезагружен)"
+      nginx_vhost_probe "$NGINX_LISTEN_PORT" "$NGINX_SERVER_NAME"
+      if [ "$NGX_CODE" = 200 ]; then v_ok "Локальный reverse proxy (host nginx ${NGX_SCHEME}://${NGINX_SERVER_NAME}:${NGINX_LISTEN_PORT}) → web: 200"
+      elif [ "$NGX_SCHEME" = https ] && [ "$NGX_CODE" = 000 ] && [[ "$NGX_NOTE" == *"не доверяет"* ]]; then v_warn "host nginx: $NGX_NOTE"
+      else v_fail "host nginx :${NGINX_LISTEN_PORT}${NGX_SCHEME:+ (${NGX_SCHEME})} → web вернул $NGX_CODE${NGX_NOTE:+ — $NGX_NOTE} (nginx-site не активен или не перезагружен)"; fi
     fi
   else v_warn "curl не найден — HTTP-проверки пропущены"; fi
 

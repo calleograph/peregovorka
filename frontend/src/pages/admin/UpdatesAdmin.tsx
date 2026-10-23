@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ApiError, type UpdateAttempt, type UpdatesOverview } from "../../api";
+import { api, type ApiError, type UpdateAttempt, type UpdateReport, type UpdatesOverview } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
 import { Markdown } from "../../components/Markdown";
 import { downloadText, fmt, shortCommit, versionLabel } from "../../util";
@@ -10,6 +10,25 @@ import { HelperAlert, HelperBadge } from "./HelperStatus";
 import RepairsPanel from "./RepairsPanel";
 
 const MAX_LOG = 600_000;
+
+/** Единый отчёт последнего обновления: итог, этап и причина, что сделано автоматически, сборка по компонентам, сервисы, что делать дальше. */
+function UpdateReportCard({ r, open }: { r: UpdateReport; open: boolean }) {
+  const list = (title: string, items: string[]) => items.length > 0 && <><div className="l">{title}</div><ul className="small">{items.map((x, i) => <li key={i}>{x}</li>)}</ul></>;
+  return (
+    <details className="card upd-report" open={open}>
+      <summary><b>Отчёт о последнем обновлении:</b> {r.ok ? <span className="badge ok">успешно</span> : <span className="badge warn">{r.result}</span>}{r.target && <span className="muted small"> · целевая версия {r.target}</span>}</summary>
+      {r.cause && <p><b>Причина:</b> {r.cause}{r.stage && <span className="muted"> (этап «{r.stage}»)</span>}</p>}
+      {r.advice && <p><b>Что сделать:</b> {r.advice}</p>}
+      {r.running && <p className="small">Работает сейчас: {r.running}{r.previous && <> · до обновления: {r.previous}</>}</p>}
+      {list("Автоматические действия", r.actions)}
+      {list("Сборка компонентов", r.build)}
+      {list("Источники сборки (проверка из среды сборки)", r.sources)}
+      {list("Состояние сервисов", r.services)}
+      <div className="row"><button className="btn mini" onClick={() => downloadText(r.text, "peregovorka-update-report.txt")}>Скачать отчёт</button>
+        <span className="muted small">Пароли, ключи и токены в отчёте скрыты.</span></div>
+    </details>
+  );
+}
 
 function ago(sec?: number | null): string {
   if (sec == null) return "—";
@@ -116,7 +135,11 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
         )}
         {ov && <HelperAlert h={ov.helper} onReload={loadOverview} />}
         {rem && !rem.ok && <div className="alert error">Не удалось проверить GitHub: {rem.error || "нет данных"}. Возможно, у сервера нет выхода в интернет — тогда обновляйте на сервере командой <code>./scripts/update.sh --env ...</code> из заранее полученного репозитория.</div>}
-        {rem?.ok && behind === 0 && <div className="alert ok">Установлена актуальная редакция проекта{ov ? ` (версия ${ov.installed.version})` : ""}.</div>}
+        {ov && !ov.deploy.consistent && (
+          <div className="alert error" role="alert"><b>Обновление установлено не полностью:</b> {ov.deploy.problems.join("; ")}. Так бывает после прерванного обновления.
+            Нажмите «Обновить проект» — обновление доведёт установку до кода на сервере (сборка недостающих образов, резервная копия и миграции, перезапуск, проверка).</div>
+        )}
+        {rem?.ok && behind === 0 && ov?.deploy.consistent && <div className="alert ok">Установлена актуальная редакция проекта{ov ? ` (версия ${ov.installed.version})` : ""}.</div>}
         {rem?.ok && behind > 0 && (
           <div className="upd-available">
             <div className="alert info"><b>Доступно обновление{rem.remote_version && ov && rem.remote_version !== ov.installed.version ? `: версия ${ov.installed.version} → ${rem.remote_version}` : ""}</b>
@@ -162,7 +185,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
           )}
           <button className="btn primary" disabled={!ov?.can_update || !!busy} onClick={() => setConfirm(true)}
                   title={ov?.can_update ? "Запустить scripts/update.sh на сервере" : ov?.reasons.join(" ")}>⬆ Обновить проект{behind > 0 ? ` (${behind})` : ""}</button>
-          {behind === 0 && rem?.ok && ov?.can_update && <span className="muted small">Новых изменений нет; обновление пересоберёт и проверит текущую редакцию.</span>}
+          {behind === 0 && rem?.ok && ov?.can_update && <span className="muted small">{ov.deploy.consistent ? "Новых изменений нет; обновление пересоберёт и проверит текущую редакцию." : "Новых изменений нет; обновление завершит развёртывание текущей редакции."}</span>}
           {!ov?.can_update && ov?.reasons.map((r) => <span key={r} className="muted small">{r}</span>)}
         </div>
       </div>
@@ -212,6 +235,8 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
             <button className="btn mini primary" onClick={() => window.location.reload()}>Обновить страницу</button></div>}
         </div>
       )}
+
+      {ov?.report && <UpdateReportCard r={ov.report} open={!ov.report.ok && !running} />}
 
       <AutoUpdatePanel />
 

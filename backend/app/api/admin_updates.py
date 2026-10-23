@@ -54,6 +54,7 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
     fin = st.get("finished_at") or 0
     st["stale"] = bool(fin and st.get("state") not in upd.BUSY_STATES and last_ok and (last_ok.get("at") or 0) >= fin and st.get("result") != "ok")
     active = (await db.execute(select(func.count()).select_from(Meeting).where(Meeting.ended_at.is_(None)))).scalar_one()
+    deploy = upd.deploy_state(remote, s.app_git_commit, await upd.schema_current(db), upd.schema_head())
     running = st.get("state") in upd.BUSY_STATES
     reasons = []
     if not st["available"]:
@@ -69,7 +70,8 @@ async def overview(request: Request, su: SessionUser = Depends(require_admin), d
         "outcome": upd.outcome_summary(st), "helper": helper_info(st),
         "remote": remote, "changes": changes_of(remote, s.app_version), "active_meetings": active, "history": history, "last_success": last_ok,
         "can_update": not reasons, "reasons": reasons,
-        "up_to_date": bool(remote and remote.get("ok") and int(remote.get("behind", 0)) == 0),
+        "deploy": deploy, "report": ch.report(),
+        "up_to_date": bool(remote and remote.get("ok") and int(remote.get("behind", 0)) == 0) and deploy["consistent"],
         "commands": {"install": "sudo ./scripts/updater.sh install --yes", "foreground": "sudo ./scripts/updater.sh run", "manual": "sudo ./scripts/update.sh"},
     }
 

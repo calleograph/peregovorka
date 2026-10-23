@@ -79,6 +79,34 @@ PY
   a="$(verdict 18751 plain401)"; b="$(verdict 18752 403)"; c="$(verdict 18753 502)"
   WS_BODY="Bad Request"; ws_route_verdict 400 proxy "http://127.0.0.1:1/rtc/v1"; f=$WS_STATUS
   rm -rf "$d"; [ "$a$b$c$f" = FAILFAILFAILFAIL ]' _ "$VL"
+t "host nginx: схема порта определяется сама — HTTPS с SNI (доверенный сертификат) 200, HTTP 200, недоверенный сертификат — предупреждение, «plain HTTP to HTTPS port» — HTTPS, а не «сайт не работает», чужой vhost — 404" bash -c 'set -u; source "$1"
+  d="$(mktemp -d)"; cat > "$d/s.py" <<PY
+import http.server, socket, ssl, sys
+port, mode = int(sys.argv[1]), sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        ok = self.path == "/healthz" and self.headers.get("Host", "").split(":")[0] == "pg.example.org"
+        code, body = (200, b"ok") if ok else (404, b"not found")
+        self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+if mode == "plain-on-https":   # как nginx с listen … ssl без сертификата для этого имени: TLS обрывается, на обычный HTTP — 400 с известным текстом
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", port)); s.listen()
+    while True:
+        c, _ = s.accept(); first = c.recv(5)
+        if first[:1] != b"\x16":
+            body = b"<center>The plain HTTP request was sent to HTTPS port</center>"
+            c.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
+        c.close()
+srv = http.server.HTTPServer(("127.0.0.1", port), H)
+if mode == "https":
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(sys.argv[3], sys.argv[4]); srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+PY
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/k.pem" -out "$d/c.pem" -days 2 -subj /CN=pg.example.org -addext subjectAltName=DNS:pg.example.org >/dev/null 2>&1
+  probe() { python3 "$d/s.py" "$1" "$2" "$d/c.pem" "$d/k.pem" & local p=$!; sleep 0.7; nginx_vhost_probe "$1" "${3:-pg.example.org}"; kill $p 2>/dev/null; wait $p 2>/dev/null; printf "%s/%s/%s" "$NGX_SCHEME" "$NGX_CODE" "$NGX_NOTE"; }
+  a="$(CURL_CA_BUNDLE="$d/c.pem" probe 18761 https)"; b="$(probe 18762 https)"; c="$(probe 18763 http)"; e="$(probe 18764 plain-on-https)"; f="$(probe 18765 http other.example.org)"
+  rm -rf "$d"
+  [ "$a" = "https/200/" ] && [[ "$b" == https/000/*"не доверяет"* ]] && [ "$c" = "http/200/" ] && [[ "$e" == https/000/*"TLS-соединение"* ]] && [ "$f" = "http/404/" ]' _ "$VL"
 t "ws_route_verdict: 400 без join_request — FAIL, 404 — FAIL с указанием на устаревший LiveKit, 101 — OK" bash -c 'set -u; source "$1"; WS_BODY="что-то другое"; ws_route_verdict 400; a=$WS_STATUS; WS_BODY=""; ws_route_verdict 404; b=$WS_STATUS; n=$WS_NOTE; ws_route_verdict 101; [ "$a$b$WS_STATUS" = FAILFAILOK ] && [[ "$n" == *rtc/v1* ]]' _ "$VL"
 t "ws_verdict 400 напрямую: это ответ самого LiveKit, прокси не обвиняется" bash -c 'set -u; source "$1"; WS_BODY="boom"; ws_verdict 400 direct; [ "$WS_STATUS" = FAIL ] && [[ "$WS_NOTE" == *"самого LiveKit"* ]] && [[ "$WS_NOTE" != *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *boom* ]]' _ "$VL"
 t "ws_verdict через прокси: напрямую 101 → виноват прокси" bash -c 'set -u; source "$1"; DIRECT_WS_CODE=101; WS_BODY=""; ws_verdict 400 proxy; [[ "$WS_NOTE" == *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *Upgrade* ]]' _ "$VL"

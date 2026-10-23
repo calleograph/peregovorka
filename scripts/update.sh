@@ -25,7 +25,7 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-REF=""; PULL=0; YES=0; FORCE=0; NO_BACKUP=0; SKIP_SMOKE=0; SKIP_MODELS=0; SKIP_PREFLIGHT=0; NO_NGINX=0; STASH=0; WAIT=180; PHASE=1
+REF=""; PULL=0; YES=0; FORCE=0; NO_BACKUP=0; SKIP_SMOKE=0; SKIP_MODELS=0; SKIP_PREFLIGHT=0; NO_NGINX=0; STASH=0; WAIT=180; PHASE=1; SKIP_NETCHECK=0
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
     --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
     --no-nginx) NO_NGINX=1; shift ;;
     --skip-smoke) SKIP_SMOKE=1; shift ;;
+    --skip-netcheck) SKIP_NETCHECK=1; shift ;;
     --wait) WAIT="$2"; shift 2 ;;
     --phase2) PHASE=2; shift ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
@@ -49,7 +50,7 @@ while [ $# -gt 0 ]; do
 done
 export DRY_RUN
 
-STEP=0; STEPS=17; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
+STEP=0; STEPS=18; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
 DEPLOY_STARTED=0
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
@@ -57,7 +58,20 @@ stop_update() { # stop_update сообщение — остановка с по�
   [ "$DRY_RUN" = "1" ] || { upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null; upd_state_set update_status failed 2>/dev/null; upd_history_append failed "$CUR_STAGE"; }
   if [ "$PHASE" -eq 2 ] && [ "$DRY_RUN" != "1" ]; then upd_autorecover; fi
   warn "Обновление остановлено на этапе «${CUR_STAGE}». Данные, .env и модели не затронуты. Устраните причину и повторите ./scripts/update.sh — он продолжит (сборка и миграции идемпотентны)."
+  [ "$DRY_RUN" = "1" ] || { upd_report_write "остановлено" "$*" "$(upd_advice "$*")"; info "Отчёт об обновлении: ${DATA_ROOT}/updater/report.txt (в веб-интерфейсе — «Обновления» → «Отчёт»)"; }
   exit 1
+}
+
+# Рекомендация к отчёту по причине остановки (что сделать, если автоматически не исправилось)
+upd_advice() {
+  case "$*" in
+    *"Источники сборки"*|*"registry-network"*|*"источник зависимостей"*) netcheck_advice | head -3 | tr '\n' ' '; echo "После устранения повторите обновление: уже собранные компоненты повторно не собираются." ;;
+    *"git fetch"*) echo "Нет доступа к репозиторию проекта: проверьте сеть/прокси сервера до GitHub и повторите обновление." ;;
+    *"Сборка образов"*) echo "См. журнал сборки компонента в отчёте; если это ошибка проекта — обновитесь до исправленной версии." ;;
+    *"Резервная копия БД"*) echo "Проверьте место на диске в каталоге резервных копий и состояние PostgreSQL (scripts/logs.sh postgres), затем повторите." ;;
+    *"healthy"*|*"не стали"*) echo "Посмотрите журнал сервиса из отчёта (scripts/logs.sh <сервис>); прежняя версия восстановлена автоматически, если это было возможно (см. «Автоматические действия»)." ;;
+    *) echo "Повторите обновление; если остановка повторится — передайте этот отчёт в поддержку." ;;
+  esac
 }
 
 # Сбой во второй фазе — сервер не остаётся в промежуточном состоянии:
@@ -66,20 +80,36 @@ stop_update() { # stop_update сообщение — остановка с по�
 #  * после перезапуска (сервисы не стали здоровыми): автоматический откат кода и образов (rollback.sh: только если схема БД совместима с прежним кодом).
 upd_autorecover() {
   local prev; prev="$(upd_state_get previous_git_commit)"
-  [ -n "$prev" ] && [ "$prev" != "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ] || return 0
-  if [ "$DEPLOY_STARTED" -eq 0 ]; then
+  [ -n "$prev" ] || return 0
+  # 1) схема БД уже изменена — вернуть базу ТОЧНО к копии, снятой при остановленном приложении (данные после неё не писались)
+  if [ "${SCHEMA_CHANGED:-0}" = 1 ]; then
+    if [ "$(upd_state_get backup_after_stop)" = 1 ] && upd_db_restore_exact "$(upd_state_get db_backup)"; then
+      SCHEMA_CHANGED=0; alembic_verify run >/dev/null 2>&1; upd_state_set alembic_after "${ALEMBIC_CUR:-}"   # ревизия восстановленной базы — в отчёт
+    else warn "Автовосстановление: схема БД изменена, а точной копии до миграции нет — прежний код поверх новой схемы не запускается (см. отчёт)"; fi
+  fi
+  [ "$prev" != "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ] || return 0
+  if [ "$DEPLOY_STARTED" -eq 0 ] && [ "${SCHEMA_CHANGED:-0}" = 0 ]; then
+    # 2) контейнеры прежней версии не пересоздавались: вернуть код и, если приложение останавливалось, запустить прежние контейнеры
     upd_git_unlock
     if git -C "$REPO_ROOT" checkout --detach "$prev" >/dev/null 2>&1; then
       rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_restored_previous"
+      upd_action "код возвращён на прежнюю версию ${prev:0:12}"
       warn "Автовосстановление: код возвращён на прежнюю версию ${prev:0:12}; работающие сервисы не перезапускались — сервер работает как до обновления."
     else warn "Автовосстановление: вернуть код на ${prev:0:12} не удалось — работающие сервисы прежней версии не тронуты"; fi
-  else
+    [ "$(upd_state_get app_stopped)" = 1 ] && upd_app_start_old
+  elif [ "${SCHEMA_CHANGED:-0}" = 0 ]; then
+    # 3) контейнеры уже новые: откат кода и образов (rollback.sh проверит совместимость схемы)
     warn "Автовосстановление: сервисы новой версии не заработали — откатываю код и образы на ${prev:0:12} (rollback.sh)"
     if "$REPO_ROOT/scripts/rollback.sh" --yes --env "$ENV_FILE" --to "$prev"; then
       rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_rolled_back"
+      upd_action "выполнен откат кода и образов на ${prev:0:12}"
       ok "Автовосстановление: прежняя версия ${prev:0:12} снова работает."
+    elif [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" = "$prev" ]; then
+      upd_action "выполнен откат кода и образов на ${prev:0:12}, но сервисы прежней версии не стали работоспособными (см. журнал)"
+      warn "Автовосстановление: код и образы возвращены на ${prev:0:12}, но сервисы не стали работоспособными — см. отчёт и scripts/logs.sh <сервис>"
     else
-      warn "Автовосстановление: откат невозможен (схема БД уже новая или нет образов прежней версии) — оставлена новая версия; см. сообщения выше и docs/INSTALL_AND_UPDATE.md (Rollback)"
+      upd_action "откат на ${prev:0:12} не выполнен (см. журнал)"
+      warn "Автовосстановление: откат невозможен (нет образов прежней версии или сервисы не запустились) — см. отчёт и docs/INSTALL_AND_UPDATE.md (Rollback)"
     fi
   fi
 }
@@ -88,6 +118,8 @@ upd_autorecover() {
 phase1() {
   sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
   if ! pmsg="$(validate_env_paths)"; then printf '%s\n' "$pmsg" >&2; die "Некорректный путь в .env — обновление не начато, ничего не изменено."; fi
+  [ "$DRY_RUN" = "1" ] || [ -f "$(upd_marker_file)" ] || { mkdir -p "$DATA_ROOT/state" 2>/dev/null; upd_actions_reset; rm -f "$DATA_ROOT/state/netcheck.txt" 2>/dev/null
+    for k in app_stopped backup_after_stop build_livekit build_backend build_asr build_web alembic_after db_backup local_changes_saved; do upd_state_set "$k" "" 2>/dev/null; done; }
   step "Определение проекта и текущей версии"
   command -v git >/dev/null || die "git не найден"
   git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO_ROOT не является git-репозиторием"
@@ -128,7 +160,7 @@ phase1() {
       ok "Установленная версия ${OLD:0:12} новее целевой ${TARGET:0:12} (в ней уже есть всё из неё) — откат назад обновлением не выполняется"
       TARGET="$OLD"
     elif ! git -C "$REPO_ROOT" merge-base --is-ancestor "$OLD" "$TARGET" 2>/dev/null; then
-      SAVED_COMMITS="$(upd_save_local_commits "$OLD" "$TARGET")"
+      SAVED_COMMITS="$(upd_save_local_commits "$OLD" "$TARGET")"; upd_action "история разошлась: локальные коммиты сохранены${SAVED_COMMITS:+ в $SAVED_COMMITS}"
       warn "Автопочинка: история на сервере разошлась с origin (локальные коммиты). Они сохранены${SAVED_COMMITS:+ в $SAVED_COMMITS} и в git; обновление переходит на целевую версию."
       FORCE_SWITCH=1
     fi
@@ -137,8 +169,13 @@ phase1() {
   if [ "$OLD" = "$TARGET" ]; then
     ok "Новых commit'ов нет — установка на актуальной версии."
     if [ "$FORCE" -eq 0 ] && [ "$PULL" -eq 0 ]; then
-      info "Выполняю только проверку состояния (verify). Пересобрать образы на том же commit: ./scripts/update.sh --force-build"
-      exec "$REPO_ROOT/scripts/verify.sh" --env "$ENV_FILE"
+      if [ "$DRY_RUN" != "1" ] && deploy_mismatch; then
+        warn "Развёртывание этой версии не завершено: ${DEPLOY_DIFF} — довожу установку до кода на сервере (сборка, копия БД и миграции, перезапуск, проверка)"
+        upd_action "развёртывание не было завершено (${DEPLOY_DIFF}) — выполняется заново"
+      else
+        info "Выполняю только проверку состояния (verify). Пересобрать образы на том же commit: ./scripts/update.sh --force-build"
+        exec "$REPO_ROOT/scripts/verify.sh" --env "$ENV_FILE"
+      fi
     fi
   else
     log "Новые commit'ы ($(git -C "$REPO_ROOT" rev-list --count "$OLD..$TARGET")):"
@@ -149,6 +186,21 @@ phase1() {
     fi
   fi
 
+  step "Источники сборки: загрузка из среды сборки (npm, PyPI, apt, GitHub, реестр Docker)"
+  if [ "$OLD" = "$TARGET" ] && [ "$FORCE" -eq 0 ] && [ "$PULL" -eq 0 ]; then info "Сборки не будет — проверка не нужна"
+  elif [ "$SKIP_NETCHECK" -eq 1 ]; then warn "Проверка источников пропущена (--skip-netcheck)"
+  else
+    netcheck_build_sources "$TARGET"; NCRC=$?
+    printf '%s\n' "${NETCHECK_LINES[@]}" | sed 's/^/  /'
+    [ "$DRY_RUN" = "1" ] || printf '%s\n' "${NETCHECK_LINES[@]}" | sed '/^[[:space:]]*$/d' > "$DATA_ROOT/state/netcheck.txt" 2>/dev/null
+    [ "${BUILD_NETWORK:-default}" = host ] && { upd_action "источники доступны только из сети хоста — сборка пойдёт в сети хоста (BUILD_NETWORK=host)"; export BUILD_NETWORK; }
+    case "$NETCHECK_STATUS" in
+      ok) ok "Все источники сборки доступны и отдают данные" ;;
+      degraded) warn "Источники доступны с оговорками (см. выше) — сборка продолжится" ;;
+      *) [ "$NCRC" -eq 0 ] || stop_update "Источники сборки недоступны из среды сборки (${NETCHECK_BLOCKING[*]}): $(printf '%s\n' "${NETCHECK_LINES[@]}" | grep '^FAIL' | head -2 | tr '\n' ' ') Код и работающая версия не изменены." ;;
+    esac
+  fi
+
   step "Проверка локальных изменений"
   if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]; then
     git -C "$REPO_ROOT" status --short >&2
@@ -156,7 +208,7 @@ phase1() {
       info "[dry-run] локальные изменения будут сохранены (патч, архив новых файлов, git stash) в ${BACKUP_DIR:-$DATA_ROOT/backups}/local-changes-<время>/, обновление продолжится"
     else
       SAVED_CHANGES="$(upd_save_local_changes)" || stop_update "Локальные изменения сохранены в ${SAVED_CHANGES:-каталог резервных копий}, но рабочую копию не удалось очистить (права на файлы проекта?). Ничего не удалено."
-      upd_state_set local_changes_saved "$SAVED_CHANGES"
+      upd_state_set local_changes_saved "$SAVED_CHANGES"; upd_action "локальные изменения файлов проекта сохранены в $SAVED_CHANGES (и в git stash), рабочая копия очищена"
       warn "Автопочинка: найдены локальные изменения файлов проекта. Они СОХРАНЕНЫ в $SAVED_CHANGES (патч, новые файлы, инструкция возврата; копия и в git stash) — рабочая копия очищена, обновление продолжается."
       info "Настройки установки (.env, данные, модели) — не файлы проекта: они не менялись."
     fi
@@ -225,7 +277,7 @@ phase2() {
   sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
   upd_git_env
   OLD="$(upd_state_get previous_git_commit)"; TARGET="$(git -C "$REPO_ROOT" rev-parse HEAD)"; OLD12="${OLD:0:12}"
-  STEP=6
+  STEP=7
   upd_state_set target_git_commit "$TARGET"
   host_version_info
   export IMAGE_TAG="${APP_GIT_COMMIT}"
@@ -258,15 +310,6 @@ phase2() {
   # SIP-телефония (если включена на сервере): образ livekit-sip скачивается заранее, без интернета — предупреждение
   sip_prepare soft
 
-  step "Резервная копия БД"
-  if [ "$NO_BACKUP" -eq 1 ]; then warn "Backup БД отключён (--no-backup) — на вашу ответственность"
-  elif [ "$(upd_svc_state postgres)" = missing ]; then warn "PostgreSQL не запущен — backup невозможен (первая установка? тогда используйте install.sh)"
-  else
-    "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label "pre-${OLD12:-update}" || stop_update "Резервная копия БД не создана — без неё миграции не выполняются"
-    BK="$(ls -1t "${BACKUP_DIR:-$DATA_ROOT/backups}/${COMPOSE_PROJECT_NAME}"-db-*.dump 2>/dev/null | head -1)"
-    [ -n "$BK" ] && upd_state_set db_backup "$BK"
-  fi
-
   upd_ensure_updater_dir
   upd_ensure_data_dirs
 
@@ -276,17 +319,42 @@ phase2() {
   [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }
   build_images || stop_update "Сборка образов не удалась (код и контейнеры не тронуты; лог: $DATA_ROOT/state/build-*.log). Уже собранные сервисы повторно не собираются."
   require_images || stop_update "Не хватает образов проекта"
+  if ! check_built_images_consistent; then
+    warn "Есть образы не из этого кода — пересобираю их один раз"; upd_action "образы не из целевого кода — принудительная пересборка"
+    FORCE_BUILD=1 build_images backend asr web || stop_update "Сборка образов не удалась при пересборке несогласованных образов"
+    check_built_images_consistent || stop_update "Образы компонентов не согласованы с целевой версией и после пересборки — переключение не выполняется"
+  fi
   check_web_image_config || stop_update "Конфигурация nginx в новом образе web некорректна — прежняя версия продолжает работать (исправьте frontend/nginx.conf и повторите)"
 
-  step "Миграции базы данных (Alembic)"
+  step "Резервная копия БД (при миграциях — с остановленным приложением)"
   dc up -d --no-build postgres redis >/dev/null || stop_update "Не удалось запустить PostgreSQL/Redis"
   local sv=("${UPD_SERVICES[@]}"); UPD_SERVICES=(postgres redis)
   upd_wait_healthy 120 || { UPD_SERVICES=("${sv[@]}"); stop_update "PostgreSQL/Redis не стали healthy"; }
   UPD_SERVICES=("${sv[@]}")
   alembic_verify run >/dev/null 2>&1; log "Ревизия БД: текущая ${ALEMBIC_CUR:-—} · целевая (head) ${ALEMBIC_HEAD:-—}"
-  dc run --rm --no-deps backend alembic upgrade head || stop_update "alembic upgrade head не выполнен: PostgreSQL откатил миграцию целиком (одна транзакция), схема прежняя"
-  DEPLOY_STARTED=1                                   # схема могла измениться: дальше прежний код возвращается только через rollback.sh с проверкой совместимости
+  NEED_MIG=1; [ -n "${ALEMBIC_CUR:-}" ] && [ "${ALEMBIC_CUR:-}" = "${ALEMBIC_HEAD:-x}" ] && NEED_MIG=0
+  if [ "$NO_BACKUP" -eq 1 ]; then
+    # без копии неудачную миграцию не отменить — останавливаемся ДО необратимого шага (код вернётся, прежние контейнеры не тронуты)
+    [ "$NEED_MIG" -eq 1 ] && stop_update "Нужны миграции схемы БД, а резервная копия отключена (--no-backup): при сбое базу не вернуть — обновление остановлено до изменения схемы. Повторите без --no-backup"
+    warn "Backup БД отключён (--no-backup) — миграций нет, схема не меняется"
+  else
+    # Миграция: приложение останавливается ДО копии — после неё в базу никто не пишет, и при неудаче база возвращается к копии без потерь
+    [ "$NEED_MIG" -eq 1 ] && { upd_app_stop || stop_update "Не удалось остановить приложение перед резервной копией"; }
+    "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label "pre-${OLD12:-update}" || stop_update "Резервная копия БД не создана — без неё миграции не выполняются"
+    BK="$(ls -1t "${BACKUP_DIR:-$DATA_ROOT/backups}/${COMPOSE_PROJECT_NAME}"-db-*.dump 2>/dev/null | head -1)"
+    [ -n "$BK" ] && upd_state_set db_backup "$BK"
+    upd_state_set backup_after_stop "$NEED_MIG"                       # при миграции копия снята, когда приложение уже остановлено (или не запущено)
+  fi
+
+  step "Миграции базы данных (Alembic)"
+  if [ "$NEED_MIG" -eq 0 ]; then ok "Схема БД уже на ревизии ${ALEMBIC_CUR} — миграций нет"
+  else
+    dc run --rm --no-deps backend alembic upgrade head || stop_update "alembic upgrade head не выполнен: PostgreSQL откатил миграцию целиком (одна транзакция), схема прежняя"
+    SCHEMA_CHANGED=1; upd_action "схема БД обновлена: ${ALEMBIC_CUR:-?} → head"
+  fi
   alembic_verify run >/dev/null 2>&1 || stop_update "После миграции current (${ALEMBIC_CUR:-?}) != head (${ALEMBIC_HEAD:-?})"
+  # продолжение прерванного обновления: схему могли мигрировать в прошлый запуск — это тоже «схема изменена этим обновлением»
+  [ -n "$(upd_state_get alembic_before)" ] && [ "$(upd_state_get alembic_before)" != unknown ] && [ "$(upd_state_get alembic_before)" != "${ALEMBIC_CUR:-}" ] && SCHEMA_CHANGED=1
   ok "Alembic: ${ALEMBIC_CUR} = head"; upd_state_set alembic_after "$ALEMBIC_CUR"
 
   step "Запуск сервисов и ожидание healthcheck (до ${WAIT} с)"
@@ -336,10 +404,12 @@ phase2() {
   upd_ensure_helper
   if [ "$H_ST" = ok ]; then
     upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok
+    upd_report_write "успешно" "" "$([ "$I_ST" = fail ] && echo "Интеграции требуют внимания: ${SMISS:-см. проверку}")"
     [ "$I_ST" = fail ] && exit 3
     exit 0
   fi
   upd_state_set result "health_failed"; upd_history_append failed "проверка работоспособности после обновления"
+  upd_report_write "установлено, но проверка работоспособности нашла ошибки" "Verify/Smoke: см. журнал" "Откройте «Исправить автоматически» или посмотрите журнал проверок; откат кода: ./scripts/rollback.sh"
   exit 1
 }
 

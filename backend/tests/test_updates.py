@@ -71,6 +71,50 @@ def test_overview_with_updater_and_remote_changes(client):
     assert client.get(U).json()["up_to_date"] is False, "ошибка проверки — это не «актуально»"
 
 
+def test_new_code_with_old_containers_or_old_schema_is_not_up_to_date(client, monkeypatch):
+    """Код на сервере новее работающего backend (прерванное обновление) или схема БД отстаёт — это не «актуально», а незавершённое развёртывание."""
+    d = chan(client)
+    heartbeat(d)
+    login(client, "root")
+    client.app_obj.state.settings.app_git_commit = "aaaaaaaaaaaa1234"
+    remote(d, behind=0, commits=[], current="aaaaaaaaaaaa", checked_at=time.time())
+    o = client.get(U).json()
+    assert o["up_to_date"] is True and o["deploy"]["consistent"] is True
+    remote(d, behind=0, commits=[], current="dddddddddddd", checked_at=time.time())
+    o = client.get(U).json()
+    assert o["up_to_date"] is False and o["deploy"]["consistent"] is False
+    assert "код на сервере — dddddddddddd, а работают компоненты версии aaaaaaaaaaaa" in o["deploy"]["problems"][0]
+    # сведения помощника старше запуска backend могли описывать прежний код — расхождение по ним не объявляется
+    remote(d, behind=0, commits=[], current="dddddddddddd", checked_at=upd.STARTED_AT - 5)
+    assert client.get(U).json()["up_to_date"] is True
+    # схема БД отстаёт от миграций в образе
+    remote(d, behind=0, commits=[], current="aaaaaaaaaaaa", checked_at=time.time())
+
+    async def old_schema(db):
+        return "0001"
+    monkeypatch.setattr(upd, "schema_current", old_schema)
+    monkeypatch.setattr(upd, "schema_head", lambda: "0002")
+    o = client.get(U).json()
+    assert o["up_to_date"] is False and "схема базы данных на ревизии 0001, программа ожидает 0002" in o["deploy"]["problems"]
+
+
+def test_schema_head_is_read_from_migrations_in_the_image():
+    head = upd.schema_head()
+    assert head and any(f"'{head}'" in f.read_text(encoding="utf-8") or f'"{head}"' in f.read_text(encoding="utf-8")
+                        for f in (REPO / "backend" / "migrations" / "versions").glob("*.py"))
+
+
+def test_update_report_is_shown_to_admin(client):
+    d = chan(client)
+    heartbeat(d)
+    login(client, "root")
+    assert client.get(U).json()["report"] is None
+    rep = {"result": "остановлено", "ok": False, "cause": "Сборка образов не удалась", "stage": "Сборка", "advice": "Повторите",
+           "actions": ["12:00:01 сеть сборки: host"], "build": ["web: ошибка"], "services": ["backend: healthy"], "text": "=== Отчёт ==="}
+    (d / "report.json").write_text(json.dumps(rep, ensure_ascii=False), encoding="utf-8")
+    assert client.get(U).json()["report"]["cause"] == "Сборка образов не удалась"
+
+
 def test_stale_heartbeat_means_updater_is_down(client):
     d = chan(client)
     heartbeat(d, ts=time.time() - 120)
