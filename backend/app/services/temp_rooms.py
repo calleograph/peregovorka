@@ -88,6 +88,8 @@ def sync_lifecycle(room: Room, meeting: Meeting | None, cfg: GeneralSettings | N
     """Состояние временной комнаты по встрече: есть люди → active; все вышли → grace_period и срок закрытия. Закрытую не возвращает."""
     if room.lifetime != "temporary" or room.lifecycle == "closed":
         return
+    if room.scheduled_start is not None:     # конференция из календаря: срок задаёт расписание (окончание + запас, у серии — свой), а не уход участников
+        return
     grace = timedelta(minutes=(cfg.temp_room_grace_minutes if cfg else 5))
     if meeting is not None and meeting.ended_at is None and meeting.empty_since is not None:
         room.lifecycle, room.auto_close_at = "grace_period", meeting.empty_since + grace

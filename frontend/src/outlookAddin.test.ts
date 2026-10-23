@@ -216,6 +216,19 @@ describe("ядро и скрытые команды на фиктивном Offi
     } finally { vi.useRealTimers(); }
   });
 
+  it("приглашённые: обязательные и необязательные уходят на сервер; не прочитались — поля нет (сервер список не меняет); окно просмотра — готовый список", async () => {
+    const item = G.Office.context.mailbox.item;
+    item.requiredAttendees = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: [{ emailAddress: "bob@example.org", displayName: "Bob" }, { displayName: "без адреса" }] }) };
+    item.optionalAttendees = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: [{ emailAddress: "guest@example.org", displayName: "" }] }) };
+    expect((await mod.prepare(item)).payload.attendees).toEqual([{ email: "bob@example.org", name: "Bob", optional: false }, { email: "guest@example.org", name: "", optional: true }]);
+    item.optionalAttendees = { getAsync: (cb: (r: unknown) => void) => cb({ status: "failed", error: { code: 1, message: "нет" } }) };
+    expect("attendees" in (await mod.prepare(item)).payload).toBe(false);
+    item.requiredAttendees = [{ emailAddress: "carol@example.org", displayName: "Carol" }]; item.optionalAttendees = [];
+    expect((await mod.prepare(item)).payload.attendees).toEqual([{ email: "carol@example.org", name: "Carol", optional: false }]);
+    await send();
+    expect(JSON.parse(calls("/meetings").at(-1)![1].body).attendees).toEqual([{ email: "carol@example.org", name: "Carol", optional: false }]);
+  });
+
   it("прошедшая встреча отклоняется до запроса к серверу понятной ошибкой", async () => {
     const item = G.Office.context.mailbox.item;
     item.start = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: new Date(Date.now() - 5 * 3600_000) }) };

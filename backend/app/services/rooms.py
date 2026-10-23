@@ -115,9 +115,10 @@ _LIST_COLUMNS = ("id", "slug", "name", "description", "max_participants", "passw
 
 
 async def accessible_room_views(db: AsyncSession, su: SessionUser) -> list[RoomView]:
-    """Комнаты, которые человек видит в списке (правило _listed), без объектов ORM: три запроса Core на весь список."""
+    """Каталог постоянных переговорок, которые человек видит (правило _listed), без объектов ORM: три запроса Core на весь список.
+    Временные комнаты и конференции из календаря — в «Предстоящих встречах» (services.upcoming)."""
     t = Room.__table__
-    live = (t.c.is_enabled.is_(True), t.c.lifecycle != "closed")
+    live = (t.c.is_enabled.is_(True), t.c.lifecycle != "closed", t.c.lifetime == "permanent")
     rows = (await db.execute(select(*(t.c[n] for n in _LIST_COLUMNS)).where(*live).order_by(t.c.name))).mappings().all()
     acl: dict = {}
     mods: dict = {}

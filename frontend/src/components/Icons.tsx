@@ -31,6 +31,8 @@ const PATHS: Record<string, ReactNode> = {
   transcript: <><path d="M4 6h16M4 10.5h16M4 15h9.5M4 19.5h6" /><path d="m16.5 17 1.6 1.6 3-3.4" /></>,
   transcriptOff: <><path d="M4 6h16M4 10.5h16M4 15h9.5M4 19.5h6" opacity=".55" /><path d="M3.5 3.5l17 17" /></>,
   lock: <><rect x="5" y="10.5" width="14" height="10" rx="2.4" /><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5" /></>,
+  calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.6" /><path d="M3.5 9.8h17M8 3v4M16 3v4" /></>,
+  clock: <><circle cx="12" cy="12" r="8.4" /><path d="M12 7.6V12l3 2" /></>,
   users: <><circle cx="9" cy="8.5" r="3.2" /><path d="M2.8 19.6c.4-3.4 3-5.3 6.2-5.3s5.8 1.9 6.2 5.3" /><path d="M16 5.6a3.1 3.1 0 0 1 0 5.8M18.2 14.6c1.8.6 3 2.2 3.2 5" /></>,
   arrowR: <><path d="M5 12h14M13.5 6.5 19 12l-5.5 5.5" /></>,
   sparkle: <><path d="M12 3.2 13.9 9l5.8 1.9-5.8 1.9L12 18.6l-1.9-5.8L4.3 10.9 10.1 9Z" /><path d="M19 3.5v3M17.5 5h3" /></>,

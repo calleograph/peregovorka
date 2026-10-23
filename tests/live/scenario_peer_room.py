@@ -43,7 +43,7 @@ async def main():
         S.check("у владельца комната видна в списке с меткой «Равноправная»", await A.wait_for("document.body.innerText.includes('Равноправная')", 15))
         S.check("у Боба в списке этой комнаты нет", not await B.js("document.body.innerText.includes('Равноправная встреча')"))
         # управление ссылкой
-        box = await A.js("(() => { const el = [...document.querySelectorAll('.room-card, .rc')].find(x => x.textContent.includes('Равноправная')); if (!el) return null; el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()")
+        box = await A.js("(() => { const el = [...document.querySelectorAll('.room-card, .rc, .upc-card, .upc-row')].find(x => x.textContent.includes('Равноправная')); if (!el) return null; el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()")
         S.check("карточка равноправной комнаты найдена", bool(box), str(box))
         await A.send("Input.dispatchMouseEvent", type="mouseMoved", x=box["x"], y=box["y"])            # в Chromium под Linux без движения и buttons=2 контекстное меню не открывается
         for t in ("mousePressed", "mouseReleased"):                                    # настоящий щелчок правой кнопкой

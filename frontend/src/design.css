@@ -363,6 +363,66 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .mic-ind.speaking .mic-ring { animation: none; opacity: .35; transform: scale(.9); } }
 .tile-foot { flex-wrap: nowrap; }
 
+/* ---------- главная: «Предстоящие встречи» (из календаря и временные комнаты) над постоянными переговорками ----------
+   Отличие от карточки комнаты — полоса состояния слева и метка «Из календаря»; скругления, тени и цвета — общие (токены темы). Без постоянной анимации. */
+.upc-section { display: grid; gap: 10px; animation: rise .5s .04s var(--ease) both; }
+.upc-head, .rooms-section-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.upc-head h2, .rooms-section-h h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.upc-head h2 .muted, .rooms-section-h h2 .muted { font-weight: 500; font-size: 14px; margin-left: 4px; }
+.upc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.upc-card { position: relative; display: grid; gap: 6px; align-content: start; min-width: 0; padding: 12px 14px 12px 16px; border: 1px solid var(--line);
+  border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); animation: rise .5s var(--ease) both; animation-delay: calc(min(var(--i, 0), 8) * 45ms + 60ms); }      /* длинный список не «проявляется» секундами */
+.upc-card, .upc-row { content-visibility: auto; contain-intrinsic-size: auto 190px; }   /* сотни встреч: карточки вне экрана не раскладываются и не рисуются */
+.upc-row { contain-intrinsic-size: auto 56px; }
+.upc-card::before { content: ""; position: absolute; left: -1px; top: 12px; bottom: 12px; width: 4px; border-radius: 0 4px 4px 0; background: var(--st, var(--accent)); }
+.upc-st-scheduled { --st: var(--accent); } .upc-st-soon { --st: var(--warn); } .upc-st-live { --st: var(--ok); } .upc-st-ended, .upc-st-open { --st: var(--line-strong); } .upc-st-cancelled { --st: var(--danger); }
+.upc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.upc-status { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none;
+  background: var(--accent-soft); color: var(--accent); }
+.upc-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.upc-status.upc-st-soon { background: var(--warn-bg); color: var(--warn-text); }
+.upc-status.upc-st-live { background: var(--ok-bg); color: var(--ok-text); }
+.upc-status.upc-st-ended, .upc-status.upc-st-open { background: var(--soft); color: var(--muted); }
+.upc-status.upc-st-cancelled { background: var(--danger-bg); color: var(--danger-text); }
+.upc-kind { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.upc-title { margin: 2px 0 0; font-size: 16px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.upc-st-cancelled .upc-title { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 55%, transparent); }
+.upc-when, .upc-count { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); min-width: 0; }
+.upc-count { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.upc-count.upc-st-soon { color: var(--warn-text); } .upc-count.upc-st-live { color: var(--ok-text); } .upc-count.upc-st-cancelled { color: var(--danger-text); } .upc-count.upc-st-ended { color: var(--muted); font-weight: 500; }
+.upc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--muted); min-width: 0; }
+.upc-org { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.upc-people { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; font-size: 13px; color: var(--muted); }
+.upc-people.link { border: 0; background: none; padding: 2px 4px; margin: -2px -4px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px; color: var(--link); }
+.upc-people.link:hover, .upc-people.link:focus-visible, .upc-people.link[aria-expanded="true"] { background: var(--accent-soft); outline: none; }
+.upc-people-names { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upc-foot { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 4px; }
+.upc-foot .spacer { flex: 1; }
+.upc-foot .btn { padding: 6px 12px; font-size: 13.5px; min-height: 34px; gap: 6px; }
+.upc-go { text-decoration: none; white-space: nowrap; }
+.upc-sync { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--warn-text); min-width: 0; }
+.upc-list { display: grid; gap: 6px; }
+.upc-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 8px 12px; min-width: 0;
+  border: 1px solid var(--line); border-left: 4px solid var(--st, var(--accent)); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); }
+.upc-row > .upc-status { justify-self: start; }
+.upc-row-main { display: grid; min-width: 0; }
+.upc-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upc-row-main .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upc-row .upc-people { max-width: 240px; }
+.upc-row-act { display: inline-flex; align-items: center; gap: 6px; }
+.upc-more { justify-self: start; }
+.upc-pop { position: fixed; z-index: 90; width: min(320px, calc(100vw - 16px)); max-height: min(360px, 60vh); overflow: auto; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: var(--shadow-pop); }
+.upc-pop-head { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.upc-pop-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.upc-pop-list li { display: grid; min-width: 0; }
+.upc-pop-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; overflow-wrap: anywhere; }
+.upc-pop-list .small { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .upc-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main go" "st people"; row-gap: 6px; }
+  .upc-row > .upc-status { grid-area: st; justify-self: start; } .upc-row-main { grid-area: main; } .upc-row > .upc-people { grid-area: people; justify-self: end; } .upc-row > .upc-row-act { grid-area: go; }
+}
+
 /* ---------- комнаты: компактный вид — плотная сетка одинаковых карточек (CSS Grid, 1 / 2 / 3 / 4 колонки по ширине) ---------- */
 .rooms-compact { display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: 1fr; }
 @media (min-width: 640px) { .rooms-compact { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -487,7 +547,10 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
   .pj-body { padding: 16px 14px 18px; }
   .pj-actions .btn { flex: 1 1 100%; justify-content: center; }
   .rooms-toolbar { flex-direction: column; align-items: stretch; }
-  .rooms-toolbar .chips { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .rooms-toolbar .chips { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; width: 100%; }     /* ширина — по экрану, лишние фильтры прокручиваются внутри строки */
+  .rooms-toolbar .chips .chip { flex: none; white-space: nowrap; }
+  .rooms-toolbar .search { flex: none; max-width: none; }                     /* основа 240px в колонке становилась высотой поля */
+  .rooms-toolbar .viewseg { margin-left: 0; align-self: flex-start; }
   .rooms-hero { flex-direction: column; align-items: stretch; }
   .rooms-hero .cta { width: 100%; }
   .modal, .modal-card, [role="dialog"] { max-width: calc(100vw - 16px); }

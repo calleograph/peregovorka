@@ -255,12 +255,33 @@
     });
   }
 
-  /** Что серверу нужно знать о событии: время, тема, признак серии, организатор, часовой пояс и идентификаторы для серверной сверки (если встреча уже сохранена). */
+  /** Приглашённые (обязательные и необязательные): адрес и имя — для «Предстоящих встреч» Peregovorka. В окне редактирования — то, что сейчас в форме
+   *  (getAsync), в окне просмотра — готовый список. Не удалось прочитать — null: сервер прежний список тогда не меняет. */
+  function readAttendees(item) {
+    function one(field, optional) {
+      var f = item[field];
+      var map = function (list) {
+        var out = [];
+        for (var i = 0; list && i < list.length && out.length < 500; i++) {
+          if (list[i] && list[i].emailAddress) out.push({ email: list[i].emailAddress, name: list[i].displayName || "", optional: optional });
+        }
+        return out;
+      };
+      if (!f) return Promise.resolve([]);
+      if (f.getAsync) return asyncCall(function (cb) { f.getAsync(cb); }, "meeting").then(map);
+      return Promise.resolve(map(f));
+    }
+    return Promise.all([one("requiredAttendees", false), one("optionalAttendees", true)])
+      .then(function (v) { return v[0].concat(v[1]); }, function () { return null; });
+  }
+
+  /** Что серверу нужно знать о событии: время, тема, признак серии, организатор, часовой пояс, приглашённые и идентификаторы для серверной сверки (если встреча уже сохранена). */
   function collect(item, key) {
     var mb = Office.context.mailbox;
     return Promise.all([
       readMeeting(item),
       item.getItemIdAsync ? asyncCall(function (cb) { item.getItemIdAsync(cb); }, "meeting").catch(function () { return null; }) : Promise.resolve(null),
+      readAttendees(item),
     ]).then(function (v) {
       var m = v[0];
       var ews = v[1] || null;
@@ -274,6 +295,7 @@
       if (ews) payload.ews_id = ews;
       if (rest) payload.rest_id = rest;
       try { if (item.seriesId) payload.series_id = item.seriesId; } catch (e) { /* не критично */ }
+      if (v[2]) payload.attendees = v[2];
       return payload;
     });
   }
@@ -540,7 +562,7 @@
   var api_ = {
     newKey: newKey, wrapBlock: wrapBlock, replaceBlock: replaceBlock, hasBlock: hasBlock, toIso: toIso, checkTimes: checkTimes, readToken: readToken, hadToken: hadToken,
     saveToken: saveToken, clearToken: clearToken, errorText: errorText, fromResponse: fromResponse, explain: explain, PgError: PgError, timeout: timeout, T: T,
-    ready: ready, clientInfo: clientInfo, supports: supports, currentItem: currentItem, readMeeting: readMeeting, collect: collect, prepare: prepare, login: login,
+    ready: ready, clientInfo: clientInfo, supports: supports, currentItem: currentItem, readMeeting: readMeeting, readAttendees: readAttendees, collect: collect, prepare: prepare, login: login,
     passwordLogin: passwordLogin, refresh: refresh, needsRefresh: needsRefresh,
     requestRoom: requestRoom, findRoom: findRoom, whoami: whoami, logout: logout, applyInvite: applyInvite, report: report, getStorage: getStorage, START: START, END: END,
   };

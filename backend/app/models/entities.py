@@ -209,6 +209,23 @@ class RoomModerator(Base):
     room: Mapped[Room] = relationship(back_populates="moderators")
 
 
+class RoomInvitee(Base):
+    """Приглашённый на запланированную конференцию (из события календаря Outlook): адрес почты, имя, сотрудник (если найден по адресу).
+    Только сведения «кто приглашён» — для списка «Предстоящие встречи» и карточки встречи; права входа даёт не эта таблица, а правила комнаты."""
+
+    __tablename__ = "room_invitees"
+    __table_args__ = (UniqueConstraint("room_id", "email", name="uq_room_invitee_email"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(254), index=True, nullable=False)                 # строчными
+    name: Mapped[str | None] = mapped_column(String(300))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    optional: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    source: Mapped[str] = mapped_column(String(10), default="addin", server_default="addin", nullable=False)   # addin | calendar — откуда последнее подтверждение
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class Meeting(Base):
     """Конкретный сеанс встречи в комнате."""
 

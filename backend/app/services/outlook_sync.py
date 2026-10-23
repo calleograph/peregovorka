@@ -1,10 +1,12 @@
 """Серверная сверка запланированных конференций с календарём организатора (Microsoft Graph или EWS).
 
 Нужна, когда встречу изменили или отменили не через надстройку: на другом устройстве, в мобильном клиенте, в календаре помощника. Раз в `sync_interval_minutes`
-по каждой активной запланированной комнате читается одно событие организатора **только по идентификатору** (тема, начало, окончание, признак отмены; тело письма не читается):
+по каждой активной запланированной комнате читается одно событие организатора **только по идентификатору** (тема, начало, окончание, признак отмены, приглашённые;
+тело письма не читается):
 
 * событие удалено или отменено → комната переводится в «отменена» (ссылка перестаёт пускать);
 * изменилось время или тема → расписание комнаты обновляется, ссылка прежняя;
+* изменился список приглашённых → обновляется список для «Предстоящих встреч» (адреса, которые календарь вернул не в SMTP-виде, прежних не удаляют);
 * любая **ошибка связи или прав никогда не отменяет комнату**: пишется состояние `error` и причина, комната остаётся как есть. Отмена — только по явному ответу «события нет».
 
 Минимальные права: Microsoft Graph — приложение с правом `Calendars.ReadBasic.All` (без тела и вложений); EWS — учётная запись с ролью ApplicationImpersonation
@@ -48,6 +50,8 @@ class EventInfo:
     subject: str = ""
     start: datetime | None = None
     end: datetime | None = None
+    attendees: list | None = None          # [(адрес, имя, необязательный)]; None — календарь их не вернул
+    attendees_complete: bool = True        # все адреса разобраны (иначе прежних приглашённых не удаляем)
 
 
 def _utc(text: str) -> datetime:
@@ -79,7 +83,7 @@ class GraphClient:
         try:
             async with self._http() as c:
                 tok = await self._token(c)
-                r = await c.get(f"{self._api}/users/{quote(organizer)}/events/{quote(rest_id, safe='')}", params={"$select": "subject,start,end,isCancelled"},
+                r = await c.get(f"{self._api}/users/{quote(organizer)}/events/{quote(rest_id, safe='')}", params={"$select": "subject,start,end,isCancelled,attendees"},
                                 headers={"Authorization": f"Bearer {tok}", "Prefer": 'outlook.timezone="UTC"'})
         except httpx.HTTPError as exc:
             raise CalendarError(f"Нет связи с Microsoft Graph ({type(exc).__name__}).") from None
@@ -90,7 +94,11 @@ class GraphClient:
         if r.status_code != 200:
             raise CalendarError(f"Graph ответил HTTP {r.status_code}.")
         j = r.json()
-        return EventInfo(True, bool(j.get("isCancelled")), j.get("subject") or "", _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]))
+        raw = [a for a in (j.get("attendees") or []) if isinstance(a, dict) and a.get("type") != "resource"]       # переговорные комнаты и оборудование — не люди
+        people = [{"email": (a.get("emailAddress") or {}).get("address"), "name": (a.get("emailAddress") or {}).get("name"), "optional": a.get("type") == "optional"} for a in raw]
+        att = ol.parse_attendees(people) if "attendees" in j else None
+        return EventInfo(True, bool(j.get("isCancelled")), j.get("subject") or "", _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]), att,
+                         att is None or len(att) == len(people))
 
     async def probe(self, mailbox: str) -> str:
         """Проверка доступа: вход приложения и чтение календаря указанного почтового ящика. Возвращает пояснение; при ошибке — CalendarError."""
@@ -295,15 +303,19 @@ class EwsClient:
         if not ews_id:
             raise CalendarError("У события нет идентификатора EWS.")
         body = ('<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/>'
-                '<t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsCancelled"/></t:AdditionalProperties></m:ItemShape>'
+                '<t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsCancelled"/><t:FieldURI FieldURI="calendar:RequiredAttendees"/>'
+                '<t:FieldURI FieldURI="calendar:OptionalAttendees"/></t:AdditionalProperties></m:ItemShape>'
                 f'<m:ItemIds><t:ItemId Id="{escape(ews_id, {chr(34): "&quot;"})}"/></m:ItemIds></m:GetItem>')
         root, cls, code, mode = await self._with_mode(lambda _m: body, organizer)
         if cls == "Success":
             it = root.find(".//t:CalendarItem", NS)
             if it is None:
                 raise CalendarError("EWS вернул не событие календаря.")
+            people = [{"email": a.findtext("t:Mailbox/t:EmailAddress", "", NS), "name": a.findtext("t:Mailbox/t:Name", "", NS), "optional": kind == "Optional"}
+                      for kind in ("Required", "Optional") for a in it.findall(f"t:{kind}Attendees/t:Attendee", NS)]
+            att = ol.parse_attendees(people)
             return EventInfo(True, (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", it.findtext("t:Subject", "", NS) or "",
-                             _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)))
+                             _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), att, len(att or []) == len(people))
         if code in ("ErrorItemNotFound", "ErrorInvalidIdMalformed", "ErrorInvalidId"):
             return EventInfo(False) if code == "ErrorItemNotFound" else self._bad_id()
         if code in _DENIED:
@@ -372,6 +384,8 @@ async def reconcile_room(db: AsyncSession, room: Room, cfg: Any, client, now: da
             except TempRoomError as exc:
                 room.outlook_sync_state, room.outlook_sync_error = "error", exc.message[:300]
                 result = "error"
+        if ev.attendees is not None:
+            await ol.set_invitees(db, room, ev.attendees, "calendar", prune=ev.attendees_complete)
         if result != "error":
             room.outlook_sync_error = None
     room.outlook_synced_at = now

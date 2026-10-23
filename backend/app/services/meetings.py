@@ -401,7 +401,9 @@ class MeetingService:
         if kick:
             await delete_livekit_room(self._s, meeting.livekit_room)
         room = await db.get(Room, meeting.room_id)
-        if room is not None and temp_rooms.close(room, reason):      # временная переговорка живёт, пока идёт встреча; материалы остаются
+        # временная переговорка живёт, пока идёт встреча; материалы остаются. Конференцию из календаря закрывает расписание (или отмена): до планового
+        # окончания в неё можно вернуться, а у серии каждая следующая встреча — в той же комнате
+        if room is not None and room.scheduled_start is None and temp_rooms.close(room, reason):
             await db.commit()
         if self.on_ended is not None:
             self.on_ended(meeting.id)

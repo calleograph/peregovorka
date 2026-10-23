@@ -84,7 +84,7 @@ def test_room_list_without_orm_matches_orm_rule_field_by_field(client, directory
         async def expected():
             su = SessionUser.from_session(sid, await app.state.sessions.get(sid))
             async with app.state.session_maker() as db:
-                rooms = [r for r in (await db.execute(select(Room).where(Room.is_enabled.is_(True), Room.lifecycle != "closed").order_by(Room.name))).scalars().all() if _listed(r, su)]
+                rooms = [r for r in (await db.execute(select(Room).where(Room.is_enabled.is_(True), Room.lifecycle != "closed", Room.lifetime == "permanent").order_by(Room.name))).scalars().all() if _listed(r, su)]
                 out = []
                 for r in rooms:
                     m = (await db.execute(select(Meeting).where(Meeting.room_id == r.id, Meeting.ended_at.is_(None)))).scalars().first()
