@@ -132,10 +132,10 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
             <div className="row chips-info">
               {rem.migrations_changed > 0 && <span className="badge warn" title="Будет создана резервная копия базы, миграции применятся автоматически">изменения схемы БД: {rem.migrations_changed}</span>}
               {rem.env_example_changed && <span className="badge" title="Новые безопасные параметры дописываются в .env автоматически; остальные показываются списком">есть новые параметры .env</span>}
-              {rem.local_changes > 0 && <span className="badge warn" title="Обновление остановится, пока на сервере есть несохранённые изменения файлов проекта">локальные изменения на сервере: {rem.local_changes}</span>}
-              {!rem.ff_possible && <span className="badge warn" title="Локальная история расходится с GitHub">обновление «вперёд» невозможно</span>}
+              {rem.local_changes > 0 && <span className="badge warn" title="Перед обновлением они будут сохранены в каталог резервных копий (патч, новые файлы, инструкция возврата), затем обновление продолжится">локальные изменения на сервере: {rem.local_changes}</span>}
+              {!rem.ff_possible && <span className="badge warn" title="Локальные коммиты будут сохранены, затем установится версия из репозитория">история на сервере расходится с репозиторием</span>}
             </div>
-            {(rem.local_changes > 0 || !rem.ff_possible) && <div className="alert error">Автоматическое обновление в этом состоянии остановится, ничего не меняя. Разберитесь на сервере: <code>git status</code>, затем <code>./scripts/update.sh</code>.</div>}
+            {(rem.local_changes > 0 || !rem.ff_possible) && <div className="alert">На сервере изменены файлы проекта{!rem.ff_possible ? " или есть свои коммиты" : ""}. Обновление сохранит их в каталог резервных копий (<code>local-changes-…</code>, с инструкцией возврата) и продолжится — ничего не удаляется. Настройки (.env) и данные не затрагиваются.</div>}
           </div>
         )}
 

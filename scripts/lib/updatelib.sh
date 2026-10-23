@@ -249,13 +249,16 @@ upd_release_target() {
 upd_head_release_tag() {
   git -C "$REPO_ROOT" tag --points-at HEAD 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1
 }
-# Куда сравнивать установку: upstream ветки; HEAD на релизном теге — самый новый релизный тег; иначе — ничего (решать молча нельзя).
+# Куда сравнивать установку: upstream ветки (или origin/<ветка>); иначе — канал релизов (самый новый тег vX.Y.Z), как и update.sh:
+# установка после отката или по SHA тоже получает обновления, а не «канал неизвестен».
 upd_check_commit() {
-  local up
+  local up br
   if up="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"; then
     git -C "$REPO_ROOT" rev-parse --verify --quiet "${up}^{commit}" 2>/dev/null
-  elif [ -z "$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null)" ] && [ -n "$(upd_head_release_tag)" ]; then
-    upd_release_target
+  elif br="$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD 2>/dev/null)" && git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/remotes/origin/${br}^{commit}" >/dev/null 2>&1; then
+    git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/remotes/origin/${br}^{commit}"
+  else
+    upd_default_target
   fi
 }
 

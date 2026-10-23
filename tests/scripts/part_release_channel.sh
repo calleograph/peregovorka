@@ -27,23 +27,23 @@ t "канал: отсоединённый HEAD → самый новый рел�
   [ "$(upd_check_commit)" = "$(git rev-parse "v0.10.0^{commit}")" ] || exit 1
 ' _ "$ROOT" "$TMP"
 
-t "канал: ветка без upstream не сравнивается молча с тегом (upd_check_commit пуст)" bash -c '
+t "канал: ветка без upstream и без origin/<ветка> — обновление по каналу релизов (самый новый тег), а не «канал неизвестен»" bash -c '
   set -uo pipefail
   source "$1/scripts/lib/common.sh" >/dev/null 2>&1
   r="$2/relrepo"; cd "$r" || exit 1
   git checkout -q -B work v0.9.0 || exit 1
   REPO_ROOT="$r"
-  [ -z "$(upd_check_commit)" ]
+  [ "$(upd_check_commit)" = "$(git rev-parse "v0.10.0^{commit}")" ]
 ' _ "$ROOT" "$TMP"
 
-t "канал: HEAD на произвольном коммите (после отката или установки по SHA) не считается релизом — цель не определяется" bash -c '
+t "канал: HEAD на произвольном коммите (после отката или установки по SHA) — не релиз, но обновление идёт по каналу релизов" bash -c '
   set -uo pipefail
   source "$1/scripts/lib/common.sh" >/dev/null 2>&1
   r="$2/relrepo"; cd "$r" || exit 1
   git checkout -q work || exit 1
   echo x > extra.txt; git add extra.txt; git commit -qm extra; git checkout -q --detach || exit 1
   REPO_ROOT="$r"
-  [ -z "$(upd_head_release_tag)" ] && [ -z "$(upd_check_commit)" ]
+  [ -z "$(upd_head_release_tag)" ] && [ "$(upd_check_commit)" = "$(git rev-parse "v0.10.0^{commit}")" ]
 ' _ "$ROOT" "$TMP"
 
 t "канал: без релизных тегов upd_release_target пуст (update.sh остановится с понятным сообщением)" bash -c '

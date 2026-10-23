@@ -173,53 +173,76 @@ t "dry-run: значения секретов .env нигде не печата�
 t "dry-run: предупреждает о миграциях БД" bash -c 'grep -q "МИГРАЦИИ БАЗЫ ДАННЫХ" <<<"$1"' _ "$OUTD"
 t "dry-run: ничего не изменено (HEAD, .env, нет резервных копий и state)" bash -c '[ "$(git -C "$1" rev-parse HEAD)" = "$2" ] && ! ls "$1"/.env.backup-* >/dev/null 2>&1 && [ ! -e "$3/state" ]' _ "$TMP/cl" "$H0" "$TMP/upd-data"
 
-# локальные изменения: остановка, ничего не удалено и не спрятано молча
+# локальные изменения: dry-run только сообщает, что они будут сохранены; ничего не меняется
 echo "локальная правка" >> "$TMP/cl/README.local"; echo "изменение" >> "$TMP/cl/.env.example"
-OUTL="$(cd "$TMP/cl" && env PATH="$BIN:$PATH" bash "$UPD" --yes 2>&1)"; RCL=$?
-t "локальные изменения: код возврата 2, обновление не продолжается" eq "$RCL" 2
-t "локальные изменения: понятное сообщение и предложение stash" bash -c 'grep -q "Обнаружены локальные изменения" <<<"$1" && grep -q "Обновление остановлено" <<<"$1" && grep -q -- "--stash" <<<"$1"' _ "$OUTL"
-t "локальные изменения: файлы на месте, stash не создан, HEAD прежний" bash -c '[ -f "$1/README.local" ] && grep -q "изменение" "$1/.env.example" && [ -z "$(git -C "$1" stash list)" ] && [ "$(git -C "$1" rev-parse HEAD)" = "$2" ]' _ "$TMP/cl" "$H0"
+OUTL="$(cd "$TMP/cl" && env PATH="$BIN:$PATH" bash "$UPD" --dry-run 2>&1)"; RCL=$?
+t "локальные изменения, dry-run: код 0, сообщение «будут сохранены», файлы на месте, stash нет" bash -c '[ "$1" -eq 0 ] && grep -q "будут сохранены" <<<"$2" && [ -f "$3/README.local" ] && grep -q "изменение" "$3/.env.example" && [ -z "$(git -C "$3" stash list)" ]' _ "$RCL" "$OUTL" "$TMP/cl"
 t "локальные изменения: секреты не напечатаны" bash -c '! grep -qE "Sup3r|masterkey123456" <<<"$1"' _ "$OUTL"
 
-# сквозной прогон до остановки на ожидании сервисов (подставной docker без контейнеров)
+# подставной docker без контейнеров; FAIL_BUILD=1 — сборка образов падает; HEALTHY_DB=1 — PostgreSQL и Redis работают, сервисы приложения не поднимаются
 UBIN="$TMP/ubin"; mkdir -p "$UBIN"
 cat > "$UBIN/docker" <<'DOCK'
 #!/usr/bin/env bash
 case "$1" in
   version) echo 29.1.3 ;;
-  compose) case "$2" in version) echo 2.40.3 ;; esac ;;
+  compose) case "$2" in version) echo 2.40.3 ;; esac; [ -n "${FAIL_BUILD:-}" ] && [[ " $* " == *" build "* ]] && exit 1
+           if [ -n "${HEALTHY_DB:-}" ] && [[ " $* " == *" ps -q "* ]]; then case "${@: -1}" in postgres|redis) echo "cid-${@: -1}" ;; esac; fi; exit 0 ;;
   info) echo overlayfs ;;
   image) exit 0 ;;
-  inspect) exit 1 ;;
+  inspect) [ -n "${HEALTHY_DB:-}" ] && [[ "${@: -1}" == cid-* ]] || exit 1; [[ "$3" == *Health* ]] && echo healthy || echo running ;;
   *) exit 0 ;;
 esac
 DOCK
 chmod +x "$UBIN/docker"; printf '#!/usr/bin/env bash\nexit 0\n' > "$UBIN/nginx"; chmod +x "$UBIN/nginx"
-OUTR="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes --stash --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCR=$?
-t "обновление: завершилось остановкой на ожидании (нет контейнеров), код 1" eq "$RCR" 1
-t "stash: локальные изменения сохранены под именем и НЕ применены автоматически" bash -c '[ "$(git -C "$1" stash list | wc -l)" -eq 1 ] && git -C "$1" stash list | grep -q "peregovorka-update-" && [ ! -e "$1/README.local" ] && grep -q "НЕ будут применены автоматически" <<<"$2"' _ "$TMP/cl" "$OUTR"
 T1="$(git -C "$TMP/seed" rev-parse HEAD)"
-t "код обновлён fast-forward до origin/main" bash -c '[ "$(git -C "$1" rev-parse HEAD)" = "$2" ]' _ "$TMP/cl" "$T1"
+
+# 1) сбой ДО перезапуска сервисов (сборка): локальные изменения сохранены, код возвращён на прежнюю версию, сервер «как до обновления»
+OUTB="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" FAIL_BUILD=1 bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCB=$?
+SAVED="$(ls -d "$TMP/upd-data/backups/local-changes-"* 2>/dev/null | head -1)"
+t "автопочинка: локальные изменения СОХРАНЕНЫ (патч, новые файлы, инструкция) и обновление продолжилось" bash -c 'grep -q "СОХРАНЕНЫ" <<<"$1" && [ -d "$2" ] && grep -q "изменение" "$2/changes.patch" && tar -tzf "$2/untracked.tar.gz" | grep -q README.local && grep -q "git -C .* apply" "$2/README.txt"' _ "$OUTB" "$SAVED"
+t "автопочинка: та же копия в git stash, рабочая копия чистая" bash -c '[ "$(git -C "$1" stash list | wc -l)" -eq 1 ] && git -C "$1" stash list | grep -q "peregovorka-update-" && [ ! -e "$1/README.local" ]' _ "$TMP/cl"
+t "сбой сборки: код 1, этап назван, код возвращён на прежнюю версию" bash -c '[ "$1" -eq 1 ] && grep -q "Обновление остановлено на этапе" <<<"$2" && grep -q "код возвращён на прежнюю версию" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCB" "$OUTB" "$TMP/cl" "$H0"
+t "сбой сборки: маркер прерванного обновления снят (повтор начнётся с начала), итог записан" bash -c '[ ! -e "$1/state/update-in-progress" ] && grep -q "^result=failed_at_.*_restored_previous$" "$1/state/last-update.state"' _ "$TMP/upd-data"
+
+# 2) база не поднялась перед миграциями: тоже до перезапуска сервисов — код возвращается, сервер на прежней версии
+OUTP="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCP=$?
+t "PostgreSQL/Redis не готовы перед миграциями: код 1, код возвращён на прежнюю версию" bash -c '[ "$1" -eq 1 ] && grep -q "PostgreSQL/Redis не стали healthy" <<<"$2" && grep -q "код возвращён на прежнюю версию" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCP" "$OUTP" "$TMP/cl" "$H0"
+
+# 3) миграция выполнена, а проверка после неё / сервисы новой версии не в порядке: автоматический откат кода и образов (rollback.sh)
+OUTR="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" HEALTHY_DB=1 bash "$UPD" --yes --no-backup --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCR=$?
+t "обновление: дошло до миграций и проверки после них, код 1" eq "$RCR" 1
+t "после слияния продолжает НОВАЯ версия скрипта (фаза 2) и печатает прогресс этапов" bash -c 'grep -q "Продолжает уже НОВАЯ версия" <<<"$1" && grep -q "Миграции базы данных" <<<"$1"' _ "$OUTR"
+t "после изменения схемы — автоматический откат кода и образов (rollback.sh), код снова прежний" bash -c 'grep -q "откатываю код и образы" <<<"$1" && [ "$(git -C "$2" rev-parse HEAD)" = "$3" ]' _ "$OUTR" "$TMP/cl" "$H0"
+t "сборка: commit и время сборки передаются образам (IMAGE_TAG/версия из git, не unknown)" bash -c '! grep -q "commit=unknown" <<<"$1" && grep -q "stage=build" <<<"$1"' _ "$OUTR"
 t ".env: резервная копия с правами 600 и ИДЕНТИЧНОЙ прежней копией" bash -c 'b="$(ls "$1"/.env.backup-* 2>/dev/null | head -1)"; [ -n "$b" ] && grep -qF "Sup3r\$ecret#Pass" "$b" && grep -q "^LIVEKIT_IMAGE_TAG=latest$" "$b" && { [ "$(uname -s)" != Linux ] || [ "$(stat -c %a "$b")" = 600 ]; }' _ "$TMP/cl"
 t ".env: прежние значения и секреты не изменены, добавлен только безопасный параметр" bash -c 'e="$1/.env"; grep -qF "LDAP_BIND_PASSWORD=Sup3r\$ecret#Pass" "$e" && grep -q "^APP_MASTER_KEY=masterkey123456$" "$e" && grep -q "^NEW_SAFE_PARAM=42$" "$e" && ! grep -q "NEW_ADMIN_PASSWORD" "$e" && ! grep -q "NEW_LISTEN_PORT" "$e"' _ "$TMP/cl"
 t ".env: LiveKit закреплён на проверенной версии (latest → проверенная версия из compat.env)" bash -c 'grep -q "^LIVEKIT_IMAGE_TAG=$(grep ^TESTED_LIVEKIT_SERVER= "$2/deployment/compat.env" | cut -d= -f2)$" "$1/.env"' _ "$TMP/cl" "$ROOT"
-t "после слияния продолжает НОВАЯ версия скрипта (фаза 2) и печатает прогресс этапов" bash -c 'grep -q "Продолжает уже НОВАЯ версия" <<<"$1" && grep -q "Миграции базы данных" <<<"$1" || grep -q "Запуск сервисов" <<<"$1"' _ "$OUTR"
-t "сборка: commit и время сборки передаются образам (IMAGE_TAG/версия из git, не unknown)" bash -c '! grep -q "commit=unknown" <<<"$1" && grep -q "stage=build" <<<"$1"' _ "$OUTR"
-t "остановка понятна: этап и инструкция «повторите ./scripts/update.sh»" bash -c 'grep -q "Обновление остановлено на этапе" <<<"$1" && grep -q "повторите ./scripts/update.sh" <<<"$1"' _ "$OUTR"
-t "состояние для отката записано: предыдущий commit, копия .env" bash -c 'f="$1/state/last-update.state"; grep -q "^previous_git_commit=$2$" "$f" && grep -q "^env_backup=.*env.backup-" "$f" && grep -q "^result=failed_at_" "$f"' _ "$TMP/upd-data" "$H0"
-t "опасных операций нет: ни reset --hard, ни удаления DATA_ROOT/томов в скриптах обновления" bash -c '! grep -nE "reset --hard|rm -rf[^#]*(DATA_ROOT|models|volumes)|docker volume rm|compose down -v|system prune" "$1/scripts/update.sh" "$1/scripts/rollback.sh" "$1/scripts/lib/updatelib.sh" | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#"' _ "$ROOT"
+t "состояние для отката записано: предыдущий commit, копия .env" bash -c 'f="$1/state/last-update.state"; grep -q "^previous_git_commit=$2$" "$f" && grep -q "^env_backup=.*env.backup-" "$f" && grep -qE "^result=(failed_at_|rolled_back_to_)" "$f"' _ "$TMP/upd-data" "$H0"
+t "опасных операций нет: ни reset --hard, ни удаления DATA_ROOT/томов в скриптах обновления" bash -c '! grep -nE "reset --hard|rm -rf[^#]*(DATA_ROOT|models|volumes)|docker volume rm|compose down -v|system prune" "$1/scripts/update.sh" "$1/scripts/rollback.sh" "$1/scripts/lib/updatelib.sh" "$1/scripts/lib/autorepair.sh" | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#"' _ "$ROOT"
 t "update.sh не вызывает install.sh и не пересоздаёт .env (cp .env.example → .env отсутствует)" bash -c '! grep -nE "(bash|exec|\./|REPO_ROOT/)scripts/install\.sh" "$1/scripts/update.sh" && ! grep -nE "(cp|mv|cat >|tee) .*\"\$ENV_FILE\"" "$1/scripts/update.sh" | grep -v backup' _ "$ROOT"
 
-# повторный запуск после прерывания: код уже обновлён — продолжение с сборки (маркер)
+# 4) повтор после прерывания (процесс убит после переключения кода): распознаётся и продолжается с фазы 2 без повторного слияния
+git -C "$TMP/cl" checkout -q --detach "$T1"; : > "$TMP/upd-data/state/update-in-progress"
+sed -i "s/^target_git_commit=.*/target_git_commit=$T1/" "$TMP/upd-data/state/last-update.state"
 OUTR2="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCR2=$?
-t "повтор после прерывания: распознаётся прерванное обновление и продолжается без повторного слияния" bash -c 'grep -q "Найдено прерванное обновление\|Новых commit'"'"'ов нет" <<<"$1"' _ "$OUTR2"
+t "повтор после прерывания: распознаётся прерванное обновление и продолжается без повторного слияния" bash -c 'grep -q "Найдено прерванное обновление" <<<"$1"' _ "$OUTR2"
 
-# non-ff: история разошлась — отказ без изменений
+# 5) история разошлась (локальный коммит на сервере): коммиты сохранены (bundle + ссылка), установлена версия из origin
 mkorigin; echo "локальный коммит" > "$TMP/cl/local.txt"; git -C "$TMP/cl" add local.txt; git -C "$TMP/cl" commit -qm "local"
 ( cd "$TMP/seed" || exit 1; echo y > other.txt && git add -A && git commit -qm "upstream" && git push -q origin main 2>/dev/null )
-H1="$(git -C "$TMP/cl" rev-parse HEAD)"
-OUTN="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" bash "$UPD" --yes 2>&1)"; RCN=$?
-t "история разошлась (не fast-forward): отказ, код 1, HEAD не тронут" bash -c '[ "$1" -eq 1 ] && grep -q "не является fast-forward" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCN" "$OUTN" "$TMP/cl" "$H1"
+H1="$(git -C "$TMP/cl" rev-parse HEAD)"; T2="$(git -C "$TMP/seed" rev-parse HEAD)"
+OUTN="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" FAIL_BUILD=1 bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCN=$?
+t "история разошлась: локальные коммиты сохранены (bundle, список, ссылка refs/peregovorka/saved)" bash -c 'grep -q "история на сервере разошлась" <<<"$1" && d="$(ls -d "$2"/backups/local-changes-* | head -1)" && [ -s "$d/local-commits.bundle" ] && grep -q local "$d/local-commits.txt" && [ "$(git -C "$3" for-each-ref --format="%(objectname)" refs/peregovorka/saved/ | head -1)" = "$4" ]' _ "$OUTN" "$TMP/upd-data" "$TMP/cl" "$H1"
+t "история разошлась: обновление дошло до сборки (не остановилось на «не fast-forward»)" bash -c '! grep -q "не является fast-forward" <<<"$1" && grep -q "Сборка образов" <<<"$1"' _ "$OUTN"
+
+# 6) зависшая блокировка git (процесс был убит) снимается; HEAD не на релизном теге → канал релизов
+mkorigin; pushnew; touch -d "-5 minutes" "$TMP/cl/.git/index.lock"
+OUTK="$(cd "$TMP/cl" && env PATH="$BIN:$PATH" bash "$UPD" --dry-run 2>&1)"; RCK=$?
+t "зависшая блокировка git снята автоматически" bash -c '[ "$1" -eq 0 ] && grep -q "сняты зависшие блокировки git" <<<"$2" && [ ! -e "$3/.git/index.lock" ]' _ "$RCK" "$OUTK" "$TMP/cl"
+( cd "$TMP/seed" || exit 1; echo z > z.txt && git add -A && git commit -qm "после релиза" && git tag v0.2.0 && git push -q origin main v0.2.0 2>/dev/null )
+git -C "$TMP/cl" fetch -q --tags origin 2>/dev/null; git -C "$TMP/cl" checkout -q --detach "$(git -C "$TMP/cl" rev-parse HEAD)"
+OUTC="$(cd "$TMP/cl" && env PATH="$BIN:$PATH" bash "$UPD" --dry-run 2>&1)"; RCC=$?
+t "HEAD отсоединён не на релизном теге: обновление идёт по каналу релизов (самый новый тег), а не останавливается" bash -c '[ "$1" -eq 0 ] && grep -q "обновляю по каналу релизов до v0.2.0" <<<"$2"' _ "$RCC" "$OUTC"
 
 # rollback: остановка при несовместимой ревизии БД (проверка функции + текст)
 t "rollback.sh: текст остановки — «git rollback ≠ database rollback» и путь к backup" bash -c 'grep -q "Git rollback ≠ database rollback" "$1/scripts/rollback.sh" && grep -q "db_backup" "$1/scripts/rollback.sh" && grep -q "exit 3" "$1/scripts/rollback.sh"' _ "$ROOT"

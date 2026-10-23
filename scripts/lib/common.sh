@@ -160,6 +160,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/versionlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/dockerlib.sh"
 # shellcheck source=updatelib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/updatelib.sh"
+# shellcheck source=autorepair.sh
+source "$(dirname "${BASH_SOURCE[0]}")/autorepair.sh"
 
 # shellcheck source=verifylib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"

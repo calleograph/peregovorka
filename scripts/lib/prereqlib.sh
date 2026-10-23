@@ -29,7 +29,7 @@ declare -A PREREQ_PKG=(
   [base64]=coreutils [sha256sum]=coreutils [nproc]=coreutils [id]=coreutils [uname]=coreutils [env]=coreutils [timeout]=coreutils [install]=coreutils [od]=coreutils [readlink]=coreutils
   # система
   [flock]=util-linux [findmnt]=util-linux [mountpoint]=util-linux
-  [free]=procps [ps]=procps [sysctl]=procps
+  [free]=procps [ps]=procps [pgrep]=procps [sysctl]=procps
   [dpkg]=dpkg [hostname]=hostname [python3]=python3
   # приложения
   [docker]=docker-ce [nginx]=nginx

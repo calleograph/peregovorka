@@ -28,7 +28,12 @@ done
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars DATA_ROOT
 git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || die "Не git-репозиторий"
-[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ] || die "Есть локальные изменения в рабочей копии — отказ (ничего не изменено)."
+upd_git_env; upd_git_unlock
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] локальные изменения были бы сохранены (BACKUP_DIR/local-changes-*) перед откатом"
+  else SAVED="$(upd_save_local_changes)" || die "Локальные изменения сохранены в ${SAVED:-каталог резервных копий}, но рабочую копию очистить не удалось — откат не выполнен"
+       warn "Локальные изменения файлов проекта сохранены в $SAVED (патч, новые файлы, git stash) — откат продолжается"; fi
+fi
 
 CUR="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 if [ -z "$TO" ]; then

@@ -7,15 +7,18 @@
 #   scripts/update.sh [--env FILE] [--ref SHA|TAG] [--pull] [--force-build] [--yes] [--dry-run]
 #                     [--stash] [--no-backup] [--skip-models] [--skip-preflight] [--no-nginx] [--skip-smoke] [--wait СЕК]
 #
-# Что делает (по порядку): определяет проект и текущий commit → git fetch и список новых commit'ов → проверяет локальные изменения
-# (при их наличии НЕ продолжает) → резервная копия .env и сравнение с новым .env.example (только имена, без значений) →
+# Что делает (по порядку): определяет проект и текущий commit → git fetch и список новых commit'ов → локальные изменения файлов проекта
+# СОХРАНЯЕТ (scripts/lib/autorepair.sh: патч, архив, git stash — в BACKUP_DIR/local-changes-*) и продолжает → резервная копия .env и сравнение с новым .env.example (только имена, без значений) →
 # git merge --ff-only → [новая версия скрипта продолжает работу] → безопасные новые параметры .env, закрепление LiveKit на проверенной
 # версии → preflight → проверка моделей (ничего не скачивает повторно) → backup БД → сборка образов (retry сети, fallback BuildKit→legacy,
 # commit/время сборки в образах) → Alembic upgrade head (current == head) → запуск и ожидание healthcheck → миграция собственного
 # nginx-site → verify → smoke-test → итог.
 #
 # Никогда: git reset --hard, удаление DATA_ROOT/моделей/томов PostgreSQL, перезапись .env (только резервная копия и дописывание
-# безопасных параметров), повторный install. Локальные изменения (--stash) прячутся ТОЛЬКО по явной просьбе и потом НЕ применяются.
+# безопасных параметров), повторный install. Автопочинка (autorepair.sh): зависшие блокировки git, «dubious ownership», сбой fetch, мелкий клон,
+# локальные правки и коммиты (сохраняются, затем — целевая версия), канал без upstream/не на теге (→ релизы), нехватка места для сборки.
+# Сбой до перезапуска сервисов — код возвращается на прежнюю версию; сервисы не стали здоровыми — автоматический откат (rollback.sh).
+# --stash оставлен для совместимости (сохранение теперь выполняется всегда).
 # --dry-run: показывает план (fetch допустим), ничего не меняет. Прерванное обновление безопасно повторить той же командой.
 #
 # Весь рабочий код обёрнут в функции и читается целиком до выполнения: git merge может заменить этот файл на диске, не ломая запуск.
@@ -48,11 +51,37 @@ export DRY_RUN
 
 STEP=0; STEPS=17; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
+DEPLOY_STARTED=0
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
   fail "$*"
   [ "$DRY_RUN" = "1" ] || { upd_state_set result "failed_at_${CUR_STAGE}" 2>/dev/null; upd_state_set update_status failed 2>/dev/null; upd_history_append failed "$CUR_STAGE"; }
+  if [ "$PHASE" -eq 2 ] && [ "$DRY_RUN" != "1" ]; then upd_autorecover; fi
   warn "Обновление остановлено на этапе «${CUR_STAGE}». Данные, .env и модели не затронуты. Устраните причину и повторите ./scripts/update.sh — он продолжит (сборка и миграции идемпотентны)."
   exit 1
+}
+
+# Сбой во второй фазе — сервер не остаётся в промежуточном состоянии:
+#  * до перезапуска сервисов (preflight, модели, копия БД, сборка, миграция — PostgreSQL откатывает неудачную миграцию сам): работающие контейнеры
+#    прежней версии не трогались — возвращаем КОД на прежний commit, и сервер целиком на прежней версии; повтор обновления начнётся с начала;
+#  * после перезапуска (сервисы не стали здоровыми): автоматический откат кода и образов (rollback.sh: только если схема БД совместима с прежним кодом).
+upd_autorecover() {
+  local prev; prev="$(upd_state_get previous_git_commit)"
+  [ -n "$prev" ] && [ "$prev" != "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ] || return 0
+  if [ "$DEPLOY_STARTED" -eq 0 ]; then
+    upd_git_unlock
+    if git -C "$REPO_ROOT" checkout --detach "$prev" >/dev/null 2>&1; then
+      rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_restored_previous"
+      warn "Автовосстановление: код возвращён на прежнюю версию ${prev:0:12}; работающие сервисы не перезапускались — сервер работает как до обновления."
+    else warn "Автовосстановление: вернуть код на ${prev:0:12} не удалось — работающие сервисы прежней версии не тронуты"; fi
+  else
+    warn "Автовосстановление: сервисы новой версии не заработали — откатываю код и образы на ${prev:0:12} (rollback.sh)"
+    if "$REPO_ROOT/scripts/rollback.sh" --yes --env "$ENV_FILE" --to "$prev"; then
+      rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_rolled_back"
+      ok "Автовосстановление: прежняя версия ${prev:0:12} снова работает."
+    else
+      warn "Автовосстановление: откат невозможен (схема БД уже новая или нет образов прежней версии) — оставлена новая версия; см. сообщения выше и docs/INSTALL_AND_UPDATE.md (Rollback)"
+    fi
+  fi
 }
 
 # --------------------------------------------------------------------------------------------- фаза 1
@@ -74,25 +103,35 @@ phase1() {
   fi
 
   step "Проверка origin и новых commit'ов"
-  upd_git_fetch >/dev/null 2>&1 || stop_update "git fetch не удался (нет доступа к GitHub?). Проверьте сеть/прокси и повторите."
+  upd_git_env; upd_git_unlock
+  upd_git_fetch_repair || stop_update "git fetch не удался и после автопочинки (повторы, принудительное обновление тегов, догрузка истории): нет доступа к репозиторию — проверьте сеть/прокси сервера. Ничего не изменено, работает прежняя версия."
   if [ -n "$REF" ]; then
     CHANNEL=ref
     TARGET="$(git -C "$REPO_ROOT" rev-parse --verify "${REF}^{commit}" 2>/dev/null)" || stop_update "Не найден ref: $REF"
   else
     BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD || true)"
-    if [ -n "$BRANCH" ]; then
-      CHANNEL=branch
-      git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || stop_update "У ветки $BRANCH не задан upstream"
-      TARGET="$(git -C "$REPO_ROOT" rev-parse '@{u}')"
+    if [ -n "$BRANCH" ] && git -C "$REPO_ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+      CHANNEL=branch; TARGET="$(git -C "$REPO_ROOT" rev-parse '@{u}')"
+    elif [ -n "$BRANCH" ] && git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/remotes/origin/${BRANCH}^{commit}" >/dev/null; then
+      CHANNEL=branch; TARGET="$(git -C "$REPO_ROOT" rev-parse "refs/remotes/origin/${BRANCH}")"
+      warn "Автопочинка: у ветки $BRANCH не был задан upstream — использую origin/$BRANCH"
+      git -C "$REPO_ROOT" branch --set-upstream-to="origin/$BRANCH" "$BRANCH" >/dev/null 2>&1 || true
     else
       HEAD_TAG="$(upd_head_release_tag)"
-      [ -n "$HEAD_TAG" ] || stop_update "HEAD отсоединён и не стоит на релизном теге (так бывает после отката или установки по SHA), поэтому канал обновления неизвестен. Укажите --ref <тег|SHA> или вернитесь на ветку: git switch main. Ничего не изменено."
       CHANNEL=release
-      TARGET="$(upd_release_target)"
-      [ -n "$TARGET" ] || stop_update "Установка на релизном теге $HEAD_TAG, но релизных тегов vX.Y.Z в origin не найдено. Укажите --ref <тег|SHA>."
-      info "Установка на релизном теге $HEAD_TAG (HEAD отсоединён — так ставит установщик). Канал обновления: релизные теги, самый новый — $(upd_release_tag)."
+      TARGET="$(upd_default_target)"
+      [ -n "$TARGET" ] || stop_update "В origin нет ни релизных тегов vX.Y.Z, ни ветки по умолчанию — обновляться не на что. Ничего не изменено."
+      if [ -n "$HEAD_TAG" ]; then info "Установка на релизном теге $HEAD_TAG (HEAD отсоединён — так ставит установщик). Канал обновления: релизные теги, самый новый — $(upd_release_tag)."
+      else warn "Автопочинка: установка не на релизном теге (после отката, установки по SHA или с ветки без upstream) — обновляю по каналу релизов до $(upd_release_tag || echo origin)"; fi
     fi
-    git -C "$REPO_ROOT" merge-base --is-ancestor "$OLD" "$TARGET" || stop_update "Обновление не является fast-forward (локальная история разошлась с origin) — автоматически не продолжаю."
+    if git -C "$REPO_ROOT" merge-base --is-ancestor "$TARGET" "$OLD" 2>/dev/null && [ "$OLD" != "$TARGET" ]; then
+      ok "Установленная версия ${OLD:0:12} новее целевой ${TARGET:0:12} (в ней уже есть всё из неё) — откат назад обновлением не выполняется"
+      TARGET="$OLD"
+    elif ! git -C "$REPO_ROOT" merge-base --is-ancestor "$OLD" "$TARGET" 2>/dev/null; then
+      SAVED_COMMITS="$(upd_save_local_commits "$OLD" "$TARGET")"
+      warn "Автопочинка: история на сервере разошлась с origin (локальные коммиты). Они сохранены${SAVED_COMMITS:+ в $SAVED_COMMITS} и в git; обновление переходит на целевую версию."
+      FORCE_SWITCH=1
+    fi
   fi
   log "Текущий:  ${OLD:0:12}"; log "Целевой:  ${TARGET:0:12}"
   if [ "$OLD" = "$TARGET" ]; then
@@ -113,17 +152,13 @@ phase1() {
   step "Проверка локальных изменений"
   if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]; then
     git -C "$REPO_ROOT" status --short >&2
-    warn "Обнаружены локальные изменения. Обновление остановлено."
-    if [ "$STASH" -eq 1 ] && [ "$DRY_RUN" != "1" ]; then
-      SN="peregovorka-update-$(date +%Y%m%d-%H%M%S)"
-      git -C "$REPO_ROOT" stash push --include-untracked -m "$SN" >/dev/null || stop_update "Не удалось выполнить stash"
-      upd_state_set stashed "$SN"
-      warn "Изменения сохранены в stash «$SN» и НЕ будут применены автоматически (вернуть вручную: git stash list / git stash pop)."
-    elif [ "$STASH" -eq 1 ]; then info "[dry-run] локальные изменения были бы сохранены в stash (по --stash)"
+    if [ "$DRY_RUN" = "1" ]; then
+      info "[dry-run] локальные изменения будут сохранены (патч, архив новых файлов, git stash) в ${BACKUP_DIR:-$DATA_ROOT/backups}/local-changes-<время>/, обновление продолжится"
     else
-      info "Варианты: закоммитьте/уберите изменения сами либо разрешите безопасный stash:  ./scripts/update.sh --stash"
-      info "(stash сохраняет изменения и НЕ применяется автоматически; скрипт ничего не удаляет и не прячет молча)"
-      exit 2
+      SAVED_CHANGES="$(upd_save_local_changes)" || stop_update "Локальные изменения сохранены в ${SAVED_CHANGES:-каталог резервных копий}, но рабочую копию не удалось очистить (права на файлы проекта?). Ничего не удалено."
+      upd_state_set local_changes_saved "$SAVED_CHANGES"
+      warn "Автопочинка: найдены локальные изменения файлов проекта. Они СОХРАНЕНЫ в $SAVED_CHANGES (патч, новые файлы, инструкция возврата; копия и в git stash) — рабочая копия очищена, обновление продолжается."
+      info "Настройки установки (.env, данные, модели) — не файлы проекта: они не менялись."
     fi
   else ok "Рабочее дерево чистое"; fi
 
@@ -171,8 +206,11 @@ phase1() {
   fi
 
   step "Обновление кода (git merge --ff-only)"
-  if [ "$CHANNEL" = branch ]; then
-    [ "$OLD" = "$TARGET" ] || git -C "$REPO_ROOT" merge --ff-only "$TARGET" >/dev/null 2>&1 || stop_update "git merge --ff-only не удался (локальные изменения конфликтуют?)"
+  upd_git_unlock
+  if [ "$CHANNEL" = branch ] && [ "${FORCE_SWITCH:-0}" = 1 ]; then
+    git -C "$REPO_ROOT" checkout -B "$BRANCH" "$TARGET" >/dev/null 2>&1 || stop_update "git checkout -B $BRANCH ${TARGET:0:12} не удался"
+  elif [ "$CHANNEL" = branch ]; then
+    [ "$OLD" = "$TARGET" ] || git -C "$REPO_ROOT" merge --ff-only "$TARGET" >/dev/null 2>&1 || stop_update "git merge --ff-only не удался"
   else
     [ "$OLD" = "$TARGET" ] || git -C "$REPO_ROOT" checkout --detach "$TARGET" >/dev/null 2>&1 || stop_update "git checkout --detach ${TARGET:0:12} не удался"
   fi
@@ -185,6 +223,7 @@ phase1() {
 # --------------------------------------------------------------------------------------------- фаза 2
 phase2() {
   sanitize_project_env; load_env "$ENV_FILE"; validate_project_name; require_vars DATA_ROOT
+  upd_git_env
   OLD="$(upd_state_get previous_git_commit)"; TARGET="$(git -C "$REPO_ROOT" rev-parse HEAD)"; OLD12="${OLD:0:12}"
   STEP=6
   upd_state_set target_git_commit "$TARGET"
@@ -232,6 +271,7 @@ phase2() {
   upd_ensure_data_dirs
 
   step "Сборка образов (retry сети, fallback BuildKit → legacy, commit ${APP_GIT_COMMIT} в образах)"
+  upd_free_space
   info "Сборка ASR (torch, pip install gigaam с GitHub) может занимать 15+ минут — это не зависание; каждую минуту печатается прогресс."
   [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }
   build_images || stop_update "Сборка образов не удалась (код и контейнеры не тронуты; лог: $DATA_ROOT/state/build-*.log). Уже собранные сервисы повторно не собираются."
@@ -244,11 +284,13 @@ phase2() {
   upd_wait_healthy 120 || { UPD_SERVICES=("${sv[@]}"); stop_update "PostgreSQL/Redis не стали healthy"; }
   UPD_SERVICES=("${sv[@]}")
   alembic_verify run >/dev/null 2>&1; log "Ревизия БД: текущая ${ALEMBIC_CUR:-—} · целевая (head) ${ALEMBIC_HEAD:-—}"
-  dc run --rm --no-deps backend alembic upgrade head || stop_update "alembic upgrade head не выполнен (откат БД — только из backup: docs/MIGRATIONS.md)"
+  dc run --rm --no-deps backend alembic upgrade head || stop_update "alembic upgrade head не выполнен: PostgreSQL откатил миграцию целиком (одна транзакция), схема прежняя"
+  DEPLOY_STARTED=1                                   # схема могла измениться: дальше прежний код возвращается только через rollback.sh с проверкой совместимости
   alembic_verify run >/dev/null 2>&1 || stop_update "После миграции current (${ALEMBIC_CUR:-?}) != head (${ALEMBIC_HEAD:-?})"
   ok "Alembic: ${ALEMBIC_CUR} = head"; upd_state_set alembic_after "$ALEMBIC_CUR"
 
   step "Запуск сервисов и ожидание healthcheck (до ${WAIT} с)"
+  DEPLOY_STARTED=1
   dc up -d --no-build || stop_update "docker compose up не выполнен"
   upd_wait_healthy "$WAIT" || stop_update "Сервисы не стали healthy: ${UPD_UNHEALTHY[*]:-?} (scripts/logs.sh <сервис>; откат кода: scripts/rollback.sh)"
   printf '%s old=%s new=%s migrations=%s image_tag=%s\n' "$(date -Is)" "$OLD" "$TARGET" "$(upd_state_get migrations_changed)" "$IMAGE_TAG" >> "$DATA_ROOT/state/deploy-history.log"
