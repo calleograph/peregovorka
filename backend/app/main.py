@@ -31,7 +31,7 @@ from .auth.guests import GuestSessionStore
 from .auth.sessions import SessionStore
 from .auth.throttle import LoginThrottle
 from .config import Settings, get_settings
-from .db import create_engine, create_health_engine, create_session_maker
+from .db import create_engine, create_health_engine, create_session_maker, pool_plan
 from .services import db_health
 from .services.leader import Leader
 from .logging_setup import configure_logging, request_id_var
@@ -79,8 +79,6 @@ def make_redis(settings: Settings) -> Redis:
     from redis.asyncio.retry import Retry  # noqa: PLC0415
     from redis.backoff import ExponentialBackoff  # noqa: PLC0415
     from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError  # noqa: PLC0415
-
-    from .db import pool_plan  # noqa: PLC0415
 
     plan = pool_plan(settings, background=False)
     limit = settings.redis_max_connections or max(200, 3 * (plan["pool_size"] + plan["max_overflow"]))
@@ -153,6 +151,8 @@ def create_app(
         sqlite = str(settings.sqlalchemy_url).startswith("sqlite")
         bg_engine = engine if sqlite else create_engine(settings, background=True)       # фоновые задачи (LLM, экспорт, карты, рассылка): свой пул, чужие запросы не вытесняет
         health_engine = create_health_engine(settings)               # крошечный пул проверок готовности и статистики
+        if not sqlite and (note := pool_plan(settings, background=False)["note"]):
+            log.warning(note, extra={"error": "db_pool_over_limit"})
         db_stats = db_health.DbStats()
         db_health.install(engine, "api", db_stats, settings.db_hold_warn_s)
         if bg_engine is not engine:

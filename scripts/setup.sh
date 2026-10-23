@@ -129,6 +129,9 @@ if [ ! -f "$ENV" ]; then
   fi
   LLM_T="$(llm_local_threads "$(nproc 2>/dev/null || echo 4)" "$PROFILE")"; set_var LLM_LOCAL_THREADS "$LLM_T"
   info "Локальная LLM: LLM_LOCAL_THREADS=$LLM_T (по числу vCPU, остаток — звонку и распознаванию; это отправная точка, а не измерение — при необходимости измените в .env)"
+  CPUS_N="$(nproc 2>/dev/null || echo 4)"; BW="$(backend_workers "$CPUS_N" "$PROFILE")"; PGMAX="$(pg_max_connections "$BW" "$CPUS_N")"
+  set_var BACKEND_WORKERS "$BW"; set_var POSTGRES_MAX_CONNECTIONS "$PGMAX"
+  info "Backend: BACKEND_WORKERS=$BW процесс(а), POSTGRES_MAX_CONNECTIONS=$PGMAX (по $CPUS_N vCPU; это отправная точка — нагрузочный замер: docs/DB_AND_SCALING.md)"
   set_var LDAP_URIS "$LDAPU"; set_var LDAP_BASE_DN "$BASEDN"; set_var LDAP_BIND_DN "$BINDDN"; set_var LDAP_BIND_PASSWORD "$BINDPW"
   set_var LDAP_CA_FILE "$CA"; set_var LDAP_ADMIN_GROUP_DN "$ADMING"
   set_var POSTGRES_DB "${NAME//-/_}"; set_var POSTGRES_USER "${NAME//-/_}"

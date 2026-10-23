@@ -173,3 +173,28 @@ source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"
 # shellcheck source=siplib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/siplib.sh"
+
+# Процессов backend по числу vCPU (отправная точка): 4 процесса выдерживают 2000 активных пользователей на 8 vCPU вместе с PostgreSQL (docs/DB_AND_SCALING.md);
+# на общем сервере ядра делят распознавание речи и языковая модель — процессов меньше. Каждый процесс — около 300 МБ памяти.
+backend_workers() {
+  local cpus="${1:-4}" profile="${2:-standalone}" w
+  case "$cpus" in ''|*[!0-9]*) cpus=4 ;; esac
+  if [ "$profile" = "shared-host" ]; then w=$(( cpus / 4 )); else w=$(( cpus / 2 )); fi
+  [ "$w" -gt 8 ] && w=8
+  [ "$w" -lt 1 ] && w=1
+  printf '%s\n' "$w"
+}
+
+# max_connections PostgreSQL под пулы всех процессов backend (размеры — как backend/app/db.py pool_plan: запросы и фоновые, каждый ×2, +2 служебных) + 10;
+# от 300 до 600 — сверх этого backend сам ужмёт пулы (pool_plan), чтобы не упереться в предел базы.
+pg_max_connections() {
+  local workers="${1:-1}" cpus="${2:-4}" api bg n
+  case "$cpus" in ''|*[!0-9]*) cpus=4 ;; esac
+  case "$workers" in ''|*[!0-9]*) workers=1 ;; esac
+  api=$(( cpus * 3 )); [ "$api" -lt 10 ] && api=10; [ "$api" -gt 40 ] && api=40
+  bg=$cpus; [ "$bg" -lt 4 ] && bg=4; [ "$bg" -gt 12 ] && bg=12
+  n=$(( workers * (2 * api + 2 * bg + 2) + 10 ))
+  [ "$n" -lt 300 ] && n=300
+  [ "$n" -gt 600 ] && n=600
+  printf '%s\n' "$n"
+}

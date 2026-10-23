@@ -32,8 +32,13 @@ FROM ${NGINX_IMAGE}
 # Конфиг уже финальный: скрипт entrypoint, пытающийся переписывать default.conf (IPv6 listen), не нужен и ругается
 # на неизменяемую ФС («can not modify … read-only file system?»). Убираем именно его — права файлов и режим ФС не ослабляем.
 USER root
+# 2000 участников = 2000 WebSocket событий через прокси (по два соединения на каждый) плюс запросы API: 1024 соединений на процесс nginx по умолчанию
+# не хватает («worker_connections are not enough»). Поднимаем предел соединений и дескрипторов процесса (мягкий предел контейнера — 1024).
 RUN rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \
-    && nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' > /usr/share/nginx/html/nginx-version.txt
+    && nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' > /usr/share/nginx/html/nginx-version.txt \
+    && sed -i -E 's/^(\s*worker_connections\s+)[0-9]+;/\18192;/' /etc/nginx/nginx.conf \
+    && sed -i '1i worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf \
+    && grep -Eq '^\s*worker_connections\s+8192;' /etc/nginx/nginx.conf && grep -q '^worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf
 USER 101
 COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=101:101 /app/dist /usr/share/nginx/html

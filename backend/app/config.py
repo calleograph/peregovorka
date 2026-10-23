@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=0, ge=0, le=500)               # временных сверх пула (0 = равно размеру пула)
     db_bg_pool_size: int = Field(default=0, ge=0, le=200)               # пул фоновых задач (0 = max(4, min(12, ядер)))
     db_bg_max_overflow: int = Field(default=0, ge=0, le=200)
+    # Пулы всех процессов должны помещаться в max_connections PostgreSQL: автоматически подобранные размеры ужимаются под предел (иначе — отказы «too many clients»)
+    postgres_max_connections: int = Field(default=0, ge=0, le=100000)  # max_connections сервера (из .env установки); 0 — неизвестно, пулы не ужимаются
+    uvicorn_workers: int = Field(default=1, ge=1, le=64)                # процессов backend в контейнере (то же значение UVICORN_WORKERS, что у uvicorn)
     db_pool_timeout_s: float = Field(default=15.0, ge=1, le=300)        # сколько ждать свободное соединение; затем 503 с Retry-After, а не 500
     db_pool_recycle_s: int = Field(default=1800, ge=0, le=86400)
     db_idle_in_tx_timeout_s: int = Field(default=120, ge=0, le=86400)   # PostgreSQL сам завершает соединение, забытое «в транзакции» дольше этого (0 — выключено)

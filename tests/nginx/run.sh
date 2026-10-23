@@ -65,6 +65,7 @@ t "/drawio/: CSP и CORS для песочницы" bash -c "curl -sI $U/drawio/
 t "/outlook (центр установки) → 200 без перенаправления" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' $U/outlook) = 200 ]"
 t "/outlook/ → 200 (приложение), а не 301/404" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' $U/outlook/) = 200 ]"
 t "приложение разрешает только свои фреймы (frame-src 'self')" bash -c "curl -sI $U/ | grep -i '^content-security-policy:' | grep -q \"frame-src 'self'\""
+t "предел соединений nginx на 2000 участников: worker_connections 8192, дескрипторов у рабочего процесса 32768" bash -c "docker exec $WEB sh -c 'grep -Eq \"worker_connections +8192;\" /etc/nginx/nginx.conf && w=\$(pgrep -f \"nginx: worker\" | head -1) && grep \"Max open files\" /proc/\$w/limits | grep -q 32768'"
 t "ошибок «cycle»/«emerg» в журнале nginx нет" bash -c "! docker logs $WEB 2>&1 | grep -Eqi 'cycle while|\[emerg\]'"
 echo "nginx/web: пройдено $PASS, провалено $FAIL"
 if [ "$FAIL" -gt 0 ]; then

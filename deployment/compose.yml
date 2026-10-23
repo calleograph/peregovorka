@@ -170,6 +170,7 @@ services:
       TLS_LOCAL_CONFIGURED: ${NGINX_TLS_CERT:+true}
       # Масштабирование (docs/DB_AND_SCALING.md): число процессов uvicorn и размеры пулов; пусто/0 — по числу ядер. Фоновые задачи выполняет один «ведущий» процесс (Redis).
       UVICORN_WORKERS: ${BACKEND_WORKERS:-1}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-300}     # пулы всех процессов ужимаются под этот предел (иначе отказы «too many clients»)
       DB_POOL_SIZE: ${DB_POOL_SIZE:-0}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-0}
       DB_BG_POOL_SIZE: ${DB_BG_POOL_SIZE:-0}
