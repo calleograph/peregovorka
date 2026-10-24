@@ -244,16 +244,19 @@ jobs:
             node scripts/update-manifest.mjs sign "$feed/update.json"
             New-Item -Force "HKCU:\SOFTWARE\Policies\Peregovorka" | Out-Null
             Set-ItemProperty "HKCU:\SOFTWARE\Policies\Peregovorka" UpdateUrl "https://localhost:8443/update.json"
-            $before = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
+            # собственные данные приложения: организации, настройки, окно, сохранённые входы (служебные файлы Chromium вроде *-wal появляются и исчезают сами)
+            function AppData { @(Get-ChildItem $data -File -Filter *.json) + @(Get-ChildItem "$data\trust" -File -ErrorAction SilentlyContinue) | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object }
+            $before = AppData
             node scripts/win-e2e.mjs update "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" "$env:RUNNER_TEMP/screens" "$env:RUNNER_TEMP/feed.pfx" $feed.FullName $env:NEXT
             if ($LASTEXITCODE) { throw "обновление из приложения: $LASTEXITCODE" }
             for ($i = 0; $i -lt 90; $i++) { $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"; if ($u.DisplayVersion -eq $env:NEXT) { break }; Start-Sleep 2 }
             for ($i = 0; $i -lt 30 -and -not (Get-Process Peregovorka -ErrorAction SilentlyContinue); $i++) { Start-Sleep 2 }
             if (-not (Get-Process Peregovorka -ErrorAction SilentlyContinue)) { throw "после обновления приложение не запустилось снова" }
             Write-Host "после обновления приложение запущено снова"
-            $after = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
-            $lost = $before | Where-Object { $after -notcontains $_ }
-            if ($lost) { throw "после обновления пропали файлы данных: $($lost -join ', ')" }
+            $after = AppData
+            $lost = @($before | Where-Object { $after -notcontains $_ })
+            if ($lost) { throw "после обновления пропали данные приложения: $($lost -join ', ')" }
+            Write-Host "данные приложения после обновления на месте: $($before.Count) файлов"
             Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
             Remove-Item "HKCU:\SOFTWARE\Policies\Peregovorka" -Recurse
             Get-Content (Get-ChildItem "$data\logs" | Sort-Object LastWriteTime | Select-Object -Last 1).FullName | Select-String "update\." | Select-Object -Last 8
