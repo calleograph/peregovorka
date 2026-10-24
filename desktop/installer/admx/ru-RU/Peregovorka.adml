@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions" revision="1.0" schemaVersion="1.0">
+  <displayName>Peregovorka для Windows</displayName>
+  <description>Peregovorka для Windows</description>
+  <resources>
+    <stringTable>
+      <string id="Peregovorka">Peregovorka для Windows</string>
+      <string id="SUPPORTED_WIN10">Windows 10 и новее</string>
+      <string id="Servers">Серверы организации</string>
+      <string id="Servers_Help">Подключения, которые приложение показывает сразу после установки. Формат: «Название|https://адрес» через точку с запятой, например «Головной офис|https://meet.example.org». Пользователь не может удалить такие подключения. Только HTTPS.</string>
+      <string id="AllowAddServers">Разрешить добавлять серверы</string>
+      <string id="AllowAddServers_Help">Отключено — пользователь не может подключать другие серверы, кроме заданных администратором.</string>
+      <string id="AllowedDomains">Разрешённые домены</string>
+      <string id="AllowedDomains_Help">Список доменов через точку с запятой: «example.org;*.example.org» (маска «*.» — только поддомены). Подключения к другим доменам запрещены и скрываются.</string>
+      <string id="Autostart">Запуск вместе с Windows</string>
+      <string id="Autostart_Help">off — не запускать; tray — свёрнутым в трей (рекомендуется); window — с открытым окном.</string>
+      <string id="Autostart_off">off</string>
+      <string id="Autostart_tray">tray</string>
+      <string id="Autostart_window">window</string>
+      <string id="CloseAction">Кнопка «Закрыть» окна</string>
+      <string id="CloseAction_Help">tray — свернуть в трей; quit — выйти из приложения; ask — спрашивать. Во время встречи приложение всегда спрашивает.</string>
+      <string id="CloseAction_tray">tray</string>
+      <string id="CloseAction_quit">quit</string>
+      <string id="CloseAction_ask">ask</string>
+      <string id="UpdateMode">Обновления приложения</string>
+      <string id="UpdateMode_Help">auto — загружать и предлагать установить; notify — только сообщать; off — не проверять. При установке из MSI приложение не обновляет себя само.</string>
+      <string id="UpdateMode_auto">auto</string>
+      <string id="UpdateMode_notify">notify</string>
+      <string id="UpdateMode_off">off</string>
+      <string id="UpdateUrl">Адрес канала обновлений</string>
+      <string id="UpdateUrl_Help">Корпоративное зеркало манифеста обновлений (https://…/update.json рядом с update.json.sig). Устанавливается только пакет, подписанный ключом издателя.</string>
+      <string id="Notifications">Уведомления Windows</string>
+      <string id="Notifications_Help">Отключено — приложение не показывает уведомления (сообщения по-прежнему копятся в непрочитанных).</string>
+      <string id="HideNotificationContent">Скрывать текст в уведомлениях</string>
+      <string id="HideNotificationContent_Help">Включено — уведомление показывает только «Новое сообщение» без автора и текста.</string>
+      <string id="ProxyMode">Прокси-сервер</string>
+      <string id="ProxyMode_Help">system — как в Windows; direct — без прокси; manual — адрес из «Адрес прокси»; pac — сценарий из «Сценарий PAC».</string>
+      <string id="ProxyMode_system">system</string>
+      <string id="ProxyMode_direct">direct</string>
+      <string id="ProxyMode_manual">manual</string>
+      <string id="ProxyMode_pac">pac</string>
+      <string id="ProxyServer">Адрес прокси</string>
+      <string id="ProxyServer_Help">Например «proxy.example.org:3128» (для режима manual).</string>
+      <string id="ProxyBypass">Без прокси для</string>
+      <string id="ProxyBypass_Help">Например «&lt;local&gt;;*.example.org» (для режима manual).</string>
+      <string id="ProxyPac">Сценарий PAC</string>
+      <string id="ProxyPac_Help">Адрес сценария автоматической настройки прокси (для режима pac).</string>
+      <string id="AllowDevTools">Разрешить инструменты разработчика</string>
+      <string id="AllowDevTools_Help">Только для диагностики службой поддержки: клавиши F12 / Ctrl+Shift+I в окнах организаций.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Servers"><textBox refId="Servers_Value"><label>Серверы организации</label></textBox></presentation>
+      <presentation id="AllowedDomains"><textBox refId="AllowedDomains_Value"><label>Разрешённые домены</label></textBox></presentation>
+      <presentation id="Autostart"><dropdownList refId="Autostart_Value">Запуск вместе с Windows</dropdownList></presentation>
+      <presentation id="CloseAction"><dropdownList refId="CloseAction_Value">Кнопка «Закрыть» окна</dropdownList></presentation>
+      <presentation id="UpdateMode"><dropdownList refId="UpdateMode_Value">Обновления приложения</dropdownList></presentation>
+      <presentation id="UpdateUrl"><textBox refId="UpdateUrl_Value"><label>Адрес канала обновлений</label></textBox></presentation>
+      <presentation id="ProxyMode"><dropdownList refId="ProxyMode_Value">Прокси-сервер</dropdownList></presentation>
+      <presentation id="ProxyServer"><textBox refId="ProxyServer_Value"><label>Адрес прокси</label></textBox></presentation>
+      <presentation id="ProxyBypass"><textBox refId="ProxyBypass_Value"><label>Без прокси для</label></textBox></presentation>
+      <presentation id="ProxyPac"><textBox refId="ProxyPac_Value"><label>Сценарий PAC</label></textBox></presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

@@ -48,7 +48,7 @@ async function boot(): Promise<void> {
   const settings = new SettingsStore(userData);
   const policy = await loadPolicy();
   const ctx: Ctx = {
-    version: __APP_VERSION__, buildKind: __BUILD_KIND__, userData, log, settings, policy,
+    version: __APP_VERSION__, buildKind: __BUILD_KIND__, install: app.isPackaged ? "exe" : "dev", userData, log, settings, policy,
     trust: new TrustStore(userData, dev && flag("--e2e")),
     eff: () => effective(settings.get(), policy),
     flags: { allowHttpLoopback: dev && flag("--allow-http-loopback"), e2e: dev && flag("--e2e"), hidden: flag("--hidden"), devTools: dev || policy.allowDevTools === true },
@@ -111,6 +111,7 @@ async function boot(): Promise<void> {
   orgs.load();
 
   const managedInstall = await isMsiInstall();
+  if (managedInstall) ctx.install = "msi";
   const updater = new Updater(ctx, () => orgs.list.map((o) => o.state), managedInstall, () => ctx.emit());
 
   // ---------------------------------------------------------------- состояние для оболочки, трея, значка, индикатора
@@ -214,7 +215,7 @@ async function boot(): Promise<void> {
     const before = ctx.eff();
     settings.patch(a);
     const s = ctx.eff();
-    if (s.autostart !== before.autostart) applyAutostart(s.autostart);
+    if (s.autostart !== before.autostart) applyAutostart(s.autostart, managedInstall && !!policy.autostart);
     if (JSON.stringify(s.proxy) !== JSON.stringify(before.proxy)) await orgs.applyProxyAll();
     if (s.updateMode !== before.updateMode) updater.schedule();
     scheduleEmit();
@@ -361,7 +362,7 @@ async function boot(): Promise<void> {
     if (link) void openLink(link);
     else main.reveal();
   });
-  if (!app.isDefaultProtocolClient("peregovorka")) {
+  if (!managedInstall && !app.isDefaultProtocolClient("peregovorka")) {           // MSI регистрирует схему для всех пользователей сам
     if (app.isPackaged) app.setAsDefaultProtocolClient("peregovorka");
     else if (process.platform === "win32") app.setAsDefaultProtocolClient("peregovorka", process.execPath, [join(__dirname, "..")]);
   }
@@ -378,7 +379,7 @@ async function boot(): Promise<void> {
   });
   if (orgs.list.length === 0) main.showPage("add");
   orgs.startAll();
-  applyAutostart(ctx.eff().autostart);
+  applyAutostart(ctx.eff().autostart, managedInstall && !!policy.autostart);
   updater.schedule();
   const link = findDeepLinkArg(argv);
   if (link) main.win.webContents.once("did-finish-load", () => void openLink(link));

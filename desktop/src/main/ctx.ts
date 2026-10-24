@@ -7,6 +7,7 @@ import type { TrustStore } from "./trust";
 export interface Ctx {
   version: string;
   buildKind: string;                  // release | test
+  install: "msi" | "exe" | "dev";     // MSI — корпоративная установка (обновляет администратор)
   userData: string;
   log: Log;
   settings: SettingsStore;

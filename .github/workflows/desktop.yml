@@ -1,0 +1,222 @@
+name: Desktop
+# Приложение Peregovorka для Windows (desktop/): проверки, сборка EXE и MSI на Windows, испытания установки/обновления/удаления, подпись, SHA-256, выпуск.
+# Версия клиента — desktop/package.json, тег выпуска — desktop-vX.Y.Z (серверные теги vX.Y.Z и канал обновления сервера не затрагиваются).
+# Подпись: секреты WINDOWS_CERT_PFX (base64 .pfx) и WINDOWS_CERT_PASSWORD, переменная WINDOWS_TIMESTAMP_URL. Без них сборка — «тестовая», выпуск — предварительный.
+# Обновления: секрет DESKTOP_UPDATE_KEY (закрытый Ed25519) и переменная DESKTOP_UPDATE_PUBKEY (scripts/update-manifest.mjs keygen).
+on:
+  push:
+    branches: [main, "feat/**"]
+    tags: ["desktop-v[0-9]+.[0-9]+.[0-9]+"]
+    paths: ["desktop/**", "frontend/src/tokens.css", "frontend/src/components/Icons.tsx", "frontend/public/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "frontend/src/tokens.css", "frontend/src/components/Icons.tsx", "frontend/public/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "24" }
+      - run: npm ci
+      - name: Типы
+        run: node build.mjs && npx tsc --noEmit
+      - name: Модульные тесты (политики, ссылки, адреса, обновления, уведомления, окно)
+        run: npm test
+      - name: Безопасность исходников
+        run: node scripts/security-check.mjs
+
+  windows:
+    needs: checks
+    runs-on: windows-2025
+    defaults: { run: { shell: pwsh, working-directory: desktop } }
+    env:
+      SIGN: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+      UPDKEY: ${{ secrets.DESKTOP_UPDATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "24" }
+      - run: npm ci
+      - name: Версия и вид сборки
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "desktop-v$v") { throw "тег ${{ github.ref_name }} не совпадает с версией $v" }
+          $kind = if ("${{ github.ref_type }}" -eq "tag" -and $env:SIGN -eq "true") { "release" } else { "test" }
+          "VERSION=$v" >> $env:GITHUB_ENV; "KIND=$kind" >> $env:GITHUB_ENV
+          Write-Host "Версия $v, сборка: $kind"
+      - name: Сборка программы и установщика EXE
+        env:
+          PEREGOVORKA_BUILD_KIND: ${{ env.KIND }}
+          PEREGOVORKA_UPDATE_PUBKEY: ${{ vars.DESKTOP_UPDATE_PUBKEY }}
+          CSC_LINK: ${{ secrets.WINDOWS_CERT_PFX }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ($env:SIGN -ne "true") { $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"; Remove-Item Env:CSC_LINK -ErrorAction SilentlyContinue }
+          node build.mjs
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE) { throw "electron-builder: $LASTEXITCODE" }
+      - name: Сборка MSI (WiX)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix build installer/msi/Peregovorka.wxs -arch x64 -bindpath unpacked=release/win-unpacked -d Version=$env:VERSION -o release/Peregovorka-$env:VERSION-x64.msi
+          if ($LASTEXITCODE) { throw "wix: $LASTEXITCODE" }
+          # второй пакет со следующей версией — только для проверки обновления поверх установленного (не публикуется)
+          $next = ($env:VERSION -split '\.')[0..1] -join '.'; $next = "$next.$([int]($env:VERSION -split '\.')[2] + 1)"
+          wix build installer/msi/Peregovorka.wxs -arch x64 -bindpath unpacked=release/win-unpacked -d Version=$next -o $env:RUNNER_TEMP/upgrade.msi
+          "NEXT=$next" >> $env:GITHUB_ENV
+      - name: Подпись MSI
+        if: env.SIGN == 'true'
+        env:
+          PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          PFXPASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          TS: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP cert.pfx
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          $ts = if ($env:TS) { @("/tr", $env:TS, "/td", "sha256") } else { @() }
+          & $signtool.FullName sign /fd sha256 /f $pfx /p $env:PFXPASS @ts "release/Peregovorka-$env:VERSION-x64.msi"
+          Remove-Item $pfx
+          if ($LASTEXITCODE) { throw "signtool: $LASTEXITCODE" }
+      - name: Подписи (если сборка подписана — все должны быть действительны)
+        run: |
+          foreach ($f in @("release/win-unpacked/Peregovorka.exe", "release/Peregovorka-Setup-$env:VERSION.exe", "release/Peregovorka-$env:VERSION-x64.msi")) {
+            $s = Get-AuthenticodeSignature $f
+            Write-Host "$f : $($s.Status) $($s.SignerCertificate.Subject)"
+            if ($env:SIGN -eq "true" -and $s.Status -ne "Valid") { throw "подпись недействительна: $f" }
+          }
+
+      # ---------------------------------------------------------------- испытания на Windows
+      - name: "EXE: тихая установка для текущего пользователя, запуск, диагностика"
+        run: |
+          Start-Process "release/Peregovorka-Setup-$env:VERSION.exe" -ArgumentList "/S" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe"
+          if (-not (Test-Path $exe)) { throw "не установлено: $exe" }
+          if (-not (Test-Path "HKCU:\Software\Classes\peregovorka")) { throw "схема peregovorka:// не зарегистрирована" }
+          $d = Join-Path $env:RUNNER_TEMP "diag-exe.json"
+          $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          $j = Get-Content $d -Raw | ConvertFrom-Json
+          Write-Host ($j.client | ConvertTo-Json -Compress)
+          if (-not $j.client.packaged -or $j.client.install -ne "exe") { throw "не та установка: $($j.client.install)" }
+          if ($j.trust_storage -ne "os") { throw "DPAPI (safeStorage) недоступен" }
+          if (-not $j.notifications_supported) { throw "уведомления Windows не поддерживаются" }
+          if ($j.client.startup_ms -gt 15000) { throw "запуск дольше 15 с: $($j.client.startup_ms)" }
+          if ((Get-Content $d -Raw) -match "pgd_|vm_session=") { throw "в отчёте секреты" }
+          "{""closeAction"":""quit""}" | Set-Content "$env:APPDATA\Peregovorka\settings.json"
+      - name: "EXE: обновление поверх установленного сохраняет настройки"
+        env:
+          PEREGOVORKA_BUILD_KIND: test
+        run: |
+          npx electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=$env:NEXT -c.directories.output=$env:RUNNER_TEMP/next
+          if ($LASTEXITCODE) { throw "сборка следующей версии: $LASTEXITCODE" }
+          Start-Process "$env:RUNNER_TEMP/next/Peregovorka-Setup-$env:NEXT.exe" -ArgumentList "/S" -Wait
+          $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"
+          if ($u.DisplayVersion -ne $env:NEXT) { throw "версия после обновления: $($u.DisplayVersion)" }
+          if (-not ((Get-Content "$env:APPDATA\Peregovorka\settings.json" -Raw) -match "quit")) { throw "настройки потеряны при обновлении" }
+      - name: "EXE: тихое удаление, нет остаточных процессов и автозапуска"
+        run: |
+          $un = Get-ChildItem "$env:LOCALAPPDATA\Programs\Peregovorka\Uninstall*.exe" | Select-Object -First 1
+          Start-Process $un.FullName -ArgumentList "/S" -Wait
+          Start-Sleep 5
+          if (Test-Path "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe") { throw "программа не удалена" }
+          if (Get-Process Peregovorka -ErrorAction SilentlyContinue) { throw "остался процесс" }
+          if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue).Peregovorka) { throw "остался автозапуск" }
+          if (-not (Test-Path "$env:APPDATA\Peregovorka\settings.json")) { throw "при тихом удалении данные пользователя должны сохраниться" }
+          Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka"
+      - name: "MSI: тихая установка с преднастройкой организаций и политик"
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP msi-install.log
+          $a = "/i `"release\Peregovorka-$env:VERSION-x64.msi`" /qn /l*v `"$log`" SERVERS=`"Головной офис|https://meet.example.org;Филиал|https://branch.example.org`" ALLOWADDSERVERS=0 AUTOSTART=tray HIDENOTIFICATIONCONTENT=1"
+          $p = Start-Process msiexec.exe -ArgumentList $a -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; throw "msiexec: $($p.ExitCode)" }
+          $exe = "$env:ProgramFiles\Peregovorka\Peregovorka.exe"
+          if (-not (Test-Path $exe)) { throw "не установлено: $exe" }
+          $pol = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Peregovorka"
+          if ($pol.Servers -notmatch "Головной офис\|https://meet.example.org") { throw "политика Servers: $($pol.Servers)" }
+          if ($pol.AllowAddServers -ne 0 -or $pol.Autostart -ne "tray") { throw "политики не записаны" }
+          if ((Get-ItemProperty "HKLM:\SOFTWARE\Peregovorka\Desktop").InstallType -ne "msi") { throw "нет признака MSI" }
+          if (-not (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").Peregovorka) { throw "нет автозапуска для всех" }
+          $d = Join-Path $env:RUNNER_TEMP "diag-msi.json"
+          $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($j.client.install -ne "msi" -or $j.update.status -ne "managed") { throw "MSI-установка не распознана: $($j.client.install) / $($j.update.status)" }
+          if ($j.organizations.Count -ne 2 -or -not $j.organizations[0].managed -or $j.policy.allowAddServers) { throw "преднастроенные организации: $($j.organizations | ConvertTo-Json -Compress)" }
+          if (-not $j.settings.notifications.hideContent) { throw "политика скрытия текста не применена" }
+      - name: "MSI: обновление без повторных свойств сохраняет политики"
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP msi-upgrade.log
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$env:RUNNER_TEMP\upgrade.msi`" /qn /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; throw "msiexec upgrade: $($p.ExitCode)" }
+          $u = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -eq "Peregovorka"
+          if (@($u).Count -ne 1 -or $u.DisplayVersion -ne $env:NEXT) { throw "после обновления: $($u | Select-Object DisplayVersion | ConvertTo-Json -Compress)" }
+          $pol = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Peregovorka"
+          if ($pol.Servers -notmatch "meet.example.org" -or $pol.AllowAddServers -ne 0) { throw "политики потеряны при обновлении" }
+      - name: "MSI: тихое удаление убирает программу, политики и автозапуск"
+        run: |
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$env:RUNNER_TEMP\upgrade.msi`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x: $($p.ExitCode)" }
+          if (Test-Path "$env:ProgramFiles\Peregovorka\Peregovorka.exe") { throw "программа не удалена" }
+          if (Test-Path "HKLM:\SOFTWARE\Policies\Peregovorka") { if ((Get-ItemProperty "HKLM:\SOFTWARE\Policies\Peregovorka").Servers) { throw "политика осталась" } }
+          if ((Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue).Peregovorka) { throw "автозапуск остался" }
+          if (Get-Process Peregovorka -ErrorAction SilentlyContinue) { throw "остался процесс" }
+
+      # ---------------------------------------------------------------- артефакты
+      - name: Манифест обновления (если настроен ключ)
+        if: env.UPDKEY == 'true' && github.ref_type == 'tag'
+        env:
+          DESKTOP_UPDATE_KEY: ${{ secrets.DESKTOP_UPDATE_KEY }}
+          DESKTOP_UPDATE_PUBKEY: ${{ vars.DESKTOP_UPDATE_PUBKEY }}
+        run: |
+          $name = "Peregovorka-Setup-$env:VERSION.exe"
+          node scripts/update-manifest.mjs make $env:VERSION "release/$name" "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$name" | Set-Content -NoNewline -Encoding utf8NoBOM release/update.json
+          node scripts/update-manifest.mjs sign release/update.json
+          node scripts/update-manifest.mjs verify release/update.json
+      - name: Контрольные суммы SHA-256
+        run: |
+          Get-ChildItem release -File | Where-Object Name -match '\.(exe|msi|json|sig)$' | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii release/SHA256SUMS.txt
+          Get-Content release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: peregovorka-windows
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.msi
+            desktop/release/update.json
+            desktop/release/update.json.sig
+            desktop/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    needs: windows
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { name: peregovorka-windows, path: out }
+      - name: Выпуск GitHub (не «последний» — последним остаётся выпуск сервера)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+        run: |
+          v="${GITHUB_REF_NAME#desktop-v}"
+          awk -v v="$v" '$0 ~ "^## "v"( |$)" {f=1; next} /^## / && f {exit} f' desktop/CHANGELOG.md > notes.md
+          if [ "$SIGNED" != "true" ]; then
+            printf '\n> **Тестовая сборка.** Установщики не подписаны сертификатом издателя: это не доверенный корпоративный выпуск.\n' >> notes.md
+            pre="--prerelease"
+          fi
+          test -s notes.md
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" out/* --title "Peregovorka для Windows $v" --notes-file notes.md --latest=false ${pre:-} --verify-tag
+          if [ -f out/update.json ]; then
+            gh release view desktop-channel >/dev/null 2>&1 || gh release create desktop-channel --title "Канал обновлений Peregovorka для Windows" --notes "Служебный выпуск: манифест последней версии приложения (подписан ключом издателя)." --prerelease --latest=false
+            gh release upload desktop-channel out/update.json out/update.json.sig --clobber
+          fi

@@ -45,7 +45,8 @@ for (const page of ["app", "picker", "indicator"]) {
 }
 await build({ ...common, platform: "browser", entryPoints: [join(root, "src/shell/shell.css")], outfile: join(out, "shell", "shell.css"), loader: { ".woff2": "file" }, assetNames: "fonts/[name]" });
 for (const f of readdirSync(join(root, "src/shell")).filter((f) => f.endsWith(".html"))) cpSync(join(root, "src/shell", f), join(out, "shell", f));
-cpSync(join(out, "assets"), join(out, "shell", "assets"), { recursive: true });          // оболочка ссылается на assets/icon.svg относительно app://shell/
+mkdirSync(join(out, "shell", "assets"), { recursive: true });
+cpSync(join(out, "assets", "icon.svg"), join(out, "shell", "assets", "icon.svg"));          // оболочка ссылается на assets/icon.svg относительно app://shell/
 
 if (test) {
   const tests = readdirSync(join(root, "test")).filter((f) => f.endsWith(".test.ts"));

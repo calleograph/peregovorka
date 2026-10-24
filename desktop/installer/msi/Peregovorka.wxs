@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Корпоративный установщик Peregovorka для Windows (WiX v5+). Создано gen_wxs.py — правьте генератор, а не этот файл.
+     Сборка: wix build Peregovorka.wxs -arch x64 -bindpath unpacked=<release/win-unpacked> -d Version=X.Y.Z -o Peregovorka-X.Y.Z-x64.msi
+     Свойства администратора (все необязательны; учётные данные пользователей в MSI не передаются): docs/DESKTOP_ADMIN.md. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Peregovorka" Manufacturer="Peregovorka" Version="$(Version)" UpgradeCode="7b4f2a1e-5c3d-4e8f-9a6b-2d1c0e9f8a73" Scope="perMachine" Compressed="yes" Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Peregovorka is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="AppIcon.exe" SourceFile="!(bindpath.unpacked)\Peregovorka.exe" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.exe" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- свойство не передано при обновлении — берётся значение, записанное при первой установке -->
+    <Property Id="SERVERS" Secure="yes" />
+    <Property Id="SAVED_SERVERS" Secure="yes"><RegistrySearch Id="FindServers" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Servers" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="SERVERS" Value="[SAVED_SERVERS]" After="AppSearch" Sequence="both" Condition="NOT SERVERS AND SAVED_SERVERS" />
+    <Property Id="ALLOWADDSERVERS" Secure="yes" />
+    <Property Id="SAVED_ALLOWADDSERVERS" Secure="yes"><RegistrySearch Id="FindAllowAddServers" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="AllowAddServers" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="ALLOWADDSERVERS" Value="[SAVED_ALLOWADDSERVERS]" After="AppSearch" Sequence="both" Condition="NOT ALLOWADDSERVERS AND SAVED_ALLOWADDSERVERS" />
+    <Property Id="ALLOWEDDOMAINS" Secure="yes" />
+    <Property Id="SAVED_ALLOWEDDOMAINS" Secure="yes"><RegistrySearch Id="FindAllowedDomains" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="AllowedDomains" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="ALLOWEDDOMAINS" Value="[SAVED_ALLOWEDDOMAINS]" After="AppSearch" Sequence="both" Condition="NOT ALLOWEDDOMAINS AND SAVED_ALLOWEDDOMAINS" />
+    <Property Id="AUTOSTART" Secure="yes" />
+    <Property Id="SAVED_AUTOSTART" Secure="yes"><RegistrySearch Id="FindAutostart" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Autostart" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="AUTOSTART" Value="[SAVED_AUTOSTART]" After="AppSearch" Sequence="both" Condition="NOT AUTOSTART AND SAVED_AUTOSTART" />
+    <Property Id="CLOSEACTION" Secure="yes" />
+    <Property Id="SAVED_CLOSEACTION" Secure="yes"><RegistrySearch Id="FindCloseAction" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="CloseAction" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="CLOSEACTION" Value="[SAVED_CLOSEACTION]" After="AppSearch" Sequence="both" Condition="NOT CLOSEACTION AND SAVED_CLOSEACTION" />
+    <Property Id="UPDATEMODE" Secure="yes" />
+    <Property Id="SAVED_UPDATEMODE" Secure="yes"><RegistrySearch Id="FindUpdateMode" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="UpdateMode" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="UPDATEMODE" Value="[SAVED_UPDATEMODE]" After="AppSearch" Sequence="both" Condition="NOT UPDATEMODE AND SAVED_UPDATEMODE" />
+    <Property Id="UPDATEURL" Secure="yes" />
+    <Property Id="SAVED_UPDATEURL" Secure="yes"><RegistrySearch Id="FindUpdateUrl" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="UpdateUrl" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="UPDATEURL" Value="[SAVED_UPDATEURL]" After="AppSearch" Sequence="both" Condition="NOT UPDATEURL AND SAVED_UPDATEURL" />
+    <Property Id="NOTIFICATIONS" Secure="yes" />
+    <Property Id="SAVED_NOTIFICATIONS" Secure="yes"><RegistrySearch Id="FindNotifications" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Notifications" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="NOTIFICATIONS" Value="[SAVED_NOTIFICATIONS]" After="AppSearch" Sequence="both" Condition="NOT NOTIFICATIONS AND SAVED_NOTIFICATIONS" />
+    <Property Id="HIDENOTIFICATIONCONTENT" Secure="yes" />
+    <Property Id="SAVED_HIDENOTIFICATIONCONTENT" Secure="yes"><RegistrySearch Id="FindHideNotificationContent" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="HideNotificationContent" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="HIDENOTIFICATIONCONTENT" Value="[SAVED_HIDENOTIFICATIONCONTENT]" After="AppSearch" Sequence="both" Condition="NOT HIDENOTIFICATIONCONTENT AND SAVED_HIDENOTIFICATIONCONTENT" />
+    <Property Id="PROXYMODE" Secure="yes" />
+    <Property Id="SAVED_PROXYMODE" Secure="yes"><RegistrySearch Id="FindProxyMode" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyMode" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="PROXYMODE" Value="[SAVED_PROXYMODE]" After="AppSearch" Sequence="both" Condition="NOT PROXYMODE AND SAVED_PROXYMODE" />
+    <Property Id="PROXYSERVER" Secure="yes" />
+    <Property Id="SAVED_PROXYSERVER" Secure="yes"><RegistrySearch Id="FindProxyServer" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyServer" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="PROXYSERVER" Value="[SAVED_PROXYSERVER]" After="AppSearch" Sequence="both" Condition="NOT PROXYSERVER AND SAVED_PROXYSERVER" />
+    <Property Id="PROXYBYPASS" Secure="yes" />
+    <Property Id="SAVED_PROXYBYPASS" Secure="yes"><RegistrySearch Id="FindProxyBypass" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyBypass" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="PROXYBYPASS" Value="[SAVED_PROXYBYPASS]" After="AppSearch" Sequence="both" Condition="NOT PROXYBYPASS AND SAVED_PROXYBYPASS" />
+    <Property Id="PROXYPAC" Secure="yes" />
+    <Property Id="SAVED_PROXYPAC" Secure="yes"><RegistrySearch Id="FindProxyPac" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyPac" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="PROXYPAC" Value="[SAVED_PROXYPAC]" After="AppSearch" Sequence="both" Condition="NOT PROXYPAC AND SAVED_PROXYPAC" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Peregovorka">
+        <Files Include="!(bindpath.unpacked)\**" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Bitness="always64">
+        <Shortcut Id="StartShortcut" Name="Peregovorka" Target="[INSTALLFOLDER]Peregovorka.exe" WorkingDirectory="INSTALLFOLDER">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="org.peregovorka.desktop" />
+        </Shortcut>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <ComponentGroup Id="System" Directory="INSTALLFOLDER">
+      <!-- признак корпоративной установки: обновления выполняет администратор, а не приложение -->
+      <Component Id="InstallType" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop" Name="InstallType" Type="string" Value="msi" KeyPath="yes" />
+      </Component>
+      <Component Id="Protocol" Bitness="always64">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\peregovorka">
+          <RegistryValue Type="string" Value="URL:Peregovorka" KeyPath="yes" />
+          <RegistryValue Name="URL Protocol" Type="string" Value="" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="[INSTALLFOLDER]Peregovorka.exe,0" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+      </Component>
+      <Component Id="RunTray" Condition="AUTOSTART=&quot;tray&quot;" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; --hidden" KeyPath="yes" />
+      </Component>
+      <Component Id="RunWindow" Condition="AUTOSTART=&quot;window&quot;" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;" KeyPath="yes" />
+      </Component>
+      <Component Id="PolServers" Condition="SERVERS" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="Servers" Type="string" Value="[SERVERS]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Servers" Type="string" Value="[SERVERS]" />
+      </Component>
+      <Component Id="PolAllowAddServers" Condition="ALLOWADDSERVERS" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="AllowAddServers" Type="integer" Value="[ALLOWADDSERVERS]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="AllowAddServers" Type="string" Value="[ALLOWADDSERVERS]" />
+      </Component>
+      <Component Id="PolAllowedDomains" Condition="ALLOWEDDOMAINS" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="AllowedDomains" Type="string" Value="[ALLOWEDDOMAINS]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="AllowedDomains" Type="string" Value="[ALLOWEDDOMAINS]" />
+      </Component>
+      <Component Id="PolAutostart" Condition="AUTOSTART" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="Autostart" Type="string" Value="[AUTOSTART]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Autostart" Type="string" Value="[AUTOSTART]" />
+      </Component>
+      <Component Id="PolCloseAction" Condition="CLOSEACTION" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="CloseAction" Type="string" Value="[CLOSEACTION]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="CloseAction" Type="string" Value="[CLOSEACTION]" />
+      </Component>
+      <Component Id="PolUpdateMode" Condition="UPDATEMODE" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="UpdateMode" Type="string" Value="[UPDATEMODE]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="UpdateMode" Type="string" Value="[UPDATEMODE]" />
+      </Component>
+      <Component Id="PolUpdateUrl" Condition="UPDATEURL" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="UpdateUrl" Type="string" Value="[UPDATEURL]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="UpdateUrl" Type="string" Value="[UPDATEURL]" />
+      </Component>
+      <Component Id="PolNotifications" Condition="NOTIFICATIONS" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="Notifications" Type="integer" Value="[NOTIFICATIONS]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="Notifications" Type="string" Value="[NOTIFICATIONS]" />
+      </Component>
+      <Component Id="PolHideNotificationContent" Condition="HIDENOTIFICATIONCONTENT" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="HideNotificationContent" Type="integer" Value="[HIDENOTIFICATIONCONTENT]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="HideNotificationContent" Type="string" Value="[HIDENOTIFICATIONCONTENT]" />
+      </Component>
+      <Component Id="PolProxyMode" Condition="PROXYMODE" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="ProxyMode" Type="string" Value="[PROXYMODE]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyMode" Type="string" Value="[PROXYMODE]" />
+      </Component>
+      <Component Id="PolProxyServer" Condition="PROXYSERVER" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="ProxyServer" Type="string" Value="[PROXYSERVER]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyServer" Type="string" Value="[PROXYSERVER]" />
+      </Component>
+      <Component Id="PolProxyBypass" Condition="PROXYBYPASS" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="ProxyBypass" Type="string" Value="[PROXYBYPASS]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyBypass" Type="string" Value="[PROXYBYPASS]" />
+      </Component>
+      <Component Id="PolProxyPac" Condition="PROXYPAC" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="ProxyPac" Type="string" Value="[PROXYPAC]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyPac" Type="string" Value="[PROXYPAC]" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Peregovorka" Level="1">
+      <ComponentGroupRef Id="System" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

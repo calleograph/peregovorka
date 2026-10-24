@@ -53,8 +53,9 @@ export class AppTray {
   }
 }
 
-/** Автозапуск средствами Windows (раздел реестра «Run» текущего пользователя); «в трей» — с ключом --hidden. Установщик удаляет запись при удалении программы. */
-export function applyAutostart(mode: Autostart): void {
+/** Автозапуск средствами Windows (раздел реестра «Run» текущего пользователя, значение «Peregovorka»); «в трей» — с ключом --hidden. Удаление программы
+ *  стирает запись. Корпоративная установка (MSI) с политикой автозапуска сама прописывает запуск для всех пользователей — тогда своя запись не нужна. */
+export function applyAutostart(mode: Autostart, machineWide = false): void {
   if (!app.isPackaged) return;                         // запуск из исходников не прописывается в автозапуск
-  app.setLoginItemSettings({ openAtLogin: mode !== "off", path: process.execPath, args: mode === "tray" ? ["--hidden"] : [] });
+  app.setLoginItemSettings({ name: "Peregovorka", openAtLogin: mode !== "off" && !machineWide, path: process.execPath, args: mode === "tray" ? ["--hidden"] : [] });
 }
