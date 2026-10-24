@@ -55,8 +55,10 @@ def test_browser_requests_cannot_get_or_use_a_token(client):
     r, _ = sign_in(client)
     csrf = r.json()["csrf_token"]
     assert client.post(f"{API}/desktop/trust", headers={"X-CSRF-Token": csrf}).status_code == 403, "без признака приложения"
-    for extra in ({"Origin": "http://testserver"}, {"Sec-Fetch-Mode": "cors"}):
+    for extra in ({"Origin": "http://testserver"}, {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors"}, {"Sec-Fetch-Site": "cross-site"}):
         assert client.post(f"{API}/desktop/trust", headers={**DESK, **extra, "X-CSRF-Token": csrf}).status_code == 403, f"запрос страницы ({extra}) — даже с XSS токен не выдаётся"
+    electron_net = {"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "empty"}         # так помечает запросы сетевой модуль главного процесса Electron
+    assert client.post(f"{API}/desktop/trust", headers={**DESK, **electron_net, "X-CSRF-Token": csrf}).status_code == 200
     _, token = trusted(client)
     client.cookies.clear()
     assert client.post(f"{API}/desktop/resume", json={"token": token}, headers={**DESK, "Origin": "http://testserver"}).status_code == 403

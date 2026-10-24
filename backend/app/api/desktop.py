@@ -1,7 +1,7 @@
 """Настольный клиент Peregovorka для Windows (desktop/): сведения о сервере для мастера подключения и «доверенное устройство» — вход без пароля после перезапуска.
 
-Токен доверенного устройства выдаётся и принимается только запросами главного процесса клиента: без заголовка Origin и без Sec-Fetch-* (браузер ставит их
-всегда, страница не может их убрать). Поэтому даже XSS на странице не получит долгоживущий токен: он никогда не попадает в веб-содержимое, клиент хранит его
+Токен доверенного устройства выдаётся и принимается только запросами главного процесса клиента: без заголовка Origin и с Sec-Fetch-Site «none» или без него
+(браузер для запросов страницы ставит Origin и Sec-Fetch-Site = same-origin/cross-site всегда, страница не может их изменить). Поэтому даже XSS на странице не получит долгоживущий токен: он никогда не попадает в веб-содержимое, клиент хранит его
 средствами Windows (DPAPI). Подробно — docs/DESKTOP.md.
 """
 from __future__ import annotations
@@ -26,7 +26,10 @@ _NO_STORE = {"Cache-Control": "no-store"}
 
 
 def _desktop_only(request: Request) -> None:
-    if request.headers.get("origin") is not None or request.headers.get("sec-fetch-mode") is not None or request.headers.get("x-peregovorka-desktop") != "1":
+    # Запрос страницы (fetch/форма) браузер всегда помечает Origin и Sec-Fetch-Site = same-origin/same-site/cross-site — подделать их скрипт не может.
+    # Сетевой модуль главного процесса Electron Origin не ставит, а Sec-Fetch-Site у него «none».
+    site = request.headers.get("sec-fetch-site")
+    if request.headers.get("origin") is not None or (site is not None and site != "none") or request.headers.get("x-peregovorka-desktop") != "1":
         raise HTTPException(status_code=403, detail={"code": "desktop_only", "message": "Доступно только приложению Peregovorka для Windows."})
 
 

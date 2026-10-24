@@ -1,0 +1,44 @@
+/* Токены оформления Peregovorka (цвета, радиусы, тени, гарнитуры) — общие для веб-интерфейса и приложения Windows (desktop/src/shell).
+   Менять только здесь: обе стороны берут значения из этого файла. */
+:root {
+  /* поверхности: холодный нейтральный ряд, чуть светлее у «поднятых» элементов */
+  --bg: #f3f5f8; --surface: #ffffff; --soft: #eaeef4; --line: #d6dce6; --line-strong: #b9c2d0;
+  /* текст: основной с высоким контрастом (≥ 12:1), вторичный — не светлее 5,4:1 на белом */
+  --text: #161b26; --muted: #576275;
+  /* акцент — один: синий; ссылки, фокус, главные кнопки, активные вкладки */
+  --accent: #2456d3; --accent-hover: #1b45ad; --accent-text: #ffffff; --accent-soft: #e4ecfd; --link: #1d4fc4;
+  /* состояния: цвет + фон + текст на нём (контраст ≥ 4,5:1) */
+  --ok: #1f9d55; --ok-bg: #def3e6; --ok-text: #14693a;
+  --danger: #cc3535; --danger-bg: #fbe4e1; --danger-text: #a52a22;
+  --warn: #d19a2a; --warn-bg: #faf0d2; --warn-text: #6b4e0e;
+  --radius: 10px; --radius-sm: 7px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .06);
+  --shadow-pop: 0 8px 28px rgba(16, 24, 40, .18);
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: "Manrope", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
+    --text: #e9edf3; --muted: #9ba6b8;
+    --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
+    --ok: #3cc477; --ok-bg: #16301f; --ok-text: #8fdca9;
+    --danger: #e0605a; --danger-bg: #3a1f1d; --danger-text: #f4a9a3;
+    --warn: #e0b04a; --warn-bg: #352c16; --warn-text: #e3cd8f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+/* тема, закреплённая администратором («Настройки сайта → Тема»): те же значения без зависимости от системной настройки */
+:root[data-theme="dark"] {
+    --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
+  --text: #e9edf3; --muted: #9ba6b8;
+  --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
+  --ok: #3cc477; --ok-bg: #16301f; --ok-text: #8fdca9;
+  --danger: #e0605a; --danger-bg: #3a1f1d; --danger-text: #f4a9a3;
+  --warn: #e0b04a; --warn-bg: #352c16; --warn-text: #e3cd8f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}

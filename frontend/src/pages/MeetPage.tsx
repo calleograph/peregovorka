@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, type OutlookPublic } from "../api";
 import { Brand } from "../components/Brand";
+import { appLink, offerApp } from "../desktop";
 
 /** Разбор остатка до начала для обратного отсчёта: «2 д 03:15:09» / «03:15:09» / «00:42». */
 export function countdown(ms: number): string {
@@ -77,6 +78,9 @@ export default function MeetPage() {
                 </div>
               )}
               {open && authed && <p className="muted">Открываем комнату…</p>}
+              {info.state !== "cancelled" && info.state !== "ended" && offerApp() && (
+                <p className="small muted">Установлено приложение Peregovorka для Windows? <a href={appLink()}>Открыть в приложении</a></p>
+              )}
             </>
           )}
         </section>
