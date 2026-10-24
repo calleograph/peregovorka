@@ -304,8 +304,13 @@ async function boot(): Promise<void> {
   }
   let recovering = false;
   async function checkShell(): Promise<void> {
-    const r = await shellHealth();
-    if (!r.ok) { log.error("shell.blank", r); void shellBroken(); }
+    // медленный компьютер (первый запуск, проверка антивирусом) рисует дольше: ошибка — только если окно пусто и через 15 с
+    for (let i = 0; i < 6; i++) {
+      const r = await shellHealth();
+      if (r.ok) return;
+      if (i === 5) { log.error("shell.blank", r); void shellBroken(); return; }
+      await new Promise((res) => setTimeout(res, 2500));
+    }
   }
   async function shellBroken(): Promise<void> {
     if (recovering || ctx.quitting || main.win.isDestroyed()) return;
@@ -428,13 +433,15 @@ async function boot(): Promise<void> {
 
   const diag = argv.find((a) => a.startsWith("--diagnostics="));
   if (diag) {
-    setTimeout(() => {
-      void shellHealth().then((sh) => {
-        try { writeFileSync(diag.slice(14), JSON.stringify({ ...collect(ctx, orgs, updater.state, null, startupMs), shell: sh }, null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
-        ctx.quitting = true;
-        app.quit();
-      });
-    }, 8000);
+    // отчёт — когда окно показано и оболочка отрисована (или через 60 с — тогда в отчёте видно, что не отрисовалась); плюс 5 с на подключение организаций
+    void (async () => {
+      let sh = await shellHealth();
+      for (let i = 0; i < 120 && (startupMs === null || !sh.ok); i++) { await new Promise((res) => setTimeout(res, 500)); sh = await shellHealth(); }
+      await new Promise((res) => setTimeout(res, 5000));
+      try { writeFileSync(diag.slice(14), JSON.stringify({ ...collect(ctx, orgs, updater.state, null, startupMs), shell: await shellHealth() }, null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
+      ctx.quitting = true;
+      app.quit();
+    })();
   }
   if (ctx.flags.e2e) (globalThis as Record<string, unknown>).__pg = { quit: () => { ctx.quitting = true; app.quit(); }, ctx, orgs, main, picker, indicator, updater, notifier, tray, shellState, openLink, lastDownload: () => lastDownload, childWindows, openDownloaded };
 }

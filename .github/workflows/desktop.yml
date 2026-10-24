@@ -183,7 +183,7 @@ jobs:
           if (-not (Test-Path "HKCU:\Software\Classes\peregovorka")) { throw "схема peregovorka:// не зарегистрирована" }
           $d = Join-Path $env:RUNNER_TEMP "diag-exe.json"
           $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
           $j = Get-Content $d -Raw | ConvertFrom-Json
           Write-Host ($j.client | ConvertTo-Json -Compress)
           if (-not $j.client.packaged -or $j.client.install -ne "exe") { throw "не та установка: $($j.client.install)" }
@@ -201,7 +201,7 @@ jobs:
           Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka" -ErrorAction SilentlyContinue
           $d = Join-Path $env:RUNNER_TEMP "diag-offline.json"
           $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
           Remove-NetFirewallRule -DisplayName "pg-offline"
           $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
           if (-not $j.shell.ok -or $j.shell.heading -ne "Добро пожаловать в Peregovorka") { throw "без сети: $($j.shell | ConvertTo-Json -Compress)" }
@@ -293,7 +293,7 @@ jobs:
           if (-not (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").Peregovorka) { throw "нет автозапуска для всех" }
           $d = Join-Path $env:RUNNER_TEMP "diag-msi.json"
           $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
           $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
           if ($j.client.install -ne "msi" -or $j.update.status -ne "managed") { throw "MSI-установка не распознана: $($j.client.install) / $($j.update.status)" }
           if ($j.organizations.Count -ne 2 -or -not $j.organizations[0].managed -or $j.policy.allowAddServers) { throw "преднастроенные организации: $($j.organizations | ConvertTo-Json -Compress)" }
@@ -389,7 +389,7 @@ jobs:
           if ($pol.Servers -ne "Организация А|https://a.example.org" -or $pol.AllowAddServers -ne 0) { throw "настройки организации не применены: $($pol.Servers)" }
           $d = "$work/diag.json"
           $pr = Start-Process "$env:ProgramFiles\Peregovorka\Peregovorka.exe" -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $pr.WaitForExit(90000)) { $pr.Kill(); throw "приложение не завершилось" }
+          if (-not $pr.WaitForExit(120000)) { $pr.Kill(); throw "приложение не завершилось" }
           $dj = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
           if ($dj.organizations.Count -ne 1 -or $dj.organizations[0].host -ne "a.example.org" -or -not $dj.shell.ok) { throw "корпоративная установка: $($dj.organizations | ConvertTo-Json -Compress)" }
           Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait
