@@ -1,9 +1,12 @@
 name: CI
 on:
+  # Изменения только клиента Windows проверяет свой workflow (desktop.yml); теги выпуска сервера — всегда полный CI (фильтр путей к тегам не применяется).
   push:
     branches: [main, "feat/**"]
     tags: ["v*"]
+    paths-ignore: ["desktop/**", ".github/workflows/desktop.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
   pull_request:
+    paths-ignore: ["desktop/**", ".github/workflows/desktop.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
 
 jobs:
   deps:

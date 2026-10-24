@@ -202,7 +202,7 @@ pre.log { margin: 0; max-height: 260px; overflow: auto; padding: 12px; backgroun
 }
 @media (max-width: 680px) {
   .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
-  .tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .tabs h1 { display: none; }
   .tabs button { flex: none; }
   .seg { overflow-x: auto; }
