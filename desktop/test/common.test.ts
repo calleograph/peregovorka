@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { normalizeServerUrl, domainAllowed, safeRoute, externalAllowed, sameOrigin } from "../src/common/urls";
 import { parseDeepLink, findDeepLinkArg, parseMeetingUrl } from "../src/common/links";
-import { parseRegQuery, policyFromValues, mergePolicy } from "../src/common/policy";
+import { parseRegQuery, parseRegExport, policyFromValues, mergePolicy } from "../src/common/policy";
 import { fitBounds, MIN_SIZE, minFor } from "../src/common/bounds";
 import { redact } from "../src/common/redact";
 import { compat, cmpVersion } from "../src/common/version";
@@ -209,4 +209,15 @@ test("сценарии PowerShell — UTF-8 с BOM (Windows PowerShell 5.1 бе�
   const { join } = await import("node:path");
   const dir = join(__dirname, "..", "..", "signing");
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".ps1"))) assert.deepEqual([...readFileSync(join(dir, f)).subarray(0, 3)], [0xef, 0xbb, 0xbf], f);
+});
+
+test("политики из reg export (UTF-16): кириллица в названиях организаций не теряется", () => {
+  const exp = Buffer.from("\uFEFFWindows Registry Editor Version 5.00\r\n\r\n[HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Peregovorka]\r\n" +
+    "\"Servers\"=\"Головной офис|https://meet.example.org;Филиал «Север» \\\"Б\\\"|https://branch.example.org\"\r\n\"AllowAddServers\"=dword:00000000\r\n" +
+    "\"Autostart\"=\"tray\"\r\n\"Junk\"=hex(7):41,00,00,00\r\n", "utf16le").toString("utf16le");
+  const p = policyFromValues(parseRegExport(exp));
+  assert.deepEqual(p.servers, [{ name: "Головной офис", origin: "https://meet.example.org" }, { name: "Филиал «Север» \"Б\"", origin: "https://branch.example.org" }]);
+  assert.equal(p.allowAddServers, false);
+  assert.equal(p.autostart, "tray");
+  assert.deepEqual(policyFromValues(parseRegExport("")), { servers: [] }, "ключа нет — политики нет");
 });
