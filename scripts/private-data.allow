@@ -121,3 +121,4 @@ www.npmjs.com
 www.postgresql.org
 www.python.org
 deb.debian.org
+ip:^2\.5\.29\.37$   # OID расширения «Extended Key Usage» (X.509), не адрес

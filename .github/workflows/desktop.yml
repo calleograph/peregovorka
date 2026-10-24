@@ -1,8 +1,14 @@
 name: Desktop
 # Приложение Peregovorka для Windows (desktop/): проверки, сборка EXE и MSI на Windows, испытания установки/обновления/удаления, подпись, SHA-256, выпуск.
 # Версия клиента — desktop/package.json, тег выпуска — desktop-vX.Y.Z (серверные теги vX.Y.Z и канал обновления сервера не затрагиваются).
-# Подпись: секреты WINDOWS_CERT_PFX (base64 .pfx) и WINDOWS_CERT_PASSWORD, переменная WINDOWS_TIMESTAMP_URL. Без них сборка — «тестовая», выпуск — предварительный.
-# Обновления: секрет DESKTOP_UPDATE_KEY (закрытый Ed25519) и переменная DESKTOP_UPDATE_PUBKEY (scripts/update-manifest.mjs keygen).
+# Подпись кода (Authenticode): секреты WINDOWS_CERT_PFX (base64 .pfx) и WINDOWS_CERT_PASSWORD, переменная WINDOWS_TIMESTAMP_URL.
+#   • без сертификата — неподписанная тестовая сборка;
+#   • самоподписанный сертификат (издатель = субъект) — подписанная ТЕСТОВАЯ сборка: на испытательной машине CI его открытая часть ставится в доверенные,
+#     у сотрудников — только если администратор сам распространит Peregovorka-publisher.cer;
+#   • сертификат удостоверяющего центра — доверенный выпуск.
+# Обновления: секрет DESKTOP_UPDATE_KEY (закрытый Ed25519) и переменная DESKTOP_UPDATE_PUBKEY — отдельный ключ, не сертификат подписи кода.
+# Переменная DESKTOP_RELEASE_MODE=trusted: выпуск по тегу обязан быть подписан сертификатом УЦ и иметь ключ обновлений, иначе сборка падает
+# (а не публикует молча неподписанное). Подробно — docs/DESKTOP_SIGNING.md.
 on:
   push:
     branches: [main, "feat/**"]
@@ -34,30 +40,78 @@ jobs:
   windows:
     needs: checks
     runs-on: windows-2025
+    timeout-minutes: 120
+    outputs:
+      kind: ${{ steps.kind.outputs.kind }}
     defaults: { run: { shell: pwsh, working-directory: desktop } }
-    env:
-      SIGN: ${{ secrets.WINDOWS_CERT_PFX != '' }}
-      UPDKEY: ${{ secrets.DESKTOP_UPDATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version: "24" }
       - run: npm ci
-      - name: Версия и вид сборки
+      - name: Версия, вид сборки, сертификат подписи и ключ обновлений
+        id: kind
+        env:
+          PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          PFXPASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          UPDKEY: ${{ secrets.DESKTOP_UPDATE_KEY }}
+          UPDPUB: ${{ vars.DESKTOP_UPDATE_PUBKEY }}
         run: |
           $v = (Get-Content package.json | ConvertFrom-Json).version
-          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "desktop-v$v") { throw "тег ${{ github.ref_name }} не совпадает с версией $v" }
-          $kind = if ("${{ github.ref_type }}" -eq "tag" -and $env:SIGN -eq "true") { "release" } else { "test" }
-          "VERSION=$v" >> $env:GITHUB_ENV; "KIND=$kind" >> $env:GITHUB_ENV
-          Write-Host "Версия $v, сборка: $kind"
+          $tag = "${{ github.ref_type }}" -eq "tag"
+          if ($tag -and "${{ github.ref_name }}" -ne "desktop-v$v") { throw "тег ${{ github.ref_name }} не совпадает с версией $v" }
+          $pfxFile = Join-Path $env:RUNNER_TEMP sign.pfx
+          $ephemeral = $false
+          if ($env:PFX) {
+            [IO.File]::WriteAllBytes($pfxFile, [Convert]::FromBase64String($env:PFX)); $pass = $env:PFXPASS
+          } elseif (-not $tag) {
+            # ветка без секрета: одноразовый тестовый сертификат создаётся на этой машине и исчезает вместе с ней — проверяется весь путь подписи
+            $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Peregovorka CI Test Publisher, O=Peregovorka CI Test Publisher" -KeyAlgorithm RSA -KeyLength 3072 `
+              -HashAlgorithm SHA256 -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+            $pass = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
+            Export-PfxCertificate -Cert $c -FilePath $pfxFile -Password (ConvertTo-SecureString $pass -AsPlainText -Force) | Out-Null
+            Remove-Item "Cert:\CurrentUser\My\$($c.Thumbprint)"
+            $ephemeral = $true
+          }
+          $signed = Test-Path $pfxFile
+          $self = $false
+          if ($signed) {
+            Write-Host "::add-mask::$pass"
+            $c = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfxFile, $pass)
+            $eku = @($c.Extensions | Where-Object { $_ -is [Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } | ForEach-Object { $_.EnhancedKeyUsages.Value })
+            if ($eku -notcontains "1.3.6.1.5.5.7.3.3") { throw "сертификат без назначения Code Signing (1.3.6.1.5.5.7.3.3)" }
+            if (-not $c.HasPrivateKey) { throw "в PFX нет закрытого ключа" }
+            if ($c.NotAfter -lt (Get-Date) -or $c.NotBefore -gt (Get-Date)) { throw "сертификат не действует сейчас: $($c.NotBefore) — $($c.NotAfter)" }
+            $self = $c.Subject -eq $c.Issuer
+            Write-Host "Сертификат: $($c.Subject); выдан: $($c.Issuer); до $($c.NotAfter); SHA-1 $($c.Thumbprint); самоподписанный: $self; одноразовый: $ephemeral"
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/publisher.cer", $c.Export("Cert"))           # только открытая часть
+            "PFX_FILE=$pfxFile" >> $env:GITHUB_ENV; "PFX_PASS=$pass" >> $env:GITHUB_ENV
+          }
+          # ключ обновлений: из секрета; на ветке без секрета — одноразовый (в выпуски по тегу не попадает)
+          $keyFile = Join-Path $env:RUNNER_TEMP update-key.pem
+          $pub = ""
+          if ($env:UPDKEY -and $env:UPDPUB) { Set-Content -NoNewline $keyFile $env:UPDKEY; $pub = $env:UPDPUB }
+          elseif (-not $tag) {
+            $out = node scripts/update-manifest.mjs keygen
+            $pub = ($out | Select-String "^DESKTOP_UPDATE_PUBKEY=").Line.Split("=", 2)[1]
+            ($out | Select-Object -Skip 2) -join "`n" | Set-Content -NoNewline $keyFile
+          }
+          if ($pub) { "UPD_PUB=$pub" >> $env:GITHUB_ENV; "DESKTOP_UPDATE_KEY_FILE=$keyFile" >> $env:GITHUB_ENV; "DESKTOP_UPDATE_PUBKEY=$pub" >> $env:GITHUB_ENV }
+          $trusted = $signed -and -not $self
+          $kind = if ($tag -and $trusted) { "release" } else { "test" }
+          if ("${{ vars.DESKTOP_RELEASE_MODE }}" -eq "trusted" -and $tag) {
+            if (-not $trusted) { throw "режим доверенного выпуска: нужен сертификат подписи от удостоверяющего центра (сейчас: $(if ($self) { 'самоподписанный' } else { 'нет сертификата' }))" }
+            if (-not $pub) { throw "режим доверенного выпуска: не настроен ключ обновлений" }
+          }
+          "VERSION=$v" >> $env:GITHUB_ENV; "KIND=$kind" >> $env:GITHUB_ENV; "SIGNED=$signed" >> $env:GITHUB_ENV; "SELFSIGNED=$self" >> $env:GITHUB_ENV
+          "EPHEMERAL=$ephemeral" >> $env:GITHUB_ENV; "kind=$kind" >> $env:GITHUB_OUTPUT
+          Write-Host "Версия $v, сборка: $kind, подпись: $signed, ключ обновлений: $([bool]$pub)"
       - name: Сборка программы и установщика EXE
         env:
           PEREGOVORKA_BUILD_KIND: ${{ env.KIND }}
-          PEREGOVORKA_UPDATE_PUBKEY: ${{ vars.DESKTOP_UPDATE_PUBKEY }}
-          CSC_LINK: ${{ secrets.WINDOWS_CERT_PFX }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          if ($env:SIGN -ne "true") { $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"; Remove-Item Env:CSC_LINK -ErrorAction SilentlyContinue }
+          $env:PEREGOVORKA_UPDATE_PUBKEY = $env:UPD_PUB
+          if ($env:SIGNED -eq "True") { $env:CSC_LINK = $env:PFX_FILE; $env:CSC_KEY_PASSWORD = $env:PFX_PASS } else { $env:CSC_IDENTITY_AUTO_DISCOVERY = "false" }
           node build.mjs
           npx electron-builder --win nsis --x64 --publish never
           if ($LASTEXITCODE) { throw "electron-builder: $LASTEXITCODE" }
@@ -78,26 +132,47 @@ jobs:
           if ($LASTEXITCODE) { throw "wix (следующая версия): $LASTEXITCODE" }
           "NEXT=$next" >> $env:GITHUB_ENV
       - name: Подпись MSI
-        if: env.SIGN == 'true'
+        if: env.SIGNED == 'True'
         env:
-          PFX: ${{ secrets.WINDOWS_CERT_PFX }}
-          PFXPASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
           TS: ${{ vars.WINDOWS_TIMESTAMP_URL }}
         run: |
-          $pfx = Join-Path $env:RUNNER_TEMP cert.pfx
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX))
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           $ts = if ($env:TS) { @("/tr", $env:TS, "/td", "sha256") } else { @() }
-          & $signtool.FullName sign /fd sha256 /f $pfx /p $env:PFXPASS @ts "release/Peregovorka-$env:VERSION-x64.msi"
-          Remove-Item $pfx
+          & $signtool.FullName sign /fd sha256 /f $env:PFX_FILE /p $env:PFX_PASS @ts "release/Peregovorka-$env:VERSION-x64.msi"
           if ($LASTEXITCODE) { throw "signtool: $LASTEXITCODE" }
       - name: Подписи (если сборка подписана — все должны быть действительны)
         run: |
-          foreach ($f in @("release/win-unpacked/Peregovorka.exe", "release/Peregovorka-Setup-$env:VERSION.exe", "release/Peregovorka-$env:VERSION-x64.msi")) {
-            $s = Get-AuthenticodeSignature $f
-            Write-Host "$f : $($s.Status) $($s.SignerCertificate.Subject)"
-            if ($env:SIGN -eq "true" -and $s.Status -ne "Valid") { throw "подпись недействительна: $f" }
+          $files = @("release/win-unpacked/Peregovorka.exe", "release/Peregovorka-Setup-$env:VERSION.exe", "release/Peregovorka-$env:VERSION-x64.msi")
+          if ($env:SELFSIGNED -eq "True") {
+            # чистая машина: самоподписанному сертификату Windows НЕ доверяет — подпись цела, но издатель не доверен
+            $s = Get-AuthenticodeSignature $files[0]
+            Write-Host "до доверия: $($s.Status) — $($s.StatusMessage)"
+            if ($s.Status -eq "Valid" -or $s.Status -eq "HashMismatch" -or $s.Status -eq "NotSigned") { throw "самоподписанная подпись до установки доверия: $($s.Status)" }
+            # так поступает администратор испытательного стенда (у сотрудников — групповой политикой, docs/DESKTOP_SIGNING.md): открытая часть — в доверенные
+            Import-Certificate -FilePath "$env:RUNNER_TEMP/publisher.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+            Import-Certificate -FilePath "$env:RUNNER_TEMP/publisher.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
           }
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f
+            Write-Host "$f : $($s.Status) $($s.SignerCertificate.Subject) $($s.TimeStamperCertificate.Subject)"
+            if ($env:SIGNED -eq "True" -and $s.Status -ne "Valid") { throw "подпись недействительна: $f — $($s.StatusMessage)" }
+          }
+          if ($env:SIGNED -eq "True") {
+            $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+            foreach ($f in $files) { & $signtool verify /pa /v $f | Select-String "Issued to|SHA1 hash|Successfully verified"; if ($LASTEXITCODE) { throw "signtool verify: $f" } }
+            if ($env:EPHEMERAL -ne "True") { Copy-Item "$env:RUNNER_TEMP/publisher.cer" release/Peregovorka-publisher.cer }
+          }
+      - name: В пакетах нет закрытых ключей и паролей
+        run: |
+          $bad = Get-ChildItem -Recurse release -File | Where-Object { $_.Extension -in ".pfx", ".p12", ".key", ".pem", ".snk" }
+          if ($bad) { throw "в выпуске файлы ключей: $($bad.Name -join ', ')" }
+          $hits = Get-ChildItem -Recurse release/win-unpacked -File | Where-Object Length -lt 50MB | Select-String -Pattern "BEGIN (RSA |EC |ENCRYPTED )?PRIVATE KEY" -List
+          if ($hits) { throw "закрытый ключ внутри программы: $($hits.Path -join ', ')" }
+          if ($env:PFX_PASS) {
+            $hits = Get-ChildItem -Recurse release/win-unpacked -File | Where-Object Length -lt 50MB | Select-String -SimpleMatch $env:PFX_PASS -List
+            if ($hits) { throw "пароль сертификата внутри программы" }
+          }
+          Write-Host "ключей и паролей в пакетах нет"
 
       # ---------------------------------------------------------------- испытания на Windows
       - name: "EXE: тихая установка для текущего пользователя, запуск, диагностика"
@@ -108,7 +183,7 @@ jobs:
           if (-not (Test-Path "HKCU:\Software\Classes\peregovorka")) { throw "схема peregovorka:// не зарегистрирована" }
           $d = Join-Path $env:RUNNER_TEMP "diag-exe.json"
           $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
           $j = Get-Content $d -Raw | ConvertFrom-Json
           Write-Host ($j.client | ConvertTo-Json -Compress)
           if (-not $j.client.packaged -or $j.client.install -ne "exe") { throw "не та установка: $($j.client.install)" }
@@ -116,18 +191,82 @@ jobs:
           if (-not $j.notifications_supported) { throw "уведомления Windows не поддерживаются" }
           if ($j.client.startup_ms -gt 15000) { throw "запуск дольше 15 с: $($j.client.startup_ms)" }
           if ((Get-Content $d -Raw) -match "pgd_|vm_session=") { throw "в отчёте секреты" }
-          "{""closeAction"":""quit""}" | Set-Content "$env:APPDATA\Peregovorka\settings.json"
-      - name: "EXE: обновление поверх установленного сохраняет настройки"
+          if (-not $j.app_files) { throw "файлы программы не найдены в пакете" }
+          if (-not $j.shell.ok -or $j.shell.heading -ne "Добро пожаловать в Peregovorka") { throw "первый запуск: окно не отрисовало мастер: $($j.shell | ConvertTo-Json -Compress)" }
+          Write-Host "окно: $($j.shell | ConvertTo-Json -Compress)"
+      - name: "EXE: первый запуск без сети — мастер открывается"
+        run: |
+          $exe = "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe"
+          New-NetFirewallRule -DisplayName "pg-offline" -Direction Outbound -Program $exe -Action Block | Out-Null
+          Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka" -ErrorAction SilentlyContinue
+          $d = Join-Path $env:RUNNER_TEMP "diag-offline.json"
+          $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
+          Remove-NetFirewallRule -DisplayName "pg-offline"
+          $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
+          if (-not $j.shell.ok -or $j.shell.heading -ne "Добро пожаловать в Peregovorka") { throw "без сети: $($j.shell | ConvertTo-Json -Compress)" }
+      - name: "EXE: установленное приложение — мастер, ошибки адреса и сертификата, настройки (снимки окна)"
+        timeout-minutes: 15
+        run: |
+          # временный сертификат «чужого» HTTPS-сервера (не доверен — приложение должно отказать с причиной)
+          $c = New-SelfSignedCertificate -DnsName localhost -Subject "CN=localhost, O=Peregovorka E2E Untrusted" -CertStoreLocation Cert:\CurrentUser\My
+          Export-PfxCertificate -Cert $c -FilePath "$env:RUNNER_TEMP/untrusted.pfx" -Password (ConvertTo-SecureString pg-e2e -AsPlainText -Force) | Out-Null
+          Remove-Item "Cert:\CurrentUser\My\$($c.Thumbprint)"
+          Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka" -ErrorAction SilentlyContinue
+          node scripts/win-e2e.mjs firstrun "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" "$env:RUNNER_TEMP/screens" "$env:RUNNER_TEMP/untrusted.pfx"
+          if ($LASTEXITCODE) { throw "испытание установленного приложения: $LASTEXITCODE" }
+          Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
+      - name: "EXE: обновление из приложения — проверить, скачать, установить поверх, запуститься снова"
+        timeout-minutes: 15
         env:
           PEREGOVORKA_BUILD_KIND: test
         run: |
-          # аргументы с точкой — в кавычках: PowerShell иначе разрезает «-c.x=…» на «-c» и «.x=…»
+          $env:PEREGOVORKA_UPDATE_PUBKEY = $env:UPD_PUB
+          if ($env:SIGNED -eq "True") { $env:CSC_LINK = $env:PFX_FILE; $env:CSC_KEY_PASSWORD = $env:PFX_PASS } else { $env:CSC_IDENTITY_AUTO_DISCOVERY = "false" }
+          # следующая версия той же программы (не публикуется) — подписана тем же сертификатом
           npx electron-builder --win nsis --x64 --publish never "-c.extraMetadata.version=$env:NEXT" "-c.directories.output=$env:RUNNER_TEMP/next"
           if ($LASTEXITCODE) { throw "сборка следующей версии: $LASTEXITCODE" }
-          Start-Process "$env:RUNNER_TEMP/next/Peregovorka-Setup-$env:NEXT.exe" -ArgumentList "/S" -Wait
+          $setup = "$env:RUNNER_TEMP/next/Peregovorka-Setup-$env:NEXT.exe"
+          $data = "$env:APPDATA\Peregovorka"
+          if (-not $env:UPD_PUB) {
+            Write-Host "::warning::ключ обновлений не настроен — проверено только обновление установщиком поверх (без приложения)"
+            "{""theme"":""dark""}" | Set-Content "$data\settings.json"
+            Start-Process $setup -ArgumentList "/S" -Wait
+          } else {
+            # канал обновлений на этой машине: HTTPS с сертификатом, которому Windows доверяет; адрес — политикой UpdateUrl (как корпоративное зеркало)
+            $c = New-SelfSignedCertificate -DnsName localhost -CertStoreLocation Cert:\LocalMachine\My
+            Export-PfxCertificate -Cert $c -FilePath "$env:RUNNER_TEMP/feed.pfx" -Password (ConvertTo-SecureString pg-e2e -AsPlainText -Force) | Out-Null
+            Export-Certificate -Cert $c -FilePath "$env:RUNNER_TEMP/feed.cer" | Out-Null
+            Import-Certificate -FilePath "$env:RUNNER_TEMP/feed.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+            $feed = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/feed"
+            Copy-Item $setup $feed
+            node scripts/update-manifest.mjs make $env:NEXT $setup "https://127.0.0.1:1/never-used.exe" | Set-Content -NoNewline -Encoding utf8NoBOM "$feed/update.json"
+            node scripts/update-manifest.mjs sign "$feed/update.json"
+            New-Item -Force "HKCU:\SOFTWARE\Policies\Peregovorka" | Out-Null
+            Set-ItemProperty "HKCU:\SOFTWARE\Policies\Peregovorka" UpdateUrl "https://localhost:8443/update.json"
+            $before = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
+            node scripts/win-e2e.mjs update "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" "$env:RUNNER_TEMP/screens" "$env:RUNNER_TEMP/feed.pfx" $feed.FullName $env:NEXT
+            if ($LASTEXITCODE) { throw "обновление из приложения: $LASTEXITCODE" }
+            for ($i = 0; $i -lt 90; $i++) { $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"; if ($u.DisplayVersion -eq $env:NEXT) { break }; Start-Sleep 2 }
+            for ($i = 0; $i -lt 30 -and -not (Get-Process Peregovorka -ErrorAction SilentlyContinue); $i++) { Start-Sleep 2 }
+            if (-not (Get-Process Peregovorka -ErrorAction SilentlyContinue)) { throw "после обновления приложение не запустилось снова" }
+            Write-Host "после обновления приложение запущено снова"
+            $after = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
+            $lost = $before | Where-Object { $after -notcontains $_ }
+            if ($lost) { throw "после обновления пропали файлы данных: $($lost -join ', ')" }
+            Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
+            Remove-Item "HKCU:\SOFTWARE\Policies\Peregovorka" -Recurse
+            Get-Content (Get-ChildItem "$data\logs" | Sort-Object LastWriteTime | Select-Object -Last 1).FullName | Select-String "update\." | Select-Object -Last 8
+          }
           $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"
-          if ($u.DisplayVersion -ne $env:NEXT) { throw "версия после обновления: $($u.DisplayVersion)" }
-          if (-not ((Get-Content "$env:APPDATA\Peregovorka\settings.json" -Raw) -match "quit")) { throw "настройки потеряны при обновлении" }
+          if (@($u).Count -ne 1 -or $u.DisplayVersion -ne $env:NEXT) { throw "версия после обновления: $($u.DisplayVersion) (записей: $(@($u).Count))" }
+          if (-not ((Get-Content "$data\settings.json" -Raw) -match "dark")) { throw "настройки потеряны при обновлении" }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: peregovorka-windows-screens
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: warn
       - name: "EXE: тихое удаление, нет остаточных процессов и автозапуска"
         run: |
           $un = Get-ChildItem "$env:LOCALAPPDATA\Programs\Peregovorka\Uninstall*.exe" | Select-Object -First 1
@@ -154,11 +293,15 @@ jobs:
           if (-not (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").Peregovorka) { throw "нет автозапуска для всех" }
           $d = Join-Path $env:RUNNER_TEMP "diag-msi.json"
           $p = Start-Process $exe -ArgumentList "--diagnostics=$d" -PassThru
-          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "приложение не завершилось" }
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "приложение не завершилось" }
           $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
           if ($j.client.install -ne "msi" -or $j.update.status -ne "managed") { throw "MSI-установка не распознана: $($j.client.install) / $($j.update.status)" }
           if ($j.organizations.Count -ne 2 -or -not $j.organizations[0].managed -or $j.policy.allowAddServers) { throw "преднастроенные организации: $($j.organizations | ConvertTo-Json -Compress)" }
           if (-not $j.settings.notifications.hideContent) { throw "политика скрытия текста не применена" }
+          if (-not $j.shell.ok) { throw "окно MSI-установки не отрисовалось: $($j.shell | ConvertTo-Json -Compress)" }
+          $p = Start-Process "release/Peregovorka-Setup-$env:VERSION.exe" -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 2 -or (Test-Path "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe")) { throw "EXE поставился поверх MSI (код $($p.ExitCode))" }
+          Write-Host "EXE поверх MSI отказался (код 2)"
       - name: "MSI: обновление без повторных свойств сохраняет политики"
         run: |
           $log = Join-Path $env:RUNNER_TEMP msi-upgrade.log
@@ -179,19 +322,79 @@ jobs:
 
       # ---------------------------------------------------------------- артефакты
       - name: Манифест обновления (если настроен ключ)
-        if: env.UPDKEY == 'true' && github.ref_type == 'tag'
-        env:
-          DESKTOP_UPDATE_KEY: ${{ secrets.DESKTOP_UPDATE_KEY }}
-          DESKTOP_UPDATE_PUBKEY: ${{ vars.DESKTOP_UPDATE_PUBKEY }}
+        if: env.UPD_PUB != '' && github.ref_type == 'tag'
         run: |
           $name = "Peregovorka-Setup-$env:VERSION.exe"
-          node scripts/update-manifest.mjs make $env:VERSION "release/$name" "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$name" | Set-Content -NoNewline -Encoding utf8NoBOM release/update.json
+          $notes = Join-Path $env:RUNNER_TEMP notes.md
+          if ((Get-Content CHANGELOG.md -Raw) -match "(?ms)^## $([regex]::Escape($env:VERSION))[^\n]*\n(.*?)(?=^## |\z)") { $Matches[1].Trim() | Set-Content -Encoding utf8NoBOM $notes } else { throw "нет записи $env:VERSION в desktop/CHANGELOG.md" }
+          node scripts/update-manifest.mjs make $env:VERSION "release/$name" "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$name" $notes "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" | Set-Content -NoNewline -Encoding utf8NoBOM release/update.json
           node scripts/update-manifest.mjs sign release/update.json
           node scripts/update-manifest.mjs verify release/update.json
       - name: Контрольные суммы SHA-256
         run: |
-          Get-ChildItem release -File | Where-Object Name -match '\.(exe|msi|json|sig)$' | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii release/SHA256SUMS.txt
+          Get-ChildItem release -File | Where-Object Name -match '\.(exe|msi|json|sig|cer)$' | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii release/SHA256SUMS.txt
           Get-Content release/SHA256SUMS.txt
+      - name: "Подписывающий агент: свой сертификат, проверки, корпоративные сборки двух организаций"
+        timeout-minutes: 15
+        run: |
+          $agent = (Resolve-Path signing/Peregovorka-Signer.ps1).Path
+          $env:PEREGOVORKA_SIGNER_DIR = Join-Path $env:RUNNER_TEMP signer
+          $work = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP corp)
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8         # агент — Windows PowerShell 5.1 (как на узлах организаций); вывод по-русски
+          # 1. собственный сертификат: неэкспортируемый ключ в LocalMachine\My, доверие — только на этом узле
+          $j = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent NewCert -Subject "Организация А" | ConvertFrom-Json
+          if (-not ($j.code_signing -and $j.has_private_key -and $j.can_sign -and $j.time_valid)) { throw "свой сертификат: $($j | ConvertTo-Json -Compress)" }
+          if ($j.key_exportable) { throw "закрытый ключ собственного сертификата экспортируемый" }
+          $tpA = $j.thumbprint
+          try { Export-PfxCertificate -Cert "Cert:\LocalMachine\My\$tpA" -FilePath "$work/x.pfx" -Password (ConvertTo-SecureString x -AsPlainText -Force) | Out-Null; throw "EXPORTED" } catch { if ($_.Exception.Message -eq "EXPORTED") { throw "ключ удалось выгрузить" } }
+          Write-Host "свой сертификат: $tpA, ключ не выгружается"
+          $tpB = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent NewCert -Subject "Организация Б" | ConvertFrom-Json).thumbprint
+          # 2. сертификат без назначения «Подпись кода» и истёкший
+          $noEku = New-SelfSignedCertificate -Type Custom -Subject "CN=Без назначения" -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.1") -CertStoreLocation Cert:\LocalMachine\My
+          $chk = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent CheckCert -Thumbprint $noEku.Thumbprint | ConvertFrom-Json
+          if ($chk.code_signing) { throw "сертификат без EKU Code Signing признан годным" }
+          $old = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Истёкший" -NotBefore (Get-Date).AddDays(-30) -NotAfter (Get-Date).AddDays(-1) -CertStoreLocation Cert:\LocalMachine\My
+          function Job($tp, $org, $srv, $out, $src = "release") {
+            @{ version = $env:VERSION; org_name = $org; server_url = $srv; types = @("exe", "msi"); update_policy = "notify"; autostart = "tray"; allow_add = $false; thumbprint = $tp; update_url = "" } |
+              ConvertTo-Json | Set-Content -Encoding utf8 "$work/job.json"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent Build -JobFile "$work/job.json" -OutDir $out -SourceDir (Resolve-Path $src).Path 2>&1 | Out-String
+          }
+          foreach ($bad in @(@($noEku.Thumbprint, "Подпись кода"), @($old.Thumbprint, "срок"))) {
+            $o = Job $bad[0] "X" "https://x.example.org" "$work/bad"
+            if ($LASTEXITCODE -eq 0 -or $o -notmatch $bad[1]) { throw "сборка с негодным сертификатом не отклонена: $o" }
+          }
+          Write-Host "негодные сертификаты отклонены"
+          # 3. изменённый исходный пакет — подпись не выполняется
+          $t = New-Item -ItemType Directory -Force "$work/tampered"
+          Copy-Item release/* $t
+          $f = "$t/Peregovorka-$env:VERSION-x64.msi"; $b = [IO.File]::ReadAllBytes($f); $b[$b.Length - 10] = $b[$b.Length - 10] -bxor 1; [IO.File]::WriteAllBytes($f, $b)
+          $o = Job $tpA "X" "https://x.example.org" "$work/bad2" $t
+          if ($LASTEXITCODE -eq 0 -or $o -notmatch "SHA-256") { throw "изменённый пакет подписан: $o" }
+          Write-Host "неподтверждённый пакет отклонён"
+          # 4. две организации, разные сертификаты
+          foreach ($o in @(@($tpA, "Организация А", "https://a.example.org", "a"), @($tpB, "Организация Б", "https://b.example.org", "b"))) {
+            $out = Job $o[0] $o[1] $o[2] "$work/$($o[3])"
+            if ($LASTEXITCODE) { throw "корпоративная сборка $($o[1]): $out" }
+            foreach ($f in Get-ChildItem "$work/$($o[3])" -File | Where-Object Extension -in ".exe", ".msi") {
+              $s = Get-AuthenticodeSignature $f.FullName
+              if ($s.Status -ne "Valid" -or $s.SignerCertificate.Thumbprint -ne $o[0]) { throw "$($f.Name): $($s.Status) $($s.SignerCertificate.Thumbprint)" }
+            }
+            Get-Content "$work/$($o[3])/SHA256SUMS.txt"
+          }
+          # 5. корпоративный MSI организации А: настройки вписаны в пакет, установка без параметров даёт преднастроенную организацию
+          $msi = (Get-ChildItem "$work/a/*.msi").FullName
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$work/corp.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$work/corp.log" -Tail 40; throw "корпоративный MSI: $($p.ExitCode)" }
+          $pol = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Peregovorka"
+          if ($pol.Servers -ne "Организация А|https://a.example.org" -or $pol.AllowAddServers -ne 0) { throw "настройки организации не применены: $($pol.Servers)" }
+          $d = "$work/diag.json"
+          $pr = Start-Process "$env:ProgramFiles\Peregovorka\Peregovorka.exe" -ArgumentList "--diagnostics=$d" -PassThru
+          if (-not $pr.WaitForExit(120000)) { $pr.Kill(); throw "приложение не завершилось" }
+          $dj = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($dj.organizations.Count -ne 1 -or $dj.organizations[0].host -ne "a.example.org" -or -not $dj.shell.ok) { throw "корпоративная установка: $($dj.organizations | ConvertTo-Json -Compress)" }
+          Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait
+          Write-Host "корпоративный MSI: организация А преднастроена, окно отрисовано"
+          foreach ($tp in $tpA, $tpB, $noEku.Thumbprint, $old.Thumbprint) { Remove-Item "Cert:\LocalMachine\My\$tp" -DeleteKey -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v7
         with:
           name: peregovorka-windows
@@ -200,6 +403,7 @@ jobs:
             desktop/release/*.msi
             desktop/release/update.json
             desktop/release/update.json.sig
+            desktop/release/Peregovorka-publisher.cer
             desktop/release/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -214,12 +418,15 @@ jobs:
       - name: Выпуск GitHub (не «последний» — последним остаётся выпуск сервера)
         env:
           GH_TOKEN: ${{ github.token }}
-          SIGNED: ${{ secrets.WINDOWS_CERT_PFX != '' }}
         run: |
           v="${GITHUB_REF_NAME#desktop-v}"
           awk -v v="$v" '$0 ~ "^## "v"( |$)" {f=1; next} /^## / && f {exit} f' desktop/CHANGELOG.md > notes.md
-          if [ "$SIGNED" != "true" ]; then
-            printf '\n> **Тестовая сборка.** Установщики не подписаны сертификатом издателя: это не доверенный корпоративный выпуск.\n' >> notes.md
+          if [ "${{ needs.windows.outputs.kind }}" != "release" ]; then
+            if [ -f out/Peregovorka-publisher.cer ]; then
+              printf '\n> **Тестовая сборка.** Установщики подписаны тестовым самоподписанным сертификатом Peregovorka (Peregovorka-publisher.cer): Windows ему не доверяет, пока администратор сам не распространит сертификат. Это не доверенный корпоративный выпуск.\n' >> notes.md
+            else
+              printf '\n> **Тестовая сборка.** Установщики не подписаны сертификатом издателя: это не доверенный корпоративный выпуск.\n' >> notes.md
+            fi
             pre="--prerelease"
           fi
           test -s notes.md

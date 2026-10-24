@@ -113,6 +113,20 @@ svg.i.flip { transform: rotate(180deg); }
 .alert dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0 0; font-size: 12.5px; }
 .alert dt { opacity: .8; } .alert dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.actions.split { justify-content: space-between; } .actions.split > .row { flex-wrap: wrap; justify-content: flex-end; }
+.actions.center { justify-content: center; }
+.alert.ok { background: var(--ok-bg); color: var(--ok-text); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.btn.lg { height: 44px; padding: 0 20px; font-size: 15px; }
+
+/* мастер подключения */
+.step-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.welcome { justify-items: center; text-align: center; gap: 20px; }
+.welcome .lead { color: var(--muted); max-width: 440px; font-size: 15px; }
+.brandmark.xl { width: 72px; height: 72px; border-radius: 18px; }
+ol.how { list-style: none; counter-reset: how; margin: 4px 0 0; padding: 0; display: grid; gap: 12px; width: 100%; max-width: 420px; text-align: left; }
+ol.how li { counter-increment: how; display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; align-items: start; }
+ol.how li::before { content: counter(how); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 650; font-size: 13px; }
+ol.how b { font-weight: 600; } ol.how span { color: var(--muted); font-size: 13px; }
 
 /* состояние организации: подключение, нет связи */
 .status { height: 100%; display: grid; place-items: center; padding: 32px; }
@@ -120,6 +134,7 @@ svg.i.flip { transform: rotate(180deg); }
 .status .box .alert { text-align: left; width: 100%; }
 .status .box .actions { justify-content: center; }
 .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.spinner.sm { width: 16px; height: 16px; border-width: 2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* настройки: вкладки слева */
@@ -145,6 +160,8 @@ svg.i.flip { transform: rotate(180deg); }
 .kv { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
+progress.bar { width: 100%; height: 6px; appearance: none; border: 0; border-radius: 3px; background: var(--soft); overflow: hidden; }
+progress.bar::-webkit-progress-bar { background: var(--soft); } progress.bar::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
 pre.log { margin: 0; max-height: 260px; overflow: auto; padding: 12px; background: var(--soft); border-radius: var(--radius-sm); font: 12px/1.5 var(--mono); white-space: pre-wrap; user-select: text; }
 .toast { position: fixed; left: calc(var(--side) + 16px); bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: var(--radius); background: var(--text); color: var(--bg);
   box-shadow: var(--shadow-pop); font-size: 13.5px; z-index: 10; }

@@ -38,7 +38,7 @@ LAYOUT = r"""(() => {
   }
   return out;
 })()"""
-SHELL_SEL = '[[".btn:not(.sm):not(.icon)", "btn"], [".btn.sm:not(.icon)", "btn-sm"], [".input", "input"], [".seg", "seg"], [".tabs button", "tab"], [".side .org", "tile"]]'
+SHELL_SEL = '[[".btn:not(.sm):not(.icon):not(.lg)", "btn"], [".btn.sm:not(.icon)", "btn-sm"], [".input", "input"], [".seg", "seg"], [".tabs button", "tab"], [".side .org", "tile"]]'
 
 
 async def layout(page, selectors="[]"):
@@ -61,6 +61,34 @@ def judge(name, r, expect_heights=None):
     check(name, not bad, "; ".join(bad)[:400])
 
 
+async def first_run(app, shell, tag, themes):
+    """Локальные экраны без единой организации (так приложение выглядит сразу после установки, в том числе без сети)."""
+    await shell.wait("document.querySelector('h1')?.textContent === 'Добро пожаловать в Peregovorka'", 15)
+    for theme in themes:
+        await shell.js(f"window.pg.call('shell:settings', {{ theme: '{theme}' }})")
+        for (w, h) in ((1366, 768), (800, 520)):
+            await app.m(f"pg.main.win.setBounds({{ x: 0, y: 0, width: {w}, height: {h} }}); return true;")
+            await asyncio.sleep(0.6)
+            key = f"{tag}-{theme}-{w}x{h}"
+            await app.shot_window(f"v-{key}-welcome")
+            judge(f"{key}: приветствие", await layout(shell, SHELL_SEL), {"btn": 36})
+            await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Добавить организацию')).click()")
+            await shell.wait("!!document.querySelector('#srv')", 5)
+            await shell.js("document.querySelector('#nm').value = 'Управление информационных технологий и связи головного офиса'")
+            await probe_in_shell(shell, "https://peregovorka-server-with-a-very-long-name.branch-office.example.org")
+            await app.shot_window(f"v-{key}-server-error")
+            judge(f"{key}: шаг сервера с ошибкой", await layout(shell, SHELL_SEL), {"btn": 36, "input": 36})
+            await shell.js("document.querySelector('.side .tool[aria-label=\"Настройки\"]').click()")
+            for t in ("general", "updates", "diag"):
+                await shell.js(f"document.querySelector('#tab-{t}').click()")
+                await asyncio.sleep(0.8 if t == "diag" else 0.3)
+                await app.shot_window(f"v-{key}-empty-settings-{t}")
+                judge(f"{key}: настройки без организаций «{t}»", await layout(shell, SHELL_SEL), {"btn": 36, "seg": 36, "tab": 36})
+            await shell.js("document.querySelector('.side .tool[aria-label=\"Подключить организацию\"]').click()")
+            await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Назад')?.click()")
+            await shell.wait("document.querySelector('h1')?.textContent === 'Добро пожаловать в Peregovorka'", 5)
+
+
 async def run_scale(scale, dark_too):
     reset_sessions()
     app = App(scale=scale, port=9370, inspect=9371)
@@ -68,6 +96,10 @@ async def run_scale(scale, dark_too):
     try:
         await app.start()
         shell = await app.page("app://shell/index.html")
+        themes = ["light", "dark"] if dark_too else ["light"]
+        await first_run(app, shell, tag, themes)
+        await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Добавить организацию')).click()")
+        await shell.wait("!!document.querySelector('#srv')", 5)
         await probe_in_shell(shell, A_URL)
         pa = await app.page(A_URL)
         await login(pa, "alice", "alice-pass")
@@ -80,7 +112,7 @@ async def run_scale(scale, dark_too):
         await pb.js("document.querySelector('.cookie-note .btn.primary')?.click()")
         await app.m("pg.orgs.activate(pg.orgs.list[0].rec.id); return true;")
         await pa.js("document.querySelector('.cookie-note .btn.primary')?.click()")
-        themes = ["light", "dark"] if dark_too else ["light"]
+        await shell.js("window.pg.call('shell:settings', { theme: 'system' })")
         for theme in themes:
             for p in (pa, pb):
                 await p.js(f"document.documentElement.setAttribute('data-theme', '{theme}')")
@@ -97,7 +129,7 @@ async def run_scale(scale, dark_too):
                 judge(f"{key}: боковая панель", await layout(shell, SHELL_SEL), {"tile": 40})
                 if (w, h) in ((1366, 768), (800, 520)):
                     await shell.js("document.querySelector('.side .tool[aria-label=\"Настройки\"]').click()")
-                    for t in ("general", "orgs", "diag"):
+                    for t in ("general", "orgs", "updates", "diag"):
                         await shell.js(f"document.querySelector('#tab-{t}').click()")
                         await asyncio.sleep(0.8 if t == "diag" else 0.3)
                         await app.shot_window(f"v-{key}-settings-{t}")

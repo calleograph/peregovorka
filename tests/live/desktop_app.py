@@ -80,8 +80,16 @@ async def main():
         await app.start()
         await app.m(STUB)
         shell = await app.page("app://shell/index.html")
-        check("первый запуск: мастер подключения", await shell.wait("!!document.querySelector('#srv')", 15))
+        check("первый запуск: приветствие мастера, не «not found» и не пустое окно",
+              await shell.wait("document.querySelector('h1')?.textContent === 'Добро пожаловать в Peregovorka' && !document.body.innerText.includes('not found')", 15))
         await app.shot_window("01-first-run")
+        await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Добавить организацию')).click()")
+        check("«Добавить организацию» → шаг адреса сервера", await shell.wait("!!document.querySelector('#srv') && !!document.querySelector('#nm')", 10))
+        await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Назад').click()")
+        check("«Назад» возвращает к приветствию", await shell.wait("document.querySelector('h1')?.textContent === 'Добро пожаловать в Peregovorka'", 5))
+        await shell.js("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Добавить организацию')).click()")
+        await shell.wait("!!document.querySelector('#srv')", 5)
+        await app.shot_window("01b-server-step")
 
         t = await probe_in_shell(shell, "http://meet.example.org")
         check("HTTP отклоняется понятным сообщением", "защищённый адрес https" in t, t[:120])
@@ -95,6 +103,9 @@ async def main():
 
         # ---------- организация А
         await shell.js(f"document.querySelector('#nm').value = 'Стенд А'")
+        await shell.js(f"(() => {{ document.querySelector('#srv').value = {json.dumps(A_URL)}; [...document.querySelectorAll('button')].find(b => b.textContent.includes('Проверить подключение')).click(); }})()")
+        check("«Проверить подключение»: сервер доступен, организация ещё не добавлена",
+              await shell.wait("document.querySelector('main').innerText.includes('Сервер доступен')", 20) and await app.m("return pg.orgs.list.length") == 0)
         await probe_in_shell(shell, A_URL)
         orgs = await app.m("return pg.orgs.list.map(o => ({ id: o.rec.id, name: o.rec.name, origin: o.rec.origin }))")
         check("организация А подключена", len(orgs) == 1 and orgs[0]["name"] == "Стенд А", str(orgs))

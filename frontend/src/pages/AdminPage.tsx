@@ -28,6 +28,7 @@ import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import ConfigBackupAdmin from "./admin/ConfigBackupAdmin";
 import CryptoAdmin from "./admin/CryptoAdmin";
+import SigningAdmin from "./admin/SigningAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import PerformanceAdmin from "./admin/PerformanceAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
@@ -82,6 +83,9 @@ const GROUPS: Group[] = [
     { id: "bitrix24", label: "Bitrix24 (профили)", render: () => <Bitrix24Admin /> },
     { id: "public_api", label: "Публичный API", render: () => <PublicApiAdmin /> },
   ] },
+  { title: "Windows-клиент", pages: [
+    { id: "desktop_signing", label: "Подпись и корпоративные сборки", render: () => <SigningAdmin /> },
+  ] },
   { title: "Безопасность", pages: [
     { id: "auth_security", label: "Вход и сеансы", render: () => (
       <SettingsForm key="auth_security" group="auth_security" title="Вход: сеансы, приложение Windows, двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
@@ -131,7 +135,7 @@ const GROUPS: Group[] = [
 /** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
 const KEYWORDS: Record<string, string> = {
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
-  crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
+  crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", desktop_signing: "windows приложение клиент подпись сертификат code signing authenticode msi exe установщик gpo ad cs обновления", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
   public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок атс инструкция порты rtp журнал вызовов", sip_policy: "телефония политика лимит звонков запрещённые направления перебор", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };

@@ -31,6 +31,7 @@ const define = {
   __APP_VERSION__: JSON.stringify(pkg.version),
   __UPDATE_PUBKEY__: JSON.stringify(process.env.PEREGOVORKA_UPDATE_PUBKEY || ""),
   __UPDATE_FEED__: JSON.stringify(process.env.PEREGOVORKA_UPDATE_FEED || pkg.peregovorka?.updateFeed || ""),
+  __DOWNLOAD_PAGE__: JSON.stringify(pkg.peregovorka?.downloadPage || ""),
   __BUILD_KIND__: JSON.stringify(process.env.PEREGOVORKA_BUILD_KIND || "test"),      // release — только подписанная сборка CI; иначе «тестовая сборка»
 };
 const common = { bundle: true, platform: "node", target: "node22", sourcemap: false, legalComments: "none", define, logLevel: "warning" };

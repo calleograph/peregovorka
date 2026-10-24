@@ -3,8 +3,8 @@
 //
 //   node scripts/update-manifest.mjs keygen
 //       новая пара ключей: закрытый — в секрет CI DESKTOP_UPDATE_KEY (PEM), открытый — в переменную CI DESKTOP_UPDATE_PUBKEY (base64). Закрытый ключ в репозиторий не кладётся.
-//   node scripts/update-manifest.mjs make <версия> <установщик.exe> <адрес загрузки> [заметки.md] > update.json
-//   node scripts/update-manifest.mjs sign update.json        → update.json.sig (ключ — из DESKTOP_UPDATE_KEY)
+//   node scripts/update-manifest.mjs make <версия> <установщик.exe> <адрес загрузки> [заметки.md] [страница выпуска] > update.json
+//   node scripts/update-manifest.mjs sign update.json        → update.json.sig (ключ — DESKTOP_UPDATE_KEY или файл DESKTOP_UPDATE_KEY_FILE)
 //   node scripts/update-manifest.mjs verify update.json      → проверка подписи (ключ — из DESKTOP_UPDATE_PUBKEY)
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { readFileSync, writeFileSync, statSync } from "node:fs";
@@ -19,15 +19,15 @@ if (cmd === "keygen") {
   console.log("DESKTOP_UPDATE_PUBKEY=" + publicKey.export({ format: "der", type: "spki" }).subarray(12).toString("base64"));
   console.log("DESKTOP_UPDATE_KEY (закрытый, только в секреты CI):\n" + privateKey.export({ format: "pem", type: "pkcs8" }));
 } else if (cmd === "make") {
-  const [version, file, url, notes] = args;
-  if (!/^\d+\.\d+\.\d+$/.test(version || "") || !file || !/^https:\/\//.test(url || "")) die("make <версия X.Y.Z> <установщик.exe> <https-адрес загрузки> [заметки]");
+  const [version, file, url, notes, page] = args;
+  if (!/^\d+\.\d+\.\d+$/.test(version || "") || !file || !/^https:\/\//.test(url || "") || (page && !/^https:\/\/\S+$/.test(page))) die("make <версия X.Y.Z> <установщик.exe> <https-адрес загрузки> [заметки] [https-страница выпуска]");
   const buf = readFileSync(file);
-  const m = { product: "peregovorka-desktop", version, released: new Date().toISOString(), notes: notes ? readFileSync(notes, "utf8").slice(0, 4000) : "",
+  const m = { product: "peregovorka-desktop", version, released: new Date().toISOString(), notes: notes ? readFileSync(notes, "utf8").slice(0, 4000) : "", ...(page ? { page } : {}),
     files: [{ kind: "nsis", name: basename(file), url, sha256: createHash("sha256").update(buf).digest("hex"), size: statSync(file).size }] };
   process.stdout.write(JSON.stringify(m, null, 1) + "\n");
 } else if (cmd === "sign") {
-  const key = process.env.DESKTOP_UPDATE_KEY;
-  if (!key) die("нет DESKTOP_UPDATE_KEY");
+  const key = process.env.DESKTOP_UPDATE_KEY || (process.env.DESKTOP_UPDATE_KEY_FILE ? readFileSync(process.env.DESKTOP_UPDATE_KEY_FILE, "utf8") : "");
+  if (!key) die("нет DESKTOP_UPDATE_KEY (или DESKTOP_UPDATE_KEY_FILE — файл PEM с правами только для владельца)");
   const body = readFileSync(args[0]);
   writeFileSync(args[0] + ".sig", sign(null, body, createPrivateKey(key)).toString("base64") + "\n");
 } else if (cmd === "verify") {
