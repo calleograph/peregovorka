@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Корпоративный установщик Peregovorka для Windows (WiX v5+). Создано gen_wxs.py — правьте генератор, а не этот файл.
-     Сборка: wix build Peregovorka.wxs -arch x64 -bindpath unpacked=<release/win-unpacked> -d Version=X.Y.Z -o Peregovorka-X.Y.Z-x64.msi
+     Сборка: wix build Peregovorka.wxs -arch x64 -bindpath unpacked=<release/win-unpacked> -bindpath icons=<frontend/public> -d Version=X.Y.Z -o Peregovorka-X.Y.Z-x64.msi
      Свойства администратора (все необязательны; учётные данные пользователей в MSI не передаются): docs/DESKTOP_ADMIN.md. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Peregovorka" Manufacturer="Peregovorka" Version="$(Version)" UpgradeCode="7b4f2a1e-5c3d-4e8f-9a6b-2d1c0e9f8a73" Scope="perMachine" Compressed="yes" Language="1033">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Peregovorka is already installed." Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
-    <Icon Id="AppIcon.exe" SourceFile="!(bindpath.unpacked)\Peregovorka.exe" />
-    <Property Id="ARPPRODUCTICON" Value="AppIcon.exe" />
+    <!-- значок в «Установке и удалении программ» — .ico (не exe: MSI хранит исходник значка целиком и без сжатия) -->
+    <Icon Id="AppIcon.ico" SourceFile="!(bindpath.icons)\favicon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
     <!-- свойство не передано при обновлении — берётся значение, записанное при первой установке -->

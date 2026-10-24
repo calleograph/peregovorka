@@ -64,15 +64,17 @@ jobs:
       - name: Сборка MSI (WiX)
         run: |
           dotnet tool install --global wix --version 5.0.2
-          $app = (Resolve-Path release/win-unpacked).Path                     # абсолютный путь: относительный WiX разрешает не от рабочего каталога
-          wix build installer/msi/Peregovorka.wxs -wx -arch x64 -bindpath unpacked=$app -d Version=$env:VERSION -o release/Peregovorka-$env:VERSION-x64.msi
+          $app = (Resolve-Path release/win-unpacked).Path                     # абсолютные пути: относительные WiX разрешает не от рабочего каталога
+          $icons = (Resolve-Path ../frontend/public).Path
+          wix build installer/msi/Peregovorka.wxs -wx -arch x64 -bindpath unpacked=$app -bindpath icons=$icons -d Version=$env:VERSION -o release/Peregovorka-$env:VERSION-x64.msi
           if ($LASTEXITCODE) { throw "wix: $LASTEXITCODE" }
           $mb = [math]::Round((Get-Item "release/Peregovorka-$env:VERSION-x64.msi").Length / 1MB)
           Write-Host "MSI: $mb МБ"
           if ($mb -lt 50) { throw "MSI подозрительно мал ($mb МБ): программа не попала в пакет" }
+          if ($mb -gt 200) { throw "MSI подозрительно велик ($mb МБ): что-то лежит несжатым" }
           # второй пакет со следующей версией — только для проверки обновления поверх установленного (не публикуется)
           $next = ($env:VERSION -split '\.')[0..1] -join '.'; $next = "$next.$([int]($env:VERSION -split '\.')[2] + 1)"
-          wix build installer/msi/Peregovorka.wxs -wx -arch x64 -bindpath unpacked=$app -d Version=$next -o $env:RUNNER_TEMP/upgrade.msi
+          wix build installer/msi/Peregovorka.wxs -wx -arch x64 -bindpath unpacked=$app -bindpath icons=$icons -d Version=$next -o $env:RUNNER_TEMP/upgrade.msi
           if ($LASTEXITCODE) { throw "wix (следующая версия): $LASTEXITCODE" }
           "NEXT=$next" >> $env:GITHUB_ENV
       - name: Подпись MSI
