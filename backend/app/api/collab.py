@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db
 from ..auth.guests import Actor, require_actor
-from ..models import MEETING_LITE, ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, MeetingWhiteboard, User, utcnow
+from ..models import MEETING_LITE, ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingChatReaction, MeetingParticipant, MeetingWhiteboard, User, utcnow
+from ..services.chats import REACTIONS
+from sqlalchemy.exc import IntegrityError
 from ..services import events, roles, whiteboard as wb
 from ..services.audit import audit_now, write_audit
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
@@ -215,10 +217,24 @@ async def participant_card(meeting_id: uuid.UUID, identity: str, request: Reques
 
 
 # ------------------------------------------------------------------------------------------------ чат
-def chat_out(m: MeetingChatMessage, atts: list[ChatAttachment] | None = None) -> dict:
+def chat_out(m: MeetingChatMessage, atts: list[ChatAttachment] | None = None, reactions: list[dict] | None = None) -> dict:
     return {"id": m.id, "meeting_id": str(m.meeting_id), "created_at": m.created_at.isoformat(), "author_type": m.author_type,
             "author_id": str(m.user_id or m.guest_id) if (m.user_id or m.guest_id) else None, "author_name": m.author_name, "text": m.text,
-            "attachments": [attachment_out(a) for a in (atts or [])]}
+            "attachments": [attachment_out(a) for a in (atts or [])], "reactions": reactions or []}
+
+
+async def reactions_by_message(db: AsyncSession, message_ids: list[int]) -> dict[int, list[dict]]:
+    """Реакции чата встречи по сообщениям: значок, число, кто поставил (до 50 участников — для подсказки). Идентификаторы — сотрудника или гостя."""
+    out: dict[int, dict[str, dict]] = {}
+    if message_ids:
+        rows = (await db.execute(select(MeetingChatReaction).where(MeetingChatReaction.message_id.in_(message_ids)).order_by(MeetingChatReaction.id))).scalars().all()
+        for r in rows:
+            e = out.setdefault(r.message_id, {}).setdefault(r.emoji, {"emoji": r.emoji, "count": 0, "user_ids": [], "names": []})
+            e["count"] += 1
+            if len(e["user_ids"]) < 50:
+                e["user_ids"].append(str(r.actor_id))
+                e["names"].append(r.actor_name)
+    return {mid: list(v.values()) for mid, v in out.items()}
 
 
 async def attachments_by_message(db: AsyncSession, message_ids: list[int]) -> dict[int, list[ChatAttachment]]:
@@ -259,7 +275,9 @@ async def chat_list(meeting_id: uuid.UUID, request: Request, after_id: int = Que
         has_more = len(rows) > limit
         rows = list(reversed(rows[:limit]))
     atts = await attachments_by_message(db, [m.id for m in rows])
-    return JSONResponse({"messages": [chat_out(m, atts.get(m.id)) for m in rows], "has_more": has_more})   # уже готово к JSON: без обхода jsonable_encoder
+    reacts = await reactions_by_message(db, [m.id for m in rows])
+    return JSONResponse({"messages": [chat_out(m, atts.get(m.id), reacts.get(m.id)) for m in rows], "has_more": has_more, "me": str(actor.id),
+                         "reactions": list(REACTIONS)})   # уже готово к JSON: без обхода jsonable_encoder
 
 
 @router.post("/{meeting_id}/chat", status_code=201)
@@ -300,6 +318,39 @@ async def chat_post(meeting_id: uuid.UUID, request: Request, body: dict[str, Any
     out = chat_out(msg, atts)
     await events.publish(request.app.state.redis, meeting_id, {"type": "chat_message", "message": out})
     return out
+
+
+REACT_RATE = (60, 60)
+
+
+@router.post("/{meeting_id}/chat/{message_id}/reaction")
+async def chat_react(meeting_id: uuid.UUID, message_id: int, request: Request, body: dict[str, Any] = Body(...), actor: Actor = Depends(require_actor),
+                     db: AsyncSession = Depends(get_db)):
+    """Реакция на сообщение чата встречи (сотрудник или гость): одна на участника — тот же значок или null снимает, другой заменяет. Видна всем сразу."""
+    await _meeting_for_actor(request, db, meeting_id, actor, write=True)
+    emoji = body.get("emoji") or None
+    if emoji is not None and emoji not in REACTIONS:
+        raise HTTPException(status_code=422, detail="Такой реакции нет")
+    msg = await db.get(MeetingChatMessage, message_id)
+    if msg is None or msg.meeting_id != meeting_id or msg.author_type == "system":
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+    await _rate(request, "chatreact", actor, meeting_id, REACT_RATE)
+    kind = "guest" if actor.is_guest else "user"
+    cur = (await db.execute(select(MeetingChatReaction).where(MeetingChatReaction.message_id == message_id, MeetingChatReaction.actor_type == kind,
+                                                              MeetingChatReaction.actor_id == actor.id))).scalar_one_or_none()
+    if cur is not None and (emoji is None or cur.emoji == emoji):
+        await db.delete(cur)
+    elif cur is not None:
+        cur.emoji = emoji
+    elif emoji is not None:
+        db.add(MeetingChatReaction(message_id=message_id, actor_type=kind, actor_id=actor.id, actor_name=actor.label, emoji=emoji))
+    try:
+        await db.commit()
+    except IntegrityError:                    # два устройства одновременно — остаётся записанная раньше
+        await db.rollback()
+    reactions = (await reactions_by_message(db, [message_id])).get(message_id, [])
+    await events.publish(request.app.state.redis, meeting_id, {"type": "chat_reaction", "message_id": message_id, "reactions": reactions})
+    return {"message_id": message_id, "reactions": reactions}
 
 
 @router.get("/{meeting_id}/chat.txt", response_class=PlainTextResponse)

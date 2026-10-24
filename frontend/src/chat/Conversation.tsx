@@ -7,6 +7,7 @@ import { chatApi, newClientId, type ChatFileInfo, type ChatInfo, type ChatItem, 
 import { ForwardDialog, ReceiptsDialog } from "./ChatDialogs";
 import { fileSize, format, insertDictated, mentionQuery, mentionsMe, rows, timeHM, type Mentions, type Span } from "./chatModel";
 import EmojiPicker from "./EmojiPicker";
+import { ReactBar, ReactionChips } from "./Reactions";
 import { insertAt } from "./emoji";
 import { chats, useChats } from "./chatStore";
 import { Dictation, type DictationPhase } from "./dictation";
@@ -248,17 +249,7 @@ function Bubble({ m, mine, me, who, group, first, last, read, marks, flash, chat
               ))}
           </div>
         )}
-        {!m.deleted && (m.reactions?.length ?? 0) > 0 && (
-          <div className="msg-reacts">
-            {m.reactions!.map((r) => {
-              const on = r.user_ids.includes(me);
-              return (
-                <button key={r.emoji} type="button" className={`msg-react ${on ? "mine" : ""}`} aria-pressed={on} title={r.names.join(", ") + (r.count > r.names.length ? ` и ещё ${r.count - r.names.length}` : "")}
-                        onClick={() => onToggleReact(r.emoji)}><span>{r.emoji}</span><span className="n">{r.count}</span></button>
-              );
-            })}
-          </div>
-        )}
+        {!m.deleted && <ReactionChips items={m.reactions} me={me} onToggle={onToggleReact} />}
         <div className="msg-meta">
           {m.edited_at && !m.deleted && <span className="msg-edited" title={`Изменено ${new Date(m.edited_at).toLocaleString("ru-RU")}`} aria-label="изменено"><Icon name="edit" size={12} /></span>}
           <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString("ru-RU")}>{timeHM(m.created_at)}</time>
@@ -362,30 +353,6 @@ function SearchBar({ chat, info, onGo, onMarks, onClose }: { chat: ChatItem; inf
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------------------------------------ реакции
-/** Быстрые реакции у сообщения (как в мессенджерах): шесть частых и «ещё» — полный набор. */
-function ReactBar({ at, choices, current, onPick, onMore, onClose }: { at: DOMRect; choices: string[]; current: string | null; onPick: (e: string) => void; onMore: () => void; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: at.left, top: at.top - 46 });
-  useLayoutEffect(() => {
-    const b = ref.current?.getBoundingClientRect();
-    if (b) setPos({ left: Math.min(Math.max(8, at.left), window.innerWidth - b.width - 8), top: at.top - b.height - 6 >= 8 ? at.top - b.height - 6 : at.bottom + 6 });
-  }, [at]);
-  useEffect(() => {
-    const down = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
-    window.addEventListener("pointerdown", down, true);
-    window.addEventListener("keydown", key, true);
-    return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("keydown", key, true); };
-  }, [onClose]);
-  return (
-    <div className="react-bar" ref={ref} role="menu" aria-label="Реакция" style={{ left: pos.left, top: pos.top }}>
-      {choices.map((e) => <button key={e} type="button" role="menuitem" className={current === e ? "on" : ""} aria-label={e} onClick={() => onPick(e)}>{e}</button>)}
-      <button type="button" role="menuitem" className="more" aria-label="Другие реакции" title="Другие реакции" onClick={onMore}><Icon name="plus" size={16} /></button>
     </div>
   );
 }

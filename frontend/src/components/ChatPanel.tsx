@@ -13,6 +13,9 @@ import { linkify } from "../linkify";
 import { formatTime } from "../transcript";
 import { copyText } from "../util";
 import { TypingSender, TypingTracker, typingText } from "../typing";
+import EmojiPicker from "../chat/EmojiPicker";
+import { insertAt } from "../chat/emoji";
+import { ReactBar, ReactionChips, myReaction } from "../chat/Reactions";
 
 const MAX_LEN = 4000;
 
@@ -76,15 +79,22 @@ function FileAttachment({ meetingId, a }: { meetingId: string; a: ChatAttachment
   );
 }
 
-function Message({ m, mine, meetingId, onOpenImage, onMenu }: { m: ChatMessage; mine: boolean; meetingId: string; onOpenImage: (id: string) => void; onMenu: (m: ChatMessage, mine: boolean) => (e: React.MouseEvent) => void }) {
+function Message({ m, mine, me, meetingId, onOpenImage, onMenu, onReact, onToggle }: {
+  m: ChatMessage; mine: boolean; me: string; meetingId: string; onOpenImage: (id: string) => void; onMenu: (m: ChatMessage, mine: boolean) => (e: React.MouseEvent) => void;
+  onReact?: (m: ChatMessage, at: DOMRect) => void; onToggle?: (m: ChatMessage, emoji: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
   const copy = async () => { if (await copyText(m.text)) { setCopied(true); window.setTimeout(() => setCopied(false), 1500); } };
   return (
-    <div className={`chat-msg ${mine ? "mine" : ""} ${m.author_type === "guest" ? "guest" : ""}`} onContextMenu={onMenu(m, mine)}>
+    <div ref={box} data-chat-msg={m.id} className={`chat-msg ${mine ? "mine" : ""} ${m.author_type === "guest" ? "guest" : ""}`} onContextMenu={onMenu(m, mine)}>
       <div className="chat-meta">
         <strong>{m.author_name}</strong>
         <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString("ru-RU")}>{formatTime(m.created_at)}</time>
-        <button type="button" className="chat-copy" onClick={copy} title="Копировать текст сообщения" aria-label="Копировать сообщение">{copied ? "Скопировано" : "Копировать"}</button>
+        <span className="chat-acts">
+          {onReact && <button type="button" className="chat-act" onClick={() => box.current && onReact(m, box.current.getBoundingClientRect())} title="Реакция" aria-label="Реакция"><Icon name="smile" size={15} /></button>}
+          {!!m.text && <button type="button" className="chat-act" onClick={copy} title={copied ? "Скопировано" : "Копировать текст"} aria-label="Копировать сообщение"><Icon name={copied ? "check" : "copy"} size={14} /></button>}
+        </span>
       </div>
       {m.text && <MessageText text={m.text} />}
       {!!m.attachments?.length && (
@@ -92,6 +102,7 @@ function Message({ m, mine, meetingId, onOpenImage, onMenu }: { m: ChatMessage; 
           {m.attachments.map((a) => a.kind === "image" ? <ImageAttachment key={a.id} meetingId={meetingId} a={a} onOpen={() => onOpenImage(a.id)} /> : <FileAttachment key={a.id} meetingId={meetingId} a={a} />)}
         </div>
       )}
+      <ReactionChips items={m.reactions} me={me} onToggle={onToggle ? (e) => onToggle(m, e) : undefined} />
     </div>
   );
 }
@@ -113,7 +124,7 @@ interface Props {
   canAttach?: boolean;
 }
 
-/** Компактный рабочий чат встречи: сообщения, время и автор, ссылки, копирование, история. Не мессенджер: без реакций; вложения — файлы и картинки. */
+/** Компактный рабочий чат встречи: сообщения, время и автор, ссылки, копирование, реакции и эмодзи (как в корпоративных чатах), вложения — файлы и картинки, история. */
 export default function ChatPanel({ meetingId, bus, readOnly = false, visible = true, selfName, onUnread, canAttach = true }: Props) {
   const [items, setItems] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -124,6 +135,10 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   const [pending, setPending] = useState<Pending[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
+  const [me, setMe] = useState("");                                   // свой идентификатор (сотрудник или гость) — «мои» реакции
+  const [reactSet, setReactSet] = useState<string[]>([]);
+  const [reactAt, setReactAt] = useState<{ m: ChatMessage; at: DOMRect; full: boolean } | null>(null);
+  const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
   const { onContextMenu, node: menuNode } = useContextMenu();
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<Pending[]>([]);
@@ -168,7 +183,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   useEffect(() => {
     let cancelled = false;
     setItems([]); setLoaded(false); setHasMore(false); setError("");
-    api.chat(meetingId).then((r) => { if (!cancelled) { setItems(r.messages); setHasMore(r.has_more); setLoaded(true); } })
+    api.chat(meetingId).then((r) => { if (!cancelled) { setItems(r.messages); setHasMore(r.has_more); setLoaded(true); setMe(r.me ?? ""); setReactSet(r.reactions ?? []); } })
       .catch((e) => { if (!cancelled) { setError((e as ApiError).message || "Не удалось загрузить чат"); setLoaded(true); } });
     return () => { cancelled = true; };
   }, [meetingId]);
@@ -177,6 +192,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   useEffect(() => {
     if (!bus) return;
     const offEv = bus.on((e) => {
+      if (e.type === "chat_reaction") { setItems((cur) => cur.map((m) => (m.id === e.message_id ? { ...m, reactions: e.reactions } : m))); return; }
       if (e.type !== "chat_message") return;
       merge([e.message]);
       tracker.current.event(e.message.author_id ?? "", e.message.author_name, false);          // сообщение пришло — автор больше не «печатает»
@@ -284,6 +300,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
     const files = (m.attachments ?? []).filter((a) => !a.missing);
     const firstImg = files.find((a) => a.kind === "image");
     return [
+      { id: "react", label: "Реакция", icon: "smile", hidden: !canReact || m.author_type === "system", onSelect: () => { const el = document.querySelector(`[data-chat-msg="${m.id}"]`); if (el) setReactAt({ m, at: el.getBoundingClientRect(), full: false }); } },
       { id: "copy", label: "Копировать текст", icon: "copy", hidden: !m.text, onSelect: () => void copyText(m.text) },
       { id: "reply", label: "Ответить", icon: "chat", hidden: readOnly, onSelect: () => insert(`> ${m.author_name}: ${(m.text || "вложение").replace(/\s+/g, " ").slice(0, 120)}\n`) },
       { id: "mention", label: "Упомянуть автора", icon: "user", hidden: readOnly || mine, onSelect: () => insert(`@${m.author_name} `) },
@@ -292,6 +309,17 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
     ];
   };
   const onMsgMenu = (m: ChatMessage, mine: boolean) => onContextMenu(() => menuFor(m, mine));
+  const react = (m: ChatMessage, emoji: string | null) => {
+    setReactAt(null);
+    void api.reactChat(meetingId, m.id, emoji).then((r) => setItems((cur) => cur.map((x) => (x.id === r.message_id ? { ...x, reactions: r.reactions } : x))))
+      .catch((e) => setError((e as ApiError).message || "Не удалось поставить реакцию"));
+  };
+  const canReact = !readOnly && !!bus && reactSet.length > 0;
+  const putEmoji = (em: string) => {
+    const el = inputRef.current;
+    setDraft((d) => insertAt(d, el?.selectionStart ?? d.length, el?.selectionEnd ?? d.length, em).value);
+    window.setTimeout(() => { if (el) { el.focus(); const p = (el.selectionStart ?? 0) + em.length; el.selectionStart = el.selectionEnd = p; } }, 0);
+  };
   useEffect(() => {          // «Упомянуть в чате» из контекстного меню участника
     const on = (e: Event) => { const n = (e as CustomEvent<string>).detail; if (n && !readOnly) insert(`@${n} `); };
     window.addEventListener("pg:mention", on);
@@ -306,7 +334,8 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
       <div className="chat-list" ref={boxRef} onScroll={onScroll} aria-live="polite" aria-label="Сообщения чата">
         {hasMore && <button type="button" className="btn mini ghost chat-older" onClick={() => { setHasMore(false); void loadOlder(); }}>Показать более ранние</button>}
         {loaded && items.length === 0 && !error && <p className="muted small">{readOnly ? "В этой встрече чат не использовался." : "Пока пусто. Адреса, ссылки, имена серверов и номера задач попадут в протокол."}</p>}
-        {items.map((m) => <Message key={m.id} m={m} mine={!!selfName && m.author_name === selfName} meetingId={meetingId} onOpenImage={openImage} onMenu={onMsgMenu} />)}
+        {items.map((m) => <Message key={m.id} m={m} mine={me ? m.author_id === me : !!selfName && m.author_name === selfName} me={me} meetingId={meetingId} onOpenImage={openImage} onMenu={onMsgMenu}
+                                   onReact={canReact && m.author_type !== "system" ? (x, at) => setReactAt({ m: x, at, full: false }) : undefined} onToggle={canReact ? react : undefined} />)}
       </div>
       {error && <div className="alert error small" role="alert">{error}</div>}
       {!readOnly && (
@@ -335,6 +364,8 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
             )}
             <textarea ref={inputRef} value={draft} maxLength={MAX_LEN} rows={1} placeholder="Сообщение" aria-label="Текст сообщения"
                       onChange={(e) => { setDraft(e.target.value); if (e.target.value.trim()) sender.current?.input(); else sender.current?.stop(); }} onKeyDown={onKey} onPaste={onPaste} />
+            <button type="button" className={`chat-attach chat-emoji ${emojiAt ? "on" : ""}`} data-emoji-toggle title="Эмодзи" aria-label="Эмодзи"
+                    onClick={(e) => setEmojiAt(emojiAt ? null : e.currentTarget.getBoundingClientRect())}><Icon name="smile" size={18} /></button>
             <button type="button" className="chat-send" disabled={!canSend} onClick={() => void send()} title="Отправить (Enter)" aria-label="Отправить сообщение">
               <Icon name="send" size={18} />
             </button>
@@ -343,6 +374,10 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
         </div>
       )}
       {menuNode}
+      {emojiAt && <EmojiPicker anchor={emojiAt} onPick={putEmoji} onClose={() => setEmojiAt(null)} />}
+      {reactAt && !reactAt.full && <ReactBar at={reactAt.at} choices={reactSet.slice(0, 6)} current={myReaction(reactAt.m.reactions, me)} onPick={(e) => react(reactAt.m, e)}
+                                             onMore={() => setReactAt({ ...reactAt, full: true })} onClose={() => setReactAt(null)} />}
+      {reactAt?.full && <EmojiPicker anchor={reactAt.at} only={reactSet} title="Реакция" onPick={(e) => react(reactAt.m, e)} onClose={() => setReactAt(null)} />}
       {viewer !== null && images[viewer] && (
         <Suspense fallback={null}>
           <ImageViewer images={images} index={viewer} load={loadBlob} onClose={() => setViewer(null)} onIndex={setViewer} />

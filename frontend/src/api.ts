@@ -73,6 +73,8 @@ export interface ChatAttachment { id: string; name: string; mime: string; size: 
 export interface ChatMessage {
   id: number; meeting_id: string; created_at: string; author_type: "user" | "guest" | "system"; author_id: string | null; author_name: string; text: string;
   attachments?: ChatAttachment[];
+  /** Реакции участников (сотрудники и гости): значок, число, кто поставил. */
+  reactions?: { emoji: string; count: number; user_ids: string[]; names: string[] }[];
 }
 export interface FloorState { presentation: boolean; floor: string[]; leaders: string[] }
 /** Патч draw.io (diffSync), разосланный сервером. `from` — идентификатор вкладки-автора (чтобы не применять собственную правку повторно). */
@@ -785,7 +787,8 @@ export const api = {
   transcriptExportUrl: (id: string, fmt: ExportFormat) => `/api/v1/meetings/${id}/transcript/export?format=${fmt}`,
   version: () => request<{ version: string; commit: string }>("GET", "/version"),
   chat: (id: string, q: { beforeId?: number; afterId?: number; limit?: number } = {}) =>
-    request<{ messages: ChatMessage[]; has_more: boolean }>("GET", `/meetings/${id}/chat?limit=${q.limit ?? 100}${q.beforeId ? `&before_id=${q.beforeId}` : ""}${q.afterId ? `&after_id=${q.afterId}` : ""}`),
+    request<{ messages: ChatMessage[]; has_more: boolean; me?: string; reactions?: string[] }>("GET", `/meetings/${id}/chat?limit=${q.limit ?? 100}${q.beforeId ? `&before_id=${q.beforeId}` : ""}${q.afterId ? `&after_id=${q.afterId}` : ""}`),
+  reactChat: (id: string, messageId: number, emoji: string | null) => request<{ message_id: number; reactions: NonNullable<ChatMessage["reactions"]> }>("POST", `/meetings/${id}/chat/${messageId}/reaction`, { emoji }),
   sendChat: (id: string, text: string, attachments: string[] = []) => request<ChatMessage>("POST", `/meetings/${id}/chat`, attachments.length ? { text, attachments } : { text }),
   /** Загрузка файла для сообщения: тело — сами байты, имя — в параметре (сервер очищает его и выбирает путь сам). */
   uploadAttachment: (id: string, file: File) => uploadBytes<ChatAttachment>(`/meetings/${id}/chat/attachments?name=${encodeURIComponent(file.name || "file")}`, file),

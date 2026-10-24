@@ -12,6 +12,7 @@ export type LiveEvent =
   | { type: "floor_changed"; identity: string; granted: boolean; by?: string }
   | { type: "chat_message"; message: ChatMessage }
   | { type: "chat_typing"; id: string; name: string; typing: boolean }
+  | { type: "chat_reaction"; message_id: number; reactions: NonNullable<ChatMessage["reactions"]> }
   | { type: "hand_changed"; identity: string; name: string; raised: boolean; by_leader: boolean; at?: number; total?: number; queue: { identity: string; name: string; at: number }[] | null }
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
   | { type: "whiteboard_saved"; seq: number; shapes: number; by: string }
@@ -21,7 +22,7 @@ export type LiveEvent =
   | { type: "camera_stopped"; identity: string; by: string }
   | { type: "mic_owner"; user_id: string; identity: string };
 
-export const EVENT_TYPES = new Set(["mic_owner", "segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "hand_changed", "whiteboard_patch", "whiteboard_saved", "stage_changed", "share_stopped", "share_permission", "camera_stopped"]);
+export const EVENT_TYPES = new Set(["mic_owner", "segment", "participant_joined", "participant_left", "meeting_ended", "recording_changed", "transcription_changed", "floor_changed", "chat_message", "chat_typing", "chat_reaction", "hand_changed", "whiteboard_patch", "whiteboard_saved", "stage_changed", "share_stopped", "share_permission", "camera_stopped"]);
 // Каждый тип из LiveEvent обязан быть здесь, иначе событие молча отбрасывается (так «рука» и «печатает» годами не доходили до остальных; охрана — liveEvents.test.ts)
 
 /** Подписчики событий встречи: чат и доска получают события от единственного сокета комнаты. */
