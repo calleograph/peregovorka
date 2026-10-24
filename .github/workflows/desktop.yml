@@ -40,6 +40,7 @@ jobs:
   windows:
     needs: checks
     runs-on: windows-2025
+    timeout-minutes: 120
     outputs:
       kind: ${{ steps.kind.outputs.kind }}
     defaults: { run: { shell: pwsh, working-directory: desktop } }
@@ -205,6 +206,7 @@ jobs:
           $j = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
           if (-not $j.shell.ok -or $j.shell.heading -ne "Добро пожаловать в Peregovorka") { throw "без сети: $($j.shell | ConvertTo-Json -Compress)" }
       - name: "EXE: установленное приложение — мастер, ошибки адреса и сертификата, настройки (снимки окна)"
+        timeout-minutes: 15
         run: |
           # временный сертификат «чужого» HTTPS-сервера (не доверен — приложение должно отказать с причиной)
           $c = New-SelfSignedCertificate -DnsName localhost -Subject "CN=localhost, O=Peregovorka E2E Untrusted" -CertStoreLocation Cert:\CurrentUser\My
@@ -215,6 +217,7 @@ jobs:
           if ($LASTEXITCODE) { throw "испытание установленного приложения: $LASTEXITCODE" }
           Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
       - name: "EXE: обновление из приложения — проверить, скачать, установить поверх, запуститься снова"
+        timeout-minutes: 15
         env:
           PEREGOVORKA_BUILD_KIND: test
         run: |
@@ -331,6 +334,67 @@ jobs:
         run: |
           Get-ChildItem release -File | Where-Object Name -match '\.(exe|msi|json|sig|cer)$' | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii release/SHA256SUMS.txt
           Get-Content release/SHA256SUMS.txt
+      - name: "Подписывающий агент: свой сертификат, проверки, корпоративные сборки двух организаций"
+        timeout-minutes: 15
+        run: |
+          $agent = (Resolve-Path signing/Peregovorka-Signer.ps1).Path
+          $env:PEREGOVORKA_SIGNER_DIR = Join-Path $env:RUNNER_TEMP signer
+          $work = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP corp)
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8         # агент — Windows PowerShell 5.1 (как на узлах организаций); вывод по-русски
+          # 1. собственный сертификат: неэкспортируемый ключ в LocalMachine\My, доверие — только на этом узле
+          $j = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent NewCert -Subject "Организация А" | ConvertFrom-Json
+          if (-not ($j.code_signing -and $j.has_private_key -and $j.can_sign -and $j.time_valid)) { throw "свой сертификат: $($j | ConvertTo-Json -Compress)" }
+          if ($j.key_exportable) { throw "закрытый ключ собственного сертификата экспортируемый" }
+          $tpA = $j.thumbprint
+          try { Export-PfxCertificate -Cert "Cert:\LocalMachine\My\$tpA" -FilePath "$work/x.pfx" -Password (ConvertTo-SecureString x -AsPlainText -Force) | Out-Null; throw "EXPORTED" } catch { if ($_.Exception.Message -eq "EXPORTED") { throw "ключ удалось выгрузить" } }
+          Write-Host "свой сертификат: $tpA, ключ не выгружается"
+          $tpB = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent NewCert -Subject "Организация Б" | ConvertFrom-Json).thumbprint
+          # 2. сертификат без назначения «Подпись кода» и истёкший
+          $noEku = New-SelfSignedCertificate -Type Custom -Subject "CN=Без назначения" -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.1") -CertStoreLocation Cert:\LocalMachine\My
+          $chk = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent CheckCert -Thumbprint $noEku.Thumbprint | ConvertFrom-Json
+          if ($chk.code_signing) { throw "сертификат без EKU Code Signing признан годным" }
+          $old = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Истёкший" -NotBefore (Get-Date).AddDays(-30) -NotAfter (Get-Date).AddDays(-1) -CertStoreLocation Cert:\LocalMachine\My
+          function Job($tp, $org, $srv, $out, $src = "release") {
+            @{ version = $env:VERSION; org_name = $org; server_url = $srv; types = @("exe", "msi"); update_policy = "notify"; autostart = "tray"; allow_add = $false; thumbprint = $tp; update_url = "" } |
+              ConvertTo-Json | Set-Content -Encoding utf8 "$work/job.json"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agent Build -JobFile "$work/job.json" -OutDir $out -SourceDir (Resolve-Path $src).Path 2>&1 | Out-String
+          }
+          foreach ($bad in @(@($noEku.Thumbprint, "Подпись кода"), @($old.Thumbprint, "срок"))) {
+            $o = Job $bad[0] "X" "https://x.example.org" "$work/bad"
+            if ($LASTEXITCODE -eq 0 -or $o -notmatch $bad[1]) { throw "сборка с негодным сертификатом не отклонена: $o" }
+          }
+          Write-Host "негодные сертификаты отклонены"
+          # 3. изменённый исходный пакет — подпись не выполняется
+          $t = New-Item -ItemType Directory -Force "$work/tampered"
+          Copy-Item release/* $t
+          $f = "$t/Peregovorka-$env:VERSION-x64.msi"; $b = [IO.File]::ReadAllBytes($f); $b[$b.Length - 10] = $b[$b.Length - 10] -bxor 1; [IO.File]::WriteAllBytes($f, $b)
+          $o = Job $tpA "X" "https://x.example.org" "$work/bad2" $t
+          if ($LASTEXITCODE -eq 0 -or $o -notmatch "SHA-256") { throw "изменённый пакет подписан: $o" }
+          Write-Host "неподтверждённый пакет отклонён"
+          # 4. две организации, разные сертификаты
+          foreach ($o in @(@($tpA, "Организация А", "https://a.example.org", "a"), @($tpB, "Организация Б", "https://b.example.org", "b"))) {
+            $out = Job $o[0] $o[1] $o[2] "$work/$($o[3])"
+            if ($LASTEXITCODE) { throw "корпоративная сборка $($o[1]): $out" }
+            foreach ($f in Get-ChildItem "$work/$($o[3])" -File | Where-Object Extension -in ".exe", ".msi") {
+              $s = Get-AuthenticodeSignature $f.FullName
+              if ($s.Status -ne "Valid" -or $s.SignerCertificate.Thumbprint -ne $o[0]) { throw "$($f.Name): $($s.Status) $($s.SignerCertificate.Thumbprint)" }
+            }
+            Get-Content "$work/$($o[3])/SHA256SUMS.txt"
+          }
+          # 5. корпоративный MSI организации А: настройки вписаны в пакет, установка без параметров даёт преднастроенную организацию
+          $msi = (Get-ChildItem "$work/a/*.msi").FullName
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$work/corp.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$work/corp.log" -Tail 40; throw "корпоративный MSI: $($p.ExitCode)" }
+          $pol = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Peregovorka"
+          if ($pol.Servers -ne "Организация А|https://a.example.org" -or $pol.AllowAddServers -ne 0) { throw "настройки организации не применены: $($pol.Servers)" }
+          $d = "$work/diag.json"
+          $pr = Start-Process "$env:ProgramFiles\Peregovorka\Peregovorka.exe" -ArgumentList "--diagnostics=$d" -PassThru
+          if (-not $pr.WaitForExit(90000)) { $pr.Kill(); throw "приложение не завершилось" }
+          $dj = Get-Content $d -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($dj.organizations.Count -ne 1 -or $dj.organizations[0].host -ne "a.example.org" -or -not $dj.shell.ok) { throw "корпоративная установка: $($dj.organizations | ConvertTo-Json -Compress)" }
+          Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait
+          Write-Host "корпоративный MSI: организация А преднастроена, окно отрисовано"
+          foreach ($tp in $tpA, $tpB, $noEku.Thumbprint, $old.Thumbprint) { Remove-Item "Cert:\LocalMachine\My\$tp" -DeleteKey -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v7
         with:
           name: peregovorka-windows

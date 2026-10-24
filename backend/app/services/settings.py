@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import ntpath
 import posixpath
+import base64
 import re
 import time
 from typing import Any, ClassVar, Literal
@@ -1009,7 +1010,37 @@ class ChatSettings(_Group):
     dictation_max_concurrent: int = Field(default=4, ge=1, le=50)    # одновременно на сервер: распознавание встреч важнее
 
 
+class DesktopChannelSettings(_Group):
+    """Корпоративный канал обновлений приложения Windows: откуда брать подписанные выпуски издателя и каким ключом проверять их подпись.
+    Ключ — ОТКРЫТЫЙ (Ed25519, base64; при смене ключа — старый и новый через запятую); закрытый ключ обновлений сюда не вводится никогда."""
+
+    feed_url: str = "https://github.com/calleograph/peregovorka/releases/download/desktop-channel/update.json"
+    pubkeys: str = ""
+
+    @field_validator("feed_url")
+    @classmethod
+    def _feed(cls, v: str) -> str:
+        v = v.strip()
+        if not re.fullmatch(r"https://[^\s]+", v):
+            raise ValueError("Адрес канала издателя — https://…/update.json")
+        return v
+
+    @field_validator("pubkeys")
+    @classmethod
+    def _keys(cls, v: str) -> str:
+        keys = [k for k in re.split(r"[\s,]+", v.strip()) if k]
+        for k in keys:
+            try:
+                ok = len(base64.b64decode(k, validate=True)) == 32
+            except ValueError:
+                ok = False
+            if not ok:
+                raise ValueError("Открытый ключ обновлений — 32 байта Ed25519 в base64 (как DESKTOP_UPDATE_PUBKEY)")
+        return ",".join(keys)
+
+
 GROUPS: dict[str, type[_Group]] = {
+    "desktop_channel": DesktopChannelSettings,
     "chats": ChatSettings,
     "api": ApiSettings,
     "bitrix24": Bitrix24Settings,

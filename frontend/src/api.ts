@@ -1,5 +1,16 @@
 // Клиент REST API. Сессия — HttpOnly cookie (JS её не видит); CSRF-токен хранится только в памяти.
 
+export interface SigningAgent { id: string; name: string; host: string; version: string; info: Record<string, string>; created_at: string; last_seen_at: string | null; online: boolean; revoked: boolean }
+export interface SigningCheck { code_signing?: boolean; has_private_key?: boolean; chain_ok?: boolean; can_sign?: boolean; key_exportable?: boolean; trusted_on_node?: boolean; time_valid?: boolean;
+  self_signed?: boolean; chain_status?: string }
+export interface SigningCert { id: string; agent_id: string; kind: "self" | "corporate"; thumbprint: string; sha256: string; subject: string; issuer: string; serial: string;
+  not_before: string; not_after: string; days_left: number; key_alg: string; sig_alg: string; check: SigningCheck; checked_at: string | null; active: boolean; state: string; has_cer: boolean; retired: boolean }
+export interface SigningFile { name: string; size: number; sha256: string; signature: { status: string; thumbprint: string; subject: string; timestamp: string } | null }
+export interface SigningJob { id: string; kind: "create_cert" | "register_cert" | "check_cert" | "build"; status: "queued" | "running" | "done" | "failed" | "cancelled"; agent_id: string;
+  cert_id: string | null; params: Record<string, unknown>; progress: string; error: string | null; created_by: string; created_at: string; started_at: string | null; finished_at: string | null; files: SigningFile[] }
+export interface SigningChannel { feed_url: string; pubkeys: string; client_url: string; published: { version: string; file: string; sha256: string; published_at: string; by: string } | null }
+export interface SigningOverview { agents: SigningAgent[]; certs: SigningCert[]; jobs: SigningJob[]; channel: SigningChannel }
+export interface BuildRequest { cert_id: string; version: string; org_name: string; server_url: string; types: string[]; update_policy: string; autostart: string; allow_add: boolean }
 export interface User { id: string; sam_account_name: string; display_name: string; is_admin: boolean }
 import { solveCaptcha, type CaptchaChallenge } from "./captcha";
 export interface Me { user: User; csrf_token: string; local?: boolean; must_change_password?: boolean; must_enroll_totp?: boolean }
@@ -810,6 +821,22 @@ export const api = {
   profile: () => request<Profile>("GET", "/profile"),
   outlookCenter: () => request<OutlookCenterInfo>("GET", "/outlook/center"),
   outlookPublic: (code: string) => request<OutlookPublic>("GET", `/outlook/public/${encodeURIComponent(code)}`),
+  signing: {
+    overview: () => request<SigningOverview>("GET", "/admin/signing"),
+    enroll: (name: string) => request<{ code: string; expires_in: number; server: string }>("POST", "/admin/signing/enroll", { name }),
+    revokeAgent: (id: string) => request<{ ok: boolean }>("DELETE", `/admin/signing/agents/${id}`),
+    createCert: (agent_id: string, subject: string, years: number) => request<SigningJob>("POST", "/admin/signing/certs/create", { agent_id, subject, years }),
+    registerCert: (agent_id: string, thumbprint: string) => request<SigningJob>("POST", "/admin/signing/certs/register", { agent_id, thumbprint }),
+    checkCert: (id: string) => request<SigningJob>("POST", `/admin/signing/certs/${id}/check`),
+    activateCert: (id: string) => request<SigningCert>("POST", `/admin/signing/certs/${id}/activate`),
+    cerUrl: (id: string) => `/api/v1/admin/signing/certs/${id}/cer`,
+    build: (b: BuildRequest) => request<SigningJob>("POST", "/admin/signing/builds", b),
+    cancel: (id: string) => request<SigningJob>("POST", `/admin/signing/jobs/${id}/cancel`),
+    fileUrl: (job: string, name: string) => `/api/v1/admin/signing/jobs/${job}/files/${encodeURIComponent(name)}`,
+    channelCheck: () => request<{ version: string; released: string; notes: string; verified: boolean }>("POST", "/admin/signing/channel/check"),
+    channelPublish: () => request<{ version: string; file: string; sha256: string }>("POST", "/admin/signing/channel/publish"),
+    channelSave: (v: { feed_url?: string; pubkeys?: string }) => request<unknown>("PUT", "/admin/settings/desktop_channel", v),
+  },
   crypto: {
     status: () => request<CryptoStatus>("GET", "/admin/crypto"),
     rotate: (password: string) => request<{ active: number }>("POST", "/admin/crypto/rotate", { password }),

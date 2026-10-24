@@ -170,7 +170,11 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 **Приложение для Windows** (`desktop/`, `docs/DESKTOP*.md`): Electron 44, отдельная версия (`desktop/package.json`, теги `desktop-vX.Y.Z`). Доверенная
 оболочка `app://shell` + страницы серверов в `WebContentsView` с разделами `persist:org-<id>` (песочница, мост `preload-org`: notify/setState/onCommand);
 сохранённый вход — токен устройства (`/api/v1/desktop/*`, `auth_security.desktop_trust_days`, DPAPI); политики HKLM/HKCU\SOFTWARE\Policies\Peregovorka;
-EXE (NSIS) и MSI (WiX 5) собираются и испытываются (установка/обновление/удаление) в CI на Windows (`.github/workflows/desktop.yml`).
+EXE (NSIS) и MSI (WiX 5) собираются и испытываются (установка/обновление/удаление, первый запуск установленного EXE и сценарий `scripts/win-e2e.mjs`
+по CDP, обновление из приложения) в CI на Windows (`.github/workflows/desktop.yml`). Обновление — полным установщиком поверх (Ed25519-манифест, SHA-256).
+**Подпись и корпоративные сборки** (сервер 0.38.0): `api/signing.py`, модели `signing_*` (миграция 0042), агент `desktop/signing/Peregovorka-Signer.ps1`
+на подписывающем узле Windows (ключ в хранилище узла, 4 вида заданий), интерфейс `SigningAdmin.tsx`, корпоративный канал `/api/v1/desktop/channel/*` —
+docs/DESKTOP_SIGNING.md; план ручной приёмки — docs/DESKTOP_ACCEPTANCE.md.
 
 ## 3. Важные каталоги и файлы
 
@@ -255,6 +259,9 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
   настоящей Windows вручную:** вход AD с Windows-машины, реальные камеры/гарнитуры/Bluetooth, показ окна и звук компьютера, несколько мониторов с разным
   масштабом, уведомления в центре уведомлений и переход по ним, автозапуск после перезагрузки, ссылки из Outlook/браузера, SmartScreen. Подпись сертификатом
   издателя и ключ обновлений не настроены (нужны секреты CI) — выпуск помечается «Тестовая сборка».
+  **1.1.0:** исправлен «not found» первого запуска (адрес файлов оболочки на Windows). Сертификат и ключ обновлений созданы на узле издателя
+  (`~/.local/share/peregovorka-signing`), но в секреты CI не занесены — владелец выполняет команды из docs/DESKTOP_SIGNING.md; до этого выпуски по тегу
+  неподписанные и без автообновления. Корпоративная подпись проверена только тестовыми сертификатами (не AD CS).
 
 ## 8. Незавершённые задачи
 

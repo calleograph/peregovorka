@@ -46,20 +46,30 @@ async function connect(url) {
   let id = 0;
   const wait = new Map();
   ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && wait.has(d.id)) { wait.get(d.id)(d); wait.delete(d.id); } };
-  const send = (method, params = {}) => new Promise((r) => { const n = ++id; wait.set(n, r); ws.send(JSON.stringify({ id: n, method, params })); });
+  // каждый вызов — с пределом времени: зависший вызов (например, снимок невидимого окна) не должен вешать испытание
+  const send = (method, params = {}, ms = 20000) => new Promise((r, j) => {
+    const n = ++id;
+    const t = setTimeout(() => { wait.delete(n); j(new Error(`CDP ${method}: нет ответа за ${ms / 1000} с`)); }, ms);
+    wait.set(n, (d) => { clearTimeout(t); r(d); });
+    ws.send(JSON.stringify({ id: n, method, params }));
+  });
   const js = async (expr) => (await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true })).result?.result?.value;
   return {
     js,
     close: () => ws.close(),
     async until(expr, sec = 15) { for (let i = 0; i < sec * 4; i++) { if (await js(expr).catch(() => false)) return true; await sleep(250); } return false; },
-    async shot(name) { const r = await send("Page.captureScreenshot", { format: "png" }); if (r.result?.data) writeFileSync(join(out, `${name}.png`), Buffer.from(r.result.data, "base64")); },
+    async shot(name) {
+      // снимок — свидетельство, а не проверка: если окно не рисует кадры (сеанс без рабочего стола), испытание продолжается
+      try { const r = await send("Page.captureScreenshot", { format: "png" }, 10000); if (r.result?.data) writeFileSync(join(out, `${name}.png`), Buffer.from(r.result.data, "base64")); }
+      catch (e) { console.log(`снимок ${name} не получен: ${e.message}`); }
+    },
     click: (text) => js(`(() => { const b = [...document.querySelectorAll('button')].find(b => b.textContent.trim().includes(${JSON.stringify(text)}) && !b.disabled); if (b) b.click(); return !!b; })()`),
     text: () => js("document.querySelector('main')?.innerText ?? ''"),
   };
 }
 
 function launch() {
-  const p = spawn(exe, [`--remote-debugging-port=${PORT}`], { stdio: "ignore" });
+  const p = spawn(exe, [`--remote-debugging-port=${PORT}`, "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"], { stdio: "ignore" });
   p.on("exit", (code) => console.log(`приложение завершилось: ${code}`));
   return p;
 }
