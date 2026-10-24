@@ -171,18 +171,27 @@ async def create_meeting(request: Request, body: dict = Body(...), db: AsyncSess
     su = await _addin_user(request, db)
     cfg = await _cfg(request, db)
     s = request.app.state
+    instance = bool(body.get("instance"))          # одно занятие серии (Office.js отдаёт ему шаблон всей серии и собственные идентификаторы)
     try:
         room, created = await ol.ensure(db, su, cfg, key=str(body.get("key") or ""), subject=str(body.get("subject") or ""), start=_dt(body.get("start"), "start"),
-                                        end=_dt(body.get("end"), "end"), recurring=bool(body.get("recurring")), default_text_days=s.settings.default_text_retention_days,
-                                        default_audio_days=s.settings.default_audio_retention_days,
-                                        encrypt_storage=se.default_for_new(await s.settings_svc.get(db, "general")))
+                                        end=_dt(body.get("end"), "end"), recurring=bool(body.get("recurring")) and not instance,
+                                        default_text_days=s.settings.default_text_retention_days, default_audio_days=s.settings.default_audio_retention_days,
+                                        encrypt_storage=se.default_for_new(await s.settings_svc.get(db, "general")), instance=instance)
     except TempRoomError as exc:
         _fail(exc)
-    _link(room, body)
-    await ol.set_invitees(db, room, ol.parse_attendees(body.get("attendees")), "addin")     # кто приглашён — для «Предстоящих встреч» (нет в запросе — список не меняется)
-    ol.apply_recurrence(room, body.get("recurrence"))                                          # шаблон серии — ближайшее занятие в «Предстоящих встречах»
-    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="outlook.create" if created else "outlook.sync", target_type="room", target_id=str(room.id),
-                      ip=client_ip(request), details={"start": room.scheduled_start.isoformat(), "end": room.scheduled_end.isoformat(), "recurring": room.recurring})
+    attendees = ol.parse_attendees(body.get("attendees"))
+    if instance and room.recurring:
+        # серия не меняется: ни время, ни связь с мастер-событием, ни шаблон. Приглашённые занятия добавляются к серии (не заменяют её список);
+        # перенос или отмену занятия календарь сообщит при ближайшей сверке
+        await ol.set_invitees(db, room, attendees, "addin", prune=False)
+        room.outlook_synced_at = None
+    else:
+        _link(room, body)
+        await ol.set_invitees(db, room, attendees, "addin")     # кто приглашён — для «Предстоящих встреч» (нет в запросе — список не меняется)
+        ol.apply_recurrence(room, body.get("recurrence"))         # шаблон серии — ближайшее занятие в «Предстоящих встречах»
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, target_type="room", target_id=str(room.id), ip=client_ip(request),
+                      action="outlook.create" if created else "outlook.occurrence" if instance and room.recurring else "outlook.sync",
+                      details={"start": room.scheduled_start.isoformat(), "end": room.scheduled_end.isoformat(), "recurring": room.recurring})
     await db.commit()
     return _out(room, ol.public_url(s.settings.app_public_url, cfg), cfg, created)
 

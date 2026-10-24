@@ -237,7 +237,15 @@ describe("ядро и скрытые команды на фиктивном Offi
     item.recurrence = { getAsync: (cb: (r: unknown) => void) => cb({ status: "succeeded", value: series }) };
     const p = (await mod.prepare(item)).payload;
     expect(p.recurring).toBe(true);
-    expect(p.recurrence).toEqual({ type: "weekly", props: { interval: 1, days: ["mon", "thu"] }, start_date: "2026-10-01", end_date: null, start_time: "09:30", duration: 45 });
+    expect(p.recurrence).toEqual({ type: "weekly", props: { interval: 1, days: ["mon", "thu"] }, start_date: "2026-10-01", end_date: null, start_time: "09:30", duration: 45,
+      tz: "Russian Standard Time" });
+    expect("instance" in p).toBe(false);
+    // одно занятие серии: Office.js отдаёт ему шаблон всей серии — сервер должен знать, что меняется только занятие
+    item.seriesId = "AAMkSeriesMasterEwsId==";
+    const one = (await mod.prepare(item)).payload;
+    expect(one.instance).toBe(true);
+    expect(one.series_id).toBe("AAMkSeriesMasterEwsId==");
+    delete item.seriesId;
   });
 
   it("прошедшая встреча отклоняется до запроса к серверу понятной ошибкой", async () => {
