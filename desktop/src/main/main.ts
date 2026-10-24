@@ -99,7 +99,8 @@ async function boot(): Promise<void> {
     confirmReloadInCall: () => dialog.showMessageBoxSync(main.win, { type: "warning", buttons: ["Обновить страницу", "Отмена"], defaultId: 1, cancelId: 1, title: "Peregovorka",
       message: "Вы участвуете во встрече", detail: "Обновление страницы прервёт подключение к встрече." }) === 0,
     download: (o, item) => handleDownload(ctx, item, (name, path, ok) => {
-      notifier.show(o, { tag: `dl:${path}:${Date.now()}`, title: ok ? "Загрузка завершена" : "Загрузка прервана", body: name, kind: "info" }, false);
+      notifier.show(o, { tag: `dl:${path}:${Date.now()}`, title: ok ? "Загрузка завершена" : "Загрузка прервана", body: ok ? `${name} — нажмите, чтобы открыть` : name, kind: "info",
+        open: ok ? () => openDownloaded(path) : undefined }, false);
       if (ok) lastDownload = path;
     }),
     contextMenu,

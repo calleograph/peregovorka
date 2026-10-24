@@ -10,6 +10,7 @@ import { compat, cmpVersion } from "../src/common/version";
 import { describeNetError, backoffMs } from "../src/common/neterr";
 import { Dedupe, shapeNotification } from "../src/common/dedupe";
 import { verifyManifest, newer, canRestartNow } from "../src/main/updateCore";
+import { openableAfterDownload } from "../src/common/files";
 
 test("адрес сервера: только HTTPS, без учётных данных и пути, ввод без схемы", () => {
   assert.deepEqual(normalizeServerUrl("meet.example.org"), { origin: "https://meet.example.org" });
@@ -164,4 +165,11 @@ test("обновления: только подписанный манифест
   const evil = Buffer.from(JSON.stringify({ product: "peregovorka-desktop", version: "9.9.9", released: "x", files: [{ kind: "nsis", name: "a.exe", url: "http://evil.example/a.exe", sha256: "a".repeat(64), size: 1 }] }));
   assert.throws(() => verifyManifest(evil, sign(null, evil, privateKey).toString("base64"), raw), /bad_manifest/, "даже подписанный, без HTTPS — отказ");
   assert.ok(canRestartNow([{ inCall: false, sharing: false }]) && !canRestartNow([{ inCall: false, sharing: false }, { inCall: true, sharing: false }]));
+});
+
+test("скачанные файлы: документы открываются, программы и сценарии — только в папке", () => {
+  for (const ok of ["C:\\Users\\a\\Downloads\\Протокол встречи.docx", "/tmp/отчёт.PDF", "C:\\x\\схема.png"]) assert.ok(openableAfterDownload(ok), ok);
+  for (const bad of ["C:\\x\\setup.exe", "C:\\x\\Счёт.pdf.exe", "C:\\x\\run.CMD", "C:\\x\\a.ps1", "C:\\x\\link.lnk", "C:\\x\\README", "C:\\x\\trick.exe. ", "C:\\x\\.hidden"]) {
+    assert.ok(!openableAfterDownload(bad), bad);
+  }
 });

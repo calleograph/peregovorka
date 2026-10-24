@@ -14,6 +14,7 @@ Peregovorka собрана из чужих компонентов (LiveKit, PyTo
 | LiveKit Server, SIP-служба, llama.cpp | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
 | PyTorch, torchaudio, GigaAM | `TORCH_VERSION`/`TORCHAUDIO_VERSION` в `asr-service/Dockerfile`, `GIGAAM_GIT_COMMIT` в `.env.example` | `scripts/deps.py apply` |
 | draw.io | `ARG DRAWIO_VERSION` в `frontend/Dockerfile` | `scripts/deps.py apply` |
+| Приложение для Windows (Electron, electron-builder, esbuild, WiX) | точные версии в `desktop/package.json` + `desktop/package-lock.json`, WiX — в `.github/workflows/desktop.yml` | разработчик при выпуске клиента (`desktop-vX.Y.Z`): `npm outdated` в `desktop/`, Electron — последний патч поддерживаемой ветки (исправления безопасности Chromium), запись в `desktop/CHANGELOG.md`. В манифест сервера (`components.json`) не входит: это отдельный продукт со своей версией |
 
 Сборка образа ставит **ровно** версии из constraints и lock-файлов, а не «самые новые в диапазоне», поэтому «Полная пересборка» воспроизводит тот комплект, который проверен в релизе. Новые версии приходят **только** через ревизию релиза (или PR от Dependabot/еженедельного контроля), а не при пересборке на сервере.
 

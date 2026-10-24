@@ -1,12 +1,10 @@
 // Мелкая интеграция с Windows: загрузки через системный диалог «Сохранить как», контекстное меню (копировать/вставить, орфография, ссылки, изображения).
 import { app, clipboard, Menu, shell, type DownloadItem, type WebContents } from "electron";
 import { extname, join } from "node:path";
+import { openableAfterDownload } from "../common/files";
 import { externalAllowed } from "../common/urls";
 import type { Ctx } from "./ctx";
 
-// Исполняемые и сценарные файлы после загрузки не запускаются из уведомления — показываются в папке (решение остаётся за человеком и SmartScreen).
-const RISKY = new Set([".exe", ".msi", ".msix", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".scr", ".lnk", ".hta", ".jar", ".reg", ".cpl", ".pif", ".appx", ".url", ".iso", ".img"]);
-export const openableAfterDownload = (path: string) => !RISKY.has(extname(path).toLowerCase());
 
 export function handleDownload(ctx: Ctx, item: DownloadItem, done: (name: string, path: string, ok: boolean) => void): void {
   const name = item.getFilename();
