@@ -61,7 +61,7 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
           <RegistryValue Key="shell\\open\\command" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; &quot;%1&quot;" />
         </RegistryKey>
       </Component>
-      <!-- автозапуск для всех пользователей: tray — свёрнутым (ключ --hidden), window — с окном -->
+      <!-- автозапуск для всех пользователей: tray — свёрнутым в трей (RUNARGS), window — с окном -->
       <Component Id="RunAtLogon" Condition="AUTOSTART=&quot;tray&quot; OR AUTOSTART=&quot;window&quot;" Bitness="always64">
         <RegistryValue Root="HKLM" Key="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;[RUNARGS]" KeyPath="yes" />
       </Component>
