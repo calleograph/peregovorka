@@ -232,10 +232,10 @@ async def main():
         # ---------- окно: минимальный размер, положение запоминается
         await app.m("pg.main.win.setBounds({ x: 50, y: 40, width: 400, height: 300 }); return true;")
         b = await app.m("return pg.main.win.getBounds()")
-        check("окно не меньше минимального размера", b["width"] >= 940 and b["height"] >= 600, str(b))
+        check("окно не меньше минимального размера", b["width"] >= 800 and b["height"] >= 520, str(b))
         await app.m("pg.main.win.setBounds({ x: 120, y: 80, width: 1280, height: 720 }); return true;")
         await asyncio.sleep(0.8)
-        for (w, h) in [(1920, 1080), (1600, 900), (1366, 768), (1280, 720), (1024, 768), (940, 600)]:
+        for (w, h) in [(1920, 1080), (1600, 900), (1366, 768), (1280, 720), (1024, 768), (800, 520)]:
             await app.m(f"pg.main.win.setBounds({{ x: 0, y: 0, width: {w}, height: {h} }}); return true;")
             await asyncio.sleep(0.6)
             await app.shot_window(f"10-size-{w}x{h}")
@@ -309,4 +309,5 @@ async def main():
     sys.exit(1 if failed else 0)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

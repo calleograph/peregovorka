@@ -2,7 +2,10 @@
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
-export const MIN_SIZE = { width: 940, height: 600 };
+// Минимум окна: при 1920×1080 и масштабе 200 % рабочая область — 960×540, при 1280×720 и 150 % — 853×480. Окно не может быть больше экрана,
+// поэтому минимум ещё и ограничивается рабочей областью (minFor).
+export const MIN_SIZE = { width: 800, height: 520 };
+export const minFor = (area: { width: number; height: number }) => ({ width: Math.min(MIN_SIZE.width, area.width), height: Math.min(MIN_SIZE.height, area.height) });
 export const DEFAULT_SIZE = { width: 1366, height: 860 };
 
 function overlap(a: Rect, b: Rect): number {

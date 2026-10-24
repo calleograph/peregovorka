@@ -271,7 +271,8 @@ function orgRow(o: OrgView, i: number): HTMLElement {
     : o.status === "connecting" ? h("span", { class: "pill" }, "Подключение…") : h("span", { class: "pill err" }, "Нет связи");
   const nameInp = h("input", { class: "input", value: o.name, maxlength: 60, "aria-label": "Название подключения", style: { height: "30px" } });
   let editing = false;
-  const who = h("div", { class: "who" }, h("b", null, o.name), h("span", null, [o.host, o.user, o.serverVersion ? `сервер ${o.serverVersion}` : null, o.managed ? "задано администратором" : null].filter(Boolean).join(" · ")));
+  const sub = [o.host, o.user, o.serverVersion ? `сервер ${o.serverVersion}` : null, o.managed ? "задано администратором" : null].filter(Boolean).join(" · ");
+  const who = h("div", { class: "who" }, h("b", { title: o.name }, o.name), h("span", { title: sub }, sub));
   const rename = h("button", { class: "btn icon sm ghost", title: "Переименовать", "aria-label": "Переименовать", on: { click: () => {
     if (!editing) { editing = true; who.replaceChildren(nameInp); nameInp.focus(); nameInp.select(); return; }
     editing = false; void call("shell:rename", { id: o.id, name: nameInp.value });

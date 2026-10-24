@@ -4,7 +4,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { normalizeServerUrl, domainAllowed, safeRoute, externalAllowed, sameOrigin } from "../src/common/urls";
 import { parseDeepLink, findDeepLinkArg, parseMeetingUrl } from "../src/common/links";
 import { parseRegQuery, policyFromValues, mergePolicy } from "../src/common/policy";
-import { fitBounds, MIN_SIZE } from "../src/common/bounds";
+import { fitBounds, MIN_SIZE, minFor } from "../src/common/bounds";
 import { redact } from "../src/common/redact";
 import { compat, cmpVersion } from "../src/common/version";
 import { describeNetError, backoffMs } from "../src/common/neterr";
@@ -102,6 +102,8 @@ test("положение окна: на видимом мониторе, ина�
   assert.ok(small.width >= MIN_SIZE.width && small.height >= MIN_SIZE.height);
   const first = fitBounds(null, [primary], primary);
   assert.ok(first.x >= 0 && first.x + first.width <= 1920);
+  assert.deepEqual(minFor({ width: 960, height: 540 }), { width: 800, height: 520 }, "1920×1080 при 200 %");
+  assert.deepEqual(minFor({ width: 853, height: 432 }), { width: 800, height: 432 }, "1280×720 при 150 % с панелью задач: минимум не больше экрана");
   const tiny = { x: 0, y: 0, width: 1024, height: 728 };
   const f2 = fitBounds(undefined, [tiny], tiny);
   assert.ok(f2.width <= 1024 && f2.height <= 728, JSON.stringify(f2));

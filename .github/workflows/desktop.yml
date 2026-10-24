@@ -128,6 +128,7 @@ jobs:
           if (Test-Path "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe") { throw "программа не удалена" }
           if (Get-Process Peregovorka -ErrorAction SilentlyContinue) { throw "остался процесс" }
           if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue).Peregovorka) { throw "остался автозапуск" }
+          if (Test-Path "HKCU:\Software\Classes\peregovorka") { throw "осталась схема peregovorka://" }
           if (-not (Test-Path "$env:APPDATA\Peregovorka\settings.json")) { throw "при тихом удалении данные пользователя должны сохраниться" }
           Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka"
       - name: "MSI: тихая установка с преднастройкой организаций и политик"

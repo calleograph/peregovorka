@@ -2,7 +2,7 @@
 // оболочки (организации, настройки), справа — страница активной организации. Положение окна хранится отдельно от настроек интерфейса.
 import { BrowserWindow, nativeTheme, screen, type WebContentsView } from "electron";
 import { join } from "node:path";
-import { fitBounds, MIN_SIZE, type Rect } from "../common/bounds";
+import { fitBounds, minFor, type Rect } from "../common/bounds";
 import type { Ctx } from "./ctx";
 import type { Orgs } from "./orgs";
 import { readJson, writeJson } from "./store";
@@ -24,13 +24,15 @@ export class MainWindow {
     this.file = join(ctx.userData, "window.json");
     const saved = readJson<Partial<Rect> & { maximized?: boolean }>(this.file, {});
     const b = fitBounds(saved, screen.getAllDisplays().map((d) => d.workArea), screen.getPrimaryDisplay().workArea);
+    const min = minFor(screen.getDisplayMatching(b).workArea);
     this.win = new BrowserWindow({
-      ...b, minWidth: MIN_SIZE.width, minHeight: MIN_SIZE.height, show: false, title: "Peregovorka", backgroundColor: themeBg(), autoHideMenuBar: true,
+      ...b, minWidth: min.width, minHeight: min.height, show: false, title: "Peregovorka", backgroundColor: themeBg(), autoHideMenuBar: true,
       icon: join(__dirname, "assets", "icon.png"), webPreferences: shellPrefs(ctx.flags.devTools),
     });
     this.win.setMenu(null);
     if (saved.maximized) this.win.maximize();
     this.win.on("move", () => this.scheduleSave());
+    this.win.on("moved", () => this.ensureVisible());                     // перетащили на другой монитор с иным масштабом
     this.win.on("resize", () => { this.layout(); this.scheduleSave(); });
     this.win.on("maximize", () => { this.layout(); this.scheduleSave(); });
     this.win.on("unmaximize", () => { this.layout(); this.scheduleSave(); });
@@ -70,7 +72,10 @@ export class MainWindow {
   }
 
   private ensureVisible(): void {
-    if (this.win.isDestroyed() || this.win.isMaximized() || this.win.isFullScreen()) return;
+    if (this.win.isDestroyed()) return;
+    const min = minFor(screen.getDisplayMatching(this.win.getBounds()).workArea);            // сменили монитор или масштаб — минимум не больше экрана
+    this.win.setMinimumSize(min.width, min.height);
+    if (this.win.isMaximized() || this.win.isFullScreen()) return;
     const b = fitBounds(this.win.getBounds(), screen.getAllDisplays().map((d) => d.workArea), screen.getPrimaryDisplay().workArea);
     this.win.setBounds(b);
   }

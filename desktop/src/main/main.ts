@@ -362,10 +362,10 @@ async function boot(): Promise<void> {
     if (link) void openLink(link);
     else main.reveal();
   });
-  if (!managedInstall && !app.isDefaultProtocolClient("peregovorka")) {           // MSI регистрирует схему для всех пользователей сам
-    if (app.isPackaged) app.setAsDefaultProtocolClient("peregovorka");
-    else if (process.platform === "win32") app.setAsDefaultProtocolClient("peregovorka", process.execPath, [join(__dirname, "..")]);
-  }
+  // схему peregovorka:// регистрируют установщики (EXE — для пользователя или машины, MSI — для машины) и удаляют вместе с программой;
+  // сама программа прописывает её только при запуске из исходников
+  if (!app.isPackaged && process.platform === "win32" && !app.isDefaultProtocolClient("peregovorka")) app.setAsDefaultProtocolClient("peregovorka", process.execPath, [join(__dirname, "..")]);
+
 
   powerMonitor.on("resume", () => { log.info("power.resume"); for (const o of orgs.list) if (o.status === "offline") orgs.reconnect(o.rec.id); });
 

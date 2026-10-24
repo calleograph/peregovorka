@@ -2,7 +2,19 @@
 ; Удаление: запись автозапуска текущего пользователя удаляется всегда; настройки, журналы и сохранённые входы — по выбору человека
 ; (при тихом удалении /S остаются: повторная установка подхватит их без новой настройки).
 
+; Ссылки peregovorka:// работают сразу после установки (не только после первого запуска программы). SHCTX — ветка текущего пользователя или машины
+; в зависимости от вида установки.
+!macro customInstall
+  WriteRegStr SHCTX "Software\Classes\peregovorka" "" "URL:Peregovorka"
+  WriteRegStr SHCTX "Software\Classes\peregovorka" "URL Protocol" ""
+  WriteRegStr SHCTX "Software\Classes\peregovorka\DefaultIcon" "" "$INSTDIR\Peregovorka.exe,0"
+  WriteRegStr SHCTX "Software\Classes\peregovorka\shell\open\command" "" '"$INSTDIR\Peregovorka.exe" "%1"'
+!macroend
+
 !macro customUnInstall
+  ${ifNot} ${isUpdated}
+    DeleteRegKey SHCTX "Software\Classes\peregovorka"
+  ${endIf}
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Peregovorka"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Peregovorka"
   ${ifNot} ${isUpdated}

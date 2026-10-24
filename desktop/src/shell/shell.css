@@ -60,7 +60,7 @@ svg.i.flip { transform: rotate(180deg); }
 .locked { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .locked svg.i { width: 14px; height: 14px; }
 .seg { display: inline-flex; justify-self: start; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; height: var(--ctl); }
-.seg button { border: 0; background: var(--surface); color: var(--text); padding: 0 12px; font: 500 13px var(--sans); cursor: pointer; border-right: 1px solid var(--line); }
+.seg button { border: 0; background: var(--surface); color: var(--text); padding: 0 12px; font: 500 13px var(--sans); cursor: pointer; border-right: 1px solid var(--line); white-space: nowrap; }
 .seg button:last-child { border-right: 0; }
 .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .seg button:disabled { opacity: .55; cursor: default; }
@@ -118,6 +118,7 @@ svg.i.flip { transform: rotate(180deg); }
 .status { height: 100%; display: grid; place-items: center; padding: 32px; }
 .status .box { max-width: 460px; width: 100%; display: grid; gap: 16px; justify-items: center; text-align: center; }
 .status .box .alert { text-align: left; width: 100%; }
+.status .box .actions { justify-content: center; }
 .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -173,5 +174,23 @@ pre.log { margin: 0; max-height: 260px; overflow: auto; padding: 12px; backgroun
 .ind .btn:hover { background: #2b3441; }
 .ind .btn.stop { background: #cc3535; border-color: #cc3535; color: #fff; }
 .ind .btn.stop:hover { background: #a52a22; }
+
+/* узкое окно (малый экран или крупный масштаб Windows): вкладки настроек уже, при совсем узком — над разделом */
+@media (max-width: 880px) {
+  .settings { grid-template-columns: 172px minmax(0, 1fr); }
+  .panel { padding: 20px 20px 40px; }
+  .page { padding: 24px 20px 40px; }
+  .page.narrow { padding-top: 32px; }
+  .kv { grid-template-columns: 140px minmax(0, 1fr); }
+}
+@media (max-width: 680px) {
+  .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+  .tabs h1 { display: none; }
+  .tabs button { flex: none; }
+  .seg { overflow-x: auto; }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .kv dd { margin-bottom: 8px; }
+}
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
