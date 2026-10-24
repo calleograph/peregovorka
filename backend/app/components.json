@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.35.0",
+ "release": "0.36.0",
  "reviewed_at": "2026-10-24",
  "components": [
   {
@@ -417,7 +417,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11804",
+   "reviewed_latest": "server-b11854",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -446,7 +446,7 @@
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
    "deferred": {
-    "version": "server-b11804",
+    "version": "server-b11854",
     "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
     "issue": "DEP-1",
     "recheck": "2026-11-16",
