@@ -2,7 +2,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const CALLS = ["shell:state", "shell:probe", "shell:add", "shell:activate", "shell:page", "shell:rename", "shell:move", "shell:remove", "shell:signout", "shell:signoutAll",
-  "shell:reconnect", "shell:settings", "shell:update:check", "shell:update:install", "shell:diag", "shell:diag:export", "shell:logs", "shell:external", "shell:badge",
+  "shell:reconnect", "shell:settings", "shell:update:check", "shell:update:download", "shell:update:install", "shell:diag", "shell:diag:export", "shell:logs", "shell:external", "shell:badge",
   "shell:picker:data", "shell:picker:choose", "shell:indicator:data", "shell:indicator:act"] as const;
 const EVENTS = ["shell:state", "shell:go", "shell:toast", "shell:indicator"] as const;
 

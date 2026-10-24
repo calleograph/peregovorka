@@ -190,3 +190,16 @@ test("оболочка app://shell: файлы пакета на Windows и Linu
   for (const bad of ["app://shell/..%5cmain.js", "app://shell/%2e%2e%5c%2e%2e%5cmain.js", "app://other/index.html", "file:///C:/x", "app://shell/%E0%A4%A"])
     assert.equal(shellFile(win, bad, path.win32), null, bad);
 });
+
+test("мост оболочки пропускает каждую команду, которую вызывает оболочка (иначе кнопка молча не работает)", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const src = join(__dirname, "..", "..", "src");
+  const preload = readFileSync(join(src, "preload", "shell.ts"), "utf8");
+  const shellCode = readdirSync(join(src, "shell")).filter((f) => f.endsWith(".ts")).map((f) => readFileSync(join(src, "shell", f), "utf8")).join("\n");
+  const used = new Set([...shellCode.matchAll(/call(?:<[^>]*>)?\("(shell:[\w:]+)"/g)].map((m) => m[1]));
+  assert.ok(used.size > 10, "команды найдены");
+  for (const ch of used) assert.ok(preload.includes(`"${ch}"`), `канал ${ch} не разрешён в preload/shell.ts`);
+  const main = readFileSync(join(src, "main", "main.ts"), "utf8");
+  for (const ch of used) assert.ok(main.includes(`handle("${ch}"`), `для ${ch} нет обработчика в main.ts`);
+});
