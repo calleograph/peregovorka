@@ -53,6 +53,13 @@ class SessionLimit(Exception):
         self.sessions, self.limit = sessions, limit
 
 
+TRUST_PREFIX = "pgd_"
+
+
+def _tkey(token: str) -> str:
+    return "dtrust:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 class SessionStore:
     def __init__(self, redis: Redis, settings: Settings):
         self._r = redis
@@ -111,6 +118,7 @@ class SessionStore:
                 await self._r.delete(x["_key"])
                 await self._r.zrem(self._idx(user_id), x["_key"])
                 await self._r.srem(f"usess:{user_id}", x["_key"])
+                await self.trust_revoke(user_id, pub=pub)
                 return True
         return False
 
@@ -126,6 +134,7 @@ class SessionStore:
     async def destroy_user(self, user_id: str, *, keep: str | None = None) -> int:
         """Завершает все сессии пользователя (кроме `keep`): смена пароля, отключение учётной записи, принудительный выход администратором."""
         keep_key = _key(keep) if keep else None
+        await self.trust_revoke(user_id, keep_pub=pub_of(keep_key) if keep_key else None)
         keys = set(await self._r.smembers(f"usess:{user_id}")) | set(await self._r.zrange(self._idx(user_id), 0, -1))
         n = 0
         for k in keys:
@@ -164,3 +173,67 @@ class SessionStore:
                 uid = json.loads(raw).get("user_id")
                 if uid:
                     await self._r.zrem(self._idx(uid), k)
+                    await self.trust_revoke(uid, pub=pub_of(k))       # выход на устройстве отзывает и его доверие
+
+    # ------------------------------------------------------------------ доверенное устройство (настольный клиент)
+    # Клиент Windows не хранит пароль: после обычного входа он получает одноразовый токен устройства (в Redis — только его хэш) и при следующем запуске
+    # обменивает его на новую сессию и новый токен. Токен привязан к сессии (`pub`): её завершение, выход, смена пароля, отключение учётной записи отзывают его.
+    # Срок — от входа ПАРОЛЕМ (`born`), продление токена срок не сдвигает.
+    async def trust_issue(self, user_id: str, pub: str, *, days: int, params: dict, born: float | None = None, pwd: str | None = None) -> tuple[str, float]:
+        uid = str(user_id)
+        await self.trust_revoke(uid, pub=pub)                                  # одна запись на сессию: повторная выдача заменяет прежнюю
+        born = born or time.time()
+        exp = born + days * 86400
+        ttl = int(exp - time.time())
+        if ttl < 60:
+            raise ValueError("trust_expired")
+        token = TRUST_PREFIX + secrets.token_urlsafe(32)
+        k = _tkey(token)
+        await self._r.set(k, json.dumps({"uid": uid, "pub": pub, "born": born, "exp": exp, "params": params, "pwd": pwd}, ensure_ascii=False), ex=ttl)
+        await self._r.hset(f"dtrust:u:{uid}", k, pub)
+        await self._r.expire(f"dtrust:u:{uid}", max(ttl, await self._r.ttl(f"dtrust:u:{uid}") or 0))
+        return token, exp
+
+    async def trust_get(self, token: str) -> dict | None:
+        if not isinstance(token, str) or not token.startswith(TRUST_PREFIX) or len(token) > 100:
+            return None
+        raw = await self._r.get(_tkey(token))
+        if raw is None:
+            return None
+        d = json.loads(raw)
+        return d if float(d.get("exp") or 0) > time.time() else None
+
+    async def trust_claim(self, token: str) -> dict | None:
+        """Забрать запись токена атомарно (GETDEL): два одновременных возобновления по одному токену не откроют две сессии."""
+        if not isinstance(token, str) or not token.startswith(TRUST_PREFIX) or len(token) > 100:
+            return None
+        raw = await self._r.getdel(_tkey(token))
+        if raw is None:
+            return None
+        d = json.loads(raw)
+        await self._r.hdel(f"dtrust:u:{d['uid']}", _tkey(token))
+        return d if float(d.get("exp") or 0) > time.time() else None
+
+    async def trust_restore(self, token: str, d: dict) -> None:
+        """Вернуть забранную запись (временный отказ: каталог недоступен, нет места в лимите сессий)."""
+        ttl = int(float(d["exp"]) - time.time())
+        if ttl > 0:
+            await self._r.set(_tkey(token), json.dumps(d, ensure_ascii=False), ex=ttl)
+            await self._r.hset(f"dtrust:u:{d['uid']}", _tkey(token), d.get("pub") or "")
+
+    async def trust_forget(self, token: str) -> None:
+        d = await self.trust_get(token)
+        await self._r.delete(_tkey(token))
+        if d:
+            await self._r.hdel(f"dtrust:u:{d['uid']}", _tkey(token))
+
+    async def trust_revoke(self, user_id: str, *, pub: str | None = None, keep_pub: str | None = None) -> int:
+        """Отзыв доверия устройств пользователя: одной сессии (`pub`) или всех, кроме `keep_pub`."""
+        idx = f"dtrust:u:{user_id}"
+        n = 0
+        for k, p in (await self._r.hgetall(idx)).items():
+            if (pub is not None and p != pub) or (keep_pub is not None and p == keep_pub):
+                continue
+            n += await self._r.delete(k)
+            await self._r.hdel(idx, k)
+        return n
