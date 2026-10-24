@@ -167,6 +167,11 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 
 **Публичный API** (`backend/app/publicapi/`, `docs/api/README.md`): `/api/public/v1`, выключен по умолчанию (группа настроек `api`). Ключ `pgk_<id>_<секрет>` (в базе SHA-256), интеграции `api_clients` с правами (`scopes.py`), комнатами (по UUID) и списком адресов. Зависимость маршрута `Access(scope, rate)`: подлинность → состояние ключа → адрес → право → лимит (одинаковый 401 на неверный ключ). Свой класс маршрута `PublicRoute` даёт единый формат ошибок и пишет журнал обращений (`RequestLogWriter`, пачками). Объект вне области комнат — 404. Курсоры keyset. OpenAPI собирается из `router.routes` (FastAPI ≥ 0.14x хранит подключённые роутеры лениво). Админ-API — `api/admin_public_api.py`, UI — `PublicApiAdmin`. Этап 2 (миграция 0020): `webhooks.py` (outbox в БД → воркер, подпись HMAC `v1=` от `"<ts>.<тело>"`, Event-Id, повторы 10 с·2ⁿ, статусы active/degraded/disabled, 410 → отключение, замена секрета с двумя подписями), `ssrf.py` (проверка каждого IP имени при сохранении и при каждой отправке, соединение на проверенный IP с прежним Host/SNI, политика on-prem `webhook_allow_hosts`, метаданные облака запрещены всегда, прокси и редиректы не используются, до трёх адресов при сбое соединения), `jobs.py` (очередь `api_jobs` в БД: queued/processing/completed/failed/cancelled, `jobs_concurrency`, предел 5 незавершённых на интеграцию, восстановление после перезапуска, события `job.*`), `idempotency.py` (`api_idempotency`, ключ на интеграцию, повтор/конфликт/выполняется), `downloads.py` (подписанная ссылка 5 мин, права заново при использовании). Хуки: `MeetingService.on_event`, `ProtocolService.on_document` (+ карта). Админ-API — `api/admin_webhooks.py`, UI — `WebhooksAdmin`, вкладки в `PublicApiAdmin`.
 
+**Приложение для Windows** (`desktop/`, `docs/DESKTOP*.md`): Electron 44, отдельная версия (`desktop/package.json`, теги `desktop-vX.Y.Z`). Доверенная
+оболочка `app://shell` + страницы серверов в `WebContentsView` с разделами `persist:org-<id>` (песочница, мост `preload-org`: notify/setState/onCommand);
+сохранённый вход — токен устройства (`/api/v1/desktop/*`, `auth_security.desktop_trust_days`, DPAPI); политики HKLM/HKCU\SOFTWARE\Policies\Peregovorka;
+EXE (NSIS) и MSI (WiX 5) собираются и испытываются (установка/обновление/удаление) в CI на Windows (`.github/workflows/desktop.yml`).
+
 ## 3. Важные каталоги и файлы
 
 | Путь | Назначение |
@@ -242,6 +247,14 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
   пока warning не считать безобидным.
 - **Runtime GGUF** (`asr-service/app/runtimes.py`, `GgufNativeProvider`): Python-привязки transcribe.cpp (`transcribe-cpp` 0.3.x), модель резидентна, пул сессий по `ASR_MAX_CONCURRENT_INFERENCE`.
   Проверен на модели Q5_K_M (снята с вооружения; Windows, CPU): WER 4,5 % на тестовой записи, RTF ≈ 0,24; **в Docker-образе Linux ещё не собирался** (колёса manylinux есть на PyPI). Запасной вариант — внешний бинарник. Реальное сравнение Full ↔ Q5_K_M на серверных CPU не выполнялось.
+
+- **Приложение для Windows (ветка `feat/desktop-client`, клиент 1.0.0 — предварительная «тестовая сборка»):** проверено на Linux — настоящий Electron под Xvfb
+  против стенда (`tests/live/desktop_app.py`, 63 проверки: две организации, изоляция, сохранённый вход, уведомления, ссылки, встреча в LiveKit, показ экрана,
+  индикатор, закрытие во время встречи, пороги производительности) и визуальный аудит (`desktop_visual.py`, масштабы 100–200 %, размеры до 800×520, темы);
+  на Windows в CI — сборка EXE/MSI, тихие установка/обновление/удаление, запуск собранной программы (DPAPI, уведомления, политики MSI). **Не проверено на
+  настоящей Windows вручную:** вход AD с Windows-машины, реальные камеры/гарнитуры/Bluetooth, показ окна и звук компьютера, несколько мониторов с разным
+  масштабом, уведомления в центре уведомлений и переход по ним, автозапуск после перезагрузки, ссылки из Outlook/браузера, SmartScreen. Подпись сертификатом
+  издателя и ключ обновлений не настроены (нужны секреты CI) — выпуск помечается «Тестовая сборка».
 
 ## 8. Незавершённые задачи
 
