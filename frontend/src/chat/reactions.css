@@ -1,0 +1,21 @@
+/* Эмодзи и реакции — общие для корпоративных чатов и чата комнаты (подключается компонентами, чтобы работать и у гостей). */
+.emoji-pop { position: fixed; z-index: 1450; width: 316px; max-width: calc(100vw - 16px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, .18)); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+.emoji-tabs { display: flex; gap: 2px; padding: 4px; border-bottom: 1px solid var(--line); }
+.emoji-tabs button { flex: 1; border: 0; background: none; border-radius: 6px; padding: 3px 0; font-size: 17px; cursor: pointer; opacity: .6; }
+.emoji-tabs button.on, .emoji-tabs button:hover { opacity: 1; background: var(--soft); }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; padding: 6px; max-height: 220px; overflow-y: auto; }
+.emoji-grid button, .react-bar button { border: 0; background: none; border-radius: 8px; font-size: 21px; line-height: 1; padding: 5px 0; cursor: pointer; }
+.emoji-grid button:hover, .react-bar button:hover { background: var(--soft); transform: scale(1.12); }
+.emoji-title { padding: 2px 8px 0; font-size: 11.5px; color: var(--muted); grid-column: 1 / -1; }
+.react-bar { position: fixed; z-index: 1450; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, .18)); }
+.react-bar button { width: 34px; padding: 4px 0; }
+.react-bar button.on { background: var(--accent-soft); }
+.react-bar .more { font-size: 15px; color: var(--muted); }
+.msg-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 1px; }
+.msg-react { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  font: inherit; font-size: 13px; cursor: pointer; color: var(--text); }
+.msg-react .n { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); opacity: .8; }
+.msg-react.mine { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.msg-react.mine .n { color: var(--text); font-weight: 700; }

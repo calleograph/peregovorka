@@ -115,3 +115,18 @@ class ChatReaction(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     emoji: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class MeetingChatReaction(Base):
+    """Реакция на сообщение чата встречи: от сотрудника или гостя (`actor_type`, `actor_id`), одна на участника; набор значков — общий с корпоративными чатами."""
+
+    __tablename__ = "meeting_chat_reactions"
+    __table_args__ = (UniqueConstraint("message_id", "actor_type", "actor_id", name="uq_meeting_chat_reactions"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("meeting_chat_messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(8), nullable=False)          # user | guest
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)

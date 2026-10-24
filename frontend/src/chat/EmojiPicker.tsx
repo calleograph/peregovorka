@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { EMOJI_GROUPS, recentEmoji, rememberEmoji } from "./emoji";
+import "./reactions.css";
 
 /** Всплывающий выбор эмодзи у кнопки `anchor`: вкладки групп и «недавние»; с `only` — один набор (полный список реакций). Esc и щелчок вне — закрыть. */
 export default function EmojiPicker({ anchor, onPick, onClose, only, title }: { anchor: DOMRect; onPick: (e: string) => void; onClose: () => void; only?: string[]; title?: string }) {

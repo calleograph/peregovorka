@@ -487,3 +487,34 @@ def test_empty_meeting_does_not_create_auto_protocols_or_error_events(tmp_path, 
         login(c, "root")
         rows = c.get("/api/v1/admin/journal", params={"filters": json.dumps([{"field": "event", "op": "starts", "value": "protocol_"}])}).json()["items"]
         assert [r["event"] for r in rows] == ["protocol_skipped"] and rows[0]["level"] == "info"
+
+
+def test_room_chat_reactions_from_employees_and_guests(client):
+    """Реакции в чате встречи: сотрудник и гость, одна на участника (повтор снимает, другая заменяет), только из набора, событие всем участникам,
+    свой идентификатор и набор реакций приходят с лентой; посторонний сотрудник реакцию не поставит."""
+    room = guest_room(client)
+    a = started(client, room)
+    mid = a["meeting_id"]
+    g = guest_join(client, room["guest_token"]).json()
+    login(client, "alice")
+    m = client.post(f"/api/v1/meetings/{mid}/chat", json={"text": "Начинаем"}).json()
+    page = client.get(f"/api/v1/meetings/{mid}/chat").json()
+    me = page["me"]
+    assert "👍" in page["reactions"] and page["messages"][0]["reactions"] == []
+    with client.websocket_connect("/api/v1/ws") as ws:
+        ws.send_json({"type": "subscribe", "meeting_id": mid})
+        assert ws.receive_json()["type"] == "subscribed"
+        r = client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "👍"}, headers=ghead(g))
+        assert r.status_code == 200 and r.json()["reactions"][0]["names"] == ["Иван Иванов (гость)"]
+        ev = ws.receive_json()
+        while ev["type"] != "chat_reaction":
+            ev = ws.receive_json()
+        assert ev["message_id"] == m["id"] and ev["reactions"][0]["emoji"] == "👍"
+    assert client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "👍"}).json()["reactions"][0]["count"] == 2
+    assert client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "🔥"}).json()["reactions"] == [
+        {"emoji": "👍", "count": 1, "user_ids": [g["guest_id"]], "names": ["Иван Иванов (гость)"]}, {"emoji": "🔥", "count": 1, "user_ids": [me], "names": ["Alice A"]}]
+    assert client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "🔥"}).json()["reactions"][0]["emoji"] == "👍", "повтор снимает"
+    assert client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "<b>"}).status_code == 422
+    assert client.post(f"/api/v1/meetings/{mid}/chat/999999/reaction", json={"emoji": "👍"}).status_code == 404
+    login(client, "carol")
+    assert client.post(f"/api/v1/meetings/{mid}/chat/{m['id']}/reaction", json={"emoji": "👍"}).status_code in (403, 404)
