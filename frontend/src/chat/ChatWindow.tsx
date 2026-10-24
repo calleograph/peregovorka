@@ -8,6 +8,30 @@ import { chatApi, type ChatItem, type Person, type SearchHit } from "./chatApi";
 import { ChatInfoDialog, FoldersDialog, NewChatDialog, PrefsDialog } from "./ChatDialogs";
 import { listTime, plainText, visibleChats, type ListView } from "./chatModel";
 import { chats, useChats } from "./chatStore";
+import type { Rect } from "../player/playerMath";
+
+const LS_RECT = "pg:chat:rect";
+const MIN = { w: 360, h: 380 };
+const vp = () => ({ w: window.innerWidth, h: window.innerHeight });
+/** Окно чатов целиком в пределах экрана: поле ввода внизу не должно уходить за край (в отличие от плеера, которому достаточно видимого заголовка). */
+function clampRect(r: Rect, vw: number, vh: number): Rect {
+  const w = Math.min(Math.max(r.w, Math.min(MIN.w, vw)), vw), h = Math.min(Math.max(r.h, Math.min(MIN.h, vh)), vh);
+  return { x: Math.min(Math.max(r.x, 0), vw - w), y: Math.min(Math.max(r.y, 0), vh - h), w, h };
+}
+const MOBILE = 760;                 // уже — окно во весь экран, без перетаскивания
+const ONE_PANE = 640;               // окно уже — одна панель (список или переписка), как на телефоне
+
+/** Положение окна: запомненное (в пределах экрана) или справа под верхним меню. Хранится только в этом браузере. */
+function initialRect(): Rect {
+  const { w, h } = vp();
+  try {
+    const o = JSON.parse(localStorage.getItem(LS_RECT) || "null");
+    if (o && ["x", "y", "w", "h"].every((k) => typeof o[k] === "number")) return clampRect({ x: o.x, y: o.y, w: Math.max(MIN.w, o.w), h: Math.max(MIN.h, o.h) }, w, h);
+  } catch { /* нет сохранённого */ }
+  const ww = Math.min(1000, w - 32), hh = Math.min(720, h - 72);
+  return clampRect({ x: w - ww - 16, y: 56, w: ww, h: hh }, w, h);
+}
+const saveRect = (r: Rect) => { try { localStorage.setItem(LS_RECT, JSON.stringify({ x: r.x, y: r.y, w: r.w, h: r.h })); } catch { /* не запоминается */ } };
 import Conversation from "./Conversation";
 
 type Dialog = { kind: "new" } | { kind: "folders" } | { kind: "prefs" } | { kind: "info"; chatId: string } | { kind: "confirm"; title: string; body: string; label: string; run: () => Promise<void> } | null;
@@ -51,13 +75,61 @@ export default function ChatWindow() {
 
   const ask = useCallback((title: string, body: string, label: string, run: () => Promise<void>) => setDialog({ kind: "confirm", title, body, label, run }), []);
   const close = useCallback(() => chats.closeWindow(), []);
+  // окно не модальное: Esc закрывает его, только когда фокус внутри (страница под ним продолжает работать)
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
     win.current?.focus();
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !dialog && !document.querySelector(".ctx-menu, .iv-backdrop")) close(); };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !dialog && win.current?.contains(document.activeElement) && !document.querySelector(".ctx-menu, .iv-backdrop, .emoji-pop")) close();
+    };
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("keydown", esc); prev?.focus?.(); };
+    return () => document.removeEventListener("keydown", esc);
   }, [close, dialog]);
+
+  // ---- плавающее окно: перетаскивание за заголовки, размер — за угол, двойной щелчок по заголовку — развернуть (как у плеера записей)
+  const [rect, setRect] = useState<Rect>(initialRect);
+  const [maxed, setMaxed] = useState(false);
+  const [view_, setVp] = useState(vp);
+  useEffect(() => {
+    const f = () => { setVp(vp()); setRect((r) => clampRect(r, window.innerWidth, window.innerHeight)); };
+    const mq = window.matchMedia?.(`(max-width: ${MOBILE - 1}px)`);         // смена ширины надёжнее ловится и так (поворот, эмуляция устройства)
+    window.addEventListener("resize", f);
+    mq?.addEventListener?.("change", f);
+    return () => { window.removeEventListener("resize", f); mq?.removeEventListener?.("change", f); };
+  }, []);
+  const mobile = view_.w < MOBILE;
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const size = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const onDown = (e: React.PointerEvent) => {
+    const t = e.target as HTMLElement;
+    if (mobile || maxed || e.button !== 0 || !t.closest("[data-drag]") || t.closest("button, a, input, select, textarea, label, [role=tab]")) return;
+    e.preventDefault();                                      // без выделения текста при перетаскивании
+    drag.current = { dx: e.clientX - rect.x, dy: e.clientY - rect.y };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    // значения — сейчас, а не в функции обновления: React применит её позже, когда отпускание кнопки уже обнулит ссылки (было: окно падало при быстром отпускании)
+    const d = drag.current, z = size.current, x = e.clientX, y = e.clientY;
+    if (d) setRect((r) => clampRect({ ...r, x: x - d.dx, y: y - d.dy }, view_.w, view_.h));
+    else if (z) setRect((r) => clampRect({ ...r, w: Math.max(MIN.w, z.w + x - z.x), h: Math.max(MIN.h, z.h + y - z.y) }, view_.w, view_.h));
+  };
+  const onUp = (e: React.PointerEvent) => {
+    if (!drag.current && !size.current) return;
+    drag.current = size.current = null;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* уже отпущен */ }
+    saveRect(rect);
+  };
+  const onSize = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    size.current = { x: e.clientX, y: e.clientY, w: rect.w, h: rect.h };
+    win.current?.setPointerCapture(e.pointerId);
+  };
+  const onDouble = (e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (!mobile && t.closest("[data-drag]") && !t.closest("button, a, input, select, textarea, label, [role=tab]")) setMaxed((m) => !m);
+  };
+  const box = mobile ? null : maxed ? { x: 8, y: 8, w: view_.w - 16, h: view_.h - 16 } : rect;
+  const onePane = mobile || (box?.w ?? 0) < ONE_PANE;
 
   // поиск слева: по названиям сразу, по содержимому переписок — запросом (не чаще чем раз в 300 мс)
   useEffect(() => {
@@ -71,19 +143,24 @@ export default function ChatWindow() {
   }, [view.text]);
 
   const open = (id: string) => void chats.select(id);
-  const tabs: { id: string; label: string }[] = [{ id: "all", label: "Все" }, { id: "unread", label: "Непрочитанные" }, ...s.folders.map((f) => ({ id: f.id, label: f.name })), { id: "archive", label: "Архив" }];
+  const tabs: { id: string; label: string; icon?: "bell" | "archive" }[] = [{ id: "all", label: "Все" }, { id: "unread", label: "Непрочитанные", icon: "bell" },
+    ...s.folders.map((f) => ({ id: f.id, label: f.name })), { id: "archive", label: "Архив", icon: "archive" }];
 
   return createPortal(
-    <div className="chat-back" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className={`chat-win ${s.current ? "has-current" : ""}`} ref={win} role="dialog" aria-modal="true" aria-label="Чаты" tabIndex={-1}>
+    <>
+      <div className={`chat-win ${s.current ? "has-current" : ""} ${onePane ? "one-pane" : ""} ${mobile ? "mobile" : ""}`} ref={win} role="dialog" aria-label="Чаты" tabIndex={-1}
+           style={box ? { left: box.x, top: box.y, width: box.w, height: box.h } : undefined}
+           onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={onDouble}>
         <aside className="chat-side" aria-label="Список чатов">
-          <div className="chat-side-head">
+          <div className="chat-side-head" data-drag title={mobile ? undefined : "Перетащите, чтобы переместить окно; двойной щелчок — развернуть"}>
             <h2>Чаты</h2>
             <span className={`chat-conn ${s.status}`} title={s.status === "online" ? "Связь есть" : s.status === "offline" ? "Нет связи" : "Подключение…"} aria-hidden />
             <div className="spacer" />
             <button type="button" className="btn ghost mini icon-btn" title="Новый чат" aria-label="Новый чат" onClick={() => setDialog({ kind: "new" })}><Icon name="plus" size={18} /></button>
             <button type="button" className="btn ghost mini icon-btn" title="Папки" aria-label="Управление папками" onClick={() => setDialog({ kind: "folders" })}><Icon name="folder" size={18} /></button>
             <button type="button" className="btn ghost mini icon-btn" title="Настройки чатов" aria-label="Настройки чатов" onClick={() => setDialog({ kind: "prefs" })}><Icon name="gear" size={18} /></button>
+            {!mobile && <button type="button" className="btn ghost mini icon-btn" title={maxed ? "Восстановить размер" : "Развернуть"} aria-label={maxed ? "Восстановить размер окна" : "Развернуть окно"}
+                                aria-pressed={maxed} onClick={() => setMaxed((m) => !m)}><Icon name="expand" size={17} /></button>}
             <button type="button" className="btn ghost mini icon-btn" title="Закрыть (Esc)" aria-label="Закрыть чаты" onClick={close}><Icon name="close" size={18} /></button>
           </div>
           <label className="chat-search">
@@ -93,8 +170,10 @@ export default function ChatWindow() {
           </label>
           <div className="chat-tabs" role="tablist" aria-label="Папки">
             {tabs.map((t) => (
-              <button key={t.id} type="button" role="tab" aria-selected={view.folder === t.id} className={`chat-tab ${view.folder === t.id ? "on" : ""}`}
-                      onClick={() => setView({ ...view, folder: t.id })}>{t.label}{t.id === "unread" && s.unread ? <span className="chat-tab-n">{s.unread}</span> : null}</button>
+              <button key={t.id} type="button" role="tab" aria-selected={view.folder === t.id} className={`chat-tab ${view.folder === t.id ? "on" : ""} ${t.icon ? "ico" : ""}`}
+                      title={t.icon ? t.label : undefined} aria-label={t.icon ? t.label : undefined} onClick={() => setView({ ...view, folder: t.id })}>
+                {t.icon ? <Icon name={t.icon} size={15} /> : t.label}{t.id === "unread" && s.unread ? <span className="chat-tab-n">{s.unread}</span> : null}
+              </button>
             ))}
           </div>
           <ul className="chat-list" role="listbox" aria-label="Переписки">
@@ -146,6 +225,7 @@ export default function ChatWindow() {
               </div>
             )}
         </section>
+        {!mobile && !maxed && <span className="chat-resize" onPointerDown={onSize} aria-hidden title="Изменить размер" />}
       </div>
       {menu.node}
       {dialog?.kind === "new" && <NewChatDialog onClose={() => setDialog(null)} />}
@@ -153,7 +233,7 @@ export default function ChatWindow() {
       {dialog?.kind === "prefs" && <PrefsDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === "info" && <ChatInfoDialog chatId={dialog.chatId} onClose={() => setDialog(null)} onSearch={() => { setDialog(null); setSearchOpen((n) => n + 1); }} />}
       {dialog?.kind === "confirm" && <ConfirmDialog title={dialog.title} body={dialog.body} confirmLabel={dialog.label} onConfirm={dialog.run} onClose={() => setDialog(null)} />}
-    </div>, document.body);
+    </>, document.body);
 }
 
 function ChatRow({ c, active, me, presence, onOpen, onMenu }: { c: ChatItem; active: boolean; me: string; presence: boolean; onOpen: () => void; onMenu: (e: React.MouseEvent) => void }) {

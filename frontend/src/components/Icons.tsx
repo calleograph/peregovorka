@@ -3,6 +3,8 @@ import type { ReactNode, SVGProps } from "react";
 /** Набор линейных пиктограмм (24×24, штрих 1.8, цвет — currentColor). Без внешних библиотек: ничего не грузится из сети. */
 const PATHS: Record<string, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
+  smile: <><circle cx="12" cy="12" r="8.6" /><path d="M8.6 14a4.2 4.2 0 0 0 6.8 0M9.2 9.6v.3M14.8 9.6v.3" /></>,
+  at: <><circle cx="12" cy="12" r="3.6" /><path d="M15.6 12v1.4a2.6 2.6 0 0 0 5.2 0V12a8.8 8.8 0 1 0-3.6 7.1" /></>,
   folder: <path d="M3.5 7.2a2 2 0 0 1 2-2h3.8l2 2.2h7.2a2 2 0 0 1 2 2v7.9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />,
   archive: <><rect x="3.2" y="4.5" width="17.6" height="4.4" rx="1.2" /><path d="M5 8.9v9a1.8 1.8 0 0 0 1.8 1.8h10.4a1.8 1.8 0 0 0 1.8-1.8v-9M10 12.6h4" /></>,
   reply: <path d="M10 8.2 5.2 12.6 10 17M5.6 12.6h7.8a5.4 5.4 0 0 1 5.4 5.4v.6" />,

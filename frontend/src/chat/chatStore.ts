@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
 import { backoffDelay } from "../liveSocket";
 import { playChatSound } from "../chatSound";
 import { chatApi, newClientId, type ChatConfig, type ChatFileInfo, type ChatFolder, type ChatItem, type ChatMsg } from "./chatApi";
-import { mergeMessages, onNewMessage, preview, totalUnread } from "./chatModel";
+import { mentionsMe, mergeMessages, onNewMessage, preview, totalUnread } from "./chatModel";
 
 export interface Conv { messages: ChatMsg[]; hasMoreBefore: boolean; loading: boolean; loaded: boolean; error: string; typing: Record<string, { name: string; until: number }>; reads: Record<string, number>; version: number }
 export interface Toast { id: number; chatId: string | null; title: string; text: string }
@@ -14,6 +14,9 @@ export interface ChatState {
   open: boolean; current: string | null; convs: Record<string, Conv>; status: "connecting" | "online" | "reconnecting" | "offline"; toasts: Toast[]; listVersion: number;
 }
 
+const SS_OPEN = "pg:chat:open";            // окно открыто и выбранная переписка — на время сеанса вкладки (переживает перезагрузку страницы)
+const ss = { get: () => { try { return JSON.parse(sessionStorage.getItem(SS_OPEN) || "null") as { current: string | null } | null; } catch { return null; } },
+  set: (v: { current: string | null } | null) => { try { if (v) sessionStorage.setItem(SS_OPEN, JSON.stringify(v)); else sessionStorage.removeItem(SS_OPEN); } catch { /* недоступно */ } } };
 const EMPTY_CONV: Conv = { messages: [], hasMoreBefore: true, loading: false, loaded: false, error: "", typing: {}, reads: {}, version: 0 };
 const PING_MS = 30000;
 const ACTIVE_MS = 3 * 60000;                 // «в сети» — было действие пользователя за последние 3 минуты и вкладка видна
@@ -54,6 +57,8 @@ class ChatStore {
     document.addEventListener("visibilitychange", this.onVisible);
     window.addEventListener("online", this.retryNow);
     this.connect();
+    const was = ss.get();
+    if (was) this.openWindow(was.current && this.state.items.some((c) => c.id === was.current) ? was.current : null);
   }
 
   stop(): void {
@@ -157,7 +162,9 @@ class ChatStore {
         const item = this.state.items.find((c) => c.id === chatId);
         if (m.author_id !== myId && m.kind === "text") {
           if (viewing) this.scheduleRead(chatId);
-          else if (!item?.muted) this.notify(chatId, item ? (item.kind === "group" ? `${item.title} · ${m.author_name}` : item.title) : m.author_name, preview(m));
+          else if (!item?.muted || mentionsMe(m.text, this.state.config?.me.name ?? "")) {      // упоминание приходит и из чата без уведомлений
+            this.notify(chatId, item ? (item.kind === "group" ? `${item.title} · ${m.author_name}` : item.title) : m.author_name, preview(m));
+          }
         }
         const t = { ...this.conv(chatId).typing };
         if (m.author_id && t[m.author_id]) { delete t[m.author_id]; this.setConv(chatId, { typing: t }); }
@@ -227,12 +234,14 @@ class ChatStore {
   // ------------------------------------------------------------------------------------------ окно и переписка
   openWindow(chatId?: string | null): void {
     this.set({ open: true, current: chatId === undefined ? this.state.current : chatId });
+    ss.set({ current: this.state.current });
     if (this.state.current) void this.select(this.state.current);
   }
-  closeWindow(): void { this.set({ open: false }); }
+  closeWindow(): void { this.set({ open: false }); ss.set(null); }
 
   async select(id: string | null): Promise<void> {
     this.set({ current: id });
+    if (this.state.open) ss.set({ current: id });
     if (!id) return;
     const c = this.conv(id);
     if (!c.loaded && !c.loading) await this.loadLatest(id);

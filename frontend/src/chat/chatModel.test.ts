@@ -92,3 +92,20 @@ describe("превью без разметки", () => {
     expect(plainText("Смотри **важное**, `код` и _курсив_ snake_case")).toBe("Смотри важное, код и курсив snake_case");
   });
 });
+
+describe("упоминания и черновой ввод", () => {
+  it("@Имя участника выделяется, своё — особо; подсказка по слову после @", async () => {
+    const { format, mentionsMe, mentionQuery } = await import("./chatModel");
+    const who = { names: ["Борис Мартынов", "Алиса Крылова"], me: "Алиса Крылова" };
+    const f = format("@Борис Мартынов посмотри, @Алиса Крылова тоже", [], who);
+    expect(f.filter((x) => x.t === "mention")).toEqual([{ t: "mention", v: "@Борис Мартынов", me: false }, { t: "mention", v: "@Алиса Крылова", me: true }]);
+    expect(mentionsMe("привет @Алиса Крылова", "Алиса Крылова")).toBe(true);
+    expect(mentionsMe("привет Алиса", "Алиса Крылова")).toBe(false);
+    expect(mentionQuery("скажи @Бо", 9)).toEqual({ start: 6, q: "Бо" });
+    expect(mentionQuery("почта a@b", 9)).toBeNull();
+  });
+  it("эмодзи вставляется у курсора", async () => {
+    const { insertAt } = await import("./emoji");
+    expect(insertAt("Привет мир", 6, 6, " 👋")).toEqual({ value: "Привет 👋 мир", caret: 9 });
+  });
+});

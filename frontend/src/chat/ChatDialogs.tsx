@@ -144,14 +144,20 @@ export function PrefsDialog({ onClose }: { onClose: () => void }) {
   const p = s.config?.prefs ?? { presence: true, sound: true };
   const [err, setErr] = useState("");
   const set = async (patch: Partial<typeof p>) => { setErr(""); try { await chatApi.prefs(patch); await chats.reloadConfig(); } catch (e) { setErr((e as Error).message); } };
+  const Row = ({ icon, title, hint, on, onChange }: { icon: "volume" | "eye"; title: string; hint: string; on: boolean; onChange: (v: boolean) => void }) => (
+    <label className="pref-row">
+      <span className="pi"><Icon name={icon} size={17} /></span>
+      <span className="pt"><b>{title}</b><span>{hint}</span></span>
+      <span className="switch"><input type="checkbox" role="switch" checked={on} onChange={(e) => onChange(e.target.checked)} /><i /></span>
+    </label>
+  );
   return (
     <Modal title="Настройки чатов" onClose={onClose}>
-      <label className="check"><input type="checkbox" checked={p.sound} onChange={(e) => void set({ sound: e.target.checked })} /> Звук новых сообщений</label>
-      {s.config?.presence && (
-        <label className="check"><input type="checkbox" checked={p.presence} onChange={(e) => void set({ presence: e.target.checked })} /> Показывать другим, что я в сети
-          <span className="muted small"> — если выключить, вас не видно «в сети» и никому не придёт уведомление о вашем появлении. История активности не хранится.</span></label>
-      )}
-      <p className="muted small">Отключить уведомления отдельного чата — правой кнопкой по нему или в меню «⋮» переписки. Настройки действуют на всех ваших устройствах.</p>
+      <div className="pref-rows">
+        <Row icon="volume" title="Звук новых сообщений" hint="Один сигнал на серию сообщений" on={p.sound} onChange={(v) => void set({ sound: v })} />
+        {s.config?.presence && <Row icon="eye" title="Показывать, что я в сети" hint="Выключено — вас не видно «в сети», уведомление о появлении никому не придёт" on={p.presence} onChange={(v) => void set({ presence: v })} />}
+      </div>
+      <p className="pref-note"><Icon name="info" size={14} />Без уведомлений для отдельного чата — правой кнопкой по нему или «⋯» в переписке. Действует на всех ваших устройствах.</p>
       {err && <div className="alert error">{err}</div>}
     </Modal>
   );

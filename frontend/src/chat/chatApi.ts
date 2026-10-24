@@ -8,6 +8,8 @@ export interface ChatMsg {
   forwarded: { name: string; at: string } | null;
   reply_to: { id: number; author_name: string; text: string; deleted: boolean } | null;
   files: ChatFileInfo[];
+  /** Реакции участников: значок, число, кто поставил (до 50). */
+  reactions?: { emoji: string; count: number; user_ids: string[]; names: string[] }[];
   /** Только на клиенте: сообщение ещё отправляется (или не отправилось) — показывается сразу, без ожидания сервера. */
   pending?: "sending" | "failed";
 }
@@ -29,6 +31,8 @@ export interface ChatConfig {
   files: { enabled: boolean; max_size_mb: number; max_files: number; types: string[] };
   dictation: { enabled: boolean; available: boolean; max_seconds: number };
   prefs: ChatPrefs; me: { id: string; name: string };
+  /** Допустимые реакции; первые шесть — быстрая панель. */
+  reactions: string[];
 }
 export interface Person { id: string | null; ref: string | null; name: string; login: string | null; department?: string | null; title?: string | null; avatar_url?: string | null; source: "local" | "directory" }
 export interface PeopleResult { users: Person[]; groups: { ref: string; name: string; description: string | null }[]; directory: "ok" | "not_configured" | "unavailable" | null }
@@ -69,6 +73,7 @@ export const chatApi = {
     http.request<ChatMsg>("POST", `${C}/${id}/messages`, body),
   edit: (id: string, mid: number, text: string) => http.request<ChatMsg>("PATCH", `${C}/${id}/messages/${mid}`, { text }),
   remove: (id: string, mid: number) => http.request<{ ok: true }>("DELETE", `${C}/${id}/messages/${mid}`),
+  react: (id: string, mid: number, emoji: string | null) => http.request<ChatMsg>("POST", `${C}/${id}/messages/${mid}/reaction`, { emoji }),
   read: (id: string, last_id: number) => http.request<{ last_read_id: number }>("POST", `${C}/${id}/read`, { last_id }),
   receipts: (id: string, mid: number) => http.request<{ delivered: boolean; items: Receipt[] }>("GET", `${C}/${id}/messages/${mid}/receipts`),
   typing: (id: string) => http.request<void>("POST", `${C}/${id}/typing`),
