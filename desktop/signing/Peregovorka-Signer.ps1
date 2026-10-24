@@ -209,8 +209,13 @@ function Sign-One([string]$file, $cert) {
     $a = @("sign", "/fd", "SHA256", "/sha1", $cert.Thumbprint)
     if ($cert.PSParentPath -like "*LocalMachine*") { $a += "/sm" }
     if ($ts) { $a += @("/tr", $ts, "/td", "SHA256") }
-    $out = & $st @a $file 2>&1
-    if ($LASTEXITCODE) { Fail "signtool: $($out -join ' ')" }
+    for ($try = 1; ; $try++) {
+      $out = & $st @a $file 2>&1
+      if (-not $LASTEXITCODE) { break }
+      # только что записанный файл может ненадолго держать антивирус — повтор, а не отказ
+      if ($try -lt 4 -and ($out -join ' ') -match 'being used by another process') { Start-Sleep -Seconds (2 * $try); continue }
+      Fail "signtool: $($out -join ' ')"
+    }
   } else {
     $p = @{ FilePath = $file; Certificate = $cert; HashAlgorithm = "SHA256" }
     if ($ts) { $p.TimestampServer = $ts }
@@ -228,22 +233,30 @@ function Sha256([string]$file) { (Get-FileHash -Algorithm SHA256 -LiteralPath $f
 
 # ------------------------------------------------------------------------------------------------ корпоративная сборка
 function Set-MsiProperties([string]$msi, [hashtable]$props) {
+  # Windows Installer COM держит файл, пока живы ВСЕ его объекты (база, представления, записи): освобождаем каждый и собираем мусор —
+  # иначе signtool следом получает «file is being used by another process»
   $wi = New-Object -ComObject WindowsInstaller.Installer
   $db = $wi.GetType().InvokeMember("OpenDatabase", "InvokeMethod", $null, $wi, @($msi, 1))
-  foreach ($k in $props.Keys) {
-    foreach ($sql in "DELETE FROM ``Property`` WHERE ``Property``='$k'", "INSERT INTO ``Property`` (``Property``, ``Value``) VALUES ('$k', ?)") {
-      $v = $db.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $db, @($sql))
-      if ($sql.StartsWith("INSERT")) {
-        $rec = $wi.GetType().InvokeMember("CreateRecord", "InvokeMethod", $null, $wi, @(1))
-        $rec.GetType().InvokeMember("StringData", "SetProperty", $null, $rec, @(1, [string]$props[$k]))
-        $v.GetType().InvokeMember("Execute", "InvokeMethod", $null, $v, @($rec)) | Out-Null
-      } else { $v.GetType().InvokeMember("Execute", "InvokeMethod", $null, $v, $null) | Out-Null }
-      $v.GetType().InvokeMember("Close", "InvokeMethod", $null, $v, $null) | Out-Null
+  $junk = New-Object System.Collections.ArrayList
+  try {
+    foreach ($k in $props.Keys) {
+      foreach ($sql in "DELETE FROM ``Property`` WHERE ``Property``='$k'", "INSERT INTO ``Property`` (``Property``, ``Value``) VALUES ('$k', ?)") {
+        $v = $db.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $db, @($sql)); [void]$junk.Add($v)
+        if ($sql.StartsWith("INSERT")) {
+          $rec = $wi.GetType().InvokeMember("CreateRecord", "InvokeMethod", $null, $wi, @(1)); [void]$junk.Add($rec)
+          $rec.GetType().InvokeMember("StringData", "SetProperty", $null, $rec, @(1, [string]$props[$k]))
+          $v.GetType().InvokeMember("Execute", "InvokeMethod", $null, $v, @($rec)) | Out-Null
+        } else { $v.GetType().InvokeMember("Execute", "InvokeMethod", $null, $v, $null) | Out-Null }
+        $v.GetType().InvokeMember("Close", "InvokeMethod", $null, $v, $null) | Out-Null
+      }
     }
+    $db.GetType().InvokeMember("Commit", "InvokeMethod", $null, $db, $null) | Out-Null
+  } finally {
+    foreach ($o in $junk) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($o) }
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($db)
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($wi)
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
   }
-  $db.GetType().InvokeMember("Commit", "InvokeMethod", $null, $db, $null) | Out-Null
-  [Runtime.InteropServices.Marshal]::FinalReleaseComObject($db) | Out-Null
-  [Runtime.InteropServices.Marshal]::FinalReleaseComObject($wi) | Out-Null
 }
 
 function Get-Sources([string]$version, [string[]]$names, [string]$dir, [string]$base, [string]$pin) {
