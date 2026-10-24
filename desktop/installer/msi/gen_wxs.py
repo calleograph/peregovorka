@@ -31,6 +31,7 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
 
     <!-- свойство не передано при обновлении — берётся значение, записанное при первой установке -->
 {props}
+    <SetProperty Id="RUNARGS" Value=" --hidden" After="SetAUTOSTART" Sequence="both" Condition="AUTOSTART=&quot;tray&quot;" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Peregovorka">
@@ -60,11 +61,9 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
           <RegistryValue Key="shell\\open\\command" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; &quot;%1&quot;" />
         </RegistryKey>
       </Component>
-      <Component Id="RunTray" Condition="AUTOSTART=&quot;tray&quot;" Bitness="always64">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; --hidden" KeyPath="yes" />
-      </Component>
-      <Component Id="RunWindow" Condition="AUTOSTART=&quot;window&quot;" Bitness="always64">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;" KeyPath="yes" />
+      <!-- автозапуск для всех пользователей: tray — свёрнутым (ключ --hidden), window — с окном -->
+      <Component Id="RunAtLogon" Condition="AUTOSTART=&quot;tray&quot; OR AUTOSTART=&quot;window&quot;" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;[RUNARGS]" KeyPath="yes" />
       </Component>
 {comps}
     </ComponentGroup>

@@ -50,6 +50,7 @@
     <Property Id="PROXYPAC" Secure="yes" />
     <Property Id="SAVED_PROXYPAC" Secure="yes"><RegistrySearch Id="FindProxyPac" Root="HKLM" Key="SOFTWARE\Peregovorka\Desktop\Install" Name="ProxyPac" Type="raw" Bitness="always64" /></Property>
     <SetProperty Id="PROXYPAC" Value="[SAVED_PROXYPAC]" After="AppSearch" Sequence="both" Condition="NOT PROXYPAC AND SAVED_PROXYPAC" />
+    <SetProperty Id="RUNARGS" Value=" --hidden" After="SetAUTOSTART" Sequence="both" Condition="AUTOSTART=&quot;tray&quot;" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Peregovorka">
@@ -79,11 +80,9 @@
           <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; &quot;%1&quot;" />
         </RegistryKey>
       </Component>
-      <Component Id="RunTray" Condition="AUTOSTART=&quot;tray&quot;" Bitness="always64">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot; --hidden" KeyPath="yes" />
-      </Component>
-      <Component Id="RunWindow" Condition="AUTOSTART=&quot;window&quot;" Bitness="always64">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;" KeyPath="yes" />
+      <!-- автозапуск для всех пользователей: tray — свёрнутым (ключ --hidden), window — с окном -->
+      <Component Id="RunAtLogon" Condition="AUTOSTART=&quot;tray&quot; OR AUTOSTART=&quot;window&quot;" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="Peregovorka" Type="string" Value="&quot;[INSTALLFOLDER]Peregovorka.exe&quot;[RUNARGS]" KeyPath="yes" />
       </Component>
       <Component Id="PolServers" Condition="SERVERS" Bitness="always64">
         <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Peregovorka" Name="Servers" Type="string" Value="[SERVERS]" KeyPath="yes" />
