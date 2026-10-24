@@ -105,36 +105,68 @@ export const totalUnread = (items: ChatItem[]) => items.reduce((n, c) => n + (c.
 // ------------------------------------------------------------------------------------------------ разметка текста
 export type Span =
   | { t: "text"; v: string } | { t: "link"; v: string; href: string } | { t: "b"; c: Span[] } | { t: "i"; c: Span[] } | { t: "code"; v: string } | { t: "pre"; v: string }
-  | { t: "mark"; v: string } | { t: "br" };
+  | { t: "mark"; v: string } | { t: "br" } | { t: "mention"; v: string; me: boolean };
+
+/** Упоминания: «@Имя Фамилия» участников переписки. `names` — имена участников, `me` — своё имя (упоминание себя выделяется сильнее). */
+export interface Mentions { names: string[]; me: string }
 
 /** Безопасная разметка сообщения (без HTML): ссылки, **жирный**, _курсив_, `код`, блок ```кода```, переносы строк. Подсветка найденного — `marks`. */
-export function format(text: string, marks: string[] = []): Span[] {
+export function format(text: string, marks: string[] = [], who?: Mentions): Span[] {
   const out: Span[] = [];
   const parts = text.split(/```/);
   parts.forEach((part, i) => {
     if (i % 2 === 1 && i < parts.length - 1) { out.push({ t: "pre", v: part.replace(/^\n/, "").replace(/\n$/, "") }); return; }
     const chunk = i % 2 === 1 ? "```" + part : part;
-    chunk.split("\n").forEach((line, j) => { if (j) out.push({ t: "br" }); out.push(...inline(line, marks)); });
+    chunk.split("\n").forEach((line, j) => { if (j) out.push({ t: "br" }); out.push(...inline(line, marks, who)); });
   });
   return out;
 }
 
-function inline(line: string, marks: string[]): Span[] {
+function inline(line: string, marks: string[], who?: Mentions): Span[] {
   const out: Span[] = [];
   for (const c of linkify(line)) {                                  // сначала ссылки: подчёркивания и звёздочки в адресе — не разметка
     if (c.type === "link") { out.push({ t: "link", v: c.text, href: c.href }); continue; }
     const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu;
     let last = 0;
     for (const m of c.text.matchAll(re)) {
-      if (m.index! > last) out.push(...highlight(c.text.slice(last, m.index), marks));
+      if (m.index! > last) out.push(...mentionSpans(c.text.slice(last, m.index), marks, who));
       if (m[1] !== undefined) out.push({ t: "code", v: m[1] });
       else if (m[2] !== undefined) out.push({ t: "b", c: highlight(m[2], marks) });
       else out.push({ t: "i", c: highlight(m[3], marks) });
       last = m.index! + m[0].length;
     }
-    if (last < c.text.length) out.push(...highlight(c.text.slice(last), marks));
+    if (last < c.text.length) out.push(...mentionSpans(c.text.slice(last), marks, who));
   }
   return out;
+}
+
+function mentionRe(names: string[]): RegExp | null {
+  const n = [...new Set(names.filter((x) => x.trim()))].sort((a, b) => b.length - a.length).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return n.length ? new RegExp(`@(${n.join("|")})`, "gu") : null;
+}
+
+function mentionSpans(s: string, marks: string[], who?: Mentions): Span[] {
+  const re = who ? mentionRe(who.names) : null;
+  if (!re) return highlight(s, marks);
+  const out: Span[] = [];
+  let last = 0;
+  for (const m of s.matchAll(re)) {
+    if (m.index! > last) out.push(...highlight(s.slice(last, m.index), marks));
+    out.push({ t: "mention", v: m[0], me: m[1] === who!.me });
+    last = m.index! + m[0].length;
+  }
+  if (last < s.length) out.push(...highlight(s.slice(last), marks));
+  return out;
+}
+
+/** Упомянут ли пользователь в тексте (для уведомления даже в чате без уведомлений). */
+export const mentionsMe = (text: string, myName: string) => !!myName && text.includes(`@${myName}`);
+
+/** Подсказка упоминаний: слово после «@» у курсора. null — курсор не в упоминании. */
+export function mentionQuery(value: string, caret: number): { start: number; q: string } | null {
+  const before = value.slice(0, caret);
+  const m = /(^|\s)@([\p{L}\p{N}._-]{0,30}(?: [\p{L}\p{N}._-]{0,30})?)$/u.exec(before);
+  return m ? { start: caret - m[2].length - 1, q: m[2] } : null;
 }
 
 /** Подсветка найденных слов (без учёта регистра; слово — и как начало более длинного, как ищет сервер). */

@@ -5,7 +5,9 @@ import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { Icon } from "../components/Icons";
 import { chatApi, newClientId, type ChatFileInfo, type ChatInfo, type ChatItem, type ChatMsg, type SearchResult } from "./chatApi";
 import { ForwardDialog, ReceiptsDialog } from "./ChatDialogs";
-import { fileSize, format, insertDictated, rows, timeHM, type Span } from "./chatModel";
+import { fileSize, format, insertDictated, mentionQuery, mentionsMe, rows, timeHM, type Mentions, type Span } from "./chatModel";
+import EmojiPicker from "./EmojiPicker";
+import { insertAt } from "./emoji";
 import { chats, useChats } from "./chatStore";
 import { Dictation, type DictationPhase } from "./dictation";
 import { chatMenu } from "./ChatWindow";
@@ -29,6 +31,7 @@ export default function Conversation({ chat, onInfo, ask, jump, onJumped, search
   const [receipts, setReceipts] = useState<ChatMsg | null>(null);
   const [viewer, setViewer] = useState<{ images: ChatFileInfo[]; index: number } | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
+  const [reactAt, setReactAt] = useState<{ m: ChatMsg; rect: DOMRect; full: boolean } | null>(null);
   const menu = useContextMenu();
   const list = useRef<ListHandle>(null);
 
@@ -56,9 +59,15 @@ export default function Conversation({ chat, onInfo, ask, jump, onJumped, search
     watch: peer ? () => void chatApi.watch(peer.id, !peer.watch).then(() => chatApi.info(chat.id).then(setInfo)) : undefined,
   }, ask);
 
+  const who: Mentions = useMemo(() => ({ names: (info?.members ?? []).map((x) => x.name), me: s.config?.me.name ?? "" }), [info, s.config?.me.name]);
+  const react = (m: ChatMsg, emoji: string | null) => void chatApi.react(chat.id, m.id, emoji).then((x) => chats.applyMessage(chat.id, x)).catch((e) => alert((e as Error).message));
+  const openReact = (m: ChatMsg, el: HTMLElement | null) => { const r = (el ?? document.querySelector(`[data-mid="${m.id}"] .msg-bubble`))?.getBoundingClientRect(); if (r) setReactAt({ m, rect: r, full: false }); };
+  const lastOwn = () => [...(conv?.messages ?? [])].reverse().find((m) => m.author_id === me && m.kind === "text" && !m.deleted && !m.pending) ?? null;
+
   const msgMenu = (m: ChatMsg): MenuItem[] => {
     const mine = m.author_id === me;
     return [
+      { id: "react", label: "Реакция", icon: "smile", onSelect: () => openReact(m, null), hidden: m.deleted || !!m.pending },
       { id: "reply", label: "Ответить", icon: "reply", onSelect: () => { setEdit(null); setReply(m); } },
       { id: "copy", label: "Скопировать текст", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(m.text), hidden: !m.text },
       { id: "fwd", label: "Переслать", icon: "forward", onSelect: () => setForward(m), hidden: !m.text },
@@ -71,7 +80,7 @@ export default function Conversation({ chat, onInfo, ask, jump, onJumped, search
 
   return (
     <div className="conv">
-      <header className="conv-head">
+      <header className="conv-head" data-drag>
         <button type="button" className="btn ghost mini icon-btn conv-back" aria-label="К списку чатов" onClick={() => void chats.select(null)}><Icon name="chevronL" size={20} /></button>
         <button type="button" className="conv-who" onClick={onInfo} title={chat.kind === "group" ? "Информация о группе" : "Информация о собеседнике"}>
           <span className="chat-av"><Avatar name={chat.title} url={chat.avatar_url} size={38} />{s.config?.presence && peer?.online && <span className="chat-online" aria-label="в сети" />}</span>
@@ -84,11 +93,18 @@ export default function Conversation({ chat, onInfo, ask, jump, onJumped, search
                 onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); menu.openAt(r.right - 240, r.bottom + 4, headMenu()); }}><Icon name="more" size={18} /></button>
       </header>
       {search && <SearchBar chat={chat} info={info} onGo={goTo} onMarks={setMarks} onClose={() => { setSearch(false); setMarks([]); }} />}
-      <MessageList ref={list} chat={chat} me={me} marks={marks} flash={flash} onMenu={(m) => menu.onContextMenu(() => msgMenu(m))} onReplyJump={(id) => void goTo(id)}
+      <MessageList ref={list} chat={chat} me={me} who={who} marks={marks} flash={flash} onMenu={(m) => menu.onContextMenu(() => msgMenu(m))} onReplyJump={(id) => void goTo(id)}
+                   onReact={openReact} onToggleReact={react}
                    onImage={(images, index) => setViewer({ images, index })} onReply={(m) => { setEdit(null); setReply(m); }}
                    onMore={(m, e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.bottom + 4, msgMenu(m)); }} />
       <Composer chat={chat} reply={reply} edit={edit} onDone={() => { setReply(null); setEdit(null); window.requestAnimationFrame(() => list.current?.toBottom()); }}
-                onCancel={() => { setReply(null); setEdit(null); }} />
+                onCancel={() => { setReply(null); setEdit(null); }} members={chat.kind === "group" ? (info?.members ?? []).filter((x) => x.id !== me) : []}
+                onEditLast={() => { const m = lastOwn(); if (m) { setReply(null); setEdit(m); } return !!m; }} />
+      {reactAt && !reactAt.full && (
+        <ReactBar at={reactAt.rect} choices={(s.config?.reactions ?? []).slice(0, 6)} current={reactAt.m.reactions?.find((r) => r.user_ids.includes(me))?.emoji ?? null}
+                  onPick={(e) => { react(reactAt.m, e); setReactAt(null); }} onMore={() => setReactAt({ ...reactAt, full: true })} onClose={() => setReactAt(null)} />
+      )}
+      {reactAt?.full && <EmojiPicker anchor={reactAt.rect} only={s.config?.reactions ?? []} title="Реакция" onPick={(e) => { react(reactAt.m, e); setReactAt(null); }} onClose={() => setReactAt(null)} />}
       {menu.node}
       {forward && <ForwardDialog from={chat.id} msg={forward} onClose={() => setForward(null)} />}
       {receipts && <ReceiptsDialog chatId={chat.id} msg={receipts} onClose={() => setReceipts(null)} />}
@@ -102,14 +118,16 @@ export default function Conversation({ chat, onInfo, ask, jump, onJumped, search
   );
 }
 
+const TOUCH = () => window.matchMedia?.("(hover: none)").matches ?? false;
 const plural = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "а" : "ов");
 
 // ------------------------------------------------------------------------------------------------ лента
 interface ListHandle { scrollToMessage: (id: number) => void; toBottom: () => void }
 const MessageList = forwardRef<ListHandle, {
-  chat: ChatItem; me: string; marks: string[]; flash: number | null; onMenu: (m: ChatMsg) => (e: React.MouseEvent) => void; onMore: (m: ChatMsg, e: React.MouseEvent) => void;
+  chat: ChatItem; me: string; who: Mentions; marks: string[]; flash: number | null; onMenu: (m: ChatMsg) => (e: React.MouseEvent) => void; onMore: (m: ChatMsg, e: React.MouseEvent) => void;
   onReplyJump: (id: number) => void; onImage: (images: ChatFileInfo[], index: number) => void; onReply: (m: ChatMsg) => void;
-}>(function MessageList({ chat, me, marks, flash, onMenu, onMore, onReplyJump, onImage, onReply }, ref) {
+  onReact: (m: ChatMsg, el: HTMLElement | null) => void; onToggleReact: (m: ChatMsg, emoji: string | null) => void;
+}>(function MessageList({ chat, me, who, marks, flash, onMenu, onMore, onReplyJump, onImage, onReply, onReact, onToggleReact }, ref) {
   const s = useChats();
   const conv = s.convs[chat.id];
   const box = useRef<HTMLDivElement>(null);
@@ -180,7 +198,8 @@ const MessageList = forwardRef<ListHandle, {
               {showMark && <div className="msg-unread-mark"><span>Новые сообщения</span></div>}
               {m.kind === "system"
                 ? <div className="msg-system" data-mid={m.id}>{m.text}</div>
-                : <Bubble m={m} mine={m.author_id === me} group={chat.kind === "group"} first={r.first} last={r.last} read={!m.pending && readTop >= m.id} marks={marks}
+                : <Bubble m={m} mine={m.author_id === me} me={me} who={who} group={chat.kind === "group"} first={r.first} last={r.last} read={!m.pending && readTop >= m.id} marks={marks}
+                          onReact={(el) => onReact(m, el)} onToggleReact={(e) => onToggleReact(m, e)}
                           flash={flash === m.id} chatId={chat.id} onMenu={onMenu(m)} onMore={(e) => onMore(m, e)} onReplyJump={onReplyJump} onReply={() => onReply(m)}
                           onImage={(f) => onImage(images, Math.max(0, images.findIndex((x) => x.id === f.id)))} />}
             </Fragment>
@@ -196,15 +215,18 @@ const MessageList = forwardRef<ListHandle, {
   );
 });
 
-function Bubble({ m, mine, group, first, last, read, marks, flash, chatId, onMenu, onMore, onReplyJump, onReply, onImage }: {
-  m: ChatMsg; mine: boolean; group: boolean; first: boolean; last: boolean; read: boolean; marks: string[]; flash: boolean; chatId: string;
+function Bubble({ m, mine, me, who, group, first, last, read, marks, flash, chatId, onMenu, onMore, onReplyJump, onReply, onImage, onReact, onToggleReact }: {
+  m: ChatMsg; mine: boolean; me: string; who: Mentions; group: boolean; first: boolean; last: boolean; read: boolean; marks: string[]; flash: boolean; chatId: string;
   onMenu: (e: React.MouseEvent) => void; onMore: (e: React.MouseEvent) => void; onReplyJump: (id: number) => void; onReply: () => void; onImage: (f: ChatFileInfo) => void;
+  onReact: (el: HTMLElement | null) => void; onToggleReact: (emoji: string | null) => void;
 }) {
+  const bubble = useRef<HTMLDivElement>(null);
+  const mentioned = !mine && mentionsMe(m.text, who.me);
   return (
-    <div className={`msg ${mine ? "mine" : "theirs"} ${first ? "first" : ""} ${last ? "last" : ""} ${flash ? "flash" : ""} ${m.pending ? `pending ${m.pending}` : ""}`}
+    <div className={`msg ${mine ? "mine" : "theirs"} ${first ? "first" : ""} ${last ? "last" : ""} ${flash ? "flash" : ""} ${mentioned ? "mentioned" : ""} ${m.pending ? `pending ${m.pending}` : ""}`}
          data-mid={m.pending ? undefined : m.id} onContextMenu={onMenu}>
       {!mine && group && <span className="msg-av">{last ? <Avatar name={m.author_name} size={28} /> : null}</span>}
-      <div className="msg-bubble">
+      <div className="msg-bubble" ref={bubble} onClick={(e) => { if (TOUCH() && !m.pending && !(e.target as HTMLElement).closest("a, button, .msg-thumb, .msg-file")) onMore(e); }}>
         {!mine && group && first && <div className="msg-author">{m.author_name}</div>}
         {m.forwarded && <div className="msg-fwd"><Icon name="forward" size={13} /> Переслано от {m.forwarded.name}</div>}
         {m.reply_to && (
@@ -212,7 +234,7 @@ function Bubble({ m, mine, group, first, last, read, marks, flash, chatId, onMen
             <b>{m.reply_to.author_name}</b><span>{m.reply_to.deleted ? "Сообщение удалено" : m.reply_to.text || "Вложение"}</span>
           </button>
         )}
-        {m.deleted ? <div className="msg-text deleted">Сообщение удалено</div> : m.text && <div className="msg-text"><Spans spans={format(m.text, marks)} /></div>}
+        {m.deleted ? <div className="msg-text deleted">Сообщение удалено</div> : m.text && <div className="msg-text"><Spans spans={format(m.text, marks, who)} /></div>}
         {!m.deleted && m.files.length > 0 && (
           <div className="msg-files">
             {m.files.map((f) => f.kind === "image" && !f.missing
@@ -226,8 +248,19 @@ function Bubble({ m, mine, group, first, last, read, marks, flash, chatId, onMen
               ))}
           </div>
         )}
+        {!m.deleted && (m.reactions?.length ?? 0) > 0 && (
+          <div className="msg-reacts">
+            {m.reactions!.map((r) => {
+              const on = r.user_ids.includes(me);
+              return (
+                <button key={r.emoji} type="button" className={`msg-react ${on ? "mine" : ""}`} aria-pressed={on} title={r.names.join(", ") + (r.count > r.names.length ? ` и ещё ${r.count - r.names.length}` : "")}
+                        onClick={() => onToggleReact(r.emoji)}><span>{r.emoji}</span><span className="n">{r.count}</span></button>
+              );
+            })}
+          </div>
+        )}
         <div className="msg-meta">
-          {m.edited_at && !m.deleted && <span title={`Изменено ${new Date(m.edited_at).toLocaleString("ru-RU")}`}>изменено</span>}
+          {m.edited_at && !m.deleted && <span className="msg-edited" title={`Изменено ${new Date(m.edited_at).toLocaleString("ru-RU")}`} aria-label="изменено"><Icon name="edit" size={12} /></span>}
           <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString("ru-RU")}>{timeHM(m.created_at)}</time>
           {mine && (m.pending === "sending" ? <Icon name="clock" size={13} aria-label="отправляется" />
             : m.pending === "failed" ? <span className="msg-failed">не отправлено <button type="button" className="btn mini" onClick={() => void chats.retry(chatId, m).catch(() => undefined)}>Повторить</button>
@@ -237,6 +270,7 @@ function Bubble({ m, mine, group, first, last, read, marks, flash, chatId, onMen
       </div>
       {!m.pending && !m.deleted && (
         <div className="msg-actions">
+          <button type="button" className="btn ghost mini icon-btn" aria-label="Реакция" title="Реакция" onClick={() => onReact(bubble.current)}><Icon name="smile" size={15} /></button>
           <button type="button" className="btn ghost mini icon-btn" aria-label="Ответить" title="Ответить" onClick={onReply}><Icon name="reply" size={15} /></button>
           <button type="button" className="btn ghost mini icon-btn" aria-label="Действия с сообщением" title="Ещё" onClick={onMore}><Icon name="more" size={15} /></button>
         </div>
@@ -256,6 +290,7 @@ function Spans({ spans }: { spans: Span[] }): ReactNode {
       case "code": return <code key={i}>{s.v}</code>;
       case "pre": return <pre key={i}>{s.v}</pre>;
       case "mark": return <mark key={i}>{s.v}</mark>;
+      case "mention": return <span key={i} className={`mention ${s.me ? "me" : ""}`}>{s.v}</span>;
     }
     return null;
   });
@@ -331,18 +366,52 @@ function SearchBar({ chat, info, onGo, onMarks, onClose }: { chat: ChatItem; inf
   );
 }
 
+// ------------------------------------------------------------------------------------------------ реакции
+/** Быстрые реакции у сообщения (как в мессенджерах): шесть частых и «ещё» — полный набор. */
+function ReactBar({ at, choices, current, onPick, onMore, onClose }: { at: DOMRect; choices: string[]; current: string | null; onPick: (e: string) => void; onMore: () => void; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: at.left, top: at.top - 46 });
+  useLayoutEffect(() => {
+    const b = ref.current?.getBoundingClientRect();
+    if (b) setPos({ left: Math.min(Math.max(8, at.left), window.innerWidth - b.width - 8), top: at.top - b.height - 6 >= 8 ? at.top - b.height - 6 : at.bottom + 6 });
+  }, [at]);
+  useEffect(() => {
+    const down = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("keydown", key, true);
+    return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("keydown", key, true); };
+  }, [onClose]);
+  return (
+    <div className="react-bar" ref={ref} role="menu" aria-label="Реакция" style={{ left: pos.left, top: pos.top }}>
+      {choices.map((e) => <button key={e} type="button" role="menuitem" className={current === e ? "on" : ""} aria-label={e} onClick={() => onPick(e)}>{e}</button>)}
+      <button type="button" role="menuitem" className="more" aria-label="Другие реакции" title="Другие реакции" onClick={onMore}><Icon name="plus" size={16} /></button>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------------------------------------ ввод
-function Composer({ chat, reply, edit, onDone, onCancel }: { chat: ChatItem; reply: ChatMsg | null; edit: ChatMsg | null; onDone: () => void; onCancel: () => void }) {
+const DRAFT = (id: string) => `pg:chat:draft:${id}`;
+const readDraft = (id: string) => { try { return localStorage.getItem(DRAFT(id)) ?? ""; } catch { return ""; } };
+const writeDraft = (id: string, v: string) => { try { if (v.trim()) localStorage.setItem(DRAFT(id), v); else localStorage.removeItem(DRAFT(id)); } catch { /* не запоминается */ } };
+
+function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: {
+  chat: ChatItem; reply: ChatMsg | null; edit: ChatMsg | null; onDone: () => void; onCancel: () => void;
+  members: { id: string; name: string; avatar_url: string | null }[]; onEditLast: () => boolean;
+}) {
   const s = useChats();
   const cfg = s.config;
   const inMeeting = useActiveMeeting() !== null;
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => readDraft(chat.id));          // черновик переписки — в этом браузере, до отправки
   const [files, setFiles] = useState<(ChatFileInfo | { id: string; name: string; uploading: true; error?: string })[]>([]);
   const [err, setErr] = useState("");
   const [drag, setDrag] = useState(false);
   const [phase, setPhase] = useState<DictationPhase>("idle");
   const [dNote, setDNote] = useState("");
   const [level, setLevel] = useState(0);
+  const [emoji, setEmoji] = useState<DOMRect | null>(null);
+  const [mq, setMq] = useState<{ start: number; q: string } | null>(null);
+  const [mi, setMi] = useState(0);
   const ta = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const lastTyping = useRef(0);
@@ -354,6 +423,7 @@ function Composer({ chat, reply, edit, onDone, onCancel }: { chat: ChatItem; rep
   useEffect(() => { if (edit) { setText(edit.text); window.requestAnimationFrame(() => ta.current?.focus()); } }, [edit]);
   useEffect(() => { if (reply) ta.current?.focus(); }, [reply]);
   useEffect(() => { const t = ta.current; if (t) { t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 200)}px`; t.style.overflowY = t.scrollHeight > 200 ? "auto" : "hidden"; } }, [text]);
+  useEffect(() => { if (edit) return; const h = window.setTimeout(() => writeDraft(chat.id, text), 300); return () => window.clearTimeout(h); }, [text, chat.id, edit]);
   useEffect(() => () => dict.current?.cancel(), []);                    // закрыли чат или переписку — микрофон освобождается
   useEffect(() => {
     const onDev = () => { if (dict.current && (dict.current.phase === "listening")) { void dict.current.stop(); setDNote("Микрофон изменился — диктовка остановлена"); } };
@@ -388,22 +458,44 @@ function Composer({ chat, reply, edit, onDone, onCancel }: { chat: ChatItem; rep
     if (!t && !ready.length) return;
     setErr("");
     if (edit) {
-      try { chats.applyMessage(chat.id, await chatApi.edit(chat.id, edit.id, t)); setText(""); onDone(); } catch (e) { setErr((e as Error).message); }
+      try { chats.applyMessage(chat.id, await chatApi.edit(chat.id, edit.id, t)); setText(readDraft(chat.id)); onDone(); } catch (e) { setErr((e as Error).message); }
       return;
     }
     const sent = ready;
-    setText(""); setFiles([]); seen.current = new Set();
+    setText(""); setFiles([]); seen.current = new Set(); writeDraft(chat.id, "");
     onDone();
     try { await chats.send(chat.id, t, { replyTo: reply, files: sent }); } catch (e) { setErr((e as Error).message || "Не отправлено"); }
   };
 
-  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canSend) void send(); }
-    else if (e.key === "Escape" && (reply || edit)) { e.stopPropagation(); setText(edit ? "" : text); onCancel(); }
+  // ---- упоминания (@ в группе): подсказка участников по началу имени
+  const found = mq ? members.filter((x) => x.name.toLocaleLowerCase("ru").split(/\s+/).some((w) => w.startsWith(mq.q.toLocaleLowerCase("ru"))) || !mq.q).slice(0, 8) : [];
+  const putMention = (name: string) => {
+    const el = ta.current;
+    if (!mq || !el) return;
+    const r = insertAt(text, mq.start, el.selectionStart, `@${name} `);
+    setText(r.value); setMq(null);
+    window.requestAnimationFrame(() => { el.focus(); el.selectionStart = el.selectionEnd = r.caret; });
   };
-  const onChange = (v: string) => {
-    setText(v);
-    if (Date.now() - lastTyping.current > 3000 && v) { lastTyping.current = Date.now(); void chatApi.typing(chat.id).catch(() => undefined); }
+  const track = (el: HTMLTextAreaElement) => { setMq(members.length ? mentionQuery(el.value, el.selectionStart) : null); setMi(0); };
+
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (found.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); setMi((i) => (i + (e.key === "ArrowDown" ? 1 : found.length - 1)) % found.length); return; }
+    if (found.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); putMention(found[mi].name); return; }
+    if (found.length && e.key === "Escape") { e.stopPropagation(); setMq(null); return; }
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canSend) void send(); }
+    else if (e.key === "Escape" && (reply || edit)) { e.stopPropagation(); setText(edit ? readDraft(chat.id) : text); onCancel(); }
+    else if (e.key === "ArrowUp" && !text && !edit && onEditLast()) e.preventDefault();      // ↑ в пустом поле — изменить своё последнее сообщение
+  };
+  const onChange = (el: HTMLTextAreaElement) => {
+    setText(el.value);
+    track(el);
+    if (Date.now() - lastTyping.current > 3000 && el.value) { lastTyping.current = Date.now(); void chatApi.typing(chat.id).catch(() => undefined); }
+  };
+  const putEmoji = (e: string) => {
+    const el = ta.current;
+    const r = insertAt(textRef.current, el?.selectionStart ?? textRef.current.length, el?.selectionEnd ?? textRef.current.length, e);
+    setText(r.value);
+    window.requestAnimationFrame(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = r.caret; } });
   };
 
   // ---- диктовка
@@ -445,16 +537,16 @@ function Composer({ chat, reply, edit, onDone, onCancel }: { chat: ChatItem; rep
       {(reply || edit) && (
         <div className="composer-ctx">
           <Icon name={edit ? "edit" : "reply"} size={16} />
-          <span><b>{edit ? "Изменение сообщения" : `Ответ: ${reply!.author_name}`}</b><span className="muted">{(edit ?? reply)!.text.slice(0, 120) || "Вложение"}</span></span>
-          <button type="button" className="btn ghost mini icon-btn" aria-label="Отменить" onClick={() => { if (edit) setText(""); onCancel(); }}><Icon name="close" size={14} /></button>
+          <span><b>{edit ? "Изменение" : reply!.author_name}</b><span className="muted">{(edit ?? reply)!.text.slice(0, 120) || "Вложение"}</span></span>
+          <button type="button" className="cbtn" aria-label="Отменить" title="Отменить (Esc)" onClick={() => { if (edit) setText(readDraft(chat.id)); onCancel(); }}><Icon name="close" size={14} /></button>
         </div>
       )}
       {files.length > 0 && (
         <div className="composer-files">
           {files.map((f) => (
             <span key={f.id} className="composer-file">
-              <Icon name="file" size={14} />{f.name}{"uploading" in f ? <span className="muted small"> · загрузка…</span> : <span className="muted small"> · {fileSize(f.size)}</span>}
-              {!("uploading" in f) && <button type="button" className="btn ghost mini icon-btn" aria-label={`Убрать ${f.name}`}
+              <Icon name="file" size={14} />{f.name}{"uploading" in f ? <span className="muted small"> · …</span> : <span className="muted small"> · {fileSize(f.size)}</span>}
+              {!("uploading" in f) && <button type="button" className="cbtn" style={{ width: 22, height: 22, minWidth: 22 }} aria-label={`Убрать ${f.name}`}
                 onClick={() => { setFiles((x) => x.filter((y) => y.id !== f.id)); void chatApi.dropFile(chat.id, f.id).catch(() => undefined); }}><Icon name="close" size={12} /></button>}
             </span>
           ))}
@@ -463,30 +555,42 @@ function Composer({ chat, reply, edit, onDone, onCancel }: { chat: ChatItem; rep
       {listening || phase === "finishing" ? (
         <div className="dictation" role="status" aria-live="polite">
           <span className="dictation-dot" style={{ transform: `scale(${1 + Math.min(level * 6, 0.8)})` }} aria-hidden />
-          <b>{phase === "starting" ? "Включаем микрофон…" : phase === "finishing" ? "Завершаем распознавание…" : "Идёт диктовка"}</b>
-          {inMeeting && <span className="muted small">Вы во встрече: если её микрофон включён, участники слышат диктовку</span>}
+          <b>{phase === "starting" ? "Микрофон…" : phase === "finishing" ? "Распознаём…" : "Идёт диктовка"}</b>
+          {inMeeting && <span className="muted small" title="Если микрофон встречи включён, участники слышат диктовку">· вы во встрече</span>}
           <div className="spacer" />
-          <button type="button" className="btn mini" disabled={phase !== "listening"} onClick={() => void stopDictation(false)}><Icon name="stop" size={14} /> Стоп</button>
-          <button type="button" className="btn mini primary" disabled={phase !== "listening"} onClick={() => void stopDictation(true)}><Icon name="send" size={14} /> Остановить и отправить</button>
-          <button type="button" className="btn mini ghost" onClick={cancelDictation}>Отмена</button>
+          <button type="button" className="cbtn" disabled={phase !== "listening"} aria-label="Стоп" title="Остановить (текст останется в поле)" onClick={() => void stopDictation(false)}><Icon name="stop" size={16} /></button>
+          <button type="button" className="cbtn send" disabled={phase !== "listening"} aria-label="Остановить и отправить" title="Остановить и отправить" onClick={() => void stopDictation(true)}><Icon name="send" size={16} /></button>
+          <button type="button" className="cbtn" aria-label="Отмена" title="Отменить диктовку" onClick={cancelDictation}><Icon name="close" size={16} /></button>
         </div>
       ) : dNote ? <div className={`alert ${phase === "error" ? "error" : "warn"} small composer-note`}>{dNote} <button type="button" className="btn ghost mini" onClick={() => setDNote("")}>Понятно</button></div> : null}
       {err && <div className="alert error small composer-note">{err} <button type="button" className="btn ghost mini" onClick={() => setErr("")}>Скрыть</button></div>}
+      {found.length > 0 && (
+        <div className="mention-pop" role="listbox" aria-label="Упомянуть участника">
+          {found.map((x, i) => (
+            <button key={x.id} type="button" role="option" aria-selected={i === mi} className={i === mi ? "on" : ""} onMouseDown={(e) => { e.preventDefault(); putMention(x.name); }}>
+              <Avatar name={x.name} url={x.avatar_url} size={22} />{x.name}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="composer-row">
-        <button type="button" className="btn ghost icon-btn" aria-label="Прикрепить файл" title={cfg?.files.enabled ? `Прикрепить файл (до ${cfg.files.max_size_mb} МБ)` : "Вложения отключены"}
+        <button type="button" className="cbtn" aria-label="Прикрепить файл" title={cfg?.files.enabled ? `Прикрепить файл (до ${cfg.files.max_size_mb} МБ) — или перетащите, или Ctrl+V` : "Вложения отключены"}
                 disabled={!cfg?.files.enabled} onClick={() => picker.current?.click()}><Icon name="attach" size={20} /></button>
         <input ref={picker} type="file" multiple hidden onChange={(e) => { void upload([...(e.target.files ?? [])]); e.target.value = ""; }} />
-        <textarea ref={ta} rows={1} value={text} maxLength={cfg?.max_message_chars ?? 4000} placeholder="Сообщение…" title="Enter — отправить, Shift+Enter — новая строка"
-                  aria-label="Текст сообщения" onChange={(e) => onChange(e.target.value)} onKeyDown={onKey}
+        <textarea ref={ta} rows={1} value={text} maxLength={cfg?.max_message_chars ?? 4000} placeholder={edit ? "Изменение сообщения…" : "Сообщение…"}
+                  title="Enter — отправить, Shift+Enter — новая строка, ↑ — изменить последнее, @ — упомянуть"
+                  aria-label="Текст сообщения" onChange={(e) => onChange(e.target)} onKeyDown={onKey} onClick={(e) => track(e.currentTarget)} onBlur={() => window.setTimeout(() => setMq(null), 150)}
                   onPaste={(e) => { const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); void upload(imgs); } }} />
+        <button type="button" data-emoji-toggle className={`cbtn ${emoji ? "on" : ""}`} aria-label="Эмодзи" title="Эмодзи" onClick={(e) => setEmoji(emoji ? null : e.currentTarget.getBoundingClientRect())}><Icon name="smile" size={20} /></button>
         {dictAvailable && !listening && phase !== "finishing" && (
-          <button type="button" className="btn ghost icon-btn" aria-label="Диктовка" title={cfg?.dictation.available ? "Продиктовать текст" : "Распознавание речи сейчас недоступно"}
+          <button type="button" className="cbtn" aria-label="Диктовка" title={cfg?.dictation.available ? "Продиктовать текст" : "Распознавание речи сейчас недоступно"}
                   disabled={!cfg?.dictation.available} onClick={() => void startDictation()}><Icon name="mic" size={20} /></button>
         )}
-        <button type="button" className="btn primary icon-btn composer-send" aria-label={edit ? "Сохранить" : "Отправить"} disabled={!canSend} onClick={() => void send()}>
+        <button type="button" className="cbtn send" aria-label={edit ? "Сохранить" : "Отправить"} title={edit ? "Сохранить (Enter)" : "Отправить (Enter)"} disabled={!canSend} onClick={() => void send()}>
           <Icon name={edit ? "check" : "send"} size={18} />
         </button>
       </div>
+      {emoji && <EmojiPicker anchor={emoji} onPick={putEmoji} onClose={() => setEmoji(null)} />}
       {drag && <div className="composer-drop">Отпустите, чтобы прикрепить файлы</div>}
     </div>
   );

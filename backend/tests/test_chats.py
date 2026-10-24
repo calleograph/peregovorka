@@ -368,3 +368,29 @@ def test_duplicate_send_race_returns_the_stored_message(client, monkeypatch):
     r = client.post(f"{C}/{cid}/messages", json={"text": "один раз", "client_id": "race-00000001"})
     assert r.status_code == 200 and r.json()["id"] == first["id"] and calls["n"] == 2
     assert _db(client, lambda db: _count(db, ChatMessage.chat_id == uuid.UUID(cid))) == 1
+
+
+def test_reactions_toggle_replace_and_reach_everyone(client):
+    """Реакции как в мессенджерах: одна на участника (повтор снимает, другая заменяет), только из набора, видны всем участникам, посторонним — 404."""
+    bob = uid(client, "bob")
+    cid = direct(client, "alice", bob)
+    m = say(client, cid, "отчёт готов")
+    login(client, "bob")
+    with client.websocket_connect(f"{API}/ws") as ws:
+        ws.send_json({"type": "subscribe_user"})
+        assert ws.receive_json()["type"] == "subscribed_user"
+        r = client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "👍"}).json()
+        assert r["reactions"] == [{"emoji": "👍", "count": 1, "user_ids": [bob], "names": ["Bob B"]}]
+        ev = ws.receive_json()
+        assert ev["type"] == "chat_message_updated" and ev["message"]["reactions"][0]["emoji"] == "👍"
+    assert client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "🔥"}).json()["reactions"][0]["emoji"] == "🔥", "другая реакция заменяет"
+    assert client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "🔥"}).json()["reactions"] == [], "повтор той же снимает"
+    assert client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "<script>"}).status_code == 422
+    client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "❤️"})
+    login(client, "alice")
+    client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "❤️"})
+    got = client.get(f"{C}/{cid}/messages").json()["messages"][0]["reactions"]
+    assert got == [{"emoji": "❤️", "count": 2, "user_ids": [bob, client.get(f"{API}/auth/me").json()["user"]["id"]], "names": ["Bob B", "Alice A"]}]
+    assert "❤️" in client.get(f"{C}/config").json()["reactions"]
+    uid(client, "carol")
+    assert client.post(f"{C}/{cid}/messages/{m['id']}/reaction", json={"emoji": "👍"}).status_code == 404

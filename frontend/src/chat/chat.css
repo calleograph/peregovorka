@@ -8,16 +8,20 @@
 .chat-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px;
   text-align: center; font-variant-numeric: tabular-nums; }
 
-/* окно */
-.chat-back { position: fixed; inset: 0; z-index: 15; display: grid; place-items: center; padding: 24px; background: rgba(10, 14, 22, .42);
-  animation: chat-fade .16s var(--ease) both; }
-.chat-win { width: min(1240px, 100%); height: min(860px, calc(100dvh - 48px)); display: grid; grid-template-columns: minmax(280px, 340px) 1fr; overflow: hidden;
-  background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 30px 80px -24px rgba(0, 0, 0, .45);
-  animation: chat-rise .22s var(--ease) both; outline: none; }
-@keyframes chat-fade { from { opacity: 0; } }
-@keyframes chat-rise { from { opacity: 0; transform: translateY(10px) scale(.99); } }
-@media (prefers-reduced-motion: reduce) { .chat-back, .chat-win { animation: none; } }
-.icon-btn { display: inline-grid; place-items: center; padding: 6px; min-width: 32px; min-height: 32px; }
+/* окно: плавающее (не модальное), как плеер записей — перетаскивается за заголовки, размер — за угол; на телефоне — во весь экран */
+.chat-win { position: fixed; z-index: 16; display: grid; grid-template-columns: minmax(250px, 300px) 1fr; overflow: hidden;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 24px 64px -20px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .08);
+  animation: chat-rise .18s var(--ease) both; outline: none; }
+.chat-win:focus, .chat-win:focus-visible { outline: none; }     /* фокус окна ставится программно — без рамки */
+.chat-win [data-drag] { cursor: grab; user-select: none; touch-action: none; }
+.chat-win [data-drag]:active { cursor: grabbing; }
+.chat-win.mobile { inset: 0; width: auto; height: auto; max-width: none; border-radius: 0; border: 0; }     /* общее правило [role=dialog] оставляло поля 8 px */
+.chat-win.mobile [data-drag] { cursor: default; touch-action: auto; }
+.chat-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 2; touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, var(--line-strong) 50% 58%, transparent 58% 70%, var(--line-strong) 70% 78%, transparent 78%); }
+@keyframes chat-rise { from { opacity: 0; transform: translateY(8px) scale(.99); } }
+@media (prefers-reduced-motion: reduce) { .chat-win { animation: none; } }
+.icon-btn { display: inline-grid; place-items: center; padding: 0; width: 32px; height: 32px; min-width: 32px; border-radius: 8px; }
 .icon-btn.on { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
 
 /* левая панель */
@@ -133,7 +137,7 @@
 .msg-failed { display: inline-flex; gap: 4px; align-items: center; color: var(--danger); }
 .msg-actions { align-self: center; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
-@media (hover: none) { .msg-actions { opacity: 1; } .msg-actions [aria-label="Ответить"] { display: none; } }      /* на сенсорном — только «⋯» (и долгое нажатие)  */
+@media (hover: none) { .msg-actions { display: none; } }      /* сенсорный экран: меню сообщения — нажатием на него (как в мессенджерах), без кнопок рядом */
 .msgs-new { position: absolute; right: 16px; bottom: 12px; display: inline-flex; gap: 4px; align-items: center; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
   background: var(--surface); color: var(--accent); font: inherit; font-size: 13px; box-shadow: var(--shadow-card); cursor: pointer; }
 
@@ -194,16 +198,97 @@
 .danger-text { color: var(--danger); }
 .ok-text { color: var(--ok-text, var(--ok)); }
 
-/* узкий экран: одна панель */
+/* одна панель: узкое окно или телефон — список или переписка с кнопкой «назад» */
+.chat-win.one-pane { grid-template-columns: 1fr; }
+.chat-win.one-pane.has-current .chat-side { display: none; }
+.chat-win.one-pane:not(.has-current) .chat-main { display: none; }
+.chat-win.one-pane .conv-head .conv-back { display: inline-grid; }
+.chat-win.one-pane .msg { max-width: 92%; }
 @media (max-width: 760px) {
-  .chat-back { padding: 0; }
-  .chat-back .chat-win { width: 100%; max-width: none; height: 100dvh; border-radius: 0; border: 0; grid-template-columns: 1fr; }     /* общее правило [role=dialog] оставляет поля 8 px */
-  .chat-win.has-current .chat-side { display: none; }
-  .chat-win:not(.has-current) .chat-main { display: none; }
-  .conv-head .conv-back { display: inline-grid; }
-  .msg { max-width: 90%; }
   .msg-thumb img { max-width: 200px; }
-  .chat-toasts { right: 12px; left: 12px; width: auto; }
-  .conv-search-row.filters { gap: 8px; }
-  .dictation > .muted { flex-basis: 100%; }
+  .chat-toasts { right: 8px; left: 8px; width: auto; }
 }
+
+/* ---- плотность: рабочим поверхностям — место, служебным — минимум воздуха */
+.chat-side-head { padding: 8px 6px 4px 12px; gap: 2px; }
+.chat-side-head h2 { font-size: 17px; }
+.chat-search { margin: 4px 8px 6px; padding: 0 8px; border-radius: 9px; }
+.chat-search input { padding: 6px 0; font-size: 14px; }
+.chat-tabs { padding: 0 8px 6px; gap: 4px; }
+.chat-tab { padding: 3px 9px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px; min-height: 26px; }
+.chat-tab.ico { padding: 3px 8px; }
+.chat-list { padding: 0 4px 6px; }
+.chat-row { padding: 6px 8px; gap: 9px; border-radius: 10px; }
+.chat-row .av { width: 38px !important; height: 38px !important; }
+.conv-head { padding: 6px 8px 6px 10px; gap: 4px; min-height: 48px; }
+.conv-who { padding: 2px 4px; gap: 8px; }
+.msgs { padding: 8px 12px 6px; }
+.msg-bubble { padding: 5px 9px 4px; border-radius: 14px; }
+.msg-day { margin: 6px 0 4px; }
+.msg.first { margin-top: 4px; }
+
+/* поле ввода: кнопки одного размера, без рамок, по нижнему краю поля */
+.composer { padding: 6px 8px 8px; gap: 4px; }
+.composer-row { align-items: flex-end; gap: 4px; }
+.composer textarea { min-height: 36px; padding: 7px 10px; line-height: 20px; border-radius: 10px; font-size: 14.5px; }
+.cbtn { width: 36px; height: 36px; min-width: 36px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 10px; background: none; color: var(--muted);
+  cursor: pointer; transition: background .15s, color .15s; flex: none; }
+.cbtn:hover:not(:disabled) { background: var(--soft); color: var(--text); }
+.cbtn:disabled { opacity: .45; cursor: default; }
+.cbtn.on { color: var(--accent); background: var(--accent-soft); }
+.cbtn.send { background: var(--grad); color: #fff; }
+.cbtn.send:hover:not(:disabled) { background: var(--grad-hover); color: #fff; }
+.cbtn.send:disabled { background: var(--line); color: var(--muted); opacity: 1; }
+.cbtn.danger { color: var(--danger); }
+
+/* диктовка: компактная строка с иконками */
+.dictation { padding: 4px 4px 4px 10px; gap: 6px; }
+.dictation b { font-weight: 600; font-size: 13.5px; }
+.dictation .cbtn { width: 32px; height: 32px; min-width: 32px; }
+
+/* эмодзи и реакции */
+.emoji-pop { position: fixed; z-index: 1450; width: 316px; max-width: calc(100vw - 16px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, .18)); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+.emoji-tabs { display: flex; gap: 2px; padding: 4px; border-bottom: 1px solid var(--line); }
+.emoji-tabs button { flex: 1; border: 0; background: none; border-radius: 6px; padding: 3px 0; font-size: 17px; cursor: pointer; opacity: .6; }
+.emoji-tabs button.on, .emoji-tabs button:hover { opacity: 1; background: var(--soft); }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; padding: 6px; max-height: 220px; overflow-y: auto; }
+.emoji-grid button, .react-bar button { border: 0; background: none; border-radius: 8px; font-size: 21px; line-height: 1; padding: 5px 0; cursor: pointer; }
+.emoji-grid button:hover, .react-bar button:hover { background: var(--soft); transform: scale(1.12); }
+.emoji-title { padding: 2px 8px 0; font-size: 11.5px; color: var(--muted); grid-column: 1 / -1; }
+.react-bar { position: fixed; z-index: 1450; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, .18)); }
+.react-bar button { width: 34px; padding: 4px 0; }
+.react-bar button.on { background: var(--accent-soft); }
+.react-bar .more { font-size: 15px; color: var(--muted); }
+.msg-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 1px; }
+.msg-react { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  font: inherit; font-size: 13px; cursor: pointer; color: var(--text); }
+.msg-react .n { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); opacity: .8; }
+.msg-react.mine { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.msg-react.mine .n { color: var(--text); font-weight: 700; }
+.mention { color: var(--accent); font-weight: 600; }
+.mention.me { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 4px; padding: 0 2px; }
+.msg.mentioned .msg-bubble { box-shadow: inset 3px 0 0 var(--accent); }
+.mention-pop { position: absolute; left: 8px; bottom: calc(100% - 2px); z-index: 3; min-width: 220px; max-width: 320px; max-height: 220px; overflow-y: auto; padding: 4px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, .18)); }
+.mention-pop button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.mention-pop button.on, .mention-pop button:hover { background: var(--accent-soft); }
+.msg-edited { display: inline-flex; color: var(--muted); }
+
+/* настройки чатов: ровные строки с переключателями */
+.pref-rows { display: grid; gap: 2px; margin: 0 -6px; }
+.pref-row { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; margin: 0; cursor: pointer; font-weight: 400; }
+.pref-row:hover { background: var(--soft); }
+.pref-row .pi { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--soft); color: var(--muted); }
+.pref-row .pt { display: grid; gap: 1px; min-width: 0; }
+.pref-row .pt b { font-weight: 600; }
+.pref-row .pt span { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch i { position: absolute; inset: 0; border-radius: 999px; background: var(--line-strong); transition: background .2s; pointer-events: none; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s var(--spring); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.switch input:checked + i { background: var(--accent); }
+.switch input:checked + i::after { transform: translateX(16px); }
+.switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pref-note { display: flex; gap: 8px; align-items: flex-start; color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }

@@ -102,3 +102,16 @@ class ChatFolder(Base):
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class ChatReaction(Base):
+    """Реакция участника на сообщение (как в мессенджерах): у одного участника на сообщении — одна реакция, повтор той же снимает её, другая — заменяет."""
+
+    __tablename__ = "chat_reactions"
+    __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_chat_reactions"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)

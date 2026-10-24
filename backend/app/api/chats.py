@@ -81,7 +81,7 @@ async def config(request: Request, su: SessionUser = Depends(require_user), db: 
     return {"enabled": cfg.enabled, "max_message_chars": cfg.max_message_chars, "max_group_members": cfg.max_group_members, "presence": cfg.presence_enabled,
             "files": {"enabled": files.enabled, "max_size_mb": files.max_size_mb, "max_files": files.max_files_per_message, "types": sorted(files.extensions())},
             "dictation": {"enabled": bool(cfg.dictation_enabled), "available": bool(asr and asr.get("model_loaded", True)), "max_seconds": cfg.dictation_max_seconds},
-            "prefs": cs.prefs(me), "me": {"id": str(me.id), "name": me.display_name}}
+            "prefs": cs.prefs(me), "me": {"id": str(me.id), "name": me.display_name}, "reactions": list(cs.REACTIONS)}
 
 
 @router.put("/prefs")
@@ -539,6 +539,24 @@ async def delete_message(chat_id: uuid.UUID, message_id: int, request: Request, 
     out = (await cs.render(db, [msg]))[0]
     await _broadcast(request, db, chat.id, {"type": "chat_message_updated", "chat_id": str(chat.id), "message": out})
     return {"ok": True}
+
+
+@router.post("/{chat_id}/messages/{message_id}/reaction")
+async def react(chat_id: uuid.UUID, message_id: int, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Реакция на сообщение (`emoji`; тот же значок или null — снять). Изменение видят все участники сразу."""
+    await _cfg(request, db)
+    chat, me = await _member(db, chat_id, su)
+    await _limit(request, "react", su, (60, 60))
+    emoji = body.get("emoji")
+    try:
+        msg = await cs.visible_message(db, chat, me, message_id)
+        changed = await cs.set_reaction(db, msg, su.user_id, str(emoji) if emoji else None)
+    except cs.ChatError as exc:
+        _fail(exc)
+    out = (await cs.render(db, [msg]))[0]
+    if changed:
+        await _broadcast(request, db, chat.id, {"type": "chat_message_updated", "chat_id": str(chat.id), "message": out})
+    return out
 
 
 @router.post("/{chat_id}/read")

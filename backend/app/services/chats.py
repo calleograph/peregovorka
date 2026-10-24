@@ -25,7 +25,7 @@ from sqlalchemy import and_, delete, func, literal_column, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Chat, ChatFile, ChatFolder, ChatMember, ChatMessage, User, utcnow
+from ..models import Chat, ChatFile, ChatFolder, ChatMember, ChatMessage, ChatReaction, User, utcnow
 from . import events
 
 PAGE = 50
@@ -38,6 +38,9 @@ _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f‪-‮⁦-⁩]")      # у�
 _WORD = re.compile(r"[\w]+", re.UNICODE)
 PRESENCE_TTL = 75                       # с: клиент подтверждает активность раз в 30 с
 DEFAULT_PREFS = {"presence": True, "sound": True}
+# Реакции (как в мессенджерах): первые шесть — быстрая панель у сообщения, остальные — в раскрывающемся наборе. Только из этого списка.
+REACTIONS = ("👍", "❤️", "😂", "😮", "😢", "🔥", "👎", "🙏", "👏", "🎉", "🤝", "👌", "💯", "✅", "❌", "🤔", "😁", "😍", "🥲", "😡", "🤯", "👀", "🚀", "💪",
+             "⚡", "🙈", "🤷", "😴", "🆗", "✍️")
 _RU = literal_column("'russian'::regconfig")
 
 
@@ -227,13 +230,54 @@ async def _files_for(db: AsyncSession, ids: list[int]) -> dict[int, list[ChatFil
     return out
 
 
+async def _reactions_for(db: AsyncSession, ids: list[int]) -> dict[int, list[dict]]:
+    """Реакции по сообщениям: значок, число, кто поставил (до 50 имён и идентификаторов — у больших групп достаточно для подсказки)."""
+    out: dict[int, dict[str, dict]] = {}
+    if ids:
+        rows = (await db.execute(select(ChatReaction.message_id, ChatReaction.emoji, ChatReaction.user_id, User.display_name)
+                                 .join(User, User.id == ChatReaction.user_id).where(ChatReaction.message_id.in_(ids)).order_by(ChatReaction.id))).all()
+        for mid, emoji, uid, name in rows:
+            r = out.setdefault(mid, {}).setdefault(emoji, {"emoji": emoji, "count": 0, "user_ids": [], "names": []})
+            r["count"] += 1
+            if len(r["user_ids"]) < 50:
+                r["user_ids"].append(str(uid))
+                r["names"].append(name)
+    return {mid: list(v.values()) for mid, v in out.items()}
+
+
+async def set_reaction(db: AsyncSession, msg: ChatMessage, user_id: uuid.UUID, emoji: str | None) -> bool:
+    """Поставить, заменить или снять (тот же значок или None) реакцию участника. Возвращает, изменилось ли что-то."""
+    if emoji is not None and emoji not in REACTIONS:
+        raise ChatError("Такой реакции нет")
+    if msg.deleted_at is not None or msg.kind != "text":
+        raise ChatError("На это сообщение реакцию поставить нельзя", 409)
+    cur = (await db.execute(select(ChatReaction).where(ChatReaction.message_id == msg.id, ChatReaction.user_id == user_id))).scalar_one_or_none()
+    if cur is not None and (emoji is None or cur.emoji == emoji):
+        await db.delete(cur)
+    elif cur is not None:
+        cur.emoji, cur.created_at = emoji, utcnow()
+    elif emoji is not None:
+        db.add(ChatReaction(message_id=msg.id, user_id=user_id, emoji=emoji))
+    else:
+        return False
+    try:
+        await db.commit()
+    except IntegrityError:                      # два устройства одновременно — побеждает записанная раньше
+        await db.rollback()
+    return True
+
+
 async def render(db: AsyncSession, rows: list[ChatMessage]) -> list[dict]:
     files = await _files_for(db, [m.id for m in rows])
+    reacts = await _reactions_for(db, [m.id for m in rows])
     want = {m.reply_to_id for m in rows if m.reply_to_id} - {m.id for m in rows}
     replies = {m.id: m for m in rows}
     if want:
         replies.update({r.id: r for r in (await db.execute(select(ChatMessage).where(ChatMessage.id.in_(want)))).scalars()})
-    return [message_out(m, files.get(m.id), replies.get(m.reply_to_id) if m.reply_to_id else None) for m in rows]
+    out = [message_out(m, files.get(m.id), replies.get(m.reply_to_id) if m.reply_to_id else None) for m in rows]
+    for o in out:
+        o["reactions"] = [] if o["deleted"] else reacts.get(o["id"], [])
+    return out
 
 
 async def history(db: AsyncSession, chat: Chat, me: ChatMember, *, before_id: int | None = None, after_id: int | None = None, around_id: int | None = None,
