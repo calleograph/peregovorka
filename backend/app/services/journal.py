@@ -40,7 +40,7 @@ def parse_client(ua: str | None) -> str | None:
         return None
     u = ua[:400]
     br = None
-    for name, pat in (("Edge", r"Edg(?:e|A|iOS)?/(\d+)"), ("Opera", r"OPR/(\d+)"), ("Firefox", r"Firefox/(\d+)"),
+    for name, pat in (("Peregovorka для Windows", r"PeregovorkaDesktop/(\d+\.\d+\.\d+)"), ("Edge", r"Edg(?:e|A|iOS)?/(\d+)"), ("Opera", r"OPR/(\d+)"), ("Firefox", r"Firefox/(\d+)"),
                       ("Chrome", r"(?:Chrome|CriOS)/(\d+)"), ("Safari", r"Version/(\d+)[\d.]* .*Safari/")):
         m = re.search(pat, u)
         if m:

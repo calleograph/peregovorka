@@ -23,6 +23,9 @@ import SetupWizard from "./components/SetupWizard";
 import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
 import { ChatHost, ChatNavButton } from "./chat/ChatNav";
+import { chats } from "./chat/chatStore";
+import { onDesktopCommand } from "./desktop";
+import { watchMeetings } from "./desktopMeetings";
 
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 import OutlookCenter from "./pages/OutlookCenter";
@@ -49,14 +52,27 @@ function StaffApp() {
   const [help, setHelp] = useState(false);
   const [pending, setPending] = useState<{ kind: string; title: string; version: number }[]>([]);
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [burger, setBurger] = useState(false);
   const inMeeting = useActiveMeeting() !== null;
   useEffect(() => setBurger(false), [pathname]);
+  // приложение Windows: переход по уведомлению и пункт «Чаты» в трее; `?chat=<id>` открывает переписку (ссылка из уведомления)
+  useEffect(() => {
+    const a = onDesktopCommand("navigate", (c) => { if (c.route?.startsWith("/") && !c.route.startsWith("//")) navigate(c.route); });
+    const b = onDesktopCommand("chats", () => chats.openWindow());
+    return () => { a(); b(); };
+  }, [navigate]);
+  useEffect(() => {
+    const id = new URLSearchParams(search).get("chat");
+    if (!id || !me) return;
+    chats.openWindow(id);
+    navigate(pathname, { replace: true });
+  }, [search, pathname, me, navigate]);
   useEffect(() => { document.title = pageTitle(pathname, me !== null, site.name); }, [pathname, me, site.name]);
   useEffect(() => { applyFavicon(inMeeting); return () => applyFavicon(false); }, [inMeeting]);   // во время встречи у значка вкладки красная точка   // на малых экранах меню закрывается при переходе
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);        // аватарка в верхнем меню; хуки — до любых ранних return
   const myId = me ? me.user.id : null;
+  useEffect(() => (myId ? watchMeetings() : undefined), [myId]);           // приложение Windows: уведомления о встречах (в браузере — ничего)
   useEffect(() => { if (myId) void api.profile().then((p) => setAvatarUrl(p.avatar_url)).catch(() => undefined); }, [myId]);
   const onProfile = useCallback((p: Profile) => setAvatarUrl(p.avatar_url), []);
 

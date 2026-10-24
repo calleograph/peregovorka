@@ -255,6 +255,85 @@ class AuthService:
                                                ip=ch.get("ip", ip), ua=ch.get("ua", ""))
         return LoginResult(sid, data, user, None, backup_used=used_backup)
 
+    # ------------------------------------------------------------------------------ доверенное устройство (настольный клиент)
+    async def _directory_state(self, user: User) -> tuple[DirectoryIdentity | None, str | None]:
+        """Учётная запись каталога без пароля: (личность, код отказа). Каталог недоступен — AuthError 503 (клиент повторит позже и токен не теряет)."""
+        try:
+            ident = await asyncio.to_thread(self._dir.lookup, user.upn or user.sam_account_name)
+        except DirectoryError as exc:
+            if exc.code in ("user_not_found", "ambiguous_user", "not_configured"):
+                return None, "account_not_found"
+            raise AuthError("directory_unavailable", *_UNAVAILABLE) from None
+        if not ident.ad_guid or ident.ad_guid != user.ad_guid:
+            return None, "account_not_found"
+        if ident.disabled:
+            return None, "account_disabled"
+        return ident, None
+
+    async def trust_pwd(self, user: User) -> str | None:
+        """Отпечаток пароля каталога на момент выдачи доверия (pwdLastSet); недоступен — None (тогда смена пароля в каталоге ловится только сменой через Peregovorka)."""
+        if user.auth_source == "local":
+            return None
+        try:
+            ident, _ = await self._directory_state(user)
+        except AuthError:
+            return None
+        return ident.pwd_set if ident else None
+
+    async def resume_device(self, db: AsyncSession, token: str, ip: str, ua: str = "") -> tuple[LoginResult, dict]:
+        """Новая сессия по токену доверенного устройства — без пароля, но с теми же правилами, что при входе: учётная запись активна, в каталоге не отключена,
+        пароль в каталоге не менялся, правила допуска пропускают. Отказ отзывает токен; недоступный каталог — нет (503). Прежняя сессия устройства завершается (место в лимите не растёт)."""
+        rec = await self._sessions.trust_claim(token)                # одноразовый: забран сразу; вернётся только при временном отказе
+        if rec is None:
+            raise AuthError("trust_invalid", "Сохранённый вход недействителен. Войдите снова.", 401)
+        try:
+            return await self._resume(db, rec, ip, ua)
+        except AuthError as exc:
+            if exc.code in ("directory_unavailable", "session_limit"):
+                await self._sessions.trust_restore(token, rec)
+            raise
+
+    async def _resume(self, db: AsyncSession, rec: dict, ip: str, ua: str) -> tuple[LoginResult, dict]:
+        async def deny(code: str):
+            err = AuthError("trust_invalid", "Сохранённый вход больше не действует. Войдите снова.", 401)
+            err.reason = code
+            raise err
+
+        user = await db.get(User, uuid_of(rec["uid"]))
+        if user is None or not user.is_active:
+            await deny("account_disabled_local")
+        params = dict(rec.get("params") or {})
+        pwd = rec.get("pwd")
+        if user.auth_source == "local":
+            if user.must_change_password or not user.password_hash:
+                await deny("password_change_required")
+            params = dict(is_admin=True, groups=[], local=True, must_change=False)
+        else:
+            ident, why = await self._directory_state(user)
+            if ident is None:
+                await deny(why or "account_not_found")
+            if pwd and ident.pwd_set and ident.pwd_set != pwd:
+                await deny("password_changed")
+            decision = await self.access_decision(db, ident)
+            if not decision.allowed:
+                await deny(decision.reason)
+            user = await self._upsert_user(db, ident, decision.is_admin)
+            params = dict(is_admin=decision.is_admin, groups=sorted(ident.groups), local=False, must_change=False)
+            pwd = ident.pwd_set or pwd
+        cfg = await self._totp_cfg(db)
+        on = cfg is not None and cfg.totp_policy != "off"
+        params["must_totp"] = bool(on and totp_required(cfg, is_admin=params["is_admin"], groups=params["groups"]) and not user.totp_enabled)
+        sid, data = await self._create_session(user, cfg, params, ip=ip, ua=ua, free=rec.get("pub") or None)
+        days = int(getattr(cfg, "desktop_trust_days", 30)) if cfg is not None else 30
+        new = None
+        if days > 0:
+            try:
+                new = await self._sessions.trust_issue(str(user.id), data.pub, days=days, params={k: params[k] for k in ("is_admin", "groups", "local")},
+                                                       born=float(rec["born"]), pwd=pwd)
+            except ValueError:
+                new = None                                              # срок от входа паролем исчерпан: эта сессия — последняя, дальше вход паролем
+        return LoginResult(sid, data, user, None), {"token": new[0] if new else None, "expires_at": new[1] if new else None}
+
     async def check_code(self, db: AsyncSession, user: User, code: str) -> tuple[bool, bool]:
         """Код из приложения (с защитой от повтора) или резервный код (гасится при использовании). Возвращает (принят, это_резервный_код)."""
         if totp.looks_like_backup(code):

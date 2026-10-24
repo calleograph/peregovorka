@@ -54,6 +54,7 @@ class DirectoryIdentity:
     department: str | None = None  # подразделение (department)
     phone: str | None = None       # телефон (telephoneNumber)
     disabled: bool = False   # учётная запись отключена в каталоге (заполняется только при поиске без пароля — `lookup`)
+    pwd_set: str | None = None  # pwdLastSet (только `lookup`): смена пароля в каталоге отзывает доверие настольного клиента
 
 
 @dataclass
@@ -312,7 +313,7 @@ class LdapDirectory:
         try:
             flt = f"(&(objectCategory=person)(objectClass=user)({attr}={escape_filter_chars(value)}))"
             attrs = ["objectGUID", "distinguishedName", "sAMAccountName", "userPrincipalName",
-                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl", *PROFILE_ATTRS]
+                     self._s.ldap_display_name_attribute, self._s.ldap_email_attribute, "userAccountControl", "pwdLastSet", *PROFILE_ATTRS]
             try:
                 svc.search(self._s.ldap_base_dn, flt, search_scope=SUBTREE, attributes=attrs, size_limit=2)
             except LDAPException as exc:
@@ -348,7 +349,7 @@ class LdapDirectory:
                 display_name=first(self._s.ldap_display_name_attribute) or sam, email=first(self._s.ldap_email_attribute),
                 groups=frozenset(groups), source=self._s.name, for_users=self._s.use_for_users, for_admins=self._s.use_for_admins,
                 title=first("title"), department=first("department"), phone=first("telephoneNumber"),
-                disabled=bool(isinstance(uac, int) and uac & _UAC_DISABLED))
+                disabled=bool(isinstance(uac, int) and uac & _UAC_DISABLED), pwd_set=first("pwdLastSet"))
         finally:
             try:
                 svc.unbind()

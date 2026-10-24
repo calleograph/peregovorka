@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions" revision="1.0" schemaVersion="1.0">
+  <displayName>Peregovorka for Windows</displayName>
+  <description>Peregovorka for Windows</description>
+  <resources>
+    <stringTable>
+      <string id="Peregovorka">Peregovorka for Windows</string>
+      <string id="SUPPORTED_WIN10">Windows 10 or later</string>
+      <string id="Servers">Organization servers</string>
+      <string id="Servers_Help">Connections shown right after installation. Format: "Name|https://address" separated by semicolons. Users cannot remove them. HTTPS only.</string>
+      <string id="AllowAddServers">Allow adding servers</string>
+      <string id="AllowAddServers_Help">Disabled: users cannot connect servers other than those set by the administrator.</string>
+      <string id="AllowedDomains">Allowed domains</string>
+      <string id="AllowedDomains_Help">Semicolon-separated domains: "example.org;*.example.org" ("*." matches subdomains only).</string>
+      <string id="Autostart">Start with Windows</string>
+      <string id="Autostart_Help">off, tray (recommended) or window.</string>
+      <string id="Autostart_off">off</string>
+      <string id="Autostart_tray">tray</string>
+      <string id="Autostart_window">window</string>
+      <string id="CloseAction">Window close button</string>
+      <string id="CloseAction_Help">tray, quit or ask. During a meeting the app always asks.</string>
+      <string id="CloseAction_tray">tray</string>
+      <string id="CloseAction_quit">quit</string>
+      <string id="CloseAction_ask">ask</string>
+      <string id="UpdateMode">Application updates</string>
+      <string id="UpdateMode_Help">auto, notify or off. MSI installations are updated by the administrator.</string>
+      <string id="UpdateMode_auto">auto</string>
+      <string id="UpdateMode_notify">notify</string>
+      <string id="UpdateMode_off">off</string>
+      <string id="UpdateUrl">Update channel URL</string>
+      <string id="UpdateUrl_Help">Corporate mirror of the update manifest (update.json with update.json.sig). Only packages signed by the publisher key are installed.</string>
+      <string id="Notifications">Windows notifications</string>
+      <string id="Notifications_Help">Disabled: the app shows no notifications.</string>
+      <string id="HideNotificationContent">Hide message text in notifications</string>
+      <string id="HideNotificationContent_Help">Enabled: notifications show only "New message".</string>
+      <string id="ProxyMode">Proxy</string>
+      <string id="ProxyMode_Help">system, direct, manual or pac.</string>
+      <string id="ProxyMode_system">system</string>
+      <string id="ProxyMode_direct">direct</string>
+      <string id="ProxyMode_manual">manual</string>
+      <string id="ProxyMode_pac">pac</string>
+      <string id="ProxyServer">Proxy server</string>
+      <string id="ProxyServer_Help">For manual mode, e.g. proxy.example.org:3128.</string>
+      <string id="ProxyBypass">Bypass list</string>
+      <string id="ProxyBypass_Help">For manual mode, e.g. &lt;local&gt;;*.example.org.</string>
+      <string id="ProxyPac">PAC script URL</string>
+      <string id="ProxyPac_Help">For pac mode.</string>
+      <string id="AllowDevTools">Allow developer tools</string>
+      <string id="AllowDevTools_Help">Support diagnostics only.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Servers"><textBox refId="Servers_Value"><label>Organization servers</label></textBox></presentation>
+      <presentation id="AllowedDomains"><textBox refId="AllowedDomains_Value"><label>Allowed domains</label></textBox></presentation>
+      <presentation id="Autostart"><dropdownList refId="Autostart_Value">Start with Windows</dropdownList></presentation>
+      <presentation id="CloseAction"><dropdownList refId="CloseAction_Value">Window close button</dropdownList></presentation>
+      <presentation id="UpdateMode"><dropdownList refId="UpdateMode_Value">Application updates</dropdownList></presentation>
+      <presentation id="UpdateUrl"><textBox refId="UpdateUrl_Value"><label>Update channel URL</label></textBox></presentation>
+      <presentation id="ProxyMode"><dropdownList refId="ProxyMode_Value">Proxy</dropdownList></presentation>
+      <presentation id="ProxyServer"><textBox refId="ProxyServer_Value"><label>Proxy server</label></textBox></presentation>
+      <presentation id="ProxyBypass"><textBox refId="ProxyBypass_Value"><label>Bypass list</label></textBox></presentation>
+      <presentation id="ProxyPac"><textBox refId="ProxyPac_Value"><label>PAC script URL</label></textBox></presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

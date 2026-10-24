@@ -34,6 +34,7 @@ st.plan.local
 
 # --- публичная инфраструктура, на которую ссылается проект (источники пакетов, образов, моделей, документации)
 github.com
+wixtoolset.org
 githubusercontent.com
 ghcr.io
 docker.io

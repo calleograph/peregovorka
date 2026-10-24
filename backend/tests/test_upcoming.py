@@ -217,6 +217,7 @@ def test_hundreds_of_meetings_are_served_with_a_constant_number_of_queries(clien
         return n[0], items
 
     _db(client, lambda db: seed(db, 30))
+    count_queries("root")                    # прогрев: первый запрос наполняет кэши (настройки и т. п.) — это не зависит от числа встреч
     q30, items30 = count_queries("root")
     _db(client, lambda db: seed(db, 300))
     q330, items330 = count_queries("root")

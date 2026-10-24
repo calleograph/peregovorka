@@ -43,6 +43,7 @@ import { describeMediaError, isDeviceBusyError, isTransientConnectError, SCREEN_
 import { PROFILE_LABELS, PROFILE_ORDER, applyProfileLive, ecoReport, loadProfile, measureScreen, saveProfile, screenShareOptions, type ScreenProfile } from "../screenShare";
 import AudiencePanel from "../components/room/AudiencePanel";
 import { audienceLabel, sameList, splitStage } from "../presentation";
+import { desktopState, onDesktopCommand } from "../desktop";
 
 // диалог настроек нужен только руководителю — грузится по требованию (вместе с общим для администрирования выбором доступа)
 const RoomManageDialog = lazy(() => import("../components/RoomManageDialog"));
@@ -1062,6 +1063,17 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bus, join, loadFloor, st.applyServer]);
   const leave = async () => { await teardown(true); if (guest) guest.onLeft("left"); else navigate("/"); };
+  // приложение Windows: показ экрана и микрофон — для индикатора поверх окон; «Покинуть встречу» и «Остановить показ» с индикатора и при закрытии окна
+  const meLocal = participants.find((p) => p.local);
+  useEffect(() => { desktopState({ sharing: !!meLocal?.screen, mic: !!meLocal?.mic }); }, [meLocal?.screen, meLocal?.mic]);
+  useEffect(() => () => desktopState({ sharing: false, mic: false }), []);
+  const desktopRef = useRef({ leave, toggle });
+  desktopRef.current = { leave, toggle };
+  useEffect(() => {
+    const a = onDesktopCommand("leave-meeting", () => void desktopRef.current.leave());
+    const b = onDesktopCommand("stop-share", () => { if (roomRef.current?.localParticipant.isScreenShareEnabled) void desktopRef.current.toggle("screen"); });
+    return () => { a(); b(); };
+  }, []);
   const endForAll = async () => {
     if (meetingRef.current) await api.endMeeting(meetingRef.current).catch((e) => setErr("general", (e as ApiError).message));
     const mid = meetingRef.current;

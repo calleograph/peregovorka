@@ -1,3 +1,4 @@
+@import "./tokens.css";
 /* Интерфейс: шрифты Inter (текст) и Manrope (заголовки) лежат на сервере — без CDN; обе гарнитуры с кириллицей, лицензия OFL (public/fonts). */
 @font-face { font-family: "Inter"; src: url("/fonts/inter-cyrillic-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
 @font-face { font-family: "Inter"; src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
@@ -6,48 +7,6 @@
 @font-face { font-family: "Press Start 2P"; src: url("/fonts/pressstart2p-cyrillic.woff2") format("woff2"); font-weight: 400; font-display: swap; unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
 @font-face { font-family: "Press Start 2P"; src: url("/fonts/pressstart2p-latin.woff2") format("woff2"); font-weight: 400; font-display: swap; unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
 
-:root {
-  /* поверхности: холодный нейтральный ряд, чуть светлее у «поднятых» элементов */
-  --bg: #f3f5f8; --surface: #ffffff; --soft: #eaeef4; --line: #d6dce6; --line-strong: #b9c2d0;
-  /* текст: основной с высоким контрастом (≥ 12:1), вторичный — не светлее 5,4:1 на белом */
-  --text: #161b26; --muted: #576275;
-  /* акцент — один: синий; ссылки, фокус, главные кнопки, активные вкладки */
-  --accent: #2456d3; --accent-hover: #1b45ad; --accent-text: #ffffff; --accent-soft: #e4ecfd; --link: #1d4fc4;
-  /* состояния: цвет + фон + текст на нём (контраст ≥ 4,5:1) */
-  --ok: #1f9d55; --ok-bg: #def3e6; --ok-text: #14693a;
-  --danger: #cc3535; --danger-bg: #fbe4e1; --danger-text: #a52a22;
-  --warn: #d19a2a; --warn-bg: #faf0d2; --warn-text: #6b4e0e;
-  --radius: 10px; --radius-sm: 7px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .06);
-  --shadow-pop: 0 8px 28px rgba(16, 24, 40, .18);
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --display: "Manrope", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
-    --text: #e9edf3; --muted: #9ba6b8;
-    --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
-    --ok: #3cc477; --ok-bg: #16301f; --ok-text: #8fdca9;
-    --danger: #e0605a; --danger-bg: #3a1f1d; --danger-text: #f4a9a3;
-    --warn: #e0b04a; --warn-bg: #352c16; --warn-text: #e3cd8f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
-    color-scheme: dark;
-  }
-}
-/* тема, закреплённая администратором («Настройки сайта → Тема»): те же значения без зависимости от системной настройки */
-:root[data-theme="dark"] {
-    --bg: #0e1218; --surface: #161b24; --soft: #1e2530; --line: #2b3441; --line-strong: #3c4859;
-  --text: #e9edf3; --muted: #9ba6b8;
-  --accent: #6f98ff; --accent-hover: #8aaeff; --accent-text: #0a1226; --accent-soft: #1b2a4c; --link: #8ab0ff;
-  --ok: #3cc477; --ok-bg: #16301f; --ok-text: #8fdca9;
-  --danger: #e0605a; --danger-bg: #3a1f1d; --danger-text: #f4a9a3;
-  --warn: #e0b04a; --warn-bg: #352c16; --warn-text: #e3cd8f;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
-  color-scheme: dark;
-}
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {

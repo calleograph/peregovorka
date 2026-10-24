@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Групповые политики Peregovorka для Windows. Скопируйте Peregovorka.admx в PolicyDefinitions, а ru-RU/en-US\Peregovorka.adml — в соответствующие папки языков.
+     Значения пишутся в HKLM/HKCU\Software\Policies\Peregovorka; машинные сильнее пользовательских. -->
+<policyDefinitions xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions" revision="1.0" schemaVersion="1.0">
+  <policyNamespaces>
+    <target prefix="peregovorka" namespace="Peregovorka.Policies.Desktop" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <supportedOn><definitions><definition name="SUPPORTED_WIN10" displayName="$(string.SUPPORTED_WIN10)" /></definitions></supportedOn>
+  <categories><category name="Peregovorka" displayName="$(string.Peregovorka)" /></categories>
+  <policies>
+    <policy name="Servers" class="Both" displayName="$(string.Servers)" explainText="$(string.Servers_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.Servers)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="Servers_Value" valueName="Servers" maxLength="2000" /></elements>
+    </policy>
+    <policy name="AllowAddServers" class="Both" displayName="$(string.AllowAddServers)" explainText="$(string.AllowAddServers_Help)" key="Software\Policies\Peregovorka" valueName="AllowAddServers">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="AllowedDomains" class="Both" displayName="$(string.AllowedDomains)" explainText="$(string.AllowedDomains_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.AllowedDomains)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="AllowedDomains_Value" valueName="AllowedDomains" maxLength="2000" /></elements>
+    </policy>
+    <policy name="Autostart" class="Both" displayName="$(string.Autostart)" explainText="$(string.Autostart_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.Autostart)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><enum id="Autostart_Value" valueName="Autostart"><item displayName="$(string.Autostart_off)"><value><string>off</string></value></item><item displayName="$(string.Autostart_tray)"><value><string>tray</string></value></item><item displayName="$(string.Autostart_window)"><value><string>window</string></value></item></enum></elements>
+    </policy>
+    <policy name="CloseAction" class="Both" displayName="$(string.CloseAction)" explainText="$(string.CloseAction_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.CloseAction)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><enum id="CloseAction_Value" valueName="CloseAction"><item displayName="$(string.CloseAction_tray)"><value><string>tray</string></value></item><item displayName="$(string.CloseAction_quit)"><value><string>quit</string></value></item><item displayName="$(string.CloseAction_ask)"><value><string>ask</string></value></item></enum></elements>
+    </policy>
+    <policy name="UpdateMode" class="Both" displayName="$(string.UpdateMode)" explainText="$(string.UpdateMode_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.UpdateMode)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><enum id="UpdateMode_Value" valueName="UpdateMode"><item displayName="$(string.UpdateMode_auto)"><value><string>auto</string></value></item><item displayName="$(string.UpdateMode_notify)"><value><string>notify</string></value></item><item displayName="$(string.UpdateMode_off)"><value><string>off</string></value></item></enum></elements>
+    </policy>
+    <policy name="UpdateUrl" class="Both" displayName="$(string.UpdateUrl)" explainText="$(string.UpdateUrl_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.UpdateUrl)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="UpdateUrl_Value" valueName="UpdateUrl" maxLength="2000" /></elements>
+    </policy>
+    <policy name="Notifications" class="Both" displayName="$(string.Notifications)" explainText="$(string.Notifications_Help)" key="Software\Policies\Peregovorka" valueName="Notifications">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="HideNotificationContent" class="Both" displayName="$(string.HideNotificationContent)" explainText="$(string.HideNotificationContent_Help)" key="Software\Policies\Peregovorka" valueName="HideNotificationContent">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="ProxyMode" class="Both" displayName="$(string.ProxyMode)" explainText="$(string.ProxyMode_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.ProxyMode)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><enum id="ProxyMode_Value" valueName="ProxyMode"><item displayName="$(string.ProxyMode_system)"><value><string>system</string></value></item><item displayName="$(string.ProxyMode_direct)"><value><string>direct</string></value></item><item displayName="$(string.ProxyMode_manual)"><value><string>manual</string></value></item><item displayName="$(string.ProxyMode_pac)"><value><string>pac</string></value></item></enum></elements>
+    </policy>
+    <policy name="ProxyServer" class="Both" displayName="$(string.ProxyServer)" explainText="$(string.ProxyServer_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.ProxyServer)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="ProxyServer_Value" valueName="ProxyServer" maxLength="2000" /></elements>
+    </policy>
+    <policy name="ProxyBypass" class="Both" displayName="$(string.ProxyBypass)" explainText="$(string.ProxyBypass_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.ProxyBypass)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="ProxyBypass_Value" valueName="ProxyBypass" maxLength="2000" /></elements>
+    </policy>
+    <policy name="ProxyPac" class="Both" displayName="$(string.ProxyPac)" explainText="$(string.ProxyPac_Help)" key="Software\Policies\Peregovorka" presentation="$(presentation.ProxyPac)">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <elements><text id="ProxyPac_Value" valueName="ProxyPac" maxLength="2000" /></elements>
+    </policy>
+    <policy name="AllowDevTools" class="Both" displayName="$(string.AllowDevTools)" explainText="$(string.AllowDevTools_Help)" key="Software\Policies\Peregovorka" valueName="AllowDevTools">
+      <parentCategory ref="Peregovorka" />
+      <supportedOn ref="SUPPORTED_WIN10" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+  </policies>
+</policyDefinitions>

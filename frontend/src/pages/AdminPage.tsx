@@ -83,8 +83,8 @@ const GROUPS: Group[] = [
     { id: "public_api", label: "Публичный API", render: () => <PublicApiAdmin /> },
   ] },
   { title: "Безопасность", pages: [
-    { id: "auth_security", label: "Двухфакторная аутентификация", render: () => (
-      <SettingsForm key="auth_security" group="auth_security" title="Двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
+    { id: "auth_security", label: "Вход и сеансы", render: () => (
+      <SettingsForm key="auth_security" group="auth_security" title="Вход: сеансы, приложение Windows, двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
         intro="Одноразовые коды из приложения-аутентификатора. Если защита обязательна, пользователь при первом входе настраивает её сам (QR-код и резервные коды). Потерянное устройство — «Пользователи → сбросить» или консольная команда admin-reset для локального администратора." />) },
     { id: "captcha", label: "CAPTCHA", render: () => (
       <SettingsForm key="captcha" group="captcha" title="CAPTCHA (защита от перебора)" fields={captchaFields}

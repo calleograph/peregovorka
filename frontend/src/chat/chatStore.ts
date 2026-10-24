@@ -6,6 +6,7 @@ import { backoffDelay } from "../liveSocket";
 import { playChatSound } from "../chatSound";
 import { chatApi, newClientId, type ChatConfig, type ChatFileInfo, type ChatFolder, type ChatItem, type ChatMsg } from "./chatApi";
 import { mentionsMe, mergeMessages, onNewMessage, preview, totalUnread } from "./chatModel";
+import { desktopNotify, desktopState } from "../desktop";
 
 export interface Conv { messages: ChatMsg[]; hasMoreBefore: boolean; loading: boolean; loaded: boolean; error: string; typing: Record<string, { name: string; until: number }>; reads: Record<string, number>; version: number }
 export interface Toast { id: number; chatId: string | null; title: string; text: string }
@@ -30,6 +31,7 @@ class ChatStore {
   private pinger: number | undefined;
   private started = false;
   private stopped = false;
+  private gen = 0;                 // поколение запуска: stop() → start() подряд (StrictMode, быстрый выход и вход) не должен оставить сокет от прежнего запуска
   private lastActivity = Date.now();
   private listTimer: number | undefined;
   private readTimer: Record<string, number> = {};
@@ -38,7 +40,11 @@ class ChatStore {
 
   subscribe = (fn: () => void) => { this.subs.add(fn); return () => { this.subs.delete(fn); }; };
   get = () => this.state;
-  private set(p: Partial<ChatState>) { this.state = { ...this.state, ...p }; for (const fn of [...this.subs]) fn(); }
+  private set(p: Partial<ChatState>) {
+    this.state = { ...this.state, ...p };
+    for (const fn of [...this.subs]) fn();
+    desktopState({ unread: this.state.unread, ws: this.state.status });          // значок и трей приложения Windows (в браузере — ничего)
+  }
   private conv(id: string): Conv { return this.state.convs[id] ?? EMPTY_CONV; }
   private setConv(id: string, p: Partial<Conv>) { this.set({ convs: { ...this.state.convs, [id]: { ...this.conv(id), ...p } } }); }
 
@@ -47,12 +53,15 @@ class ChatStore {
     if (this.started) return;
     this.started = true;
     this.stopped = false;
+    const gen = ++this.gen;
     try {
       const config = await chatApi.config();
+      if (gen !== this.gen) return;
       this.set({ config, enabled: config.enabled, ready: true });
       if (!config.enabled) return;
-    } catch { this.set({ ready: true, enabled: false }); return; }
+    } catch { if (gen === this.gen) this.set({ ready: true, enabled: false }); return; }
     await Promise.all([this.refreshList(), this.refreshFolders()]);
+    if (gen !== this.gen) return;            // за время загрузки запуск отменили или начали заново — сокет откроет новый запуск
     for (const ev of ["pointerdown", "keydown", "wheel", "touchstart"]) window.addEventListener(ev, this.touch, { passive: true });
     document.addEventListener("visibilitychange", this.onVisible);
     window.addEventListener("online", this.retryNow);
@@ -64,6 +73,7 @@ class ChatStore {
   stop(): void {
     this.stopped = true;
     this.started = false;
+    this.gen += 1;
     window.clearTimeout(this.timer);
     window.clearInterval(this.pinger);
     try { this.ws?.close(1000); } catch { /* уже закрыт */ }
@@ -162,8 +172,11 @@ class ChatStore {
         const item = this.state.items.find((c) => c.id === chatId);
         if (m.author_id !== myId && m.kind === "text") {
           if (viewing) this.scheduleRead(chatId);
-          else if (!item?.muted || mentionsMe(m.text, this.state.config?.me.name ?? "")) {      // упоминание приходит и из чата без уведомлений
-            this.notify(chatId, item ? (item.kind === "group" ? `${item.title} · ${m.author_name}` : item.title) : m.author_name, preview(m));
+          else {
+            const mention = mentionsMe(m.text, this.state.config?.me.name ?? "");
+            if (!item?.muted || mention) {      // упоминание приходит и из чата без уведомлений
+              this.notify(chatId, item ? (item.kind === "group" ? `${item.title} · ${m.author_name}` : item.title) : m.author_name, preview(m), { id: m.id, mention });
+            }
           }
         }
         const t = { ...this.conv(chatId).typing };
@@ -211,7 +224,9 @@ class ChatStore {
   }
 
   // ------------------------------------------------------------------------------------------ уведомления
-  private notify(chatId: string | null, title: string, text: string): void {
+  private notify(chatId: string | null, title: string, text: string, msg?: { id: number; mention: boolean }): void {
+    // приложение Windows: уведомление системы, когда страницу не видно (свёрнуто, в трее, открыта другая организация); повтор одного сообщения не показывается
+    if (chatId && msg) desktopNotify({ tag: `chat:${chatId}:${msg.id}`, title, body: text, kind: msg.mention ? "mention" : "chat", route: `/?chat=${encodeURIComponent(chatId)}` });
     const id = ++this.toastSeq;
     this.set({ toasts: [...this.state.toasts.slice(-2), { id, chatId, title, text }] });
     window.setTimeout(() => this.dismiss(id), 6000);

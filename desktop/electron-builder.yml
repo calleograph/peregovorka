@@ -1,0 +1,47 @@
+# Сборка установщика EXE (NSIS). MSI собирается отдельно из той же распакованной программы (installer/msi, WiX) — см. docs/DESKTOP_ADMIN.md.
+appId: org.peregovorka.desktop           # совпадает с AppUserModelID в main.ts: иначе Windows не показывает уведомления приложения
+productName: Peregovorka
+copyright: Peregovorka
+artifactName: Peregovorka-Setup-${version}.${ext}
+directories:
+  output: release
+  buildResources: installer
+files:
+  - dist/**/*
+  - "!dist/test/**"
+  - package.json
+asar: true
+# Предохранители Electron: в собранной программе нельзя запустить её как Node.js, подменить код вне asar, включить отладчик Node ключом
+# командной строки; cookie организаций шифруются средствами ОС (DPAPI).
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+protocols:
+  - name: Peregovorka
+    schemes: [peregovorka]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: dist/assets/icon.png
+  executableName: Peregovorka
+  requestedExecutionLevel: asInvoker
+  legalTrademarks: Peregovorka
+nsis:
+  oneClick: false
+  perMachine: false                      # по умолчанию — для текущего пользователя без прав администратора; выбор «для всех» — в установщике
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Peregovorka
+  uninstallDisplayName: Peregovorka
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false        # данные — по выбору при удалении (installer/include.nsh)
+  include: installer/include.nsh
+  guid: 6d2b7c51-1d83-4b0c-9a7e-0c7f5a3b1e42

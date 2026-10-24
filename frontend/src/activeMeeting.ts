@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { desktopState } from "./desktop";
 
 // Идёт ли в ЭТОЙ вкладке встреча. Правило интерфейса: пока встреча идёт, вкладка с комнатой никогда не используется для перехода в другие
 // разделы (администрирование, история, протоколы, ссылки из чата) — всё это открывается в новой вкладке, иначе уход со страницы оборвёт
@@ -9,6 +10,7 @@ const subs = new Set<() => void>();
 export function setActiveMeeting(id: string | null): void {
   if (active === id) return;
   active = id;
+  desktopState({ inCall: id !== null });            // приложение Windows: подтверждение закрытия, индикатор, отложенное обновление
   subs.forEach((f) => f());
 }
 export const getActiveMeeting = (): string | null => active;
