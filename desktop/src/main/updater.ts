@@ -125,9 +125,11 @@ export class Updater {
       const fs = statfsSync(dir);
       if (fs.bavail * fs.bsize < f.size * 2) throw new Error("no_space");          // запас: установщик распаковывает программу рядом
       const path = join(dir, f.name);
+      // корпоративное зеркало (политика UpdateUrl) хранит установщик рядом с манифестом; подлинность — по SHA-256 из подписанного манифеста
+      const url = this.ctx.policy.updateUrl ? new URL(f.name, this.feed()).href : f.url;
       this.set({ status: "downloading", progress: 0, error: undefined });
       for (let attempt = 1; ; attempt++) {
-        try { await this.fetchTo(f.url, f.size, path); break; } catch (e) {
+        try { await this.fetchTo(url, f.size, path); break; } catch (e) {
           const msg = String((e as Error)?.message ?? e);
           if (attempt >= 3 || msg === "size_mismatch") throw e;
           this.ctx.log.warn("update.download_retry", { attempt, error: msg.slice(0, 80) });
