@@ -203,3 +203,10 @@ test("мост оболочки пропускает каждую команду
   const main = readFileSync(join(src, "main", "main.ts"), "utf8");
   for (const ch of used) assert.ok(main.includes(`handle("${ch}"`), `для ${ch} нет обработчика в main.ts`);
 });
+
+test("сценарии PowerShell — UTF-8 с BOM (Windows PowerShell 5.1 без BOM читает их как ANSI и ломается на кириллице)", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const dir = join(__dirname, "..", "..", "signing");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".ps1"))) assert.deepEqual([...readFileSync(join(dir, f)).subarray(0, 3)], [0xef, 0xbb, 0xbf], f);
+});

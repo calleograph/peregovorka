@@ -115,6 +115,9 @@ TABLES: dict[str, TablePolicy] = {
     "room_invitees": TablePolicy(False, "приглашённые на конференции из календаря — данные встреч; временные комнаты не переносятся"),
     "chats": TablePolicy(False, "переписка сотрудников — данные пользователей конкретного сервера"), "chat_members": TablePolicy(False, "участники переписок"),
     "chat_messages": TablePolicy(False, "переписка сотрудников"), "chat_files": TablePolicy(False, "вложения переписки"), "chat_folders": TablePolicy(False, "личные папки чатов"), "chat_reactions": TablePolicy(False, "реакции на сообщения"), "meeting_chat_reactions": TablePolicy(False, "реакции в чатах встреч"),
+    "signing_agents": TablePolicy(False, "подписывающие узлы подключаются к новому серверу заново (токен агента выдаётся этим сервером)"),
+    "signing_certs": TablePolicy(False, "сведения о сертификатах узлов — появятся снова после подключения узла; ключи на сервере не хранятся"),
+    "signing_jobs": TablePolicy(False, "история заданий подписи и готовые пакеты — артефакты, а не конфигурация"),
     "guest_participants": TablePolicy(False, "данные встреч"), "meetings": TablePolicy(False, "данные встреч"), "meeting_participants": TablePolicy(False, "данные встреч"),
     "meeting_grants": TablePolicy(False, "данные встреч"), "meeting_chat_messages": TablePolicy(False, "переписка встреч"), "meeting_chat_attachments": TablePolicy(False, "вложения чата"),
     "meeting_whiteboards": TablePolicy(False, "схемы встреч"), "transcript_segments": TablePolicy(False, "стенограммы"), "protocols": TablePolicy(False, "протоколы и резюме встреч"),
@@ -165,6 +168,7 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "sip_policy": GroupPolicy(title="Политика телефонии"),
     "profile_policy": GroupPolicy(title="Правка профиля пользователями"),
     "auth_security": GroupPolicy(title="Двухфакторная аутентификация (политика)"),
+    "desktop_channel": GroupPolicy(title="Канал обновлений приложения Windows (адрес и открытый ключ издателя)"),
     "auto_backup": GroupPolicy(title="Автоматическая копия настроек", skip={"archive_key": "ключ шифрования копий не кладётся в саму копию: на новом сервере создаётся новый"}),
     "autoupdate": GroupPolicy(title="Автообновление", reason="расписание обновлений относится к серверу, но безопасно переносится как настройка"),
 }

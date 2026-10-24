@@ -193,7 +193,7 @@ function settingsPage(): HTMLElement {
   return h("div", { class: "settings" }, nav, h("div", { style: { position: "relative", overflow: "auto" } }, panel, S!.orgs.length ? back : null));
 }
 function refreshSettings(): void {
-  if (tab === "orgs" || tab === "updates" || tab === "about") fillPanel();         // живые списки; формы с вводом не перерисовываются
+  if (tab !== "network" && tab !== "diag") fillPanel();     // живые списки и переключатели (настройку могли изменить из трея или политики); форма прокси и отчёт диагностики не перерисовываются
 }
 const isLocked = (f: string) => S!.locked.includes(f);
 const lockNote = () => h("span", { class: "locked" }, icon("lock"), "Задано администратором");
