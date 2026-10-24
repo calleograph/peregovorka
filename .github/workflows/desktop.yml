@@ -114,7 +114,8 @@ jobs:
         env:
           PEREGOVORKA_BUILD_KIND: test
         run: |
-          npx electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=$env:NEXT -c.directories.output=$env:RUNNER_TEMP/next
+          # аргументы с точкой — в кавычках: PowerShell иначе разрезает «-c.x=…» на «-c» и «.x=…»
+          npx electron-builder --win nsis --x64 --publish never "-c.extraMetadata.version=$env:NEXT" "-c.directories.output=$env:RUNNER_TEMP/next"
           if ($LASTEXITCODE) { throw "сборка следующей версии: $LASTEXITCODE" }
           Start-Process "$env:RUNNER_TEMP/next/Peregovorka-Setup-$env:NEXT.exe" -ArgumentList "/S" -Wait
           $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"

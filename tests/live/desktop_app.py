@@ -254,6 +254,30 @@ async def main():
             await asyncio.sleep(0.7 if tab == "diag" else 0.3)
             await app.shot_window(f"08-settings-{tab}")
         await shell.js("document.querySelector('.settings [aria-label=\"Закрыть настройки\"]').click()")
+
+        # ---------- пороги производительности (базовые замеры и пороги — docs/DESKTOP.md «Производительность»)
+        M = "const m = process.mainModule.require('electron').app.getAppMetrics(); return { mb: Math.round(m.reduce((n, x) => n + x.memory.workingSetSize, 0) / 1024), cpu: m.reduce((n, x) => n + x.cpu.percentCPUUsage, 0) };"
+        ready = int(app.log().split('app.ready {"ms":')[1].split("}")[0])
+        check("запуск до показа окна ≤ 3 с", ready <= 3000, f"{ready} мс")
+        sw = await app.m("const t = []; for (let i = 0; i < 10; i++) { const o = pg.orgs.list[i % 2]; const t0 = performance.now(); pg.orgs.activate(o.rec.id); t.push(performance.now() - t0); await new Promise(r => setTimeout(r, 100)); } return Math.max(...t);")
+        check("переключение организации ≤ 50 мс (без перезагрузки страниц)", sw <= 50, f"{sw:.1f} мс")
+        mem = (await app.m(M))["mb"]
+        check("память: две организации в простое ≤ 1500 МБ", mem <= 1500, f"{mem} МБ")
+        await app.m("pg.main.win.hide(); return true;")
+        await app.m(M)
+        await asyncio.sleep(10)
+        cpu = (await app.m(M))["cpu"]
+        check("процессор в фоне (окно скрыто, две организации) ≤ 5 %", cpu <= 5, f"{cpu:.1f} %")
+        await app.m("pg.main.reveal(); return true;")
+        heap0 = await shell.js("performance.memory.usedJSHeapSize")
+        for _ in range(20):
+            await shell.js("document.querySelector('.side .tool[aria-label=\"Настройки\"]').click()")
+            for t in ("general", "orgs", "updates", "about"):
+                await shell.js(f"document.querySelector('#tab-{t}').click()")
+            await shell.js("document.querySelector('.side .org').click()")
+        await shell.send("HeapProfiler.collectGarbage")
+        heap1 = await shell.js("performance.memory.usedJSHeapSize")
+        check("оболочка без утечек: 20 открытий настроек", heap1 - heap0 < 5 * 1048576, f"{(heap1 - heap0) / 1048576:+.1f} МБ")
     finally:
         await app.stop()
 
