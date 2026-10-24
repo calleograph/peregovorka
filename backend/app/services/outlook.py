@@ -138,9 +138,12 @@ async def owned(db: AsyncSession, su: SessionUser, room_id: uuid.UUID) -> Room:
 
 
 async def ensure(db: AsyncSession, su: SessionUser, cfg: OutlookSettings, *, key: str, subject: str, start: datetime, end: datetime, recurring: bool,
-                 default_text_days: int | None = None, default_audio_days: int | None = None, encrypt_storage: bool = False) -> tuple[Room, bool]:
+                 default_text_days: int | None = None, default_audio_days: int | None = None, encrypt_storage: bool = False, instance: bool = False) -> tuple[Room, bool]:
     """Создаёт запланированную комнату или возвращает уже связанную с этим событием (идемпотентно). Отменённую или закрытую по ошибке комнату,
-    у которой встреча ещё не закончилась, повторное нажатие кнопки возвращает в работу."""
+    у которой встреча ещё не закончилась, повторное нажатие кнопки возвращает в работу.
+
+    instance — изменено одно занятие серии (Office.js `seriesId`): комнату серии оно не переносит (время, тема, связь с событием остаются от серии;
+    перенос и отмену занятия сообщает календарь при сверке). Новая комната для одного занятия — разовая встреча."""
     if not cfg.enabled:
         raise TempRoomError("disabled", "Интеграция с Outlook отключена администратором.", 403)
     if not allowed(cfg, su):
@@ -148,9 +151,11 @@ async def ensure(db: AsyncSession, su: SessionUser, cfg: OutlookSettings, *, key
     if not KEY_RE.match(key or ""):
         raise TempRoomError("bad_key", "Некорректный ключ события.", 422)
     now = utcnow()
+    room = await find_by_key(db, su.user_id, key)
+    if room is not None and instance and room.recurring:
+        return room, False
     start, end = validate_times(start, end, recurring, now)
     subject = " ".join((subject or "").split())[:200] or "Встреча"
-    room = await find_by_key(db, su.user_id, key)
     if room is not None:
         await reschedule(db, room, cfg, subject=subject, start=start, end=end, recurring=recurring, now=now)
         return room, False
@@ -259,15 +264,19 @@ async def set_invitees(db: AsyncSession, room: Room, attendees: list[tuple[str, 
 
 
 def apply_recurrence(room: Room, raw) -> bool:
-    """Шаблон серии от надстройки (Office.js): у разовой встречи сбрасывается; неверный или отсутствующий — прежний не трогаем."""
+    """Шаблон серии от надстройки (Office.js): у разовой встречи сбрасывается; неверный или отсутствующий — прежний не трогаем.
+    Новый шаблон — прежние исключения серии недействительны (Outlook при изменении шаблона их сбрасывает): календарь пришлёт свежие при ближайшей сверке."""
     from . import recurrence as rc  # noqa: PLC0415
 
     if not room.recurring:
-        changed, room.outlook_recurrence = room.outlook_recurrence is not None, None
+        changed = room.outlook_recurrence is not None or room.outlook_exceptions is not None
+        room.outlook_recurrence = room.outlook_exceptions = None
         return changed
     pat = rc.from_office(raw)
     if pat is None or pat == room.outlook_recurrence:
         return False
+    if room.outlook_recurrence is not None:
+        room.outlook_exceptions, room.outlook_synced_at = None, None
     room.outlook_recurrence = pat
     return True
 

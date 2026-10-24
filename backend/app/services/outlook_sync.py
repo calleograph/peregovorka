@@ -7,6 +7,9 @@
 * событие удалено или отменено → комната переводится в «отменена» (ссылка перестаёт пускать);
 * изменилось время или тема → расписание комнаты обновляется, ссылка прежняя;
 * изменился список приглашённых → обновляется список для «Предстоящих встреч» (адреса, которые календарь вернул не в SMTP-виде, прежних не удаляют);
+* серия: читается мастер-событие — шаблон, пояс серии, перенесённые и отменённые занятия (Graph `exceptionOccurrences`/`cancelledOccurrences`,
+  EWS `ModifiedOccurrences`/`DeletedOccurrences`). Отмена или перенос одного занятия серию не отменяет и не переносит. Если комната серии связана
+  с одним занятием (так делала прежняя надстройка), связь переводится на мастер-событие;
 * любая **ошибка связи или прав никогда не отменяет комнату**: пишется состояние `error` и причина, комната остаётся как есть. Отмена — только по явному ответу «события нет».
 
 Минимальные права: Microsoft Graph — приложение с правом `Calendars.ReadBasic.All` (без тела и вложений); EWS — учётная запись с ролью ApplicationImpersonation
@@ -54,6 +57,13 @@ class EventInfo:
     attendees: list | None = None          # [(адрес, имя, необязательный)]; None — календарь их не вернул
     attendees_complete: bool = True        # все адреса разобраны (иначе прежних приглашённых не удаляем)
     recurrence: dict | None = None          # шаблон серии в виде Microsoft Graph (patternedRecurrence); EWS приводится к нему же
+    kind: str = ""                          # тип события: Graph singleInstance/seriesMaster/occurrence/exception, EWS Single/RecurringMaster/Occurrence/Exception
+    tz: str | None = None                   # пояс события из календаря (имя Windows или IANA)
+    master_rest_id: str | None = None       # событие оказалось занятием серии: идентификатор мастер-события (комната серии перепривязывается)
+    master_ews_id: str | None = None
+    occ_cancelled: list | None = None       # отменённые занятия: исходные даты (Graph) или исходные начала UTC (EWS); None — не прочитаны (прежние не трогаем)
+    occ_moved: list | None = None           # перенесённые занятия: [(исходное начало, начало, окончание)] в UTC
+    warning: str | None = None              # часть сведений не прочитана (событие при этом сверено)
 
 
 def _utc(text: str) -> datetime:
@@ -79,14 +89,24 @@ class GraphClient:
             raise CalendarError(f"Microsoft Entra ID отклонил вход приложения (HTTP {r.status_code}): проверьте идентификатор каталога, приложения и секрет.")
         return r.json()["access_token"]
 
-    async def get_event(self, organizer: str, rest_id: str | None, ews_id: str | None) -> EventInfo:
+    async def get_event(self, organizer: str, rest_id: str | None, ews_id: str | None, series: bool = False) -> EventInfo:
         if not rest_id:
             raise CalendarError("У события нет идентификатора для Microsoft Graph.")
+        url = lambda eid: f"{self._api}/users/{quote(organizer)}/events/{quote(eid, safe='')}"  # noqa: E731
+        master = ext = None
         try:
             async with self._http() as c:
-                tok = await self._token(c)
-                r = await c.get(f"{self._api}/users/{quote(organizer)}/events/{quote(rest_id, safe='')}", params={"$select": "subject,start,end,isCancelled,attendees,recurrence"},
-                                headers={"Authorization": f"Bearer {tok}", "Prefer": 'outlook.timezone="UTC"'})
+                h = {"Authorization": f"Bearer {await self._token(c)}", "Prefer": 'outlook.timezone="UTC"'}
+                sel = {"$select": "subject,start,end,isCancelled,attendees,recurrence,type,seriesMasterId,originalStartTimeZone"}
+                r = await c.get(url(rest_id), params=sel, headers=h)
+                j = r.json() if r.status_code == 200 else {}
+                if series and j.get("type") in ("occurrence", "exception") and j.get("seriesMasterId"):     # комната серии связана с одним занятием — читаем серию
+                    master = str(j["seriesMasterId"])
+                    r = await c.get(url(master), params=sel, headers=h)
+                    j = r.json() if r.status_code == 200 else {}
+                if series and j.get("type") == "seriesMaster":
+                    ext = await c.get(url(master or rest_id), headers=h, params={"$select": "cancelledOccurrences,exceptionOccurrences,originalStart,start,end,isCancelled",
+                                                                               "$expand": "exceptionOccurrences"})
         except httpx.HTTPError as exc:
             raise CalendarError(f"Нет связи с Microsoft Graph ({type(exc).__name__}).") from None
         if r.status_code == 404:
@@ -95,12 +115,29 @@ class GraphClient:
             raise CalendarError("Graph отказал в доступе к календарю: выдайте приложению право Calendars.ReadBasic.All и подтвердите его администратором.")
         if r.status_code != 200:
             raise CalendarError(f"Graph ответил HTTP {r.status_code}.")
-        j = r.json()
         raw = [a for a in (j.get("attendees") or []) if isinstance(a, dict) and a.get("type") != "resource"]       # переговорные комнаты и оборудование — не люди
         people = [{"email": (a.get("emailAddress") or {}).get("address"), "name": (a.get("emailAddress") or {}).get("name"), "optional": a.get("type") == "optional"} for a in raw]
         att = ol.parse_attendees(people) if "attendees" in j else None
-        return EventInfo(True, bool(j.get("isCancelled")), j.get("subject") or "", _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]), att,
-                         att is None or len(att) == len(people), j.get("recurrence") if isinstance(j.get("recurrence"), dict) else None)
+        out = EventInfo(True, bool(j.get("isCancelled")), j.get("subject") or "", _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]), att,
+                        att is None or len(att) == len(people), j.get("recurrence") if isinstance(j.get("recurrence"), dict) else None,
+                        kind=str(j.get("type") or ""), tz=j.get("originalStartTimeZone") or None, master_rest_id=master)
+        if ext is not None and ext.status_code == 200:
+            x = ext.json()
+            # OID.<мастер>.<ГГГГ-ММ-ДД> — исходная дата занятия в поясе серии
+            out.occ_cancelled = [str(o).rsplit(".", 1)[-1] for o in x.get("cancelledOccurrences") or [] if isinstance(o, str)]
+            out.occ_moved = []
+            for e in x.get("exceptionOccurrences") or []:
+                try:
+                    one = (_utc(e["originalStart"]), _utc(e["start"]["dateTime"]), _utc(e["end"]["dateTime"]))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+                if e.get("isCancelled"):
+                    out.occ_cancelled.append(one[0])
+                else:
+                    out.occ_moved.append(one)
+        elif ext is not None:
+            out.warning = f"Перенесённые и отменённые занятия серии не прочитаны (Graph ответил HTTP {ext.status_code}); показываются прежние сведения."
+        return out
 
     async def probe(self, mailbox: str) -> str:
         """Проверка доступа: вход приложения и чтение календаря указанного почтового ящика. Возвращает пояснение; при ошибке — CalendarError."""
@@ -301,13 +338,22 @@ class EwsClient:
             tail = "Выдайте учётной записи право «Рецензент» на календарь организатора (Add-MailboxFolderPermission … -AccessRights Reviewer) либо роль ApplicationImpersonation."
         return CalendarError(("Вход выполнен, но " if probe else "") + "прав на календарь организатора нет. Успешный вход в EWS сам по себе прав на чужие календари не даёт. " + tail)
 
-    async def get_event(self, organizer: str, rest_id: str | None, ews_id: str | None) -> EventInfo:
+    async def get_event(self, organizer: str, rest_id: str | None, ews_id: str | None, series: bool = False) -> EventInfo:
         if not ews_id:
             raise CalendarError("У события нет идентификатора EWS.")
+        eid = escape(ews_id, {chr(34): "&quot;"})
+        ev = await self._item(organizer, f'<t:ItemId Id="{eid}"/>', series)
+        if series and ev.kind in ("Occurrence", "Exception"):                 # комната серии связана с одним занятием — читаем мастер-событие
+            ev = await self._item(organizer, f'<t:RecurringMasterItemId OccurrenceId="{eid}"/>', series)
+        return ev
+
+    async def _item(self, organizer: str, ident: str, series: bool) -> EventInfo:
+        extra = ('<t:FieldURI FieldURI="calendar:StartTimeZone"/><t:FieldURI FieldURI="calendar:ModifiedOccurrences"/><t:FieldURI FieldURI="calendar:DeletedOccurrences"/>'
+                 if series else "")
         body = ('<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/>'
                 '<t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsCancelled"/><t:FieldURI FieldURI="calendar:RequiredAttendees"/>'
-                '<t:FieldURI FieldURI="calendar:OptionalAttendees"/><t:FieldURI FieldURI="calendar:Recurrence"/></t:AdditionalProperties></m:ItemShape>'
-                f'<m:ItemIds><t:ItemId Id="{escape(ews_id, {chr(34): "&quot;"})}"/></m:ItemIds></m:GetItem>')
+                '<t:FieldURI FieldURI="calendar:OptionalAttendees"/><t:FieldURI FieldURI="calendar:Recurrence"/><t:FieldURI FieldURI="calendar:CalendarItemType"/>'
+                f'{extra}</t:AdditionalProperties></m:ItemShape><m:ItemIds>{ident}</m:ItemIds></m:GetItem>')
         root, cls, code, mode = await self._with_mode(lambda _m: body, organizer)
         if cls == "Success":
             it = root.find(".//t:CalendarItem", NS)
@@ -316,8 +362,23 @@ class EwsClient:
             people = [{"email": a.findtext("t:Mailbox/t:EmailAddress", "", NS), "name": a.findtext("t:Mailbox/t:Name", "", NS), "optional": kind == "Optional"}
                       for kind in ("Required", "Optional") for a in it.findall(f"t:{kind}Attendees/t:Attendee", NS)]
             att = ol.parse_attendees(people)
-            return EventInfo(True, (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", it.findtext("t:Subject", "", NS) or "",
-                             _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), att, len(att or []) == len(people), _ews_recurrence(it))
+            out = EventInfo(True, (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", it.findtext("t:Subject", "", NS) or "",
+                            _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), att, len(att or []) == len(people), _ews_recurrence(it),
+                            kind=it.findtext("t:CalendarItemType", "", NS) or "")
+            tz = it.find("t:StartTimeZone", NS)
+            out.tz = tz.get("Id") if tz is not None else None
+            if ident.startswith("<t:RecurringMasterItemId"):
+                iid = it.find("t:ItemId", NS)
+                out.master_ews_id = iid.get("Id") if iid is not None else None
+            if series and out.kind == "RecurringMaster":
+                try:
+                    out.occ_cancelled = [_utc(t.text or "") for t in it.findall("t:DeletedOccurrences/t:DeletedOccurrence/t:Start", NS)]
+                    out.occ_moved = [(_utc(o.findtext("t:OriginalStart", "", NS)), _utc(o.findtext("t:Start", "", NS)), _utc(o.findtext("t:End", "", NS)))
+                                     for o in it.findall("t:ModifiedOccurrences/t:Occurrence", NS)]
+                except ValueError:
+                    out.occ_cancelled = out.occ_moved = None
+                    out.warning = "EWS вернул перенесённые или отменённые занятия серии в непонятном виде; показываются прежние сведения."
+            return out
         if code in ("ErrorItemNotFound", "ErrorInvalidIdMalformed", "ErrorInvalidId"):
             return EventInfo(False) if code == "ErrorItemNotFound" else self._bad_id()
         if code in _DENIED:
@@ -395,7 +456,7 @@ def make_client(cfg: Any, transport: httpx.AsyncBaseTransport | None = None):
 async def reconcile_room(db: AsyncSession, room: Room, cfg: Any, client, now: datetime) -> str:
     """Одна комната: возвращает cancelled | rescheduled | ok | error. Ошибка связи комнату не трогает."""
     try:
-        ev = await client.get_event(room.outlook_organizer or "", room.outlook_rest_id, room.outlook_ews_id)
+        ev = await client.get_event(room.outlook_organizer or "", room.outlook_rest_id, room.outlook_ews_id, series=bool(room.recurring))
     except CalendarError as exc:
         room.outlook_sync_state, room.outlook_sync_error, room.outlook_synced_at = "error", str(exc)[:300], now
         await db.commit()
@@ -406,6 +467,8 @@ async def reconcile_room(db: AsyncSession, room: Room, cfg: Any, client, now: da
         room.outlook_sync_state, result = "missing", "cancelled"
     else:
         room.outlook_sync_state = "ok"
+        room.outlook_rest_id = ev.master_rest_id or room.outlook_rest_id          # связь с серией, а не с одним её занятием
+        room.outlook_ews_id = ev.master_ews_id or room.outlook_ews_id
         if not room.recurring and ev.start and ev.end:
             try:
                 changed = await ol.reschedule(db, room, cfg, subject=" ".join(ev.subject.split())[:200] or None, start=ev.start, end=ev.end, recurring=False, now=now)
@@ -416,11 +479,15 @@ async def reconcile_room(db: AsyncSession, room: Room, cfg: Any, client, now: da
         if ev.attendees is not None:
             await ol.set_invitees(db, room, ev.attendees, "calendar", prune=ev.attendees_complete)
         if room.recurring and ev.recurrence:
-            pat = rc.from_graph(ev.recurrence, ev.start, ev.end, room.outlook_tz)
+            pat = rc.from_graph(ev.recurrence, ev.start, ev.end, room.outlook_tz, ev.tz)
             if pat is not None:
                 room.outlook_recurrence = pat
+        if room.recurring and ev.occ_cancelled is not None:      # исключения серии — целиком из календаря: повторная сверка дублей не даёт
+            exc_new = rc.build_exceptions(ev.occ_cancelled, ev.occ_moved, rc.series_zone(room.outlook_recurrence, room.outlook_tz))
+            if exc_new != (room.outlook_exceptions or {"cancelled": [], "moved": {}}):
+                room.outlook_exceptions, result = exc_new, "rescheduled"
         if result != "error":
-            room.outlook_sync_error = None
+            room.outlook_sync_error = ev.warning
     room.outlook_synced_at = now
     await db.commit()
     return result

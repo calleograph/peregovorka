@@ -59,6 +59,17 @@ describe("Предстоящие встречи: отсчёт и состоян�
     expect(dayLabel("2027-01-05T09:00:00Z", NOW, "UTC")).toContain("2027");
   });
 
+  it("занятие серии из другого пояса: каждый видит его в своём поясе, в том числе после перехода на зимнее время", () => {
+    // серия в 10:00 по Берлину: 26.10 (Европа уже на зимнем) = 09:00 UTC, 02.11 (США тоже перешли) — снова 09:00 UTC
+    const oct26 = m({ recurring: true, start: "2026-10-26T09:00:00Z", end: "2026-10-26T10:00:00Z" });
+    const nov2 = m({ recurring: true, start: "2026-11-02T09:00:00Z", end: "2026-11-02T10:00:00Z" });
+    expect(whenLabel(oct26, NOW, "Europe/Berlin")).toMatch(/^Серия · пн, 26 окт\S* · 10:00–11:00$/);
+    expect(whenLabel(oct26, NOW, "Europe/Moscow")).toMatch(/· 12:00–13:00$/);
+    expect(whenLabel(oct26, NOW, "Asia/Tokyo")).toMatch(/· 18:00–19:00$/);
+    expect(whenLabel(oct26, NOW, "America/New_York")).toMatch(/· 05:00–06:00$/);          // в Нью-Йорке ещё летнее время
+    expect(whenLabel(nov2, NOW, "America/New_York")).toMatch(/· 04:00–05:00$/);           // 1 ноября США перешли на зимнее
+  });
+
   it("кнопка: «Войти», когда вход открыт и разрешён; иначе «Открыть встречу»; у отменённой кнопки нет", () => {
     expect(action(m({ opens_at: iso(-1), start: iso(9) }), "soon", NOW)).toEqual({ label: "Войти", primary: true });
     expect(action(m(), "scheduled", NOW)).toEqual({ label: "Открыть встречу", primary: false });

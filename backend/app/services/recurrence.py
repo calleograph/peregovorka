@@ -1,13 +1,21 @@
-"""Серии встреч из календаря Outlook: шаблон повторения и ближайшее занятие (для «Предстоящих встреч»: дата, отсчёт, сортировка).
+"""Серии встреч из календаря Outlook: шаблон повторения, исключения серии и ближайшее занятие (для «Предстоящих встреч»: дата, отсчёт, сортировка).
 
 Шаблон приходит от надстройки (Office.js `item.recurrence`) или из серверной сверки (Microsoft Graph `recurrence`, EWS `Recurrence`) и хранится
 в одном виде (`rooms.outlook_recurrence`):
 
     {"type": "daily" | "weekly" | "monthly" | "monthly_nth" | "yearly" | "yearly_nth", "interval": 1, "days": [0, 2] (пн = 0), "day": 15, "nth": 1..5 (5 — последний),
-     "month": 1..12, "start": "ГГГГ-ММ-ДД", "end": "ГГГГ-ММ-ДД" | None, "count": N | None, "time": "ЧЧ:ММ", "minutes": 60}
+     "month": 1..12, "start": "ГГГГ-ММ-ДД", "end": "ГГГГ-ММ-ДД" | None, "count": N | None, "time": "ЧЧ:ММ", "minutes": 60, "tz": "Europe/Moscow" (если известен)}
 
-Время занятий — в часовом поясе организатора (`rooms.outlook_tz`, его присылает надстройка); перенос или отмена отдельного занятия (исключения серии)
-не учитываются. Неизвестный или неполный шаблон — None: тогда серия показывается без даты следующего занятия, как раньше.
+Время занятий — в часовом поясе самой серии из календаря (`tz`: Office.js `recurrenceTimeZone`, Graph `recurrenceTimeZone`/`originalStartTimeZone`,
+EWS `StartTimeZone`; имена Windows переводятся в IANA). Пояса нет — пояс организатора из надстройки (`rooms.outlook_tz`), затем UTC.
+
+Исключения серии (`rooms.outlook_exceptions`) — только из календаря (серверная сверка): Outlook не сообщает надстройке исходное время перенесённого занятия
+и не вызывает её при отмене занятия. Ключ — исходная дата занятия в поясе серии (в серии Outlook не больше одного занятия в день):
+
+    {"cancelled": ["ГГГГ-ММ-ДД", ...], "moved": {"ГГГГ-ММ-ДД": ["начало UTC", "окончание UTC"]}}
+
+Каждая сверка заменяет исключения целиком — повторная сверка дублей не создаёт. Неизвестный или неполный шаблон — None: тогда серия показывается без даты
+следующего занятия, как раньше.
 """
 from __future__ import annotations
 
@@ -23,6 +31,22 @@ _WEEK = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
 _NTH = {"first": 1, "second": 2, "third": 3, "fourth": 4, "last": 5}
 _MONTH = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
 HORIZON_DAYS = 800                          # дальше двух лет серию не ищем (так же ограничен срок жизни комнаты серии)
+MAX_EXCEPTIONS = 2000
+
+
+def zone_name(raw) -> str | None:
+    """Имя пояса из календаря → имя IANA: Windows («Russian Standard Time») по таблице CLDR, IANA — как есть. Свой пояс Outlook (`tzone://Microsoft/Custom`) и мусор — None."""
+    from .windows_zones import WINDOWS_TO_IANA  # noqa: PLC0415
+
+    name = str(raw or "").strip()
+    if not name or len(name) > 64:
+        return None
+    name = WINDOWS_TO_IANA.get(name, name)
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    return name
 
 
 def _days(raw) -> list[int]:
@@ -82,6 +106,8 @@ def validate(p) -> dict | None:
         out["month"] = _month(p.get("month"))
         if not out["month"]:
             return None
+    if p.get("tz") and zone_name(p["tz"]):
+        out["tz"] = zone_name(p["tz"])
     try:
         date.fromisoformat(start)
     except ValueError:
@@ -94,7 +120,8 @@ def from_office(r) -> dict | None:
     if not isinstance(r, dict):
         return None
     kind, props = str(r.get("type") or ""), r.get("props") if isinstance(r.get("props"), dict) else {}
-    base = {"interval": props.get("interval") or 1, "start": r.get("start_date"), "end": r.get("end_date"), "time": r.get("start_time"), "minutes": r.get("duration")}
+    base = {"interval": props.get("interval") or 1, "start": r.get("start_date"), "end": r.get("end_date"), "time": r.get("start_time"), "minutes": r.get("duration"),
+            "tz": r.get("tz")}          # recurrenceTimeZone.name: время серии (start_time) — в этом поясе
     if kind == "daily":
         return validate({**base, "type": "daily"})
     if kind == "weekday":
@@ -108,12 +135,14 @@ def from_office(r) -> dict | None:
     return None
 
 
-def from_graph(rec, start_utc: datetime | None, end_utc: datetime | None, local_tz: str | None) -> dict | None:
-    """Шаблон Microsoft Graph (patternedRecurrence); время занятия — из начала мастер-события (UTC) в поясе организатора."""
+def from_graph(rec, start_utc: datetime | None, end_utc: datetime | None, local_tz: str | None, event_tz: str | None = None) -> dict | None:
+    """Шаблон Microsoft Graph (patternedRecurrence; EWS приводится к нему же); время занятия — из начала мастер-события (UTC) в поясе серии:
+    `range.recurrenceTimeZone`, иначе пояс события (`event_tz`), иначе пояс организатора из надстройки (`local_tz`)."""
     if not isinstance(rec, dict) or start_utc is None or end_utc is None:
         return None
     pat, rng = rec.get("pattern") or {}, rec.get("range") or {}
-    local = start_utc.astimezone(_zone(local_tz))
+    tz = zone_name(rng.get("recurrenceTimeZone")) or zone_name(event_tz)
+    local = start_utc.astimezone(_zone(tz or local_tz))
     kind = {"daily": "daily", "weekly": "weekly", "absoluteMonthly": "monthly", "relativeMonthly": "monthly_nth",
             "absoluteYearly": "yearly", "relativeYearly": "yearly_nth"}.get(str(pat.get("type") or ""))
     if not kind:
@@ -122,7 +151,48 @@ def from_graph(rec, start_utc: datetime | None, end_utc: datetime | None, local_
                      "nth": _NTH.get(str(pat.get("index") or "")), "month": pat.get("month"), "start": rng.get("startDate") or local.date().isoformat(),
                      "end": rng.get("endDate") if rng.get("type") == "endDate" else None,
                      "count": rng.get("numberOfOccurrences") if rng.get("type") == "numbered" else None,
-                     "time": local.strftime("%H:%M"), "minutes": int((end_utc - start_utc).total_seconds() // 60)})
+                     "time": local.strftime("%H:%M"), "minutes": int((end_utc - start_utc).total_seconds() // 60), "tz": tz})
+
+
+def series_zone(p: dict | None, fallback: str | None):
+    """Пояс серии: из шаблона (календарь), иначе пояс организатора из надстройки, иначе UTC."""
+    return _zone((p or {}).get("tz") or fallback)
+
+
+def build_exceptions(cancelled, moved, tz) -> dict:
+    """Исключения серии из календаря. cancelled — исходные даты («ГГГГ-ММ-ДД», Graph) или исходные начала (UTC, EWS); moved — [(исходное начало, начало, окончание)] в UTC.
+    Даты — в поясе серии `tz`."""
+    def day(v) -> str | None:
+        if isinstance(v, datetime):
+            return v.astimezone(tz).date().isoformat()
+        return v if isinstance(v, str) and _DATE.match(v) else None
+    out_c = sorted({d for d in (day(v) for v in cancelled or []) if d})[-MAX_EXCEPTIONS:]
+    out_m = {}
+    for orig, start, end in (moved or [])[:MAX_EXCEPTIONS]:
+        d = day(orig)
+        if d and isinstance(start, datetime) and isinstance(end, datetime) and end > start:
+            out_m[d] = [_iso(start), _iso(end)]
+    return {"cancelled": out_c, "moved": out_m}
+
+
+def _iso(d: datetime) -> str:
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _exc(raw) -> tuple[set, dict]:
+    """Сохранённые исключения → (отменённые даты, {дата: (начало, окончание)}); испорченные записи пропускаются."""
+    if not isinstance(raw, dict):
+        return set(), {}
+    cancelled = {d for d in raw.get("cancelled") or [] if isinstance(d, str) and _DATE.match(d)}
+    moved = {}
+    for d, v in (raw.get("moved") or {}).items() if isinstance(raw.get("moved"), dict) else ():
+        try:
+            s, e = (datetime.fromisoformat(str(x).replace("Z", "+00:00")) for x in v)
+        except (TypeError, ValueError):
+            continue
+        if s.tzinfo and e.tzinfo and e > s:
+            moved[d] = (s.astimezone(timezone.utc), e.astimezone(timezone.utc))
+    return cancelled, moved
 
 
 def _zone(name: str | None):
@@ -162,16 +232,20 @@ def _matches(p: dict, d: date, first: date) -> bool:
     return years % n == 0 and d.month == p["month"] and d == _nth_weekday(d.year, d.month, p["days"][0], p["nth"])     # yearly_nth
 
 
-def next_occurrence(p: dict | None, tz_name: str | None, now: datetime) -> tuple[datetime, datetime] | None:
-    """Ближайшее занятие серии, которое ещё не закончилось (идущее сейчас — тоже): (начало, окончание) в UTC. None — серия закончилась или шаблона нет."""
+def next_occurrence(p: dict | None, tz_name: str | None, now: datetime, exceptions: dict | None = None) -> tuple[datetime, datetime] | None:
+    """Ближайшее занятие серии, которое ещё не закончилось (идущее сейчас — тоже): (начало, окончание) в UTC, с учётом переноса и отмены отдельных занятий.
+    None — серия закончилась, все оставшиеся занятия отменены или шаблона нет. tz_name — пояс организатора, если у шаблона нет своего."""
     p = validate(p) if p else None
     if p is None:
         return None
-    tz = _zone(tz_name)
+    tz = series_zone(p, tz_name)
+    cancelled, moved = _exc(exceptions)
     first = date.fromisoformat(p["start"])
     last = date.fromisoformat(p["end"]) if p["end"] else None
     hh, mm = map(int, p["time"].split(":"))
     dur = timedelta(minutes=p["minutes"])
+    # перенесённое занятие могло уйти далеко от исходной даты (Outlook лишь не даёт перескочить соседнее) — смотрим все переносы
+    best = min(((s, e) for d, (s, e) in moved.items() if e > now and d not in cancelled), default=None)
     today = now.astimezone(tz).date()
     # с подсчётом занятий («N раз») идём от начала серии, иначе — со вчерашнего дня (занятие могло начаться вчера и ещё идти)
     d, seen = (first if p["count"] else max(first, today - timedelta(days=1))), 0
@@ -180,9 +254,12 @@ def next_occurrence(p: dict | None, tz_name: str | None, now: datetime) -> tuple
         if _matches(p, d, first):
             seen += 1
             if p["count"] and seen > p["count"]:
-                return None
-            start = datetime.combine(d, time(hh, mm), tz).astimezone(timezone.utc)
-            if start + dur > now:
-                return start, start + dur
+                break
+            key = d.isoformat()
+            if key not in cancelled and key not in moved:      # перенесённые учтены выше, отменённые пропускаем (в счёт «N раз» они входят, как в Outlook)
+                # несуществующее местное время (ночь перехода на летнее) сдвигается на час вперёд, неоднозначное (на зимнее) — первое из двух
+                start = datetime.combine(d, time(hh, mm), tz).astimezone(timezone.utc)
+                if start + dur > now:
+                    return min(best, (start, start + dur)) if best else (start, start + dur)
         d += timedelta(days=1)
-    return None
+    return best

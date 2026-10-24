@@ -1,5 +1,5 @@
 """Стенд (см. README.md): наполняет «Предстоящие встречи» тем же путём, что надстройка Outlook — токен надстройки и POST /api/v1/outlook/meetings
-с приглашёнными. Встречи: через 12 мин, через 3 ч, завтра, через полночь, идущая (вход через API), отменённая, серия, временная комната.
+с приглашёнными. Встречи: через 12 мин, через 3 ч, завтра, через полночь, идущая (вход через API), отменённая, две серии (вторая — в поясе Берлина), временная комната.
 Сотни встреч этим путём не создать (у API надстройки предел частоты) — их проверяет backend/tests/test_upcoming.py. Запуск: python tests/live/seed_upcoming.py [--base URL]"""
 import argparse
 import uuid
@@ -58,6 +58,11 @@ first = now + timedelta(days=2)
 meet("Еженедельный обзор проектов", first, 60, people=PEOPLE, recurring=True, tz="UTC",       # серия с шаблоном: на главной — ближайшее занятие
      recurrence={"type": "weekly", "props": {"interval": 1, "days": [("mon", "tue", "wed", "thu", "fri", "sat", "sun")[first.weekday()]]},
                  "start_date": first.date().isoformat(), "end_date": None, "start_time": first.strftime("%H:%M"), "duration": 60})
+# серия в поясе Берлина (recurrenceTimeZone), организатор — в Москве: время занятий считается по поясу серии, а не браузера организатора
+mon = (now + timedelta(days=(7 - now.weekday()) % 7 or 7)).replace(hour=8, minute=0, second=0, microsecond=0)
+meet("Совещание руководителей", mon, 60, people=PEOPLE[:2], recurring=True, tz="Europe/Moscow",
+     recurrence={"type": "weekly", "props": {"interval": 1, "days": ["mon"]}, "start_date": mon.date().isoformat(), "end_date": None,
+                 "start_time": "10:00", "duration": 60, "tz": "W. Europe Standard Time"})
 bob = session("bob", "bob-pass")
 bob.post(f"{API}/rooms/temporary", json={"name": "Срочный созвон по инциденту"})
 print("Готово: встречи созданы")

@@ -243,14 +243,17 @@
     return item;
   }
 
-  /** Шаблон серии из Office.js (Recurrence + SeriesTime) — простым объектом для сервера: тип, параметры, даты, время начала, длительность. Сбой — null. */
+  /** Шаблон серии из Office.js (Recurrence + SeriesTime) — простым объектом для сервера: тип, параметры, даты, время начала, длительность и пояс серии
+   *  (recurrenceTimeZone: время серии задано в нём, а не в поясе браузера). Сбой — null. */
   function plainRecurrence(r) {
     if (!r || !r.recurrenceType) return null;
     try {
       var st = r.seriesTime;
       var call = function (name) { return st && typeof st[name] === "function" ? st[name]() : null; };
-      return { type: r.recurrenceType, props: r.recurrenceProperties || {}, start_date: call("getStartDate"), end_date: call("getEndDate"),
+      var out = { type: r.recurrenceType, props: r.recurrenceProperties || {}, start_date: call("getStartDate"), end_date: call("getEndDate"),
         start_time: call("getStartTime"), duration: call("getDuration") };
+      if (r.recurrenceTimeZone && r.recurrenceTimeZone.name) out.tz = String(r.recurrenceTimeZone.name);
+      return out;
     } catch (e) { return null; }
   }
 
@@ -305,7 +308,8 @@
       try { if (mb.userProfile && mb.userProfile.emailAddress) payload.organizer = mb.userProfile.emailAddress; } catch (e) { /* не критично */ }
       if (ews) payload.ews_id = ews;
       if (rest) payload.rest_id = rest;
-      try { if (item.seriesId) payload.series_id = item.seriesId; } catch (e) { /* не критично */ }
+      /* одно занятие серии: Office.js отдаёт ему шаблон всей серии, поэтому сервер должен знать, что меняется только занятие */
+      try { if (item.seriesId) { payload.series_id = item.seriesId; payload.instance = true; } } catch (e) { /* не критично */ }
       if (v[2]) payload.attendees = v[2];
       if (m.recurrence) payload.recurrence = m.recurrence;
       return payload;
