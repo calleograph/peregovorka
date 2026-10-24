@@ -226,6 +226,12 @@ async def main():
         S.check("390 px: переход между списком и перепиской, без горизонтальной прокрутки", one and back and sw <= 390, f"scrollWidth={sw}")
         await B.js("document.documentElement.setAttribute('data-theme', 'light')")
         await A.shot("desktop")
+        # ---- поиск слева по сотрудникам: написать сразу из строки поиска
+        await A.js("document.querySelector('.chat-search input').focus()")
+        await A.send("Input.insertText", text="dave")
+        ok = await A.wait_for("[...document.querySelectorAll('.chat-found-row.person')].some(r => r.innerText.includes('Дмитрий Соколов'))", 8)
+        await A.js("[...document.querySelectorAll('.chat-found-row.person')].find(r => r.innerText.includes('Дмитрий Соколов'))?.click()")
+        S.check("поиск слева находит сотрудника и открывает с ним переписку", ok and await A.wait_for("document.querySelector('.conv-who b')?.textContent === 'Дмитрий Соколов'", 8))
         # ---- чат во время видеовстречи
         await A.js("document.querySelector('[aria-label=\"Закрыть чаты\"]').click()")
         joined = await A.join()

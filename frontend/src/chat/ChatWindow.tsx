@@ -4,7 +4,7 @@ import Avatar from "../components/Avatar";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { ConfirmDialog } from "../components/Dialogs";
 import { Icon } from "../components/Icons";
-import { chatApi, type ChatItem, type SearchHit } from "./chatApi";
+import { chatApi, type ChatItem, type Person, type SearchHit } from "./chatApi";
 import { ChatInfoDialog, FoldersDialog, NewChatDialog, PrefsDialog } from "./ChatDialogs";
 import { listTime, plainText, visibleChats, type ListView } from "./chatModel";
 import { chats, useChats } from "./chatStore";
@@ -41,6 +41,7 @@ export default function ChatWindow() {
   const [view, setView] = useState<ListView>({ folder: "all", text: "" });
   const [dialog, setDialog] = useState<Dialog>(null);
   const [found, setFound] = useState<{ chats: ChatItem[]; messages: (SearchHit & { chat_id: string })[]; terms?: string[] } | null>(null);
+  const [people, setPeople] = useState<Person[]>([]);
   const [jump, setJump] = useState<{ chatId: string; id: number; terms: string[] } | null>(null);
   const [searchOpen, setSearchOpen] = useState(0);
   const win = useRef<HTMLDivElement>(null);
@@ -61,8 +62,11 @@ export default function ChatWindow() {
   // поиск слева: по названиям сразу, по содержимому переписок — запросом (не чаще чем раз в 300 мс)
   useEffect(() => {
     const t = view.text.trim();
-    if (t.length < 2) { setFound(null); return; }
-    const h = window.setTimeout(() => void chatApi.searchAll(t).then(setFound).catch(() => setFound(null)), 300);
+    if (t.length < 2) { setFound(null); setPeople([]); return; }
+    const h = window.setTimeout(() => {
+      void chatApi.searchAll(t).then(setFound).catch(() => setFound(null));
+      void chatApi.people(t).then((r) => setPeople(r.users.slice(0, 8))).catch(() => setPeople([]));      // сотрудники — написать сразу из поиска
+    }, 300);
     return () => window.clearTimeout(h);
   }, [view.text]);
 
@@ -102,6 +106,17 @@ export default function ChatWindow() {
               <li className="chat-empty">
                 {s.items.length === 0 ? <>Переписок пока нет.<button type="button" className="btn primary mini" onClick={() => setDialog({ kind: "new" })}>Написать сотруднику</button></>
                   : view.text ? "Ничего не найдено в названиях" : view.folder === "archive" ? "В архиве пусто" : "Здесь пока пусто"}
+              </li>
+            )}
+            {people.length > 0 && (
+              <li className="chat-found">
+                <div className="chat-found-h">Сотрудники</div>
+                {people.filter((p) => !s.items.some((c) => c.kind === "direct" && c.peer?.id === p.id)).map((p) => (
+                  <button key={p.id ?? p.ref ?? p.name} type="button" className="chat-found-row person"
+                          onClick={() => void chatApi.direct({ id: p.id, ref: p.ref, login: p.login }).then((r) => { setView({ ...view, text: "" }); return chats.openChat(r.id); }).catch((e) => alert((e as Error).message))}>
+                    <Avatar name={p.name} url={p.avatar_url} size={30} /><span><b>{p.name}</b><span className="muted small">{[p.title, p.department].filter(Boolean).join(" · ") || "написать"}</span></span>
+                  </button>
+                ))}
               </li>
             )}
             {found && found.messages.length > 0 && (
