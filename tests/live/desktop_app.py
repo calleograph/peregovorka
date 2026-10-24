@@ -102,6 +102,7 @@ async def main():
         pa = await app.page(A_URL)
         check("вход alice на странице организации А", await login(pa, "alice", "alice-pass"))
         check("после входа паролем устройство получило сохранённый вход (токен, не пароль)", await app.main.wait(f"!!globalThis.__pg.ctx.trust.get('{a_id}')", 15))
+        await pa.send("Page.addScriptToEvaluateOnNewDocument", source="window.__tracks = []; const G = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices); navigator.mediaDevices.getUserMedia = async (c) => { const s = await G(c); window.__tracks.push(...s.getTracks()); return s; };")
         await pa.send("Page.addScriptToEvaluateOnNewDocument", source="window.__ws = []; const W = window.WebSocket; window.WebSocket = function (...a) { const s = new W(...a); window.__ws.push(s); return s; }; window.WebSocket.prototype = W.prototype; Object.assign(window.WebSocket, W);")
         await pa.js("location.reload()")
         await pa.wait("!!document.querySelector('.topbar .usermenu')", 30)
@@ -192,6 +193,9 @@ async def main():
             if await pa.wait("document.querySelectorAll('.tile').length > 0", 10):
                 break
         check("вход во встречу в приложении (LiveKit)", await app.main.wait(f"globalThis.__pg.orgs.byId('{a_id}').state.inCall === true", 20))
+        await asyncio.sleep(2)
+        live_audio = await pa.js("window.__tracks.filter(t => t.kind === 'audio' && t.readyState === 'live').length")
+        check("после проверки устройств во встрече один микрофон (без дублей захвата)", live_audio <= 1, f"живых аудиодорожек: {live_audio}")
         r = await pa.send("Runtime.evaluate", expression="window.__ds = navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(s => (window.__share = s, s.getVideoTracks()[0].readyState), e => e.name)",
                           userGesture=True, awaitPromise=False)
         picker = await app.page("app://shell/picker.html", 15, fresh=True)
@@ -228,6 +232,8 @@ async def main():
         check("«Открыть» на индикаторе возвращает окно", await app.main.wait("globalThis.__pg.main.win.isVisible()", 10))
         await app.m(f"pg.orgs.command(pg.orgs.byId('{a_id}'), {{ type: 'leave-meeting' }}); return true;")
         check("«Покинуть встречу» из приложения", await app.main.wait(f"globalThis.__pg.orgs.byId('{a_id}').state.inCall === false", 15))
+        check("после выхода из встречи камера и микрофон освобождены", await pa.wait("window.__tracks.every(t => t.readyState === 'ended')", 10),
+              str(await pa.js("window.__tracks.filter(t => t.readyState === 'live').map(t => t.kind)")))
 
         # ---------- окно: минимальный размер, положение запоминается
         await app.m("pg.main.win.setBounds({ x: 50, y: 40, width: 400, height: 300 }); return true;")
