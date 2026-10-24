@@ -34,9 +34,7 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
     <SetProperty Id="RUNARGS" Value=" --hidden" After="SetAUTOSTART" Sequence="both" Condition="AUTOSTART=&quot;tray&quot;" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Peregovorka">
-        <Files Include="!(bindpath.unpacked)\\**" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="Peregovorka" />
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -47,6 +45,11 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
         <RegistryValue Root="HKLM" Key="SOFTWARE\\Peregovorka\\Desktop" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
+
+    <!-- файлы программы (распакованная сборка electron-builder) -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.unpacked)\\**" />
+    </ComponentGroup>
 
     <ComponentGroup Id="System" Directory="INSTALLFOLDER">
       <!-- признак корпоративной установки: обновления выполняет администратор, а не приложение -->
@@ -69,6 +72,7 @@ Path(__file__).with_name("Peregovorka.wxs").write_text(f'''<?xml version="1.0" e
     </ComponentGroup>
 
     <Feature Id="Main" Title="Peregovorka" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
       <ComponentGroupRef Id="System" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
