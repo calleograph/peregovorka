@@ -993,7 +993,23 @@ class ApiSettings(_Group):
         return self
 
 
+class ChatSettings(_Group):
+    """Корпоративные чаты (вкладка «Чаты» в верхнем меню): сроки хранения переписки, пределы, присутствие «в сети» и голосовая диктовка через ASR.
+    Вложения подчиняются общим правилам «Вложения чата» (размер, типы, хранилище)."""
+
+    enabled: bool = True
+    retention_days: int = Field(default=0, ge=0, le=3650)            # 0 — хранить без срока; иначе сообщения и файлы старше удаляются
+    max_message_chars: int = Field(default=4000, ge=200, le=20000)
+    max_group_members: int = Field(default=300, ge=3, le=2000)
+    messages_per_minute: int = Field(default=40, ge=5, le=600)       # на одного пользователя по всем чатам
+    presence_enabled: bool = True                                    # показывать «в сети» (каждый может скрыть свой статус в настройках чатов)
+    dictation_enabled: bool = True
+    dictation_max_seconds: int = Field(default=120, ge=10, le=600)   # одна диктовка
+    dictation_max_concurrent: int = Field(default=4, ge=1, le=50)    # одновременно на сервер: распознавание встреч важнее
+
+
 GROUPS: dict[str, type[_Group]] = {
+    "chats": ChatSettings,
     "api": ApiSettings,
     "bitrix24": Bitrix24Settings,
     "privacy": PrivacySettings,

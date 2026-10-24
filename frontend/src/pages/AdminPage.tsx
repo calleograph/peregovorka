@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -99,9 +99,12 @@ const GROUPS: Group[] = [
     { id: "audio_storage", label: "Хранилище аудиозаписей", render: () => (
       <SettingsForm key="audio_storage" group="audio_storage" title="Хранилище аудиозаписей" fields={audioStorageFields} testable
         intro="Отдельное место для звука встреч — так большие файлы не смешиваются с протоколами. Выберите хранилище из раздела «Файловые хранилища»." />) },
+    { id: "chats", label: "Корпоративные чаты", render: () => (
+      <SettingsForm key="chats" group="chats" title="Корпоративные чаты" fields={chatsFields}
+        intro="Личные и групповые переписки сотрудников. Вложения подчиняются правилам раздела «Хранилище вложений чата» (размер, типы, хранилище). Тексты переписки в технические журналы не пишутся." />) },
     { id: "chat_files", label: "Хранилище вложений чата", render: () => (
       <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
-        intro="Файлы и картинки в чате встречи: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
+        intro="Файлы и картинки в чате встречи и в корпоративных чатах: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
     { id: "storage_sync", label: "Целостность хранилищ", render: () => <StorageSyncAdmin /> },
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
     { id: "journal_settings", label: "Хранение журнала", render: () => (

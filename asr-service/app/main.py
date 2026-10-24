@@ -17,12 +17,13 @@ from .config import AsrSettings
 from .health import create_health_app
 from .inference import InferenceQueue
 from .logging_setup import configure_logging
+from .dictation import DictationManager
 from .manager import SessionManager
 from .model_manager import ModelManager
 from .pipeline import recorder_stats
 from .pipeline_health import HEALTH
 from .publisher import SegmentPublisher, heartbeat_loop
-from .runtime_config import VAD_CONFIG_KEY, apply_vad, current_vad
+from .runtime_config import VAD_CONFIG_KEY, apply_vad, current_vad, segmenter_config
 
 log = logging.getLogger("asr")
 DESIRED_MODEL_KEY = "asr:desired_model"  # желаемая модель из админки (пишет backend); ASR применяет её сам
@@ -83,8 +84,10 @@ async def amain() -> None:
     models = ModelManager(settings, load_catalog(settings.asr_model_dir, settings.asr_model_name), busy_reason=busy_reason)
     queue = InferenceQueue(models, max_concurrent=settings.asr_max_concurrent_inference, queue_size=settings.asr_queue_size, language=settings.asr_language)
     publisher = SegmentPublisher(redis, lambda: models.info)
-    manager = SessionManager(settings, redis, queue, publisher, silero_factory())
+    vad_factory = silero_factory()
+    manager = SessionManager(settings, redis, queue, publisher, vad_factory)
     holder["manager"] = manager
+    dictation = DictationManager(redis, queue, vad_factory, lambda: segmenter_config(settings), queue_size=settings.asr_queue_size)
 
     def snapshot() -> dict:
         st = models.status()
@@ -97,7 +100,7 @@ async def amain() -> None:
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
             "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(), "pipeline": HEALTH.snapshot(),
             **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
-            "active_meetings": manager.active_meetings, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
+            "active_meetings": manager.active_meetings, "dictation": {"active": len(dictation.active), **dictation.stats}, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
 
     async def selftest() -> dict:
@@ -146,6 +149,7 @@ async def amain() -> None:
         tasks.append(asyncio.create_task(heartbeat_loop(redis, snapshot), name="heartbeat"))
         tasks.append(asyncio.create_task(watch_desired_model(redis, models), name="model-watch"))
         tasks.append(asyncio.create_task(manager.run(), name="manager"))
+        tasks.append(asyncio.create_task(dictation.run(), name="dictation"))
         log.info("ASR-сервис запущен", extra={"cpu_count": os.cpu_count(), "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"),
                                          "max_concurrent_inference": settings.asr_max_concurrent_inference, "model": models.active_id, "ready": models.is_ready(), "device": settings.asr_device})
         await stop.wait()
@@ -154,6 +158,8 @@ async def amain() -> None:
             t.cancel()
         with contextlib.suppress(Exception):
             await manager.stop_all()
+        with contextlib.suppress(Exception):
+            await dictation.stop_all()
         with contextlib.suppress(Exception):
             await queue.stop()
         with contextlib.suppress(Exception):

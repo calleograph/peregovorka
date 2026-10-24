@@ -61,6 +61,49 @@ async def _dev_pcm(body: dict = Body(...)):
     return {"ok": True}
 
 
+@app.post("/__dev/fake_asr")
+async def _dev_fake_asr():
+    """Только для стенда: подставная служба распознавания для диктовки чата (контракт docs/ASR_CONTRACT.md, «Диктовка»): «жив» в heartbeat,
+    на каждые ~1,5 с громкого звука — фрагмент «фраза N», в конце — done. Настоящий ASR (GigaAM) на стенде не запускается."""
+    import array, asyncio, base64 as _b64, json as _json, math
+    r = app.state.redis
+    if getattr(app.state, "fake_asr", None):
+        return {"ok": True, "already": True}
+
+    async def session(sid):
+        last, loud, n, out = "0-0", 0, 0, f"asr:dict:{sid}:out"
+        while True:
+            res = await r.xread({f"asr:dict:{sid}:in": last}, block=1000, count=50)
+            for _s, items in res or []:
+                for mid, f in items:
+                    last = mid
+                    if f.get("eof"):
+                        if loud > 8000:
+                            n += 1
+                            await r.xadd(out, {"type": "final", "seq": str(n), "text": f"фраза {n}"})
+                        await r.xadd(out, {"type": "done", "segments": str(n), "busy": "0", "timeout": "0"})
+                        return
+                    a = array.array("h"); a.frombytes(_b64.b64decode(f.get("pcm") or ""))
+                    if a and math.sqrt(sum(x * x for x in a) / len(a)) > 300:
+                        loud += len(a)
+                        if loud >= 24000:
+                            n, loud = n + 1, 0
+                            await r.xadd(out, {"type": "final", "seq": str(n), "text": f"фраза {n}"})
+
+    async def run():
+        last = "$"
+        while True:
+            await r.set("asr:heartbeat", _json.dumps({"model_loaded": True, "stand": True}), ex=30)
+            res = await r.xread({"asr:dictation:control": last}, block=5000, count=10)
+            for _s, items in res or []:
+                for mid, f in items:
+                    last = mid
+                    if f.get("type") == "start":
+                        asyncio.create_task(session(f["sid"]))
+    app.state.fake_asr = asyncio.create_task(run())
+    return {"ok": True}
+
+
 @app.post("/__dev/forget_waveforms")
 async def _dev_forget_waveforms():
     """Только для стенда: забыть построенные волны — так проверяется «старая запись без волны»."""

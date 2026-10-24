@@ -45,3 +45,17 @@ ASR раз в 10 с пишет ключ `asr:heartbeat` (JSON: `model_loaded`, `
 При `record_audio=true` ASR дописывает сырой PCM (int16, 16 кГц, моно, без заголовка) в
 `$RECORDINGS_DIR/<room_name>/<identity>.pcm`. Backend (тот же uid 10001) по завершении встречи превращает файлы в WAV,
 раскладывает по структуре комната/дата/время и удаляет PCM. Файлы короче 1 с отбрасываются.
+
+## Диктовка (сообщения чата)
+
+Звук диктовки идёт **не через LiveKit**, а через Redis (backend — `app/api/dictation.py`, ASR — `app/dictation.py`):
+
+- Stream `asr:dictation:control` — команды `type=start`, `sid` (32 шестнадцатеричных знака), `max_seconds`. ASR читает поток с конца (`$`):
+  диктовки, начатые до перезапуска ASR, не возобновляются — backend сообщает пользователю об истечении ожидания.
+- Stream `asr:dict:<sid>:in` — звук: поле `pcm` (base64 от PCM int16, 16 кГц, моно; кусками ~100 мс) или `eof=1` (конец). TTL ключа — 10 мин,
+  после завершения удаляется.
+- Stream `asr:dict:<sid>:out` — результаты: `type=final, seq, text` (фрагмент по паузе; `seq` — номер фрагмента, клиент отбрасывает повтор),
+  `type=busy, seq` (очередь заполнена больше чем наполовину — фрагмент не распознаётся, встречи важнее), `type=done, segments, busy, timeout`,
+  `type=error, code, message` (`busy` — превышено число одновременных диктовок).
+- Нарезка — тот же VAD и `SpeechSegmenter`, распознавание — общая `InferenceQueue`; звук на диск не пишется, текст в журнал не попадает
+  (только тайминги, `meeting_id=dictation`). Сведения в heartbeat: `dictation: {active, sessions, rejected, segments, busy}`.

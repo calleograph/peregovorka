@@ -118,7 +118,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "chats" | "autoupdate" | "auth_security" | "captcha" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -1139,3 +1139,6 @@ export interface PerfData {
   kernel: { ok: boolean; note?: string; params: Record<string, { value: number | null; recommended: number; ok: boolean | null }> };
   containers: { backend: { cpu_pct: number | null; mem_bytes: number | null; mem_limit: number | null }; note: string };
 }
+
+/** Общие функции запросов для модулей вне этого файла (чаты): те же CSRF, ошибки и обработка 401, что у `api`. */
+export const http = { request, uploadBytes, putBlob, fetchBlob };

@@ -58,6 +58,8 @@ class User(Base):
     # Значения профиля по источникам {"ad": {...}, "bitrix": {..., "fetched_at": iso}} и внешние идентификаторы {"bitrix": "123"} — для слияния по приоритетам
     profile_sources: Mapped[dict | None] = mapped_column(JSONType)
     external_ids: Mapped[dict | None] = mapped_column(JSONType)
+    # Личные настройки чатов: {"presence": показывать ли мой статус «в сети», "sound": звук новых сообщений} (см. services/chats.py)
+    chat_prefs: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

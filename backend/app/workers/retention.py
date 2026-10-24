@@ -68,6 +68,13 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
             if orphans:
                 stats["attachments_orphaned"] = orphans
         await db.commit()
+        settings_svc = getattr(protocols, "_svc", None) or getattr(protocols, "settings_svc", None)
+        if settings_svc is not None and protocols.chat_files is not None:
+            from ..services import chats  # noqa: PLC0415
+
+            days = (await settings_svc.get(db, "chats")).retention_days       # срок хранения корпоративной переписки (0 — без срока)
+            if days:
+                stats["chat_messages"] = await chats.purge_expired(db, protocols.chat_files, days)
     if any(stats.values()):
         log.info("Очистка по срокам хранения", extra=stats)
     return stats
