@@ -34,6 +34,22 @@ export function parseRegQuery(out: string): Map<string, RegValue> {
   return m;
 }
 
+/** Файл `reg export` (UTF-16, уже раскодирован) → то же, что parseRegQuery. `reg query` для этого не годится: он печатает в кодировке консоли (OEM),
+ *  и кириллица в названиях организаций из групповой политики превращалась в «????». Значения hex(…) не используются политиками и пропускаются. */
+export function parseRegExport(text: string): Map<string, RegValue> {
+  const m = new Map<string, RegValue>();
+  for (const line of text.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const r = /^"((?:[^"\\]|\\.)*)"=(.*)$/.exec(line);
+    if (!r) continue;
+    const name = r[1].replace(/\\(.)/g, "$1").toLowerCase();
+    const v = r[2];
+    const str = /^"((?:[^"\\]|\\.)*)"$/.exec(v);
+    if (str) m.set(name, { type: "REG_SZ", data: str[1].replace(/\\(.)/g, "$1") });
+    else if (/^dword:[0-9a-f]{8}$/i.test(v)) m.set(name, { type: "REG_DWORD", data: "0x" + v.slice(6) });
+  }
+  return m;
+}
+
 const pick = <T extends string>(v: string | undefined, allowed: readonly T[]): T | undefined => (allowed as readonly string[]).includes((v ?? "").toLowerCase()) ? (v!.toLowerCase() as T) : undefined;
 const flag = (v: RegValue | undefined): boolean | undefined => {
   if (!v) return undefined;

@@ -37,8 +37,31 @@ jobs:
       - name: Безопасность исходников
         run: node scripts/security-check.mjs
 
-  windows:
+  # Быстрый круг (каждое изменение клиента): собранная программа без установщика (electron-builder --dir) на настоящей Windows и проверки
+  # с пустым профилем — первый запуск, работа без сервера, снимки и вёрстка (npm run preview; то же, что разработчик запускает у себя).
+  preview:
     needs: checks
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults: { run: { shell: pwsh, working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "24" }
+      - run: npm ci
+      - name: Предварительная сборка и проверки (npm run preview)
+        run: npm run preview
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: peregovorka-preview-screens
+          path: desktop/out/preview
+          if-no-files-found: warn
+
+  # Полный круг: установщики EXE/MSI, подпись, установка/обновление/удаление, агент подписи — для main, тегов выпуска и ручного запуска.
+  windows:
+    needs: [checks, preview]
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: windows-2025
     timeout-minutes: 120
     outputs:
@@ -213,7 +236,7 @@ jobs:
           Export-PfxCertificate -Cert $c -FilePath "$env:RUNNER_TEMP/untrusted.pfx" -Password (ConvertTo-SecureString pg-e2e -AsPlainText -Force) | Out-Null
           Remove-Item "Cert:\CurrentUser\My\$($c.Thumbprint)"
           Remove-Item -Recurse -Force "$env:APPDATA\Peregovorka" -ErrorAction SilentlyContinue
-          node scripts/win-e2e.mjs firstrun "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" "$env:RUNNER_TEMP/screens" "$env:RUNNER_TEMP/untrusted.pfx"
+          node scripts/check.mjs firstrun --app "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" --out "$env:RUNNER_TEMP/screens" --untrusted-pfx "$env:RUNNER_TEMP/untrusted.pfx"
           if ($LASTEXITCODE) { throw "испытание установленного приложения: $LASTEXITCODE" }
           Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
       - name: "EXE: обновление из приложения — проверить, скачать, установить поверх, запуститься снова"
@@ -244,16 +267,19 @@ jobs:
             node scripts/update-manifest.mjs sign "$feed/update.json"
             New-Item -Force "HKCU:\SOFTWARE\Policies\Peregovorka" | Out-Null
             Set-ItemProperty "HKCU:\SOFTWARE\Policies\Peregovorka" UpdateUrl "https://localhost:8443/update.json"
-            $before = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
-            node scripts/win-e2e.mjs update "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" "$env:RUNNER_TEMP/screens" "$env:RUNNER_TEMP/feed.pfx" $feed.FullName $env:NEXT
+            # собственные данные приложения: организации, настройки, окно, сохранённые входы (служебные файлы Chromium вроде *-wal появляются и исчезают сами)
+            function AppData { @(Get-ChildItem $data -File -Filter *.json) + @(Get-ChildItem "$data\trust" -File -ErrorAction SilentlyContinue) | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object }
+            $before = AppData
+            node scripts/check.mjs update --app "$env:LOCALAPPDATA\Programs\Peregovorka\Peregovorka.exe" --out "$env:RUNNER_TEMP/screens" --pfx "$env:RUNNER_TEMP/feed.pfx" --feed $feed.FullName --next $env:NEXT
             if ($LASTEXITCODE) { throw "обновление из приложения: $LASTEXITCODE" }
             for ($i = 0; $i -lt 90; $i++) { $u = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -like "Peregovorka*"; if ($u.DisplayVersion -eq $env:NEXT) { break }; Start-Sleep 2 }
             for ($i = 0; $i -lt 30 -and -not (Get-Process Peregovorka -ErrorAction SilentlyContinue); $i++) { Start-Sleep 2 }
             if (-not (Get-Process Peregovorka -ErrorAction SilentlyContinue)) { throw "после обновления приложение не запустилось снова" }
             Write-Host "после обновления приложение запущено снова"
-            $after = Get-ChildItem -Recurse -File $data -Exclude *.log | Where-Object FullName -notmatch "\\(logs|Cache|Code Cache|GPUCache|DawnCache|blob_storage|Local Storage|Session Storage|Network|Crashpad)\\" | ForEach-Object { $_.FullName.Substring($data.Length) } | Sort-Object
-            $lost = $before | Where-Object { $after -notcontains $_ }
-            if ($lost) { throw "после обновления пропали файлы данных: $($lost -join ', ')" }
+            $after = AppData
+            $lost = @($before | Where-Object { $after -notcontains $_ })
+            if ($lost) { throw "после обновления пропали данные приложения: $($lost -join ', ')" }
+            Write-Host "данные приложения после обновления на месте: $($before.Count) файлов"
             Get-Process Peregovorka -ErrorAction SilentlyContinue | Stop-Process -Force
             Remove-Item "HKCU:\SOFTWARE\Policies\Peregovorka" -Recurse
             Get-Content (Get-ChildItem "$data\logs" | Sort-Object LastWriteTime | Select-Object -Last 1).FullName | Select-String "update\." | Select-Object -Last 8

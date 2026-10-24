@@ -4,7 +4,7 @@
 //  • каждая IPC-команда проверяет отправителя: окно, главный фрейм и адрес (для организации — её origin).
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, safeStorage, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { execFile } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findDeepLinkArg, parseDeepLink } from "../common/links";
 import { shellFile } from "../common/shellfile";
@@ -44,8 +44,13 @@ async function boot(): Promise<void> {
   await app.whenReady();
   // испытания под Linux без связки ключей: шифрование-заглушка Chromium (в Windows всегда DPAPI); только запуск из исходников с --e2e
   if (dev && flag("--e2e") && process.platform === "linux") safeStorage.setUsePlainTextEncryption(true);
+  // режим диагностики запуска: журнал главного процесса, ошибки preload и консоль оболочки — ещё и в терминал (npm run dev, проверки перед выпуском)
+  const debugLog = flag("--debug-log") || !!process.env.PEREGOVORKA_DEBUG;
+  if (debugLog) process.env.PEREGOVORKA_LOG_STDERR = "1";
   const userData = app.getPath("userData");
   const log = new Log(join(userData, "logs"));
+  process.on("uncaughtException", (e) => log.error("main.exception", { error: String(e?.stack ?? e).slice(0, 1500) }));
+  process.on("unhandledRejection", (e) => log.error("main.rejection", { error: String((e as Error)?.stack ?? e).slice(0, 1500) }));
   const settings = new SettingsStore(userData);
   const policy = await loadPolicy();
   const ctx: Ctx = {
@@ -57,7 +62,8 @@ async function boot(): Promise<void> {
     emit: () => scheduleEmit(),
   };
   nativeTheme.themeSource = ctx.eff().theme;
-  log.info("app.start", { version: ctx.version, build: ctx.buildKind, electron: process.versions.electron, packaged: app.isPackaged });
+  log.info("app.start", { version: ctx.version, build: ctx.buildKind, electron: process.versions.electron, packaged: app.isPackaged,
+    ...(debugLog ? { userData, app: app.getAppPath(), shell: existsSync(join(__dirname, "shell", "index.html")) } : {}) });
 
   const bridgeReady = new Set<number>();          // страницы, где интерфейс сервера уже слушает команды приложения
 
@@ -79,6 +85,14 @@ async function boot(): Promise<void> {
   session.defaultSession.setPermissionCheckHandler(() => false);
   app.on("web-contents-created", (_e, wc) => {
     wc.on("will-attach-webview", (e) => e.preventDefault());
+    wc.on("preload-error", (_ev, path, err) => log.error("preload.error", { preload: path.split(/[\\/]/).pop(), error: String(err?.stack ?? err).slice(0, 600) }));
+    // консоль оболочки (файлы приложения): предупреждения и ошибки — всегда в журнал; страницы серверов — только ошибки и только в режиме диагностики
+    wc.on("console-message", (d) => {
+      const own = wc.session === session.defaultSession;
+      if (!(own ? d.level === "error" || d.level === "warning" || debugLog : debugLog && d.level === "error")) return;
+      log.write(d.level === "error" ? "error" : d.level === "warning" ? "warn" : "info", own ? "shell.console" : "page.console",
+        { level: d.level, message: d.message.slice(0, 300), source: (d.sourceId || "").replace(/^app:\/\/shell\//, "").slice(0, 120), line: d.lineNumber });
+    });
     wc.on("did-navigate", () => bridgeReady.delete(wc.id));             // полная перезагрузка страницы: мост объявит готовность заново
     if (wc.session === session.defaultSession) {
       wc.setWindowOpenHandler(() => ({ action: "deny" }));

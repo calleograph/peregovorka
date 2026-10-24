@@ -170,8 +170,8 @@ RTC TCP/UDP, зависимости, ASR, тайминги) с маскиров�
 **Приложение для Windows** (`desktop/`, `docs/DESKTOP*.md`): Electron 44, отдельная версия (`desktop/package.json`, теги `desktop-vX.Y.Z`). Доверенная
 оболочка `app://shell` + страницы серверов в `WebContentsView` с разделами `persist:org-<id>` (песочница, мост `preload-org`: notify/setState/onCommand);
 сохранённый вход — токен устройства (`/api/v1/desktop/*`, `auth_security.desktop_trust_days`, DPAPI); политики HKLM/HKCU\SOFTWARE\Policies\Peregovorka;
-EXE (NSIS) и MSI (WiX 5) собираются и испытываются (установка/обновление/удаление, первый запуск установленного EXE и сценарий `scripts/win-e2e.mjs`
-по CDP, обновление из приложения) в CI на Windows (`.github/workflows/desktop.yml`). Обновление — полным установщиком поверх (Ed25519-манифест, SHA-256).
+EXE (NSIS) и MSI (WiX 5) собираются и испытываются (установка/обновление/удаление, первый запуск установленного EXE и сценарий `scripts/check.mjs`
+по CDP, обновление из приложения) в CI на Windows (`.github/workflows/desktop.yml`). Быстрый цикл `npm run dev` / `preview` / `release` — docs/DESKTOP_DEV.md. Обновление — полным установщиком поверх (Ed25519-манифест, SHA-256).
 **Подпись и корпоративные сборки** (сервер 0.38.0): `api/signing.py`, модели `signing_*` (миграция 0042), агент `desktop/signing/Peregovorka-Signer.ps1`
 на подписывающем узле Windows (ключ в хранилище узла, 4 вида заданий), интерфейс `SigningAdmin.tsx`, корпоративный канал `/api/v1/desktop/channel/*` —
 docs/DESKTOP_SIGNING.md; план ручной приёмки — docs/DESKTOP_ACCEPTANCE.md.

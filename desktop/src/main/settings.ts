@@ -1,8 +1,9 @@
 // Настройки приложения (пользователь) поверх политик (администратор). Политика, заданная явно, сильнее и блокирует поле в интерфейсе.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mergePolicy, parseRegQuery, policyFromValues, type Autostart, type CloseAction, type Policy, type ProxyMode, type UpdateMode } from "../common/policy";
+import { mergePolicy, parseRegExport, parseRegQuery, policyFromValues, type Autostart, type CloseAction, type Policy, type ProxyMode, type UpdateMode } from "../common/policy";
 import { readJson, writeJson } from "./store";
 
 export interface Settings {
@@ -83,15 +84,22 @@ export class SettingsStore {
   }
 }
 
+/** Ключ реестра как текст `reg export` (UTF-16 → строка; пусто, если ключа нет). */
 function reg(key: string): Promise<string> {
-  return new Promise((res) => execFile("reg.exe", ["query", key], { windowsHide: true, timeout: 5000 }, (_e, out) => res(String(out || ""))));
+  const file = join(tmpdir(), `peregovorka-policy-${process.pid}-${Math.random().toString(36).slice(2)}.reg`);
+  return new Promise((res) => execFile("reg.exe", ["export", key, file, "/y"], { windowsHide: true, timeout: 5000 }, (e) => {
+    let text = "";
+    if (!e) try { text = readFileSync(file).toString("utf16le"); } catch { /* нет файла — нет политики */ }
+    rmSync(file, { force: true });
+    res(text);
+  }));
 }
 
 /** Политики Windows (HKLM сильнее HKCU). Вне Windows — файл из PEREGOVORKA_POLICY_FILE (только для испытаний). */
 export async function loadPolicy(): Promise<Policy> {
   if (process.platform === "win32") {
     const [m, u] = await Promise.all([reg("HKLM\\SOFTWARE\\Policies\\Peregovorka"), reg("HKCU\\SOFTWARE\\Policies\\Peregovorka")]);
-    return mergePolicy(policyFromValues(parseRegQuery(m)), policyFromValues(parseRegQuery(u)));
+    return mergePolicy(policyFromValues(parseRegExport(m)), policyFromValues(parseRegExport(u)));
   }
   const f = process.env.PEREGOVORKA_POLICY_FILE;
   if (!f) return { servers: [] };

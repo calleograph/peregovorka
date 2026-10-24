@@ -2,3 +2,5 @@ node_modules/
 dist/
 release/
 src/shell/icons.gen.ts
+out/
+.dev-profile/
