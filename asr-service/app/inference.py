@@ -30,6 +30,7 @@ class Job:
     on_result: Callable[["JobResult"], Awaitable[None]]
     enqueued_at: float = field(default_factory=time.monotonic)
     vad_wait_ms: int = 0  # от конца речи до постановки в очередь (пауза-конец реплики VAD)
+    on_done: Callable[[], None] | None = None  # вызывается после обработки (с текстом, пустой или с ошибкой) — диктовка ждёт все свои фрагменты
 
 
 @dataclass
@@ -133,3 +134,5 @@ class InferenceQueue:
             finally:
                 self.busy -= 1
                 self._q.task_done()
+                if job.on_done is not None:
+                    job.on_done()

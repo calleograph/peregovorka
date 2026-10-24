@@ -29,6 +29,23 @@ async def publish(redis: Redis, meeting_id: uuid.UUID | str, event: dict) -> Non
     await redis.publish(channel(meeting_id), json.dumps(event, ensure_ascii=False, default=str))
 
 
+def user_channel(user_id: uuid.UUID | str) -> str:
+    """Личный канал сотрудника: события чатов (новые сообщения, прочитанность, изменения переписок) на все его устройства и вкладки."""
+    return f"user:{user_id}:events"
+
+
+async def publish_users(redis: Redis, user_ids, event: dict) -> None:
+    """Одно событие в личные каналы нескольких сотрудников одной пачкой (pipeline): подписчик на любом экземпляре backend получит его из Redis."""
+    ids = list(dict.fromkeys(str(u) for u in user_ids))
+    if not ids:
+        return
+    text = json.dumps(event, ensure_ascii=False, default=str)
+    pipe = redis.pipeline(transaction=False)
+    for uid in ids:
+        pipe.publish(user_channel(uid), text)
+    await pipe.execute()
+
+
 class Subscriber:
     """Получатель событий (один WebSocket). `queue.get()` возвращает текст сообщения; `None` — получатель отключён хабом (переполнение)."""
 

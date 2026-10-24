@@ -19,7 +19,7 @@ from pathlib import PurePosixPath
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import ChatAttachment, Meeting, utcnow
+from ..models import ChatAttachment, ChatFile, Meeting, utcnow
 from .filestore import FileStore
 from .settings import ChatFilesSettings
 from .reconcile import mark_missing
@@ -121,8 +121,8 @@ class ChatFilesService:
         if self.journal is not None:
             self.journal.emit("storage", event, level="error", meeting_id=str(meeting_id) if meeting_id else None, message=str(exc)[:300], data=extra)
 
-    async def store(self, db: AsyncSession, meeting: Meeting, *, uploader_type: str, uploader_id: uuid.UUID, raw_name: str, data: bytes) -> ChatAttachment:
-        """Проверяет и сохраняет файл. Если хранилище недоступно — понятная ошибка (503) и запись в журнале; метаданные при этом не создаются."""
+    async def _put(self, db: AsyncSession, raw_name: str, data: bytes, key_for, owner: uuid.UUID) -> dict:
+        """Проверка и запись файла; возвращает поля метаданных. Если хранилище недоступно — понятная ошибка (503) и запись в журнале."""
         cfg = await self.settings(db)
         if not cfg.enabled:
             raise AttachmentError("Вложения в чат отключены администратором", 403)
@@ -131,17 +131,30 @@ class ChatFilesService:
         if kind == "image" and extension(name) != ext:
             name = name.rsplit(".", 1)[0] + "." + ext if "." in name else name + "." + ext
         aid = uuid.uuid4()
+        key = key_for(aid, ext)
         try:
             backend, profile_id = await self._files.chat_backend(db)
-            await asyncio.to_thread(backend.write_bytes, storage_key(meeting.id, aid, ext), data)
+            await asyncio.to_thread(backend.write_bytes, key, data)
         except StorageError as exc:
-            self._fail("chat_file_save_failed", exc, meeting.id, {"name": name, "size": len(data)})
+            self._fail("chat_file_save_failed", exc, owner, {"name": name, "size": len(data)})
             raise AttachmentError("Не удалось сохранить файл: хранилище вложений недоступно. Сообщите администратору — ошибка записана в журнал.", 503) from None
-        att = ChatAttachment(id=aid, meeting_id=meeting.id, uploader_type=uploader_type, uploader_id=uploader_id, name=name, mime=mime, size=len(data),
-                             kind=kind, storage_key=storage_key(meeting.id, aid, ext), profile_id=profile_id)
+        return {"id": aid, "name": name, "mime": mime, "size": len(data), "kind": kind, "storage_key": key, "profile_id": profile_id}
+
+    async def store(self, db: AsyncSession, meeting: Meeting, *, uploader_type: str, uploader_id: uuid.UUID, raw_name: str, data: bytes) -> ChatAttachment:
+        """Вложение чата встречи. Метаданные создаются только после успешной записи файла."""
+        f = await self._put(db, raw_name, data, lambda aid, ext: storage_key(meeting.id, aid, ext), meeting.id)
+        att = ChatAttachment(meeting_id=meeting.id, uploader_type=uploader_type, uploader_id=uploader_id, **f)
         db.add(att)
         await db.commit()
         return att
+
+    async def store_for_chat(self, db: AsyncSession, chat_id: uuid.UUID, *, uploader_id: uuid.UUID, raw_name: str, data: bytes) -> ChatFile:
+        """Вложение корпоративного чата: те же правила и то же хранилище, путь `chats/<чат>/<id>.<расширение>`."""
+        f = await self._put(db, raw_name, data, lambda aid, ext: f"chats/{chat_id}/{aid}.{ext}", chat_id)
+        row = ChatFile(chat_id=chat_id, uploader_id=uploader_id, **f)
+        db.add(row)
+        await db.commit()
+        return row
 
     async def read(self, db: AsyncSession, att: ChatAttachment) -> bytes:
         if att.file_state == "missing":
@@ -153,7 +166,7 @@ class ChatFilesService:
             await mark_missing(db, att, self.journal, "вложение чата")
             raise AttachmentError("Файл не найден в хранилище — вероятно, его удалили вне приложения. Он больше не будет предлагаться.", 410) from None
         except StorageError as exc:
-            self._fail("chat_file_read_failed", exc, att.meeting_id, {"attachment": str(att.id)})
+            self._fail("chat_file_read_failed", exc, getattr(att, "meeting_id", None) or getattr(att, "chat_id", None), {"attachment": str(att.id)})
             raise AttachmentError("Файл сейчас недоступен: хранилище не отвечает.", 503) from None
 
     async def remove_files(self, db: AsyncSession, atts: list[ChatAttachment]) -> int:
@@ -165,7 +178,7 @@ class ChatFilesService:
                 await asyncio.to_thread(backend.delete, att.storage_key)
             except StorageError as exc:
                 failed += 1
-                self._fail("chat_file_delete_failed", exc, att.meeting_id, {"attachment": str(att.id)})
+                self._fail("chat_file_delete_failed", exc, getattr(att, "meeting_id", None) or getattr(att, "chat_id", None), {"attachment": str(att.id)})
         return failed
 
     async def delete_for_meetings(self, db: AsyncSession, meeting_ids: list[uuid.UUID]) -> int:
@@ -177,14 +190,15 @@ class ChatFilesService:
         return len(atts)
 
     async def purge_orphans(self, db: AsyncSession) -> int:
-        """Загружено, но так и не отправлено (закрыли вкладку, убрали превью): удаляем файл и строку."""
-        old = list((await db.execute(select(ChatAttachment).where(ChatAttachment.message_id.is_(None),
-                                                                   ChatAttachment.created_at < utcnow() - PENDING_TTL))).scalars().all())
-        if not old:
-            return 0
-        await self.remove_files(db, old)
-        await db.execute(delete(ChatAttachment).where(ChatAttachment.id.in_([a.id for a in old])))
-        return len(old)
+        """Загружено, но так и не отправлено (закрыли вкладку, убрали превью): удаляем файл и строку — и в чатах встреч, и в корпоративных чатах."""
+        n = 0
+        for model in (ChatAttachment, ChatFile):
+            old = list((await db.execute(select(model).where(model.message_id.is_(None), model.created_at < utcnow() - PENDING_TTL))).scalars().all())
+            if old:
+                await self.remove_files(db, old)
+                await db.execute(delete(model).where(model.id.in_([a.id for a in old])))
+                n += len(old)
+        return n
 
 
 def attachment_out(a: ChatAttachment) -> dict:

@@ -22,6 +22,7 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import SetupWizard from "./components/SetupWizard";
 import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
+import { ChatHost, ChatNavButton } from "./chat/ChatNav";
 
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 import OutlookCenter from "./pages/OutlookCenter";
@@ -127,6 +128,7 @@ function StaffApp() {
         <nav aria-label="Основная навигация" className="topnav">
           <NavItem to="/" end newTab={inMeeting}>Переговорки</NavItem>
           <NavItem to="/history" newTab={inMeeting}>История</NavItem>
+          <ChatNavButton />
           {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab={inMeeting} />}
         </nav>
         <div className="spacer" />
@@ -152,6 +154,7 @@ function StaffApp() {
       <Suspense fallback={null}><PlayerHost /></Suspense>
       {!pathname.startsWith("/rooms/") && <AppFooter info={build} />}
       {help && <HelpDialog onClose={() => setHelp(false)} />}
+      <ChatHost userId={me.user.id} />
       <CookieNotice />
     </div>
   );

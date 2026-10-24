@@ -1,6 +1,10 @@
 """WebSocket живых событий. Аутентификация по cookie сессии (сотрудник) либо по гостевому токену (`/ws?guest=1`, первое сообщение
 `{"type":"auth","guest_token":...}` — заголовки в браузерном WebSocket не задать), проверка Origin, подписка на встречу только при
-наличии права (участник встречи или админ; гость — только на свою идущую встречу)."""
+наличии права (участник встречи или админ; гость — только на свою идущую встречу).
+
+Чаты: `{"type":"subscribe_user"}` — личный канал сотрудника (только свой; события всех его переписок на все устройства);
+`{"type":"presence","active":true}` — клиент подтверждает активность (вкладка видна и было действие) не чаще раза в 30 с: только это делает
+человека «в сети». Действующая, но неактивная сессия статуса не даёт; скрывший статус в настройках не отмечается."""
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +19,8 @@ from sqlalchemy import select
 from ..auth.deps import SessionUser
 from ..config import origin_allowed
 from ..models import MEETING_LITE, Meeting, MeetingParticipant
-from ..services import events, roles
+from ..models import User
+from ..services import chats, events, roles
 from ..services.access import can_access_meeting
 
 router = APIRouter()
@@ -38,6 +43,18 @@ async def _can_subscribe(app, su: SessionUser | None, guest, meeting_id: uuid.UU
             return meeting.ended_at is None and str(meeting.id) == guest.meeting_id, False
         ok = await can_access_meeting(db, app.state.redis, meeting, su)
         return ok, bool(ok and roles.is_leader_of(meeting.room, su))
+
+
+async def _presence_allowed(app, user_id: uuid.UUID) -> bool:
+    async with app.state.session_maker() as db:
+        cfg = await app.state.settings_svc.get(db, "chats")
+        u = await db.get(User, user_id)
+        return bool(cfg.enabled and cfg.presence_enabled and u is not None and chats.prefs(u)["presence"])
+
+
+async def _user(app, user_id: uuid.UUID) -> User:
+    async with app.state.session_maker() as db:
+        return await db.get(User, user_id)
 
 
 async def _guest_alive(app, token: str):
@@ -87,6 +104,7 @@ async def ws_endpoint(ws: WebSocket):
     hub = app.state.event_hub
     sub = hub.new_subscriber()
     subscribed: dict[str, uuid.UUID] = {}
+    presence_ok: tuple[bool, float] | None = None          # (можно ли показывать «в сети», когда проверено)
 
     async def forward() -> None:
         while True:
@@ -130,6 +148,20 @@ async def ws_endpoint(ws: WebSocket):
                 await hub.subscribe(sub, ch, leader=is_leader)
                 subscribed[ch] = mid
                 await ws.send_text(json.dumps({"type": "subscribed", "meeting_id": str(mid)}))
+            elif kind == "subscribe_user":
+                if su is None:
+                    await ws.send_text(json.dumps({"type": "error", "message": "forbidden"}))
+                    continue
+                await hub.subscribe(sub, events.user_channel(su.user_id))
+                await ws.send_text(json.dumps({"type": "subscribed_user"}))
+            elif kind == "presence":
+                if su is None or not msg.get("active"):
+                    continue
+                now = asyncio.get_running_loop().time()
+                if presence_ok is None or now - presence_ok[1] > SESSION_RECHECK_SECONDS:
+                    presence_ok = (await _presence_allowed(app, su.user_id), now)
+                if await chats.touch_presence(app.state.redis, su.user_id, presence_ok[0]) and presence_ok[0]:
+                    await chats.came_online(app.state.redis, await _user(app, su.user_id))
             elif kind == "unsubscribe":
                 try:
                     ch = events.channel(uuid.UUID(str(msg.get("meeting_id"))))
