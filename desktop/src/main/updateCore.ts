@@ -4,7 +4,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { cmpVersion } from "../common/version";
 
 export type UpdateFile = { kind: "nsis"; url: string; sha256: string; size: number; name: string };
-export type Manifest = { product: "peregovorka-desktop"; version: string; released: string; notes?: string; files: UpdateFile[] };
+export type Manifest = { product: "peregovorka-desktop"; version: string; released: string; notes?: string; page?: string; files: UpdateFile[] };
 
 /** Открытый ключ в виде base64 «сырых» 32 байт Ed25519 → KeyObject. */
 export function publicKey(b64: string) {
@@ -13,12 +13,14 @@ export function publicKey(b64: string) {
   return createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]), format: "der", type: "spki" });
 }
 
-export function verifyManifest(body: Buffer, sigB64: string, keyB64: string): Manifest {
-  if (!keyB64) throw new Error("no_key");
+/** `keysB64` — один или несколько открытых ключей через запятую: при смене ключа сборки несут старый и новый, пока все клиенты не обновятся. */
+export function verifyManifest(body: Buffer, sigB64: string, keysB64: string): Manifest {
+  const keys = keysB64.split(/[\s,]+/).filter(Boolean);
+  if (!keys.length) throw new Error("no_key");
   const sig = Buffer.from(sigB64.trim(), "base64");
-  if (sig.length !== 64 || !verify(null, body, publicKey(keyB64), sig)) throw new Error("bad_signature");
+  if (sig.length !== 64 || !keys.some((k) => verify(null, body, publicKey(k), sig))) throw new Error("bad_signature");
   const m = JSON.parse(body.toString("utf8")) as Manifest;
-  if (m.product !== "peregovorka-desktop" || !/^\d+\.\d+\.\d+$/.test(m.version) || !Array.isArray(m.files)) throw new Error("bad_manifest");
+  if (m.product !== "peregovorka-desktop" || !/^\d+\.\d+\.\d+$/.test(m.version) || !Array.isArray(m.files) || (m.page !== undefined && !/^https:\/\/\S+$/.test(m.page))) throw new Error("bad_manifest");
   for (const f of m.files) {
     if (f.kind !== "nsis" || !/^https:\/\//.test(f.url) || !/^[0-9a-f]{64}$/.test(f.sha256) || !(f.size > 0 && f.size < 1_000_000_000) || !/^[\w .()-]+\.exe$/.test(f.name)) throw new Error("bad_manifest");
   }

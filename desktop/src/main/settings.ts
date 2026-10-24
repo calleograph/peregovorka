@@ -11,6 +11,7 @@ export interface Settings {
   notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
   proxy: { mode: ProxyMode; rules: string; bypass: string; pac: string };
   updateMode: UpdateMode;
+  theme: "system" | "light" | "dark";        // оформление окон приложения (страницы серверов следуют ему же, если в профиле выбрано «как в системе»)
   activeOrg: string | null;
   firstRunDone: boolean;
 }
@@ -20,7 +21,8 @@ export const DEFAULTS: Settings = {
   autostart: "off",
   notifications: { enabled: true, sound: true, hideContent: false, dndUntil: 0 },
   proxy: { mode: "system", rules: "", bypass: "", pac: "" },
-  updateMode: "auto",
+  updateMode: "notify",                      // проверять и сообщать; загрузку начинает человек (или политика UpdateMode=auto)
+  theme: "system",
   activeOrg: null,
   firstRunDone: false,
 };
@@ -65,6 +67,7 @@ export class SettingsStore {
     s.closeAction = one(p.closeAction, ["tray", "quit", "ask"] as const) ?? s.closeAction;
     s.autostart = one(p.autostart, ["off", "tray", "window"] as const) ?? s.autostart;
     s.updateMode = one(p.updateMode, ["auto", "notify", "off"] as const) ?? s.updateMode;
+    s.theme = one(p.theme, ["system", "light", "dark"] as const) ?? s.theme;
     const n = (p.notifications ?? {}) as Record<string, unknown>;
     for (const k of ["enabled", "sound", "hideContent"] as const) if (typeof n[k] === "boolean") s.notifications[k] = n[k] as boolean;
     if (typeof n.dndUntil === "number" && Number.isFinite(n.dndUntil) && n.dndUntil >= -1) s.notifications.dndUntil = n.dndUntil;

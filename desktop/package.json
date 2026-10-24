@@ -15,7 +15,8 @@
     "dist": "node build.mjs && electron-builder --win nsis --x64 --publish never"
   },
   "peregovorka": {
-    "updateFeed": "https://github.com/calleograph/peregovorka/releases/download/desktop-channel/update.json"
+    "updateFeed": "https://github.com/calleograph/peregovorka/releases/download/desktop-channel/update.json",
+    "downloadPage": "https://github.com/calleograph/peregovorka/releases?q=desktop-v"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",

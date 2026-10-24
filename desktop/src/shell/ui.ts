@@ -41,8 +41,8 @@ export function icon(name: keyof typeof ICONS | string, cls = "i"): SVGSVGElemen
 export type OrgView = { id: string; name: string; origin: string; host: string; managed: boolean; icon: string | null; status: string; problem: { title: string; hint: string; code: string } | null;
   retryAt: number | null; user: string | null; unread: number; inCall: boolean; sharing: boolean; theme: string | null; trusted: boolean; serverVersion: string | null; trustDays: number | null };
 export type State = { version: string; buildKind: string; platform: string; activeId: string | null; page: string; orgs: OrgView[]; settings: Settings; locked: string[]; canAdd: boolean;
-  allowedDomains: string[]; update: { status: string; version?: string; progress?: number; error?: string; checkedAt?: number; notes?: string; installOnQuit?: boolean }; trustAvailable: boolean };
-export type Settings = { closeAction: string; autostart: string; updateMode: string; notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
+  allowedDomains: string[]; update: { status: string; version?: string; progress?: number; error?: string; checkedAt?: number; notes?: string; installOnQuit?: boolean; latest?: string; manualUrl?: string | null }; trustAvailable: boolean };
+export type Settings = { closeAction: string; autostart: string; updateMode: string; theme: string; notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
   proxy: { mode: string; rules: string; bypass: string; pac: string }; activeOrg: string | null; firstRunDone: boolean };
 
 type Bridge = { call(ch: string, a?: unknown): Promise<unknown>; on(ev: string, cb: (d: unknown) => void): void };

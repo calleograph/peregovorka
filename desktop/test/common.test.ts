@@ -162,6 +162,8 @@ test("обновления: только подписанный манифест
   const other = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).subarray(12).toString("base64");
   assert.throws(() => verifyManifest(body, sig, other), /bad_signature/, "чужой ключ");
   assert.throws(() => verifyManifest(body, sig, ""), /no_key/, "сборка без ключа обновлений не устанавливает ничего");
+  assert.equal(verifyManifest(body, sig, `${other},${raw}`).version, "1.2.0", "смена ключа: сборка с двумя ключами принимает подпись любым из них");
+  assert.throws(() => verifyManifest(body, sig, `${other}`), /bad_signature/, "после смены старым ключом подписать нельзя, если он убран из сборки");
   const evil = Buffer.from(JSON.stringify({ product: "peregovorka-desktop", version: "9.9.9", released: "x", files: [{ kind: "nsis", name: "a.exe", url: "http://evil.example/a.exe", sha256: "a".repeat(64), size: 1 }] }));
   assert.throws(() => verifyManifest(evil, sign(null, evil, privateKey).toString("base64"), raw), /bad_manifest/, "даже подписанный, без HTTPS — отказ");
   assert.ok(canRestartNow([{ inCall: false, sharing: false }]) && !canRestartNow([{ inCall: false, sharing: false }, { inCall: true, sharing: false }]));
@@ -172,4 +174,19 @@ test("скачанные файлы: документы открываются, 
   for (const bad of ["C:\\x\\setup.exe", "C:\\x\\Счёт.pdf.exe", "C:\\x\\run.CMD", "C:\\x\\a.ps1", "C:\\x\\link.lnk", "C:\\x\\README", "C:\\x\\trick.exe. ", "C:\\x\\.hidden"]) {
     assert.ok(!openableAfterDownload(bad), bad);
   }
+});
+
+test("оболочка app://shell: файлы пакета на Windows и Linux, без выхода за каталог", async () => {
+  const path = await import("node:path");
+  const { shellFile } = await import("../src/common/shellfile");
+  const win = "C:\\Program Files\\Peregovorka\\resources\\app.asar\\dist\\shell";
+  const f = shellFile(win, "app://shell/index.html", path.win32);
+  assert.equal(f?.file, `${win}\\index.html`);
+  assert.equal(f?.url, "file:///C:/Program%20Files/Peregovorka/resources/app.asar/dist/shell/index.html", "1.0.0 давал file://C%3A/… — «not found» на Windows");
+  assert.equal(shellFile("C:\\Users\\Иван Петров\\AppData\\Local\\Programs\\Peregovorka\\resources\\app.asar\\dist\\shell", "app://shell/assets/icon.svg", path.win32)?.url,
+    "file:///C:/Users/%D0%98%D0%B2%D0%B0%D0%BD%20%D0%9F%D0%B5%D1%82%D1%80%D0%BE%D0%B2/AppData/Local/Programs/Peregovorka/resources/app.asar/dist/shell/assets/icon.svg");
+  assert.equal(shellFile("/opt/Peregovorka/resources/app.asar/dist/shell", "app://shell/shell.css", path.posix)?.url, "file:///opt/Peregovorka/resources/app.asar/dist/shell/shell.css");
+  assert.equal(shellFile(win, "app://shell/../main.js", path.win32)?.file, `${win}\\main.js`, "../ в адресе снимает сам разбор URL — остаёмся в каталоге оболочки");
+  for (const bad of ["app://shell/..%5cmain.js", "app://shell/%2e%2e%5c%2e%2e%5cmain.js", "app://other/index.html", "file:///C:/x", "app://shell/%E0%A4%A"])
+    assert.equal(shellFile(win, bad, path.win32), null, bad);
 });

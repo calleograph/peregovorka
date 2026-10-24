@@ -2,11 +2,12 @@
 //  • app://shell/* — доверенная локальная оболочка из пакета приложения (боковая панель, мастер, настройки, диагностика, выбор экрана) — preload-shell;
 //  • страницы серверов организаций — недоверенное удалённое содержимое в отдельных разделах, песочница, мост preload-org с тремя действиями;
 //  • каждая IPC-команда проверяет отправителя: окно, главный фрейм и адрес (для организации — её origin).
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, powerMonitor, protocol, safeStorage, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, safeStorage, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
+import { join } from "node:path";
 import { findDeepLinkArg, parseDeepLink } from "../common/links";
+import { shellFile } from "../common/shellfile";
 import { normalizeServerUrl, safeRoute, sameOrigin, externalAllowed } from "../common/urls";
 import type { Ctx } from "./ctx";
 import { collect, type Devices } from "./diagnostics";
@@ -55,6 +56,7 @@ async function boot(): Promise<void> {
     quitting: false,
     emit: () => scheduleEmit(),
   };
+  nativeTheme.themeSource = ctx.eff().theme;
   log.info("app.start", { version: ctx.version, build: ctx.buildKind, electron: process.versions.electron, packaged: app.isPackaged });
 
   const bridgeReady = new Set<number>();          // страницы, где интерфейс сервера уже слушает команды приложения
@@ -64,12 +66,13 @@ async function boot(): Promise<void> {
   const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
   const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8", woff2: "font/woff2", png: "image/png", svg: "image/svg+xml" };
   protocol.handle("app", async (req) => {
-    const u = new URL(req.url);
-    const file = normalize(join(root, decodeURIComponent(u.pathname)));
-    if (u.host !== "shell" || !file.startsWith(root + sep)) return new Response("not found", { status: 404 });
-    const r = await net.fetch(`file://${file.split(sep).map(encodeURIComponent).join("/")}`).catch(() => null);
-    if (!r || !r.ok) return new Response("not found", { status: 404 });
-    return new Response(r.body, { headers: { "content-type": TYPES[file.split(".").pop() || ""] || "application/octet-stream", "content-security-policy": CSP, "x-content-type-options": "nosniff" } });
+    const f = shellFile(root, req.url);
+    const r = f ? await net.fetch(f.url).catch((e) => { log.error("shell.read_failed", { error: String(e).slice(0, 200) }); return null; }) : null;
+    if (!f || !r || !r.ok) {
+      log.error("shell.not_found", { path: new URL(req.url).pathname.slice(0, 100), status: r?.status ?? null });
+      return new Response("not found", { status: 404 });
+    }
+    return new Response(r.body, { headers: { "content-type": TYPES[f.file.split(".").pop() || ""] || "application/octet-stream", "content-security-policy": CSP, "x-content-type-options": "nosniff" } });
   });
   // раздел по умолчанию принадлежит только оболочке: никаких разрешений и загрузок с удалённых адресов
   session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
@@ -113,7 +116,13 @@ async function boot(): Promise<void> {
 
   const managedInstall = await isMsiInstall();
   if (managedInstall) ctx.install = "msi";
-  const updater = new Updater(ctx, () => orgs.list.map((o) => o.state), managedInstall, () => ctx.emit());
+  const updater = new Updater(ctx, () => orgs.list.map((o) => o.state), managedInstall, () => ctx.emit(), (version) => {
+    const n = ctx.eff().notifications;
+    if (!n.enabled || n.dndUntil === -1 || n.dndUntil > Date.now() || !Notification.isSupported()) return;
+    const note = new Notification({ title: "Доступна новая версия Peregovorka", body: `Версия ${version}. Скачать и установить — «Настройки → Обновления».`, silent: true });
+    note.on("click", () => openSettings("updates"));
+    note.show();
+  });
 
   // ---------------------------------------------------------------- состояние для оболочки, трея, значка, индикатора
   let emitTimer: NodeJS.Timeout | null = null;
@@ -219,10 +228,12 @@ async function boot(): Promise<void> {
     if (s.autostart !== before.autostart) applyAutostart(s.autostart, managedInstall && !!policy.autostart);
     if (JSON.stringify(s.proxy) !== JSON.stringify(before.proxy)) await orgs.applyProxyAll();
     if (s.updateMode !== before.updateMode) updater.schedule();
+    if (s.theme !== before.theme) nativeTheme.themeSource = s.theme;
     scheduleEmit();
     return s;
   });
   handle("shell:update:check", "main", () => updater.check(true));
+  handle("shell:update:download", "main", () => updater.download());
   handle("shell:update:install", "main", (_e, a) => {
     const now = a.now === true;
     if (now && !updater.canRestart()) return { ok: false, reason: "Установка будет доступна после завершения встречи." };
@@ -278,7 +289,35 @@ async function boot(): Promise<void> {
     scheduleEmit();
   });
   ipcMain.on("org:ready", (e) => { if (orgSender(e)) bridgeReady.add(e.sender.id); });
-  main.win.webContents.on("did-finish-load", () => scheduleEmit());
+  main.win.webContents.on("did-finish-load", () => { scheduleEmit(); setTimeout(() => void checkShell(), 3000); });
+  main.win.webContents.on("did-fail-load", (_e, code, desc, url, isMain) => { if (isMain) { log.error("shell.load_failed", { code, desc, url: url.slice(0, 80) }); void shellBroken(); } });
+  main.win.webContents.on("render-process-gone", (_e, d) => { log.error("shell.gone", { reason: d.reason }); void shellBroken(); });
+
+  // ---------------------------------------------------------------- оболочка не отрисовалась: окно не остаётся пустым
+  async function shellHealth(): Promise<{ ok: boolean; url: string; heading: string; error?: string }> {
+    const wc = main.win.webContents;
+    const url = wc.getURL().slice(0, 80);
+    try {
+      const r = (await wc.executeJavaScript(`({ n: document.querySelector("#app main")?.childElementCount ?? 0, h: document.querySelector("#app h1")?.textContent ?? "" })`)) as { n: number; h: string };
+      return { ok: url.startsWith("app://shell/") && r.n > 0, url, heading: r.h.slice(0, 80) };
+    } catch (e) { return { ok: false, url, heading: "", error: String(e).slice(0, 120) }; }
+  }
+  let recovering = false;
+  async function checkShell(): Promise<void> {
+    const r = await shellHealth();
+    if (!r.ok) { log.error("shell.blank", r); void shellBroken(); }
+  }
+  async function shellBroken(): Promise<void> {
+    if (recovering || ctx.quitting || main.win.isDestroyed()) return;
+    recovering = true;
+    main.reveal();
+    const r = await dialog.showMessageBox(main.win, { type: "error", buttons: ["Повторить", "Папка журналов", "Выйти"], defaultId: 0, cancelId: 0, title: "Peregovorka",
+      message: "Не удалось открыть окно приложения", detail: "Файлы программы не загрузились. Повторите попытку; если ошибка повторяется — переустановите Peregovorka и передайте журналы администратору." });
+    recovering = false;
+    if (r.response === 1) { void shell.openPath(log.dir); void shellBroken(); }
+    else if (r.response === 2) { ctx.quitting = true; app.quit(); }
+    else void main.win.loadURL("app://shell/index.html").catch(() => undefined);
+  }
   main.win.on("focus", () => main.win.flashFrame(false));
 
   // ---------------------------------------------------------------- закрытие и выход
@@ -333,10 +372,12 @@ async function boot(): Promise<void> {
     upcoming: () => { const o = orgs.active; if (o) { focusOrg(o); navigate(o, "/"); } },
     call: (o) => focusOrg(o),
     switchTo: (o) => focusOrg(o),
-    settings: () => { main.reveal(); main.showPage("settings"); main.win.webContents.send("shell:go", { page: "settings" }); },
-    checkUpdates: () => { main.reveal(); main.showPage("settings"); main.win.webContents.send("shell:go", { page: "settings", tab: "updates" }); void updater.check(true); },
+    settings: () => openSettings(),
+    checkUpdates: () => { openSettings("updates"); void updater.check(true); },
     quit: () => void requestQuit(),
   });
+
+  function openSettings(tab?: string): void { main.reveal(); main.showPage("settings"); main.win.webContents.send("shell:go", { page: "settings", tab }); }
 
   async function openLink(raw: string): Promise<void> {
     const d = parseDeepLink(raw, { allowHttpLoopback: ctx.flags.allowHttpLoopback });
@@ -388,9 +429,11 @@ async function boot(): Promise<void> {
   const diag = argv.find((a) => a.startsWith("--diagnostics="));
   if (diag) {
     setTimeout(() => {
-      try { writeFileSync(diag.slice(14), JSON.stringify(collect(ctx, orgs, updater.state, null, startupMs), null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
-      ctx.quitting = true;
-      app.quit();
+      void shellHealth().then((sh) => {
+        try { writeFileSync(diag.slice(14), JSON.stringify({ ...collect(ctx, orgs, updater.state, null, startupMs), shell: sh }, null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
+        ctx.quitting = true;
+        app.quit();
+      });
     }, 8000);
   }
   if (ctx.flags.e2e) (globalThis as Record<string, unknown>).__pg = { quit: () => { ctx.quitting = true; app.quit(); }, ctx, orgs, main, picker, indicator, updater, notifier, tray, shellState, openLink, lastDownload: () => lastDownload, childWindows, openDownloaded };

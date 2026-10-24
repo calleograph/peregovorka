@@ -14,7 +14,8 @@ app.append(side, main);
 
 // ------------------------------------------------------------------------------------------ тема
 function applyTheme(): void {
-  const t = S?.orgs.find((o) => o.id === S!.activeId)?.theme;
+  const pref = S?.settings.theme;
+  const t = pref === "light" || pref === "dark" ? pref : S?.orgs.find((o) => o.id === S!.activeId)?.theme;
   if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
   else document.documentElement.removeAttribute("data-theme");
 }
@@ -84,27 +85,40 @@ function statusPage(o: OrgView): HTMLElement {
 }
 
 // ------------------------------------------------------------------------------------------ мастер подключения
+// Шаги: приветствие (только при первом запуске) → адрес сервера с проверкой → вход на странице сервера (его способы входа) → интерфейс организации.
+// Всё это — локальные файлы приложения: мастер открывается и без сети, а ошибки проверки остаются на этом же экране.
+let addStep: "welcome" | "form" = "welcome";
 function addPage(): HTMLElement {
   const st = S!;
   const first = st.orgs.length === 0;
-  const url = h("input", { class: "input", id: "srv", type: "text", placeholder: "meet.example.org", autocomplete: "off", spellcheck: false, value: addPrefill.url ?? "", "aria-describedby": "srv-help" });
-  const name = h("input", { class: "input", id: "nm", type: "text", placeholder: "Например: Головной офис", maxlength: 60, autocomplete: "off" });
-  const out = h("div", { class: "stack" });
-  const btn = h("button", { class: "btn primary", type: "submit" }, "Проверить и подключить");
   const policyErr = addPrefill.error || (!st.canAdd ? "Добавление серверов запрещено политикой организации. Подключения задаёт администратор." : null);
-  const form = h("form", { class: "card stack", on: { submit: (e: Event) => { e.preventDefault(); void submit(); } } },
+  if (first && st.canAdd && addStep === "welcome" && !addPrefill.url) return welcomePage();
+  const name = h("input", { class: "input", id: "nm", type: "text", placeholder: "Например: Головной офис", maxlength: 60, autocomplete: "off" });
+  const url = h("input", { class: "input", id: "srv", type: "text", placeholder: "https://meet.example.org", autocomplete: "off", spellcheck: false, value: addPrefill.url ?? "", "aria-describedby": "srv-help" });
+  const out = h("div", { class: "stack", "aria-live": "polite" });
+  const checkBtn = h("button", { class: "btn", type: "button", on: { click: () => void run(false) } }, "Проверить подключение");
+  const nextBtn = h("button", { class: "btn primary", type: "submit" }, "Продолжить");
+  const back = h("button", { class: "btn ghost", type: "button", on: { click: () => { if (first) { addStep = "welcome"; addPrefill = {}; renderMain(true); } else go("org"); } } }, icon("chevronL"), "Назад");
+  const form = h("form", { class: "card stack", on: { submit: (e: Event) => { e.preventDefault(); void run(true); } } },
+    h("div", { class: "step-label" }, first ? "Шаг 1 из 2 · Сервер организации" : "Сервер организации"),
+    h("label", { class: "field" }, h("span", null, "Название организации (необязательно)"), name, h("small", null, "Как подключение будет подписано в приложении. Можно изменить позже.")),
     h("label", { class: "field" }, h("span", null, "Адрес сервера Peregovorka"), url, h("small", { id: "srv-help" }, "Тот же адрес, что открываете в браузере. Можно вставить ссылку на встречу.")),
-    h("label", { class: "field" }, h("span", null, "Название подключения (необязательно)"), name),
     st.allowedDomains.length ? h("p", { class: "small muted" }, `Разрешены домены: ${st.allowedDomains.join(", ")}`) : null,
-    h("div", { class: "actions" }, first ? null : h("button", { class: "btn", type: "button", on: { click: () => go("org") } }, "Отмена"), btn),
-    out);
+    out,
+    h("div", { class: "actions split" }, back, h("div", { class: "row" }, checkBtn, nextBtn)));
   let route = addPrefill.route;
-  async function submit(): Promise<void> {
+  let busy = false;
+  url.addEventListener("input", () => { url.removeAttribute("aria-invalid"); out.replaceChildren(); });
+  async function run(connect: boolean): Promise<void> {
+    if (busy) return;
     let raw = url.value.trim();
     const meeting = /^https?:\/\/[^/]+\/.+/.test(raw) ? parseMeetingUrl(raw) : null;
     if (meeting) { raw = meeting.origin; route = meeting.route; }
-    btn.disabled = true;
-    btn.replaceChildren(h("span", { class: "spinner", style: { width: "16px", height: "16px", borderWidth: "2px" } }), "Проверка…");
+    const btn = connect ? nextBtn : checkBtn;
+    const label = btn.textContent ?? "";
+    busy = true;
+    checkBtn.disabled = nextBtn.disabled = true;
+    btn.replaceChildren(h("span", { class: "spinner sm" }), connect ? "Подключение…" : "Проверка…");
     out.replaceChildren();
     url.removeAttribute("aria-invalid");
     try {
@@ -118,20 +132,35 @@ function addPage(): HTMLElement {
         if (p) out.append(alertBox("err", p.title, p.hint, p.cert ? certDl(p.cert) : null, p.code));
         return;
       }
-      btn.replaceChildren("Подключение…");
+      if (!connect) { out.append(alertBox("ok", "Сервер доступен", "Нажмите «Продолжить» — откроется вход в организацию.")); return; }
       const a = (await call("shell:add", { url: raw, name: name.value, route })) as { ok: boolean };
-      if (a.ok) { addPrefill = {}; page = "org"; renderSide(); renderMain(true); }
+      if (a.ok) { addPrefill = {}; addStep = "welcome"; page = "org"; renderSide(); renderMain(true); }
     } finally {
-      btn.disabled = false;
-      if (btn.isConnected) btn.replaceChildren("Проверить и подключить");
+      busy = false;
+      checkBtn.disabled = nextBtn.disabled = false;
+      if (btn.isConnected) btn.replaceChildren(label);
     }
   }
   setTimeout(() => (st.canAdd ? url.focus() : undefined), 0);
   const head = h("div", { class: "page-head" }, h("img", { class: "brandmark", src: "assets/icon.svg", alt: "" }),
-    h("div", null, h("h1", null, first ? "Добро пожаловать в Peregovorka" : "Подключение организации"),
-      h("p", { class: "lead" }, first ? "Укажите адрес корпоративного сервера — затем войдите учётной записью организации." : "Каждая организация работает отдельно: свой вход, свои чаты и уведомления.")));
-  if (policyErr && !st.canAdd) return h("div", { class: "page narrow" }, head, alertBox("warn", policyErr));
+    h("div", null, h("h1", null, "Подключение организации"),
+      h("p", { class: "lead" }, first ? "Укажите сервер Peregovorka вашей организации. Затем откроется вход учётной записью организации." : "Каждая организация работает отдельно: свой вход, свои чаты и уведомления.")));
+  if (policyErr && !st.canAdd) return h("div", { class: "page narrow" }, head, alertBox("warn", policyErr), first ? h("div", { class: "actions" }, h("button", { class: "btn", on: { click: () => go("settings") } }, icon("gear"), "Настройки")) : null);
   return h("div", { class: "page narrow" }, head, policyErr ? alertBox("err", policyErr) : null, form);
+}
+
+function welcomePage(): HTMLElement {
+  const start = h("button", { class: "btn primary lg", on: { click: () => { addStep = "form"; renderMain(true); } } }, icon("plus"), "Добавить организацию");
+  setTimeout(() => start.focus(), 0);
+  return h("div", { class: "page narrow welcome" },
+    h("img", { class: "brandmark xl", src: "assets/icon.svg", alt: "" }),
+    h("h1", null, "Добро пожаловать в Peregovorka"),
+    h("p", { class: "lead" }, "Встречи, чаты, история и материалы вашей организации — в отдельном окне, с уведомлениями Windows."),
+    h("ol", { class: "how" },
+      h("li", null, h("b", null, "Укажите сервер"), h("span", null, "Адрес Peregovorka вашей организации — его сообщит администратор.")),
+      h("li", null, h("b", null, "Войдите"), h("span", null, "Учётной записью организации: доменной или локальной.")),
+      h("li", null, h("b", null, "Работайте"), h("span", null, "Вход сохранится — пароль на компьютере не хранится."))),
+    h("div", { class: "actions center" }, start, h("button", { class: "btn ghost", on: { click: () => go("settings") } }, icon("gear"), "Настройки")));
 }
 
 const INPUT_ERRORS: Record<string, string> = { empty: "Укажите адрес сервера.", invalid: "Адрес не похож на адрес сервера.", not_https: "Нужен защищённый адрес https://. Незащищённые подключения не поддерживаются.",
@@ -142,7 +171,7 @@ function checksList(steps: Step[]): HTMLElement {
   return h("ul", { class: "checks", "aria-label": "Результаты проверки" }, steps.map((s) => h("li", { class: s.state }, h("span", { class: "st", "aria-label": s.state }, icon(ST_ICON[s.state] ?? "info")),
     h("div", { class: "t" }, h("b", null, s.title), h("span", null, s.text)))));
 }
-function alertBox(kind: "err" | "warn" | "info", title: string, hint?: string, extra?: Node | null, code?: string): HTMLElement {
+function alertBox(kind: "err" | "warn" | "info" | "ok", title: string, hint?: string, extra?: Node | null, code?: string): HTMLElement {
   return h("div", { class: `alert ${kind}`, role: kind === "err" ? "alert" : "status" }, icon("info"), h("div", { class: "body" }, h("b", null, title), hint ? h("span", null, hint) : null, extra ?? null,
     code ? h("span", { class: "small mono" }, code) : null));
 }
@@ -198,6 +227,9 @@ function fillPanel(): void {
         h("div", { class: "field" }, h("span", null, "Запускать вместе с Windows"), seg([["off", "Не запускать"], ["tray", "Свёрнутым в трей"], ["window", "С открытым окном"]], s.autostart,
           (v) => setS({ autostart: v }), isLocked("autostart")), h("small", null, "Рекомендуется «свёрнутым в трей»: сообщения и уведомления приходят сразу после входа в Windows."),
           isLocked("autostart") ? lockNote() : null),
+        h("div", { class: "field" }, h("span", null, "Оформление"), seg([["system", "Как в Windows"], ["light", "Светлое"], ["dark", "Тёмное"]], s.theme, (v) => setS({ theme: v })),
+          h("small", null, "Окна приложения. Страница организации следует своей теме из профиля, если там не выбрано «как в системе».")),
+        h("div", { class: "field" }, h("span", null, "Язык"), h("div", { class: "muted" }, "Русский")),
         h("div", { class: "field" }, h("span", null, "Кнопка «Закрыть» окна"), seg([["tray", "Свернуть в трей"], ["quit", "Выйти из приложения"], ["ask", "Спрашивать"]], s.closeAction,
           (v) => setS({ closeAction: v }), isLocked("closeAction")), h("small", null, "Во время встречи приложение всегда спросит, продолжать ли её в фоне."), isLocked("closeAction") ? lockNote() : null)));
   } else if (tab === "notify") {
@@ -236,23 +268,32 @@ function fillPanel(): void {
   } else if (tab === "updates") {
     const u = S.update;
     const status: Record<string, string> = { idle: "Проверка ещё не выполнялась", checking: "Проверка…", none: "Установлена последняя версия", available: `Доступна версия ${u.version}`,
-      downloading: `Загрузка версии ${u.version}… ${u.progress ?? 0}%`, ready: `Версия ${u.version} готова к установке`, error: u.error ?? "Ошибка проверки", disabled: u.error ?? "Проверка обновлений выключена",
-      managed: "Версию приложения устанавливает администратор (корпоративная установка)" };
+      downloading: `Загрузка версии ${u.version}… ${u.progress ?? 0}%`, ready: `Версия ${u.version} загружена и проверена`, error: "Ошибка", disabled: "Автоматическая проверка выключена",
+      managed: "Версию приложения устанавливает администратор (корпоративная установка MSI)" };
     const inCall = S.orgs.some((o) => o.inCall || o.sharing);
-    const fixed = u.status === "managed" || (u.status === "disabled" && !!u.error);          // корпоративная установка или сборка без ключа: проверять нечего
+    const nokey = u.status === "disabled" && !!u.error;                       // сборка без ключа проверки: только ручная установка новой версии
+    const busy = u.status === "checking" || u.status === "downloading";
+    const manual = u.manualUrl ? h("button", { class: "btn ghost", on: { click: () => void call("shell:external", { url: u.manualUrl }) } }, icon("download"), "Скачать установщик вручную") : null;
+    if (nokey) status.disabled = "Новые версии устанавливаются установщиком";
     P.replaceChildren(T("Обновления"),
       h("div", { class: "card flat stack" },
-        h("dl", { class: "kv" }, h("dt", null, "Установлена"), h("dd", null, `${S.version}${S.buildKind !== "release" ? " (тестовая сборка)" : ""}`), h("dt", null, "Состояние"), h("dd", null, status[u.status] ?? u.status),
-          u.checkedAt ? h("dt", null, "Проверено") : null, u.checkedAt ? h("dd", null, new Date(u.checkedAt).toLocaleString("ru-RU")) : null),
-        u.notes ? h("pre", { class: "log" }, u.notes) : null,
+        h("dl", { class: "kv" }, h("dt", null, "Установлена"), h("dd", null, `${S.version}${S.buildKind !== "release" ? " (тестовая сборка)" : ""}`),
+          h("dt", null, "Последняя доступная"), h("dd", null, u.latest ?? "—"),
+          h("dt", null, "Состояние"), h("dd", null, status[u.status] ?? u.status),
+          u.checkedAt ? h("dt", null, "Последняя проверка") : null, u.checkedAt ? h("dd", null, new Date(u.checkedAt).toLocaleString("ru-RU")) : null),
+        u.status === "downloading" ? h("progress", { class: "bar", max: 100, value: u.progress ?? 0, "aria-label": "Загрузка обновления" }) : null,
+        u.notes && (u.status === "available" || u.status === "downloading" || u.status === "ready") ? h("div", { class: "field" }, h("span", null, "Что нового"), h("pre", { class: "log" }, u.notes)) : null,
+        u.status === "error" && u.error ? alertBox("err", u.error) : null,
+        nokey ? alertBox("info", "Обновление установщиком", u.error) : null,
         u.status === "ready" && inCall ? alertBox("info", "Установка — после встречи", "Во время встречи и показа экрана приложение не перезапускается.") : null,
-        fixed ? null : h("div", { class: "field" }, h("span", null, "Режим"), seg([["auto", "Загружать автоматически"], ["notify", "Только сообщать"], ["off", "Не проверять"]], S.settings.updateMode,
-          (v) => setS({ updateMode: v }), isLocked("updateMode")), isLocked("updateMode") ? lockNote() : null,
-          h("small", null, "Обновление устанавливается, только если пакет подписан ключом издателя Peregovorka.")),
-        fixed && u.status !== "ready" ? null : h("div", { class: "actions" },
-          h("button", { class: "btn", disabled: u.status === "checking" || u.status === "downloading", on: { click: () => void call("shell:update:check") } }, icon("retry"), "Проверить обновления"),
+        u.status === "managed" || nokey ? null : sw("Автоматически проверять обновления", "Раз в несколько часов. Новая версия устанавливается, только если подписана ключом издателя Peregovorka.",
+          S.settings.updateMode !== "off", (v) => setS({ updateMode: v ? "notify" : "off" }), isLocked("updateMode")),
+        u.status === "managed" ? null : h("div", { class: "actions" }, manual,
+          nokey ? null : h("button", { class: "btn", disabled: busy || u.status === "ready", on: { click: () => void call("shell:update:check") } }, icon("retry"), "Проверить обновления"),
+          u.status === "available" ? h("button", { class: "btn primary", on: { click: () => void call("shell:update:download") } }, icon("download"), "Скачать обновление") : null,
           u.status === "ready" ? h("button", { class: "btn", disabled: !!u.installOnQuit, on: { click: () => void call("shell:update:install", { now: false }) } }, u.installOnQuit ? "Установится при выходе" : "Установить при выходе") : null,
-          u.status === "ready" ? h("button", { class: "btn primary", disabled: inCall, on: { click: () => void call("shell:update:install", { now: true }) } }, "Перезапустить и обновить") : null)));
+          u.status === "ready" ? h("button", { class: "btn primary", disabled: inCall, on: { click: () => void call("shell:update:install", { now: true }) } }, "Установить обновление") : null)),
+      ...(u.status === "ready" ? [h("p", { class: "small muted" }, "Приложение закроется, установщик обновит его поверх текущей версии и запустит снова. Организации, вход и настройки сохраняются.")] : []));
   } else if (tab === "diag") {
     const box = h("div", { class: "stack" }, h("div", { class: "spinner" }));
     P.replaceChildren(T("Диагностика"), box);
@@ -288,7 +329,7 @@ function orgRow(o: OrgView, i: number): HTMLElement {
 }
 
 type Diag = Record<string, unknown> & { client: Record<string, unknown>; organizations: Record<string, unknown>[]; permissions: Record<string, string>; devices: { audioinput: number; audiooutput: number; videoinput: number } | null;
-  processes: { type: string; mb: number; cpu: number }[]; log_tail: string; update: { status: string } };
+  processes: { type: string; mb: number; cpu: number }[]; log_tail: string; update: { status: string }; app_files: boolean; trust_storage: string };
 async function devices() {
   try {
     const d = await navigator.mediaDevices.enumerateDevices();
@@ -315,7 +356,9 @@ function diagView(r: Diag): HTMLElement {
       h("dt", null, "Устройства"), h("dd", null, r.devices ? `микрофонов ${r.devices.audioinput}, динамиков ${r.devices.audiooutput}, камер ${r.devices.videoinput}` : "нет данных"),
       h("dt", null, "Память"), h("dd", null, `${mem} МБ, процессов ${r.processes.length}`),
       h("dt", null, "Запуск"), h("dd", null, c.startup_ms ? `${c.startup_ms} мс` : "—"),
-      h("dt", null, "Обновления"), h("dd", null, UPD_ST[r.update.status] ?? r.update.status))),
+      h("dt", null, "Обновления"), h("dd", null, UPD_ST[r.update.status] ?? r.update.status),
+      h("dt", null, "Файлы программы"), h("dd", null, r.app_files ? "в порядке" : "повреждены — переустановите приложение"),
+      h("dt", null, "Хранилище входа"), h("dd", null, r.trust_storage === "os" ? "защищено Windows (DPAPI)" : "недоступно — вход не сохраняется"))),
     h("div", { class: "card flat list" }, r.organizations.map((o) => h("div", { class: "item" }, h("div", { class: "who" }, h("b", null, String(o.host)),
       h("span", null, [ORG_ST[String(o.status)] ?? String(o.status), o.problem ? `ошибка ${o.problem}` : null, o.server_version ? `сервер ${o.server_version}` : null, `канал событий: ${WS_ST[String(o.websocket)] ?? "—"}`,
         o.in_call ? "идёт встреча" : null, o.saved_sign_in ? "вход сохранён" : "вход не сохранён"].filter(Boolean).join(" · ")))))),

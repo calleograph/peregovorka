@@ -1,7 +1,9 @@
 // «Диагностика»: технический отчёт для поддержки и администратора. В отчёт НЕ попадают пароли, токены, cookie, содержимое сообщений, имена собеседников;
 // журнал — последние строки после маскирования. Тот же отчёт без интерфейса: `Peregovorka.exe --diagnostics=<файл>` (см. docs/DESKTOP.md).
 import { app, Notification, screen, systemPreferences } from "electron";
+import { existsSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { redact } from "../common/redact";
 import type { Ctx } from "./ctx";
 import type { Orgs } from "./orgs";
@@ -22,6 +24,7 @@ export function collect(ctx: Ctx, orgs: Orgs, update: UpdateState, devices: Devi
     settings: { closeAction: s.closeAction, autostart: s.autostart, updateMode: s.updateMode, notifications: { enabled: s.notifications.enabled, sound: s.notifications.sound,
       hideContent: s.notifications.hideContent, dnd: s.notifications.dndUntil === -1 || s.notifications.dndUntil > Date.now() }, proxy: s.proxy.mode },
     policy: { locked: lockedFields(ctx.policy), servers: ctx.policy.servers.length, allowAddServers: ctx.policy.allowAddServers ?? true, allowedDomains: ctx.policy.allowedDomains ?? [] },
+    app_files: ["shell/index.html", "shell/app.js", "shell/shell.css", "preload-shell.js", "preload-org.js"].every((f) => existsSync(join(__dirname, f))),
     trust_storage: ctx.trust.available() ? "os" : "unavailable",
     notifications_supported: Notification.isSupported(),
     organizations: orgs.list.map((o) => ({ host: new URL(o.rec.origin).host, managed: o.rec.managed, active: o.rec.id === orgs.activeId, status: o.status,
