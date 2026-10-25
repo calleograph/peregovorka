@@ -450,15 +450,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#desktop-v}"
-          awk -v v="$v" '$0 ~ "^## "v"( |$)" {f=1; next} /^## / && f {exit} f' desktop/CHANGELOG.md > notes.md
-          if [ "${{ needs.windows.outputs.kind }}" != "release" ]; then
-            if [ -f out/Peregovorka-publisher.cer ]; then
-              printf '\n> **Тестовая сборка.** Установщики подписаны тестовым самоподписанным сертификатом Peregovorka (Peregovorka-publisher.cer): Windows ему не доверяет, пока администратор сам не распространит сертификат. Это не доверенный корпоративный выпуск.\n' >> notes.md
-            else
-              printf '\n> **Тестовая сборка.** Установщики не подписаны сертификатом издателя: это не доверенный корпоративный выпуск.\n' >> notes.md
+          awk -v v="$v" '$0 ~ "^## "v"( |$)" {f=1; next} /^## / && f {exit} f' desktop/CHANGELOG.md > changes.md
+          test -s changes.md
+          {
+            printf 'Приложение Peregovorka для Windows: видеовстречи, чаты и доска вашей организации в отдельном окне, с уведомлениями из системного трея. Нужен сервер Peregovorka 0.37.0 или новее.\n\n## Что нового\n\n'
+            cat changes.md
+            printf '\n## Установка\n\n- **Peregovorka-Setup-%s.exe** — обычная установка для одного пользователя, без прав администратора.\n- **Peregovorka-%s-x64.msi** — для централизованного развёртывания в организации (групповые политики).\n- Контрольные суммы — в файле SHA256SUMS.txt.\n' "$v" "$v"
+            if [ "${{ needs.windows.outputs.kind }}" != "release" ]; then
+              if [ -f out/Peregovorka-publisher.cer ]; then
+                printf '\nУстановщики подписаны сертификатом Peregovorka (Peregovorka-publisher.cer); чтобы Windows ему доверяла, администратор распространяет сертификат в организации.\n'
+              else
+                printf '\nУстановщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать окно SmartScreen — выберите «Подробнее» → «Выполнить в любом случае».\n'
+              fi
             fi
-            pre="--prerelease"
-          fi
+          } > notes.md
+          [ "${{ needs.windows.outputs.kind }}" = "release" ] || pre="--prerelease"
           test -s notes.md
           (cd out && sha256sum -c SHA256SUMS.txt)
           gh release create "$GITHUB_REF_NAME" out/* --title "Peregovorka для Windows $v" --notes-file notes.md --latest=false ${pre:-} --verify-tag
