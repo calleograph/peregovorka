@@ -94,7 +94,10 @@ async function firstrun() {
       await s.js(`document.querySelector('#tab-${tab}').click()`);
       await sleep(tab === "diag" ? 1500 : 400);
       check(`настройки до входа: «${tab}»`, (await s.js("document.querySelector('.panel h2')?.textContent ?? ''")).length > 0);
-      if (tab === "diag") { const d = await s.text(); check("диагностика: файлы программы в порядке", d.includes("в порядке"), d.slice(0, 400)); }
+      if (tab === "diag") {
+        await s.until("document.body.innerText.includes('в порядке')", 20);              // отчёт собирается асинхронно: на медленной машине дольше фиксированных 1,5 с
+        const d = await s.text(); check("диагностика: файлы программы в порядке", d.includes("в порядке"), d.slice(0, 400));
+      }
       await s.shot(join(OUT, `04-settings-${tab}.png`));
     }
     await s.js("document.querySelector('#tab-general').click()");
