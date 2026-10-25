@@ -462,7 +462,7 @@ def test_disabling_inbound_or_telephony_drops_the_rule(tmp_path, directory):
         assert wait_for(lambda: bool(lk.rules))
         login(c, "carol")
         assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"sip": {"allow_inbound": False}}).status_code == 200
-        assert not lk.rules
+        assert wait_for(lambda: not lk.rules), "правило входящих снимается (в фоне — проверка не должна зависеть от скорости раннера)"
 
 
 def test_phone_participants_are_not_kicked_with_the_guest_link(tmp_path, directory):
