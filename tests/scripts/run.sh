@@ -115,6 +115,10 @@ rm -rf "$R/data"; printf '<html>login</html>' > "$R/srv/html.txt"; head -c 20000
 t "models.sh: HTML вместо модели (страница входа прокси) отвергается" bash -c 'bash "$1/scripts/models.sh" --env "$2/env"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$R"
 t "models.sh: недоступный адрес — понятная причина и способ продолжить" bash -c 'out="$(bash "$1/scripts/models.sh" --env "$2/env.dead" 2>&1)"; [ $? -ne 0 ] && echo "$out" | grep -q "соединение невозможно" && echo "$out" | grep -q -- "--from-dir"' _ "$ROOT" "$R"
 kill "$RNG_PID" 2>/dev/null
+# разбор причины падения сервиса по журналу (подмена dc): PermissionError на модели → автоисправление прав возможно, ключи маскируются
+t "diagnose_service: PermissionError на /models → DIAG_FIX=models и команда исправления" bash -c 'source "$1/scripts/lib/common.sh"; dc() { printf "Traceback (most recent call last):\nPermissionError: [Errno 13] Permission denied: %s\nINTERNAL_API_TOKEN=supersecret\n" "/models/gigaam/catalog.json"; }; out="$(diagnose_service asr 2>&1)"; echo "$out" | grep -q "scripts/models.sh" && ! echo "$out" | grep -q supersecret' _ "$ROOT"
+t "diagnose_service: DIAG_FIX выставляется для прав на модель" bash -c 'source "$1/scripts/lib/common.sh"; dc() { echo "PermissionError: [Errno 13] Permission denied: /models/gigaam/catalog.json"; }; diagnose_service asr >/dev/null 2>&1; [ "$DIAG_FIX" = models ]' _ "$ROOT"
+t "diagnose_service: нет файла модели → подсказка про models.sh --from-dir" bash -c 'source "$1/scripts/lib/common.sh"; dc() { echo "FileNotFoundError: /models/gigaam/v3_e2e_rnnt.ckpt"; }; diagnose_service asr 2>&1 | grep -q -- "--from-dir"' _ "$ROOT"
 
 # shellcheck source=part_docker.sh
 source "$ROOT/tests/scripts/part_docker.sh"

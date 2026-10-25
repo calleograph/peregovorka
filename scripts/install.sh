@@ -2,7 +2,7 @@
 # install.sh — установка экземпляра ЭТАПАМИ; повторный запуск после сбоя безопасен и продолжает работу.
 #
 #   scripts/install.sh --profile shared-host|standalone [--env FILE] [--dry-run]
-#       [--from ЭТАП] [--force-build] [--adopt-images] [--skip-preflight] [--skip-models] [--models-from КАТАЛОГ]
+#       [--from ЭТАП] [--force-build] [--adopt-images] [--skip-preflight] [--skip-models] [--models-from КАТАЛОГ] [--skip-admin]
 #       [--skip-start] [--configure-firewall]
 #
 # Этапы (в этом порядке):
@@ -32,7 +32,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 STAGES=(prerequisites preflight dirs kernel models pull build database migrations services healthcheck nginx firewall verify helper report)
-PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""; MODELS_FROM=""
+PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""; MODELS_FROM=""; SKIP_ADMIN=0
 FORCE_BUILD=0; ADOPT=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,6 +45,7 @@ while [ $# -gt 0 ]; do
     --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
     --skip-models) SKIP_MODELS=1; shift ;;
     --models-from) MODELS_FROM="$2"; shift 2 ;;
+    --skip-admin) SKIP_ADMIN=1; shift ;;
     --skip-start) SKIP_START=1; shift ;;
     --configure-firewall) FIREWALL=1; shift ;;
     -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
@@ -360,8 +361,8 @@ stage_report() {
     log " Оставшиеся предупреждения (${#VERIFY_WARNINGS[@]}):"
     for w in "${VERIFY_WARNINGS[@]}"; do log "   - $(printf '%s' "$w" | cut -c1-220)"; done
   else log " Предупреждений нет."; fi
-  log " Первый вход:      создайте локального администратора (пароль генерируется и показывается один раз, только в терминале; заранее заданного пароля нет):"
-  log "                   sudo scripts/bootstrap-admin.sh${ENV_FILE:+ --env $ENV_FILE}"
+  log " Первый вход:      локальный администратор создаётся командой (пароль генерируется и показывается один раз, только в терминале, в журнал не пишется; заранее заданного пароля нет):"
+  log "                   sudo scripts/bootstrap-admin.sh${ENV_FILE:+ --env $ENV_FILE}   (при интерактивной установке она запускается автоматически ниже)"
   log "                   затем откройте ${APP_PUBLIC_URL:-адрес приложения} именно по этому адресу: другой адрес (IP, localhost, SSH-туннель) отклоняется проверкой Origin."
   log "                   Дополнительный адрес — только осознанно, через ALLOWED_ORIGINS в .env (проверка при этом не отключается)."
   log "========================================================="
@@ -393,3 +394,8 @@ if [ "$DRY_RUN" != "1" ]; then
 fi
 run_stage report        stage_report
 [ "$DRY_RUN" = "1" ] && ok "Dry-run завершён: перечисленные этапы будут выполнены по порядку." || log "Дальше (по желанию): scripts/smoke-test.sh [--login ЛОГИН]"
+# Первый локальный администратор — сразу, если установку запускает человек у терминала: пароль уходит только на /dev/tty (не в журнал, не в файлы).
+# Без терминала (cron, ssh без tty, перенаправление вывода) автоматически ничего не создаётся — команда напечатана в памятке выше.
+if [ "$DRY_RUN" != "1" ] && [ "$SKIP_ADMIN" -eq 0 ] && [ -t 0 ] && [ -w /dev/tty ] && : > /dev/tty 2>/dev/null; then
+  "$REPO_ROOT/scripts/bootstrap-admin.sh" --env "$ENV_FILE" || warn "Локальный администратор не создан автоматически. Выполните: sudo scripts/bootstrap-admin.sh"
+fi
