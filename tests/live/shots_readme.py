@@ -19,6 +19,10 @@ navigator.mediaDevices.getDisplayMedia = async function () {
 };
 """
 
+# на общем стенде остаются комнаты от других сценариев (длинные названия, значки) и служебная строка версии: для витрины их не показываем
+HIDE = """document.querySelectorAll('.rc-cell,tbody tr,.rm').forEach(e=>{if(/подбор персонала|Значковая|icon-room/.test(e.textContent))e.style.display='none'});
+[...document.querySelectorAll('div,span,p,small')].filter(e=>e.children.length===0&&/^Версия: /.test(e.textContent.trim())).forEach(e=>e.style.display='none')"""
+
 def save(name, data):
     os.makedirs(OUT, exist_ok=True)
     open(os.path.join(OUT, name), "wb").write(base64.b64decode(data))
@@ -62,7 +66,13 @@ async def main():
         await A.goto("/admin?tab=rooms", 3.5)
         await A.wait_for("document.querySelectorAll('table tbody tr').length>=5", 20)
         await A.js("[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='Понятно').forEach(b=>b.click())")
+        await A.js(HIDE)
         await shot(A, "admin.png", 1600, 900)
+        await A.goto("/", 3.5)
+        await A.wait_for("document.querySelectorAll('.rc').length>=3", 20)
+        await A.js("[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='Понятно').forEach(b=>b.click())")
+        await A.js(HIDE)
+        await shot(A, "rooms.png", 1600, 900)
         print("снимки:", os.path.abspath(OUT))
     finally:
         for c in (A, B, C): await c.close()
