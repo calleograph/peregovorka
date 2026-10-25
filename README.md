@@ -75,6 +75,17 @@ sudo ./install.sh
 
 <sub>Снимки сделаны на тестовом стенде с вымышленными данными.</sub>
 
+## Приложение для Windows
+
+<!-- desktop-release:start -->
+**Версия 1.2.0** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.2.0) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.2.0/SHA256SUMS.txt)
+
+- **[Peregovorka-Setup-1.2.0.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.2.0/Peregovorka-Setup-1.2.0.exe)** — установка для себя, без прав администратора
+- **[Peregovorka-1.2.0-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.2.0/Peregovorka-1.2.0-x64.msi)** — для развёртывания в организации (групповые политики)
+
+Несколько серверов организаций в одном окне, трей и уведомления Windows, новое оформление «Стекло». Установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае».
+<!-- desktop-release:end -->
+
 ## Архитектура
 
 Браузер (React + LiveKit) → nginx → backend (FastAPI) с PostgreSQL и Redis; звук и видео идут через LiveKit (WebRTC), распознавание речи — отдельный сервис GigaAM, документы формирует локальная или внешняя языковая модель.

@@ -30,6 +30,19 @@ step("модульные тесты", npm, ["test"]);
 step("безопасность исходников", process.execPath, ["scripts/security-check.mjs"]);
 step("предварительная сборка и проверки собранной программы", process.execPath, ["scripts/preview.mjs"]);
 
+// Витрина репозитория (README): версия и ссылки на установщики текущего выпуска — всегда новые, без ручного шага.
+const readme = join(ROOT, "..", "README.md");
+const repo = "https://github.com/calleograph/peregovorka", tag = `desktop-v${version}`, rel = `${repo}/releases/download/${tag}`;
+const block = [
+  `**Версия ${version}** · [страница выпуска](${repo}/releases/tag/${tag}) · [контрольные суммы](${rel}/SHA256SUMS.txt)`, "",
+  `- **[Peregovorka-Setup-${version}.exe](${rel}/Peregovorka-Setup-${version}.exe)** — установка для себя, без прав администратора`,
+  `- **[Peregovorka-${version}-x64.msi](${rel}/Peregovorka-${version}-x64.msi)** — для развёртывания в организации (групповые политики)`, "",
+].join("\n");
+const rm = readFileSync(readme, "utf8");
+if (!rm.includes("<!-- desktop-release:start -->")) die("в README.md нет блока <!-- desktop-release -->");
+writeFileSync(readme, rm.replace(/<!-- desktop-release:start -->\n[\s\S]*?(?=\n[^\n]*\n<!-- desktop-release:end -->)/, `<!-- desktop-release:start -->\n${block}`));
+git("add", "../README.md");
+
 for (const f of ["package.json", "package-lock.json"]) {
   const p = join(ROOT, f);
   const d = JSON.parse(readFileSync(p, "utf8"));
