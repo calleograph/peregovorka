@@ -168,6 +168,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/netcheck.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/updtxn.sh"
 # shellcheck source=mask.sh
 source "$(dirname "${BASH_SOURCE[0]}")/mask.sh"
+# shellcheck source=modelslib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/modelslib.sh"
 
 # shellcheck source=verifylib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verifylib.sh"

@@ -2,7 +2,7 @@
 # install.sh — установка экземпляра ЭТАПАМИ; повторный запуск после сбоя безопасен и продолжает работу.
 #
 #   scripts/install.sh --profile shared-host|standalone [--env FILE] [--dry-run]
-#       [--from ЭТАП] [--force-build] [--adopt-images] [--skip-preflight] [--skip-models]
+#       [--from ЭТАП] [--force-build] [--adopt-images] [--skip-preflight] [--skip-models] [--models-from КАТАЛОГ]
 #       [--skip-start] [--configure-firewall]
 #
 # Этапы (в этом порядке):
@@ -32,7 +32,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 STAGES=(prerequisites preflight dirs kernel models pull build database migrations services healthcheck nginx firewall verify helper report)
-PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""
+PROFILE_ARG=""; SKIP_PREFLIGHT=0; SKIP_START=0; FIREWALL=0; SKIP_MODELS=0; FROM_STAGE=""; MODELS_FROM=""
 FORCE_BUILD=0; ADOPT=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -44,6 +44,7 @@ while [ $# -gt 0 ]; do
     --adopt-images) ADOPT=1; shift ;;
     --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
     --skip-models) SKIP_MODELS=1; shift ;;
+    --models-from) MODELS_FROM="$2"; shift 2 ;;
     --skip-start) SKIP_START=1; shift ;;
     --configure-firewall) FIREWALL=1; shift ;;
     -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
@@ -148,6 +149,8 @@ stage_dirs() {
   for d in recordings exports ca chat-files avatars branding; do
     if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then as_root chown 10001:10001 "$DATA_ROOT/$d"; fi
   done
+  # Модели монтируются в контейнер ASR (uid 10001) только на чтение: каталог, созданный с umask 077, ему недоступен.
+  [ "$DRY_RUN" = "1" ] || models_fix_perms || warn "Права на каталог моделей не исправлены автоматически (см. выше)."
 }
 
 # Параметры ядра для звука/видео (UDP-буферы, vm.overcommit_memory) — собственным файлом /etc/sysctl.d/99-peregovorka.conf.
@@ -178,12 +181,15 @@ stage_llm() {
 
 stage_models() {
   stage_llm
-  local ckpt="$DATA_ROOT/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt"
-  if [ -s "$ckpt" ]; then ok "Модель ASR на месте: $ckpt"; return 0; fi
+  local ckpt="$DATA_ROOT/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" args=(--env "$ENV_FILE")
   if [ "$SKIP_MODELS" -eq 1 ] || [ "$DRY_RUN" = "1" ]; then
-    warn "Модель ASR не подготовлена ($ckpt): подготовьте scripts/models.sh — без неё ASR-сервис не станет ready."; return 0
+    if asr_model_ready; then ok "Модель ASR на месте: $ckpt"; else warn "Модель ASR не подготовлена ($ckpt): подготовьте scripts/models.sh — без неё ASR-сервис не станет ready."; fi
+    return 0
   fi
-  fail_stage models "Модель ASR не подготовлена ($ckpt). Выполните scripts/models.sh (или --from-dir для закрытой сети) и повторите; --skip-models пропускает проверку."
+  [ -z "$MODELS_FROM" ] || args+=(--from-dir "$MODELS_FROM")
+  # Загрузка, проверка целостности (оба файла), докачка и права — в scripts/models.sh; готовая модель повторно не скачивается.
+  "$REPO_ROOT/scripts/models.sh" "${args[@]}" \
+    || fail_stage models "Модель ASR не подготовлена (причина выше). Закрытая сеть: скачайте файлы на другом компьютере и запустите scripts/install.sh --profile $PROFILE --from models --models-from КАТАЛОГ; --skip-models пропускает этап."
 }
 
 stage_pull() {
@@ -237,12 +243,26 @@ stage_migrations() {
 }
 
 stage_services() {
+  # Реальное чтение файлов модели от имени пользователя ASR — до запуска контейнеров: иначе сервис уйдёт в цикл перезапусков с PermissionError.
+  if [ "$DRY_RUN" != "1" ] && [ "$SKIP_MODELS" -ne 1 ] && asr_model_ready; then
+    if ! models_access_check; then
+      warn "Контейнер ASR не читает файлы модели — исправляю права только в $DATA_ROOT/models…"
+      models_fix_perms && models_access_check \
+        || fail_stage models "Сервис ASR (uid 10001) не может прочитать модель в $DATA_ROOT/models (см. выше). Исправьте права этого каталога и повторите: scripts/install.sh --profile $PROFILE --from services"
+    fi
+  fi
   dc_run up -d --no-build
 }
 
 stage_healthcheck() {
   if [ "$DRY_RUN" = "1" ]; then info "[dry-run] ожидание healthy всех сервисов (до 240 с), затем проверка"; return 0; fi
   if ! "$REPO_ROOT/scripts/status.sh" --env "$ENV_FILE" --wait 240; then
+    DIAG_FIX=""; diagnose_failed_services
+    if [ "$DIAG_FIX" = models ] && models_fix_perms; then
+      info "Права на модель исправлены — перезапускаю только ASR."
+      dc restart asr >/dev/null 2>&1 || true
+      if "$REPO_ROOT/scripts/status.sh" --env "$ENV_FILE" --wait 180; then ok "Сервисы healthy после исправления прав модели."; return 0; fi
+    fi
     warn "Сервисы не стали healthy. Останавливаю ТОЛЬКО прикладные контейнеры проекта (данные БД/Redis не удаляются): web backend asr livekit."
     dc stop web backend asr livekit >/dev/null 2>&1 || true
     fail_stage services "не все сервисы healthy — см. scripts/logs.sh <сервис>; после исправления повторите установку."
@@ -340,6 +360,10 @@ stage_report() {
     log " Оставшиеся предупреждения (${#VERIFY_WARNINGS[@]}):"
     for w in "${VERIFY_WARNINGS[@]}"; do log "   - $(printf '%s' "$w" | cut -c1-220)"; done
   else log " Предупреждений нет."; fi
+  log " Первый вход:      создайте локального администратора (пароль генерируется и показывается один раз, только в терминале; заранее заданного пароля нет):"
+  log "                   sudo scripts/bootstrap-admin.sh${ENV_FILE:+ --env $ENV_FILE}"
+  log "                   затем откройте ${APP_PUBLIC_URL:-адрес приложения} именно по этому адресу: другой адрес (IP, localhost, SSH-туннель) отклоняется проверкой Origin."
+  log "                   Дополнительный адрес — только осознанно, через ALLOWED_ORIGINS в .env (проверка при этом не отключается)."
   log "========================================================="
   print_network_summary
   ok "Peregovorka deployment completed"

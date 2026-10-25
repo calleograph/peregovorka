@@ -95,7 +95,7 @@ def test_origin_from_allowed_origins_is_accepted_on_login_and_others_are_not(cli
     assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"},
                        headers={"Origin": "https://192.0.2.10"}).status_code == 200
     bad = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"}, headers={"Origin": "https://evil.example"})
-    assert bad.status_code == 403 and bad.json()["detail"] == "Недопустимый Origin"
+    assert bad.status_code == 403 and bad.json()["detail"].startswith("Недопустимый Origin. Откройте приложение по адресу ")
 
 
 def test_origin_list_is_normalized_and_never_matches_null_or_other_hosts():

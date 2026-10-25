@@ -102,6 +102,13 @@ async def export(body: ExportIn, request: Request, su: SessionUser = Depends(req
         "Cache-Control": "no-store, no-cache, max-age=0", "Pragma": "no-cache", "X-Accel-Buffering": "no"})          # без буферизации прокси: шифртекст не оседает на диске промежуточных серверов
 
 
+@router.post("/checks")
+async def recheck(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Повторить проверки подключений (каталог, почта, хранилища, внешние API) после исправления настроек — ничего не меняет."""
+    report = await checks.run_checks(request.app, db)
+    return {"checks": report, "summary": checks.summarize(report)}
+
+
 @router.post("/import/inspect")
 async def inspect(request: Request, su: SessionUser = Depends(require_admin)):
     """Только заголовок (без пароля): версия, дата, совместимость — чтобы сообщить «архив новее сервера» до ввода пароля."""

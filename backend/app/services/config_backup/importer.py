@@ -164,7 +164,7 @@ async def preview(payload: dict, db: AsyncSession, *, current_version: str, curr
     warnings: list[dict] = []
 
     def warn(kind: str, where: str, value: Any = None, note: str = "") -> None:
-        warnings.append({"kind": kind, "title": R.BOUND_TITLE.get(kind, kind), "where": where, "value": (str(value)[:200] if value not in (None, "") else None), "note": note})
+        warnings.append({"kind": kind, "title": R.BOUND_TITLE.get(kind, kind), "where": where, "value": (str(value)[:200] if value not in (None, "") else None), "note": note or R.BOUND_ACTION.get(kind, "")})
 
     # --- привязка к серверу: объявленная в реестре
     for name, rows in payload["tables"].items():
@@ -199,7 +199,7 @@ async def preview(payload: dict, db: AsyncSession, *, current_version: str, curr
         warn(R.BOUND_PATH, "Файловые хранилища", ", ".join(map(str, ext)), "отмечены как внешний том: после восстановления смонтируйте том на новом сервере и нажмите «Проверить» — метка тома и защита от записи на системный диск ставятся заново")
     sips = len(payload["tables"].get("sip_profiles", []))
     if sips:
-        warn(R.BOUND_LIVEKIT, "SIP-телефония", None, f"подключений: {sips}. Идентификаторы транков LiveKit старого сервера не переносятся — после импорта синхронизируйте SIP в разделе «SIP-телефония»")
+        warn(R.BOUND_LIVEKIT, "SIP-телефония", None, f"подключений: {sips}. Они будут перенесены ВЫКЛЮЧЕННЫМИ: пока старый сервер работает, новый не должен занимать те же линии АТС. Идентификаторы транков LiveKit старого сервера не переносятся. Когда будете готовы, проверьте параметры, включите подключение в разделе «SIP-телефония» и выполните синхронизацию")
     if payload["tables"].get("ca_certificates"):
         warn(R.BOUND_CERT, "Сертификаты УЦ", len(payload["tables"]["ca_certificates"]), "сертификаты переносятся; убедитесь, что имя нового сервера соответствует сертификатам каталога/почты, а TLS-сертификат веб-сервера (nginx) установлен отдельно")
     src = str(man.get("source_url") or "")
@@ -292,6 +292,8 @@ async def apply(payload: dict, db: AsyncSession, settings_svc: SettingsService, 
                     else:
                         v = "" if not table.columns[col].nullable else None
                 data[col] = v
+            if name == "sip_profiles":
+                data["enabled"] = False       # включает администратор явно: иначе новый экземпляр может перехватить линии АТС, которые ещё использует старый
             pk_col = [c.name for c in table.primary_key.columns][0]
             pk_val = data.get(pk_col)
             # записи с тем же уникальным значением, но другим первичным ключом, заменяются (для переговорок — только без встреч)

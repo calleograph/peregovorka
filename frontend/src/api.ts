@@ -1103,6 +1103,7 @@ export const api = {
     configPreview: (file: Blob, archivePassword: string) => configRequest<ConfigPreview>("/admin/config/import/preview", file, { "Content-Type": "application/octet-stream", "X-Archive-Password": archivePassword }).then((r) => r.data),
     configApply: (file: Blob, archivePassword: string, adminPassword: string) =>
       configRequest<ConfigReport>("/admin/config/import/apply", file, { "Content-Type": "application/octet-stream", "X-Archive-Password": archivePassword, "X-Admin-Password": adminPassword, "X-Import-Confirm": "yes" }).then((r) => r.data),
+    configRecheck: () => request<{ checks: ConfigCheck[]; summary: ConfigReport["summary"] }>("POST", "/admin/config/checks"),
     storageStats: () => request<StorageStats>("GET", "/admin/storage/stats"),
     storageStatsRefresh: () => request<{ started: boolean }>("POST", "/admin/storage/stats/refresh"),
     transfers: () => request<TransferJob[]>("GET", "/admin/storage/transfers"),

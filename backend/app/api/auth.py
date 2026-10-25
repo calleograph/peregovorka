@@ -35,8 +35,9 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     settings = request.app.state.settings
     origin = request.headers.get("origin")
     if origin is not None and not origin_allowed(origin, settings):
-        log.warning("Origin отклонён", extra={"origin": origin[:200], "path": "/auth/login"})
-        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+        log.warning("Origin отклонён", extra={"origin": origin[:200], "path": "/auth/login", "expected": settings.app_public_url})
+        # адрес установки — не секрет (он же в письмах и ссылках); проверку Origin это не ослабляет
+        raise HTTPException(status_code=403, detail=f"Недопустимый Origin. Откройте приложение по адресу {settings.app_public_url.rstrip('/')} (вход по IP, localhost или через туннель отклоняется защитой; дополнительный адрес администратор добавляет в ALLOWED_ORIGINS).")
     ip = client_ip(request)
     await captcha.guard(request, "login")          # после порога неудач (или всегда) нужен решённый CAPTCHA-вызов
     journal = request.app.state.journal

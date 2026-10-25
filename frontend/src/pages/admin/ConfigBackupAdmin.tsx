@@ -91,6 +91,11 @@ function ImportPanel() {
   const [err, setErr] = useState("");
   const [report, setReport] = useState<ConfigReport | null>(null);
 
+  const recheck = async () => {
+    setBusy(true); setErr("");
+    try { const r = await api.admin.configRecheck(); setReport((p) => (p ? { ...p, checks: r.checks, summary: r.summary } : p)); } catch (e) { setErr((e as ApiError).message); }
+    setBusy(false);
+  };
   const reset = () => { file.current = null; setName(""); setHead(null); setApw(""); setPrev(null); setAck(false); setAdminPw(""); setErr(""); setReport(null); };
   const pick = async (f: File | undefined) => {
     reset();
@@ -175,6 +180,8 @@ function ImportPanel() {
             {report.checks.map((c, i) => <tr key={i}><td>{c.component}</td><td>{c.item}</td><td><span className={`badge ${statusTone(c.status)}`}>{statusTitle(c.status)}</span></td><td className="small">{c.message}</td></tr>)}
             {!report.checks.length && <tr><td colSpan={4} className="muted">Подключений для проверки в архиве не было.</td></tr>}
           </tbody></table>
+          <div className="row" style={{ marginTop: 8 }}><button className="btn" disabled={busy} onClick={() => void recheck()}>{busy ? "Проверяем…" : "Повторить проверки"}</button>
+            <span className="small muted">Например, после исправления адреса почтового сервера или хранилища в «Интеграциях».</span></div>
           <p className="small muted">Подключения, помеченные «требует внимания», перенесены, но не отвечают с нового сервера — обычно меняется адрес или сеть: откройте раздел и поправьте. Идентификаторы пользователей каталога сопоставятся при первом входе.</p>
           <button className="btn" onClick={reset}>Готово</button>
         </div>

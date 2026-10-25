@@ -74,7 +74,7 @@ async def run_checks(app, db) -> list[dict[str, Any]]:
         out.append(await _one(f"Внешний API ({'обезличивание' if p.kind == 'anonymizer' else 'языковая модель'})", p.name, api))
     # --- SIP: идентификаторы транков старого LiveKit не переносятся
     for s in (await db.execute(select(SipProfile))).scalars().all():
-        out.append({"component": "SIP-телефония", "item": s.name, "status": "needs_attention", "message": "подключение перенесено, но транки LiveKit нового сервера ещё не созданы — выполните синхронизацию в разделе «SIP-телефония»"})
+        out.append({"component": "SIP-телефония", "item": s.name, "status": "needs_attention", "message": "подключение перенесено выключенным и не используется. Когда старый сервер больше не нужен для телефонии: проверьте параметры, включите подключение и выполните синхронизацию в разделе «SIP-телефония»"})
     return out
 
 

@@ -242,6 +242,7 @@ upd_ensure_data_dirs() {
     fi
   done
   for d in models/gigaam models/llm state backups; do [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || sudo -n mkdir -p "$DATA_ROOT/$d" 2>/dev/null || true; done
+  models_fix_perms || warn "Права на каталог моделей не исправлены: sudo scripts/models.sh"
   upd_ensure_updater_dir
   return "$rc"
 }

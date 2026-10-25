@@ -90,6 +90,32 @@ t "models.sh отказывает при UNC в DATA_ROOT" bash -c '! bash "$1/s
 rm -rf "$M/data"; echo x > "$M/src/v3_e2e_rnnt.ckpt"
 t "слишком маленький файл сохраняется как .failed" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/src"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$M"
 
+# ---- 6a. models.sh: докачка при обрыве, права доступа, целостность, диагностика
+R="$TMP/rng"; mkdir -p "$R/srv"; head -c 3000000 /dev/urandom > "$R/srv/v3_e2e_rnnt.ckpt"; echo tok > "$R/srv/v3_e2e_rnnt_tokenizer.model"
+# адрес источника — только через .env (скрипты сбрасывают GIGAAM_* из окружения), порт 18931 — тестовый сервер
+printf 'DATA_ROOT=%s/data\nASR_MODEL_NAME=v3_e2e_rnnt\nGIGAAM_MODEL_BASE_URL=http://127.0.0.1:18931\n' "$R" > "$R/env"
+printf 'DATA_ROOT=%s/data\nASR_MODEL_NAME=v3_e2e_rnnt\nGIGAAM_MODEL_BASE_URL=http://127.0.0.1:1\n' "$R" > "$R/env.dead"
+python3 "$ROOT/tests/scripts/rangeserver.py" "$R/srv" 18931 >/dev/null 2>&1 & RNG_PID=$!; sleep 1
+t "models.sh: обрыв загрузки посреди файла — докачка и полный размер" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" && cmp "$2/srv/v3_e2e_rnnt.ckpt" "$2/data/models/gigaam/v3_e2e_rnnt.ckpt"' _ "$ROOT" "$R"
+t "models.sh: без .part после успеха" bash -c '! ls "$1"/data/models/gigaam/*.part'  _ "$R"
+t "models.sh: готовая модель не качается (сервер недоступен)" bash -c 'bash "$1/scripts/models.sh" --env "$2/env.dead" | grep -q "уже на месте"' _ "$ROOT" "$R"
+rm -f "$R/data/models/gigaam/v3_e2e_rnnt_tokenizer.model"
+t "models.sh: наличие одного чекпойнта — не готовность, дозагружает токенайзер" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" && [ -s "$2/data/models/gigaam/v3_e2e_rnnt_tokenizer.model" ]' _ "$ROOT" "$R"
+# импорт из каталога с ограниченными правами: модель должна стать читаемой для «чужого» пользователя контейнера
+rm -rf "$R/data"; mkdir -p "$R/imp"; cp "$R/srv/"* "$R/imp/"; chmod 600 "$R/imp/"*
+t "models.sh --from-dir: файлы 600 → читаемы остальным (uid контейнера)" bash -c 'bash "$1/scripts/models.sh" --env "$2/env" --from-dir "$2/imp" && [ "$(stat -c %a "$2/data/models/gigaam/v3_e2e_rnnt.ckpt")" = 644 ]' _ "$ROOT" "$R"
+chmod 700 "$R/data/models" "$R/data/models/gigaam"; chmod 600 "$R/data/models/gigaam/"*
+t "models_fix_perms: каталоги 700/файлы 600 → 755/644, не 777" bash -c 'source "$1/scripts/lib/common.sh"; load_env "$2/env"; models_fix_perms && [ "$(stat -c %a "$DATA_ROOT/models/gigaam")" = 755 ] && [ "$(stat -c %a "$DATA_ROOT/models/gigaam/v3_e2e_rnnt.ckpt")" = 644 ]' _ "$ROOT" "$R"
+t "models_fix_perms: трогает только каталог моделей" bash -c 'chmod 700 "$1/data"; source "$2/scripts/lib/common.sh"; load_env "$1/env"; models_fix_perms; [ "$(stat -c %a "$1/data")" = 700 ]' _ "$R" "$ROOT"
+chmod 755 "$R/data"
+rm -rf "$R/data"; head -c 3000000 /dev/urandom > "$R/srv/other.ckpt"
+t "models.sh: неверный SHA-256 из .env — файл в .failed и отказ" bash -c 'cp "$2/env" "$2/env.sha"; echo GIGAAM_CKPT_SHA256=0000 >> "$2/env.sha"; bash "$1/scripts/models.sh" --env "$2/env.sha"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$R"
+t "models.sh: верный SHA-256 из .env принимается" bash -c 'rm -rf "$2/data"; cp "$2/env" "$2/env.sha"; echo "GIGAAM_CKPT_SHA256=$(sha256sum "$2/srv/v3_e2e_rnnt.ckpt" | cut -d" " -f1)" >> "$2/env.sha"; bash "$1/scripts/models.sh" --env "$2/env.sha"' _ "$ROOT" "$R"
+rm -rf "$R/data"; printf '<html>login</html>' > "$R/srv/html.txt"; head -c 2000000 /dev/zero | tr '\0' ' ' > "$R/srv/v3_e2e_rnnt.ckpt"; { printf '<!DOCTYPE html>'; cat "$R/srv/v3_e2e_rnnt.ckpt"; } > "$R/x" && mv "$R/x" "$R/srv/v3_e2e_rnnt.ckpt"
+t "models.sh: HTML вместо модели (страница входа прокси) отвергается" bash -c 'bash "$1/scripts/models.sh" --env "$2/env"; [ $? -ne 0 ] && [ -f "$2/data/models/gigaam/v3_e2e_rnnt.ckpt.failed" ]' _ "$ROOT" "$R"
+t "models.sh: недоступный адрес — понятная причина и способ продолжить" bash -c 'out="$(bash "$1/scripts/models.sh" --env "$2/env.dead" 2>&1)"; [ $? -ne 0 ] && echo "$out" | grep -q "соединение невозможно" && echo "$out" | grep -q -- "--from-dir"' _ "$ROOT" "$R"
+kill "$RNG_PID" 2>/dev/null
+
 # shellcheck source=part_docker.sh
 source "$ROOT/tests/scripts/part_docker.sh"
 # shellcheck source=part_diag.sh

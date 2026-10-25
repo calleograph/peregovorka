@@ -406,12 +406,15 @@ def test_certificates_documents_sip_templates_branding_roles_and_what_must_not_m
         assert r.status_code == 200, r.text
         sip_warn = [x for x in r.json()["checks"] if x["component"] == "SIP-телефония"]
         assert sip_warn and sip_warn[0]["status"] == "needs_attention" and "синхронизац" in sip_warn[0]["message"]
+        again = c.post("/api/v1/admin/config/checks")             # проверки можно повторить без повторного импорта
+        assert again.status_code == 200 and any(x["component"] == "SIP-телефония" for x in again.json()["checks"])
         box_b = c.app_obj.state.settings_svc.box
 
         async def check(db):
             sip = await db.get(SipProfile, sip_id)
             assert box_b.decrypt(sip.secret_enc, aad=f"sip_profile.{sip_id}".encode()) == "SIP-PASS-A"
             assert sip.lk_outbound_trunk_id is None and sip.lk_inbound_trunk_id is None, "идентификаторы транков старого LiveKit не переносятся"
+            assert sip.enabled is False, "SIP на новом сервере включает только администратор (старый сервер может ещё использовать линии АТС)"
             ca_row = (await db.execute(select(CaCertificate))).scalars().one()
             assert "BEGIN CERTIFICATE" in ca_row.pem and ca_row.label == "Корневой УЦ"
             doc = await db.get(LegalDocument, "privacy")
