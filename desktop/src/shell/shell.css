@@ -211,3 +211,8 @@ pre.log { margin: 0; max-height: 260px; overflow: auto; padding: 12px; backgroun
 }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Тема «Стекло» (светлое оформление по умолчанию): палитра — из общих токенов; фон и боковая панель — как в веб-интерфейсе (frontend/src/glass.css) */
+:root[data-theme="glass"] body { background: linear-gradient(180deg, #f4f8ff 0%, #e8f0fb 100%); }
+:root[data-theme="glass"] .side { background: color-mix(in srgb, var(--surface) 72%, transparent); border-right-color: color-mix(in srgb, var(--surface) 55%, var(--line)); backdrop-filter: blur(16px); }
+:root[data-theme="glass"] .side .tool[aria-current="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 18px -10px color-mix(in srgb, var(--accent) 60%, transparent); }

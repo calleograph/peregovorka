@@ -54,7 +54,8 @@ if (desktop && typeof document !== "undefined") {
   document.documentElement.classList.add("desktop-app");
   const theme = () => {
     const t = document.documentElement.getAttribute("data-theme");
-    desktopState({ theme: t === "dark" || t === "light" ? t : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light" });
+    const light = t === "light" || t === "glass" || t === "diamond" || t === "amber" || t === "corporate";            // «Стекло» и пастельные темы светлые независимо от темы Windows
+    desktopState({ theme: t === "dark" ? "dark" : light ? "light" : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light" });
   };
   theme();
   new MutationObserver(theme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

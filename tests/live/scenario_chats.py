@@ -174,10 +174,10 @@ async def main():
         box1 = await A.js("JSON.stringify(document.querySelector('.chat-win').getBoundingClientRect())")
         saved = await A.js("localStorage.getItem('pg:chat:rect')")
         S.check("окно перемещается за заголовок и запоминает положение", box0 != box1 and box1 is not None and bool(saved), f"{box0} → {box1}, под курсором {under}")
-        await A.js("[...document.querySelectorAll('.topnav a')].find(a => a.textContent === 'История').click()")
+        await A.js("[...document.querySelectorAll('.rail-nav a')].find(a => a.textContent === 'История').click()")
         await asyncio.sleep(1)
         S.check("окно остаётся открытым при переходе между разделами", await A.js("location.pathname === '/history' && !!document.querySelector('.chat-win')"))
-        await A.js("[...document.querySelectorAll('.topnav a')].find(a => a.textContent === 'Переговорки').click()")
+        await A.js("[...document.querySelectorAll('.rail-nav a')].find(a => a.textContent === 'Переговорки').click()")
         await A.js(f"{row}.click()")
         # ---- длинная история: 300 сообщений, подгрузка вверх и поиск
         await B.js(f"""(async () => {{ const me = await (await fetch('/api/v1/auth/me')).json();

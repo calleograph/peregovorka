@@ -2,7 +2,7 @@
 
 export type MenuItem =
   | { kind: "link"; key: string; label: string; to: string; hint?: string; icon?: string }
-  | { kind: "action"; key: string; label: string; onSelect: () => void; hint?: string; danger?: boolean; disabled?: boolean }
+  | { kind: "action"; key: string; label: string; onSelect: () => void; hint?: string; danger?: boolean; disabled?: boolean; checked?: boolean }
   | { kind: "text"; key: string; label: string }
   | { kind: "divider"; key: string };
 

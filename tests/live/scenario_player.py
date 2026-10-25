@@ -80,7 +80,7 @@ async def main():
     S.check("плеер открылся как плавающее окно", await A.wait_for("!!document.querySelector('.plr.full')", 10))
     S.check("нет затемнения и блокировки страницы", await A.js("!document.querySelector('.modal-back,.mp-back') && getComputedStyle(document.querySelector('.plr')).position==='fixed'"),
             str(await A.js("[...document.querySelectorAll('.modal-back,.mp-back')].map(e=>e.className+': '+e.innerText.slice(0,60))")))
-    S.check("страница под плеером доступна: ссылка «История» в шапке кликабельна (не перекрыта)", await A.js("(()=>{const a=[...document.querySelectorAll('.topnav a')].find(x=>x.textContent.includes('История'));const r=a.getBoundingClientRect();const e=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return a.contains(e)})()"))
+    S.check("страница под плеером доступна: ссылка «История» в шапке кликабельна (не перекрыта)", await A.js("(()=>{const a=[...document.querySelectorAll('.rail-nav a')].find(x=>x.textContent.includes('История'));const r=a.getBoundingClientRect();const e=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return a.contains(e)})()"))
     S.check("данные записи загружены (метаданные, длительность ≈ 14 с)", await A.wait_for("(()=>{const a=document.querySelector('.plr audio');return a&&a.readyState>=1&&a.duration>12&&a.duration<17})()", 15))
     # --- 2. волновая форма
     S.check("волновая форма нарисована по пикам (не обычная шкала)", await A.wait_for("!!document.querySelector('.plr .wf.has-peaks canvas')", 15))
@@ -167,7 +167,7 @@ async def main():
     S.check("плеер свернулся в компактное окно без остановки звука", await A.wait_for("!!document.querySelector('.plr.mini') && !document.querySelector('.plr audio').paused", 4))
     S.check("в мини-плеере нет стенограммы и тяжёлых элементов управления", await A.js("!document.querySelector('.plr .plr-tr') && !document.querySelector('.plr .plr-ctl')"))
     t_before = await A.js("document.querySelector('.plr audio').currentTime")
-    for path, name in (("a[href=\"/\"].topnav, .topnav a[href=\"/\"]", "Переговорки"), (".topnav a[href=\"/history\"]", "История")):
+    for path, name in (("a[href=\"/\"].rail-nav, .rail-nav a[href=\"/\"]", "Переговорки"), (".rail-nav a[href=\"/history\"]", "История")):
         await A.js(f"document.querySelector('{path}')?.click()"); await asyncio.sleep(1.2)
     await A.js("(()=>{window.history.pushState({}, '', '/admin'); window.dispatchEvent(new PopStateEvent('popstate'))})()"); await asyncio.sleep(1.5)
     st = await A.js("(()=>{const a=document.querySelector('.plr audio');return {mark:a&&a.__mark,paused:a&&a.paused,t:a&&a.currentTime,path:location.pathname,n:document.querySelectorAll('audio').length}})()")

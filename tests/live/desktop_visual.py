@@ -140,7 +140,7 @@ async def run_scale(scale, dark_too):
                     judge(f"{key}: мастер подключения", await layout(shell, SHELL_SEL), {"btn": 36, "input": 36})
                     await shell.js("document.querySelector('.side .org').click()")
                     await asyncio.sleep(0.4)
-                    await pa.js("document.querySelector('.topnav a[href=\"/\"]') && [...document.querySelectorAll('button')].find(b => /Чаты/.test(b.textContent))?.click()")
+                    await pa.js("document.querySelector('.rail-nav a[href=\"/\"]') && [...document.querySelectorAll('button')].find(b => /Чаты/.test(b.textContent))?.click()")
                     await asyncio.sleep(1.2)
                     await app.shot_window(f"v-{key}-chats")
                     judge(f"{key}: окно чатов", await layout(pa))

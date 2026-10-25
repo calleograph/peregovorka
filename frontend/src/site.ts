@@ -41,7 +41,7 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
 /** Тема пользователя применяется сразу при загрузке модуля — до ответа сервера, чтобы страница не мигала другой темой. */
 function applyUserThemeEarly(): void {
   if (typeof document === "undefined") return;
-  const t = getUserTheme();
+  const t = getUserTheme() ?? DEFAULT_THEME;
   if (t !== "system") document.documentElement.setAttribute("data-theme", t);
 }
 
@@ -86,9 +86,11 @@ export function palette(primary: string, second: string, dark: boolean): Palette
 const VARS = ["--accent", "--accent-hover", "--accent-soft", "--accent-text", "--link", "--grad", "--grad-hover", "--brand-b"];
 
 // ------------------------------------------------------------------------------------------ применение
-export type ThemeId = "system" | "light" | "dark" | "diamond" | "amber" | "corporate";
-/** Темы личного кабинета. «Как в системе» — по умолчанию; три пастельные темы имеют собственный акцент (фирменный цвет организации к ним не применяется). */
+export type ThemeId = "glass" | "system" | "light" | "dark" | "diamond" | "amber" | "corporate";
+/** Темы личного кабинета. «Стекло» — по умолчанию (пока пользователь не выбрал свою, а администратор не закрепил другую); «Как в системе» — светлая или тёмная по устройству;
+ *  три пастельные темы имеют собственный акцент (фирменный цвет организации к ним не применяется). */
 export const THEMES: { id: ThemeId; label: string; hint: string; swatch: [string, string, string] }[] = [
+  { id: "glass", label: "Стекло", hint: "Светлая, воздушная, с мягкими панелями — по умолчанию", swatch: ["#e8f0fc", "#fbfdff", "#2f6bff"] },
   { id: "system", label: "Как в системе", hint: "Светлая или тёмная — по настройке устройства", swatch: ["#f3f5f8", "#161b24", "#2456d3"] },
   { id: "light", label: "Светлая", hint: "Нейтральная светлая", swatch: ["#f3f5f8", "#ffffff", "#2456d3"] },
   { id: "dark", label: "Тёмная", hint: "Нейтральная тёмная", swatch: ["#0e1218", "#161b24", "#6f98ff"] },
@@ -97,22 +99,24 @@ export const THEMES: { id: ThemeId; label: string; hint: string; swatch: [string
   { id: "corporate", label: "Корпоративная", hint: "Спокойная голубая", swatch: ["#e8f0f7", "#f7fafd", "#2f6fa8"] },
 ];
 const THEME_KEY = "pg:theme";
-const NEUTRAL = new Set<ThemeId>(["system", "light", "dark"]);
+const NEUTRAL = new Set<ThemeId>(["glass", "system", "light", "dark"]);
 
-export function getUserTheme(): ThemeId {
+/** Тема, которую пользователь выбрал сам; null — не выбирал (тогда действует тема администратора или «Стекло»). */
+export function getUserTheme(): ThemeId | null {
   try { const v = localStorage.getItem(THEME_KEY) as ThemeId | null; if (v && THEMES.some((t) => t.id === v)) return v; } catch { /* хранилище недоступно */ }
-  return "system";
+  return null;
 }
-/** Тема этого пользователя (в браузере, как и звуки); «как в системе» — по умолчанию. Применяется сразу, без перезагрузки. */
+/** Тема этого пользователя (в браузере, как и звуки). Применяется сразу, без перезагрузки. */
 export function setUserTheme(t: ThemeId): void {
-  try { if (t === "system") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ }
+  try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ }
   applySite(current);
   emit();
 }
-/** Итоговая тема: выбор пользователя важнее темы, заданной администратором для установки; та, в свою очередь, важнее системной. */
-export function effectiveTheme(site: Site, user: ThemeId = getUserTheme()): ThemeId { return user !== "system" ? user : site.theme; }
+/** Итоговая тема: выбор пользователя важнее темы, закреплённой администратором («светлая» или «тёмная»); без того и другого — «Стекло». */
+export function effectiveTheme(site: Site, user: ThemeId | null = getUserTheme()): ThemeId { return user ?? (site.theme !== "system" ? site.theme : DEFAULT_THEME); }
+export const DEFAULT_THEME: ThemeId = "glass";
 
-export function isDark(site: Site, win: Window = window, user: ThemeId = getUserTheme()): boolean {
+export function isDark(site: Site, win: Window = window, user: ThemeId | null = getUserTheme()): boolean {
   const t = effectiveTheme(site, user);
   if (t !== "system") return t === "dark";
   return typeof win.matchMedia === "function" && win.matchMedia("(prefers-color-scheme: dark)").matches;
