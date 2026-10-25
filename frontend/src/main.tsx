@@ -7,7 +7,9 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles.css";
 import "./design.css";
 import "./glass.css";
+import { installCrystalsHotkey } from "./crystalsHotkey";
 
+installCrystalsHotkey();
 void loadSite();       // оформление установки: применяется к странице без пересборки (при недоступности сервера остаётся стандартное)
 
 createRoot(document.getElementById("root")!).render(
