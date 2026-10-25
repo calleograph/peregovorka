@@ -21,4 +21,6 @@ description: Выпуск версии Peregovorka — чек-лист VERSION �
 7. **Проверки** — тесты backend и frontend, сборка; при изменениях комнаты — живые сценарии `tests/live/`; после push — зелёный CI.
 8. **Выпуск** — `./scripts/release.sh patch|minor` (переносит Unreleased в раздел версии, пишет VERSION, коммит «Релиз X.Y.Z», тег), затем `./scripts/release.sh push`.
 
+Клиент Windows выпускается отдельно (`desktop-vX.Y.Z`, навык `desktop-dev`). Общая дисциплина выпуска — глобальный `release-ci-discipline` (если установлен); работа с CI — `github-actions-ci`.
+
 В отчёте владельцу перечисли, что сделано на каждом шаге, и честно отметь непроверенное.

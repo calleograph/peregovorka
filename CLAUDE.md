@@ -10,3 +10,12 @@
 
 **CHANGELOG — для пользователя. HISTORY — для разработчика. README — витрина продукта.**
 Перед каждым выпуском — чек-лист из [docs/VERSIONING.md](docs/VERSIONING.md) (навык `.claude/skills/release`): VERSION → CHANGELOG пользовательским языком → HISTORY → PROJECT → README → docs → CI → release.
+
+## Навыки
+
+Каталог, источники и лицензии — [.claude/skills/README.md](.claude/skills/README.md). Навыки подхватываются сами по описанию; перед работой в их области — сначала навык, потом своё решение.
+
+- `desktop/` → `desktop-dev` (команды проекта) + `electron-windows-client` (общие ловушки Electron/Windows). `electron-development` — только общие правила безопасности и IPC.
+- Выпуск сервера → `release`; клиента — `desktop-dev`. CI и его журналы → `github-actions-ci`. Непонятная ошибка → `debugging-wizard`.
+- Глобальные навыки пользователя (если установлены) дополняют, а не заменяют проектные: `release-ci-discipline`, `live-browser-smoke-testing` (страница комнаты), `public-repo-private-config-hygiene`, индекс `meeting-platform-skills-index`.
+- Нетривиальная повторяемая ошибка → одна строка «симптом → причина → как предотвращено» в «Ловушки» профильного навыка, а не журнал. Навыки — без частных данных.

@@ -122,7 +122,6 @@ www.postgresql.org
 www.python.org
 deb.debian.org
 ip:^2\.5\.29\.37$   # OID расширения «Extended Key Usage» (X.509), не адрес
-# сторонние навыки .claude/skills (без изменений, THIRD_PARTY.md): ссылки авторов, лицензия, примеры адресов
+# сторонние навыки .claude/skills (без изменений, .claude/skills/README.md): ссылки авторов, лицензия, примеры адресов
 jeffallan.github.io
 apache.org
-test.com

@@ -50,4 +50,4 @@ npm run check -- shots    --app dev      # снимки локальных эк�
 | Испытания окна | CDP окна (`scripts/cdp.mjs`) | Playwright `_electron` не подходит: ему нужен `--inspect` главного процесса, а он закрыт предохранителем в собранной программе. Два клиента CDP (`check.mjs` на Node и живой сценарий `tests/live/desktop_*.py` со стендом) — второй нужен для сценариев с сервером и главным процессом |
 | Убрано | `scripts/win-e2e.mjs` | заменён `scripts/check.mjs` (общий для разработчика, preview и CI) |
 
-Навыки для агентов (`.claude/skills`): свои — `release`, `desktop-dev`; сторонние — `electron-development`, `playwright-expert`, `debugging-wizard` (источники и лицензии — `.claude/skills/THIRD_PARTY.md`).
+Навыки для агентов (`.claude/skills`): свои — `release`, `desktop-dev`, `electron-windows-client`, `github-actions-ci`; сторонние — `electron-development`, `debugging-wizard` (каталог, источники и лицензии — `.claude/skills/README.md`).
