@@ -69,7 +69,7 @@ const game = (function () {
     gear: '<svg viewBox="0 0 24 24"><g fill="currentColor">' + [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<rect x="10.4" y="1.6" width="3.2" height="5" rx="1" transform="rotate(${a} 12 12)"/>`).join('') + '<circle cx="12" cy="12" r="6.6"/></g><circle cx="12" cy="12" r="2.6" fill="#2b1a73"/></svg>',
     help: '<svg viewBox="0 0 24 24"><path d="M8.6 8.8a3.5 3.5 0 1 1 5 3.2c-1 .5-1.6 1.2-1.6 2.3v.6" stroke="currentColor" stroke-width="2.8" fill="none" stroke-linecap="round"/><circle cx="12" cy="19.2" r="1.8" fill="currentColor"/></svg>',
     replay: '<svg viewBox="0 0 24 24"><path d="M5.6 9.2A7 7 0 1 1 5 13.5" stroke="currentColor" stroke-width="2.8" fill="none" stroke-linecap="round"/><path d="M3.5 4.5v6h6z" fill="currentColor"/></svg>',
-    home: '<svg viewBox="0 0 24 24"><path d="M3 11.2L12 3.8l9 7.4V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" fill="currentColor"/></svg>',
+    toHome: '<svg viewBox="0 0 24 24"><path d="M3 11.2L12 3.8l9 7.4V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" fill="currentColor"/></svg>',
     back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     star: (cls) => `<svg class="${cls}" viewBox="0 0 100 100"><path d="M50 5l12.6 30 32.4 2.7-24.6 21.2 7.5 31.6L50 73.6 22.1 90.5l7.5-31.6L5 37.7l32.4-2.7z" class="sf" stroke-width="5" stroke-linejoin="round"/><path d="M50 16l8 19 18 2-11 7" class="sh" fill="none" stroke-width="5" stroke-linecap="round"/></svg>`,
   };
@@ -346,7 +346,7 @@ const game = (function () {
         <button class="btn next" type="button"><span>Дальше</span>${ICON.play}</button>
         <div class="row2">
           <button class="rb" type="button" data-act="retry" aria-label="Пройти уровень заново" title="Заново">${ICON.replay}</button>
-          <button class="rb" type="button" data-act="home" aria-label="В меню" title="В меню">${ICON.home}</button>
+          <button class="rb" type="button" data-act="home" aria-label="В меню" title="В меню">${ICON.toHome}</button>
         </div>
       </section>
       <section class="scr end lose off">
@@ -355,7 +355,7 @@ const game = (function () {
         <div class="phrase lp">Совсем чуть-чуть не хватило</div>
         <div class="left"></div>
         <button class="btn again" type="button">${ICON.replay}<span>Повторить</span></button>
-        <div class="row2"><button class="rb" type="button" data-act="home" aria-label="В меню" title="В меню">${ICON.home}</button></div>
+        <div class="row2"><button class="rb" type="button" data-act="home" aria-label="В меню" title="В меню">${ICON.toHome}</button></div>
       </section>
       <section class="scr panel shop off" aria-label="Лавка усилителей">
         <div class="head"><h2>Лавка усилителей</h2><div class="coins"><img class="coin" alt="Осколки"><b class="cv">0</b></div></div>
