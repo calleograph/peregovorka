@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.38.0",
- "reviewed_at": "2026-10-24",
+ "release": "0.38.1",
+ "reviewed_at": "2026-10-25",
  "components": [
   {
    "key": "livekit_server",
@@ -417,7 +417,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11854",
+   "reviewed_latest": "server-b11870",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -446,7 +446,7 @@
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
    "deferred": {
-    "version": "server-b11854",
+    "version": "server-b11870",
     "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
     "issue": "DEP-1",
     "recheck": "2026-11-16",
@@ -1529,7 +1529,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-24",
+  "checked_at": "2026-10-25",
   "source": "osv.dev",
   "advisories": {
    "onnx==1.19.1": [
