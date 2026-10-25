@@ -12,6 +12,8 @@ import { loadSite, useSite } from "./site";
 import { versionLabel } from "./util";
 import { applyFavicon, pageTitle } from "./pageTitle";
 import NavMenu from "./components/NavMenu";
+import AppRail from "./components/AppRail";
+import ThemeMenu from "./components/ThemeMenu";
 import { ADMIN_QUICK, adminHref, type MenuItem } from "./navMenu";
 import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
@@ -134,23 +136,36 @@ function StaffApp() {
     { kind: "action", key: "out", label: "Выйти", danger: true, disabled: inMeeting, hint: inMeeting ? "сначала выйдите из комнаты" : undefined, onSelect: () => void logout() },
   ];
 
+  const rail = !inMeeting;            // во встрече остаётся прежняя верхняя панель (разделы открываются в новой вкладке); вне встречи — левая панель разделов
+  const userMenu = (
+    <NavMenu className="usermenu" align="right" items={userItems} newTab={inMeeting} title={me.user.display_name}
+             label={<><Avatar name={me.user.display_name} url={avatarUrl} size={28} /><span className="uname">{me.user.display_name}</span></>} />
+  );
   return (
-    <div className="shell">
-      <header className={`topbar ${burger ? "burger-open" : ""}`}>
-        {inMeeting
-          ? <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке"><Brand suffix=" ↗" /></a>
-          : <Link to="/" className="brand"><Brand /></Link>}
-        <button type="button" className="burger" aria-label="Меню" aria-expanded={burger} onClick={() => setBurger((b) => !b)}><span /><span /><span /></button>
-        <nav aria-label="Основная навигация" className="topnav">
-          <NavItem to="/" end newTab={inMeeting}>Переговорки</NavItem>
-          <NavItem to="/history" newTab={inMeeting}>История</NavItem>
-          <ChatNavButton />
-          {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab={inMeeting} />}
-        </nav>
-        <div className="spacer" />
-        <NavMenu className="usermenu" align="right" items={userItems} newTab={inMeeting} title={me.user.display_name}
-                 label={<><Avatar name={me.user.display_name} url={avatarUrl} size={28} /><span className="uname">{me.user.display_name}</span></>} />
-      </header>
+    <div className={`shell ${rail ? "has-rail" : ""}`}>
+      {rail && <AppRail isAdmin={me.user.is_admin} adminItems={adminItems} adminActive={pathname.startsWith("/admin")} />}
+      <div className="shell-col">
+      {rail ? (
+        <header className="topbar">
+          <Link to="/" className="brand topbar-brand"><Brand /></Link>
+          <div className="spacer" />
+          <ThemeMenu />
+          {userMenu}
+        </header>
+      ) : (
+        <header className={`topbar ${burger ? "burger-open" : ""}`}>
+          <a href="/" target="_blank" rel="noopener" className="brand" title="Откроется в новой вкладке"><Brand suffix=" ↗" /></a>
+          <button type="button" className="burger" aria-label="Меню" aria-expanded={burger} onClick={() => setBurger((b) => !b)}><span /><span /><span /></button>
+          <nav aria-label="Основная навигация" className="topnav">
+            <NavItem to="/" end newTab>Переговорки</NavItem>
+            <NavItem to="/history" newTab>История</NavItem>
+            <ChatNavButton />
+            {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab />}
+          </nav>
+          <div className="spacer" />
+          {userMenu}
+        </header>
+      )}
       <main>
         {wizard && <SetupWizard onGo={goAdmin} onClose={() => setWizard(false)} />}
         <Suspense fallback={<div className="muted">Загрузка…</div>}>
@@ -169,6 +184,7 @@ function StaffApp() {
       </main>
       <Suspense fallback={null}><PlayerHost /></Suspense>
       {!pathname.startsWith("/rooms/") && <AppFooter info={build} />}
+      </div>
       {help && <HelpDialog onClose={() => setHelp(false)} />}
       <ChatHost userId={me.user.id} />
       <CookieNotice />

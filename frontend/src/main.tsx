@@ -6,6 +6,7 @@ import { loadSite } from "./site";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles.css";
 import "./design.css";
+import "./glass.css";
 
 void loadSite();       // оформление установки: применяется к странице без пересборки (при недоступности сервера остаётся стандартное)
 

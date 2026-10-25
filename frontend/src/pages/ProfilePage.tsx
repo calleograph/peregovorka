@@ -7,7 +7,7 @@ import { Icon } from "../components/Icons";
 import { chatSoundEnabled, playChatSound, setChatSoundEnabled, setSoundVolume, soundVolume } from "../chatSound";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import { fmt } from "../util";
-import { THEMES, getUserTheme, setUserTheme, type ThemeId } from "../site";
+import { THEMES, effectiveTheme, setUserTheme, useSite, type ThemeId } from "../site";
 
 /** «Активные устройства»: сессии этой учётной записи; можно завершить любую (в том числе все остальные). Вход с другого устройства сессию на этом не завершает. */
 function ActiveDevices() {
@@ -35,13 +35,14 @@ function ActiveDevices() {
 }
 
 /** Личные звуковые уведомления комнаты (хранятся в браузере): сообщения чата, поднятая рука, общая громкость. */
-/** Тема оформления этого пользователя (хранится в браузере, как и звуки): «как в системе» по умолчанию, светлая, тёмная и три пастельные. */
+/** Тема оформления этого пользователя (хранится в браузере, как и звуки): «Стекло» по умолчанию, «как в системе», светлая, тёмная и три пастельные. */
 function ThemeSettings() {
-  const [cur, setCur] = useState<ThemeId>(getUserTheme);
+  const site = useSite();
+  const [cur, setCur] = useState<ThemeId>(() => effectiveTheme(site));
   return (
     <div className="card">
       <h2>Оформление</h2>
-      <p className="muted small" style={{ margin: "0 0 6px" }}>Тема интерфейса — только для вас, на этом устройстве. По умолчанию используется тема устройства.</p>
+      <p className="muted small" style={{ margin: "0 0 6px" }}>Тема интерфейса — только для вас, на этом устройстве. По умолчанию используется тема «Стекло».</p>
       <div className="theme-grid" role="group" aria-label="Тема оформления">
         {THEMES.map((t) => (
           <button key={t.id} type="button" className="theme-opt" aria-pressed={cur === t.id} onClick={() => { setUserTheme(t.id); setCur(t.id); }} title={t.hint}>

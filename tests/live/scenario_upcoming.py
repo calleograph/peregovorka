@@ -47,12 +47,12 @@ async def main():
         await A.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))"); await asyncio.sleep(0.3)
         S.check("подсказка закрывается по Esc", not await A.js("!!document.querySelector('.upc-pop')"))
         # фильтры
-        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent === 'Постоянные').click()"); await asyncio.sleep(0.4)
+        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent.startsWith('Постоянные')).click()"); await asyncio.sleep(0.4)
         S.check("фильтр «Постоянные»: только каталог переговорок", await A.js("!document.querySelector('.upc-section') && document.querySelectorAll('.rc-cell').length > 0"))
-        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent === 'Предстоящие').click()"); await asyncio.sleep(0.4)
+        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent.startsWith('Предстоящие')).click()"); await asyncio.sleep(0.4)
         S.check("фильтр «Предстоящие»: только встречи", await A.js("!!document.querySelector('.upc-section') && document.querySelectorAll('.rc-cell').length === 0"))
-        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent === 'Все').click()")
-        await A.js("[...document.querySelectorAll('.viewseg button')].find(b => /Компактно/.test(b.textContent)).click()"); await asyncio.sleep(0.6)
+        await A.js("[...document.querySelectorAll('.chips .chip')].find(b => b.textContent.startsWith('Все')).click()")
+        await A.js("[...document.querySelectorAll('.viewseg button')].find(b => /Список/.test(b.textContent)).click()"); await asyncio.sleep(0.6)
         S.check("компактный вид: встречи строками", await A.js("document.querySelectorAll('.upc-row').length > 0 && document.querySelectorAll('.upc-card').length === 0"))
         for w, h in ((1366, 650), (390, 844)):
             await A.send("Emulation.setDeviceMetricsOverride", width=w, height=h, deviceScaleFactor=1, mobile=w < 600); await asyncio.sleep(1.0)

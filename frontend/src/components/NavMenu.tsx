@@ -63,7 +63,7 @@ export default function NavMenu({ label, items, active = false, align = "left", 
             );
           }
           return (
-            <button key={it.key} data-mi role="menuitem" type="button" tabIndex={open ? 0 : -1} className={`dd-item ${it.danger ? "danger" : ""}`} disabled={it.disabled}
+            <button key={it.key} data-mi role={it.checked === undefined ? "menuitem" : "menuitemradio"} type="button" tabIndex={open ? 0 : -1} className={`dd-item ${it.danger ? "danger" : ""} ${it.checked ? "checked" : ""}`} disabled={it.disabled} aria-checked={it.checked}
                     onClick={() => { setOpen(false); it.onSelect(); }}>
               <span>{it.label}</span>{it.hint && <span className="dd-hint">{it.hint}</span>}
             </button>

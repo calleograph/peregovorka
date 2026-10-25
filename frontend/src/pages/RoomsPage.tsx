@@ -67,21 +67,32 @@ function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean, onManagePeer?: (i
   return { handler: onContextMenu(items), node, openFrom };
 }
 
-function CopyLinks({ r, onCopy, compact = true }: { r: Room; onCopy: (text: string, tone?: "ok" | "error") => void; compact?: boolean }) {
-  const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
+/** Вторичные действия комнаты: копировать ссылку для сотрудников и меню «⋯» (гостевая ссылка, управление, настройки — там, отдельно и с подписями). */
+function RoomActions({ r, onCopy, menu }: { r: Room; onCopy: Toast; menu: { openFrom: (el: HTMLElement) => void } }) {
+  const copy = async () => { const ok = await copyText(roomUrl(r)); onCopy(ok ? "Ссылка для сотрудников скопирована" : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   return (
-    <span className={`rc-actions ${compact ? "" : "inline"}`}>
-      <button type="button" className="copybtn reg" onClick={() => void copy(roomUrl(r), "Ссылка для сотрудников")}
-              title="Ссылка для сотрудников: вход по учётной записи" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={15} /></button>
-      {r.guest_token && (
-        <button type="button" className="copybtn guest" onClick={() => void copy(guestUrl(r), "Гостевая ссылка")}
-                title="Гостевая ссылка: вход без учётной записи, по приглашению" aria-label={`Скопировать гостевую ссылку: ${r.name}`}><Icon name="copy" size={15} /></button>
-      )}
+    <span className="rc-actions">
+      <button type="button" className="iconbtn" onClick={() => void copy()} title="Скопировать ссылку для сотрудников (вход по учётной записи)" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={16} /></button>
+      <button type="button" className="iconbtn rm-more" aria-label={`Действия: ${r.name}`} title="Другие действия (или правая кнопка мыши)" aria-haspopup="menu" onClick={(e) => menu.openFrom(e.currentTarget)}><Icon name="more" size={16} /></button>
     </span>
   );
 }
 
-/** Компактная карточка комнаты для режима «Компактно»: несколько колонок, длинное название — в две строки с подсказкой, вся карточка открывает комнату. */
+/** Возможности и особенности комнаты — одним набором для плитки и списка. */
+function RoomTags({ r }: { r: Room }) {
+  return (
+    <>
+      {r.lifetime === "temporary" && <span className="tag" title={r.lifecycle === "grace_period" ? "Все вышли: комната закроется, если никто не вернётся" : "Комната на одну встречу"}>{r.lifecycle === "grace_period" ? "Временная · ждёт возврата" : "Временная"}</span>}
+      {r.room_type === "peer" && <span className="tag" title="Равноправная комната: ведущего нет, у всех участников равные права">Равноправная</span>}
+      {r.room_type === "presentation" && <span className="tag" title="Участники слушают; говорят руководители и те, кому дали слово"><Icon name="screen" size={13} /> Презентация</span>}
+      {r.transcription_enabled && <span className="tag" title="Реплики записываются в стенограмму"><Icon name="transcript" size={13} /> Стенограмма</span>}
+      {r.auto_record ? <span className="tag warn" title="Запись звука начинается вместе со встречей"><Icon name="record" size={13} /> Запись сразу</span>
+        : r.record_audio && <span className="tag warn" title="Руководитель может включить запись звука"><Icon name="record" size={13} /> Запись</span>}
+    </>
+  );
+}
+
+/** Строка списка: те же данные, что в плитке, в одну плотную строку. Вся строка открывает комнату; кнопки справа — отдельно, без перекрытий. */
 function RoomMini({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number; onCopy: Toast; isAdmin: boolean; onManagePeer?: (id: string) => void }) {
   const menu = useRoomMenu(r, onCopy, isAdmin, onManagePeer);
   const live = r.active_meeting;
@@ -89,22 +100,20 @@ function RoomMini({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
   const navigate = useNavigate();
   const open = () => navigate(`/rooms/${r.slug}`);
   return (
-    <div className="rm" role="listitem" onContextMenu={menu.handler} style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
+    <div className={`rm ${live ? "is-live" : ""}`} role="listitem" onContextMenu={menu.handler} style={{ "--i": i } as CSSProperties} tabIndex={0} onClick={open}
          onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(); } }}>
-      <div className="rm-top">
-        <span className="rm-name" title={r.description ? `${r.name} — ${r.description}` : r.name}>{r.name}</span>
-        <span className={`pill ${live ? "live" : "free"}`} title={live ? `Идёт встреча, участников: ${live.participants}` : "Свободна"}><i className="pulse" aria-hidden />{live ? live.participants : "Свободна"}</span>
+      <RoomIcon name={r.name} icon={r.icon} size={38} className="rm-mark" />
+      <div className="rm-main">
+        <span className="rm-name" title={r.description ? `${r.name} — ${r.description}` : r.name}>{r.name}{r.has_password && <Icon name="lock" size={13} />}</span>
+        {r.description && <span className="rm-desc">{r.description}</span>}
       </div>
-      <div className="rm-sub small muted">
-        <code title={`Технический идентификатор (адрес комнаты): ${r.slug}`}>{r.slug}</code>
-        <span title={r.has_password ? "Для входа нужен пароль" : undefined}>{full ? "мест нет" : `до ${r.max_participants}`}{r.has_password ? " · 🔒" : ""}</span>
-      </div>
+      <div className="rm-tags"><RoomTags r={r} /></div>
+      <span className={`pill ${live ? "live" : "free"}`} title={live ? `Идёт встреча, участников: ${live.participants}` : "Свободна"}><i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants}` : "Свободна"}</span>
+      <span className="rm-cap" title="Предел участников"><Icon name="users" size={14} /> {full ? "мест нет" : `до ${r.max_participants}`}</span>
       {menu.node}
       <div className="rm-act" onClick={(e) => e.stopPropagation()}>
-        <CopyLinks r={r} onCopy={onCopy} compact={false} />
-        <span className="spacer" />
-        <button type="button" className="rm-more" aria-label={`Действия: ${r.name}`} title="Действия (или правая кнопка мыши)" aria-haspopup="menu" onClick={(e) => menu.openFrom(e.currentTarget)}><Icon name="more" size={16} /></button>
-        <Link to={`/rooms/${r.slug}`} className="btn mini primary">{full ? "Мест нет" : "Войти"}</Link>
+        <RoomActions r={r} onCopy={onCopy} menu={menu} />
+        <Link to={`/rooms/${r.slug}`} className="btn mini go">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"} <Icon name="arrowR" size={14} /></Link>
       </div>
     </div>
   );
@@ -118,7 +127,7 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
   return (
     <div className="rc-cell" style={{ "--i": i } as CSSProperties} onContextMenu={menu.handler}>
     {menu.node}
-    <CopyLinks r={r} onCopy={onCopy} />
+    <RoomActions r={r} onCopy={onCopy} menu={menu} />
     <Link to={`/rooms/${r.slug}`} className={`room-card rc ${live ? "is-live" : ""}`} style={{ "--i": i, "--ha": t.a, "--hb": t.b } as CSSProperties} onPointerMove={spotlight}
           aria-label={`${r.name}: ${live ? `идёт встреча, участников ${live.participants}` : "свободна"}`}>
       <span className="rc-glow" aria-hidden />
@@ -133,17 +142,10 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
         </div>
       </div>
       {r.description && <p className="rc-desc">{r.description}</p>}
-      <div className="rc-tags">
-        {r.lifetime === "temporary" && <span className="tag" title={r.lifecycle === "grace_period" ? "Все вышли: комната закроется, если никто не вернётся" : "Комната на одну встречу"}>{r.lifecycle === "grace_period" ? "Временная · ждёт возврата" : "Временная"}</span>}
-        {r.room_type === "peer" && <span className="tag" title="Равноправная комната: ведущего нет, у всех участников равные права">Равноправная</span>}
-        {r.room_type === "presentation" && <span className="tag" title="Участники слушают; говорят руководители и те, кому дали слово"><Icon name="screen" size={13} /> Презентация</span>}
-        {r.transcription_enabled && <span className="tag" title="Реплики записываются в стенограмму"><Icon name="transcript" size={13} /> Стенограмма</span>}
-        {r.auto_record ? <span className="tag warn" title="Запись звука начинается вместе со встречей"><Icon name="record" size={13} /> Запись сразу</span>
-          : r.record_audio && <span className="tag warn" title="Руководитель может включить запись звука"><Icon name="record" size={13} /> Запись</span>}
-      </div>
+      <div className="rc-tags"><RoomTags r={r} /></div>
       <div className="rc-foot">
         <span className="rc-cap"><Icon name="users" size={14} /> {live ? `${live.participants} из ${r.max_participants}` : `до ${r.max_participants}`}</span>
-        <span className="rc-go">{full ? "Мест нет" : live ? "Присоединиться" : "Войти"} <Icon name="arrowR" size={16} /></span>
+        <span className="rc-go btn mini go" aria-hidden>{full ? "Мест нет" : live ? "Присоединиться" : "Войти"} <Icon name="arrowR" size={15} /></span>
       </div>
     </Link>
     </div>
@@ -164,6 +166,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [view, setView] = useState<View>(() => { try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "tiles"; } catch { return "tiles"; } });
   const [toast, showToast] = useToast();
   const [upcoming, setUpcoming] = useState<UpcomingMeeting[]>([]);
+  const searchRef = useRef<HTMLInputElement>(null);
   const skew = useRef(0);                                   // часы сервера минус часы браузера: отсчёт не зависит от неточных часов компьютера
   const [now, setNow] = useState(() => Date.now());
   const [mineOnly, setMineOnly] = useState(true);           // администратор: по умолчанию только свои встречи
@@ -202,6 +205,15 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     if (filter === "free") return !r.active_meeting;
     return true;
   }), [rooms, q, filter]);
+  useEffect(() => {                                                // Ctrl+K (⌘K) — в строку поиска
+    const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); } };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
+  const counts: Record<Filter, number> = {
+    all: rooms?.length ?? 0, upcoming: upcoming.length, permanent: rooms?.length ?? 0,
+    live: (rooms ?? []).filter((r) => r.active_meeting).length, free: (rooms ?? []).filter((r) => !r.active_meeting).length,
+  };
   const adminView = isAdmin && upcoming.some((m) => !m.mine);
   const meetings = useMemo(() => upcoming.filter((m) => {
     if (adminView && mineOnly && !m.mine) return false;
@@ -247,13 +259,13 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
 
       {anything && (
         <div className="rooms-toolbar">
-          <label className="search"><Icon name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти встречу или комнату" aria-label="Найти встречу или комнату" /></label>
+          <label className="search"><Icon name="search" size={18} /><input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти встречу или комнату…" aria-label="Найти встречу или комнату" /><kbd aria-hidden>Ctrl K</kbd></label>
           <div className="seg viewseg" role="group" aria-label="Вид списка">
             <button type="button" aria-pressed={view === "tiles"} onClick={() => pickView("tiles")} title="Плитки"><Icon name="grid" size={15} /> Плитка</button>
-            <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Компактные карточки в несколько колонок"><Icon name="list" size={15} /> Компактно</button>
+            <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")} title="Список: те же данные в одну строку"><Icon name="list" size={15} /> Список</button>
           </div>
           <div className="chips" role="group" aria-label="Фильтр комнат">
-            {FILTERS.map(([id, label]) => <button key={id} type="button" className={`chip ${filter === id ? "on" : ""}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
+            {FILTERS.map(([id, label]) => <button key={id} type="button" className={`chip ${filter === id ? "on" : ""}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}<span className="n">{counts[id]}</span></button>)}
           </div>
         </div>
       )}
@@ -272,7 +284,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
       {rooms.length === 0 && upcoming.length > 0 && filter !== "upcoming" && <p className="muted small">Постоянных переговорок для вас нет.</p>}
       {view === "tiles"
         ? <div className="grid rooms-grid">{shown.map((r, i) => <RoomCard key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} onManagePeer={setPeerManage} />)}</div>
-        : <div className="rooms-compact" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} onManagePeer={setPeerManage} />)}</div>}
+        : <div className="rooms-rows" role="list">{shown.map((r, i) => <RoomMini key={r.id} r={r} i={i} onCopy={showToast} isAdmin={isAdmin} onManagePeer={setPeerManage} />)}</div>}
       {toast}
       {tempOpen && policy && <TempRoomDialog policy={policy} onClose={() => setTempOpen(false)} />}
       {peerOpen && peerPolicy && <PeerCreateDialog policy={peerPolicy} onClose={() => setPeerOpen(false)} />}

@@ -28,18 +28,21 @@ describe("оформление установки", () => {
     expect(mix("zzz", "#ffffff", 0.5)).toBe("zzz");
     expect(onColor("#ffffff")).toBe("#0a1226");
   });
-  it("тема: выбор пользователя важнее темы администратора, та — важнее системной", () => {
+  it("тема: выбор пользователя важнее темы администратора, та — важнее стандартной «Стекло»", () => {
     const s = (theme: Site["theme"]): Site => ({ ...DEFAULT_SITE, theme });
+    expect(effectiveTheme(s("system"), null)).toBe("glass");
+    expect(effectiveTheme(s("light"), null)).toBe("light");
     expect(effectiveTheme(s("system"), "system")).toBe("system");
-    expect(effectiveTheme(s("dark"), "system")).toBe("dark");
+    expect(effectiveTheme(s("dark"), "system")).toBe("system");
+    expect(effectiveTheme(s("dark"), null)).toBe("dark");
     expect(effectiveTheme(s("dark"), "amber")).toBe("amber");
     expect(effectiveTheme(s("light"), "corporate")).toBe("corporate");
   });
-  it("темы: по умолчанию «как в системе», идентификаторы уникальны, цветные темы описаны в стилях", () => {
-    expect(THEMES[0].id).toBe("system");
+  it("темы: по умолчанию «Стекло», идентификаторы уникальны, цветные темы описаны в стилях", () => {
+    expect(THEMES[0].id).toBe("glass");
     expect(new Set(THEMES.map((t) => t.id)).size).toBe(THEMES.length);
-    expect(THEMES.length).toBe(6);
-    const css = ["styles.css", "design.css"].map((f) => readFileSync(resolve(__dirname, f), "utf8")).join("\n");
+    expect(THEMES.length).toBe(7);
+    const css = ["styles.css", "design.css", "glass.css"].map((f) => readFileSync(resolve(__dirname, f), "utf8")).join("\n");
     for (const t of THEMES.filter((x) => x.id !== "system" && x.id !== "light")) expect(css, t.id).toContain(`:root[data-theme="${t.id}"]`);
   });
   it("пастельные темы: текст на кнопке и основной текст читаемы (≥ 4,5:1)", () => {
@@ -51,6 +54,18 @@ describe("оформление установки", () => {
       expect(contrast(v("bg"), v("text")), `${id}: текст`).toBeGreaterThanOrEqual(7);
       expect(contrast(v("surface"), v("muted")), `${id}: вторичный текст`).toBeGreaterThanOrEqual(4.5);
     }
+  });
+  it("тема «Стекло»: кнопка, основной и вторичный текст читаемы (≥ 4,5:1), стили темы описаны", () => {
+    const css = readFileSync(resolve(__dirname, "tokens.css"), "utf8");
+    expect(readFileSync(resolve(__dirname, "glass.css"), "utf8")).toContain(':root[data-theme="glass"]');
+    const block = css.slice(css.indexOf(':root[data-theme="glass"] {')).split("}")[0];
+    const v = (n: string) => block.match(new RegExp(`--${n}:\\s*(#[0-9a-fA-F]{6})`))![1];
+    expect(contrast(v("accent"), v("accent-text")), "кнопка").toBeGreaterThanOrEqual(4.5);
+    expect(contrast(v("surface"), v("text")), "текст").toBeGreaterThanOrEqual(7);
+    expect(contrast(v("surface"), v("muted")), "вторичный текст").toBeGreaterThanOrEqual(4.5);
+    expect(contrast(v("bg"), v("muted")), "вторичный текст на фоне").toBeGreaterThanOrEqual(4.5);
+    expect(contrast(v("ok-bg"), v("ok-text")), "статус «свободна»").toBeGreaterThanOrEqual(4.5);
+    expect(contrast(v("warn-bg"), v("warn-text")), "метка «запись»").toBeGreaterThanOrEqual(4.5);
   });
   it("заголовок вкладки берёт название системы из настроек сайта", () => {
     expect(pageTitle("/", true, "Встречи компании")).toBe("Переговорки · Встречи компании");

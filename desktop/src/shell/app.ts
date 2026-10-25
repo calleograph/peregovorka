@@ -16,9 +16,10 @@ app.append(side, main);
 function applyTheme(): void {
   const pref = S?.settings.theme;
   const t = pref === "light" || pref === "dark" ? pref : S?.orgs.find((o) => o.id === S!.activeId)?.theme;
-  if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
-  else document.documentElement.removeAttribute("data-theme");
+  const dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "glass");               // светлое оформление — «Стекло», как в веб-интерфейсе по умолчанию
 }
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);       // тема Windows изменилась — «как в Windows» следует за ней
 
 // ------------------------------------------------------------------------------------------ боковая панель
 function renderSide(): void {

@@ -1,3 +1,3 @@
 /* Тема пользователя — до загрузки приложения и стилей: страница (в том числе вход) сразу открывается в выбранной теме, без вспышки другой схемы.
    Отдельный файл, а не встроенный скрипт: политика CSP разрешает только свои скрипты. Ключ — тот же, что в src/site.ts (pg:theme). */
-try { var t = localStorage.getItem("pg:theme"); if (t && t !== "system") document.documentElement.setAttribute("data-theme", t); } catch (e) { /* хранилище недоступно — тема по системе */ }
+try { var t = localStorage.getItem("pg:theme") || "glass"; if (t !== "system") document.documentElement.setAttribute("data-theme", t); } catch (e) { /* хранилище недоступно — тема «Стекло» (по умолчанию) */ }
