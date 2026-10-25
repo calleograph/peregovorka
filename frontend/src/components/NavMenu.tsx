@@ -30,6 +30,16 @@ export default function NavMenu({ label, items, active = false, align = "left", 
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
   }, [open]);
 
+  // Меню, не помещающееся в окно (низкое окно, меню открывается вверх от нижней кнопки), получает прокрутку вместо обрезанных пунктов.
+  useEffect(() => {
+    const p = root.current?.querySelector<HTMLElement>(".dd-panel");
+    if (!p) return;
+    if (!open) { p.style.maxHeight = ""; p.style.overflowY = ""; return; }
+    const r = p.getBoundingClientRect(), vh = window.innerHeight, m = 8;
+    if (r.top < m) { p.style.maxHeight = `${r.height - (m - r.top)}px`; p.style.overflowY = "auto"; }
+    else if (r.bottom > vh - m) { p.style.maxHeight = `${r.height - (r.bottom - (vh - m))}px`; p.style.overflowY = "auto"; }
+  }, [open]);
+
   const openAndFocus = (last = false) => { setOpen(true); window.setTimeout(() => focusItem(last ? idx.length - 1 : 0), 20); };
   const onButtonKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); openAndFocus(e.key === "ArrowUp"); }

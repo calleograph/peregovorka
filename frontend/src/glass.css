@@ -47,7 +47,8 @@
 .rail .dd-panel { left: calc(100% + 12px); top: auto; bottom: 0; }
 .has-rail .table th { overflow-wrap: normal; word-break: normal; }                 /* заголовки таблиц не рвутся посреди слова при более узкой рабочей области */
 
-.has-rail .topbar { position: relative; z-index: 20; flex-wrap: nowrap; justify-content: flex-end; gap: 12px; padding: 16px 32px 0; background: transparent; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.has-rail .topbar { position: relative; z-index: 12;      /* ниже окна чатов (16): иначе «стеклянные» кнопки верхней зоны размывают окно, развёрнутое на весь экран */
+  flex-wrap: nowrap; justify-content: flex-end; gap: 12px; padding: 16px 32px 0; background: transparent; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .has-rail .topbar-brand { display: none; }
 .thememenu .dd-btn, .has-rail .usermenu .dd-btn { height: 42px; box-sizing: border-box; padding: 0 12px 0 10px; border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: var(--shadow-glass); color: var(--text); gap: 9px; }
 .has-rail .usermenu .dd-btn { padding-left: 6px; }
