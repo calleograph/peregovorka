@@ -221,3 +221,26 @@ test("политики из reg export (UTF-16): кириллица в назв�
   assert.equal(p.autostart, "tray");
   assert.deepEqual(policyFromValues(parseRegExport("")), { servers: [] }, "ключа нет — политики нет");
 });
+
+test("автозапуск: у нового профиля по умолчанию «в трей», у существующего — сохранённое значение, политика сильнее", async () => {
+  const { mkdtempSync, writeFileSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { SettingsStore, effective } = await import("../src/main/settings");
+  const dir = () => mkdtempSync(join(tmpdir(), "pg-settings-"));
+
+  const fresh = dir();
+  assert.equal(new SettingsStore(fresh).get().autostart, "tray");
+  assert.equal(JSON.parse(readFileSync(join(fresh, "settings.json"), "utf8")).autostart, "tray");      // записано сразу
+  new SettingsStore(fresh).patch({ autostart: "off" });
+  assert.equal(new SettingsStore(fresh).get().autostart, "off", "осознанное «не запускать» не перезаписывается");
+
+  const old = dir();
+  writeFileSync(join(old, "settings.json"), JSON.stringify({ closeAction: "quit", firstRunDone: true }));
+  assert.equal(new SettingsStore(old).get().autostart, "off", "профиль прежней версии без поля автозапуска остаётся как был");
+  const onlyOrgs = dir();
+  writeFileSync(join(onlyOrgs, "orgs.json"), "{}");
+  assert.equal(new SettingsStore(onlyOrgs).get().autostart, "off", "есть список организаций — профиль не новый");
+
+  assert.equal(effective(new SettingsStore(dir()).get(), { servers: [], autostart: "off" }).autostart, "off", "политика администратора сильнее");
+});

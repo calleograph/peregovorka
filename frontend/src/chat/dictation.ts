@@ -18,6 +18,8 @@ export class Dictation {
   private node: AudioWorkletNode | null = null;
   private done: ((ok: boolean) => void) | null = null;
   private finished = false;
+  private finals = 0;                 // сколько фрагментов текста пришло
+  private peak = 0;                   // наибольший уровень звука за диктовку (0…1)
   phase: DictationPhase = "idle";
 
   constructor(private h: DictationHandlers) {}
@@ -26,7 +28,7 @@ export class Dictation {
 
   async start(deviceId?: string): Promise<void> {
     if (this.phase === "starting" || this.phase === "listening") return;
-    this.finished = false;
+    this.finished = false; this.finals = 0; this.peak = 0;
     this.setPhase("starting");
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -56,12 +58,14 @@ export class Dictation {
   private async begin(): Promise<void> {
     try {
       this.ctx = new AudioContext({ sampleRate: 16000, latencyHint: "interactive" });
+      if (this.ctx.state === "suspended") await this.ctx.resume();            // без этого звук не идёт, если окружение не считает запуск действием пользователя
       await this.ctx.audioWorklet.addModule(WORKLET);
       const src = this.ctx.createMediaStreamSource(this.stream!);
       this.node = new AudioWorkletNode(this.ctx, "pg-pcm16", { numberOfInputs: 1, numberOfOutputs: 0 });
       this.node.port.onmessage = (e) => {
         const { pcm, level } = e.data as { pcm: ArrayBuffer; level: number };
         this.h.onLevel?.(level);
+        if (level > this.peak) this.peak = level;
         if (this.ws?.readyState === WebSocket.OPEN && this.phase === "listening") this.ws.send(pcm);
       };
       src.connect(this.node);
@@ -76,7 +80,7 @@ export class Dictation {
     try { m = JSON.parse(String(raw)); } catch { return; }
     switch (m.type) {
       case "ready": void this.begin(); break;
-      case "final": this.h.onFinal(Number(m.seq), String(m.text ?? "")); break;
+      case "final": if (String(m.text ?? "").trim()) this.finals++; this.h.onFinal(Number(m.seq), String(m.text ?? "")); break;
       case "busy": this.h.onPhase(this.phase, String(m.message ?? "Распознавание занято — часть фразы пропущена")); break;
       case "limit": void this.stop(); break;
       case "done": this.finish(true); break;
@@ -90,7 +94,8 @@ export class Dictation {
     this.releaseMic();
     try { this.ws?.close(1000); } catch { /* уже закрыт */ }
     this.ws = null;
-    this.setPhase("idle");
+    // сервер закончил, а текста нет, хотя звук был: человек должен это видеть, а не гадать, куда делась речь
+    this.setPhase("idle", ok && this.finals === 0 && this.peak > 0.02 ? "Речь не распознана: проверьте микрофон и повторите. Если повторяется — сообщите администратору." : undefined);
     this.done?.(ok);
   }
 
@@ -102,6 +107,16 @@ export class Dictation {
     this.ws = null;
     this.setPhase("error", message);
     if (!was) this.done?.(false);
+  }
+
+  /** Микрофон действительно пропал: дорожка закончилась или её устройства нет в списке. Событие `devicechange` само ни о чём не говорит: в Windows оно приходит и при открытии
+   *  микрофона, и при смене устройства по умолчанию, поэтому останавливать диктовку по нему одному нельзя. */
+  async micLost(): Promise<boolean> {
+    const t = this.stream?.getAudioTracks()[0];
+    if (!t || t.readyState !== "live") return true;
+    const id = t.getSettings().deviceId;
+    if (!id) return false;
+    try { return !(await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === "audioinput" && d.deviceId === id); } catch { return false; }
   }
 
   /** Остановить и дождаться окончательного текста (последняя фраза дорезается сервером). true — сервер подтвердил окончание. */

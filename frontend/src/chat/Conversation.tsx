@@ -393,7 +393,10 @@ function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: 
   useEffect(() => { if (edit) return; const h = window.setTimeout(() => writeDraft(chat.id, text), 300); return () => window.clearTimeout(h); }, [text, chat.id, edit]);
   useEffect(() => () => dict.current?.cancel(), []);                    // закрыли чат или переписку — микрофон освобождается
   useEffect(() => {
-    const onDev = () => { if (dict.current && (dict.current.phase === "listening")) { void dict.current.stop(); setDNote("Микрофон изменился — диктовка остановлена"); } };
+    const onDev = () => {
+      const d = dict.current;
+      if (d?.phase === "listening") void d.micLost().then((lost) => { if (lost && dict.current === d && d.phase === "listening") { void d.stop(); setDNote("Микрофон отключён — диктовка остановлена"); } });
+    };
     navigator.mediaDevices?.addEventListener?.("devicechange", onDev);
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", onDev);
   }, []);

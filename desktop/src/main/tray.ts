@@ -57,5 +57,7 @@ export class AppTray {
  *  стирает запись. Корпоративная установка (MSI) с политикой автозапуска сама прописывает запуск для всех пользователей — тогда своя запись не нужна. */
 export function applyAutostart(mode: Autostart, machineWide = false): void {
   if (!app.isPackaged) return;                         // запуск из исходников не прописывается в автозапуск
+  // проверочный запуск с отдельным профилем (--user-data-dir) не трогает автозапуск настоящей установки на этом компьютере; проверка записи — с PEREGOVORKA_AUTOSTART_TEST=1
+  if (process.argv.some((a) => a.startsWith("--user-data-dir=")) && !process.env.PEREGOVORKA_AUTOSTART_TEST) return;
   app.setLoginItemSettings({ name: "Peregovorka", openAtLogin: mode !== "off" && !machineWide, path: process.execPath, args: mode === "tray" ? ["--hidden"] : [] });
 }

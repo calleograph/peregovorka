@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api, type SubtitleData } from "../api";
 import { Icon } from "../components/Icons";
+import FloatClose from "../components/FloatClose";
 import { SPEEDS, clamp, fmtTime, keyAction, mediaErrorText, nextSpeed } from "../mediaPlayerMath";
 import { MIN_FULL, activeCues, clampRect, decodePeaks, defaultRect, momentLink, parsePrefs, type Cue, type Prefs, type Rect } from "./playerMath";
 import { closePlayer, setPlayerMode, usePlayer, type PlayerItem } from "./store";
@@ -198,7 +199,7 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
         {isMini
           ? <button type="button" className="btn mini ghost" onClick={() => setPlayerMode("full")} aria-label="Развернуть плеер" title="Развернуть"><Icon name="expand" size={15} /></button>
           : <button type="button" className="btn mini ghost" onClick={() => setPlayerMode("mini")} aria-label="Свернуть в мини-плеер" title="Свернуть в мини-плеер"><Icon name="mini" size={15} /></button>}
-        <button type="button" className="btn mini ghost" onClick={closePlayer} aria-label="Закрыть плеер (Esc)" title="Закрыть (Esc)"><Icon name="close" size={15} /></button>
+        <FloatClose onClick={closePlayer} label="Закрыть плеер (Esc)" title="Закрыть (Esc)" />
       </div>
 
       <div className="plr-main">

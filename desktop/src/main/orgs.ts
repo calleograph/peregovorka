@@ -401,6 +401,11 @@ export class Orgs {
       if (!own(req.securityOrigin) || !req.frame) { cb(null); return; }
       this.host.pickScreen(o, req, cb);
     });
+    // картинки страницы (значки комнат, аватарки) идут на сервер этой организации; сбой попадает в журнал (только путь, без параметров), а страница сама показывает запасной значок
+    const imgs = { urls: [`${o.rec.origin}/api/*`], types: ["image"] as ("image")[] };
+    const imgLog = (status: number | string, url: string) => this.ctx.log.warn("page.image_failed", { org: o.rec.id, status, path: url.split("?")[0].slice(0, 120) });
+    ses.webRequest.onCompleted(imgs, (d) => { if (d.statusCode >= 400) imgLog(d.statusCode, d.url); });
+    ses.webRequest.onErrorOccurred(imgs, (d) => { if (d.error !== "net::ERR_ABORTED") imgLog(d.error, d.url); });
     ses.on("will-download", (_e, item, wc) => this.host.download(o, item, wc));
     const ua = ses.getUserAgent().replace(/\s(Electron|peregovorka-desktop|Peregovorka)\/[\d.]+/gi, "");
     ses.setUserAgent(`${ua} PeregovorkaDesktop/${this.ctx.version}`);

@@ -1,6 +1,6 @@
 // Настройки приложения (пользователь) поверх политик (администратор). Политика, заданная явно, сильнее и блокирует поле в интерфейсе.
 import { execFile } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mergePolicy, parseRegExport, parseRegQuery, policyFromValues, type Autostart, type CloseAction, type Policy, type ProxyMode, type UpdateMode } from "../common/policy";
@@ -52,13 +52,27 @@ export function effective(s: Settings, p: Policy): Settings {
   };
 }
 
+/** Значения для профиля, которого раньше не было: автозапуск «свёрнутым в трей» — уведомления приходят сразу после входа в Windows.
+ *  Существующим профилям это не навязывается: у них действует сохранённое значение (в том числе осознанное «не запускать»). Политика администратора сильнее обоих. */
+export const NEW_PROFILE: Partial<Settings> = { autostart: "tray" };
+
+/** Профиль новый, если нет ни настроек, ни списка организаций (у любого работавшего профиля хотя бы один из файлов есть). */
+export function isNewProfile(dir: string): boolean {
+  return !existsSync(join(dir, "settings.json")) && !existsSync(join(dir, "orgs.json"));
+}
+
+export function loadSettings(raw: Partial<Settings>, isNew: boolean): Settings {
+  return { ...DEFAULTS, ...(isNew ? NEW_PROFILE : {}), ...raw, notifications: { ...DEFAULTS.notifications, ...(raw.notifications ?? {}) }, proxy: { ...DEFAULTS.proxy, ...(raw.proxy ?? {}) } };
+}
+
 export class SettingsStore {
   private file: string;
   private s: Settings;
   constructor(dir: string) {
     this.file = join(dir, "settings.json");
-    const raw = readJson<Partial<Settings>>(this.file, {});
-    this.s = { ...DEFAULTS, ...raw, notifications: { ...DEFAULTS.notifications, ...(raw.notifications ?? {}) }, proxy: { ...DEFAULTS.proxy, ...(raw.proxy ?? {}) } };
+    const isNew = isNewProfile(dir);
+    this.s = loadSettings(readJson<Partial<Settings>>(this.file, {}), isNew);
+    if (isNew) writeJson(this.file, this.s);        // значение по умолчанию записано: следующий запуск уже не считает профиль новым
   }
   get(): Settings { return this.s; }
   /** Правка от интерфейса: только известные поля и допустимые значения. */

@@ -62,6 +62,11 @@ async function start(extra) {
 }
 
 // -------------------------------------------------------------------------------------------- первый запуск
+// запись автозапуска проверяется только в одноразовом окружении CI (на компьютере разработчика проверочный запуск автозапуск не трогает)
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const AUTOSTART_REG = process.platform === "win32" && !!process.env.CI && APP !== "dev";
+if (AUTOSTART_REG) process.env.PEREGOVORKA_AUTOSTART_TEST = "1";
+
 async function firstrun() {
   const pfx = opt("untrusted-pfx");
   const untrusted = pfx ? await serve(18443, pfx, null) : null;
@@ -92,6 +97,13 @@ async function firstrun() {
       if (tab === "diag") { const d = await s.text(); check("диагностика: файлы программы в порядке", d.includes("в порядке"), d.slice(0, 400)); }
       await s.shot(join(OUT, `04-settings-${tab}.png`));
     }
+    await s.js("document.querySelector('#tab-general').click()");
+    await sleep(400);
+    check("автозапуск у нового профиля по умолчанию — «Свёрнутым в трей»", await s.js("[...document.querySelectorAll('.seg [aria-pressed=true]')].some((b) => b.textContent.trim() === 'Свёрнутым в трей')"));
+    if (AUTOSTART_REG) {
+      const run = (() => { try { return execFileSync("reg.exe", ["query", RUN_KEY, "/v", "Peregovorka"], { encoding: "utf8" }); } catch { return ""; } })();
+      check("Windows: запись автозапуска создана (в трей, ключ --hidden, путь к программе)", /Peregovorka\.exe/i.test(run) && run.includes("--hidden"), run.trim().slice(-200));
+    }
     await s.js("window.pg.call('shell:settings', { theme: 'dark' })");
     await s.js("document.querySelector('#tab-general').click()");
     await sleep(600);
@@ -106,6 +118,7 @@ async function firstrun() {
   } finally {
     app.kill();
     untrusted?.close();
+    if (AUTOSTART_REG) try { execFileSync("reg.exe", ["delete", RUN_KEY, "/v", "Peregovorka", "/f"], { stdio: "ignore" }); } catch { /* записи не было */ }
   }
 }
 

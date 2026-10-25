@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiError } from "../api";
-import { Icon } from "../components/Icons";
+import FloatClose from "../components/FloatClose";
 import type { LiveBus } from "../liveSocket";
 import BoardExportMenu from "./BoardExportMenu";
 import DrawioFrame, { type FrameHandle } from "./DrawioFrame";
@@ -108,8 +108,8 @@ export default function Whiteboard({ meetingId, bus, open, readOnly = false, fil
         {headExtra}
         <BoardExportMenu request={request} fileBase={fileBase} meetingId={meetingId} />
         <button className="btn mini" onClick={toggleFull} aria-pressed={full} title={full ? "Вернуть доску в окно (Esc)" : "Развернуть доску на весь экран"}>{full ? "⤡ Свернуть" : "⤢ На весь экран"}</button>
-        <button type="button" className="board-close" onClick={onClose} aria-label="Скрыть доску" title="Скрыть доску — вы остаётесь в звонке, правки продолжат приходить"><Icon name="close" size={16} /></button>
       </div>
+      <FloatClose corner onClick={onClose} label="Скрыть доску" title="Скрыть доску — вы остаётесь в звонке, правки продолжат приходить" />
       <p className="muted small board-hint">Фигуры — слева, перетащите на холст. Связь: наведите на фигуру и потяните за стрелку к другой фигуре. Цвета и стили — кнопка «Формат» вверху справа.</p>
       <DrawioFrame ref={frame} onMessage={onMessage} className="drawio-frame" title="Общая доска (draw.io)" />
     </section>

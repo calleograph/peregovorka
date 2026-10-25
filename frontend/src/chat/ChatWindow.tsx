@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Avatar from "../components/Avatar";
+import FloatClose from "../components/FloatClose";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { ConfirmDialog } from "../components/Dialogs";
 import { Icon } from "../components/Icons";
@@ -161,7 +162,6 @@ export default function ChatWindow() {
             <button type="button" className="btn ghost mini icon-btn" title="Настройки чатов" aria-label="Настройки чатов" onClick={() => setDialog({ kind: "prefs" })}><Icon name="gear" size={18} /></button>
             {!mobile && <button type="button" className="btn ghost mini icon-btn" title={maxed ? "Восстановить размер" : "Развернуть"} aria-label={maxed ? "Восстановить размер окна" : "Развернуть окно"}
                                 aria-pressed={maxed} onClick={() => setMaxed((m) => !m)}><Icon name="expand" size={17} /></button>}
-            <button type="button" className="btn ghost mini icon-btn" title="Закрыть (Esc)" aria-label="Закрыть чаты" onClick={close}><Icon name="close" size={18} /></button>
           </div>
           <label className="chat-search">
             <Icon name="search" size={16} />
@@ -225,6 +225,7 @@ export default function ChatWindow() {
               </div>
             )}
         </section>
+        <FloatClose corner onClick={close} label="Закрыть чаты" title="Закрыть (Esc)" />
         {!mobile && !maxed && <span className="chat-resize" onPointerDown={onSize} aria-hidden title="Изменить размер" />}
       </div>
       {menu.node}
