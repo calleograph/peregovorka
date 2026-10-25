@@ -253,6 +253,7 @@ jobs:
           $data = "$env:APPDATA\Peregovorka"
           if (-not $env:UPD_PUB) {
             Write-Host "::warning::ключ обновлений не настроен — проверено только обновление установщиком поверх (без приложения)"
+            New-Item -ItemType Directory -Force $data | Out-Null          # каталога данных может не быть: предыдущие шаги его удаляют
             "{""theme"":""dark""}" | Set-Content "$data\settings.json"
             Start-Process $setup -ArgumentList "/S" -Wait
           } else {
