@@ -100,6 +100,13 @@ jobs:
       - uses: actions/checkout@v7
       - run: python3 scripts/check_private_data.py
 
+  wiki:
+    # Исходники вики (wiki/): ссылки между страницами, шапка и блок «Что дальше», страницы в боковой панели, нет секретов и чужих доменов. Предупреждения о версии не блокируют.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/check_wiki.py
+
   version:
     # Версия задаётся одним файлом VERSION; CHANGELOG и frontend/package.json обязаны с ней совпадать, а тег (если это сборка тега) — быть vVERSION.
     runs-on: ubuntu-24.04
