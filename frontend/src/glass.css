@@ -44,7 +44,10 @@
 .rail .dd { width: 100%; }
 .rail .dd-label { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .rail .dd-caret { display: none; }
-.rail .dd-panel { left: calc(100% + 12px); top: auto; bottom: 0; }
+.rail .dd-panel { position: fixed; left: calc(var(--rail-w) + 6px); top: auto; bottom: 16px; min-width: 190px; max-width: 240px; padding: 4px; border-radius: 12px; }
+.rail .dd-item { padding: 6px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 500; line-height: 1.3; }
+.rail .dd-hint { display: none; }            /* меню левой панели — компактное, без строк пояснений */
+.rail .dd-sep { margin: 3px 4px; }
 .has-rail .table th { overflow-wrap: normal; word-break: normal; }                 /* заголовки таблиц не рвутся посреди слова при более узкой рабочей области */
 
 .has-rail .topbar { position: relative; z-index: 12;      /* ниже окна чатов (16): иначе «стеклянные» кнопки верхней зоны размывают окно, развёрнутое на весь экран */

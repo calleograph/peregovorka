@@ -34,8 +34,14 @@ export default function NavMenu({ label, items, active = false, align = "left", 
   useEffect(() => {
     const p = root.current?.querySelector<HTMLElement>(".dd-panel");
     if (!p) return;
-    if (!open) { p.style.maxHeight = ""; p.style.overflowY = ""; return; }
+    if (!open) { p.style.maxHeight = ""; p.style.overflowY = ""; p.style.top = ""; p.style.bottom = ""; return; }
     const r = p.getBoundingClientRect(), vh = window.innerHeight, m = 8;
+    if (root.current?.closest(".rail")) {            // меню левой панели — как контекстное: рядом с кнопкой, целиком в окне, прокрутка при нехватке места
+      const b = btn.current!.getBoundingClientRect(), h = Math.min(r.height, vh - 2 * m);
+      p.style.maxHeight = `${vh - 2 * m}px`; p.style.overflowY = "auto"; p.style.bottom = "auto";
+      p.style.top = `${Math.max(m, Math.min(b.bottom - h, vh - h - m)) - (root.current.closest(".rail")?.getBoundingClientRect().top ?? 0)}px`;
+      return;
+    }
     if (r.top < m) { p.style.maxHeight = `${r.height - (m - r.top)}px`; p.style.overflowY = "auto"; }
     else if (r.bottom > vh - m) { p.style.maxHeight = `${r.height - (r.bottom - (vh - m))}px`; p.style.overflowY = "auto"; }
   }, [open]);
