@@ -3,8 +3,11 @@ import { Link } from "react-router-dom";
 import { Modal } from "./Dialogs";
 import HelpDialog from "./HelpDialog";
 import { useSite } from "../site";
+import { desktop } from "../desktop";
+import { DESKTOP_SETUP_URL, DESKTOP_VERSION } from "../desktopDist";
+import { PROJECT_URL } from "../projectUrl";
 
-export const PROJECT_URL = "https://github.com/calleograph/peregovorka";
+export { PROJECT_URL };
 export const CHANGELOG_URL = `${PROJECT_URL}/blob/main/CHANGELOG.md`;
 
 export interface BuildInfo { version: string; commit: string; built_at?: string }
@@ -64,7 +67,7 @@ export function AppFooter({ info }: { info: BuildInfo | null }) {
             {site.footer_text && <><span className="sep" aria-hidden>·</span><span>{site.footer_text}</span></>}
             {site.org.url && <><span className="sep" aria-hidden>·</span><a href={site.org.url} target="_blank" rel="noopener noreferrer">{site.org.url.replace(/^https?:\/\//, "")}</a></>}
           </span>
-          <span><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Peregovorka (open source)</a><span className="sep" aria-hidden>·</span><a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer">Что нового</a></span>
+          <span><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Peregovorka (open source)</a>{!desktop && <><span className="sep" aria-hidden>·</span><a href={DESKTOP_SETUP_URL} rel="noopener noreferrer" title={`Скачать установщик Peregovorka для Windows ${DESKTOP_VERSION}`}>Приложение для Windows {DESKTOP_VERSION}</a></>}<span className="sep" aria-hidden>·</span><a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer">Что нового</a></span>
         </div>
       </footer>
       {open && <AboutDialog info={info} onClose={() => setOpen(false)} />}

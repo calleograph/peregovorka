@@ -42,6 +42,12 @@ const rm = readFileSync(readme, "utf8");
 if (!rm.includes("<!-- desktop-release:start -->")) die("в README.md нет блока <!-- desktop-release -->");
 writeFileSync(readme, rm.replace(/<!-- desktop-release:start -->\n[\s\S]*?(?=\n[^\n]*\n<!-- desktop-release:end -->)/, `<!-- desktop-release:start -->\n${block}`));
 git("add", "../README.md");
+// Ссылка на установщик в подвале сайта (frontend/src/desktopDist.ts) — тоже всегда на текущий выпуск.
+const dist = join(ROOT, "..", "frontend", "src", "desktopDist.ts");
+const ds = readFileSync(dist, "utf8");
+if (!/export const DESKTOP_VERSION = "[\d.]+";/.test(ds)) die("в frontend/src/desktopDist.ts нет строки DESKTOP_VERSION");
+writeFileSync(dist, ds.replace(/export const DESKTOP_VERSION = "[\d.]+";/, `export const DESKTOP_VERSION = "${version}";`));
+git("add", "../frontend/src/desktopDist.ts");
 
 for (const f of ["package.json", "package-lock.json"]) {
   const p = join(ROOT, f);
