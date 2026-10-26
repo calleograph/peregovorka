@@ -1426,7 +1426,7 @@
     "repo": "library/redis",
     "suffix": "-alpine"
    },
-   "digest": "sha256:57e4255cc971b1c8d6f8a6ca283ac01bc3ecdd914273ef6bfaede87aaecd6541",
+   "digest": "sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193",
    "deferred": {
     "version": "8",
     "reason": "Мажорное обновление: нужна проверка совместимости Redis 8 с очередями ASR, сессиями, E2EE-ключами и LiveKit SIP на стенде и оценка условий лицензии.",
