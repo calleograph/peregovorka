@@ -687,6 +687,7 @@ class OutlookSettings(_Group):
     guest_links: bool = False                                             # пускать по ссылке гостей без учётной записи (в открывшееся окно входа)
     tls_mode: str = "auto"                                                # где завершается HTTPS: auto (по признакам установки и proxy-заголовкам) | local (сам сервер) | proxy (reverse proxy) | gateway (WAF/балансировщик); локальный сертификат не требуется
     mail_kind: str = "exchange"                                           # exchange (локальный Exchange) | m365 (Exchange Online) — подсказки и инструкции; на работу не влияет
+    officejs_source: Literal["local", "cdn", "cdn_only"] = "local"        # откуда страницы надстройки берут Office.js: local (с этого сервера) | cdn (Office.js с CDN Microsoft, MicrosoftAjax.js с сервера) | cdn_only (всё с CDN, как до 0.40.1)
     sync_on_send: bool = False                                            # манифест подписывает надстройку на отправку приглашения (Smart Alerts): время и тема уходят на сервер. Нужен Mailbox 1.12
     sync_mode: str = "off"                                                # серверная сверка календаря: off | graph | ews
     sync_interval_minutes: int = Field(default=10, ge=1, le=1440)

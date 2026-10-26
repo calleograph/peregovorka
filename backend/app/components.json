@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.40.0",
+ "release": "0.40.1",
  "reviewed_at": "2026-10-26",
  "components": [
   {
@@ -253,7 +253,7 @@
   },
   {
    "key": "officejs",
-   "title": "Office.js (Outlook, CDN Microsoft)",
+   "title": "Office.js (Outlook, снимок CDN Microsoft в образе web)",
    "group": "Видеосвязь и телефония",
    "pinned": "1",
    "tested": "1",
@@ -263,7 +263,7 @@
    },
    "locations": [],
    "changelog": "https://learn.microsoft.com/office/dev/add-ins/",
-   "note": "Библиотека подключается страницами надстройки с CDN Microsoft без версии в адресе; проект проверяет наборы требований Mailbox (1.3, для передачи при отправке 1.12) и валидатором манифеста."
+   "note": "Библиотека (около 120 файлов) скачивается с officeapis.public.onecdn.static.microsoft при сборке образа web (frontend/scripts/vendor-officejs.mjs) и не закреплена по версии или хешу: источник, дата и SHA-256 — в /outlook/assets/SOURCE.json; запасной путь — тот же CDN. Проект проверяет наборы требований Mailbox (1.3, для передачи при отправке 1.12) и валидатором манифеста."
   },
   {
    "key": "transcribe_cpp",

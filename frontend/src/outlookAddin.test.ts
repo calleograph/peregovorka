@@ -273,6 +273,21 @@ describe("ядро и скрытые команды на фиктивном Offi
     expect(await mod.applyInvite(item, ROOM)).toEqual({ body: true, location: false });
   });
 
+  it("окно входа получает тот же источник Office.js, что и открывшая его страница (?officejs=); по умолчанию адрес без параметров", async () => {
+    delete store["pg_outlook_token"];
+    G.PG_OFFICE = { mode: "cdn", src: "cdn" };
+    const withMode = mod.login("browser");
+    expect(dialog!.url).toBe("https://meet.example.org/outlook/auth.html?step=browser&officejs=cdn");
+    dialog!.closeByUser();
+    await withMode.catch(() => undefined);
+    G.PG_OFFICE = { mode: "local", src: "local" };
+    const plain = mod.login();
+    expect(dialog!.url).toBe("https://meet.example.org/outlook/auth.html");
+    dialog!.closeByUser();
+    await plain.catch(() => undefined);
+    delete G.PG_OFFICE;
+  });
+
   it("вход: токен из окна сохраняется; закрытие окна — «отменено»; токен истёк (401) — новый вход и повтор", async () => {
     delete store["pg_outlook_token"];
     const pending = mod.login();

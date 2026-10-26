@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import ssl
 import time
@@ -45,6 +46,38 @@ async def _internal_api(request: Request) -> dict:
         return {"ok": ok, "message": text if ok is not True else "API надстройки отвечает внутри приложения."}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": f"API не ответил внутри приложения: {type(exc).__name__}."}
+
+
+async def _officejs_local(c: httpx.AsyncClient, base: str) -> dict | None:
+    """Локальная копия Office.js в образе web (кладётся при сборке, frontend/scripts/vendor-officejs.mjs): файлы отвечают, это скрипт нужной сборки, а не страница ошибки."""
+    got: dict[str, bytes] = {}
+    for name in ("office-js/office.js", "SOURCE.json"):
+        rr = await c.get(f"{base}/outlook/assets/{name}")
+        if rr.status_code != 200:
+            return None
+        got[name] = rr.content
+    head = got["office-js/office.js"][:20000]
+    if b"Office" not in head or head.lstrip()[:1] == b"<":
+        return None
+    try:
+        info = json.loads(got["SOURCE.json"])
+    except ValueError:
+        info = {}
+    # сборка, требующая MicrosoftAjax.js, под CSP страниц надстройки не запустится (он разбирает JSON через eval)
+    return {"source": str(info.get("source", ""))[:120], "built_at": str(info.get("built_at", ""))[:10], "files": info.get("files"), "no_ajax": b"osfLoadMsAjax = false" in head}
+
+
+def _officejs_verdict(mode: str, local: dict | None) -> tuple[bool | None, str]:
+    if local and not local["no_ajax"]:
+        return False, "Локальная копия Office.js требует MicrosoftAjax.js, который не работает под CSP страниц надстройки: пересоберите web (update.sh --force-build)."
+    if local:
+        src = f"источник {local['source']}, получены {local['built_at']}, файлов {local['files']}" if local["source"] else "сведения об источнике не найдены"
+        note = "" if mode == "local" else f" Сейчас выбран режим «{mode}»: локальные файлы не используются."
+        return True, f"Office.js лежит на сервере ({src}).{note}"
+    if mode == "cdn_only":
+        return None, "Локальной копии нет, выбран режим «всё с прежнего CDN Microsoft»: компьютерам с Outlook нужен доступ к CDN Microsoft."
+    return None, ("Локальной копии Office.js в образе нет (при сборке не было доступа к CDN Microsoft). Панель берёт библиотеку с CDN, поэтому компьютерам с Outlook нужен доступ к ней; "
+                  "чтобы положить файлы на сервер, пересоберите web с доступом к officeapis.public.onecdn.static.microsoft: update.sh --force-build.")
 
 
 async def _cfg(request: Request, db: AsyncSession):
@@ -106,14 +139,16 @@ async def status(request: Request, su: SessionUser = Depends(require_admin), db:
                     rr = await c.get(files_base + path)
                     if rr.status_code != 200:
                         bad.append(f"{path}: HTTP {rr.status_code}")
+                local = await _officejs_local(c, files_base)
             add("files", "Файлы надстройки", not bad if not bad else False, ("Страницы и значки надстройки доступны" + (" (проверено внутри Docker: публичный адрес с сервера недоступен)." if unreachable_files else " по адресу сервера."))
                 if not bad else "Недоступны: " + "; ".join(bad) + ". Проверьте обратный прокси (путь /outlook/).")
+            add("officejs", "Библиотека Microsoft Office.js", *_officejs_verdict(cfg.officejs_source, local))
         except httpx.HTTPError as exc:
             code, text = od.connect_failure(exc)
             add("files", "Файлы надстройки", None, text + " Проверьте их с рабочей станции (публичная страница /outlook).")
         add("client", "Доступность клиентам", None, "Достоверно проверяется из браузера клиента: откройте публичную страницу установки (/outlook) или нажмите «Проверить с этого компьютера».")
     try:
-        root = ET.fromstring(ol.manifest_xml(base or "https://example.invalid", st.settings.app_version, sync_on_send=cfg.effective_sync_on_send))
+        root = ET.fromstring(ol.manifest_xml(base or "https://example.invalid", st.settings.app_version, sync_on_send=cfg.effective_sync_on_send, officejs=cfg.officejs_source))
         add("manifest", "Манифест", True, f"Идентификатор надстройки {root.findtext('{http://schemas.microsoft.com/office/appforoffice/1.1}Id')} постоянен для адреса {base}.")
     except ET.ParseError:
         add("manifest", "Манифест", False, "Манифест не разбирается — сообщите разработчикам.")

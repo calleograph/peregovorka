@@ -66,7 +66,7 @@ async def main():
         S.check("интеграция включена (по умолчанию вход действует 7 суток)", await R.js(f"{ENABLE}({{}})") == 200)
         await A.start()
         S.check("сеанса браузера нет: панель от него не зависит", await A.js("(async () => { const me = await (await fetch('/api/v1/auth/me')).json(); await fetch('/api/v1/auth/logout', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token}}); return (await fetch('/api/v1/auth/me')).status; })()") == 401)
-        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*cdn.office.net*"])
+        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*onecdn.static.microsoft*", "*/outlook/assets/*", "*cdn.office.net*"])
         await A.send("Page.addScriptToEvaluateOnNewDocument", source=FAKE)
         await A.send("Emulation.setDeviceMetricsOverride", width=320, height=640, deviceScaleFactor=1, mobile=False)
 
@@ -138,10 +138,10 @@ async def main():
         S.check("повторная вставка: ссылка в приглашении, комната та же", st["link"] == partial and st["body"].count("<!--pg-conf-->") == 1)
         # 10: сеть недоступна — объяснение, а не зависание
         await A.js("sessionStorage.clear()"); await A.js("window.__m.put('init', true); window.__m.put('props', {}); window.__m.put('body', ''); window.__m.put('subject', 'Без сети'); window.__m.put('start', Date.now() + 2 * 3600e3); window.__m.put('end', Date.now() + 3 * 3600e3)")
-        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*cdn.office.net*", "*/api/v1/outlook/meetings*"])
+        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*onecdn.static.microsoft*", "*/outlook/assets/*", "*cdn.office.net*", "*/api/v1/outlook/meetings*"])
         st = await open_panel("document.body.dataset.state === 'error' || document.body.dataset.state === 'done'")
         S.check("нет связи с API: «Нет связи с сервером», кнопка «Попробовать снова»", st["msg"] and "Нет связи с сервером" in st["msg"] and st["go"] == "Попробовать снова", str(st)[:300])
-        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*cdn.office.net*"])
+        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*onecdn.static.microsoft*", "*/outlook/assets/*", "*cdn.office.net*"])
         await A.js("document.getElementById('go').click()")
         S.check("сеть вернулась — повтор успешен", await A.wait_for("document.body.dataset.state === 'done'", 15))
         # 11: вход истёк — форма с «Срок входа истёк», без окна

@@ -43,7 +43,7 @@ async def main():
     try:
         for c in (R, A, B):
             await c.start()
-            await c.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*"])        # настоящий office.js здесь не нужен: он подменён
+            await c.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*onecdn.static.microsoft*", "*/outlook/assets/*"])        # настоящий office.js здесь не нужен: он подменён
         S.check("администратор включил интеграцию", (await R.js(ENABLE)) == 200)
         # окно входа: страница auth.html на этом сервере выпускает токен и отдаёт его «Outlook» через messageParent
         await A.send("Page.addScriptToEvaluateOnNewDocument", source=FAKE_OFFICE)

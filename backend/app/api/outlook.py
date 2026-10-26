@@ -254,7 +254,8 @@ async def addin_diag(request: Request):
     page = v("pg", 12) if v("pg", 12) in ("taskpane", "commands", "auth") else "?"
     dm = v("dm", 4)
     parts = [f"страница {page}", f"режим IE {dm}" if dm else "", f"Promise {v('p', 10)}", f"fetch {v('f', 10)}",
-             "Office.js не загружена" if v("o", 10) == "undefined" else "Office.js загружена", "контекст Office есть" if v("oc", 2) == "1" else "контекста Office нет",
+             "Office.js не загружена" if v("o", 10) == "undefined" else "Office.js загружена", f"источник {v('os', 30)}" if v("os", 30) else "", f"Sys (MicrosoftAjax) {v('sys', 10)}" if v("sys", 10) else "",
+             "контекст Office есть" if v("oc", 2) == "1" else "контекста Office нет",
              f"через {v('ms', 7)} мс", v("why", 160), f"клиент {v('h', 20)} {v('pl', 20)} {v('cl', 60)}".strip() if v("h", 20) or v("cl", 60) else "",
              f"код {v('code', 30)}/{v('st', 20)}" if v("code", 30) else ""]
     request.app.state.journal.emit("outlook", ev[0], level=ev[1], ip=client_ip(request), client=" ".join((request.headers.get("user-agent") or "").split())[:160] or None,
@@ -447,4 +448,4 @@ async def manifest(request: Request, db: AsyncSession = Depends(get_db)):
     base = ol.public_url(s.app_public_url, cfg)
     if not cfg.enabled or not base.startswith("https://"):
         raise HTTPException(status_code=404, detail="Интеграция выключена или не задан публичный HTTPS-адрес.")
-    return Response(ol.manifest_xml(base, s.app_version, sync_on_send=cfg.effective_sync_on_send), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})
+    return Response(ol.manifest_xml(base, s.app_version, sync_on_send=cfg.effective_sync_on_send, officejs=cfg.officejs_source), media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="peregovorka-outlook-manifest.xml"', "Cache-Control": "no-store"})

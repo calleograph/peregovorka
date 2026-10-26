@@ -260,7 +260,7 @@ def _readme(base: str, version: str, cfg: OutlookSettings) -> str:
 
 def build_package(base: str, version: str, cfg: OutlookSettings) -> bytes:
     """ZIP-пакет для установки администратором Exchange / Microsoft 365."""
-    files = {"Peregovorka-Outlook.xml": ol.manifest_xml(base, version, sync_on_send=cfg.effective_sync_on_send), "README.txt": _readme(base, version, cfg),
+    files = {"Peregovorka-Outlook.xml": ol.manifest_xml(base, version, sync_on_send=cfg.effective_sync_on_send, officejs=cfg.officejs_source), "README.txt": _readme(base, version, cfg),
              "Install-OutlookAddin.ps1": BOM + INSTALL_PS1, "Test-OutlookAddin.ps1": BOM + TEST_PS1,
              "Uninstall-OutlookAddin.ps1": BOM + UNINSTALL_PS1}
     buf = io.BytesIO()

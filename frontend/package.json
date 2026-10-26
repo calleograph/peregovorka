@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "vendor:officejs": "node scripts/vendor-officejs.mjs",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },

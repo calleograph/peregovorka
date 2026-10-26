@@ -20,7 +20,7 @@ async def main():
         S.check("интеграция включена, гости разрешены", await R.js(f"{ENABLE}({{guest_links: true}})") == 200)
         await A.start()
         await A.js("(async () => { const me = await (await fetch('/api/v1/auth/me')).json(); await fetch('/api/v1/auth/logout', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token}}); })()")
-        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*cdn.office.net*"])
+        await A.send("Network.setBlockedURLs", urls=["*appsforoffice.microsoft.com*", "*onecdn.static.microsoft*", "*/outlook/assets/*", "*cdn.office.net*"])
         await A.send("Page.addScriptToEvaluateOnNewDocument", source=FAKE)
         await A.send("Emulation.setDeviceMetricsOverride", width=340, height=700, deviceScaleFactor=1, mobile=False)
 

@@ -10,7 +10,7 @@
   function enc(v) { return encodeURIComponent(String(v === undefined || v === null ? "" : v).substring(0, 160)); }
   function env() {
     return { dm: d.documentMode || "", p: typeof w.Promise, f: typeof w.fetch, x: typeof w.XMLHttpRequest,
-      o: typeof w.Office, oc: (w.Office && w.Office.context) ? 1 : 0, ls: (function () { try { return w.localStorage ? 1 : 0; } catch (e) { return 0; } })() };
+      o: typeof w.Office, oc: (w.Office && w.Office.context) ? 1 : 0, sys: typeof w.Sys, os: w.PG_OFFICE ? w.PG_OFFICE.mode + ":" + w.PG_OFFICE.src : "", ls: (function () { try { return w.localStorage ? 1 : 0; } catch (e) { return 0; } })() };
   }
   function beacon(e, extra) {
     try {
@@ -38,7 +38,7 @@
     if (w.PG_BOOT.ready) return;
     var v = env(), why;
     if (v.dm && v.dm < 9) why = "Outlook открыл страницу в режиме совместимости Internet Explorer " + v.dm + " (нужен режим IE 11 или новее).";
-    else if (v.o === "undefined") why = "Библиотека Office.js не загрузилась с appsforoffice.microsoft.com (нет доступа с этого компьютера или блокирует прокси).";
+    else if (v.o === "undefined") why = "Библиотека Office.js не загрузилась (" + (v.os || "источник неизвестен") + "): нет файлов на сервере и нет доступа к CDN Microsoft с этого компьютера, либо их блокирует прокси.";
     else if (!v.oc) why = "Office.js загружена, но Outlook не передал странице контекст надстройки.";
     else why = "Office инициализирован, но страница не завершила запуск.";
     beacon("init_timeout", { why: why });

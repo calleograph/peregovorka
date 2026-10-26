@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 // гарантированно не работает: синтаксис ES5, порядок подключения, запросы через XMLHttpRequest, полифил Promise, самодиагностика запуска.
 const dir = new URL("../public/outlook/", import.meta.url);
 const read = (f: string) => readFileSync(new URL(f, dir), "utf-8");
-const SCRIPTS = ["boot.js", "polyfill.js", "commands.js", "taskpane.js", "auth.js"];
+const SCRIPTS = ["boot.js", "polyfill.js", "ms-loader.js", "ms-fallback.js", "commands.js", "taskpane.js", "auth.js"];
 
 describe("надстройка Outlook: Internet Explorer 11 и режим совместимости", () => {
   it("все скрипты надстройки — ES5 (иначе IE 11 не разберёт файл, и Office не запустит надстройку)", () => {
@@ -39,10 +39,44 @@ describe("надстройка Outlook: Internet Explorer 11 и режим со�
     for (const f of ["taskpane.html", "commands.html", "auth.html"]) {
       const h = read(f);
       expect(h, f).toMatch(/<meta charset="utf-8">\s*<meta http-equiv="X-UA-Compatible" content="IE=edge">/);
-      const boot = h.indexOf("/outlook/boot.js"), poly = h.indexOf("/outlook/polyfill.js"), office = h.indexOf("appsforoffice.microsoft.com");
+      const boot = h.indexOf("/outlook/boot.js"), poly = h.indexOf("/outlook/polyfill.js"), office = h.indexOf("/outlook/ms-loader.js");
       expect(boot > 0 && boot < poly && poly < office, f).toBe(true);
+      expect(h, f).not.toMatch(/<script[^>]+src="https?:\/\//);                 // библиотеки Microsoft подключает только ms-loader.js: источник выбирается в одном месте
     }
     expect(read("taskpane.html")).not.toMatch(/<use href="[^"]+"\/>/);          // у каждого значка есть xlink:href (IE 11)
+  });
+
+  /** Запуск ms-loader.js / ms-fallback.js в подставной среде: собирает всё, что скрипты пишут через document.write. */
+  function loadLibs(search: string, hasOffice: boolean) {
+    const written: string[] = [];
+    const w: Record<string, unknown> = { location: { search } };
+    if (hasOffice) w.Office = {};
+    const ctx = vm.createContext({ window: w, document: { write: (s: string) => written.push(s) } });
+    vm.runInContext(read("ms-loader.js"), ctx);
+    const first = [...written];
+    if (written.some((t) => t.includes("ms-fallback.js"))) vm.runInContext(read("ms-fallback.js"), ctx);          // выполняется после локального office.js, только если его написали
+    return { first, all: written, office: w.PG_OFFICE as { mode: string; src: string } };
+  }
+  const srcs = (a: string[]) => a.map((t) => /src="([^"]+)"/.exec(t)![1]);
+
+  it("ms-loader: по умолчанию Office.js с этого сервера (MicrosoftAjax не подключается: он ломается под CSP), CDN только запасной путь", () => {
+    const ok = loadLibs("", true);
+    expect(srcs(ok.first)).toEqual(["/outlook/assets/office-js/office.js", "/outlook/ms-fallback.js"]);
+    expect(srcs(ok.all)).toHaveLength(2);                                    // Office есть — запасной путь не нужен
+    expect(ok.office).toEqual({ mode: "local", src: "local" });
+    const lost = loadLibs("?et=1", false);                                    // локальный office.js не загрузился (нет файла в образе)
+    expect(srcs(lost.all).pop()).toBe("https://officeapis.public.onecdn.static.microsoft/1/office.js");
+    expect(lost.office.src).toBe("cdn_fallback");
+  });
+
+  it("ms-loader: режимы cdn и cdn_only (в обоих — только Office.js); неизвестное значение и посторонние параметры безопасно дают local", () => {
+    expect(srcs(loadLibs("?officejs=cdn", false).all)).toEqual(["https://officeapis.public.onecdn.static.microsoft/1/office.js"]);
+    expect(srcs(loadLibs("?a=1&officejs=cdn_only", false).all)).toEqual(["https://appsforoffice.microsoft.com/lib/1/hosted/office.js"]);
+    for (const q of ["?officejs=evil", "?officejs=%22%3E%3Cscript%3E", "?xofficejs=cdn"]) {
+      const r = loadLibs(q, true);
+      expect(r.office.mode, q).toBe("local");
+      expect(srcs(r.all).every((s) => s.startsWith("/outlook/")), q).toBe(true);     // в document.write не попадает ничего из адреса страницы
+    }
   });
 
   it("CSS: у каждого значения через var() есть обычное значение перед ним (IE 11 не знает переменных)", () => {

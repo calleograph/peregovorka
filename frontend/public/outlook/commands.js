@@ -160,7 +160,7 @@
     forbidden: ["Нет прав", "Создавать конференции из Outlook вам не разрешено. Обратитесь к администратору.", "server"],
     disabled: ["Интеграция выключена", "Администратор выключил интеграцию с Outlook в Peregovorka.", "server"],
     no_office: ["Откройте в Outlook", "Эта страница работает только внутри Outlook.", "client"],
-    office_js_missing: ["Office.js не загрузился", "Не загрузилась библиотека Microsoft Office.js. Проверьте доступ к appsforoffice.microsoft.com или сообщите администратору.", "client"],
+    office_js_missing: ["Office.js не загрузился", "Не загрузилась библиотека Microsoft Office.js. Сообщите администратору: в журнале Outlook (администрирование) указан источник библиотеки.", "client"],
     office_timeout: ["Outlook не ответил", "Outlook не ответил вовремя. Закройте и снова откройте окно встречи.", "client"],
     office_error: ["Outlook вернул ошибку", "Outlook не выполнил действие. Закройте и снова откройте окно встречи.", "client"],
     unsupported: ["Функция недоступна", "Эта версия Outlook не поддерживает нужное действие. Обновите Outlook или воспользуйтесь Outlook в браузере.", "client"],
@@ -339,6 +339,14 @@
     });
   }
 
+  /** Окно входа получает тот же источник Office.js, что и страница, которая его открыла (параметр ?officejs=, см. ms-loader.js). */
+  function dialogQuery(step) {
+    var q = [];
+    if (step) q.push("step=" + step);
+    if (root.PG_OFFICE && root.PG_OFFICE.mode && root.PG_OFFICE.mode !== "local") q.push("officejs=" + root.PG_OFFICE.mode);
+    return q.length ? "?" + q.join("&") : "";
+  }
+
   /** step = "browser": панель уже знает, что нужен дополнительный шаг (2FA, CAPTCHA) — окно сразу открывает основное приложение, без своей формы. */
   function login(step) {
     return new Promise(function (resolve, reject) {
@@ -353,7 +361,7 @@
       };
       var waitTimer = setTimeout(function () { finish(reject, PgError(dlg ? "auth_timeout" : "dialog_failed", "auth", "окно входа не ответило")); }, T.dialogOpen);
       try {
-        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html" + (step ? "?step=" + step : ""), { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
+        Office.context.ui.displayDialogAsync(root.location.origin + "/outlook/auth.html" + dialogQuery(step), { height: 70, width: 32, promptBeforeOpen: false }, function (res) {
           if (res.status !== Office.AsyncResultStatus.Succeeded) {
             finish(reject, PgError("dialog_failed", "auth", res.error ? res.error.code + " " + res.error.message : ""));
             return;

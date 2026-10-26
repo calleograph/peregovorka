@@ -17,6 +17,12 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
 RUN npm run build
+# Office.js для надстройки Outlook кладётся в образ (dist/outlook/assets/, источник — официальный CDN Microsoft): прежняя сборка библиотеки в Outlook Web App
+# локального Exchange требует MicrosoftAjax.js, а тот не работает под CSP страниц надстройки («Ошибка настройки»); сборка с officeapis… его не требует.
+# Сбой не роняет сборку: каталог не создаётся, панель берёт Office.js с CDN, а «Интеграции → Microsoft Outlook → Проверки» показывает, что локальной копии
+# нет (повторить: update.sh --force-build).
+COPY scripts ./scripts
+RUN node scripts/vendor-officejs.mjs dist
 # Сведения о сборке для проверки verify.sh (должны совпадать с git HEAD): отдельный слой в конце, кэш npm не сбрасывается.
 ARG APP_VERSION=0.0.0
 ARG APP_GIT_COMMIT=unknown
