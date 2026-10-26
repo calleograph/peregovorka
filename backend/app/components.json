@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.40.4",
+ "release": "0.41.0",
  "reviewed_at": "2026-10-26",
  "components": [
   {
@@ -1426,7 +1426,7 @@
     "repo": "library/redis",
     "suffix": "-alpine"
    },
-   "digest": "sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193",
+   "digest": "sha256:6ba19c50b56777f5c11c58eff8ddb69d0d5f27ba131cffb63f180ccfd43c66af",
    "deferred": {
     "version": "8",
     "reason": "Мажорное обновление: нужна проверка совместимости Redis 8 с очередями ASR, сессиями, E2EE-ключами и LiveKit SIP на стенде и оценка условий лицензии.",

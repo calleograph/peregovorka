@@ -55,7 +55,7 @@ services:
     logging: *default-logging
 
   redis:
-    image: redis:7-alpine@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193
+    image: redis:7-alpine@sha256:6ba19c50b56777f5c11c58eff8ddb69d0d5f27ba131cffb63f180ccfd43c66af
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет
