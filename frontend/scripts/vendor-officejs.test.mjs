@@ -2,9 +2,10 @@ import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SOURCES, looksLikeScript, noMsAjax, plan, vendor } from "./vendor-officejs.mjs";
+import { SOURCES, looksLikeScript, noMsAjax, plan, validFile, vendor } from "./vendor-officejs.mjs";
 
 const OFFICE = `osfLoadMsAjax = false;\n/* Office JavaScript API library */ var OSF=OSF||{};OSF.HostSpecificFileVersionDefault="16.00";OSF.HostSpecificFileVersionMap={excel:{web:"16.00"},outlook:{android:"16.00",mac:"16.00",web:"16.01",win32:"16.02"},word:{web:"16.00"}};OSF.SupportedLocales={"en-us":true,"ru-ru":true,"sr-latn-rs":true};${"x".repeat(300)}`;
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(80)]);
 const dirs = [];
 const tmp = async () => { const d = await mkdtemp(join(tmpdir(), "vend-")); dirs.push(d); return d; };
 afterEach(async () => { vi.unstubAllGlobals(); for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -20,6 +21,9 @@ function cdn(files, base) {
 const FULL = (extra = {}) => ({
   "office.js": OFFICE,
   ...Object.fromEntries(["outlook-android-16.00", "outlook-mac-16.00", "outlook-web-16.01", "outlook-win32-16.02"].map((n) => [n + ".js", `// ${n}\n${"h".repeat(300)}`])),
+  "AgaveErrorUX/index.html": '<!DOCTYPE html><html><body><script src="AgaveErrorUX.js"></script>' + " ".repeat(300) + "</body></html>",
+  "AgaveErrorUX/AgaveErrorUX.js": `// agave\n${"a".repeat(300)}`, "AgaveErrorUX/style/AgaveErrorUX.css": `html{margin:0}${" ".repeat(300)}`,
+  ...Object.fromEntries(["moe_status_icons", "agavedefaulticon96x96"].map((n) => [`AgaveErrorUX/images/${n}.png`, PNG])),
   ...Object.fromEntries(["en-us", "ru-ru", "sr-latn-rs"].flatMap((l) => [`${l}/office_strings.js`, `${l}/outlook_strings.js`].map((f) => [f, `// ${f}\n${"s".repeat(300)}`]))),
   ...extra,
 });
@@ -47,6 +51,14 @@ describe("vendor-officejs: состав файлов выводится из с�
     expect(log.mock.calls.join("\n")).toMatch(/требует MicrosoftAjax/);
   });
 
+  it("страница подтверждения доверия к узлу Outlook (AgaveErrorUX) входит в обязательный набор с точным регистром имён", () => {
+    const p = plan(OFFICE);
+    for (const f of ["AgaveErrorUX/index.html", "AgaveErrorUX/AgaveErrorUX.js", "AgaveErrorUX/style/AgaveErrorUX.css", "AgaveErrorUX/images/moe_status_icons.png"]) expect(p.required).toContain(f);
+    expect(validFile("AgaveErrorUX/index.html", Buffer.from("<html>proxy error</html>" + " ".repeat(300)))).toBe(false);
+    expect(validFile("AgaveErrorUX/images/office.png", Buffer.from("<html>not a png</html>" + " ".repeat(100)))).toBe(false);
+    expect(validFile("AgaveErrorUX/images/office.png", PNG)).toBe(true);
+  });
+
   it("ответ прокси или страница ошибки вместо скрипта не принимается", () => {
     expect(looksLikeScript("a.js", "<!DOCTYPE html><html>proxy</html>" + " ".repeat(300))).toBe(false);
     expect(looksLikeScript("a.js", "short")).toBe(false);
@@ -66,6 +78,8 @@ describe("vendor-officejs: поставка в dist", () => {
     expect((await readdir(a)).sort()).toEqual(["LICENSE-office-js.md", "SOURCE.json", "office-js"]);        // SOURCE.json в корне assets: его читает проверка в администрировании
     expect((await readdir(join(a, "office-js"))).some((f) => /ajax/i.test(f))).toBe(false);
     expect((await stat(join(a, "office-js", "ru-ru", "outlook_strings.js"))).size).toBeGreaterThan(100);
+    expect((await readFile(join(a, "office-js", "AgaveErrorUX", "index.html"), "utf8"))).toContain("AgaveErrorUX.js");
+    expect((await stat(join(a, "office-js", "AgaveErrorUX", "images", "moe_status_icons.png"))).size).toBeGreaterThan(50);
     expect(JSON.parse(await readFile(join(a, "SOURCE.json"), "utf8")).office_js_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect((await readFile(join(a, "LICENSE-office-js.md"), "utf8")).length).toBeGreaterThan(10);
     expect(await readdir(join(dist, "outlook"))).toEqual(["assets"]);         // временный каталог убран

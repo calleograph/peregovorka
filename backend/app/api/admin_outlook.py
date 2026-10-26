@@ -51,11 +51,13 @@ async def _internal_api(request: Request) -> dict:
 async def _officejs_local(c: httpx.AsyncClient, base: str) -> dict | None:
     """Локальная копия Office.js в образе web (кладётся при сборке, frontend/scripts/vendor-officejs.mjs): файлы отвечают, это скрипт нужной сборки, а не страница ошибки."""
     got: dict[str, bytes] = {}
-    for name in ("office-js/office.js", "SOURCE.json"):
+    for name in ("office-js/office.js", "office-js/AgaveErrorUX/index.html", "SOURCE.json"):
         rr = await c.get(f"{base}/outlook/assets/{name}")
         if rr.status_code != 200:
             return None
         got[name] = rr.content
+    if b"AgaveErrorUX.js" not in got["office-js/AgaveErrorUX/index.html"][:5000]:
+        return None                                         # без страницы подтверждения доверия Outlook Web App панель не запустится
     head = got["office-js/office.js"][:20000]
     if b"Office" not in head or head.lstrip()[:1] == b"<":
         return None

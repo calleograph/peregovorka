@@ -56,12 +56,13 @@ def test_diag_beacon_reports_source_and_microsoftajax(client):
     assert "источник local:cdn_fallback" in m and "Sys (MicrosoftAjax) undefined" in m
 
 
-def _files(office: bool = True, source: bool = True, page: bool = False, needs_ajax: bool = False):
+def _files(office: bool = True, source: bool = True, page: bool = False, needs_ajax: bool = False, agave: bool = True):
     def handler(req: httpx.Request) -> httpx.Response:
         p = req.url.path
         if p.startswith("/outlook/assets/"):
             lib = (b"" if needs_ajax else b"osfLoadMsAjax = false;\n") + b"/* Office JavaScript API library */ var OSF=OSF||{};" * 20
             body = {"/outlook/assets/office-js/office.js": lib if office else None,
+                    "/outlook/assets/office-js/AgaveErrorUX/index.html": b'<!DOCTYPE html><script src="AgaveErrorUX.js"></script>' if agave else None,
                     "/outlook/assets/SOURCE.json": json.dumps({"source": "https://cdn.example.org/1/", "built_at": "2026-10-26T14:19:30Z", "files": 121}).encode() if source else None}.get(p)
             if page:
                 return httpx.Response(200, content=b"<!doctype html><html>SPA</html>")        # прокси вернул страницу приложения вместо файла
@@ -84,7 +85,7 @@ def test_status_reports_local_copy_present(tmp_path, directory):
     assert by["officejs"]["ok"] is True and "не используются" in by["officejs"]["message"]
 
 
-@pytest.mark.parametrize("kw", [{"office": False}, {"source": False}, {"page": True}])
+@pytest.mark.parametrize("kw", [{"office": False}, {"source": False}, {"page": True}, {"agave": False}])
 def test_status_warns_but_does_not_fail_when_local_copy_is_missing_or_is_a_page(tmp_path, directory, kw):
     by = _check(tmp_path, directory, _files(**kw))
     assert by["officejs"]["ok"] is None and "CDN" in by["officejs"]["message"] and "--force-build" in by["officejs"]["message"]     # панель работает через запасной путь: не «ошибка», а предупреждение

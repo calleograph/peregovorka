@@ -19,6 +19,11 @@ const LICENSE_URL = "https://raw.githubusercontent.com/OfficeDev/office-js/relea
 const O15_FILES = ["o15apptofilemappingtable.js", "outlook-15.js", "outlook-15.01.js", "outlook-15.02.js", "outlook-15.03.js", "outlook-15.04.js", "outlookwebapp-15.js", "outlookwebapp-15.01.js"];
 const EXTRA_FILES = ["es6-promise.js", "ariatelemetry/aria-web-telemetry.js", "telemetry/oteljs_agave.js", "telemetry/oteljs.js"];
 const PLATFORMS = ["web", "win32", "mac", "ios", "android", "universal"];
+// Страница подтверждения доверия к узлу Outlook (AgaveErrorUX): для узла не из списка Microsoft (локальный Outlook Web App) office.js открывает
+// <каталог office.js>/AgaveErrorUX/index.html во фрейме, и без неё доверие не подтверждается — панель не запускается. Регистр имён важен (nginx в Linux).
+const AGAVE_REQUIRED = ["AgaveErrorUX/index.html", "AgaveErrorUX/AgaveErrorUX.js", "AgaveErrorUX/style/AgaveErrorUX.css", "AgaveErrorUX/images/moe_status_icons.png", "AgaveErrorUX/images/agavedefaulticon96x96.png"];
+const AGAVE_IMAGES = ["agavedefaulticon32x32", "businessbarclose_16x16x32", "dropdownarrow_16x16x32", "ellipsis_16x16x32", "miniinfoblue_16x16x32", "refresh_16x16x32"].map((n) => `AgaveErrorUX/images/${n}.png`)
+  .concat(["AgaveErrorUX/images/moe_default_icon.png", "AgaveErrorUX/images/office.png"]);
 
 /** Из текста office.js: языки и файлы узла Outlook. Возвращает { required, optional } — пути относительно каталога office.js. */
 export function plan(officeJs) {
@@ -27,18 +32,27 @@ export function plan(officeJs) {
   const def = /OSF\.HostSpecificFileVersionDefault="([\d.]+)"/.exec(officeJs)?.[1] ?? "16.00";
   const host = [...map.matchAll(/([a-z0-9]+):"([\d.]+)"/g)].map((m) => `outlook-${m[1]}-${m[2]}.js`);
   const required = [...new Set([
-    ...host,
+    ...host, ...AGAVE_REQUIRED,
     ...(locales.length ? locales : ["en-us", "ru-ru"]).flatMap((l) => [`${l}/office_strings.js`, `${l}/outlook_strings.js`]),
   ])];
   const optional = [...new Set([
     ...PLATFORMS.map((p) => `outlook-${p}-${def}.js`),
-    ...O15_FILES, ...EXTRA_FILES,
+    ...O15_FILES, ...EXTRA_FILES, ...AGAVE_IMAGES,
   ])].filter((f) => !required.includes(f));
   return { required, optional, locales, host };
 }
 
 /** Сборка office.js не требует MicrosoftAjax (флаг, который Microsoft ставит в начале файла). */
 export const noMsAjax = (officeJs) => /osfLoadMsAjax\s*=\s*false/.test(officeJs.slice(0, 20000));
+
+/** Файл подходит по типу: скрипт, страница AgaveErrorUX, стили или PNG (а не страница прокси/ошибки). */
+export function validFile(name, buf) {
+  if (name.endsWith(".png")) return buf.length > 50 && buf[0] === 0x89 && buf.toString("latin1", 1, 4) === "PNG";
+  const text = buf.toString("utf8");
+  if (name.endsWith(".html")) return /AgaveErrorUX\.js/.test(text);
+  if (name.endsWith(".css")) return text.length > 200 && !/^\s*<(!doctype|html)/i.test(text);
+  return looksLikeScript(name, text);
+}
 
 /** Ответ похож на скрипт Microsoft, а не на страницу прокси/ошибки. */
 export function looksLikeScript(name, text) {
@@ -78,7 +92,7 @@ async function fetchSet(base, outDir, log) {
   const miss = [];
   await pool([...required.map((f) => [f, true]), ...optional.map((f) => [f, false])], 8, async ([f, must]) => {
     const r = await get(base + f);
-    if (r.buf && looksLikeScript(f, r.buf.toString("utf8"))) files.set(f, r.buf);
+    if (r.buf && validFile(f, r.buf)) files.set(f, r.buf);
     else if (must) miss.push(f);
   });
   if (miss.length) throw new Error(`не получены обязательные файлы (${miss.length}): ${miss.slice(0, 5).join(", ")}`);
