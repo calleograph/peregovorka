@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.41.0",
- "reviewed_at": "2026-10-26",
+ "release": "0.41.1",
+ "reviewed_at": "2026-10-27",
  "components": [
   {
    "key": "livekit_server",
@@ -1536,7 +1536,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-26",
+  "checked_at": "2026-10-27",
   "source": "osv.dev",
   "advisories": {
    "onnx==1.19.1": [
