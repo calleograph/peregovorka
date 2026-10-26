@@ -58,11 +58,14 @@ async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession =
 
 
 @router.get("/upcoming")
-async def upcoming_meetings(su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def upcoming_meetings(request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """«Предстоящие встречи»: запланированные конференции из календаря и временные комнаты, о которых человеку можно знать (services.upcoming).
     Время сервера — для обратного отсчёта в браузере без частых запросов."""
     now = utcnow()
-    return {"server_time": now, "items": await upcoming.upcoming(db, su, now)}
+    s = request.app.state.settings_svc
+    ol_cfg = await s.get(db, "outlook")
+    temp_guests = bool((await s.get(db, "general")).temp_room_allow_guest_link)
+    return {"server_time": now, "items": await upcoming.upcoming(db, su, now, outlook_guests=bool(ol_cfg.enabled and ol_cfg.guest_links), temp_guests=temp_guests)}
 
 
 @router.get("/{room_id}/invitees")

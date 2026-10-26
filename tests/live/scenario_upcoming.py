@@ -69,6 +69,8 @@ async def main():
         await B.js("document.querySelector('.upc-more')?.click()"); await asyncio.sleep(0.5)
         b = await B.js("(() => ({names: [...document.querySelectorAll('.upc-title, .upc-row-name')].map(e => e.textContent)}))()")
         S.check("приглашённый видит встречи, куда его позвали, но не чужие", "Планёрка отдела продаж" in b["names"] and "Встреча с поставщиком" not in b["names"], str(b)[:200])
+        await B.js("[...document.querySelectorAll('.upc-card, .upc-row')].find(c => (c.querySelector('.upc-title, .upc-row-name')).textContent === 'Планёрка отдела продаж').querySelector('.upc-people.link').scrollIntoView({block: 'end', behavior: 'instant'})")
+        await asyncio.sleep(0.5)          # человек нажимает на то, что видит: кнопку сначала докручивают до видимого места, у нижнего края окна
         await B.js("[...document.querySelectorAll('.upc-card, .upc-row')].find(c => (c.querySelector('.upc-title, .upc-row-name')).textContent === 'Планёрка отдела продаж').querySelector('.upc-people.link').click()")
         await asyncio.sleep(1.0)
         pt = await B.js("document.querySelector('.upc-pop')?.innerText || ''")

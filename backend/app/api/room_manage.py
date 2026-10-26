@@ -330,10 +330,30 @@ async def _require_temp_guest_policy(request: Request, db: AsyncSession) -> None
 
 @router.post("/guest-link/{action}", response_model=RoomManageOut)
 async def guest_link(room_id: uuid.UUID, action: str, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """`rotate` — новая гостевая ссылка (старая перестаёт работать); `revoke` — отозвать ссылку (гостевой доступ выключается). Гости встречи отключаются."""
-    if action not in ("rotate", "revoke"):
+    """`issue` — гостевая ссылка для копирования: уже выпущенная возвращается без изменений (новая не создаётся при каждом нажатии), иначе выпускается, если политика разрешает;
+    `rotate` — новая гостевая ссылка (старая перестаёт работать); `revoke` — отозвать ссылку (гостевой доступ выключается). Гости встречи отключаются при rotate и revoke."""
+    if action not in ("issue", "rotate", "revoke"):
         raise HTTPException(status_code=404, detail="Неизвестное действие")
     room = await _room_for_leader(request, db, room_id, su)
+    if action == "issue":
+        if room.guest_access_enabled and room.guest_token:
+            return await _out(db, room, su, request)
+        if room.cancelled_at is not None or room.lifecycle == "closed":
+            raise HTTPException(status_code=409, detail="Встреча закрыта или отменена")
+        if room.lifetime != "temporary":
+            raise HTTPException(status_code=403, detail="Гостевой вход в этой комнате отключён: его включает администратор")
+        if room.scheduled_start is not None:          # встреча из Outlook или календаря: политика гостей Outlook
+            ol_cfg = await request.app.state.settings_svc.get(db, "outlook")
+            if not (ol_cfg.enabled and ol_cfg.guest_links):
+                raise HTTPException(status_code=403, detail="Гости во встречах Outlook отключены администратором")
+        else:
+            await _require_temp_guest_policy(request, db)
+        room.guest_token, room.guest_access_enabled = new_guest_token(), True
+        await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.guest_link.issue", target_type="room", target_id=str(room.id),
+                          ip=client_ip(request), details={"room": room.slug, "by_leader": not su.is_admin})
+        await db.commit()
+        await db.refresh(room)
+        return await _out(db, room, su, request)
     if action == "rotate":
         if room.lifetime == "temporary":
             await _require_temp_guest_policy(request, db)

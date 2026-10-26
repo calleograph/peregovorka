@@ -1,0 +1,42 @@
+/* Кнопки быстрого копирования ссылок на карточках (components/LinkCopy.tsx): зелёная — для сотрудников, красная — гостевая. Цвета мягкие, значки различимы и без цвета (подсказка, подпись для диктора).
+   Значения заданы явно для светлой и тёмной тем; тест linkCopyContrast.test.ts проверяет контраст значка на фоне кнопки (не ниже 4,5:1). */
+:root {
+  --lc-ok-bg: #e3f5ea; --lc-ok-fg: #14683a; --lc-ok-line: #b4dfc4; --lc-ok-hover: #d2eedd;
+  --lc-bad-bg: #fde8e8; --lc-bad-fg: #a32323; --lc-bad-line: #f1bcbc; --lc-bad-hover: #fbd6d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lc-ok-bg: #143a25; --lc-ok-fg: #8ee6b0; --lc-ok-line: #2a6a46; --lc-ok-hover: #1b4a31;
+    --lc-bad-bg: #411a1a; --lc-bad-fg: #ffa3a3; --lc-bad-line: #7a3030; --lc-bad-hover: #552121;
+  }
+}
+:root[data-theme="dark"] {
+  --lc-ok-bg: #143a25; --lc-ok-fg: #8ee6b0; --lc-ok-line: #2a6a46; --lc-ok-hover: #1b4a31;
+  --lc-bad-bg: #411a1a; --lc-bad-fg: #ffa3a3; --lc-bad-line: #7a3030; --lc-bad-hover: #552121;
+}
+.lc-group { display: inline-flex; align-items: center; gap: 6px; }
+.iconbtn.lc { flex: none; width: 34px; height: 34px; transition: background .15s, border-color .15s, transform .15s; }
+.iconbtn.lc-staff { color: var(--lc-ok-fg); background: var(--lc-ok-bg); border-color: var(--lc-ok-line); }
+.iconbtn.lc-guest { color: var(--lc-bad-fg); background: var(--lc-bad-bg); border-color: var(--lc-bad-line); }
+.iconbtn.lc-staff:hover, .iconbtn.lc-staff:focus-visible { background: var(--lc-ok-hover); color: var(--lc-ok-fg); border-color: var(--lc-ok-fg); }
+.iconbtn.lc-guest:hover, .iconbtn.lc-guest:focus-visible { background: var(--lc-bad-hover); color: var(--lc-bad-fg); border-color: var(--lc-bad-fg); }
+.iconbtn.lc:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.iconbtn.lc:disabled { opacity: .7; cursor: progress; }
+.iconbtn.lc.done { transform: scale(1.06); }
+.lc-tip { position: fixed; z-index: 2000; transform: translateX(-100%); max-width: min(280px, calc(100vw - 16px)); padding: 6px 10px; border-radius: 8px; background: var(--text); color: var(--surface); font: 500 12.5px/1.3 var(--sans); box-shadow: 0 6px 18px rgb(0 0 0 / 22%); pointer-events: none; white-space: nowrap; }
+
+/* карточка-плитка: справа вверху до трёх кнопок одного размера на одной линии, заголовок не заходит под них */
+.rc-cell .rc-actions { align-items: center; }
+.rc-cell .rc-top { padding-right: 96px; }
+.rc-cell.has-guest .rc-top { padding-right: 138px; }
+.rc-cell .rc-title h2 { overflow-wrap: anywhere; }
+/* «Предстоящие встречи»: статус слева, кнопки справа; длинное название переносится и не накрывается */
+.upc-top .rc-actions.inline { margin: -4px -4px -4px 0; flex: none; }
+.upc-top .upc-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upc-foot .upc-kind { flex: 0 1 auto; }
+.upc-row-act .rc-actions.inline { gap: 6px; }
+@media (max-width: 520px) {
+  .rc-actions .iconbtn, .iconbtn.lc { width: 32px; height: 32px; }
+  .rc-cell .rc-top { padding-right: 88px; } .rc-cell.has-guest .rc-top { padding-right: 126px; }
+}
+@media (prefers-reduced-motion: reduce) { .iconbtn.lc { transition: none; } .iconbtn.lc.done { transform: none; } }

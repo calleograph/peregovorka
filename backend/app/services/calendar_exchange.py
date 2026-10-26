@@ -46,6 +46,44 @@ class CalEvent:
     location: str = ""
     organizer: str = ""
     series_id: str | None = None
+    show_as: str = "busy"                # free | tentative | busy | oof | workingElsewhere (занятость на это время)
+    calendar_id: str | None = None       # какой из календарей ящика (None — основной)
+    meeting: bool = False                # собрание с участниками (а не личная запись в календаре)
+
+
+@dataclass
+class CalendarInfo:
+    id: str                              # "primary" — основной календарь ящика
+    name: str
+    default: bool = False
+    can_edit: bool = True
+
+
+@dataclass
+class EventDetail:
+    event: CalEvent
+    organizer_name: str = ""
+    attendees: list[dict] = field(default_factory=list)      # {email, name, type: required|optional, response}
+    body: str = ""                                          # описание текстом (без разметки), не длиннее MAX_BODY
+    web_link: str | None = None
+    sensitivity: str = "normal"
+
+
+MAX_BODY = 4000
+_SHOW_AS = {"free", "tentative", "busy", "oof", "workingElsewhere"}
+
+
+def _plain(text: str) -> str:
+    """Описание события: только текст, без разметки и лишних пробелов (в интерфейсе показывается как текст, не как HTML)."""
+    import html as _html  # noqa: PLC0415
+    import re as _re  # noqa: PLC0415
+
+    t = _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", text or "", flags=_re.S | _re.I)
+    t = _re.sub(r"<br\s*/?>|</p>|</div>|</li>", "\n", t, flags=_re.I)
+    t = _re.sub(r"<[^>]+>", "", t)
+    t = _html.unescape(t)
+    t = _re.sub(r"[ \t\r\f\v]+", " ", t)
+    return _re.sub(r"\n\s*\n+", "\n\n", t).strip()[:MAX_BODY]
 
 
 @dataclass
@@ -147,18 +185,30 @@ class GraphCalendar(GraphClient):
             kind = {"singleInstance": "single", "seriesMaster": "series", "occurrence": "occurrence", "exception": "exception"}.get(str(j.get("type")), "single")
             loc = (j.get("location") or {}).get("displayName") or ""
             org = ((j.get("organizer") or {}).get("emailAddress") or {}).get("address") or ""
+            show = str(j.get("showAs") or "busy")
             return CalEvent(str(j["id"]), str(j.get("subject") or ""), _utc(j["start"]["dateTime"]), _utc(j["end"]["dateTime"]), j.get("@odata.etag"), bool(j.get("isAllDay")),
-                            bool(j.get("isCancelled")), kind, str(loc)[:300], str(org).lower(), j.get("seriesMasterId"))
+                            bool(j.get("isCancelled")), kind, str(loc)[:300], str(org).lower(), j.get("seriesMasterId"), show if show in _SHOW_AS else "busy",
+                            None, bool(j.get("attendees")))
         except (KeyError, TypeError, ValueError):
             return None
 
-    async def list_events(self, mailbox: str, start: datetime, end: datetime) -> list[CalEvent]:
+    async def list_calendars(self, mailbox: str) -> list[CalendarInfo]:
+        r = await self._req("GET", mailbox, "/calendars", params={"$select": "id,name,isDefaultCalendar,canEdit", "$top": "50"})
+        if r.status_code != 200:
+            raise self._fail(r)
+        out = [CalendarInfo("primary" if x.get("isDefaultCalendar") else str(x["id"]), str(x.get("name") or "Календарь")[:120], bool(x.get("isDefaultCalendar")), bool(x.get("canEdit", True)))
+               for x in r.json().get("value") or [] if x.get("id")]
+        out.sort(key=lambda c: (not c.default, c.name.lower()))
+        return out
+
+    async def list_events(self, mailbox: str, start: datetime, end: datetime, calendar_id: str | None = None) -> list[CalEvent]:
         out: list[CalEvent] = []
         params: dict[str, Any] | None = {"startDateTime": start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "endDateTime": end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                          "$select": "id,subject,start,end,isAllDay,isCancelled,type,seriesMasterId,location,organizer", "$top": "100", "$orderby": "start/dateTime"}
+                                          "$select": "id,subject,start,end,isAllDay,isCancelled,type,seriesMasterId,location,organizer,showAs,attendees", "$top": "100", "$orderby": "start/dateTime"}
+        path = "/calendarView" if not calendar_id or calendar_id == "primary" else f"/calendars/{quote(calendar_id, safe='')}/calendarView"
         url: str | None = None
         for _ in range(MAX_PAGES):
-            r = await self._req("GET", mailbox, "/calendarView", params=params, absolute=url)
+            r = await self._req("GET", mailbox, path, params=params, absolute=url)
             if r.status_code != 200:
                 raise self._fail(r)
             j = r.json()
@@ -166,7 +216,33 @@ class GraphCalendar(GraphClient):
             url, params = j.get("@odata.nextLink"), None
             if not url or len(out) >= MAX_EVENTS:
                 break
+        for e in out:
+            e.calendar_id = calendar_id or "primary"
         return out[:MAX_EVENTS]
+
+    async def get_event(self, mailbox: str, event_id: str) -> EventDetail:
+        r = await self._req("GET", mailbox, f"/events/{quote(event_id, safe='')}", params={"$select": "id,subject,start,end,isAllDay,isCancelled,type,seriesMasterId,location,organizer,showAs,attendees,body,webLink,sensitivity"},
+                            extra={"Prefer": 'outlook.timezone="UTC", outlook.body-content-type="text"'})
+        if r.status_code != 200:
+            raise self._fail(r)
+        j = r.json()
+        ev = self._event(j)
+        if ev is None:
+            raise CalendarError("Exchange вернул событие в непонятном виде.")
+        att = [{"email": str((a.get("emailAddress") or {}).get("address") or "").lower(), "name": str((a.get("emailAddress") or {}).get("name") or "")[:120],
+                "type": "optional" if a.get("type") == "optional" else "required", "response": str((a.get("status") or {}).get("response") or "none")} for a in j.get("attendees") or []][:MAX_EVENTS]
+        body = j.get("body") or {}
+        text = str(body.get("content") or "")
+        return EventDetail(ev, str(((j.get("organizer") or {}).get("emailAddress") or {}).get("name") or "")[:120], [a for a in att if a["email"]],
+                           _plain(text) if str(body.get("contentType")).lower() == "html" else text.strip()[:MAX_BODY], j.get("webLink"), str(j.get("sensitivity") or "normal"))
+
+    async def master_id(self, mailbox: str, event_id: str) -> str | None:
+        """Идентификатор серии для занятия (Graph отдаёт его в самом событии)."""
+        r = await self._req("GET", mailbox, f"/events/{quote(event_id, safe='')}", params={"$select": "id,seriesMasterId,type"})
+        if r.status_code != 200:
+            raise self._fail(r)
+        j = r.json()
+        return str(j["seriesMasterId"]) if j.get("seriesMasterId") else (str(j["id"]) if j.get("type") == "seriesMaster" else None)
 
     def _payload(self, s: EventSpec) -> dict:
         body: dict[str, Any] = {
@@ -187,10 +263,15 @@ class GraphCalendar(GraphClient):
         j = r.json()
         return Created(str(j["id"]), j.get("@odata.etag"), j.get("webLink"))
 
-    async def update_event(self, mailbox: str, event_id: str, change: str | None, *, subject: str | None, start: datetime | None, end: datetime | None, tz: str = "UTC") -> Created:
+    async def update_event(self, mailbox: str, event_id: str, change: str | None, *, subject: str | None, start: datetime | None, end: datetime | None, tz: str = "UTC",
+                           location: str | None = None, attendees: list[tuple[str, str | None, bool]] | None = None) -> Created:
         patch: dict[str, Any] = {}
         if subject is not None:
             patch["subject"] = subject
+        if location is not None:
+            patch["location"] = {"displayName": location}
+        if attendees is not None:
+            patch["attendees"] = [{"emailAddress": {"address": a, **({"name": n} if n else {})}, "type": "optional" if opt else "required"} for a, n, opt in attendees]
         if start is not None and end is not None:
             patch["start"] = {"dateTime": _local(start, tz), "timeZone": tz}
             patch["end"] = {"dateTime": _local(end, tz), "timeZone": tz}
@@ -229,7 +310,7 @@ class EwsCalendar(EwsClient):
 
     @staticmethod
     def _code(root: ET.Element) -> tuple[str, str]:
-        for kind in ("FindItem", "GetItem", "GetFolder"):
+        for kind in ("FindItem", "GetItem", "GetFolder", "FindFolder"):
             msg = root.find(f".//m:{kind}ResponseMessage", NS)
             if msg is not None:
                 return msg.get("ResponseClass", "Error"), (msg.findtext("m:ResponseCode", "", NS) or "")
@@ -242,15 +323,43 @@ class EwsCalendar(EwsClient):
         cls, code = _ews_code(root, kind)
         return root, cls, code
 
-    async def list_events(self, mailbox: str, start: datetime, end: datetime) -> list[CalEvent]:
+    @staticmethod
+    def _folder(mailbox: str, mode: str, calendar_id: str | None) -> str:
+        if calendar_id and calendar_id != "primary":
+            return f'<t:FolderId Id="{escape(calendar_id, {chr(34): "&quot;"})}"/>'
+        return ('<t:DistinguishedFolderId Id="calendar"/>' if mode == "impersonation" else
+                f'<t:DistinguishedFolderId Id="calendar"><t:Mailbox><t:EmailAddress>{escape(mailbox)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>')
+
+    async def list_calendars(self, mailbox: str) -> list[CalendarInfo]:
+        """Основной календарь и дополнительные календари ящика (подпапки календаря с классом IPF.Appointment)."""
+        def body_for(mode: str) -> str:
+            return ('<m:FindFolder Traversal="Deep"><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/>'
+                    '<t:FieldURI FieldURI="folder:FolderClass"/></t:AdditionalProperties></m:FolderShape>'
+                    f'<m:ParentFolderIds>{self._folder(mailbox, mode, None)}</m:ParentFolderIds></m:FindFolder>')
+
+        root, cls, code, mode = await self._with_mode(body_for, mailbox)
+        if cls != "Success":
+            if code in _DENIED:
+                raise self._denied(mode)
+            raise CalendarError(f"EWS ответил ошибкой {code or 'неизвестной'}.")
+        out = [CalendarInfo("primary", "Календарь", True, True)]
+        for f in root.findall(".//t:CalendarFolder", NS):
+            fid = f.find("t:FolderId", NS)
+            if fid is None or not fid.get("Id"):
+                continue
+            out.append(CalendarInfo(fid.get("Id", ""), (f.findtext("t:DisplayName", "", NS) or "Календарь")[:120], False, True))
+        out[1:] = sorted(out[1:], key=lambda c: c.name.lower())
+        return out
+
+    async def list_events(self, mailbox: str, start: datetime, end: datetime, calendar_id: str | None = None) -> list[CalEvent]:
         fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
 
         def body_for(mode: str) -> str:
-            folder = ('<t:DistinguishedFolderId Id="calendar"/>' if mode == "impersonation" else
-                      f'<t:DistinguishedFolderId Id="calendar"><t:Mailbox><t:EmailAddress>{escape(mailbox)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>')
+            folder = self._folder(mailbox, mode, calendar_id)
             return ('<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/>'
                     '<t:FieldURI FieldURI="calendar:Start"/><t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsAllDayEvent"/><t:FieldURI FieldURI="calendar:IsCancelled"/>'
-                    '<t:FieldURI FieldURI="calendar:Location"/><t:FieldURI FieldURI="calendar:CalendarItemType"/><t:FieldURI FieldURI="calendar:Organizer"/></t:AdditionalProperties></m:ItemShape>'
+                    '<t:FieldURI FieldURI="calendar:Location"/><t:FieldURI FieldURI="calendar:CalendarItemType"/><t:FieldURI FieldURI="calendar:Organizer"/>'
+                    '<t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/><t:FieldURI FieldURI="calendar:IsMeeting"/></t:AdditionalProperties></m:ItemShape>'
                     f'<m:CalendarView MaxEntriesReturned="{MAX_EVENTS}" StartDate="{fmt(start)}" EndDate="{fmt(end)}"/><m:ParentFolderIds>{folder}</m:ParentFolderIds></m:FindItem>')
 
         root, cls, code, mode = await self._with_mode(body_for, mailbox)
@@ -260,15 +369,71 @@ class EwsCalendar(EwsClient):
             raise CalendarError(f"EWS ответил ошибкой {code or 'неизвестной'}.")
         out: list[CalEvent] = []
         for it in root.findall(".//t:CalendarItem", NS):
-            try:
-                iid = it.find("t:ItemId", NS)
-                kind = {"Single": "single", "RecurringMaster": "series", "Occurrence": "occurrence", "Exception": "exception"}.get(it.findtext("t:CalendarItemType", "", NS), "single")
-                out.append(CalEvent(iid.get("Id", ""), it.findtext("t:Subject", "", NS) or "", _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), iid.get("ChangeKey"),
-                                    (it.findtext("t:IsAllDayEvent", "false", NS) or "").lower() == "true", (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", kind,
-                                    (it.findtext("t:Location", "", NS) or "")[:300], (it.findtext("t:Organizer/t:Mailbox/t:EmailAddress", "", NS) or "").lower()))
-            except (AttributeError, ValueError):
-                continue
+            ev = self._parse(it)
+            if ev is not None:
+                ev.calendar_id = calendar_id or "primary"
+                out.append(ev)
         return out
+
+    @staticmethod
+    def _parse(it: ET.Element) -> CalEvent | None:
+        try:
+            iid = it.find("t:ItemId", NS)
+            kind = {"Single": "single", "RecurringMaster": "series", "Occurrence": "occurrence", "Exception": "exception"}.get(it.findtext("t:CalendarItemType", "", NS), "single")
+            show = {"Free": "free", "Tentative": "tentative", "Busy": "busy", "OOF": "oof", "WorkingElsewhere": "workingElsewhere"}.get(it.findtext("t:LegacyFreeBusyStatus", "Busy", NS), "busy")
+            return CalEvent(iid.get("Id", ""), it.findtext("t:Subject", "", NS) or "", _utc(it.findtext("t:Start", "", NS)), _utc(it.findtext("t:End", "", NS)), iid.get("ChangeKey"),
+                            (it.findtext("t:IsAllDayEvent", "false", NS) or "").lower() == "true", (it.findtext("t:IsCancelled", "false", NS) or "").lower() == "true", kind,
+                            (it.findtext("t:Location", "", NS) or "")[:300], (it.findtext("t:Organizer/t:Mailbox/t:EmailAddress", "", NS) or "").lower(), None, show, None,
+                            (it.findtext("t:IsMeeting", "false", NS) or "").lower() == "true")
+        except (AttributeError, ValueError):
+            return None
+
+    async def get_event(self, mailbox: str, event_id: str) -> EventDetail:
+        eid = escape(event_id, {chr(34): "&quot;"})
+
+        def body_for(_mode: str) -> str:
+            return ('<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:BodyType>Text</t:BodyType><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/>'
+                    '<t:FieldURI FieldURI="calendar:Start"/><t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:IsAllDayEvent"/><t:FieldURI FieldURI="calendar:IsCancelled"/>'
+                    '<t:FieldURI FieldURI="calendar:Location"/><t:FieldURI FieldURI="calendar:CalendarItemType"/><t:FieldURI FieldURI="calendar:Organizer"/>'
+                    '<t:FieldURI FieldURI="calendar:RequiredAttendees"/><t:FieldURI FieldURI="calendar:OptionalAttendees"/><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/>'
+                    f'<t:FieldURI FieldURI="item:Body"/></t:AdditionalProperties></m:ItemShape><m:ItemIds><t:ItemId Id="{eid}"/></m:ItemIds></m:GetItem>')
+
+        root, cls, code, mode = await self._with_mode(body_for, mailbox)
+        if cls != "Success":
+            if code in _DENIED:
+                raise self._denied(mode)
+            if code == "ErrorItemNotFound":
+                raise CalendarError("Почтовый ящик или событие не найдены.")
+            raise CalendarError(f"EWS ответил ошибкой {code or 'неизвестной'}.")
+        it = root.find(".//t:CalendarItem", NS)
+        ev = self._parse(it) if it is not None else None
+        if ev is None:
+            raise CalendarError("Exchange вернул событие в непонятном виде.")
+        att: list[dict] = []
+        for tag, kind in (("RequiredAttendees", "required"), ("OptionalAttendees", "optional")):
+            for a in it.findall(f"t:{tag}/t:Attendee", NS):
+                email = (a.findtext("t:Mailbox/t:EmailAddress", "", NS) or "").lower()
+                if email:
+                    att.append({"email": email, "name": (a.findtext("t:Mailbox/t:Name", "", NS) or "")[:120], "type": kind, "response": (a.findtext("t:ResponseType", "Unknown", NS) or "none").lower()})
+        body = it.find("t:Body", NS)
+        text = (body.text or "") if body is not None else ""
+        return EventDetail(ev, (it.findtext("t:Organizer/t:Mailbox/t:Name", "", NS) or "")[:120], att[:MAX_EVENTS], text.strip()[:MAX_BODY] if (body is None or body.get("BodyType") != "HTML") else _plain(text))
+
+    async def master_id(self, mailbox: str, event_id: str) -> str | None:
+        """Идентификатор серии для занятия: EWS отдаёт мастер-событие по RecurringMasterItemId."""
+        eid = escape(event_id, {chr(34): "&quot;"})
+
+        def body_for(_mode: str) -> str:
+            return (f'<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="calendar:CalendarItemType"/></t:AdditionalProperties></m:ItemShape>'
+                    f'<m:ItemIds><t:RecurringMasterItemId OccurrenceId="{eid}"/></m:ItemIds></m:GetItem>')
+
+        root, cls, code, mode = await self._with_mode(body_for, mailbox)
+        if cls != "Success":
+            if code in _DENIED:
+                raise self._denied(mode)
+            return None                       # событие не из серии или серия удалена
+        iid = root.find(".//t:CalendarItem/t:ItemId", NS)
+        return iid.get("Id") if iid is not None else None
 
     def _item_xml(self, s: EventSpec) -> str:
         tzid = _IANA_TO_WINDOWS.get(s.tz)
@@ -298,8 +463,19 @@ class EwsCalendar(EwsClient):
             raise self._denied("impersonation")
         raise CalendarError(f"EWS не создал событие: {code or 'неизвестная ошибка'}.")
 
-    async def update_event(self, mailbox: str, event_id: str, change: str | None, *, subject: str | None, start: datetime | None, end: datetime | None, tz: str = "UTC") -> Created:
+    async def update_event(self, mailbox: str, event_id: str, change: str | None, *, subject: str | None, start: datetime | None, end: datetime | None, tz: str = "UTC",
+                           location: str | None = None, attendees: list[tuple[str, str | None, bool]] | None = None) -> Created:
         ups = []
+        if location is not None:
+            ups.append(f'<t:SetItemField><t:FieldURI FieldURI="calendar:Location"/><t:CalendarItem><t:Location>{escape(location)}</t:Location></t:CalendarItem></t:SetItemField>')
+        if attendees is not None:
+            for field_, want in (("RequiredAttendees", False), ("OptionalAttendees", True)):
+                rows = [(a, n) for a, n, opt in attendees if opt == want]
+                if rows:
+                    xml = "".join(f'<t:Attendee><t:Mailbox>{f"<t:Name>{escape(n)}</t:Name>" if n else ""}<t:EmailAddress>{escape(a)}</t:EmailAddress></t:Mailbox></t:Attendee>' for a, n in rows)
+                    ups.append(f'<t:SetItemField><t:FieldURI FieldURI="calendar:{field_}"/><t:CalendarItem><t:{field_}>{xml}</t:{field_}></t:CalendarItem></t:SetItemField>')
+                else:
+                    ups.append(f'<t:DeleteItemField><t:FieldURI FieldURI="calendar:{field_}"/></t:DeleteItemField>')
         if subject is not None:
             ups.append(f'<t:SetItemField><t:FieldURI FieldURI="item:Subject"/><t:CalendarItem><t:Subject>{escape(subject)}</t:Subject></t:CalendarItem></t:SetItemField>')
         if start is not None and end is not None:

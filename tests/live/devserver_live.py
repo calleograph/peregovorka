@@ -127,18 +127,33 @@ async def _dev_calendar(body: dict = Body(default={})):
     if body.get("reset") or not g.events:
         g.events.clear()
         now = utcnow().replace(minute=0, second=0, microsecond=0)
-        def at(days, hour, minutes=45):
-            s0 = (now + dt.timedelta(days=days)).replace(hour=hour)
-            return {"start": {"dateTime": s0.strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}, "end": {"dateTime": (s0 + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}}
         mb = "alice@corp.test"
-        g.add_event(mb, subject="Планёрка отдела", type="seriesMaster", **at(0, 9))
-        g.add_event(mb, subject="Обед с партнёрами", **at(0, 11, 60))
-        g.add_event(mb, subject="Созвон по бюджету", location={"displayName": "http://localhost:5173/m/abcdefghjkmnpqrstuvw"}, **at(1, 10))
-        g.add_event(mb, subject="Ретроспектива", **at(1, 10, 90))
-        g.add_event(mb, subject="Разбор инцидента", location={"displayName": "http://localhost:5173/rooms/tmp-k7f3p2"}, **at(2, 15))
-        g.add_event(mb, subject="Отменённая встреча", isCancelled=True, **at(3, 13))
-        g.add_event(mb, subject="Конференция (весь день)", isAllDay=True, **at(4, 0, 1440))
-    return {"events": len(g.events)}
+        def span(day, h, mi=0, minutes=45):
+            s0 = (now + dt.timedelta(days=day)).replace(hour=h, minute=mi)
+            return {"start": {"dateTime": s0.strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}, "end": {"dateTime": (s0 + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}}
+        att = lambda e, n="", k="required", r="none": {"emailAddress": {"address": e, "name": n}, "type": k, "status": {"response": r}}
+        # серия: мастер (не попадает в календарное представление, как у настоящего Graph) и три занятия
+        g.add_event(mb, id="SERIES", subject="Планёрка отдела", type="seriesMaster", calendar="_master", attendees=[att("bob@corp.test", "Боб Петров", r="accepted")], **span(1, 9))
+        for i in range(3):
+            g.add_event(mb, id=f"OCC{i}", subject="Планёрка отдела", type="occurrence", seriesMasterId="SERIES", attendees=[att("bob@corp.test", "Боб Петров", r="accepted")], **span(1 + 7 * i, 9))
+        g.add_event(mb, id="BUDGET", subject="Созвон по бюджету", location={"displayName": "Переговорная 3"}, attendees=[att("bob@corp.test", "Боб Петров", r="accepted"), att("carol@corp.test", "Карина Сидорова", "optional")],
+                    body={"contentType": "html", "content": "<p>Повестка:</p><p>1. Бюджет квартала<br>2. Риски</p>"}, **span(1, 10, 0, 60))
+        g.add_event(mb, id="RETRO", subject="Ретроспектива спринта", attendees=[att("dan@corp.test")], **span(1, 10, 30, 60))
+        g.add_event(mb, id="EARLY", subject="Ранняя зарядка", **span(1, 6, 30, 45))
+        g.add_event(mb, id="LATE", subject="Вечерний созвон с Азией", attendees=[att("lee@corp.test")], **span(1, 21, 0, 60))
+        g.add_event(mb, id="LUNCH", subject="Обед с партнёрами", showAs="free", **span(2, 12, 0, 60))
+        g.add_event(mb, id="INVITE", subject="Планирование от руководителя", organizer={"emailAddress": {"address": "boss@corp.test", "name": "Руководитель"}}, attendees=[att("alice@corp.test", "Алиса")], **span(2, 14, 0, 60))
+        g.add_event(mb, id="INC", subject="Разбор инцидента", location={"displayName": "http://localhost:5173/rooms/tmp-k7f3p2"}, **span(2, 16, 0, 60))
+        g.add_event(mb, id="CANC", subject="Отменённая встреча", isCancelled=True, **span(3, 13))
+        g.add_event(mb, id="ALLDAY", subject="Конференция (весь день)", isAllDay=True, **span(4, 0, 0, 1440))
+        g.add_event(mb, id="PROJ", subject="Проектный созвон", calendar="CALPROJ", **span(1, 14, 0, 60))
+        app.state.dev_day1 = (now + dt.timedelta(days=1)).date().isoformat()
+    out = {"events": len(g.events), "day1": getattr(app.state, "dev_day1", None)}
+    if body.get("dump"):
+        out["items"] = {k: {"subject": e.get("subject"), "location": (e.get("location") or {}).get("displayName"), "cancelled": bool(e.get("isCancelled")), "start": e["start"]["dateTime"][:16], "end": e["end"]["dateTime"][:16],
+                            "attendees": [a["emailAddress"]["address"] for a in e.get("attendees") or []], "body": ((e.get("body") or {}).get("content") or "")[:3000]} for k, e in g.events.items()}
+        out["posts"] = [p for m, p in g.calls if m in ("POST", "PATCH", "DELETE")]
+    return out
 
 
 @app.post("/__dev/restore_seed")

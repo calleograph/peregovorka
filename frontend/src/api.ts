@@ -28,6 +28,8 @@ export interface UpcomingMeeting {
   mine: boolean; can_join: boolean; can_manage: boolean; has_password: boolean; url: string;
   /** гостевая ссылка временной комнаты — только тому, кто управляет встречей и если гостевой вход включён */
   guest_token: string | null;
+  /** гостевой ссылки ещё нет, но этот человек вправе её выпустить (сервер выпускает одну и повторно отдаёт её же) */
+  guest_issuable?: boolean;
   /** сверка с календарём: последнее подтверждённое состояние и его время (error — календарь недоступен, показано прежнее) */
   sync: { state: "ok" | "error" | "missing"; at: string | null } | null;
 }
@@ -881,7 +883,7 @@ export const api = {
   manage: {
     get: (roomId: string) => request<RoomManage>("GET", `/rooms/${roomId}/manage`),
     patch: (roomId: string, body: Record<string, unknown>) => request<RoomManage>("PATCH", `/rooms/${roomId}/manage`, body),
-    guestLink: (roomId: string, action: "rotate" | "revoke") => request<RoomManage>("POST", `/rooms/${roomId}/manage/guest-link/${action}`),
+    guestLink: (roomId: string, action: "issue" | "rotate" | "revoke") => request<RoomManage>("POST", `/rooms/${roomId}/manage/guest-link/${action}`),
     search: (roomId: string, kind: "group" | "user", q: string) => request<DirHit[]>("GET", `/rooms/${roomId}/manage/directory?kind=${kind}&q=${encodeURIComponent(q)}`),
     /** Кому уйдёт рассылка по этим (даже несохранённым) настройкам: адреса из каталога, у кого адреса нет, что запрещено политикой. */
     meetingSettings: (meetingId: string) => request<MeetingSettings>("GET", `/meetings/${meetingId}/settings`),

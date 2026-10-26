@@ -75,14 +75,67 @@ async def disconnect(request: Request, su: SessionUser = Depends(require_user), 
     return await cs.status(db, su, cfg)
 
 
-@router.get("/events")
-async def events(request: Request, start: str = Query(alias="from", max_length=40), end: str = Query(alias="to", max_length=40), refresh: bool = False,
-                 su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.get("/calendars")
+async def calendars(request: Request, refresh: bool = False, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Календари ящика сотрудника (основной и дополнительные): что можно включить в показ."""
     cfg = await _cfg(request, db)
     try:
-        return await cs.events(db, su, cfg, request.app.state.redis, _dt(start, "from"), _dt(end, "to"), base=_base(request, cfg), refresh=refresh, transport=_transport(request))
+        return await cs.calendars(db, su, cfg, request.app.state.redis, refresh=refresh, transport=_transport(request))
     except cs.CalendarDenied as exc:
         _fail(exc)
+
+
+@router.get("/events")
+async def events(request: Request, start: str = Query(alias="from", max_length=40), end: str = Query(alias="to", max_length=40), refresh: bool = False,
+                 calendars: str = Query(default="", max_length=1200), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    cfg = await _cfg(request, db)
+    try:
+        return await cs.events(db, su, cfg, request.app.state.redis, _dt(start, "from"), _dt(end, "to"), base=_base(request, cfg), refresh=refresh, transport=_transport(request),
+                               calendar_ids=[c for c in calendars.split(",") if c.strip()] or None)
+    except cs.CalendarDenied as exc:
+        _fail(exc)
+
+
+@router.post("/event/open")
+async def event_detail(request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Карточка события: организатор, участники, место, описание, ссылки Peregovorka. Идентификатор события — в теле запроса (в нём бывают символы, неудобные для адреса)."""
+    cfg = await _cfg(request, db)
+    try:
+        return await cs.detail(db, su, cfg, request.app.state.redis, body.get("id"), base=_base(request, cfg), transport=_transport(request))
+    except cs.CalendarDenied as exc:
+        _fail(exc)
+
+
+@router.post("/event/update")
+async def update_event(request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Изменить событие своего календаря. Для занятия серии обязателен `scope`: `occurrence` (только это занятие) или `series` (вся серия)."""
+    cfg = await _cfg(request, db)
+    attendees = None
+    if body.get("attendees") is not None:
+        attendees, _skipped = await _attendees(request, db, body.get("attendees"))
+        attendees = [(a["email"], a.get("name"), bool(a.get("optional"))) for a in attendees]
+    try:
+        res = await cs.update_any(db, su, cfg, request.app.state.redis, body, attendees=attendees, transport=_transport(request))
+    except cs.CalendarDenied as exc:
+        _fail(exc)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="calendar.update", target_type="user", target_id=str(su.user_id), ip=client_ip(request),
+                      details={"scope": res["scope"], "fields": sorted(k for k in ("subject", "start", "end", "location", "attendees") if body.get(k) is not None)})
+    await db.commit()
+    return res
+
+
+@router.post("/event/cancel")
+async def cancel_event(request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Отменить событие своего календаря; участникам уходит отмена. Для занятия серии обязателен `scope`."""
+    cfg = await _cfg(request, db)
+    try:
+        res = await cs.cancel_any(db, su, cfg, request.app.state.redis, body, transport=_transport(request))
+    except cs.CalendarDenied as exc:
+        _fail(exc)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="calendar.cancel", target_type="user", target_id=str(su.user_id), ip=client_ip(request),
+                      details={"scope": res["scope"]})
+    await db.commit()
+    return res
 
 
 async def _attendees(request: Request, db: AsyncSession, raw: Any) -> tuple[list[dict], list[str]]:

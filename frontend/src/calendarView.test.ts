@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, buildCreateBody, dayKey, defaultForm, describe as describeEvent, formError, groupByDay, layoutDay, newKey, nextSlot, rangeFor, shift, startOfWeek, title, type CalEvent, type CreateForm } from "./calendarView";
+import { addDays, buildCreateBody, cleanWork, DEFAULT_WORK, FULL_DAY, gridWindow, isConference, selectionOf, timeAt, toneOf, dayKey, defaultForm, describe as describeEvent, formError, groupByDay, layoutDay, newKey, nextSlot, rangeFor, shift, startOfWeek, title, type CalEvent, type CreateForm } from "./calendarView";
 
 const ev = (over: Partial<CalEvent> = {}): CalEvent => ({ id: "1", source: "exchange", title: "Встреча", start: "2026-10-28T07:00:00Z", end: "2026-10-28T08:00:00Z", all_day: false, kind: "meeting", status: "scheduled", recurring: false,
   location: null, etag: null, room_id: null, mine: false, join_url: null, guest_url: null, editable: false, ...over });
@@ -89,7 +89,7 @@ describe("раскладка суток", () => {
 describe("подписи", () => {
   it("событие описывается не только цветом: тип, название, время, статус", () => {
     const t = describeEvent(ev({ kind: "series", recurring: true, status: "live", title: "Планёрка", start: local(2026, 10, 28, 10).toISOString(), end: local(2026, 10, 28, 10, 45).toISOString() }));
-    expect(t).toBe("Серия. Планёрка. 10:00–10:45. повторяется. Идёт");
+    expect(t).toBe("Повторяющаяся. конференция Peregovorka. Планёрка. 10:00–10:45. Идёт");
   });
 });
 
@@ -131,4 +131,102 @@ describe("создание встречи", () => {
     expect(k).toMatch(/^[A-Za-z0-9_-]{16,70}$/);
     expect(newKey()).not.toBe(k);
   });
+});
+
+
+describe("цветовая модель: главный признак — цветом, остальные — значком и текстом", () => {
+  const e = (o: Partial<CalEvent>) => ev({ kind: "event", status: "scheduled", recurring: false, room_id: null, ...o });
+  it("серый — отменённое, сиреневый — повторяющееся, голубой — разовая встреча, светло-жёлтый — обычное событие", () => {
+    expect(toneOf(e({}))).toBe("plain");
+    expect(toneOf(e({ meeting: true }))).toBe("meeting");                      // собрание с участниками, без Peregovorka
+    expect(toneOf(e({ kind: "meeting", room_id: "r" }))).toBe("meeting");
+    expect(toneOf(e({ recurring: true }))).toBe("series");
+    expect(toneOf(e({ kind: "series", recurring: true, room_id: "r" }))).toBe("series");
+    expect(toneOf(e({ status: "cancelled", recurring: true, kind: "meeting" }))).toBe("cancelled");      // отмена главнее остальных признаков
+  });
+  it("конференция Peregovorka — независимый признак: серия-конференция и серия без неё различимы", () => {
+    expect(isConference(e({ kind: "series", recurring: true, room_id: "r" }))).toBe(true);
+    expect(isConference(e({ kind: "permanent" }))).toBe(true);
+    expect(isConference(e({ recurring: true }))).toBe(false);
+    expect(describeEvent(e({ kind: "series", recurring: true, room_id: "r", title: "А" }))).toContain("конференция Peregovorka");
+    expect(describeEvent(e({ recurring: true, title: "А" }))).not.toContain("конференция");
+  });
+});
+
+describe("рабочие часы и окно сетки", () => {
+  const monday = local(2026, 10, 26);
+  const at = (d: number, h: number, mi = 0) => local(2026, 10, d, h, mi);
+  const slices = (evs: CalEvent[]) => groupByDay(evs, monday, addDays(monday, 7));
+  const e = (s: Date, f: Date) => ev({ id: `${s.getTime()}`, start: s.toISOString(), end: f.toISOString() });
+  it("настройка нормализуется: целые часы, начало раньше конца, не короче двух часов", () => {
+    expect(cleanWork(null)).toEqual(DEFAULT_WORK);
+    expect(cleanWork({ from: 9.7, to: 3 })).toEqual({ from: 9, to: 11, onlyWork: false });
+    expect(cleanWork({ from: 99, to: 99, onlyWork: true })).toEqual({ from: 22, to: 24, onlyWork: true });
+    expect(cleanWork({ from: -5, to: 0 })).toEqual({ from: 0, to: 2, onlyWork: false });
+  });
+  it("без «только рабочие» показываются все сутки; с ним — рабочий диапазон, расширенный до событий вне него", () => {
+    const by = slices([e(at(27, 10), at(27, 11))]);
+    expect(gridWindow(by, { from: 8, to: 19, onlyWork: false })).toEqual(FULL_DAY);
+    expect(gridWindow(by, { from: 8, to: 19, onlyWork: true })).toEqual({ from: 8, to: 19 });
+    const wide = slices([e(at(27, 6, 30), at(27, 7)), e(at(28, 20), at(28, 21, 15))]);
+    expect(gridWindow(wide, { from: 8, to: 19, onlyWork: true })).toEqual({ from: 6, to: 22 });          // ни одно событие не скрыто
+    expect(gridWindow(slices([e(at(27, 23), at(28, 1))]), { from: 8, to: 19, onlyWork: true }).to).toBe(24);
+  });
+  it("раскладка учитывает окно: доли считаются от показываемых часов", () => {
+    const by = slices([e(at(27, 10), at(27, 11))]);
+    const [p] = layoutDay(by.get(dayKey(at(27, 0))) ?? [], at(27, 0), { from: 8, to: 12 });
+    expect(p.top).toBeCloseTo(0.5, 5); expect(p.height).toBeCloseTo(0.25, 5);
+  });
+});
+
+describe("выделение интервала мышью", () => {
+  const day = local(2026, 10, 27);
+  it("положение указателя — время с округлением до 15 минут, с учётом окна часов", () => {
+    expect(timeAt(day, 0.5, FULL_DAY)).toEqual(local(2026, 10, 27, 12, 0));
+    expect(timeAt(day, 0.5, { from: 8, to: 12 })).toEqual(local(2026, 10, 27, 10, 0));
+    expect(timeAt(day, 0.3333, FULL_DAY)).toEqual(local(2026, 10, 27, 8, 0));
+    expect(timeAt(day, 1, FULL_DAY)).toEqual(local(2026, 10, 27, 23, 45));      // низ сетки не уходит на следующие сутки
+    expect(timeAt(day, -3, FULL_DAY)).toEqual(local(2026, 10, 27, 0, 0));
+  });
+  it("протяжка в любую сторону даёт начало и длительность; не короче 15 минут; щелчок — полчаса", () => {
+    const a = local(2026, 10, 27, 10), b = local(2026, 10, 27, 11, 30);
+    expect(selectionOf(a, b)).toEqual({ start: a, minutes: 90 });
+    expect(selectionOf(b, a)).toEqual({ start: a, minutes: 90 });
+    expect(selectionOf(a, local(2026, 10, 27, 10, 5)).minutes).toBe(15);
+    expect(selectionOf(a, a, true).minutes).toBe(30);
+  });
+  it("форма создания получает место, описание и длительность из выделения", () => {
+    const f = defaultForm(local(2026, 10, 27, 10), false, 90);
+    expect(f.minutes).toBe(90);
+    const body = buildCreateBody({ ...f, title: "А", location: " Каб. 5 ", description: " Повестка " }, "cal0123456789abcdef0123", "Europe/Moscow");
+    expect(body.location).toBe("Каб. 5"); expect(body.description).toBe("Повестка");
+    expect(buildCreateBody({ ...f, title: "А" }, "cal0123456789abcdef0123", "UTC")).not.toHaveProperty("location");
+  });
+});
+
+describe("сутки перехода на летнее и зимнее время", () => {
+  const prev = process.env.TZ;
+  const at = (tz: string, fn: () => void) => { process.env.TZ = tz; try { fn(); } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; } };
+  it("в Берлине 25 октября 2026 (25 часов): событие 10:00–11:00 стоит на отметке 10 часов, а не на 11", () => at("Europe/Berlin", () => {
+    const day = new Date(2026, 9, 25);
+    const e = ev({ id: "d", start: new Date(2026, 9, 25, 10, 0).toISOString(), end: new Date(2026, 9, 25, 11, 0).toISOString() });
+    const by = groupByDay([e], day, new Date(2026, 9, 26));
+    const [p] = layoutDay(by.get(dayKey(day)) ?? [], day);
+    expect(p.top).toBeCloseTo(10 / 24, 6); expect(p.height).toBeCloseTo(1 / 24, 6);
+  }));
+  it("в Берлине 29 марта 2026 (23 часа): событие после перехода — на своей отметке; окно «только рабочие» считается по настенным часам", () => at("Europe/Berlin", () => {
+    const day = new Date(2026, 2, 29);
+    const e = ev({ id: "d", start: new Date(2026, 2, 29, 9, 0).toISOString(), end: new Date(2026, 2, 29, 21, 30).toISOString() });
+    const by = groupByDay([e], day, new Date(2026, 2, 30));
+    const [p] = layoutDay(by.get(dayKey(day)) ?? [], day);
+    expect(p.top).toBeCloseTo(9 / 24, 6); expect(p.height).toBeCloseTo(12.5 / 24, 6);
+    expect(gridWindow(by, { from: 8, to: 19, onlyWork: true })).toEqual({ from: 8, to: 22 });
+  }));
+  it("событие через полночь: вечерний кусок доходит до низа суток", () => at("Europe/Berlin", () => {
+    const day = new Date(2026, 9, 24);
+    const e = ev({ id: "n", start: new Date(2026, 9, 24, 22, 0).toISOString(), end: new Date(2026, 9, 25, 1, 0).toISOString() });
+    const by = groupByDay([e], day, new Date(2026, 9, 26));
+    const [p] = layoutDay(by.get(dayKey(day)) ?? [], day);
+    expect(p.top + p.height).toBeCloseTo(1, 6);
+  }));
 });

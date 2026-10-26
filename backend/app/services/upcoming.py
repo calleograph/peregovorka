@@ -75,7 +75,9 @@ def _url(v) -> str:
     return "/rooms/" + v.slug
 
 
-async def upcoming(db: AsyncSession, su: SessionUser, now: datetime) -> list[dict]:
+async def upcoming(db: AsyncSession, su: SessionUser, now: datetime, *, outlook_guests: bool = False, temp_guests: bool = False) -> list[dict]:
+    """`outlook_guests` — организация разрешила гостей во встречах Outlook и календаря; `temp_guests` — разрешила гостевую ссылку временных переговорок:
+    только при них встреча получает гостевую ссылку и право её выпустить (решает сервер, интерфейс лишь показывает)."""
     t = Room.__table__
     cond = (t.c.is_enabled.is_(True), t.c.lifetime == "temporary",
             or_(t.c.lifecycle != "closed", and_(t.c.cancelled_at.is_not(None), t.c.cancelled_at > now - CANCELLED_SHOWN, t.c.scheduled_end > now)))
@@ -117,7 +119,10 @@ async def upcoming(db: AsyncSession, su: SessionUser, now: datetime) -> list[dic
             "last_ended_at": last_end.get(v.id),
             "invitees": {"count": counts.get(v.id, 0), "names": [n or (e if emails else "Без имени") for n, e in preview.get(v.id, [])] if names else None, "can_list": names},
             "mine": mine, "can_join": v.cancelled_at is None and acl_allows(v, su), "can_manage": emails, "has_password": bool(v.password_hash),
-            "guest_token": v.guest_token if emails and v.guest_access_enabled and not scheduled else None,      # у конференции из календаря гости входят по той же ссылке /m/
+            # секрет гостевой ссылки — организатору, руководителям и администратору, если гостевой вход у встречи включён и разрешён политикой; у встречи из календаря — по политике Outlook
+            "guest_token": v.guest_token if (emails and v.guest_access_enabled and v.guest_token and (outlook_guests if scheduled else True)) else None,
+            # ссылку ещё нет, но этот человек вправе её выпустить (ровно один раз: повторное действие возвращает ту же)
+            "guest_issuable": bool(emails and v.cancelled_at is None and not (v.guest_access_enabled and v.guest_token) and (outlook_guests if scheduled else (temp_guests and v.room_type != peer_rooms.ROOM_TYPE))),
             "url": _url(v), "sync": {"state": v.outlook_sync_state, "at": v.outlook_synced_at} if scheduled and v.outlook_sync_state else None,
         })
     # ближайшие первыми: идущие — по фактическому началу, серии — по ближайшему занятию; серия без шаблона (занятие неизвестно) — после остальных

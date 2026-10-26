@@ -11,6 +11,8 @@ import { PeerCreateDialog, PeerManageDialog } from "../components/PeerRooms";
 import { magnet, spotlight, tint } from "../fx";
 import RoomIcon from "../components/RoomIcon";
 import UpcomingSection from "../components/UpcomingMeetings";
+import { useCalendarAvailable } from "../useCalendarAvailable";
+import { LinkCopy } from "../components/LinkCopy";
 import { meetingState, span, tickMs } from "../upcomingStatus";
 
 /** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
@@ -46,7 +48,6 @@ const VIEW_KEY = "pg:roomsView";
 const roomUrl = (r: Room) => r.room_type === "peer" ? `${window.location.origin}/p/${r.slug.replace(/^p-/, "")}` : `${window.location.origin}/rooms/${r.slug}`;
 const guestUrl = (r: Room) => `${window.location.origin}/guest/${r.guest_token}`;
 
-/** Кнопки копирования ссылок. Обычная (зелёная) — для сотрудников; гостевая (красная) — только если гостевой вход включён и пользователь вправе ею делиться. */
 type Toast = (text: string, tone?: "ok" | "error") => void;
 
 /** Пункты меню правой кнопки у комнаты (все они есть и обычным путём: карточка, кнопки копирования). «Настройки комнаты» — только администратору. */
@@ -67,12 +68,11 @@ function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean, onManagePeer?: (i
   return { handler: onContextMenu(items), node, openFrom };
 }
 
-/** Вторичные действия комнаты: копировать ссылку для сотрудников и меню «⋯» (гостевая ссылка, управление, настройки — там, отдельно и с подписями). */
+/** Действия карточки: две кнопки быстрого копирования (для сотрудников — всегда, гостевая — только если сервер отдал вам гостевую ссылку) и меню «⋯» с остальным (управление, настройки). */
 function RoomActions({ r, onCopy, menu }: { r: Room; onCopy: Toast; menu: { openFrom: (el: HTMLElement) => void } }) {
-  const copy = async () => { const ok = await copyText(roomUrl(r)); onCopy(ok ? "Ссылка для сотрудников скопирована" : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   return (
     <span className="rc-actions">
-      <button type="button" className="iconbtn" onClick={() => void copy()} title="Скопировать ссылку для сотрудников (вход по учётной записи)" aria-label={`Скопировать ссылку для сотрудников: ${r.name}`}><Icon name="copy" size={16} /></button>
+      <LinkCopy name={r.name} staffUrl={roomUrl(r)} guest={r.guest_token ? { url: guestUrl(r) } : null} onCopy={onCopy} />
       <button type="button" className="iconbtn rm-more" aria-label={`Действия: ${r.name}`} title="Другие действия (или правая кнопка мыши)" aria-haspopup="menu" onClick={(e) => menu.openFrom(e.currentTarget)}><Icon name="more" size={16} /></button>
     </span>
   );
@@ -125,7 +125,7 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
   const live = r.active_meeting;
   const full = live && live.participants >= r.max_participants;
   return (
-    <div className="rc-cell" style={{ "--i": i } as CSSProperties} onContextMenu={menu.handler}>
+    <div className={`rc-cell${r.guest_token ? " has-guest" : ""}`} style={{ "--i": i } as CSSProperties} onContextMenu={menu.handler}>
     {menu.node}
     <RoomActions r={r} onCopy={onCopy} menu={menu} />
     <Link to={`/rooms/${r.slug}`} className={`room-card rc ${live ? "is-live" : ""}`} style={{ "--i": i, "--ha": t.a, "--hb": t.b } as CSSProperties} onPointerMove={spotlight}
@@ -153,6 +153,7 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
 }
 
 export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
+  const calendarOn = useCalendarAvailable();
   const site = useSite();
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [error, setError] = useState("");
@@ -241,6 +242,12 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
             {!anything ? "Для вас пока нет доступных комнат." : liveCount > 0 ? `Сейчас идут встречи: ${liveCount}. Выберите комнату, чтобы присоединиться или начать новую.` : "Выберите комнату, чтобы начать встречу. Речь будет записана в стенограмму и станет протоколом."}
           </p>
         </div>
+        {(calendarOn || isAdmin) && (
+          <Link className="btn cta" to="/calendar" {...magnet} title={calendarOn ? "Ваш календарь Outlook: неделя, месяц, список; создание встреч с конференцией" : "Раздел «Календарь» пока не включён: страница объяснит, как это сделать"}>
+            <Icon name="calendar" size={17} /> Календарь
+            <small className="cta-note">{calendarOn ? "встречи из Outlook" : "не включён"}</small>
+          </Link>
+        )}
         {peerPolicy?.enabled && (
           <button className="btn cta" {...magnet} onClick={() => setPeerOpen(true)} disabled={!peerPolicy.can_create}
                   title={peerPolicy.can_create ? "Комната без ведущего: у всех участников равные права; открывается по ссылке" : `Уже ${peerPolicy.active_mine} активных равноправных комнат — закройте одну из них`}>
@@ -271,7 +278,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
       )}
 
       {showUpcoming && <UpcomingSection items={meetings} now={now} view={view} mineOnly={adminView ? mineOnly : null} onMineOnly={setMineOnly}
-                                         othersCount={adminView ? upcoming.filter((m) => !m.mine).length : 0} actions={{ onCopy: showToast, onManagePeer: setPeerManage }} />}
+                                         othersCount={adminView ? upcoming.filter((m) => !m.mine).length : 0} actions={{ onCopy: showToast, onManagePeer: setPeerManage, onIssued: () => void api.upcoming().then((r) => setUpcoming(r.items)).catch(() => undefined) }} />}
       {showUpcoming && filter !== "upcoming" && rooms.length > 0 && <div className="rooms-section-h"><h2>Постоянные переговорки <span className="muted">{shown.length}</span></h2></div>}
       {!anything && (
         <div className="empty">

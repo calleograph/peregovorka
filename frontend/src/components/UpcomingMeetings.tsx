@@ -6,9 +6,10 @@ import { action, hhmm, meetingState, STATE_LABEL, whenLabel } from "../upcomingS
 import { copyText } from "../util";
 import { useContextMenu, type MenuItem } from "./ContextMenu";
 import { Icon } from "./Icons";
+import { LinkCopy } from "./LinkCopy";
 
 type Toast = (text: string, tone?: "ok" | "error") => void;
-export interface MeetingActions { onCopy: Toast; onManagePeer?: (roomId: string) => void }
+export interface MeetingActions { onCopy: Toast; onManagePeer?: (roomId: string) => void; onIssued?: () => void }
 
 /** Меню встречи (правая кнопка или «⋯»): те же действия, что были у временных комнат в каталоге — ссылка, гостевая ссылка, управление ссылкой равноправной комнаты. */
 function useMeetingMenu(m: UpcomingMeeting, { onCopy, onManagePeer }: MeetingActions) {
@@ -27,9 +28,17 @@ function useMeetingMenu(m: UpcomingMeeting, { onCopy, onManagePeer }: MeetingAct
   return { handler: onContextMenu(items), node, openFrom };
 }
 
-function More({ m, menu }: { m: UpcomingMeeting; menu: ReturnType<typeof useMeetingMenu> }) {
-  return <button type="button" className="rm-more" aria-label={`Действия: ${m.name}`} title="Действия (или правая кнопка мыши)" aria-haspopup="menu"
-                 onClick={(e) => { e.stopPropagation(); menu.openFrom(e.currentTarget); }}><Icon name="more" size={16} /></button>;
+/** Кнопки быстрого копирования и «⋯» в одной строке в правом верхнем углу карточки (в строке списка — справа). Гостевая — по ответу сервера: ссылка есть либо её можно выпустить. */
+function Actions({ m, menu, actions }: { m: UpcomingMeeting; menu: ReturnType<typeof useMeetingMenu>; actions: MeetingActions }) {
+  const guest = m.cancelled ? null : m.guest_token ? { url: `${window.location.origin}/guest/${m.guest_token}` }
+    : m.guest_issuable ? { url: null, issue: async () => { const r = await api.manage.guestLink(m.id, "issue"); if (!r.guest_token) throw new Error("Сервер не выпустил гостевую ссылку"); actions.onIssued?.(); return `${window.location.origin}/guest/${r.guest_token}`; } } : null;
+  return (
+    <span className="rc-actions inline">
+      <LinkCopy name={m.name} staffUrl={m.cancelled ? null : window.location.origin + m.url} guest={guest} onCopy={actions.onCopy} />
+      <button type="button" className="iconbtn rm-more" aria-label={`Действия: ${m.name}`} title="Действия (или правая кнопка мыши)" aria-haspopup="menu"
+              onClick={(e) => { e.stopPropagation(); menu.openFrom(e.currentTarget); }}><Icon name="more" size={16} /></button>
+    </span>
+  );
 }
 
 const KIND_LABEL: Record<UpcomingMeeting["kind"], string> = { scheduled: "Из календаря", temporary: "Временная комната", peer: "Равноправная комната" };
@@ -116,8 +125,7 @@ export function MeetingCard({ m, now, i, actions }: { m: UpcomingMeeting; now: n
       {menu.node}
       <div className="upc-top">
         <span className={`upc-status upc-st-${st.state}`}><i aria-hidden />{STATE_LABEL[st.state]}</span>
-        <span className="upc-kind" title={m.kind === "scheduled" ? "Встреча запланирована в календаре Outlook" : "Комната на одну встречу"}>
-          <Icon name={m.kind === "scheduled" ? "calendar" : "sparkle"} size={13} /> {KIND_LABEL[m.kind]}</span>
+        <Actions m={m} menu={menu} actions={actions} />
       </div>
       <h3 className="upc-title" title={m.name}>{m.name}</h3>
       <div className="upc-when"><Icon name="calendar" size={14} /> {whenLabel(m, now)}</div>
@@ -127,10 +135,11 @@ export function MeetingCard({ m, now, i, actions }: { m: UpcomingMeeting; now: n
         <People m={m} />
       </div>
       <div className="upc-foot">
+        <span className="upc-kind" title={m.kind === "scheduled" ? "Встреча запланирована в календаре Outlook" : "Комната на одну встречу"}>
+          <Icon name={m.kind === "scheduled" ? "calendar" : "sparkle"} size={13} /> {KIND_LABEL[m.kind]}</span>
         <SyncNote m={m} />
         {m.has_password && <span className="tag" title="Для входа нужен пароль"><Icon name="lock" size={12} /> Пароль</span>}
         <span className="spacer" />
-        <More m={m} menu={menu} />
         <Go m={m} state={st.state} now={now} />
       </div>
     </article>
@@ -149,7 +158,7 @@ export function MeetingRow({ m, now, actions }: { m: UpcomingMeeting; now: numbe
         <span className="small muted">{whenLabel(m, now)} · {st.text}</span>
       </span>
       <People m={m} />
-      <span className="upc-row-act"><More m={m} menu={menu} /><Go m={m} state={st.state} now={now} mini /></span>
+      <span className="upc-row-act"><Actions m={m} menu={menu} actions={actions} /><Go m={m} state={st.state} now={now} mini /></span>
     </div>
   );
 }

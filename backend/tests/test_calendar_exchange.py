@@ -155,3 +155,66 @@ def test_recurrence_conversion_and_unsupported_patterns():
     for fn in (lambda: recurrence_to_graph({"type": "yearly", "start": "2026-11-02"}, "UTC"), lambda: recurrence_to_ews({"type": "monthly_nth"})):
         with pytest.raises(CalendarError):
             fn()
+
+
+# ------------------------------------------------------------------------------------------------ календари, карточка, серия, место и участники (EWS)
+def _folders(items: str, cls="Success", code="NoError") -> httpx.Response:
+    return _resp(f'<m:FindFolderResponse><m:ResponseMessages><m:FindFolderResponseMessage ResponseClass="{cls}"><m:ResponseCode>{code}</m:ResponseCode>'
+                 f'<m:RootFolder><t:Folders>{items}</t:Folders></m:RootFolder></m:FindFolderResponseMessage></m:ResponseMessages></m:FindFolderResponse>')
+
+
+def _get(item: str, cls="Success", code="NoError") -> httpx.Response:
+    return _resp(f'<m:GetItemResponse><m:ResponseMessages><m:GetItemResponseMessage ResponseClass="{cls}"><m:ResponseCode>{code}</m:ResponseCode>'
+                 f'<m:Items>{item}</m:Items></m:GetItemResponseMessage></m:ResponseMessages></m:GetItemResponse>')
+
+
+def test_calendars_list_primary_plus_subfolders_with_impersonation_header():
+    rec = Recorder(_folders('<t:CalendarFolder><t:FolderId Id="FPROJ"/><t:DisplayName>Проекты</t:DisplayName></t:CalendarFolder>'
+                            '<t:CalendarFolder><t:FolderId Id="FARCH"/><t:DisplayName>Архив</t:DisplayName></t:CalendarFolder>'))
+    cals = run(client(rec).list_calendars("alice@example.org"))
+    assert [(c.id, c.name, c.default) for c in cals] == [("primary", "Календарь", True), ("FARCH", "Архив", False), ("FPROJ", "Проекты", False)]
+    assert rec.header_mailbox() == "alice@example.org" and rec.reqs[0].find(".//m:FindFolder", NS).get("Traversal") == "Deep"
+    with pytest.raises(CalendarError):
+        run(client(Recorder(_folders("", "Error", "ErrorImpersonateUserDenied"))).list_calendars("alice@example.org"))
+
+
+def test_list_events_in_a_chosen_folder_and_busy_status():
+    item = ITEM.replace("<t:CalendarItemType>", "<t:LegacyFreeBusyStatus>Free</t:LegacyFreeBusyStatus><t:CalendarItemType>")
+    rec = Recorder(_find(item))
+    ev = run(client(rec).list_events("alice@example.org", D, E, "FPROJ"))
+    assert ev[0].show_as == "free" and ev[0].calendar_id == "FPROJ"
+    assert rec.reqs[0].find(".//m:ParentFolderIds/t:FolderId", NS).get("Id") == "FPROJ"
+    assert "calendar:LegacyFreeBusyStatus" in {f.get("FieldURI") for f in rec.reqs[0].findall(".//t:FieldURI", NS)}
+
+
+def test_get_event_parses_attendees_organizer_and_text_body():
+    item = ('<t:CalendarItem><t:ItemId Id="OCC1" ChangeKey="CK5"/><t:Subject>Планёрка</t:Subject><t:Body BodyType="Text">Повестка: бюджет</t:Body><t:Start>2026-11-02T07:00:00Z</t:Start>'
+            '<t:End>2026-11-02T07:45:00Z</t:End><t:IsAllDayEvent>false</t:IsAllDayEvent><t:IsCancelled>false</t:IsCancelled><t:Location>Каб. 5</t:Location>'
+            '<t:CalendarItemType>Occurrence</t:CalendarItemType><t:LegacyFreeBusyStatus>Busy</t:LegacyFreeBusyStatus>'
+            '<t:Organizer><t:Mailbox><t:Name>Алиса</t:Name><t:EmailAddress>Alice@example.org</t:EmailAddress></t:Mailbox></t:Organizer>'
+            '<t:RequiredAttendees><t:Attendee><t:Mailbox><t:Name>Bob</t:Name><t:EmailAddress>Bob@example.org</t:EmailAddress></t:Mailbox><t:ResponseType>Accept</t:ResponseType></t:Attendee></t:RequiredAttendees>'
+            '<t:OptionalAttendees><t:Attendee><t:Mailbox><t:EmailAddress>ext@example.org</t:EmailAddress></t:Mailbox></t:Attendee></t:OptionalAttendees></t:CalendarItem>')
+    rec = Recorder(_get(item))
+    d = run(client(rec).get_event("alice@example.org", "OCC1"))
+    assert d.event.kind == "occurrence" and d.event.organizer == "alice@example.org" and d.organizer_name == "Алиса" and d.body == "Повестка: бюджет"
+    assert [(a["email"], a["type"], a["response"]) for a in d.attendees] == [("bob@example.org", "required", "accept"), ("ext@example.org", "optional", "unknown")]
+    assert rec.reqs[0].findtext(".//t:BodyType", None, NS) == "Text" and rec.header_mailbox() == "alice@example.org"
+
+
+def test_master_id_of_an_occurrence_uses_recurring_master_item_id():
+    rec = Recorder(_get('<t:CalendarItem><t:ItemId Id="MASTER9" ChangeKey="K"/></t:CalendarItem>'), _get("", "Error", "ErrorItemNotFound"))
+    c = client(rec)
+    assert run(c.master_id("alice@example.org", "OCC1")) == "MASTER9"
+    assert rec.reqs[0].find(".//t:RecurringMasterItemId", NS).get("OccurrenceId") == "OCC1"
+    assert run(c.master_id("alice@example.org", "SINGLE")) is None
+
+
+def test_update_sets_location_and_replaces_attendees_in_both_lists():
+    rec = Recorder(_write("UpdateItem", item='<t:CalendarItem><t:ItemId Id="A1" ChangeKey="CK3"/></t:CalendarItem>'))
+    run(client(rec).update_event("alice@example.org", "A1", "CK1", subject=None, start=None, end=None, location="Каб. 7", attendees=[("bob@example.org", "Bob", False)]))
+    ui = rec.reqs[0].find(".//m:UpdateItem", NS)
+    fields = {f.get("FieldURI") for f in ui.findall(".//t:FieldURI", NS)}
+    assert fields == {"calendar:Location", "calendar:RequiredAttendees", "calendar:OptionalAttendees"}
+    assert ui.findtext(".//t:SetItemField/t:CalendarItem/t:Location", None, NS) == "Каб. 7"
+    assert ui.findtext(".//t:RequiredAttendees/t:Attendee/t:Mailbox/t:EmailAddress", None, NS) == "bob@example.org"
+    assert ui.find(".//t:DeleteItemField/t:FieldURI", NS).get("FieldURI") == "calendar:OptionalAttendees", "пустой список необязательных — поле очищается"

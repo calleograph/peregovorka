@@ -7,6 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles.css";
 import "./design.css";
 import "./glass.css";
+import "./linkcopy.css";
 import "./calendar.css";
 import { installCrystalsHotkey } from "./crystalsHotkey";
 

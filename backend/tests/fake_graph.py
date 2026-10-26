@@ -22,6 +22,7 @@ class FakeGraph:
     def __init__(self):
         self.events: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
+        self.calendars = [{"id": "CALDEF", "name": "Календарь", "isDefaultCalendar": True, "canEdit": True}, {"id": "CALPROJ", "name": "Проекты", "isDefaultCalendar": False, "canEdit": True}]
         self.deny = False
         self.down = False
         self.n = 0
@@ -46,9 +47,14 @@ class FakeGraph:
         if not m:
             return httpx.Response(404)
         mb, rest = m.group(1).replace("%40", "@"), m.group(2)
-        if rest == "/calendarView" and method == "GET":
+        if rest == "/calendars" and method == "GET":
+            return httpx.Response(200, json={"value": self.calendars})
+        cv = re.match(r"^(?:/calendars/([^/]+))?/calendarView$", rest)
+        if cv and method == "GET":
+            cal = cv.group(1)
             a, b = req.url.params["startDateTime"], req.url.params["endDateTime"]
-            vals = [{k: v for k, v in e.items() if k != "mailbox"} for e in self.events.values() if e["mailbox"] == mb and e["start"]["dateTime"][:19] < b[:19] and e["end"]["dateTime"][:19] > a[:19]]
+            vals = [{k: v for k, v in e.items() if k not in ("mailbox", "calendar")} for e in self.events.values()
+                    if e["mailbox"] == mb and e.get("calendar", "primary") == (cal or "primary") and e["start"]["dateTime"][:19] < b[:19] and e["end"]["dateTime"][:19] > a[:19]]
             return httpx.Response(200, json={"value": vals})
         if rest == "/events" and method == "POST":
             j = json.loads(req.content)
@@ -65,11 +71,13 @@ class FakeGraph:
             e = self.events.get(eid)
             if e is None or e["mailbox"] != mb:
                 return httpx.Response(404)
+            if method == "GET":
+                return httpx.Response(200, json={k: v for k, v in e.items() if k not in ("mailbox", "calendar")})
             if method == "PATCH":
                 if req.headers.get("If-Match") and req.headers["If-Match"] != e["@odata.etag"]:
                     return httpx.Response(412)
                 j = json.loads(req.content)
-                e.update({k: (utc(v) if k in ("start", "end") else v) for k, v in j.items() if k in ("subject", "start", "end")})
+                e.update({k: (utc(v) if k in ("start", "end") else v) for k, v in j.items() if k in ("subject", "start", "end", "location", "attendees")})
                 self.n += 1
                 e["@odata.etag"] = f'W/"v{self.n}"'
                 return httpx.Response(200, json=e)
