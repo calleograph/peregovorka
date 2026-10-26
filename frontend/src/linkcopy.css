@@ -1,25 +1,26 @@
-/* Кнопки быстрого копирования ссылок на карточках (components/LinkCopy.tsx): зелёная — для сотрудников, красная — гостевая. Цвета мягкие, значки различимы и без цвета (подсказка, подпись для диктора).
-   Значения заданы явно для светлой и тёмной тем; тест linkCopyContrast.test.ts проверяет контраст значка на фоне кнопки (не ниже 4,5:1). */
+/* Кнопки быстрого копирования ссылок на карточках (components/LinkCopy.tsx): сине-зелёная — для сотрудников, коралловая — гостевая; контурный стиль без тёмных заливок.
+   Значки различимы и без цвета (подсказка, подпись для диктора). Значения заданы явно для светлой и тёмной тем; тест linkCopyContrast.test.ts проверяет контраст значка на карточке (не ниже 4,5:1). */
 :root {
-  --lc-ok-bg: #e3f5ea; --lc-ok-fg: #14683a; --lc-ok-line: #b4dfc4; --lc-ok-hover: #d2eedd;
-  --lc-bad-bg: #fde8e8; --lc-bad-fg: #a32323; --lc-bad-line: #f1bcbc; --lc-bad-hover: #fbd6d6;
+  --lc-ok-fg: #0b6b75; --lc-ok-line: #8cc9d0;           /* сине-зелёный: ссылка для сотрудников */
+  --lc-bad-fg: #a8322a; --lc-bad-line: #edaaa1;         /* коралловый: гостевая ссылка */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --lc-ok-bg: #143a25; --lc-ok-fg: #8ee6b0; --lc-ok-line: #2a6a46; --lc-ok-hover: #1b4a31;
-    --lc-bad-bg: #411a1a; --lc-bad-fg: #ffa3a3; --lc-bad-line: #7a3030; --lc-bad-hover: #552121;
+    --lc-ok-fg: #66d9e3; --lc-ok-line: #2f6f77;
+    --lc-bad-fg: #ff9f93; --lc-bad-line: #7d3b35;
   }
 }
 :root[data-theme="dark"] {
-  --lc-ok-bg: #143a25; --lc-ok-fg: #8ee6b0; --lc-ok-line: #2a6a46; --lc-ok-hover: #1b4a31;
-  --lc-bad-bg: #411a1a; --lc-bad-fg: #ffa3a3; --lc-bad-line: #7a3030; --lc-bad-hover: #552121;
+  --lc-ok-fg: #66d9e3; --lc-ok-line: #2f6f77;
+  --lc-bad-fg: #ff9f93; --lc-bad-line: #7d3b35;
 }
 .lc-group { display: inline-flex; align-items: center; gap: 6px; }
 .iconbtn.lc { flex: none; width: 34px; height: 34px; transition: background .15s, border-color .15s, transform .15s; }
-.iconbtn.lc-staff { color: var(--lc-ok-fg); background: var(--lc-ok-bg); border-color: var(--lc-ok-line); }
-.iconbtn.lc-guest { color: var(--lc-bad-fg); background: var(--lc-bad-bg); border-color: var(--lc-bad-line); }
-.iconbtn.lc-staff:hover, .iconbtn.lc-staff:focus-visible { background: var(--lc-ok-hover); color: var(--lc-ok-fg); border-color: var(--lc-ok-fg); }
-.iconbtn.lc-guest:hover, .iconbtn.lc-guest:focus-visible { background: var(--lc-bad-hover); color: var(--lc-bad-fg); border-color: var(--lc-bad-fg); }
+/* контурный стиль: прозрачная заливка с едва заметным оттенком, цветная рамка и значок; при наведении оттенок гуще, рамка цветом значка */
+.iconbtn.lc-staff { color: var(--lc-ok-fg); background: color-mix(in srgb, var(--lc-ok-fg) 7%, transparent); border-color: var(--lc-ok-line); }
+.iconbtn.lc-guest { color: var(--lc-bad-fg); background: color-mix(in srgb, var(--lc-bad-fg) 7%, transparent); border-color: var(--lc-bad-line); }
+.iconbtn.lc-staff:hover, .iconbtn.lc-staff:focus-visible { background: color-mix(in srgb, var(--lc-ok-fg) 14%, transparent); color: var(--lc-ok-fg); border-color: var(--lc-ok-fg); }
+.iconbtn.lc-guest:hover, .iconbtn.lc-guest:focus-visible { background: color-mix(in srgb, var(--lc-bad-fg) 14%, transparent); color: var(--lc-bad-fg); border-color: var(--lc-bad-fg); }
 .iconbtn.lc:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .iconbtn.lc:disabled { opacity: .7; cursor: progress; }
 .iconbtn.lc.done { transform: scale(1.06); }

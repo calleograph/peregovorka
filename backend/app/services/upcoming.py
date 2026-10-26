@@ -22,7 +22,6 @@ from . import peer_rooms
 from . import recurrence as rc
 from .rooms import RoomView, _listed, _matches, acl_allows
 
-CANCELLED_SHOWN = timedelta(days=7)        # отменённая встреча видна со статусом «Отменена», пока не прошло её время (но не дольше недели после отмены)
 PREVIEW = 3                                 # сколько имён приглашённых в карточке; остальные — «+N»
 _COLS = ("id", "slug", "name", "room_type", "lifetime", "lifecycle", "created_by_user_id", "created_by_name", "created_at", "peer_access", "password_hash", "guest_token", "guest_access_enabled",
          "scheduled_start", "scheduled_end", "join_opens_at", "recurring", "cancelled_at", "outlook_sync_state", "outlook_synced_at", "outlook_recurrence", "outlook_exceptions", "outlook_tz")
@@ -79,8 +78,8 @@ async def upcoming(db: AsyncSession, su: SessionUser, now: datetime, *, outlook_
     """`outlook_guests` — организация разрешила гостей во встречах Outlook и календаря; `temp_guests` — разрешила гостевую ссылку временных переговорок:
     только при них встреча получает гостевую ссылку и право её выпустить (решает сервер, интерфейс лишь показывает)."""
     t = Room.__table__
-    cond = (t.c.is_enabled.is_(True), t.c.lifetime == "temporary",
-            or_(t.c.lifecycle != "closed", and_(t.c.cancelled_at.is_not(None), t.c.cancelled_at > now - CANCELLED_SHOWN, t.c.scheduled_end > now)))
+    # в «Предстоящих» только актуальное: отменённые и закрытые комнаты не попадают в список вовсе (материалы остаются в «Истории»); завершённые встречи отсекаются ниже
+    cond = (t.c.is_enabled.is_(True), t.c.lifetime == "temporary", t.c.lifecycle != "closed", t.c.cancelled_at.is_(None))
     views = await _views(db, cond)
     invited = await _invited(db, su, [v.id for v in views])
     shown = []
@@ -109,7 +108,11 @@ async def upcoming(db: AsyncSession, su: SessionUser, now: datetime, *, outlook_
         start, end, opens = v.scheduled_start or v.created_at, v.scheduled_end, v.join_opens_at
         if v.recurring:              # серия: ближайшее занятие по шаблону и исключениям (вход у серии открыт всегда); шаблона нет — время первого занятия без окончания
             nxt = rc.next_occurrence(v.outlook_recurrence, v.outlook_tz, now, v.outlook_exceptions)
+            if nxt is None and v.outlook_recurrence and m is None:
+                continue             # занятий больше нет (серия закончилась): в списке её нет; прошедшее занятие не скрывает будущие — они находятся шаблоном
             start, end, opens = (nxt[0], nxt[1], None) if nxt else (start, None, None)
+        elif scheduled and m is None and ((end is not None and end <= now) or (last_end.get(v.id) is not None and last_end[v.id] >= start)):
+            continue                 # разовая встреча закончилась (по расписанию или фактически): в «Предстоящих» не показывается, остаётся в «Истории»
         out.append({
             "id": str(v.id), "slug": v.slug, "name": v.name,
             "kind": "scheduled" if scheduled else ("peer" if v.room_type == peer_rooms.ROOM_TYPE else "temporary"),

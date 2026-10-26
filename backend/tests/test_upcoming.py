@@ -112,19 +112,60 @@ def test_repeated_sync_is_idempotent_and_updates_time_and_invitees(client):
     assert _item(client, "alice", j["id"])["invitees"]["count"] == 2
 
 
-def test_cancelled_meeting_shows_status_then_disappears_and_ended_rooms_go_to_history_only(client):
+def test_cancelled_meeting_is_not_listed_at_all_and_stays_out_after_its_time_passes(client):
     j, h, _b = _schedule(client)
+    assert _item(client, "alice", j["id"]) is not None
     _anon(client)
     assert client.delete(f"{O}/meetings/{j['id']}", headers=h).status_code == 204
-    it = _item(client, "alice", j["id"])
-    assert it and it["cancelled"] is True and it["can_join"] is False, "отменённая видна со статусом «Отменена»"
+    assert _item(client, "alice", j["id"]) is None, "отменённая встреча на главной не показывается ни со статусом, ни в счётчиках"
+    assert j["id"] not in [x["id"] for x in _up(client, "root")["items"]], "и администратору"
 
     async def past(db):
         r = await db.get(Room, uuid.UUID(j["id"]))
         r.scheduled_start, r.scheduled_end = utcnow() - timedelta(hours=2), utcnow() - timedelta(hours=1)
         await db.commit()
     _db(client, past)
-    assert _item(client, "alice", j["id"]) is None, "время отменённой встречи прошло — из списка ушла"
+    assert _item(client, "alice", j["id"]) is None
+
+
+def test_meeting_whose_time_has_passed_is_not_listed_unless_people_are_in_it_and_nothing_is_deleted(client):
+    j, *_ = _schedule(client, **_body(start_in=-5, length=60))
+    assert _item(client, "alice", j["id"]) is not None, "началась, идти может — ещё актуальна"
+
+    async def over(db):
+        r = await db.get(Room, uuid.UUID(j["id"]))
+        r.scheduled_start, r.scheduled_end = utcnow() - timedelta(hours=3), utcnow() - timedelta(hours=2)
+        await db.commit()
+    _db(client, over)
+    assert _item(client, "alice", j["id"]) is None, "плановое время прошло, никто не вошёл — на главной нет"
+    row = _db(client, lambda db: db.get(Room, uuid.UUID(j["id"])))
+    assert row is not None and row.lifecycle != "deleted", "запись в базе остаётся"
+    a = _join(client, "alice", j["id"])
+    assert _item(client, "alice", j["id"])["live"], "если в комнате идёт встреча — она показывается, даже если плановое время вышло"
+    login(client, "alice")
+    assert client.post(f"{API}/meetings/{a['meeting_id']}/end").status_code == 204
+    assert _item(client, "alice", j["id"]) is None, "встреча закончилась — из списка ушла"
+    login(client, "alice")
+    assert a["meeting_id"] in [m["id"] for m in client.get(f"{API}/meetings").json()], "в «Истории» осталась"
+
+
+def test_finished_occurrence_does_not_hide_the_series_and_an_ended_series_is_gone(client):
+    j, *_ = _schedule(client, recurring=True)
+    a = _join(client, "alice", j["id"])
+    login(client, "alice")
+    assert client.post(f"{API}/meetings/{a['meeting_id']}/end").status_code == 204
+    it = _item(client, "alice", j["id"])
+    assert it and it["recurring"] and it["live"] is None and it["last_ended_at"], "занятие закончилось — серия остаётся с ближайшим занятием"
+
+    ended = {"type": "daily", "interval": 1, "start": (utcnow() - timedelta(days=10)).date().isoformat(), "end": (utcnow() - timedelta(days=2)).date().isoformat(), "count": None,
+             "time": "10:00", "minutes": 30, "tz": "UTC"}
+
+    async def finish(db):
+        r = await db.get(Room, uuid.UUID(j["id"]))
+        r.outlook_recurrence, r.outlook_tz = ended, "UTC"
+        await db.commit()
+    _db(client, finish)
+    assert _item(client, "alice", j["id"]) is None, "у серии больше нет занятий — на главной её нет"
 
 
 def test_series_room_survives_its_sessions_and_live_status_reflects_the_real_meeting(client):
@@ -247,7 +288,7 @@ def test_finished_meeting_leaves_upcoming_by_schedule_and_stays_in_history(clien
     a = _join(client, "alice", j["id"])
     login(client, "alice")
     assert client.post(f"{API}/meetings/{a['meeting_id']}/end").status_code == 204
-    assert _item(client, "alice", j["id"])["last_ended_at"], "сразу после встречи — ещё в списке (до закрытия по расписанию)"
+    assert _item(client, "alice", j["id"]) is None, "встреча закончилась — на главной её больше нет (не ждём закрытия по расписанию)"
 
     async def expire(db):
         r = await db.get(Room, uuid.UUID(j["id"]))

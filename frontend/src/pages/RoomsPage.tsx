@@ -13,7 +13,7 @@ import RoomIcon from "../components/RoomIcon";
 import UpcomingSection from "../components/UpcomingMeetings";
 import { useCalendarAvailable } from "../useCalendarAvailable";
 import { LinkCopy } from "../components/LinkCopy";
-import { meetingState, span, tickMs } from "../upcomingStatus";
+import { isActual, meetingState, span, tickMs } from "../upcomingStatus";
 
 /** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
 function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: () => void }) {
@@ -166,7 +166,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [view, setView] = useState<View>(() => { try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "tiles"; } catch { return "tiles"; } });
   const [toast, showToast] = useToast();
-  const [upcoming, setUpcoming] = useState<UpcomingMeeting[]>([]);
+  const [received, setUpcoming] = useState<UpcomingMeeting[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
   const skew = useRef(0);                                   // часы сервера минус часы браузера: отсчёт не зависит от неточных часов компьютера
   const [now, setNow] = useState(() => Date.now());
@@ -194,6 +194,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     document.addEventListener("visibilitychange", vis);
     return () => { alive = false; window.clearInterval(t); document.removeEventListener("visibilitychange", vis); };
   }, []);
+  const upcoming = useMemo(() => received.filter((m) => isActual(m, now)), [received, now]);       // завершённые и отменённые на главной не показываются: ни карточками, ни в счётчиках и поиске
   useEffect(() => {                                                // отсчёт: раз в секунду у самой границы начала, иначе раз в 15 с
     const t = window.setTimeout(() => setNow(Date.now() + skew.current), tickMs(upcoming, now));
     return () => window.clearTimeout(t);

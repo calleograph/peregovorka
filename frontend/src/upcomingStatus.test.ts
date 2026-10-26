@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UpcomingMeeting } from "./api";
-import { action, dayLabel, meetingState, span, tickMs, whenLabel } from "./upcomingStatus";
+import { action, dayLabel, isActual, meetingState, span, tickMs, whenLabel } from "./upcomingStatus";
 
 const NOW = Date.parse("2026-10-23T12:00:00Z");
 const iso = (minFromNow: number) => new Date(NOW + minFromNow * 60_000).toISOString();
@@ -80,5 +80,33 @@ describe("Предстоящие встречи: отсчёт и состоян�
   it("частота перерисовки: раз в секунду только у самой границы начала", () => {
     expect(tickMs([m({ start: iso(60) })], NOW)).toBe(15_000);
     expect(tickMs([m({ start: new Date(NOW + 50_000).toISOString() })], NOW)).toBe(1000);
+  });
+});
+
+
+describe("главная показывает только актуальные встречи", () => {
+  it("запланированная, скоро начинающаяся, идущая и открытая комната — актуальны", () => {
+    expect(isActual(m({ start: iso(300), end: iso(330), opens_at: iso(290) }), NOW)).toBe(true);
+    expect(isActual(m({ start: iso(10), end: iso(40), opens_at: iso(0) }), NOW)).toBe(true);
+    expect(isActual(m({ start: iso(-20), end: iso(10), live: { started_at: iso(-15), participants: 2 } }), NOW)).toBe(true);
+    expect(isActual(m({ kind: "temporary", end: null, opens_at: null }), NOW)).toBe(true);
+  });
+  it("завершённые и отменённые — нет: по времени окончания, по фактическому завершению, по отмене", () => {
+    expect(isActual(m({ start: iso(-90), end: iso(-30), opens_at: iso(-100) }), NOW)).toBe(false);
+    expect(isActual(m({ start: iso(-30), end: iso(60), last_ended_at: iso(-5) }), NOW)).toBe(false);
+    expect(isActual(m({ cancelled: true }), NOW)).toBe(false);
+    expect(isActual(m({ cancelled: true, recurring: true }), NOW)).toBe(false);
+  });
+  it("встреча уходит сама, когда проходит её время: устаревший ответ сервера и переход через полночь не оставляют её в списке", () => {
+    const late = m({ start: iso(-5), end: iso(25), opens_at: iso(-15) });
+    expect(isActual(late, NOW)).toBe(true);
+    expect(isActual(late, NOW + 31 * 60_000)).toBe(false);
+    const night = m({ start: Date.parse("2026-10-23T22:30:00Z") - NOW > 0 ? new Date("2026-10-23T22:30:00Z").toISOString() : iso(1), end: new Date("2026-10-23T23:30:00Z").toISOString(), opens_at: new Date("2026-10-23T22:20:00Z").toISOString() });
+    expect(isActual(night, Date.parse("2026-10-23T23:00:00Z"))).toBe(true);
+    expect(isActual(night, Date.parse("2026-10-24T00:05:00Z"))).toBe(false);                      // после полуночи, без перезагрузки страницы
+  });
+  it("серия: окончание одного занятия не прячет серию", () => {
+    const series = m({ recurring: true, start: iso(-90), end: iso(-30), opens_at: null });
+    expect(isActual(series, NOW)).toBe(true);
   });
 });

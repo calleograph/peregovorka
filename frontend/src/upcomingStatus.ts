@@ -69,6 +69,14 @@ export function meetingState(m: UpcomingMeeting, now: number, tz?: string): { st
   return { state: left <= SOON_MS || open ? "soon" : "scheduled", text: left < 60_000 ? `Начало через ${span(left)}` : `Через ${span(left)}` };
 }
 
+/** Актуальна ли встреча для главной страницы: запланированная, скоро начинающаяся, идущая или открытая комната. Завершённые и отменённые на главной не показываются
+ *  (они остаются в «Истории»). Проверяется по текущему времени при каждой перерисовке, поэтому встреча уходит сама, без перезагрузки: по окончании, после полуночи, при устаревшем ответе сервера. */
+export function isActual(m: UpcomingMeeting, now: number, tz?: string): boolean {
+  if (m.recurring && !m.cancelled) return true;          // серия: окончание одного занятия не прячет остальные — следующее занятие сервер пришлёт при ближайшем обновлении
+  const s = meetingState(m, now, tz).state;
+  return s !== "ended" && s !== "cancelled";
+}
+
 /** Как часто перерисовывать отсчёт: раз в секунду, только когда у какой-то встречи меньше двух минут до начала; иначе раз в 15 секунд. */
 export function tickMs(items: UpcomingMeeting[], now: number): number {
   return items.some((m) => !m.cancelled && !m.live && m.kind === "scheduled" && !!m.end && Math.abs(new Date(m.start).getTime() - now) < 120_000) ? 1000 : 15_000;
