@@ -5,12 +5,13 @@ import { Icon } from "../components/Icons";
 import { chatApi, newClientId, type ChatInfo, type ChatMsg, type PeopleResult, type Person, type Receipt } from "./chatApi";
 import { visibleChats } from "./chatModel";
 import { chats, useChats } from "./chatStore";
+import { useFocusOnMount } from "../useInitialFocus";
 
 const key = (p: Person) => p.id ?? `ref:${p.ref}`;
 const pick = (p: Person) => ({ id: p.id, ref: p.ref, login: p.login });
 
 /** Поиск сотрудников: внутренний справочник (кто уже входил) и корпоративный каталог; группы каталога раскрываются в участников. */
-function PeoplePicker({ selected, onToggle, multi }: { selected: Person[]; onToggle: (p: Person) => void; multi: boolean }) {
+export function PeoplePicker({ selected, onToggle, multi }: { selected: Person[]; onToggle: (p: Person) => void; multi: boolean }) {
   const [q, setQ] = useState("");
   const [res, setRes] = useState<PeopleResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -61,6 +62,7 @@ function PeoplePicker({ selected, onToggle, multi }: { selected: Person[]; onTog
 
 export function NewChatDialog({ onClose }: { onClose: () => void }) {
   const s = useChats();
+  const focusOnMount = useFocusOnMount<HTMLLabelElement>();
   const [mode, setMode] = useState<"direct" | "group">("direct");
   const [sel, setSel] = useState<Person[]>([]);
   const [title, setTitle] = useState("");
@@ -84,7 +86,7 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
       </div>
       {mode === "group" && (
         <>
-          <label>Название группы<input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="Например, «Проект Альфа»" /></label>
+          <label ref={focusOnMount}>Название группы<input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="Например, «Проект Альфа»" /></label>
           {sel.length > 0 && (
             <div className="people-chips">
               {sel.map((p) => <span key={key(p)} className="chip on">{p.name}<button type="button" aria-label={`Убрать ${p.name}`} onClick={() => toggle(p)}>×</button></span>)}
@@ -129,7 +131,7 @@ export function FoldersDialog({ onClose }: { onClose: () => void }) {
         ))}
       </ul>
       <form className="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(() => chatApi.createFolder(name.trim())).then(() => setName("")); }}>
-        <input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Новая папка: «Работа», «Проекты»…" aria-label="Название новой папки" />
+        <input data-autofocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Новая папка: «Работа», «Проекты»…" aria-label="Название новой папки" />
         <button type="submit" className="btn primary" disabled={!name.trim()}>Создать</button>
       </form>
       {err && <div className="alert error">{err}</div>}

@@ -226,7 +226,7 @@ class LocalStorage:
             raise StorageError(f"Не удалось удалить файл: {exc.strerror or exc}") from None
 
     def list_dir(self, rel: str) -> list[str]:
-        full = self._full(rel)
+        full = self._root.resolve() if rel in ("", ".") else self._full(rel)          # "" — корень хранилища (нужно сканированию при восстановлении материалов)
         try:
             return sorted(p.name for p in full.iterdir()) if full.is_dir() else []
         except OSError as exc:
@@ -431,7 +431,7 @@ class SmbStorage:
     def list_dir(self, rel: str) -> list[str]:
         smb = self._session()
         try:
-            path = self._unc(rel)
+            path = self._unc(None if rel in ("", ".") else rel)
             return sorted(smb.listdir(path)) if smb.path.isdir(path) else []
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: не удалось прочитать каталог ({type(exc).__name__})") from None

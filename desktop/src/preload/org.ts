@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld("peregovorkaDesktop", Object.freeze({
   setState(s: { unread?: number; inCall?: boolean; sharing?: boolean; mic?: boolean; theme?: string; ws?: string }): void {
     ipcRenderer.send("org:state", { unread: s?.unread, inCall: s?.inCall, sharing: s?.sharing, mic: s?.mic, theme: s?.theme, ws: s?.ws });
   },
+  /** Выбор устройств и обработка звука, заданные в настройках приложения (по названию устройства). Страница применяет их как значения по умолчанию; null — нет данных. */
+  media: Object.freeze({ get(): Promise<unknown> { return ipcRenderer.invoke("org:media:get"); } }),
+  /** Открыть системные настройки звука Windows: mic-classic (окно «Звук», вкладка «Запись»), sound, privacy-mic. Другие значения отклоняются. */
+  openSoundSettings(kind: string): Promise<unknown> { return ipcRenderer.invoke("org:sound:open", { kind: String(kind ?? "") }); },
   onCommand(cb: (c: Cmd) => void): void {
     handler = typeof cb === "function" ? cb : null;
     ipcRenderer.send("org:ready");

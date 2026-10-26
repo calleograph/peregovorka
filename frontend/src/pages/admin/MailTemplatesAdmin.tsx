@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type MailTemplate } from "../../api";
 import { useContextMenu } from "../../components/ContextMenu";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 const empty = { name: "", subject: "", body: "", signature: "", materials: ["protocol", "summary"] as string[], is_default: false };
 
 /** «Шаблоны писем»: тема, текст, подпись и материалы по умолчанию для рассылки материалов встреч; переменные {{...}} подставляются при отправке. */
 export default function MailTemplatesAdmin() {
+  const focusOnMount = useFocusOnMount();
   const { onContextMenu, node: ctxNode } = useContextMenu();
   const [items, setItems] = useState<MailTemplate[]>([]);
   const [vars, setVars] = useState<{ name: string; describe: string }[]>([]);
@@ -40,7 +42,7 @@ export default function MailTemplatesAdmin() {
       {error && <div className="alert error" role="alert">{error}</div>}
       {note && <div className="alert ok" role="status">{note}</div>}
       {form && (
-        <div className="card stack">
+        <div className="card stack" ref={focusOnMount}>
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение шаблона «${form.name}»` : "Новый шаблон"}</h3>
           <label>Название<input value={form.name} maxLength={120} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
           <label>Тема письма<input value={form.subject} maxLength={300} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Материалы встречи «{{meeting_title}}» от {{meeting_date}}" /></label>

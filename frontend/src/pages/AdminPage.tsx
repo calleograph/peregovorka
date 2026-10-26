@@ -25,12 +25,14 @@ import { confirmLeave } from "../dirtyGuard";
 import SipAdmin from "./admin/SipAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
+import RestoreAdmin from "./admin/RestoreAdmin";
 import StoragesAdmin from "./admin/StoragesAdmin";
 import ConfigBackupAdmin from "./admin/ConfigBackupAdmin";
 import CryptoAdmin from "./admin/CryptoAdmin";
 import SigningAdmin from "./admin/SigningAdmin";
 import SystemAdmin from "./admin/SystemAdmin";
 import PerformanceAdmin from "./admin/PerformanceAdmin";
+import NetworkAdmin from "./admin/NetworkAdmin";
 import { AuditAdmin, MeetingsAdmin, RecordingsAdmin, UsersAdmin } from "./admin/Tables";
 import TemplatesAdmin from "./admin/TemplatesAdmin";
 
@@ -110,6 +112,7 @@ const GROUPS: Group[] = [
       <SettingsForm key="chat_files" group="chat_files" title="Вложения чата" fields={chatFilesFields} testable
         intro="Файлы и картинки в чате встречи и в корпоративных чатах: размер, допустимые типы и место хранения (общее хранилище, в том числе SMB)." />) },
     { id: "storage_sync", label: "Целостность хранилищ", render: () => <StorageSyncAdmin /> },
+    { id: "restore", label: "Восстановление материалов", render: () => <RestoreAdmin /> },
     { id: "journal", label: "Журнал событий", render: (go) => <JournalAdmin onOpenSettings={() => go("journal_settings")} /> },
     { id: "journal_settings", label: "Хранение журнала", render: () => (
       <SettingsForm key="journal" group="journal" title="Хранение журнала событий" fields={journalFields} testable
@@ -117,6 +120,7 @@ const GROUPS: Group[] = [
     { id: "mail_log", label: "Почта: журнал отправки", render: () => <MailLogAdmin /> },
   ] },
   { title: "Система", pages: [
+    { id: "network", label: "Сетевая доступность", render: () => <NetworkAdmin /> },
     { id: "updates", label: "Обновления и версии", render: (go) => <UpdatesAdmin onOpen={go} /> },
     { id: "config_backup", label: "Резервная копия конфигурации", render: () => <ConfigBackupAdmin /> },
     { id: "general", label: "Общие настройки", render: () => <SettingsForm key="general" group="general" title="Общие настройки" fields={generalFields} /> },
@@ -134,6 +138,8 @@ const GROUPS: Group[] = [
 
 /** Дополнительные слова для поиска по меню: технические названия остаются в подсказках, а не в названиях разделов. */
 const KEYWORDS: Record<string, string> = {
+  restore: "восстановление найти материалы перенос хранилища записи стенограммы протоколы паспорт manifest сканирование диск потерялись не отображаются",
+  network: "порты межсетевой экран firewall nat udp tcp livekit публикация интернет reverse proxy turn stun доступность сеть",
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
   crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", desktop_signing: "windows приложение клиент подпись сертификат code signing authenticode msi exe установщик gpo ad cs обновления", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",

@@ -754,6 +754,11 @@ export function journalParams(qy: JournalQuery, beforeId?: number, limit = 100):
   return p.toString();
 }
 
+import type { RestoreJobView } from "./restoreView";
+export interface NetRule { id: string; direction: "in" | "out"; scope: "internet" | "internal" | "pbx" | "local"; required: "required" | "recommended" | "conditional"; proto: string; port: string; component: string; purpose: string; where: string; notes: string[] }
+export interface NetworkInfo { variant: string[]; rules: NetRule[]; local_only: { proto: string; port: string; component: string; purpose: string; reachable: string; bind?: string }[]; warnings: string[]; limits: string[]; public_host: string; node_ip: string; generated_at: number }
+export interface NetworkProbe { checks: { id: string; host: string; port: number; what: string; ok: boolean; ms?: number; error?: string }[]; not_checked: { id: string; proto: string; port: string; reason: string }[]; disclaimer: string }
+
 export const api = {
   login: (login: string, password: string) => request<Me | TotpChallenge>("POST", "/auth/login", { login, password }),
   freeSlot: (free_token: string, session_id: string) => request<Me>("POST", "/auth/login/free-slot", { free_token, session_id }),
@@ -1083,6 +1088,13 @@ export const api = {
     deleteStorage: (id: string) => request<void>("DELETE", `/admin/storages/${id}`),
     testStorage: (id: string) => request<TestResult>("POST", `/admin/storages/${id}/test`),
     performance: () => request<PerfData>("GET", "/admin/performance"),
+    restoreOverview: () => request<{ jobs: RestoreJobView[]; limits: { max_items: number } }>("GET", "/admin/restore"),
+    restoreJob: (id: string) => request<RestoreJobView>("GET", `/admin/restore/jobs/${id}`),
+    restoreScan: (subpath: string, deep: boolean) => request<RestoreJobView>("POST", "/admin/restore/scan", { subpath, deep }),
+    restoreCancel: (id: string) => request<{ id: string; cancelling: boolean }>("POST", `/admin/restore/jobs/${id}/cancel`),
+    restoreApply: (scanId: string, items: string[]) => request<RestoreJobView>("POST", "/admin/restore/apply", { scan_id: scanId, items, confirm: true }),
+    network: () => request<NetworkInfo>("GET", "/admin/network"),
+    networkProbe: () => request<NetworkProbe>("POST", "/admin/network/probe"),
     resetTotp: (userId: string, password: string) => request<void>("POST", `/admin/users/${userId}/totp/reset`, { password }),
     autoBackup: () => request<AutoBackupStatus>("GET", "/admin/auto-backup"),
     autoBackupSave: (body: Partial<Omit<AutoBackupStatus["settings"], "archive_key_set">>) => request<AutoBackupStatus>("PUT", "/admin/auto-backup/settings", body),

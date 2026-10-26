@@ -114,6 +114,73 @@ async def _dev_forget_waveforms():
     return {"ok": True}
 
 
+@app.post("/__dev/calendar")
+async def _dev_calendar(body: dict = Body(default={})):
+    """Только для стенда: подставной Microsoft Graph с несколькими событиями у alice (вместо Exchange) и включённый раздел «Календарь» — для проверки страницы в браузере."""
+    import httpx
+    from fake_graph import FakeGraph
+    g = getattr(app.state, "dev_graph", None) or FakeGraph()
+    app.state.dev_graph = g
+    app.state.calendar_transport = httpx.MockTransport(g)
+    if body.get("down") is not None:
+        g.down = bool(body["down"])
+    if body.get("reset") or not g.events:
+        g.events.clear()
+        now = utcnow().replace(minute=0, second=0, microsecond=0)
+        def at(days, hour, minutes=45):
+            s0 = (now + dt.timedelta(days=days)).replace(hour=hour)
+            return {"start": {"dateTime": s0.strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}, "end": {"dateTime": (s0 + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.0000000"), "timeZone": "UTC"}}
+        mb = "alice@corp.test"
+        g.add_event(mb, subject="Планёрка отдела", type="seriesMaster", **at(0, 9))
+        g.add_event(mb, subject="Обед с партнёрами", **at(0, 11, 60))
+        g.add_event(mb, subject="Созвон по бюджету", location={"displayName": "http://localhost:5173/m/abcdefghjkmnpqrstuvw"}, **at(1, 10))
+        g.add_event(mb, subject="Ретроспектива", **at(1, 10, 90))
+        g.add_event(mb, subject="Разбор инцидента", location={"displayName": "http://localhost:5173/rooms/tmp-k7f3p2"}, **at(2, 15))
+        g.add_event(mb, subject="Отменённая встреча", isCancelled=True, **at(3, 13))
+        g.add_event(mb, subject="Конференция (весь день)", isAllDay=True, **at(4, 0, 1440))
+    return {"events": len(g.events)}
+
+
+@app.post("/__dev/restore_seed")
+async def _dev_restore_seed(body: dict = Body(default={})):
+    """Только для стенда: старые материалы на диске «после переноса» — подписанный паспорт стенда (достоверно), каталог без паспорта и каталог с чужой подписью (предположительно)."""
+    import base64 as b64, hashlib, json as js, pathlib
+    from app.services import manifest as mf
+    root = pathlib.Path(body.get("root") or os.path.join(DATA, "fs"))
+    key = app.state.settings.app_master_key
+    started = utcnow() - dt.timedelta(days=30)
+    async with app.state.session_maker() as db:
+        from sqlalchemy import select as sel
+        room = (await db.execute(sel(Room).where(Room.slug == "north"))).scalars().first()
+        alice = (await db.execute(sel(User).where(User.sam_account_name == "alice"))).scalars().first()
+        rid, aid, guid = str(room.id), str(alice.id), alice.ad_guid.lower()
+    def put(folder, rel, data):
+        p = root / folder / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    def write_manifest(folder, directory, names, signer):
+        files = []
+        for n in names:
+            b = (root / folder / directory / n).read_bytes()
+            kind, fmt = mf.classify(n)
+            files.append({"name": n, "kind": kind, "format": fmt, "size": len(b), "sha256": hashlib.sha256(b).hexdigest()})
+        ctx = {"meeting": {"id": str(uuid.uuid4()), "started_at": mf.iso(started), "ended_at": mf.iso(started + dt.timedelta(hours=1)), "end_reason": "manual", "transcription": True, "record_audio": True},
+               "room": {"id": rid, "slug": "north", "name": "Переговорная «Север»", "lifetime": "permanent", "history_access": "participants"},
+               "access": {"acl": [], "moderators": [], "grants": []}, "participants": [{"user_id": aid, "ad_guid": guid, "joined_at": mf.iso(started), "left_at": mf.iso(started)}], "retention": {"text_days": 365, "audio_days": 30}}
+        doc = mf.sign(mf.build(ctx, instance=mf.instance_id(signer), folder=folder, directory=directory, files=files, now=utcnow()), signer)
+        (root / folder / directory / "manifest.json").write_text(js.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    d1 = "Переговорная Север/2026-09-26, Суббота/10-30"
+    put("Audio", d1 + "/Алиса Крылова.wav", b"RIFF" + os.urandom(4000)); put("Transcripts", d1 + "/protocol.txt", "Участвовали: Алиса Крылова\n[00:03] Алиса Крылова: Начинаем планёрку\n".encode())
+    put("Protocols", d1 + "/summary.md", "Итог планёрки: утвердили план\n".encode())
+    write_manifest("Audio", d1, ["Алиса Крылова.wav"], key); write_manifest("Transcripts", d1, ["protocol.txt"], key); write_manifest("Protocols", d1, ["summary.md"], key)
+    d2 = "Бухгалтерия/2026-08-14, Пятница/09-00"
+    put("Transcripts", d2 + "/protocol.txt", "Старая встреча без паспорта\n".encode()); put("Audio", d2 + "/Пётр Сидоров.wav", b"RIFF" + os.urandom(2500))
+    d3 = "Юристы/2026-08-20, Четверг/15-00"
+    put("Transcripts", d3 + "/protocol.txt", "Встреча из другой установки\n".encode())
+    write_manifest("Transcripts", d3, ["protocol.txt"], b64.b64encode(os.urandom(32)).decode())
+    return {"root": str(root), "dirs": [d1, d2, d3]}
+
+
 eng = sa.create_engine(f"sqlite:///{DATA}/dev.db")
 Base.metadata.create_all(eng)
 FAM = ["Иванов", "Петрова", "Сидоренко", "Морозов", "Соколова", "Кузнецов", "Лебедева", "Орлов", "Крылова", "Мартынов"]

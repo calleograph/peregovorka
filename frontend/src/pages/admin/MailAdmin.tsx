@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type DiagResult, type MailMessageRow, type MailProfile } from "../../api";
 import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
   id?: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login"; username: string; secret: string; secret_set: boolean;
@@ -16,6 +17,7 @@ const toForm = (p: MailProfile): Form => ({ ...p, secret: "" });
  * администраторы системы — руководители комнат лишь выбирают «что и кому» отправлять.
  */
 export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void }) {
+  const focusOnMount = useFocusOnMount();
   const [items, setItems] = useState<MailProfile[]>([]);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
@@ -73,7 +75,7 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {form && (
-        <form className="card form" onSubmit={(e) => void save(e)} noValidate>
+        <form ref={focusOnMount} className="card form" onSubmit={(e) => void save(e)} noValidate>
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение профиля «${form.name}»` : "Новый профиль SMTP"}</h3>
           <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Почтовый сервер организации" maxLength={120} /></label>
           <fieldset className="group"><legend>Сервер</legend>

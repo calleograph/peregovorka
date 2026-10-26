@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type DiagResult, type LdapProfile, type LegacyLdap } from "../../api";
 import { SecretInput, StageList, secretToSend } from "./common";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
   id?: string; name: string; enabled: boolean; host: string; port: number; protocol: "ldaps" | "starttls"; base_dn: string; upn_suffix: string; netbios_domain: string;
@@ -19,6 +20,7 @@ const toForm = (p: LdapProfile): Form => ({ ...p, secret: "", secret_set: p.secr
  * «Проверить» делает реальную проверку: DNS → TCP → TLS с проверкой цепочки по загруженным CA → вход → чтение Base DN.
  */
 export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void }) {
+  const focusOnMount = useFocusOnMount();
   const [items, setItems] = useState<LdapProfile[]>([]);
   const [env, setEnv] = useState<{ configured: boolean; uris: string[] } | null>(null);
   const [legacy, setLegacy] = useState<LegacyLdap | null>(null);
@@ -101,7 +103,7 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {form && (
-        <form className="card form" onSubmit={(e) => void save(e)} noValidate>
+        <form ref={focusOnMount} className="card form" onSubmit={(e) => void save(e)} noValidate>
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение подключения «${form.name}»` : "Новое подключение"}</h3>
           <div className="cols">
             <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Основной домен" maxLength={120} /></label>

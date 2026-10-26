@@ -117,6 +117,7 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
           <div className="row" style={{ marginTop: 8, flexWrap: "wrap" }}>
             {onOpen && <button className="btn mini" onClick={() => onOpen("updates")}>Обновления и версии</button>}
             {onOpen && <button className="btn mini" onClick={() => onOpen("journal")}>Журнал событий</button>}
+            {onOpen && <button className="btn mini" onClick={() => onOpen("network")}>Показать необходимые порты</button>}
             {onOpen && <button className="btn mini" onClick={() => onOpen("clients")}>Диагностика клиентов</button>}
             {onOpen && <button className="btn mini" onClick={() => onOpen("llm")}>Языковая модель</button>}
             {onOpen && <button className="btn mini" onClick={() => onOpen("system_tech")}>Технические показатели →</button>}

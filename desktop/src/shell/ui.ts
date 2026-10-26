@@ -42,7 +42,7 @@ export type OrgView = { id: string; name: string; origin: string; host: string; 
   retryAt: number | null; user: string | null; unread: number; inCall: boolean; sharing: boolean; theme: string | null; trusted: boolean; serverVersion: string | null; trustDays: number | null };
 export type State = { version: string; buildKind: string; platform: string; activeId: string | null; page: string; orgs: OrgView[]; settings: Settings; locked: string[]; canAdd: boolean;
   allowedDomains: string[]; update: { status: string; version?: string; progress?: number; error?: string; checkedAt?: number; notes?: string; installOnQuit?: boolean; latest?: string; manualUrl?: string | null }; trustAvailable: boolean };
-export type Settings = { closeAction: string; autostart: string; updateMode: string; theme: string; notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
+export type Settings = { media: { mic: string; speaker: string; camera: string; noise: "off" | "standard" | "enhanced"; echo: boolean; agc: boolean }; closeAction: string; autostart: string; updateMode: string; theme: string; notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
   proxy: { mode: string; rules: string; bypass: string; pac: string }; activeOrg: string | null; firstRunDone: boolean };
 
 type Bridge = { call(ch: string, a?: unknown): Promise<unknown>; on(ev: string, cb: (d: unknown) => void): void };

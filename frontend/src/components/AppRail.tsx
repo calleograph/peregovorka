@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { ChatNavButton } from "../chat/ChatNav";
 import { useSite } from "../site";
+import { useCalendarAvailable } from "../useCalendarAvailable";
 import { Icon, type IconName } from "./Icons";
 import NavMenu from "./NavMenu";
 import type { MenuItem } from "../navMenu";
@@ -14,6 +15,7 @@ function RailLink({ to, end, icon, children }: { to: string; end?: boolean; icon
 export default function AppRail({ isAdmin, adminItems, adminActive }: { isAdmin: boolean; adminItems: MenuItem[]; adminActive: boolean }) {
   const site = useSite();
   const mark = site.assets.logo_compact ?? null;
+  const calendar = useCalendarAvailable();
   return (
     <aside className="rail" aria-label="Разделы">
       <Link to="/" className="rail-brand" title={site.name} aria-label={site.name}>
@@ -21,6 +23,7 @@ export default function AppRail({ isAdmin, adminItems, adminActive }: { isAdmin:
       </Link>
       <nav aria-label="Основная навигация" className="rail-nav">
         <RailLink to="/" end icon="video">Переговорки</RailLink>
+        {calendar && <RailLink to="/calendar" icon="calendar">Календарь</RailLink>}
         <RailLink to="/history" icon="clock">История</RailLink>
         <ChatNavButton />
         {isAdmin && <NavMenu className="rail-admin" label={<><Icon name="gear" size={22} /><span>Админ</span></>} items={adminItems} active={adminActive} title="Администрирование" />}

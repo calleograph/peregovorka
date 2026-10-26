@@ -7,6 +7,8 @@
 //   node scripts/check.mjs offline  --app ...   две организации без доступного сервера: переключение, состояние «нет связи», настройки, диагностика
 //   node scripts/check.mjs shots    --app ... [--out dir]   снимки локальных экранов: 1280×800 и 800×520, масштаб 100/150/200 %, светлая и тёмная тема;
 //       проверка вёрстки: нет горизонтальной прокрутки, обрезанного текста, наложений элементов, разных высот однотипных кнопок и полей
+//   node scripts/check.mjs av       --app ...   «Настройки → Звук и видео» с поддельными устройствами Chromium: список устройств, шкала уровня микрофона, проверка звука и камеры,
+//       запоминание выбора, понятная диагностика отказа микрофона, отсутствие ошибок в консоли. Настоящее оборудование (USB, Bluetooth, встроенный микрофон) здесь не проверяется
 //   node scripts/check.mjs update   --app <exe> --pfx feed.pfx --feed dir --next X.Y.Z   (CI Windows) проверить → скачать → установить
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, createReadStream, existsSync } from "node:fs";
@@ -125,6 +127,66 @@ async function firstrun() {
   }
 }
 
+// -------------------------------------------------------------------------------------------- звук и видео
+async function av() {
+  const { app, s } = await start(["--use-fake-device-for-media-stream"]);
+  try {
+    check("первый запуск: приветствие", await s.until(WELCOME, 20));
+    await s.click("Настройки");
+    await s.until("!!document.querySelector('.tabs')", 5);
+    check("вкладка «Звук и видео» есть в настройках", await s.js("!!document.querySelector('#tab-av')"));
+    await s.js("document.querySelector('#tab-av').click()");
+    check("список устройств: микрофон, воспроизведение, камера — не пустые", await s.until("document.querySelector('#av-mic')?.options.length > 1 && document.querySelector('#av-camera')?.options.length > 1", 20),
+      await s.js("[...document.querySelectorAll('#av-mic option, #av-camera option, #av-speaker option')].map((o) => o.textContent).join(' | ')"));
+    check("первым в списке — «По умолчанию в Windows»", await s.js("document.querySelector('#av-mic').options[0].textContent === 'По умолчанию в Windows'"));
+    check("число устройств показано словами", (await s.text()).includes("Windows видит: микрофонов"), (await s.text()).slice(0, 300));
+    await s.shot(join(OUT, "30-av.png"));
+    // микрофон: шкала уровня оживает (поддельное устройство Chromium издаёт сигнал)
+    check("«Проверить микрофон» запускает проверку", await s.click("Проверить микрофон"));
+    check("шкала уровня: сигнал поддельного микрофона виден", await s.until("document.querySelector('progress.bar')?.value > 3", 30), await s.js("document.querySelector('progress.bar')?.value + ' / ' + document.querySelector('main').innerText.slice(0, 200)"));
+    check("надпись «Сигнал есть»", await s.until("document.querySelector('main').innerText.includes('Сигнал есть')", 20));
+    await s.shot(join(OUT, "31-av-mic.png"));
+    check("«Остановить проверку»: микрофон освобождён, шкала на нуле", (await s.click("Остановить проверку")) && (await s.until("document.querySelector('progress.bar')?.value === 0", 5)));
+    // звук
+    check("«Проверить звук»: сообщение о воспроизведении", (await s.click("Проверить звук")) && (await s.until("document.querySelector('main').innerText.includes('Воспроизводится короткая мелодия') || document.querySelector('main').innerText.includes('Не удалось воспроизвести')", 10)), (await s.text()).slice(0, 300));
+    // камера
+    check("«Включить просмотр»: кадр камеры появился", (await s.click("Включить просмотр")) && (await s.until("document.querySelector('video.cam-preview')?.videoWidth > 0", 20)), await s.js("String(document.querySelector('video.cam-preview')?.readyState)"));
+    await s.shot(join(OUT, "32-av-cam.png"));
+    check("«Выключить просмотр»: камера освобождена", (await s.click("Выключить просмотр")) && (await s.js("document.querySelector('video.cam-preview').hidden")));
+    // выбор запоминается по названию и доходит до страниц организаций
+    const label = await s.js("document.querySelector('#av-mic').options[1].value");
+    await s.js("(() => { const sel = document.querySelector('#av-mic'); sel.value = sel.options[1].value; sel.dispatchEvent(new Event('change')); })()");
+    await sleep(500);
+    const st = await s.js("window.pg.call('shell:state').then((x) => x.settings.media)");
+    check("выбранный микрофон сохранён в настройках по названию", st?.mic === label && label.length > 0, JSON.stringify(st));
+    await s.js("(() => { const b = [...document.querySelectorAll('.seg button')].find((x) => x.textContent === 'Стандартное'); b?.click(); })()");
+    await sleep(400);
+    check("шумоподавление запоминается", (await s.js("window.pg.call('shell:state').then((x) => x.settings.media.noise)")) === "standard");
+    check("состояние разрешений Windows для оболочки доступно (shell:av:state)", (await s.js("window.pg.call('shell:av:state').then((x) => typeof x.platform === 'string')")) === true);
+    // отказ микрофона: понятная причина, а не общее «ошибка»
+    await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Could not start audio source'), { name: 'NotReadableError' }))");
+    await s.click("Проверить микрофон");
+    check("отказ микрофона: заголовок и шаги, без утверждения «монопольный режим точно»", await s.until("[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('Микрофон не удалось открыть'))", 10), (await s.text()).slice(0, 400));
+    const t = await s.text();
+    check("отказ микрофона: сказано, что это наиболее вероятное объяснение", t.includes("наиболее вероятное объяснение"));
+    check("отказ микрофона: рекомендация о перезагрузке с оговоркой", t.includes("рекомендуется перезагрузить компьютер") && t.includes("Часто достаточно"));
+    check("отказ микрофона: кнопка «Повторить»", t.includes("Повторить"));
+    if (process.platform === "win32") check("Windows: кнопка «Открыть настройки микрофона Windows»", t.includes("Открыть настройки микрофона Windows"));
+    await s.shot(join(OUT, "33-av-problem.png"));
+    // системные настройки: неизвестный вид отклоняется, вне Windows — честный отказ
+    const bad = await s.js("window.pg.call('shell:sound:open', { kind: 'cmd /c calc' })");
+    check("открытие системных настроек: неизвестный вид отклонён", bad?.ok === false, JSON.stringify(bad));
+    check("переход на другую вкладку освобождает устройства", (await s.js("document.querySelector('#tab-general').click(); 1")) === 1);
+    const errs = s.errors().filter((e) => !/getUserMedia|NotReadableError/.test(e));
+    check("консоль оболочки без ошибок", errs.length === 0, errs.join(" | "));
+    const logErr = mainLogErrors();
+    check("журнал главного процесса без ошибок", logErr.length === 0, logErr.join(" | "));
+    s.close();
+  } finally {
+    app.kill();
+  }
+}
+
 // -------------------------------------------------------------------------------------------- без сервера
 async function offline() {
   // две организации, заданные политикой, на адресах, где сервера нет (TEST-NET-1, RFC 5737)
@@ -222,7 +284,7 @@ async function shots() {
         await s.js("document.querySelector('#nm').value = 'Управление информационных технологий и связи головного офиса'");
         await probe(s, "https://127.0.0.1:18999");
       }],
-      ...["general", "updates", "diag", "about"].map((t) => [`settings-${t}`, async () => {
+      ...["general", "av", "updates", "diag", "about"].map((t) => [`settings-${t}`, async () => {
         if (!(await s.js("!!document.querySelector('.tabs')"))) await s.js("document.querySelector('.side .tool[aria-label=\"Настройки\"]').click()");
         await s.js(`document.querySelector('#tab-${t}').click()`); await sleep(t === "diag" ? 1500 : 300);
       }]),
@@ -282,8 +344,8 @@ async function update() {
 }
 
 try {
-  const run = { firstrun, offline, shots, update }[mode];
-  if (!run) throw new Error("режим: firstrun | offline | shots | update");
+  const run = { firstrun, offline, shots, av, update }[mode];
+  if (!run) throw new Error("режим: firstrun | offline | shots | av | update");
   await run();
 } catch (e) {
   check("проверка выполнена без исключений", false, e?.stack ?? e);

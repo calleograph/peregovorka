@@ -129,6 +129,8 @@ TABLES: dict[str, TablePolicy] = {
     "chat_messages": TablePolicy(False, "переписка сотрудников"), "chat_files": TablePolicy(False, "вложения переписки"), "chat_folders": TablePolicy(False, "личные папки чатов"), "chat_reactions": TablePolicy(False, "реакции на сообщения"), "meeting_chat_reactions": TablePolicy(False, "реакции в чатах встреч"),
     "signing_agents": TablePolicy(False, "подписывающие узлы подключаются к новому серверу заново (токен агента выдаётся этим сервером)"),
     "signing_certs": TablePolicy(False, "сведения о сертификатах узлов — появятся снова после подключения узла; ключи на сервере не хранятся"),
+    "calendar_links": TablePolicy(False, "согласие сотрудника на показ его календаря — личные данные, не конфигурация: после переноса сотрудник подтверждает доступ заново"),
+    "restore_jobs": TablePolicy(False, "журнал сканирований и восстановлений материалов — результат работы с конкретным хранилищем, не конфигурация"),
     "signing_jobs": TablePolicy(False, "история заданий подписи и готовые пакеты — артефакты, а не конфигурация"),
     "guest_participants": TablePolicy(False, "данные встреч"), "meetings": TablePolicy(False, "данные встреч"), "meeting_participants": TablePolicy(False, "данные встреч"),
     "meeting_grants": TablePolicy(False, "данные встреч"), "meeting_chat_messages": TablePolicy(False, "переписка встреч"), "meeting_chat_attachments": TablePolicy(False, "вложения чата"),

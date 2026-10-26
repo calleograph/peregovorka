@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.39.4",
- "reviewed_at": "2026-10-25",
+ "release": "0.40.0",
+ "reviewed_at": "2026-10-26",
  "components": [
   {
    "key": "livekit_server",
@@ -424,7 +424,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11870",
+   "reviewed_latest": "server-b11889",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -453,7 +453,7 @@
    ],
    "changelog": "https://github.com/ggml-org/llama.cpp/releases",
    "deferred": {
-    "version": "server-b11870",
+    "version": "server-b11889",
     "reason": "Новый образ не проверен с моделью Qwen3 1.7B на CPU: качество ответов и скорость протоколов на целевом железе не измерялись.",
     "issue": "DEP-1",
     "recheck": "2026-11-16",
@@ -1377,7 +1377,7 @@
     "repo": "library/postgres",
     "suffix": "-alpine"
    },
-   "digest": "sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36",
+   "digest": "sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab",
    "deferred": {
     "version": "18",
     "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",
@@ -1536,7 +1536,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-25",
+  "checked_at": "2026-10-26",
   "source": "osv.dev",
   "advisories": {
    "onnx==1.19.1": [

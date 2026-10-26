@@ -13,7 +13,7 @@
   var BUSY_LABEL = { meeting: "Проверяем встречу…", auth: "Ожидаем вход…", api: "Создаём конференцию…", invite: "Добавляем ссылку…" };
   var FATAL = { no_office: 1, office_js_missing: 1, no_item: 1, legacy_browser: 1, office_timeout: 1 };
   var st = { ready: false, busy: false, step: "", failed: "", item: null, token: null, auth: "unknown", user: "", key: null, room: null, applied: null,
-    existing: false, stale: false, meeting: null, timeBad: null, err: null, fatal: false, csp: [] };
+    existing: false, stale: false, confirm: "", meeting: null, timeBad: null, err: null, fatal: false, csp: [] };
 
   function $(id) { return document.getElementById(id); }
   function show(el, on) { el.hidden = !on; }
@@ -156,11 +156,32 @@
     check($("chk-body"), a.body, a.body ? "Ссылка в тексте приглашения" : "В тексте приглашения ссылки нет");
     show($("chk-loc"), a.location !== null);
     check($("chk-loc"), !!a.location, a.location ? "Ссылка в поле «Место»" : "Поле «Место» этот Outlook изменить не дал");
+    renderGuest(room, partial);
     $("hint").textContent = st.stale ? "Время или тема встречи изменились — нажмите «Обновить конференцию»."
       : partial ? "Скопируйте ссылку вручную или вставьте её ещё раз — новая комната не создастся."
       : room.recurring ? "Ссылка постоянная для всей серии. Отправьте приглашение — участники получат её в письме."
       : room.opens_at && fmtTime ? "Вход откроется в " + fmtTime.format(new Date(room.opens_at)) + ". Отправьте приглашение — участники получат ссылку."
       : "Отправьте приглашение — участники получат ссылку.";
+  }
+
+  /** Блок гостевой ссылки: только если организация разрешила гостей во встречах Outlook. Отзыв и перевыпуск — в два шага (второе нажатие подтверждает). */
+  function renderGuest(room, partial) {
+    var on = !!room.guests_allowed && room.state !== "cancelled" && room.state !== "ended";
+    show($("guest"), on);
+    if (!on) return;
+    var has = !!room.guest_url;
+    show($("guest-linkbox"), has);
+    if (has) { $("glink").href = room.guest_url; $("glink").textContent = room.guest_url.replace(/^https?:\/\//, ""); $("glink").title = room.guest_url; }
+    show($("g-issue"), !has);
+    show($("g-rotate"), has);
+    show($("g-revoke"), has);
+    $("g-rotate").textContent = st.confirm === "rotate" ? "Подтвердить: прежняя ссылка перестанет работать" : "Выпустить новую";
+    $("g-revoke").textContent = st.confirm === "revoke" ? "Подтвердить: гости потеряют доступ" : "Отозвать";
+    var busy = st.busy;
+    $("g-issue").disabled = $("g-rotate").disabled = $("g-revoke").disabled = busy;
+    $("ghint").textContent = !has ? "Гостевой ссылки у этой встречи нет. Выпустите её, чтобы пригласить участников без учётной записи."
+      : partial ? "Ссылка не вставлена в приглашение: вставьте её ещё раз кнопкой выше."
+      : "Гость входит без учётной записи: без истории встреч, показа экрана и материалов организации. Ссылка действует, пока встреча не закрыта и не отменена.";
   }
 
   function check(li, ok, text) {
@@ -296,9 +317,11 @@
   }
 
   function copy() {
-    var url = st.room && st.room.url;
-    if (!url) return;
-    var mark = function () { var b = $("copy"); b.classList.add("copied"); say("Ссылка скопирована"); setTimeout(function () { b.classList.remove("copied"); }, 1500); };
+    if (st.room && st.room.url) copyText(st.room.url, $("copy"));
+  }
+
+  function copyText(url, button) {
+    var mark = function () { button.classList.add("copied"); say("Ссылка скопирована"); setTimeout(function () { button.classList.remove("copied"); }, 1500); };
     var legacy = function () {
       var ta = document.createElement("textarea");
       ta.value = url;
@@ -315,6 +338,34 @@
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(mark, legacy);
       else legacy();
     } catch (e) { legacy(); }
+  }
+
+  /** Выпустить, перевыпустить или отозвать гостевую ссылку и сразу обновить блок в тексте приглашения (иначе в письме осталась бы прежняя ссылка). */
+  function guestAction(action) {
+    if (st.busy || !st.room || !st.token) return;
+    if ((action === "rotate" || action === "revoke") && st.confirm !== action) { st.confirm = action; render(); say("Нажмите ещё раз для подтверждения"); return; }
+    st.confirm = "";
+    st.busy = true;
+    st.err = null;
+    render();
+    P.guestLink(st.room.id, action, st.token).then(function (room) {
+      st.room = room;
+      return P.applyInvite(st.item, room).then(function (a) { st.applied = a; });
+    }).then(function () {
+      st.busy = false;
+      say(action === "revoke" ? "Гостевая ссылка отозвана и убрана из приглашения." : "Гостевая ссылка добавлена в приглашение.");
+      P.report(st.token, "guest", "guest_" + action, "ok");
+      render();
+    }, function (e) {
+      st.busy = false;
+      fail(e, st.token);
+      render();
+    });
+  }
+
+  function copyGuest() {
+    var url = st.room && st.room.guest_url;
+    if (url) copyText(url, $("gcopy"));
   }
 
   /* ---------------------------------------------------------------- открытие панели */
@@ -397,6 +448,10 @@
     $("lg-window").addEventListener("click", windowLogin);
     $("logout").addEventListener("click", logout);
     $("copy").addEventListener("click", copy);
+    $("gcopy").addEventListener("click", copyGuest);
+    $("g-issue").addEventListener("click", function () { guestAction("issue"); });
+    $("g-rotate").addEventListener("click", function () { guestAction("rotate"); });
+    $("g-revoke").addEventListener("click", function () { guestAction("revoke"); });
     document.addEventListener("securitypolicyviolation", function (e) {
       st.csp.push((e.violatedDirective || "") + " " + (e.blockedURI || ""));
       if (st.csp.length === 1) P.report(st.token, "csp", "csp_blocked", st.csp[0]);

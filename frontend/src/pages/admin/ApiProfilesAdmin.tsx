@@ -5,6 +5,7 @@ import { useContextMenu } from "../../components/ContextMenu";
 import FieldsEditor from "./FieldsEditor";
 import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import type { Field } from "./SettingsForm";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 const SECRET: Record<ProfileKind, string> = { llm: "api_key", anonymizer: "token" };
 const DEFAULTS: Record<ProfileKind, SettingsValues> = {
@@ -26,6 +27,7 @@ interface Edit { id?: string; name: string; values: SettingsValues; secrets: Rec
  * назначить свой конкретной переговорке (в настройках комнаты). «Основной» профиль — прежние общие настройки на этой странице ниже.
  */
 export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; fields: Field[] }) {
+  const focusOnMount = useFocusOnMount();
   const { onContextMenu, node: ctxNode } = useContextMenu();
   const [rows, setRows] = useState<ApiProfile[]>([]);
   const [edit, setEdit] = useState<Edit | null>(null);
@@ -134,7 +136,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
       )}
 
       {edit && (
-        <form className="form" onSubmit={save}>
+        <form ref={focusOnMount} className="form" onSubmit={save}>
           <h3>{edit.id ? "Изменение API" : "Новый API"}</h3>
           <label>Название<input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required maxLength={120}
                                 placeholder={kind === "llm" ? "Внутренняя модель" : "DocClean резервный"} />

@@ -3,6 +3,7 @@ import { api, type ApiError, type DiagResult, type SipProfile, type SipStatus } 
 import { normalizeNumber } from "../../phone";
 import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
 import { ConnectionCheck, SipCallLog, SipGuideDialog } from "../../components/SipGuide";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
   id?: string; name: string; enabled: boolean; is_default: boolean; direction: SipProfile["direction"]; host: string; port: number; transport: SipProfile["transport"];
@@ -23,6 +24,7 @@ const Dot = ({ ok }: { ok: boolean | null | undefined }) => <span className={`do
  * сохранении он синхронизируется. Asterisk — первый проверенный вариант, но не единственный: интерфейс и модель от АТС не зависят.
  */
 export default function SipAdmin() {
+  const focusOnMount = useFocusOnMount();
   const [st, setSt] = useState<SipStatus | null>(null);
   const [items, setItems] = useState<SipProfile[]>([]);
   const [form, setForm] = useState<Form | null>(null);
@@ -142,7 +144,7 @@ export default function SipAdmin() {
       </div>
 
       {form && (
-        <form className="card form" onSubmit={(e) => void save(e)} noValidate>
+        <form ref={focusOnMount} className="card form" onSubmit={(e) => void save(e)} noValidate>
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение профиля «${form.name}»` : "Новый SIP-профиль"}</h3>
           <div className="cols">
             <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Asterisk, офис" maxLength={120} /></label>

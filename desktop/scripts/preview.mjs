@@ -33,7 +33,7 @@ if (!win && args.includes("--win")) {
   console.log(`\nдля Windows: ${zip} — распаковать и запустить win-unpacked\\Peregovorka.exe`);
 }
 
-const checks = ["firstrun", "offline", ...(args.includes("--no-shots") ? [] : ["shots"])];
+const checks = ["firstrun", "offline", "av", ...(args.includes("--no-shots") ? [] : ["shots"])];
 for (const c of checks) {
   console.log(`\n=== проверка «${c}» собранной программы ===`);
   run(process.execPath, [join("scripts", "check.mjs"), c, "--app", app, "--out", join(ROOT, "out", "preview")]);

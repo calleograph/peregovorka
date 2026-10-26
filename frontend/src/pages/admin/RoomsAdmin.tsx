@@ -5,6 +5,7 @@ import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile,
 import AclPicker, { entryLabel } from "../../components/AclPicker";
 import RoomIcon from "../../components/RoomIcon";
 import RoomIconPicker, { applyPendingIcon, type PendingIcon } from "../../components/RoomIconPicker";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
   id?: string; slug: string; name: string; description: string; is_enabled: boolean; max_participants: number;
@@ -74,6 +75,7 @@ function GuestLink({ form, onChange }: { form: Form; onChange: (r: RoomAdmin) =>
 }
 
 export default function RoomsAdmin() {
+  const focusOnMount = useFocusOnMount();
   const { onContextMenu, node: ctxNode } = useContextMenu();
   const [rooms, setRooms] = useState<RoomAdmin[]>([]);
   const [form, setForm] = useState<Form | null>(null);
@@ -141,7 +143,7 @@ export default function RoomsAdmin() {
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {form && (
-        <form className="card form room-form" onSubmit={save} noValidate>
+        <form ref={focusOnMount} className="card form room-form" onSubmit={save} noValidate>
           <div className="row"><h3 style={{ margin: 0 }}>{form.id ? `Изменение комнаты «${form.name}»` : "Новая комната"}</h3></div>
           <div className="tabs" role="tablist" aria-label="Разделы настроек комнаты">
             {TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}

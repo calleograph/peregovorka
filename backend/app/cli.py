@@ -8,6 +8,10 @@
         Официальное восстановление доступа: новый случайный пароль (при первом входе его нужно сменить), завершение всех сессий этого
         администратора, снятие блокировки входа, запись в журнал аудита. LDAP не нужен. С --create создаёт администратора, если его нет.
 
+    python -m app.cli network [--format text|md|csv|json|request]
+        Печатает тот же перечень портов, что раздел «Сетевая доступность»: из окружения контейнера и настроек интеграций в базе.
+        Без запущенных контейнеров используйте `scripts/ports.sh`: он читает только `.env`.
+
     python -m app.cli status
         Печатает, есть ли локальный администратор (без паролей).
 
@@ -42,6 +46,15 @@ async def _run(args: argparse.Namespace) -> int:
                 if existing:
                     print(f"USERNAME={existing.sam_account_name}")
                     print(f"MUST_CHANGE_PASSWORD={'1' if existing.must_change_password else '0'}")
+                return 0
+
+            if args.cmd == "network":
+                from .api.admin_network import build_current                  # noqa: PLC0415
+                from .security.secretbox import SecretBox                     # noqa: PLC0415
+                from .services import netrules                                # noqa: PLC0415
+                from .services.settings import SettingsService                # noqa: PLC0415
+                svc = SettingsService(SecretBox(s.app_master_key) if s.app_master_key else None)
+                print(netrules.FORMATS[args.format](await build_current(s, svc, db)), end="")
                 return 0
 
             if args.cmd == "bootstrap-admin":
@@ -104,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--username", default="")
     r.add_argument("--create", action="store_true")
     r.add_argument("--actor", default="")
+    nw = sub.add_parser("network")
+    nw.add_argument("--format", choices=["text", "md", "csv", "json", "request"], default="text")
     sub.add_parser("status")
     args = p.parse_args(argv)
     try:

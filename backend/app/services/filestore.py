@@ -65,7 +65,7 @@ class PrefixedStorage:
         self._base.delete(self._p(rel))
 
     def list_dir(self, rel: str) -> list[str]:
-        return self._base.list_dir(self._p(rel)) if (rel or self._prefix) else []
+        return self._base.list_dir(self._p(rel))
 
     def delete_dir(self, rel: str) -> None:
         self._base.delete_dir(self._p(rel))

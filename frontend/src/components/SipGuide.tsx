@@ -102,7 +102,7 @@ export function SipGuideDialog({ profiles, initialId, onClose }: { profiles: Sip
     window.setTimeout(() => setCopied(""), 4000);
   };
   return (
-    <Modal title="Инструкция по подключению АТС" onClose={onClose} wide>
+    <Modal title="Инструкция по подключению АТС" onClose={onClose} wide noAutofocus>
       <div className="row">
         {profiles.length > 1 && <label className="inline">Профиль <select value={pid} onChange={(e) => setPid(e.target.value)}>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
         {profiles.length === 1 && <span className="muted">Профиль: {profiles[0].name}</span>}

@@ -325,17 +325,29 @@ def join_link(base: str, room: Room) -> str:
     return f"{base}/m/{room.slug.removeprefix(PREFIX)}"
 
 
-def invite_texts(room: Room, base: str, cfg: OutlookSettings, *, guest: bool) -> tuple[str, str]:
-    """Блок для письма-приглашения: HTML (в тело встречи) и обычный текст (для запасных клиентов)."""
+def guest_link(base: str, room: Room, cfg: OutlookSettings) -> str | None:
+    """Гостевая ссылка, если организация разрешила гостей во встречах Outlook и у комнаты она выпущена (не отозвана). Иначе None."""
+    if not (cfg.guest_links and room.guest_access_enabled and room.guest_token):
+        return None
+    return f"{base}/guest/{room.guest_token}"
+
+
+def invite_texts(room: Room, base: str, cfg: OutlookSettings, *, guest_url: str | None = None) -> tuple[str, str]:
+    """Блок для письма-приглашения: HTML (в тело встречи) и обычный текст (для запасных клиентов). Две ссылки: для сотрудников (вход учётной записью организации)
+    и, если разрешены гости, отдельная гостевая — с собственным секретом, поэтому сотрудник не раздаёт ссылку, по которой входят по доменной учётной записи."""
     url = join_link(base, room)
     early = cfg.early_minutes
-    lines = [f"Подключиться к конференции: {url}",
-             f"Вход открывается за {early} мин до начала. Перед входом проверьте камеру и микрофон." if not room.recurring else "Вход открыт в любое время; встреча начинается в назначенное время.",
-             "Нужна учётная запись организации." + (" Гостям без учётной записи вход доступен по той же ссылке." if guest else "")]
-    html = ('<br><p><b>Видеоконференция Peregovorka</b></p>'
-            f'<p><a href="{escape(url, {chr(34): "&quot;"})}" target="_blank">Подключиться к конференции</a></p>'
-            f'<p>{escape(url)}</p><p>{escape(lines[1])}</p><p>{escape(lines[2])}</p><br>')
-    return html, "\n".join(lines)
+    timing = f"Вход открывается за {early} мин до начала. Перед входом проверьте камеру и микрофон." if not room.recurring else "Вход открыт в любое время; встреча начинается в назначенное время."
+    lines = ["Подключение к встрече Peregovorka", "", "Для сотрудников организации (вход учётной записью):", url]
+    html = ['<br><p><b>Подключение к встрече Peregovorka</b></p>',
+            f'<p><b>Для сотрудников организации</b> (вход учётной записью):<br><a href="{escape(url, {chr(34): "&quot;"})}" target="_blank">{escape(url)}</a></p>']
+    if guest_url:
+        note = "Если у участника нет корпоративной учётной записи, передайте ему гостевую ссылку."
+        lines += ["", "Для внешних участников (без учётной записи):", guest_url, note]
+        html.append(f'<p><b>Для внешних участников</b> (без учётной записи):<br><a href="{escape(guest_url, {chr(34): "&quot;"})}" target="_blank">{escape(guest_url)}</a><br><i>{escape(note)}</i></p>')
+    lines += ["", timing]
+    html.append(f"<p>{escape(timing)}</p><br>")
+    return "".join(html), "\n".join(lines)
 
 
 def public_view(room: Room, st: str, *, now: datetime, cfg: OutlookSettings) -> dict:

@@ -81,6 +81,12 @@ async def _room_by_token(db: AsyncSession, token: str) -> Room:
     return room
 
 
+async def _outlook_policy(request: Request, db: AsyncSession, room: Room) -> None:
+    """Встречи из Outlook подчиняются разрешению организации «Пускать гостей» (Администрирование → Microsoft Outlook): если его выключили, уже выпущенные ссылки такой встречи перестают работать."""
+    if room.outlook_key and not (await request.app.state.settings_svc.get(db, "outlook")).guest_links:
+        raise HTTPException(status_code=404, detail="Гостевая ссылка недействительна или отозвана")
+
+
 async def _throttle(request: Request, key: str, limit: int, window: int, *, hit: bool = True) -> None:
     redis = request.app.state.redis
     k = f"{key}:{client_ip(request)}"
@@ -96,6 +102,7 @@ async def _throttle(request: Request, key: str, limit: int, window: int, *, hit:
 async def room_info(token: str, request: Request, db: AsyncSession = Depends(get_db)):
     await _throttle(request, "guest:info", 120, 600)
     room = await _room_by_token(db, token)
+    await _outlook_policy(request, db, room)
     active = await request.app.state.meetings._active_meeting(db, room.id)  # noqa: SLF001
     return GuestRoomInfo(room_name=room.name, description=room.description, meeting_active=active is not None,
                          has_password=bool(room.password_hash), camera_allowed=room.camera_allowed,
@@ -131,6 +138,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     await _throttle(request, "guest:join", JOIN_LIMIT, JOIN_WINDOW)
     await captcha.guard(request, "guest")
     room = await _room_by_token(db, token)
+    await _outlook_policy(request, db, room)
     name = clean_display_name(body.display_name)
     ip, client = client_ip(request), parse_client(request.headers.get("user-agent"))
     journal = request.app.state.journal

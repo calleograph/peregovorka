@@ -80,6 +80,19 @@
         <a class="iconbtn" id="open" href="#" target="_blank" rel="noopener" title="Открыть конференцию" aria-label="Открыть конференцию"><svg class="ico" aria-hidden="true"><use href="#i-open" xlink:href="#i-open"/></svg></a>
       </div>
       <a class="open-link" id="open-text" href="#" target="_blank" rel="noopener"><svg class="ico" aria-hidden="true"><use href="#i-open" xlink:href="#i-open"/></svg>Открыть конференцию</a>
+      <div class="guestbox" id="guest" hidden>
+        <p class="guest-title">Для внешних участников</p>
+        <div class="linkbox" id="guest-linkbox">
+          <a id="glink" href="#" target="_blank" rel="noopener"></a>
+          <button class="iconbtn" id="gcopy" type="button" title="Копировать гостевую ссылку" aria-label="Копировать гостевую ссылку"><svg class="ico" aria-hidden="true"><use href="#i-copy" xlink:href="#i-copy"/></svg></button>
+        </div>
+        <p class="hint" id="ghint"></p>
+        <div class="guest-actions">
+          <button class="linkbtn strong" id="g-issue" type="button" hidden>Выпустить гостевую ссылку</button>
+          <button class="linkbtn" id="g-rotate" type="button" hidden>Выпустить новую</button>
+          <button class="linkbtn" id="g-revoke" type="button" hidden>Отозвать</button>
+        </div>
+      </div>
       <ul class="checks">
         <li id="chk-body"><svg class="ico" aria-hidden="true"><use href="#i-check" xlink:href="#i-check"/></svg><span>Ссылка в тексте приглашения</span></li>
         <li id="chk-loc"><svg class="ico" aria-hidden="true"><use href="#i-check" xlink:href="#i-check"/></svg><span>Ссылка в поле «Место»</span></li>

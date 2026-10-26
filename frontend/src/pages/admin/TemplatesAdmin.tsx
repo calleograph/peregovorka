@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ProtocolTemplate } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form { id?: string; name: string; kind: "any" | "protocol" | "summary"; instruction: string }
 const empty: Form = { name: "", kind: "any", instruction: "" };
@@ -8,6 +9,7 @@ const KIND: Record<string, string> = { any: "любой документ", proto
 
 /** Общие шаблоны инструкций: появляются у всех пользователей в окне «Сформировать протокол». Личные шаблоны пользователи ведут сами. */
 export default function TemplatesAdmin() {
+  const focusOnMount = useFocusOnMount();
   const [rows, setRows] = useState<ProtocolTemplate[]>([]);
   const [form, setForm] = useState<Form | null>(null);
   const [err, setErr] = useState("");
@@ -33,7 +35,7 @@ export default function TemplatesAdmin() {
       {err && <div className="alert error">{err}</div>}
       {!form && <button className="btn primary" onClick={() => setForm({ ...empty })}>Создать шаблон</button>}
       {form && (
-        <form className="card form" onSubmit={save}>
+        <form ref={focusOnMount} className="card form" onSubmit={save}>
           <h3>{form.id ? "Изменение шаблона" : "Новый шаблон"}</h3>
           <label>Название шаблона
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required maxLength={200} placeholder="Протокол по форме организации" />

@@ -129,6 +129,14 @@ t "check_wiki: корректные страницы проходят" python3 "
 printf '\n[[Нет такой]] и 10.1.2.3\n' >> "$W/wiki/Другая.md"
 t "check_wiki: битая ссылка и чужой адрес отвергаются" bash -c '! python3 "$1/scripts/check_wiki.py"' _ "$W"
 
+# ---- scripts/ports.sh: перечень портов из .env без Docker; другой порт в .env — другой перечень; неверные аргументы и отсутствие файла — код 2
+printf 'APP_PUBLIC_URL=https://meet.example.org\nLIVEKIT_NODE_IP=203.0.113.9\nLIVEKIT_TCP_PORT=7881\nLIVEKIT_UDP_PORT=50000\nINSTALL_PROFILE=standalone\n' > "$TMP/ports.env"
+t "ports.sh: порты берутся из .env" bash -c 'out="$("$1/scripts/ports.sh" --env "$2" --format csv)"; echo "$out" | grep -q "UDP,50000" && echo "$out" | grep -q "TCP,7881" && echo "$out" | grep -q "203.0.113.9"' _ "$ROOT" "$TMP/ports.env"
+t "ports.sh: заявка сетевому администратору" bash -c '"$1/scripts/ports.sh" --env "$2" --format request | grep -q "Прошу открыть"' _ "$ROOT" "$TMP/ports.env"
+t "ports.sh: вывод в файл" bash -c '"$1/scripts/ports.sh" --env "$2" --format md --out "$3/p.md" >/dev/null && grep -q "50000" "$3/p.md"' _ "$ROOT" "$TMP/ports.env" "$TMP"
+t "ports.sh: нет .env — код 2" bash -c '"$1/scripts/ports.sh" --env /nonexistent >/dev/null 2>&1; [ $? -eq 2 ]' _ "$ROOT"
+t "ports.sh: неизвестный формат — код 2" bash -c '"$1/scripts/ports.sh" --env "$2" --format exe >/dev/null 2>&1; [ $? -eq 2 ]' _ "$ROOT" "$TMP/ports.env"
+
 # shellcheck source=part_docker.sh
 source "$ROOT/tests/scripts/part_docker.sh"
 # shellcheck source=part_diag.sh

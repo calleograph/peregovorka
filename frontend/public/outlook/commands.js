@@ -434,6 +434,14 @@
     });
   }
 
+  /** Гостевая ссылка встречи: issue — выпустить, если её нет; rotate — новая (прежняя перестаёт работать); revoke — отозвать. Возвращает обновлённую встречу (с новым текстом приглашения). */
+  function guestLink(roomId, action, token) {
+    return http("POST", "/meetings/" + encodeURIComponent(roomId) + "/guest-link", token, { action: action }, T.api, "api").then(function (res) {
+      if (res.status !== 200) throw fromResponse(res, "api");
+      return res.body;
+    });
+  }
+
   /** Связанная с ключом конференция (для повторного открытия панели); null — комнаты ещё нет. */
   function findRoom(key, token) {
     return http("GET", "/meetings/by-key/" + encodeURIComponent(key), token, null, T.api, "api").then(function (res) {
@@ -580,7 +588,7 @@
     saveToken: saveToken, clearToken: clearToken, errorText: errorText, fromResponse: fromResponse, explain: explain, PgError: PgError, timeout: timeout, T: T,
     ready: ready, clientInfo: clientInfo, supports: supports, currentItem: currentItem, readMeeting: readMeeting, readAttendees: readAttendees, collect: collect, prepare: prepare, login: login,
     passwordLogin: passwordLogin, refresh: refresh, needsRefresh: needsRefresh,
-    requestRoom: requestRoom, findRoom: findRoom, whoami: whoami, logout: logout, applyInvite: applyInvite, report: report, getStorage: getStorage, START: START, END: END,
+    requestRoom: requestRoom, findRoom: findRoom, guestLink: guestLink, whoami: whoami, logout: logout, applyInvite: applyInvite, report: report, getStorage: getStorage, START: START, END: END,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api_;
   root.PGOutlook = api_;

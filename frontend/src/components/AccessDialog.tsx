@@ -43,7 +43,7 @@ export default function AccessDialog({ meetingId, onClose }: { meetingId: string
         <div className="row">
           <select value={kind} onChange={(e) => { setKind(e.target.value as "user" | "group"); setHits([]); setGroup(null); setHint(""); }} aria-label="Что искать">
             <option value="user">Пользователь (ФИО, логин, почта)</option><option value="group">Группа каталога</option></select>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="От 2 символов" aria-label="Поиск в каталоге" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} />
+          <input data-autofocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="От 2 символов" aria-label="Поиск в каталоге" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} />
           <button type="button" className="btn" disabled={q.trim().length < 2 || busy} onClick={() => void search()}>Найти</button>
         </div>
         {hint && <div className="muted small">{hint}</div>}

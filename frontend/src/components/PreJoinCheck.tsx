@@ -5,6 +5,8 @@ import { levelFromTimeDomain, toneWav, type PreJoin } from "../prejoin";
 import { copyText } from "../util";
 import { reportEvent } from "../diagnostics";
 import { deniedText, HINT_DELAY_MS, planFor, type HintPlan } from "../permissionHint";
+import { loadDesktopMedia, openWindowsSound, pickByLabel } from "../desktopMedia";
+import { desktop } from "../desktop";
 
 type Perm = PermissionState | "unknown";
 
@@ -204,6 +206,20 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
     await requestAll();
   };
 
+  // В приложении Windows выбор из «Настроек → Звук и видео» подставляется один раз, пока пользователь сам ничего не выбрал: устройства сопоставляются по названию
+  const appliedDesktop = useRef(false);
+  useEffect(() => {
+    if (appliedDesktop.current || !desktop?.media) return;
+    if (!devices.audioinput.length && !devices.videoinput.length) return;
+    appliedDesktop.current = true;
+    void loadDesktopMedia().then((m) => {
+      if (!m) return;
+      const mic = pickByLabel(devices.audioinput, m.mic), spk = pickByLabel(devices.audiooutput, m.speaker), cam = pickByLabel(devices.videoinput, m.camera);
+      if (mic) setMicId((cur) => cur || mic.deviceId);
+      if (spk) setSpeakerId((cur) => cur || spk.deviceId);
+      if (cam) setCamId((cur) => cur || cam.deviceId);
+    });
+  }, [devices]);
   useEffect(() => { void listDevices(); return () => { stopMic(); camTicket.current++; camStream.current?.getTracks().forEach((t) => t.stop()); camStream.current = null; }; }, [listDevices, stopMic]);
   // подключили или отключили устройство: список обновляется; если пропала камера, которая сейчас включена, — выключаем её и говорим об этом
   useEffect(() => {
@@ -277,7 +293,8 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
             ? <button type="button" className="btn mini" disabled={perm.mic === "denied"} onClick={() => { setAsked(true); void startMic(micId || undefined); }}>Проверить микрофон</button>
             : <span className="pc-hint">Скажите что-нибудь — полоса должна двигаться.</span>}
         </div>
-        {micErr && <div className="alert error small" role="alert">{micErr} Войти можно и без микрофона.</div>}
+        {micErr && <div className="alert error small" role="alert">{micErr} Войти можно и без микрофона.
+          {desktop?.openSoundSettings && <div className="pc-btns" style={{ marginTop: 6 }}><button type="button" className="btn mini" onClick={() => void openWindowsSound("mic-classic")}>Открыть настройки микрофона Windows</button></div>}</div>}
       </div>
 
       {cameraAllowed && (

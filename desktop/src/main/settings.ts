@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mergePolicy, parseRegExport, parseRegQuery, policyFromValues, type Autostart, type CloseAction, type Policy, type ProxyMode, type UpdateMode } from "../common/policy";
+import { cleanMedia, DEFAULT_MEDIA, type MediaPrefs } from "../common/media";
 import { readJson, writeJson } from "./store";
 
 export interface Settings {
@@ -12,6 +13,7 @@ export interface Settings {
   notifications: { enabled: boolean; sound: boolean; hideContent: boolean; dndUntil: number };
   proxy: { mode: ProxyMode; rules: string; bypass: string; pac: string };
   updateMode: UpdateMode;
+  media: MediaPrefs;                         // выбранные устройства (по названию) и обработка звука: передаются страницам организаций как значения по умолчанию
   theme: "system" | "light" | "dark";        // оформление окон приложения (страницы серверов следуют ему же, если в профиле выбрано «как в системе»)
   activeOrg: string | null;
   firstRunDone: boolean;
@@ -23,6 +25,7 @@ export const DEFAULTS: Settings = {
   notifications: { enabled: true, sound: true, hideContent: false, dndUntil: 0 },
   proxy: { mode: "system", rules: "", bypass: "", pac: "" },
   updateMode: "notify",                      // проверять и сообщать; загрузку начинает человек (или политика UpdateMode=auto)
+  media: DEFAULT_MEDIA,
   theme: "system",
   activeOrg: null,
   firstRunDone: false,
@@ -62,7 +65,7 @@ export function isNewProfile(dir: string): boolean {
 }
 
 export function loadSettings(raw: Partial<Settings>, isNew: boolean): Settings {
-  return { ...DEFAULTS, ...(isNew ? NEW_PROFILE : {}), ...raw, notifications: { ...DEFAULTS.notifications, ...(raw.notifications ?? {}) }, proxy: { ...DEFAULTS.proxy, ...(raw.proxy ?? {}) } };
+  return { ...DEFAULTS, ...(isNew ? NEW_PROFILE : {}), ...raw, notifications: { ...DEFAULTS.notifications, ...(raw.notifications ?? {}) }, media: cleanMedia(raw.media), proxy: { ...DEFAULTS.proxy, ...(raw.proxy ?? {}) } };
 }
 
 export class SettingsStore {
@@ -83,6 +86,7 @@ export class SettingsStore {
     s.autostart = one(p.autostart, ["off", "tray", "window"] as const) ?? s.autostart;
     s.updateMode = one(p.updateMode, ["auto", "notify", "off"] as const) ?? s.updateMode;
     s.theme = one(p.theme, ["system", "light", "dark"] as const) ?? s.theme;
+    if (p.media !== undefined) s.media = cleanMedia(p.media, s.media);
     const n = (p.notifications ?? {}) as Record<string, unknown>;
     for (const k of ["enabled", "sound", "hideContent"] as const) if (typeof n[k] === "boolean") s.notifications[k] = n[k] as boolean;
     if (typeof n.dndUntil === "number" && Number.isFinite(n.dndUntil) && n.dndUntil >= -1) s.notifications.dndUntil = n.dndUntil;

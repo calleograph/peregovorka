@@ -8,6 +8,9 @@ type Bridge = {
   notify(n: { tag: string; title: string; body?: string; route?: string; kind?: "chat" | "mention" | "meeting" | "info" }): void;
   setState(s: DesktopState): void;
   onCommand(cb: (c: DesktopCommand) => void): void;
+  /** Только в приложении версии с настройкой оборудования (1.3 и новее): выбранные устройства и обработка звука, системные настройки звука Windows. */
+  media?: { get(): Promise<unknown> };
+  openSoundSettings?(kind: "mic-classic" | "sound" | "privacy-mic"): Promise<unknown>;
 };
 
 const raw = typeof window !== "undefined" ? (window as unknown as { peregovorkaDesktop?: Bridge }).peregovorkaDesktop : undefined;

@@ -1063,3 +1063,38 @@ class SipCall(Base):
 # Встреча для проверки доступа и частых запросов (чат, стенограмма, вход, выход, подписка на события): комната с ACL и руководителями — одним запросом
 # вместо трёх, список участников не загружается (их бывают сотни, а обращается каждый; обращение к нему при такой загрузке — ошибка, а не скрытый запрос).
 MEETING_LITE = (raiseload(Meeting.participants), joinedload(Meeting.room).joinedload(Room.acl), joinedload(Meeting.room).joinedload(Room.moderators))
+
+
+class CalendarLink(Base):
+    """Согласие сотрудника на показ и ведение его календаря Outlook в Peregovorka. Без этой записи сервер календарь сотрудника не читает и не изменяет,
+    даже если серверная учётная запись имеет такую возможность. Пароля и токенов здесь нет: доступ к ящику даёт серверное подключение администратора."""
+
+    __tablename__ = "calendar_links"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False)        # ящик, который сотрудник подтвердил как свой (адрес из каталога на момент согласия)
+    consented_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    last_ok_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+
+
+class RestoreJob(Base):
+    """Сканирование хранилищ и восстановление материалов встреч после переноса (Администрирование → Хранилища → «Восстановление материалов»).
+    `kind=scan` — поиск паспортов и каталогов с материалами; `kind=restore` — применение выбранного результата сканирования (повторный запуск безопасен: уже восстановленное пропускается)."""
+
+    __tablename__ = "restore_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)                  # scan | restore
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                      # для restore — сканирование, по которому идёт восстановление
+    status: Mapped[str] = mapped_column(String(12), default="running", nullable=False)    # running | done | cancelled | failed
+    params: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    progress: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSONType)
+    error: Mapped[str | None] = mapped_column(String(500))
+    started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    started_by_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+

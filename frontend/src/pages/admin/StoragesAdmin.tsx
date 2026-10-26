@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type StorageProfile, type TestResult } from "../../api";
 import StorageTransferAdmin from "./StorageTransferAdmin";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
@@ -23,6 +24,7 @@ const FOLDER_HELP: [string, string][] = [
  * потом лишь выбирают хранилище в своих разделах — адрес и пароль второй раз вводить не нужно. Подпапки внутри создаются автоматически.
  */
 export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => void }) {
+  const focusOnMount = useFocusOnMount();
   const [items, setItems] = useState<StorageProfile[]>([]);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
@@ -73,7 +75,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {form && (
-        <form className="card form" onSubmit={save} noValidate>
+        <form ref={focusOnMount} className="card form" onSubmit={save} noValidate>
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение хранилища «${form.name}»` : "Новое хранилище"}</h3>
           <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Файловый сервер №1" maxLength={120} />
             <span className="example">Пример: <code>Файловый сервер №1</code></span></label>

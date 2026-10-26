@@ -35,7 +35,7 @@ x-app-env: &app-env
 
 services:
   postgres:
-    image: postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?}
@@ -170,6 +170,14 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       TLS_LOCAL_CONFIGURED: ${NGINX_TLS_CERT:+true}
+      # Только для раздела «Сетевая доступность»: как установлен экземпляр (адреса привязки и порты на хосте). Секретов здесь нет.
+      NET_INSTALL_PROFILE: ${INSTALL_PROFILE:-}
+      NET_LIVEKIT_BIND_ADDR: ${LIVEKIT_BIND_ADDR:-0.0.0.0}
+      NET_LIVEKIT_HTTP_PORT: ${LIVEKIT_HTTP_PORT:-}
+      NET_WEB_BIND_ADDR: ${WEB_BIND_ADDR:-127.0.0.1}
+      NET_WEB_PORT: ${WEB_PORT:-}
+      NET_NGINX_LISTEN_PORT: ${NGINX_LISTEN_PORT:-}
+      NET_SIP_BIND_ADDR: ${SIP_BIND_ADDR:-0.0.0.0}
       # Масштабирование (docs/DB_AND_SCALING.md): число процессов uvicorn и размеры пулов; пусто/0 — по числу ядер. Фоновые задачи выполняет один «ведущий» процесс (Redis).
       UVICORN_WORKERS: ${BACKEND_WORKERS:-1}
       POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-300}     # пулы всех процессов ужимаются под этот предел (иначе отказы «too many clients»)

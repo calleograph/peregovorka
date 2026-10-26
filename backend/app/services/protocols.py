@@ -226,6 +226,7 @@ class ProtocolService:
         self.local_llm = LocalLlm(settings, transport=self._transports.get("local_llm"))   # встроенная локальная модель (Qwen3 1.7B)
         self.files = FileStore(svc, settings.data_dir)
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
+        self.manifests = None  # services.manifest.ManifestService: паспорт встречи (manifest.json) рядом с материалами; задаётся при запуске приложения
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
@@ -364,6 +365,11 @@ class ProtocolService:
                 self.journal.emit("storage", "storage_unavailable", level="error", message=str(exc)[:300], data={"folder": folder})
             return None
 
+    async def _mark_manifest(self, meeting_id) -> None:
+        """Отметить встречу: паспорт (manifest.json) обновит фоновый цикл. Сбой отметки ничего не отменяет."""
+        if self.manifests is not None:
+            await self.manifests.mark(meeting_id)
+
     def _ca(self) -> str | None:
         return self._s.ldap_ca_file or None
 
@@ -499,6 +505,7 @@ class ProtocolService:
                         rec.status, rec.error = "failed", str(exc)[:480]
                         log.error("Выгрузка стенограммы не удалась", extra={"meeting_id": str(meeting_id), "error": str(exc)})
                     await db.commit()
+                await self._mark_manifest(meeting_id)
                 proto_cfg = await self._svc.get(db, "protocol")
             if (proto_cfg.auto_generate or proto_cfg.auto_summary) and not await self.has_materials(meeting_id):  # type: ignore[attr-defined]
                 # пустая встреча: автоматический протокол не создаётся и ошибок в журнале не плодит
@@ -641,6 +648,7 @@ class ProtocolService:
                 self.journal.emit("storage", "recording_export_failed", level="error", meeting_id=str(rec.meeting_id),
                                   message=str(exc)[:300], data={"recording": str(rec.id), "size_bytes": rec.size_bytes})
         await db.commit()
+        await self._mark_manifest(rec.meeting_id)
 
     async def retry_pending_exports(self, db: AsyncSession) -> int:
         cfg = await self._svc.get(db, "audio_storage")
@@ -1063,6 +1071,7 @@ class ProtocolService:
             loc = await asyncio.to_thread(storage.write_bytes, f"{dir_rel}/{name}", (rec.content + "\n").encode("utf-8"))
             rec.meta = {**(rec.meta or {}), "dir": dir_rel, "location": loc}
             await db.commit()
+            await self._mark_manifest(rec.meeting_id)
         except StorageError as exc:
             log.error("Выгрузка протокола не удалась", extra={"protocol": str(rec.id), "error": str(exc)})
 

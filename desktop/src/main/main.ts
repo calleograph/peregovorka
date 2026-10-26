@@ -2,11 +2,12 @@
 //  • app://shell/* — доверенная локальная оболочка из пакета приложения (боковая панель, мастер, настройки, диагностика, выбор экрана) — preload-shell;
 //  • страницы серверов организаций — недоверенное удалённое содержимое в отдельных разделах, песочница, мост preload-org с тремя действиями;
 //  • каждая IPC-команда проверяет отправителя: окно, главный фрейм и адрес (для организации — её origin).
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, safeStorage, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, safeStorage, session, shell, systemPreferences, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findDeepLinkArg, parseDeepLink } from "../common/links";
+import { SOUND_SETTINGS, soundCommand, type SoundSettings } from "../common/media";
 import { shellFile } from "../common/shellfile";
 import { normalizeServerUrl, safeRoute, sameOrigin, externalAllowed } from "../common/urls";
 import type { Ctx } from "./ctx";
@@ -81,8 +82,12 @@ async function boot(): Promise<void> {
     return new Response(r.body, { headers: { "content-type": TYPES[f.file.split(".").pop() || ""] || "application/octet-stream", "content-security-policy": CSP, "x-content-type-options": "nosniff" } });
   });
   // раздел по умолчанию принадлежит только оболочке: никаких разрешений и загрузок с удалённых адресов
-  session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  // Единственное исключение — микрофон, камера и выбор динамиков для проверки оборудования в настройках: только главное окно оболочки и только с адреса app://shell
+  // (отдельная от организаций сессия: страницы серверов этих разрешений здесь не получают).
+  const shellMedia = (wc: WebContents | null, perm: string, url: string): boolean =>
+    (perm === "media" || perm === "speaker-selection") && !!wc && !!main?.win && !main.win.isDestroyed() && wc.id === main.win.webContents.id && url.startsWith("app://shell/");
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb(shellMedia(wc, perm, d.requestingUrl)));
+  session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => shellMedia(wc, perm, origin.endsWith("/") ? origin : `${origin}/`));
   app.on("web-contents-created", (_e, wc) => {
     wc.on("will-attach-webview", (e) => e.preventDefault());
     wc.on("preload-error", (_ev, path, err) => log.error("preload.error", { preload: path.split(/[\\/]/).pop(), error: String(err?.stack ?? err).slice(0, 600) }));
@@ -263,6 +268,21 @@ async function boot(): Promise<void> {
     return true;
   });
   handle("shell:logs", "main", () => shell.openPath(log.dir));
+  // Звук и видео: состояние разрешений Windows и открытие системных настроек (фиксированный перечень, без параметров от страницы)
+  const access = (k: "microphone" | "camera") => { try { return systemPreferences.getMediaAccessStatus(k); } catch { return "unknown"; } };
+  const SETTINGS_URIS = new Set(["ms-settings:sound", "ms-settings:privacy-microphone", "ms-settings:privacy-webcam"]);          // закрытый перечень: произвольный адрес через эту функцию открыть нельзя
+  function openSettingsUri(u: string): void { if (SETTINGS_URIS.has(u)) void shell.openExternal(u); }
+  function openSound(kind: string): { ok: boolean; reason?: string } {
+    if (process.platform !== "win32") return { ok: false, reason: "windows_only" };
+    if (!(SOUND_SETTINGS as readonly string[]).includes(kind)) return { ok: false, reason: "unknown_kind" };
+    const c = soundCommand(kind as SoundSettings);
+    log.info("sound.open", { kind });
+    if (c.uri) { openSettingsUri(c.uri); return { ok: true }; }
+    execFile(c.exe, c.args, { windowsHide: false }, (err) => { if (err && c.fallback) { log.warn("sound.open_fallback", { kind, error: String(err.message).slice(0, 120) }); openSettingsUri(c.fallback); } });
+    return { ok: true };
+  }
+  handle("shell:av:state", "main", () => ({ platform: process.platform, mic: access("microphone"), camera: access("camera") }));
+  handle("shell:sound:open", "main", (_e, a) => openSound(str(a.kind, 20)));
   handle("shell:external", "main", (_e, a) => { const u = str(a.url, 2000); if (externalAllowed(u)) void shell.openExternal(u); });
   handle("shell:badge", "main", (_e, a) => {
     if (process.platform !== "win32") return;
@@ -303,6 +323,9 @@ async function boot(): Promise<void> {
     scheduleEmit();
   });
   ipcMain.on("org:ready", (e) => { if (orgSender(e)) bridgeReady.add(e.sender.id); });
+  // значения по умолчанию для выбора устройств и обработки звука на странице организации; открыть системные настройки звука из сообщения об ошибке микрофона
+  ipcMain.handle("org:media:get", (e) => (orgSender(e as unknown as IpcMainEvent) ? ctx.eff().media : null));
+  ipcMain.handle("org:sound:open", (e, a) => (orgSender(e as unknown as IpcMainEvent) ? openSound(str((a as Record<string, unknown> | null)?.kind, 20)) : { ok: false, reason: "rejected" }));
   main.win.webContents.on("did-finish-load", () => { scheduleEmit(); setTimeout(() => void checkShell(), 3000); });
   main.win.webContents.on("did-fail-load", (_e, code, desc, url, isMain) => { if (isMain) { log.error("shell.load_failed", { code, desc, url: url.slice(0, 80) }); void shellBroken(); } });
   main.win.webContents.on("render-process-gone", (_e, d) => { log.error("shell.gone", { reason: d.reason }); void shellBroken(); });

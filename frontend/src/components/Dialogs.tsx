@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { focusInitial } from "../initialFocus";
 
-/** Модальное окно: Escape и клик по фону закрывают, фокус уходит внутрь. */
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+/** Модальное окно: Escape и клик по фону закрывают, фокус при открытии — в первое поле ввода (`focusInitial`: правила в initialFocus.ts), при закрытии — возвращается на кнопку, открывшую окно. */
+export function Modal({ title, onClose, children, wide, noAutofocus }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; /** Окно для чтения или выбора действия: курсор в поле ввода не ставится (см. initialFocus.ts). */ noAutofocus?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;                 // обработчик может меняться при каждой перерисовке родителя; эффект ниже выполняется один раз и фокус при фоновом обновлении не трогает
+  const opener = useRef<HTMLElement | null>(null);
+  if (opener.current === null) opener.current = document.activeElement as HTMLElement | null;      // до монтирования дочерних полей: поле с autoFocus фокус уже заберёт
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const prev = opener.current;
+    if (ref.current) focusInitial(ref.current);
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("keydown", esc); prev?.focus?.(); };
-  }, [onClose]);
+    return () => { document.removeEventListener("keydown", esc); if (prev && prev.isConnected) prev.focus?.(); };
+  }, []);
   return (
     <div className="modal-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref} tabIndex={-1} style={wide ? { width: "min(980px, 100%)" } : undefined}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref} tabIndex={-1} data-no-autofocus={noAutofocus ? "" : undefined} style={wide ? { width: "min(980px, 100%)" } : undefined}>
         <div className="row"><h2>{title}</h2><div className="spacer" /><button className="btn ghost mini" onClick={onClose} aria-label="Закрыть">✕</button></div>
         {children}
       </div>

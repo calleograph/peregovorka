@@ -32,6 +32,7 @@ import { watchMeetings } from "./desktopMeetings";
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 import OutlookCenter from "./pages/OutlookCenter";
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
+const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
@@ -175,6 +176,7 @@ function StaffApp() {
           <Route path="/p/:code" element={<PeerOpenPage />} />
           {AudienceDemo && <Route path="/__dev/audience" element={<Suspense fallback={null}><AudienceDemo /></Suspense>} />}
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
+          <Route path="/calendar" element={<Suspense fallback={null}><CalendarPage /></Suspense>} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />

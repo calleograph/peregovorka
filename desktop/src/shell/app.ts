@@ -1,6 +1,7 @@
 // Доверенная оболочка: боковая панель организаций и разделы приложения (подключение, настройки, диагностика). Страница сервера показывается главным процессом
 // справа от панели; когда открыт раздел оболочки, страница скрыта (встреча и чаты при этом продолжают работать).
 import { parseMeetingUrl } from "../common/links";
+import { avPanel, type AvPanel } from "./av";
 import { call, h, icon, orgTile, pg, type OrgView, type State } from "./ui";
 
 let S: State | null = null;
@@ -43,6 +44,7 @@ function renderSide(): void {
 
 // ------------------------------------------------------------------------------------------ переходы
 function go(p: string, orgId?: string): void {
+  if (p !== "settings") stopAv();
   page = p;
   if (p === "org" && orgId) void call("shell:activate", { id: orgId });
   else void call("shell:page", { page: p });
@@ -182,7 +184,7 @@ function certDl(c: Record<string, string>): HTMLElement {
 }
 
 // ------------------------------------------------------------------------------------------ настройки
-const TABS: [string, string, string][] = [["general", "Общие", "sliders"], ["notify", "Уведомления", "bell"], ["orgs", "Организации", "users"], ["network", "Сеть", "shield"],
+const TABS: [string, string, string][] = [["general", "Общие", "sliders"], ["notify", "Уведомления", "bell"], ["av", "Звук и видео", "mic"], ["orgs", "Организации", "users"], ["network", "Сеть", "shield"],
   ["updates", "Обновления", "download"], ["diag", "Диагностика", "info"], ["about", "О программе", "sparkle"]];
 let panel: HTMLElement | null = null;
 function settingsPage(): HTMLElement {
@@ -194,7 +196,7 @@ function settingsPage(): HTMLElement {
   return h("div", { class: "settings" }, nav, h("div", { style: { position: "relative", overflow: "auto" } }, panel, S!.orgs.length ? back : null));
 }
 function refreshSettings(): void {
-  if (tab !== "network" && tab !== "diag") fillPanel();     // живые списки и переключатели (настройку могли изменить из трея или политики); форма прокси и отчёт диагностики не перерисовываются
+  if (tab !== "network" && tab !== "diag" && tab !== "av") fillPanel();     // живые списки и переключатели (настройку могли изменить из трея или политики); форма прокси и отчёт диагностики не перерисовываются
 }
 const isLocked = (f: string) => S!.locked.includes(f);
 const lockNote = () => h("span", { class: "locked" }, icon("lock"), "Задано администратором");
@@ -217,8 +219,11 @@ function seg(options: [string, string][], value: string, onPick: (v: string) => 
   return box;
 }
 
+let av: AvPanel | null = null;
+function stopAv(): void { av?.stop(); av = null; }
 function fillPanel(): void {
   if (!panel || !S) return;
+  if (tab !== "av") stopAv();
   const s = S.settings;
   const P = panel;
   const T = (t: string) => h("h2", null, t);
@@ -233,6 +238,10 @@ function fillPanel(): void {
         h("div", { class: "field" }, h("span", null, "Язык"), h("div", { class: "muted" }, "Русский")),
         h("div", { class: "field" }, h("span", null, "Кнопка «Закрыть» окна"), seg([["tray", "Свернуть в трей"], ["quit", "Выйти из приложения"], ["ask", "Спрашивать"]], s.closeAction,
           (v) => setS({ closeAction: v }), isLocked("closeAction")), h("small", null, "Во время встречи приложение всегда спросит, продолжать ли её в фоне."), isLocked("closeAction") ? lockNote() : null)));
+  } else if (tab === "av") {
+    stopAv();
+    av = avPanel({ media: () => S!.settings.media, save: (p) => setS({ media: p }), platform: () => S!.platform, inCall: () => S!.orgs.some((o) => o.inCall) });
+    P.replaceChildren(T("Звук и видео"), av.el);
   } else if (tab === "notify") {
     const dnd = s.notifications.dndUntil === -1 || s.notifications.dndUntil > Date.now();
     P.replaceChildren(T("Уведомления"),

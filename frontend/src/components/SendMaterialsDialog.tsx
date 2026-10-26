@@ -55,7 +55,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
   };
 
   return (
-    <Modal title="Отправить материалы встречи" onClose={onClose} wide>
+    <Modal title="Отправить материалы встречи" onClose={onClose} wide noAutofocus>
       {!plan && !error && <p className="muted">Загрузка…</p>}
       {error && <div className="alert error" role="alert">{error}</div>}
       {result ? (

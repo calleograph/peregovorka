@@ -699,6 +699,9 @@ class OutlookSettings(_Group):
     ews_access: str = "auto"                                              # доступ к календарям организаторов: auto | impersonation (ApplicationImpersonation) | delegate («Рецензент»)
     ews_kerberos_realm: str = ""                                          # область Kerberos, если её нельзя найти по DNS (необязательно)
     ews_kdc: str = ""                                                     # адрес KDC (необязательно; обычно находится по DNS)
+    calendar_enabled: bool = False                                        # раздел «Календарь» в Peregovorka: события Outlook сотрудника (нужна настроенная серверная сверка и согласие самого сотрудника)
+    calendar_write: bool = False                                          # создание и изменение встреч в календарях сотрудников (Graph: Calendars.ReadWrite; EWS: ApplicationImpersonation)
+    calendar_groups: str = ""                                             # группы каталога, которым доступен календарь; пусто — всем сотрудникам (каждый всё равно подключает его сам)
     ews_user: str = ""                                                    # учётная запись сверки (роль ApplicationImpersonation либо доступ «Рецензент» к календарям)
     ews_password: str = ""
 
@@ -720,6 +723,11 @@ class OutlookSettings(_Group):
     @field_validator("allowed_groups")
     @classmethod
     def _groups(cls, v: str) -> str:
+        return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))
+
+    @field_validator("calendar_groups")
+    @classmethod
+    def _cal_groups(cls, v: str) -> str:
         return ";".join(dict.fromkeys(x.strip().lower() for x in v.replace("\n", ";").split(";") if x.strip()))
 
     @field_validator("mail_kind")

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type ApiError, type SigningAgent, type SigningCert, type SigningJob, type SigningOverview } from "../../api";
 import { Icon } from "../../components/Icons";
 import { fmtDate } from "./common";
+import { useFocusOnMount } from "../../useInitialFocus";
 
 /** «Windows-клиент → Подпись и корпоративные сборки»: подписывающие узлы и их сертификаты, корпоративные установщики, канал обновлений, диагностика,
  *  инструкции. Закрытые ключи, пароли PFX и токены агентов здесь не показываются и через браузер не передаются вовсе. */
@@ -83,6 +84,7 @@ type TabProps = { ov: SigningOverview; busy: boolean; act: (fn: () => Promise<un
 
 // ---------------------------------------------------------------------------------------------- сертификаты и узлы
 function CertsTab({ ov, busy, act }: TabProps) {
+  const focusOnMount = useFocusOnMount();
   const agents = ov.agents.filter((a) => !a.revoked);
   const [enroll, setEnroll] = useState<{ code: string; server: string } | null>(null);
   const [nodeName, setNodeName] = useState("Узел подписи");
@@ -128,7 +130,7 @@ function CertsTab({ ov, busy, act }: TabProps) {
           <button className={`btn ${form === "register" ? "primary" : ""}`} disabled={!agents.length} onClick={() => setForm(form === "register" ? "" : "register")}>Подключить сертификат компании</button>
         </div>
         {form && (
-          <form className="sg-form" onSubmit={(e) => {
+          <form ref={focusOnMount} className="sg-form" onSubmit={(e) => {
             e.preventDefault();
             void act(() => (form === "create" ? api.signing.createCert(agent, subject, years) : api.signing.registerCert(agent, thumb)),
               "Задание отправлено узлу — результат появится здесь через несколько секунд").then(() => setForm(""));

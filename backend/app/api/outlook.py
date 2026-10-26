@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
 from datetime import datetime
 
@@ -90,9 +91,11 @@ def _fail(exc: TempRoomError):
 
 
 def _out(room: Room, base: str, cfg, created: bool = False, meeting_active: bool = False) -> dict:
-    html, text = ol.invite_texts(room, base, cfg, guest=bool(room.guest_access_enabled and cfg.guest_links))
-    return {"id": str(room.id), "created": created, "url": ol.join_link(base, room), "state": ol.state(room, meeting_active=meeting_active), "name": room.name,
-            "start": room.scheduled_start, "end": room.scheduled_end, "opens_at": room.join_opens_at, "recurring": room.recurring, "invite_html": html, "invite_text": text}
+    guest_url = ol.guest_link(base, room, cfg)
+    html, text = ol.invite_texts(room, base, cfg, guest_url=guest_url)
+    return {"id": str(room.id), "created": created, "url": ol.join_link(base, room), "guest_url": guest_url, "guests_allowed": bool(cfg.guest_links),
+            "state": ol.state(room, meeting_active=meeting_active), "name": room.name, "start": room.scheduled_start, "end": room.scheduled_end, "opens_at": room.join_opens_at,
+            "recurring": room.recurring, "invite_html": html, "invite_text": text}
 
 
 @router.get("/config")
@@ -266,6 +269,40 @@ async def by_key(key: str, request: Request, db: AsyncSession = Depends(get_db))
     room = await ol.find_by_key(db, su.user_id, key) if ol.KEY_RE.match(key) else None
     if room is None:
         raise HTTPException(status_code=404, detail="Связанной конференции нет.")
+    return _out(room, ol.public_url(request.app.state.settings.app_public_url, cfg), cfg)
+
+
+@router.post("/meetings/{room_id}/guest-link")
+async def guest_link(room_id: uuid.UUID, request: Request, body: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    """Гостевая ссылка встречи Outlook. `issue` — выпустить, если её нет (уже выпущенную не меняет, поэтому повторное сохранение события не плодит ссылки); `rotate` — выпустить новую
+    (прежняя перестаёт работать, гости встречи отключаются); `revoke` — отозвать. Разрешение организации (`guest_links`) не обходится; секрет в журнал и аудит не попадает."""
+    su = await _addin_user(request, db)
+    cfg = await _cfg(request, db)
+    action = str(body.get("action") or "")
+    if action not in ("issue", "rotate", "revoke"):
+        raise HTTPException(status_code=422, detail="action: issue, rotate или revoke")
+    if not cfg.enabled:
+        raise HTTPException(status_code=403, detail="Интеграция с Outlook отключена администратором.")
+    try:
+        room = await ol.owned(db, su, room_id)
+    except TempRoomError as exc:
+        _fail(exc)
+    if action != "revoke" and not cfg.guest_links:
+        raise HTTPException(status_code=403, detail={"code": "guests_disabled", "message": "Гости во встречах Outlook отключены администратором."})
+    if room.lifecycle == "closed":
+        raise HTTPException(status_code=409, detail={"code": "room_closed", "message": "Встреча закрыта или отменена."})
+    kicked = 0
+    if action == "revoke":
+        room.guest_token, room.guest_access_enabled = None, False
+    elif action == "rotate" or not (room.guest_access_enabled and room.guest_token):
+        room.guest_token, room.guest_access_enabled = secrets.token_urlsafe(24), True
+    if action != "issue":
+        await db.flush()
+        kicked = await request.app.state.meetings.kick_guests(db, room.id)
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=f"outlook.guest_link.{action}", target_type="room", target_id=str(room.id),
+                      ip=client_ip(request), details={"room": room.slug, "guests_disconnected": kicked})
+    await db.commit()
+    await db.refresh(room)
     return _out(room, ol.public_url(request.app.state.settings.app_public_url, cfg), cfg)
 
 

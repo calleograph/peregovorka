@@ -1,5 +1,6 @@
 import type { AudioCaptureOptions } from "livekit-client";
 import { browserNoiseSuppression, migrateNoiseMode, type NoiseMode } from "./audio/noiseMode";
+import { desktopMediaCached } from "./desktopMedia";
 
 /**
  * Настройки микрофона пользователя (хранятся в браузере, на сервер не отправляются).
@@ -16,10 +17,16 @@ const KEY = "room.micPrefs.v1";
 type Store = Pick<Storage, "getItem" | "setItem">;
 const defaultStore = (): Store | null => { try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; } };
 
+/** Пока выбор не сохранён в браузере, в приложении Windows действуют значения из его настроек («Звук и видео»); в браузере — обычные по умолчанию. */
+function desktopDefaults(): MicPrefs {
+  const d = desktopMediaCached();
+  return d ? { ...DEFAULT_MIC_PREFS, noiseMode: d.noise, echoCancellation: d.echo, autoGainControl: d.agc } : { ...DEFAULT_MIC_PREFS };
+}
+
 export function loadMicPrefs(store: Store | null = defaultStore()): MicPrefs {
   try {
     const raw = store?.getItem(KEY);
-    if (!raw) return { ...DEFAULT_MIC_PREFS };
+    if (!raw) return desktopDefaults();
     const o = JSON.parse(raw) as Partial<MicPrefs>;
     const pick = (k: Exclude<keyof MicPrefs, "noiseMode">) => (typeof o[k] === "boolean" ? (o[k] as boolean) : DEFAULT_MIC_PREFS[k]);
     return { noiseMode: migrateNoiseMode(o), echoCancellation: pick("echoCancellation"), autoGainControl: pick("autoGainControl"), releaseOnMute: pick("releaseOnMute") };
