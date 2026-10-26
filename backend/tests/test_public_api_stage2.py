@@ -890,10 +890,15 @@ def test_parallel_requests_are_counted_exactly_per_client(tmp_path, directory):
 
         def hit(k):
             return c.get(f"{P}/me", headers=hdr(k)).status_code
+        t0 = time.monotonic()
         with ThreadPoolExecutor(16) as ex:
             ra = list(ex.map(hit, [ka] * 40))
             rb = list(ex.map(hit, [kb] * 5))
-        assert ra.count(200) == 10 and ra.count(429) == 30, "ровно лимит, без «лишних» при параллельных запросах"
+        # окно лимита фиксированное (60 с): на медленном стенде серия могла пройти через его границу — тогда допустимо по 10 на каждое затронутое окно
+        windows = 1 + int((time.monotonic() - t0) // 55)
+        n200 = ra.count(200)
+        assert n200 == 10 if windows == 1 else 10 <= n200 <= 10 * windows, "ровно лимит, без «лишних» при параллельных запросах"
+        assert n200 + ra.count(429) == 40
         assert rb == [200] * 5, "лимит одной интеграции не затрагивает другую"
 
 
