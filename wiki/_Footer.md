@@ -1,1 +1,1 @@
-[Репозиторий](https://github.com/calleograph/peregovorka) · [Сообщить об ошибке](https://github.com/calleograph/peregovorka/issues) · [Выпуски](https://github.com/calleograph/peregovorka/releases) · Версия сервера 0.40.1, приложения для Windows 1.3.0 · вики проверена 2026-10-26
+[Репозиторий](https://github.com/calleograph/peregovorka) · [Сообщить об ошибке](https://github.com/calleograph/peregovorka/issues) · [Выпуски](https://github.com/calleograph/peregovorka/releases) · Версия сервера 0.41.0, приложения для Windows 1.3.0 · вики проверена 2026-10-26
