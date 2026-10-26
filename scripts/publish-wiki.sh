@@ -32,5 +32,6 @@ git -C "$TMP/wiki" diff --cached --stat | tail -3
 if [ -z "$(git -C "$TMP/wiki" status --porcelain)" ]; then echo "Изменений нет."; exit 0; fi
 if [ "$YES" -ne 1 ]; then echo "Это только предпросмотр. Для отправки: scripts/publish-wiki.sh --yes"; exit 0; fi
 V="$(cat "$ROOT/VERSION")"
-git -C "$TMP/wiki" commit --quiet -m "Вики: версия $V"
+# Личность берём из основного репозитория: во временном клоне своей нет.
+git -C "$TMP/wiki" -c user.name="$(git config user.name || echo peregovorka)" -c user.email="$(git config user.email || echo noreply@example.org)" commit --quiet -m "Вики: версия $V"
 git -C "$TMP/wiki" push --quiet origin HEAD && echo "Опубликовано."
