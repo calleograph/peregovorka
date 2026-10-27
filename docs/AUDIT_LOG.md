@@ -6,6 +6,7 @@
 
 | Область | События (`action`) |
 | --- | --- |
+| Безопасность | `security.ip_access.settings`, `security.ip_access.confirm`, `security.ip_access.auto_revert`, `security.ip_access.console_reset`, `security.ip_access.entry_add/entry_update/entry_delete`, `security.ip.block`, `security.ip.unblock`, `security.waf.update`, `security.events.export` (события самого защитного слоя — в разделе «События и блокировки») |
 | Вход | `auth.login`, `auth.login_failed`, `auth.login_denied` (пароль верен, но правила допуска не пустили), `auth.login_locked`, `auth.logout`, `auth.totp_failed`, `auth.backup_code_used`, `captcha.rejected` |
 | 2FA | `auth.totp_enable`, `auth.totp_disable`, `auth.totp_backup_regenerate`, `auth.totp_reset` |
 | Комнаты и встречи | `meeting.join`, `meeting.join_denied`, `meeting.leave` (пользователи и гости), создание, изменение и удаление комнат, завершение встречи, выдача и отзыв доступа |

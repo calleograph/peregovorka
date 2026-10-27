@@ -363,6 +363,11 @@ export const loginProtectionFields: Field[] = [
     help: "По одному в строке (или через запятую). Эти адреса никогда не блокируются целиком." },
 ]
 
+export const securityLogFields: Field[] = [
+  { name: "retention_days", label: "Срок хранения событий", unit: "дней", type: "number", min: 1, max: 365, example: "30" },
+  { name: "max_rows", label: "Не более записей", type: "number", min: 1000, max: 5000000, example: "200000", help: "Сверх этого числа удаляются самые старые записи, даже если срок не вышел." },
+]
+
 export const netTrustFields: Field[] = [
   { name: "mode", label: "Откуда брать адрес клиента", type: "select",
     options: [["auto", "Автоматически (рекомендуется): X-Forwarded-For от доверенных прокси"], ["xff", "Только X-Forwarded-For"], ["x_real_ip", "Только X-Real-IP"], ["forwarded", "Только Forwarded (RFC 7239)"], ["header", "Свой заголовок (WAF/CDN)"], ["peer", "Адрес соединения (прокси нет, сервер доступен напрямую)"]],

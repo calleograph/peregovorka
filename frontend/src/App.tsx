@@ -1,7 +1,8 @@
 import { watchTables } from "./stackTables";
 import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { api, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
+import { api, isRestricted, onRestricted, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
+import RestrictedPage from "./pages/RestrictedPage";
 import Avatar from "./components/Avatar";
 import { AppFooter, CookieNotice, type BuildInfo } from "./components/ProductInfo";
 import PrivacyPage from "./pages/PrivacyPage";
@@ -214,6 +215,9 @@ function GuestApp() {
 
 
 export default function App() {
+  const [blocked, setBlocked] = useState(isRestricted());
+  useEffect(() => onRestricted(() => setBlocked(true)), []);
+  if (blocked) return <RestrictedPage />;          // адрес вне разрешённых подсетей: вместо интерфейса — нейтральная страница
   return <><CaptchaHost /><Pages /></>;       // окно проверки «я не робот» живёт в корне: его вызывает любой запрос, на который сервер ответил 428
 }
 

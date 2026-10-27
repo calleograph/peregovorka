@@ -169,6 +169,7 @@ services:
       LDAP_TIMEOUT_SECONDS: ${LDAP_TIMEOUT_SECONDS:-5}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      IP_ACCESS_DISABLE: ${IP_ACCESS_DISABLE:-0}
       TLS_LOCAL_CONFIGURED: ${NGINX_TLS_CERT:+true}
       # Только для раздела «Сетевая доступность»: как установлен экземпляр (адреса привязки и порты на хосте). Секретов здесь нет.
       NET_INSTALL_PROFILE: ${INSTALL_PROFILE:-}

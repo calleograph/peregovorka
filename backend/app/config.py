@@ -54,6 +54,7 @@ class Settings(BaseSettings):
         return self.outlook_check_ca_file or ("/data/ca/outlook-ca.pem" if os.path.isfile("/data/ca/outlook-ca.pem") else "")
     # Адреса прокси, которые в X-Forwarded-For пропускаются справа налево (через запятую, CIDR или IP): локальный TLS-терминатор/host-nginx и т. п.
     trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"
+    ip_access_disable: bool = False          # аварийный выключатель ограничения по подсетям (IP_ACCESS_DISABLE=1 в .env): действует независимо от базы и интерфейса
     # Дополнительные адреса, с которых открывают приложение через внешний reverse proxy (через запятую, вида https://хост[:порт]).
     # Основной адрес — APP_PUBLIC_URL; проверка Origin остаётся включённой, список лишь расширяет её.
     allowed_origins: str = ""

@@ -134,7 +134,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "ip_access" | "waf" | "security_log" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -622,6 +622,12 @@ export const hasGuestToken = () => guestToken !== "";
 
 // Сессия истекла/прекращена админом: App переключает на экран входа вместо «молчаливых» ошибок.
 let onUnauthorized: (() => void) | null = null;
+/** Сервер ответил 403 `access_restricted`: адрес клиента вне разрешённых подсетей. Интерфейс заменяется нейтральной страницей (без сведений о настройках). */
+let restricted = false;
+const restrictedListeners = new Set<() => void>();
+export const isRestricted = () => restricted;
+export const onRestricted = (fn: () => void) => { restrictedListeners.add(fn); return () => { restrictedListeners.delete(fn); }; };
+const markRestricted = () => { if (!restricted) { restricted = true; restrictedListeners.forEach((f) => f()); } };
 export const setUnauthorizedHandler = (fn: (() => void) | null) => { onUnauthorized = fn; };
 
 /** keepalive-запрос переживает выгрузку страницы (закрытие вкладки, переход). */
@@ -656,6 +662,7 @@ async function request<T>(method: string, path: string, body?: unknown, captcha?
     const code = typeof d === "object" && d ? d.code ?? "error" : "error";
     const message = typeof d === "object" && d ? d.message : typeof d === "string" ? d : `Ошибка ${res.status}`;
     const ra = Number(res.headers.get("Retry-After")) || undefined;
+    if (res.status === 403 && code === "access_restricted") markRestricted();
     if (res.status === 428 && code === "captcha_required" && typeof d === "object" && d?.challenge) {
       if (isImageChallenge(d.challenge)) {
         // визуальная CAPTCHA: пользователь вводит символы с картинки; после неверного ответа сервер выдаёт новую картинку (до 5 попыток подряд)
@@ -773,6 +780,15 @@ export interface NetRule { id: string; direction: "in" | "out"; scope: "internet
 export interface IpDiagnostics { client_ip: string; counter_key: string; source: string; tcp_peer: string | null; web_peer: string | null; headers_accepted: boolean; chain: string[]; notes: string[]; warnings: string[];
   headers: { x_forwarded_for: string; x_real_ip: string; forwarded: string; x_pg_peer: string };
   config: { mode: string; header_name: string; trusted_proxies: string[]; proxy_hops: number; accept_from: string[] } }
+export interface IpAccessEntry { id: string; cidr: string; comment: string; enabled: boolean; updated_at: string; updated_by: string }
+export interface IpAccessState { enabled: boolean; active: boolean; forced_off: boolean; exempt_guests: boolean; exempt_public_api: boolean; trial_minutes: number; pending: boolean; seconds_left: number | null; confirmed_at: string | null;
+  entries: IpAccessEntry[]; my_ip: string; my_ip_allowed: boolean; denied_24h: number; warnings: string[]; covered: { id: string; title: string; detail: string }[]; not_covered: { id: string; title: string; detail: string }[] }
+export interface SecEvent { id: number; at: string; ip: string | null; account: string | null; kind: string; kind_title: string; result: string; reason: string | null; rule: string | null; until: string | null; component: string; details: Record<string, unknown> | null; explain?: string | null }
+export interface SecBlock { ip: string; reason: string; rule: string; manual: boolean; actor: string; failures: number; level: number; since: number; until: number; failures_24h: number; recent: { at: string; kind_title: string; reason: string | null; rule: string | null }[] }
+export interface SecOverview { protection: { login_protection: boolean; captcha_mode: string; captcha_kind: string; ip_access: { enabled: boolean; active: boolean; networks: number }; waf_mode: string };
+  blocked_now: number; failed_logins_24h: number; login_blocked_24h: number; captcha_shown_24h: number; captcha_passed_24h: number; denied_net_24h: number; waf_hits_24h: number; top_rules: { rule: string; count: number }[]; attention: string[] }
+export interface WafRule { id: string; title: string; blurb: string; verified: boolean; mode: "inherit" | "off" | "observe" | "block"; observed_24h: number; blocked_24h: number; last_seen: string | null }
+export interface WafState { mode: "off" | "observe" | "protect"; probe_threshold: number; probe_block_minutes: number; exclude_paths: string; exclude_ips: string; rules: WafRule[] }
 export interface NetworkInfo { variant: string[]; rules: NetRule[]; local_only: { proto: string; port: string; component: string; purpose: string; reachable: string; bind?: string }[]; warnings: string[]; limits: string[]; public_host: string; node_ip: string; generated_at: number }
 export interface NetworkProbe { checks: { id: string; host: string; port: number; what: string; ok: boolean; ms?: number; error?: string }[]; not_checked: { id: string; proto: string; port: string; reason: string }[]; disclaimer: string }
 
@@ -1112,6 +1128,21 @@ export const api = {
     restoreApply: (scanId: string, items: string[]) => request<RestoreJobView>("POST", "/admin/restore/apply", { scan_id: scanId, items, confirm: true }),
     network: () => request<NetworkInfo>("GET", "/admin/network"),
     ipDiagnostics: () => request<IpDiagnostics>("GET", "/admin/security/ip-diagnostics"),
+    ipAccess: () => request<IpAccessState>("GET", "/admin/security/ip-access"),
+    ipAccessSettings: (body: Record<string, unknown>) => request<IpAccessState>("PUT", "/admin/security/ip-access/settings", body),
+    ipAccessConfirm: () => request<IpAccessState>("POST", "/admin/security/ip-access/confirm"),
+    ipAccessAdd: (body: { cidr: string; comment: string; enabled?: boolean }) => request<IpAccessState>("POST", "/admin/security/ip-access/entries", body),
+    ipAccessUpdate: (id: string, body: Record<string, unknown>) => request<IpAccessState>("PATCH", `/admin/security/ip-access/entries/${id}`, body),
+    ipAccessDelete: (id: string, body: Record<string, unknown> = {}) => request<IpAccessState>("DELETE", `/admin/security/ip-access/entries/${id}`, body),
+    secOverview: () => request<SecOverview>("GET", "/admin/security/overview"),
+    secEvents: (q: Record<string, string | number>) => request<{ total: number; items: SecEvent[]; kinds: { id: string; title: string }[] }>("GET", `/admin/security/events?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, String(v)]))}`),
+    secEventsExportUrl: (q: Record<string, string | number>, format: "csv" | "json") => `/api/v1/admin/security/events/export?${new URLSearchParams({ ...Object.fromEntries(Object.entries(q).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, String(v)])), format })}`,
+    secBlocks: () => request<{ items: SecBlock[] }>("GET", "/admin/security/blocks"),
+    secUnblock: (ip: string) => request<{ ok: boolean }>("POST", "/admin/security/blocks/unblock", { ip }),
+    secBlock: (body: { ip: string; minutes: number; reason: string; confirm_shared?: boolean }) => request<{ ok: boolean; until: number }>("POST", "/admin/security/blocks", body),
+    secActivity: (ip: string) => request<{ ip: string; items: SecEvent[] }>("GET", `/admin/security/activity?ip=${encodeURIComponent(ip)}`),
+    waf: () => request<WafState>("GET", "/admin/security/waf"),
+    wafUpdate: (body: Record<string, unknown>) => request<WafState>("PUT", "/admin/security/waf", body),
     loginProtectionStatus: () => request<{ blocked_now: number }>("GET", "/admin/security/login-protection/status"),
     networkProbe: () => request<NetworkProbe>("POST", "/admin/network/probe"),
     resetTotp: (userId: string, password: string) => request<void>("POST", `/admin/users/${userId}/totp/reset`, { password }),

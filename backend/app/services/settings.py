@@ -706,6 +706,71 @@ def _cidr_list(v: str, what: str) -> str:
     return "\n".join(dict.fromkeys(out))
 
 
+class IpAccessSettings(_Group):
+    """Доверенные подсети: ограничение доступа к Peregovorka разрешёнными IP-адресами и подсетями (список — таблица allowed_networks). По умолчанию выключено."""
+
+    enabled: bool = False
+    exempt_guests: bool = False          # не ограничивать гостевые ссылки (гости приходят из любых сетей)
+    exempt_public_api: bool = False      # не ограничивать публичный API (у ключей свои списки адресов)
+    trial_minutes: int = Field(default=5, ge=1, le=60)            # пробный срок после включения: подтвердить из разрешённой сети, иначе откат
+    pending_until: str | None = None     # ISO-время конца пробного срока (служебное)
+    confirmed_at: str | None = None
+    activated_by: str = ""
+
+
+class WafSettings(_Group):
+    """Лёгкий встроенный WAF: режим, режимы отдельных правил, порог перебора путей, исключения."""
+
+    mode: str = "observe"                # off | observe | protect
+    rules: dict[str, str] = Field(default_factory=dict)           # правило → inherit | off | observe | block
+    probe_threshold: int = Field(default=40, ge=10, le=10000)    # ответов 404/405 с одного адреса в минуту до срабатывания «перебора путей»
+    probe_block_minutes: int = Field(default=10, ge=1, le=1440)
+    exclude_paths: str = Field(default="", max_length=4000)      # начала путей, которые не проверяются (по одному в строке)
+    exclude_ips: str = ""                # адреса и подсети, которые не проверяются
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in ("off", "observe", "protect"):
+            raise ValueError("Режим WAF: off, observe или protect")
+        return v
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(cls, v: dict) -> dict:
+        from ..security.waf import RULES  # noqa: PLC0415
+
+        out = {}
+        for k, m in v.items():
+            if k not in RULES:
+                raise ValueError(f"Неизвестное правило WAF: {k[:40]}")
+            if m not in ("inherit", "off", "observe", "block"):
+                raise ValueError("Режим правила: inherit, off, observe или block")
+            if m != "inherit":
+                out[k] = m
+        return out
+
+    @field_validator("exclude_paths")
+    @classmethod
+    def _paths(cls, v: str) -> str:
+        lines = [x.strip() for x in v.replace("\r", "").split("\n") if x.strip()]
+        if any(not x.startswith("/") or len(x) > 200 or " " in x for x in lines):
+            raise ValueError("Пути исключений: каждый с «/», без пробелов, по одному в строке")
+        return "\n".join(dict.fromkeys(lines))
+
+    @field_validator("exclude_ips")
+    @classmethod
+    def _ips(cls, v: str) -> str:
+        return _cidr_list(v, "Исключения по адресам")
+
+
+class SecurityLogSettings(_Group):
+    """Хранение событий безопасности."""
+
+    retention_days: int = Field(default=30, ge=1, le=365)
+    max_rows: int = Field(default=200_000, ge=1000, le=5_000_000)
+
+
 class NetTrustSettings(_Group):
     """Как определяется адрес клиента. Доверенные прокси — узлы, которым разрешено сообщать настоящий адрес клиента (в заголовках). Это НЕ список разрешённых клиентских сетей.
     Заголовки принимаются только от узлов, которые подключились к web с доверенного адреса; прямое подключение к backend или от недоверенного узла заголовки не меняет."""
@@ -1162,6 +1227,9 @@ GROUPS: dict[str, type[_Group]] = {
     "captcha": CaptchaSettings,
     "login_protection": LoginProtectionSettings,
     "net_trust": NetTrustSettings,
+    "ip_access": IpAccessSettings,
+    "waf": WafSettings,
+    "security_log": SecurityLogSettings,
     "profile_policy": ProfilePolicySettings,
     "outlook": OutlookSettings,
     "sip_policy": SipPolicySettings,
