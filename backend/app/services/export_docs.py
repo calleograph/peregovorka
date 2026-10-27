@@ -320,23 +320,6 @@ def to_docx(md: str, title: str | None = None) -> bytes:
 
 
 # --------------------------------------------------------------------------------- HTML
-HTML_CSS = """
-:root{color-scheme:light;--text:#1f2937;--muted:#667085;--line:#d9dee7;--head:#eef1f6;--ok:#e3f2e7;--info:#e3eefa;--warn:#fcefd0;--mute:#eef0f3;--flag:#fff3c4}
-*{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Calibri,sans-serif}
-main{max-width:1100px;margin:24px auto;padding:28px 34px;background:#fff;border:1px solid var(--line);border-radius:14px}
-h1{font-size:26px;margin:0 0 14px;letter-spacing:-.01em}h2{font-size:18px;margin:26px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}h3{font-size:16px}
-p{margin:8px 0}em{color:var(--muted)}table{width:100%;border-collapse:collapse;margin:8px 0 14px;table-layout:auto}
-th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word;min-width:9em}th{background:var(--head);font-weight:600}
-tr{break-inside:avoid}thead{display:table-header-group}th:first-child,td:first-child{width:2.6em;min-width:0;color:var(--muted)}
-.ok th{background:var(--ok)}.info th{background:var(--info)}.warn th{background:var(--warn)}.muted th{background:var(--mute)}
-blockquote{margin:10px 0;padding:8px 14px;border-left:4px solid var(--line);background:#fafbfc;color:var(--muted)}blockquote.flag{background:var(--flag);border-color:#e0b100;color:var(--text)}
-pre{background:#f3f4f6;border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;font:13px/1.45 Consolas,"DejaVu Sans Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere}
-code{font-family:Consolas,"DejaVu Sans Mono",monospace;background:#f3f4f6;padding:1px 4px;border-radius:4px}
-@media print{body{background:#fff}main{border:0;margin:0;padding:0;max-width:none}h2{break-after:avoid}}
-@page{margin:16mm}
-"""
-
-
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -357,41 +340,11 @@ def _runs_html(runs: list[Run]) -> str:
     return "".join(out)
 
 
-def to_html(md: str, title: str | None = None) -> str:
-    """Самостоятельная страница документа: общие стили, таблицы с переносом, мягкие акценты разделов; печать — через браузер. Текст модели экранируется."""
-    from .doc_render import section_accent, warn_text
+def to_html(md: str, title: str | None = None, *, kind: str = "protocol") -> str:
+    """Самостоятельная страница документа в оформлении «Peregovorka Glass Documents» (светлая тема «Стекло»; services/glass_html.py). Текст модели экранируется."""
+    from .glass_html import to_html as render  # noqa: PLC0415
 
-    def lst(b: Block) -> str:
-        tag = "ol" if b.kind == "ol" else "ul"
-        return f"<{tag}>" + "".join(f"<li>{_runs_html(it.runs)}" + "".join(lst(c) for c in it.children) + "</li>" for it in b.items) + f"</{tag}>"
-
-    body: list[str] = []
-    accent: str | None = None
-    for b in parse_markdown(md):
-        if b.kind == "h":
-            if b.level == 2:
-                accent = section_accent(_runs_text(b.runs))
-            body.append(f"<h{min(b.level, 4)}>{_runs_html(b.runs)}</h{min(b.level, 4)}>")
-        elif b.kind == "p":
-            body.append(f"<p>{_runs_html(b.runs)}</p>")
-        elif b.kind in ("ul", "ol"):
-            body.append(lst(b))
-        elif b.kind == "quote":
-            cls = ' class="flag"' if warn_text(_runs_text(b.runs)) else ""
-            body.append(f"<blockquote{cls}>{_runs_html(b.runs)}</blockquote>")
-        elif b.kind == "hr":
-            body.append("<hr>")
-        elif b.kind == "code":
-            body.append(f"<pre>{_esc(b.text)}</pre>")
-        elif b.kind == "table":
-            head, rows = b.rows[0], b.rows[1:]
-            cls = f' class="{accent}"' if accent else ""
-            body.append(f"<table{cls}><thead><tr>" + "".join(f"<th>{_runs_html(c)}</th>" for c in head) + "</tr></thead><tbody>"
-                        + "".join("<tr>" + "".join(f"<td>{_runs_html(c)}</td>" for c in r) + "</tr>" for r in rows) + "</tbody></table>")
-    t = _esc(title or "Документ")
-    return (f'<!doctype html>\n<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-            f'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; base-uri \'none\'; form-action \'none\'">'
-            f'<title>{t}</title><style>{HTML_CSS}</style></head><body><main>\n' + "\n".join(body) + "\n</main></body></html>\n")
+    return render(md, title, kind=kind)
 
 
 # ---------------------------------------------------------------------------------- PDF

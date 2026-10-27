@@ -38,12 +38,17 @@ async def _plan(request: Request, db: AsyncSession, meeting, once: str | None = 
             "model": (lm.title if lm else eff.model) if eff.enabled else None, "profile": ch.name, "local": is_local, "source": ch.source}
 
 
-def _state(rec, meeting, plan: dict, can_edit: bool) -> dict:
+# Что из сведений о формировании отдаётся всем, кто видит карту: состояние и предупреждения о неполноте. Остальное (токены, повторы, ответы модели по фрагментам) — только администратору.
+META_USER = ("requested_at", "started_at", "finished_at", "duration_s", "warnings", "coverage_pct", "failed", "interrupted", "regen_failed")
+
+
+def _state(rec, meeting, plan: dict, can_edit: bool, admin: bool = False) -> dict:
     out: dict[str, Any] = {"status": rec.status if rec else "none", "plan": plan, "can_edit": can_edit, "categories": [{"id": i, "label": label} for i, label, _d in CATEGORIES],
                            "finished": meeting.ended_at is not None}
     if rec is not None:
-        meta = {k: v for k, v in (rec.meta or {}).items() if k not in ("previous", "keep")}      # прежняя карта целиком клиенту не нужна — только факт, что её можно вернуть
-        out.update(meta=meta, error=rec.error, created_by=rec.created_by, updated_at=rec.updated_at.isoformat(), can_restore=bool((rec.meta or {}).get("previous")) and rec.status == "ready")
+        meta = {k: v for k, v in (rec.meta or {}).items() if k not in ("previous", "keep", "facts")}      # прежняя карта и сохранённые ответы модели клиенту не нужны
+        out.update(meta=meta if admin else {k: meta[k] for k in META_USER if k in meta}, error=rec.error, created_by=rec.created_by, updated_at=rec.updated_at.isoformat(),
+                   can_restore=bool((rec.meta or {}).get("previous")) and rec.status == "ready")
         if rec.data and rec.status in ("ready", "pending", "running"):
             out["data"] = apply_edits(rec.data, rec.edits)
             out["stale"] = rec.status != "ready"                     # идёт пересоздание: показана прежняя карта
@@ -57,7 +62,7 @@ async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     rec = await maps.refresh(db, await maps.get(db, meeting_id))
     from .meetings import can_edit_protocol  # noqa: PLC0415
 
-    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
+    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su), su.is_admin)
     st["can_generate"] = can_edit_protocol(meeting, su)
     if st["can_generate"] and roles.can_manage_room(meeting.room, su):
         ps = request.app.state.protocols
@@ -126,7 +131,7 @@ async def restore_map(meeting_id: uuid.UUID, request: Request, su: SessionUser =
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.restore", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
                       details={"model": (rec.meta or {}).get("model")})
     await db.commit()
-    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
+    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su), su.is_admin)
     st["can_generate"] = True
     return st
 
@@ -156,7 +161,7 @@ async def edit_topic(meeting_id: uuid.UUID, topic_id: str, request: Request, bod
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.edit_topic", target_type="meeting", target_id=str(meeting_id),
                       ip=client_ip(request), details={"topic_id": topic_id, "fields": sorted(patch)})
     await db.commit()
-    st = _state(rec, meeting, await _plan(request, db, meeting), True)
+    st = _state(rec, meeting, await _plan(request, db, meeting), True, su.is_admin)
     st["can_generate"] = True
     return st
 

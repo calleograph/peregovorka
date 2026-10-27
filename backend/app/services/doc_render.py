@@ -30,16 +30,42 @@ def where(source: dict | None) -> str:
     return f"[{source.get('ts', '')}]{who}{tag}".strip()
 
 
+_MONTH_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(.*)$")
+_RANGE = re.compile(r"^(\d{1,2}):(\d{2})(?:\s*[—–-]\s*окончание:\s*(\d{1,2}):(\d{2}))?\s*$", re.I)
+
+
 def meta_from_header(header: list[str]) -> list[list[str]]:
-    out = []
+    """Шапка стенограммы → сведения о встрече для документа: «Встреча», «Дата» (ДД.ММ.ГГГГ), «Время», «Длительность», «Участвовали»; прочие строки шапки остаются как есть."""
+    out: list[list[str]] = []
     for h in header:
         if h.startswith("===") or not h.strip():
             continue
-        if ":" in h:
-            a, b = h.split(":", 1)
-            out.append([a.strip(), b.strip()])
-        else:
+        if ":" not in h:
             out.append(["", h.strip()])
+            continue
+        a, b = (x.strip() for x in h.split(":", 1))
+        low = a.lower()
+        if low in ("переговорка", "встреча", "название"):
+            out.append(["Встреча", b])
+        elif low == "дата":
+            m = _MONTH_ISO.match(b)
+            out.append(["Дата", f"{m.group(3)}.{m.group(2)}.{m.group(1)}{m.group(4)}" if m else b])
+        elif low == "начало":
+            m = _RANGE.match(b)
+            if not m:
+                out.append([a, b])
+                continue
+            start = f"{int(m.group(1)):02d}:{m.group(2)}"
+            if m.group(3):
+                end = f"{int(m.group(3)):02d}:{m.group(4)}"
+                out.append(["Время", f"{start} — {end}"])
+                mins = (int(m.group(3)) * 60 + int(m.group(4)) - int(m.group(1)) * 60 - int(m.group(2))) % 1440
+                if 0 < mins:
+                    out.append(["Длительность", f"{mins // 60} ч {mins % 60} мин" if mins >= 60 else f"{mins} мин"])
+            else:
+                out.append(["Время", f"начало в {start}"])
+        else:
+            out.append([a, b])
     return out
 
 
@@ -66,7 +92,7 @@ def inject_attendees(md: str, att: dict | None) -> str:
 
 
 def build_document(header: list[str], items: list, *, summary: str = "", incomplete: bool = False, notes: list[str] | None = None,
-                   title: str = "Протокол совещания", attendees: dict | None = None) -> dict:
+                   title: str = "Протокол встречи", attendees: dict | None = None) -> dict:
     """Структура документа из проверенных пунктов (extraction.Item). Ничего не добавляется от себя: чего нет — «не указан» / «решение не принималось»."""
     topics = sorted((i for i in items if i.kind == "topic"), key=lambda i: i.sec)
     decisions = [i for i in items if i.kind == "decision"]
@@ -109,8 +135,18 @@ def _table(head: list[str], rows: list[list[str]]) -> list[str]:
     return out
 
 
+def _numbered(rows: list[str]) -> list[str]:
+    return [f"{n}. {r}" for n, r in enumerate(rows, 1)]
+
+
+def _with_src(text: str, source: str) -> str:
+    one = " ".join(str(text or "").split())
+    return f"{one} — _{source}_" if source and source != "—" else one
+
+
 def document_to_markdown(doc: dict, *, disclaimer: bool = True) -> str:
-    L: list[str] = [f"# {doc.get('title') or 'Протокол совещания'}", ""]
+    """Содержание документа в Markdown. Пустые разделы не выводятся (кроме «Обсуждений»). Оформление в HTML — services/glass_html.py и страница приложения."""
+    L: list[str] = [f"# {doc.get('title') or 'Протокол встречи'}", ""]
     for label, value in doc.get("meta") or []:
         L += [f"**{label}:** {value}" if label else value, ""]
     if doc.get("incomplete"):
@@ -121,22 +157,28 @@ def document_to_markdown(doc: dict, *, disclaimer: bool = True) -> str:
         L += ["_Документ собран автоматически: каждый пункт проверен по тексту и привязан к реплике-источнику; чего в репликах нет — «не указан». Важные пункты сверьте с записью._", ""]
     L += attendees_markdown(doc.get("attendees"))
     if doc.get("summary"):
-        L += ["## Итог", "", doc["summary"], ""]
-    L += ["## Обсуждение", ""]
+        L += ["## Краткие итоги", "", doc["summary"], ""]
+    L += ["## Обсуждения", ""]
     d = doc.get("discussion") or []
-    L += _table(["№", "Тема", "Что обсуждали", "Чем закончилось", "Где в записи"], [[str(n), r["topic"], r["discussion"], r["result"], r["source"]] for n, r in enumerate(d, 1)]) if d else ["— темы не выделены"]
-    L += ["", "## Решения", ""]
+    if d:
+        for n, r in enumerate(d, 1):
+            L += [f"### {n}. {_cell(r['topic'])}", "", " ".join(str(r["discussion"]).split()), "", f"**Чем закончилось:** {' '.join(str(r['result']).split())}", ""]
+            if r.get("source") and r["source"] != "—":
+                L += [f"_Где в записи: {r['source']}_", ""]
+    else:
+        L += ["— темы не выделены", ""]
     d = doc.get("decisions") or []
-    L += _table(["№", "Решение", "Где в записи"], [[str(n), r["decision"], r["source"]] for n, r in enumerate(d, 1)]) if d else ["— не принималось"]
-    L += ["", "## Задачи", ""]
+    if d:
+        L += ["## Решения", ""] + _numbered([_with_src(r["decision"], r["source"]) for r in d]) + [""]
     d = doc.get("tasks") or []
-    L += _table(["№", "Задача", "Ответственный", "Срок", "Где в записи"], [[str(n), r["task"], r["assignee"], r["deadline"], r["source"]] for n, r in enumerate(d, 1)]) if d else ["— не выделены"]
+    if d:
+        L += ["## Задачи и поручения", ""] + _table(["№", "Задача", "Ответственный", "Срок", "Где в записи"], [[str(n), r["task"], r["assignee"], r["deadline"], r["source"]] for n, r in enumerate(d, 1)]) + [""]
     d = doc.get("proposals") or []
     if d:
-        L += ["", "## Предложения, не принятые как решение", ""] + _table(["№", "Предложение", "Где в записи"], [[str(n), r["proposal"], r["source"]] for n, r in enumerate(d, 1)])
-    L += ["", "## Открытые вопросы", ""]
+        L += ["## Предложения, не принятые как решение", ""] + _numbered([_with_src(r["proposal"], r["source"]) for r in d]) + [""]
     d = doc.get("open_questions") or []
-    L += _table(["№", "Вопрос", "Чего не хватает", "Где в записи"], [[str(n), r["question"], r["missing"], r["source"]] for n, r in enumerate(d, 1)]) if d else ["— нет"]
+    if d:
+        L += ["## Открытые вопросы", ""] + _numbered([_with_src(r["question"], r["source"]) for r in d]) + [""]
     return "\n".join(L).rstrip() + "\n"
 
 

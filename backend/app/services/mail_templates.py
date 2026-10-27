@@ -125,7 +125,7 @@ async def meeting_context(db: AsyncSession, meeting: Meeting, tz) -> dict[str, s
     for kind in ("protocol", "summary"):
         p = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting.id, Protocol.kind == kind, Protocol.status == "ready")
                               .order_by(Protocol.updated_at.desc()))).scalars().first()
-        titles[kind] = (p.title or ("Протокол совещания" if kind == "protocol" else "Краткое резюме")) if p else ""
+        titles[kind] = (p.title or ("Протокол встречи" if kind == "protocol" else "Краткое резюме")) if p else ""
     return {"meeting_title": meeting.room.name, "meeting_date": start.strftime("%d.%m.%Y"), "meeting_start": start.strftime("%H:%M"),
             "meeting_end": end.strftime("%H:%M") if end else "", "room_name": meeting.room.name, "organizer_name": organizer.display_name if organizer else "",
             "participants": ", ".join(names), "protocol_name": titles["protocol"], "summary_name": titles["summary"], "project_name": await _site_name(db)}

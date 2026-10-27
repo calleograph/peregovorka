@@ -63,12 +63,13 @@ def reply(obj, finish="stop"):
 
 
 def pass_of(body):
-    """Какой проход запросили (по ключу схемы)."""
-    return next(iter(body["response_format"]["json_schema"]["schema"]["properties"]))
+    """Какие списки запросили: у общего прохода в схеме все четыре."""
+    return tuple(body["response_format"]["json_schema"]["schema"]["properties"])
 
 
 def answer(body, topics=(), decisions=(), tasks=(), questions=()):
-    return {"topics": {"topics": list(topics)}, "items": {"items": list(decisions)}, "tasks": {"tasks": list(tasks)}, "questions": {"questions": list(questions)}}[pass_of(body)]
+    """Общий ответ модели на фрагмент: темы, решения, поручения, вопросы одним объектом."""
+    return {"topics": list(topics), "items": list(decisions), "tasks": list(tasks), "questions": list(questions)}
 
 
 # ------------------------------------------------------------------------------------------------ разбор, id, имена
@@ -97,7 +98,9 @@ def test_similar_names_are_never_confused_by_mentions_and_the_prompt_uses_ids():
     assert ex.mentions("Иван Петренко сделает", people)[0] == {"Иван Петренко"}
     system = ex.system_for(people)
     assert "p02 — Иван Петров" in system and "p03 — Иван Петренко" in system and "Иван Петров ≠ Иван Петренко" in system and "Алексей Мороз ≠ Алексей Морозов" in system
-    sch = ex.schema_for("tasks", [p.pid for p in people])
+    from app.services.fact_engine import combined_schema, limits_for
+
+    sch = combined_schema([p.pid for p in people], limits_for(6000))
     assert sch["properties"]["tasks"]["items"]["properties"]["assignee"]["enum"] == [f"p0{n}" for n in range(1, 8)] + ["none"], "модель называет id, а не имя"
 
 
@@ -198,7 +201,7 @@ def test_markdown_has_sources_and_honest_marks_for_unconfirmed_owner_and_missing
              ex.Item("proposal", "Открыть ssh наружу", "10:02:30", 150, sources=src("10:02:30", "Игорь Соколов", "Предлагаю открыть ssh наружу.")),
              ex.Item("open", "Сколько хранить логи", "10:03:00", 180, sources=src("10:03:00", "Анна Крылова", "пока не знаем"))]
     md = ex.render_markdown(["Переговорка: Тест", "Дата: 2026-10-12"], items)
-    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) | [10:00:20] Иван Петров |" in md
+    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) | [10:00:20] Иван Петров |" in md and "## Задачи и поручения" in md
     assert "не определён (модель предположила: Алексей Морозов; в репликах не подтверждено)" in md and "| не указан |" in md
     assert "## Предложения, не принятые как решение" in md and "Открыть ssh наружу" in md and "## Открытые вопросы" in md and "Сколько хранить логи" in md
     st = ex.to_structured(items)
@@ -223,39 +226,62 @@ def good(body, n):
                           questions=[{"text": "Сколько хранить логи", "ts": "10:03:00"}]))
 
 
-def test_pipeline_runs_narrow_passes_with_a_common_prefix_and_builds_a_deterministic_protocol():
+def test_pipeline_makes_one_call_per_fragment_and_builds_a_deterministic_protocol():
     llm, seen = llm_for(good)
     res = run(llm)
-    assert len(seen) == 5 and res.calls == 5 and res.parts == 1 and res.ok_fragments == 4 and not res.truncated
-    passes = seen[:4]
-    assert "response_format" not in seen[4] and "Релиз переносим" in seen[4]["messages"][1]["content"], "итог пишется по проверенным пунктам, а не по стенограмме"
-    assert [pass_of(b) for b in passes] == ["topics", "items", "tasks", "questions"], "темы / решения / поручения / вопросы — отдельные проходы"
-    assert len({b["messages"][0]["content"] for b in passes}) == 1, "системный промпт одинаков во всех проходах (llama.cpp не обрабатывает фрагмент заново)"
-    frag_part = [b["messages"][1]["content"].split("\n\n=== ЗАДАНИЕ")[0] for b in passes]
-    assert len(set(frag_part)) == 1 and all(b["temperature"] == 0.0 and b["max_tokens"] <= 800 for b in passes)
+    assert len(seen) == 2 and res.calls == 2 and res.parts == 1 and res.ok_fragments == 1 and not res.truncated, "один запрос на фрагмент + итоговый абзац (раньше — четыре + итог)"
+    assert "response_format" not in seen[1] and "Релиз переносим" in seen[1]["messages"][1]["content"], "итог пишется по проверенным пунктам, а не по стенограмме"
+    assert pass_of(seen[0]) == ("topics", "items", "tasks", "questions"), "темы / решения / поручения / вопросы — один общий ответ по схеме"
+    sch = seen[0]["response_format"]["json_schema"]["schema"]["properties"]
+    assert all("maxItems" in sch[k] for k in sch), "число пунктов ограничено схемой: ответ не может расти бесконечно"
+    assert sch["topics"]["items"]["properties"]["title"]["maxLength"] and "category" in sch["topics"]["items"]["properties"]
+    assert seen[0]["temperature"] == 0.0 and seen[0]["max_tokens"] <= 4000
     assert "p02 — Иван Петров" in seen[0]["messages"][0]["content"]
-    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) |" in res.text and "Открыть ssh наружу" in res.text and "| 1 | Релиз переносим" in res.text
-    assert "## Итог" in res.text and "Релиз перенесли на вторник" in res.text and "| Перенос релиза | Перенос релиза и окно выкладки | Решение: Релиз переносим на вторник" in res.text
+    assert "| 1 | отдать исправление прав | Иван Петров | в четверг к обеду (2026-10-15) |" in res.text and "Открыть ssh наружу" in res.text and "Релиз переносим" in res.text
+    assert "## Краткие итоги" in res.text and "Релиз перенесли на вторник" in res.text and "### 1. Перенос релиза" in res.text and "Перенос релиза и окно выкладки" in res.text
     assert res.structured["document"]["discussion"][0]["discussion"] == "Перенос релиза и окно выкладки" and not res.structured["document"]["incomplete"]
     assert res.structured["tasks"][0]["assignee"] == "Иван Петров" and res.structured["tasks"][0]["source"]["ts"] == "10:00:05" and res.structured["stats"]["fragments"] == 1
+    assert res.diag["extract_calls"] == 1 and res.diag["calls"] == 2 and res.diag["coverage_pct"] == 100.0 and res.diag["retries"]["length"] == 0 and res.calls_log[0]["stage"] == "extract"
 
 
-def test_truncated_pass_is_split_and_retried_instead_of_using_cut_data():
-    state = {"cut": 0}
-
+def test_truncated_answer_is_salvaged_and_only_the_unprocessed_tail_is_sent_again():
+    """Раньше оборванный проход повторялся по обеим половинам фрагмента (весь текст заново). Теперь принимается то, что успело закончиться, а заново уходит только хвост."""
     def handler(body, n):
-        if "response_format" in body and pass_of(body) == "items" and state["cut"] == 0:
-            state["cut"] = 1
-            return reply('{"items": [{"status": "deci', finish="length")                  # оборвано
-        return good(body, n)
+        if "response_format" in body and n == 1:
+            return reply('{"topics": [{"title": "Перенос релиза", "summary": "Релиз", "category": "dev", "ts": "10:00:05", "end": "10:00:20"}], "items": [{"status": "deci', finish="length")
+        if "response_format" in body:
+            return reply(answer(body, decisions=[{"status": "proposal", "text": "Открыть ssh наружу", "ts": "10:02:30"}], questions=[{"text": "Сколько хранить логи", "ts": "10:03:00"}]))
+        return reply("Итог.")
 
     llm, seen = llm_for(handler)
     res = run(llm)
-    assert res.truncated is True and res.failed == 0 and res.calls == 7          # 3 прохода как обычно + оборванный + две половины + итог
-    assert any("пришлось повторить" in w and "лимиту длины — 1" in w for w in res.warnings), res.warnings
-    assert res.structured["stats"]["length_retries"] == 1 and "Релиз переносим на вторник" in res.text
-    sizes = [len(b["messages"][1]["content"]) for b in seen if "response_format" in b and pass_of(b) == "items"]
-    assert sizes[1] < sizes[0] and sizes[2] < sizes[0], "повтор идёт меньшими частями"
+    ext = [b for b in seen if "response_format" in b]
+    assert len(ext) == 2 and res.failed == 0 and not res.truncated, "второй запрос — только хвост, потери нет"
+    first, tail = ext[0]["messages"][1]["content"], ext[1]["messages"][1]["content"]
+    assert "[10:00:05]" in first and "[10:00:05]" not in tail and "[10:02:30]" in tail and len(tail) < len(first), "хвост — только реплики после последнего разобранного времени"
+    assert res.structured["stats"]["salvaged"] == 1 and res.structured["stats"]["tail_runs"] == 1 and res.diag["retries"]["tail"] == 1
+    assert "Перенос релиза" in res.text and "Открыть ssh наружу" in res.text and res.diag["coverage_pct"] == 100.0
+
+
+def test_list_filled_up_to_the_schema_limit_continues_with_the_rest_of_the_fragment():
+    """Список заполнен до предела схемы — модель, возможно, хотела назвать больше: уверенно разобрано только до времени его последнего пункта, остальное разбирается отдельно."""
+    from app.services.fact_engine import limits_for
+
+    lim = limits_for(len(TEXT))
+
+    def handler(body, n):
+        if "response_format" not in body:
+            return reply("Итог.")
+        if n == 1:
+            rows = [{"title": f"Вопрос номер {i} обсуждения", "summary": "суть", "category": "dev", "ts": "10:00:05", "end": "10:00:20"} for i in range(lim.topics)]
+            return reply({"topics": rows, "items": [], "tasks": [], "questions": []})
+        return reply(answer(body, topics=[{"title": "Завершающее обсуждение логов", "summary": "суть", "category": "dev", "ts": "10:02:30", "end": "10:03:30"}]))
+
+    llm, seen = llm_for(handler)
+    res = run(llm)
+    ext = [b for b in seen if "response_format" in b]
+    assert len(ext) == 2 and res.structured["stats"]["lists_full"] >= 1
+    assert "Завершающее обсуждение логов" in res.text and "[10:00:05]" not in ext[1]["messages"][1]["content"]
 
 
 def test_pass_that_never_parses_is_reported_and_pipeline_stops_early_when_the_first_one_fails():
@@ -272,7 +298,7 @@ def test_summary_is_written_from_verified_facts_and_falls_back_when_cut_off():
 
     llm, seen = llm_for(handler)
     res = run(llm, kind="summary")
-    assert res.calls == 5 and res.text.startswith("Релиз перенесли")
+    assert res.calls == 2 and res.text.startswith("Релиз перенесли")
     facts = seen[-1]["messages"][1]["content"]
     assert "Решение: Релиз переносим на вторник" in facts and "Поручение: Иван Петров — отдать исправление прав (срок: в четверг к обеду)" in facts and "стенограмм" not in facts.lower()
     llm, _ = llm_for(lambda body, n: good(body, n) if "response_format" in body else reply("Обрыв", finish="length"))

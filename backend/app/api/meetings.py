@@ -16,6 +16,7 @@ from ..services import roles
 from ..services.room_icons import icon_out
 from ..services.audit import audit_now, write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
+from ..services.glass_html import CSP_HEADER
 from ..services.llm_choice import once_options
 from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
 from ..services.meetings import JoinError
@@ -171,18 +172,21 @@ async def get_transcript(meeting_id: uuid.UUID, request: Request, after_id: int 
                          segments=[SegmentOut(**segment_to_dict(s, mask=meeting.room.mask_profanity)) for s in rows[:limit]])
 
 
-def _file_response(data: bytes, fmt: str, base: str) -> Response:
+def _file_response(data: bytes, fmt: str, base: str, inline: bool = False) -> Response:
+    # inline — только для HTML: страница открывается в браузере (просмотр и печать), а не скачивается; у документа своя строгая политика безопасности (мета-тег)
+    disp = "inline" if (inline and fmt == "html") else "attachment"
     return Response(data, media_type=CONTENT_TYPES[fmt],
-                    headers={"Content-Disposition": f'attachment; filename="{base}.{fmt}"', "Cache-Control": "no-store"})
+                    headers={"Content-Disposition": f'{disp}; filename="{base}.{fmt}"', "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                             **({"Content-Security-Policy": CSP_HEADER} if disp == "inline" else {})})
 
 
-def _render(fmt: str, markdown: str, title: str) -> bytes:
+def _render(fmt: str, markdown: str, title: str, kind: str = "protocol") -> bytes:
     if fmt == "md":
         return (markdown.rstrip() + "\n").encode("utf-8")
     if fmt == "txt":
         return md_to_plain(markdown).encode("utf-8")
     if fmt == "html":
-        return to_html(markdown, title).encode("utf-8")
+        return to_html(markdown, title, kind=kind).encode("utf-8")
     try:
         return to_docx(markdown, title) if fmt == "docx" else to_pdf(markdown, title)
     except RuntimeError as exc:
@@ -242,7 +246,7 @@ def can_edit_protocol(meeting: Meeting | None, su: SessionUser) -> bool:
     return roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id
 
 
-def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = False, live: dict | None = None) -> dict:
+def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = False, live: dict | None = None, admin: bool = False) -> dict:
     d = {"id": str(p.id), "meeting_id": str(p.meeting_id), "kind": p.kind, "status": p.status, "error": p.error,
          "created_by": p.created_by, "created_at": p.created_at, "updated_at": p.updated_at, "title": p.title,
          "edited_at": p.edited_at, "edited_by": p.edited_by, "model": (p.meta or {}).get("model"), "can_edit": can_edit,
@@ -259,6 +263,11 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
          "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "llm_local", "api_type", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
                                                                "length_hits", "finish", "max_tokens", "limit_note", "input_chars", "output_chars", "prompt_tokens",
                                                                "completion_tokens", "structured", "failed", "error_code")}}
+    # привязка времён документа к стенограмме: секунды суток начала встречи в часовом поясе, в котором записаны метки [ЧЧ:ММ:СС] (переход от пункта к реплике)
+    d["time_base"] = (p.meta or {}).get("time_base")
+    # техническая диагностика формирования (обращения, повторы по причинам, токены, покрытие) — только администратору; обычному пользователю достаточно состояния и предупреждений
+    if admin:
+        d["diagnostics"] = (p.meta or {}).get("diag")
     if with_content:
         d["content"], d["instruction"] = p.content, p.instruction
     return d
@@ -271,7 +280,7 @@ async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUse
                              .order_by(Protocol.created_at.desc()))).scalars().all()
     can = can_edit_protocol(meeting, su)
     ps = request.app.state.protocols
-    return [_protocol_dict(p, can_edit=can, live=await ps.live_progress(p.id) if p.status in ("pending", "running") else None) for p in rows]
+    return [_protocol_dict(p, can_edit=can, admin=su.is_admin, live=await ps.live_progress(p.id) if p.status in ("pending", "running") else None) for p in rows]
 
 
 @router.get("/{meeting_id}/protocols/default-instruction")
@@ -371,7 +380,7 @@ async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUI
 async def get_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user),
                        db: AsyncSession = Depends(get_db)):
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
-    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su), live=await request.app.state.protocols.live_progress(p.id) if p.status in ("pending", "running") else None)
+    return _protocol_dict(p, with_content=True, can_edit=can_edit_protocol(await db.get(Meeting, meeting_id), su), admin=su.is_admin, live=await request.app.state.protocols.live_progress(p.id) if p.status in ("pending", "running") else None)
 
 
 @router.patch("/{meeting_id}/protocols/{protocol_id}")
@@ -399,7 +408,7 @@ async def edit_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: 
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.edit", target_type="meeting", target_id=str(meeting_id),
                       details={"protocol_id": str(protocol_id), "content_changed": "content" in body, "title_changed": "title" in body})
     await db.commit()
-    return _protocol_dict(p, with_content=True, can_edit=True)
+    return _protocol_dict(p, with_content=True, can_edit=True, admin=su.is_admin)
 
 
 @router.delete("/{meeting_id}/protocols/{protocol_id}", status_code=204)
@@ -414,16 +423,16 @@ async def delete_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
 
 @router.get("/{meeting_id}/protocols/{protocol_id}/export")
 async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request: Request,
-                          format: str = Query("docx", pattern="^(txt|md|docx|pdf|html)$"),
+                          format: str = Query("docx", pattern="^(txt|md|docx|pdf|html)$"), inline: bool = Query(False),
                           su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     p = await _get_protocol(request, db, meeting_id, protocol_id, su)
     if p.status != "ready" or not p.content:
         raise HTTPException(status_code=409, detail="Протокол ещё не готов")
     meeting = await db.get(Meeting, meeting_id)
-    title = p.title or ("Протокол совещания" if p.kind == "protocol" else "Краткое резюме") + f": {meeting.room.name}"
+    title = p.title or ("Протокол встречи" if p.kind == "protocol" else "Краткое резюме") + f": {meeting.room.name}"
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.export", target_type="protocol", target_id=str(p.id), ip=client_ip(request),
                     details={"format": format, "kind": p.kind, "meeting_id": str(meeting_id)})
-    return _file_response(_render(format, p.content, title), format, f"{p.kind}-{str(p.id)[:8]}")
+    return _file_response(_render(format, p.content, title, p.kind), format, f"{p.kind}-{str(p.id)[:8]}", inline=inline)
 
 
 # ----------------------------------------------------------------------------------------- записи (admin)

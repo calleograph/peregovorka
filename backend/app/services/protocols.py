@@ -30,6 +30,7 @@ from ..integrations.llm import LlmClient, LlmError
 from . import llm_stats
 from .llm_choice import parse_once, resolve_llm
 from .extraction import local_pipeline, structured_pipeline
+from .fact_engine import FactsCache, load_facts
 from .job_budget import MAX_S, Budget, JobTimeout
 from .local_llm import LocalLlm, LocalModel
 from ..db import release
@@ -145,6 +146,16 @@ class PipelineResult:
     structured: dict = field(default_factory=dict)       # проверенные пункты (темы, решения, поручения с источниками) — только для локального структурного режима
     notes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    facts: dict = field(default_factory=dict)            # проверенные ответы модели по фрагментам — для повторного использования другим документом встречи
+    diag: dict = field(default_factory=dict)             # сводка генерации для администратора (обращения, повторы, токены, покрытие)
+
+
+def external_fragment_chars(context_window: int, out_cap: int, limit: int) -> int:
+    """Размер фрагмента для структурного режима внешней модели. Контекст известен — весь текст идёт одним запросом, если помещается (русский текст ≈ 2,3 знака на токен с запасом);
+    неизвестен — прежние осторожные 12 000 знаков: одним запросом, пока модель не обещала большего окна, документ не отправляем."""
+    if context_window and context_window > out_cap + 4000:
+        return max(EXTERNAL_FRAGMENT_CHARS, min(limit, int((context_window - out_cap - 2500) * 2.3)))
+    return min(limit, EXTERNAL_FRAGMENT_CHARS)
 
 
 def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, str | None]:
@@ -155,28 +166,31 @@ def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, s
 
 async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
                            has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False, attendees: dict | None = None,
-                           budget: Budget | None = None) -> PipelineResult:
+                           budget: Budget | None = None, cache: FactsCache | None = None, model: str = "", external_limit: int | None = None, out_cap: int | None = None) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
     if local is None and external_structured and structured:
         # Структурный режим внешней модели: тот же конвейер, что у локальной (JSON по схеме → проверка и сборка документа кодом); не получилось — обычный режим ниже
-        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=min(limit, EXTERNAL_FRAGMENT_CHARS), attendees=attendees)
+        sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=external_limit or min(limit, EXTERNAL_FRAGMENT_CHARS), attendees=attendees,
+                                       cache=cache, model=model, cap=out_cap)
         if sr is not None and sr.ok_fragments:
             res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
             res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
             res.truncated = sr.truncated
             res.warnings += sr.warnings
+            res.facts, res.diag = sr.facts, sr.diag
             return res
         res.warnings.append("Структурный режим не сработал (модель не вернула разбираемый JSON) — использован обычный режим.")
     if local is not None:
         # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
         budget = budget or Budget()
-        sr = await local_pipeline(llm, kind=kind, instruction=LOCAL_BUILTIN_INSTRUCTION, text=text, limit=limit, budget=budget, attendees=attendees) if structured else None
+        sr = await local_pipeline(llm, kind=kind, instruction=LOCAL_BUILTIN_INSTRUCTION, text=text, limit=limit, budget=budget, attendees=attendees, cache=cache, model=model) if structured else None
         if sr is not None and sr.ok_fragments:
             res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
             res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
             res.truncated = sr.truncated
             res.warnings += sr.warnings
+            res.facts, res.diag = sr.facts, sr.diag
             if sr.truncated and kind == "summary":
                 res.warnings.append(TRUNCATED_LOCAL.format(where=" (резюме)"))
             return res
@@ -328,18 +342,24 @@ class ProtocolService:
             log.warning("Часовой пояс недоступен, используется UTC", extra={"timezone": name})
             return timezone.utc  # type: ignore[return-value]
 
-    async def transcript_text(self, db: AsyncSession, meeting: Meeting, tz: ZoneInfo) -> str:
-        rows = (await db.execute(select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting.id)
-                                 .order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
+    async def participant_names(self, db: AsyncSession, meeting: Meeting) -> list[str]:
+        """Кто участвовал (сотрудники по первому присоединению и гости). Одинаков для протокола и карты: от него зависят список участников в запросе к модели и общий кэш ответов."""
         latest: dict[uuid.UUID, str] = {}
         for p in sorted(meeting.participants, key=lambda p: p.joined_at):
             latest.setdefault(p.user_id, p.user.display_name)
         guests = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id)
                                    .order_by(GuestParticipant.joined_at))).scalars().all()
-        names = list(latest.values()) + [f"{g.display_name} (гость)" for g in guests]
+        return list(latest.values()) + [f"{g.display_name} (гость)" for g in guests]
+
+    async def transcript_text(self, db: AsyncSession, meeting: Meeting, tz: ZoneInfo, *, flat: bool = False) -> str:
+        """Стенограмма с шапкой. flat — текст реплики в одну строку без лишних пробелов (так её видит модель в протоколе и в карте; скачиваемая стенограмма остаётся как есть)."""
+        rows = (await db.execute(select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting.id)
+                                 .order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
+        names = await self.participant_names(db, meeting)
+        one = (lambda t: " ".join((t or "").split())) if flat else (lambda t: t)
         return render_transcript(
             meeting.room.name, meeting.started_at, meeting.ended_at, names,
-            [(r.started_at, author_name(r) or "Неизвестный участник", profanity.maybe(r.text, meeting.room.mask_profanity)) for r in rows], tz)
+            [(r.started_at, author_name(r) or "Неизвестный участник", one(profanity.maybe(r.text, meeting.room.mask_profanity))) for r in rows], tz)
 
     async def has_materials(self, meeting_id: uuid.UUID) -> bool:
         """Есть ли что обрабатывать: реплики, сообщения чата или схема на доске."""
@@ -989,7 +1009,7 @@ class ProtocolService:
                     api_type="local" if is_local else eff_cfg.type, llm_profile=llm_res.name, llm_source=llm_res.source)
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
-        transcript = await self.transcript_text(db, meeting, tz)
+        transcript = await self.transcript_text(db, meeting, tz, flat=True)
         materials = await build_materials(db, meeting, tz, transcript)
         if not materials.usable:
             raise NothingToProcess("В стенограмме нет реплик, а чат и доска пусты — протокол не создаётся")
@@ -1018,12 +1038,20 @@ class ProtocolService:
         warnings: list[str] = []
         if lm is not None and lm.light and len(clean.text) > lm.warn_input_chars:
             warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
+        # Ответы модели по фрагментам, уже полученные для этой встречи другим документом (карта, протокол, резюме) той же моделью: повторять запрос к модели незачем.
+        # Читается только сохранённое при формировании; пока запрос к модели не совпал побайтно, кэш не используется.
+        cache = FactsCache(await load_facts(db, meeting_id, eff_cfg.model))
+        start_local = meeting.started_at.astimezone(tz)
+        time_base = {"offset_s": start_local.hour * 3600 + start_local.minute * 60 + start_local.second}
+        out_cap, _ = eff_cfg.output_limit(purpose)
+        ext_limit = external_fragment_chars(eff_cfg.context_window or 0, out_cap, limit)
         await release(db)
         info["llm_started"] = datetime.now(timezone.utc)
         try:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
                                           has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
-                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att, budget=budget)
+                                          external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att, budget=budget,
+                                          cache=cache, model=eff_cfg.model, external_limit=ext_limit, out_cap=min(out_cap, 6000))
         finally:
             info["llm_finished"] = datetime.now(timezone.utc)
             info["llm_stats"] = dict(llm.stats)
@@ -1038,7 +1066,7 @@ class ProtocolService:
                 "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens, "anonymized_chunks": clean.chunks,
                 "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
                 "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
-                "sources": materials.meta()}
+                "sources": materials.meta(), "time_base": time_base, "facts": pipe.facts or None, "diag": {**pipe.diag, "cache_hits": cache.hits} if pipe.diag else None}
         st = llm.stats
         sstats = (pipe.structured or {}).get("stats") or {}
         meta.update(instruction_builtin=True if info.get("instruction_builtin") else None, coverage=(pipe.structured or {}).get("coverage"),

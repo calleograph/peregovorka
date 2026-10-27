@@ -67,7 +67,7 @@ async def _protocol_like(svc: "DeliveryService", db: AsyncSession, meeting: Meet
 
 
 async def _protocol(svc, db, meeting):
-    return await _protocol_like(svc, db, meeting, "protocol", "Протокол", "Протокол совещания")
+    return await _protocol_like(svc, db, meeting, "protocol", "Протокол", "Протокол встречи")
 
 
 async def _summary(svc, db, meeting):
@@ -477,7 +477,7 @@ class DeliveryService:
                 files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.html", FORMAT_MIME["html"], m.html))
                 continue
             for fmt in fmts:
-                data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else to_html(m.md, m.title).encode("utf-8") if fmt == "html"
+                data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else to_html(m.md, m.title, kind="summary" if m.kind == "summary" else "protocol").encode("utf-8") if fmt == "html"
                         else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
                 files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.{fmt}", FORMAT_MIME[fmt], data))
         if archive and files:

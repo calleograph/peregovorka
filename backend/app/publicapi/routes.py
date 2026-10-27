@@ -20,6 +20,7 @@ from ..auth.deps import client_ip, get_db
 from ..models import (ConversationMap, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User)
 from ..services.audit import write_audit
 from ..services.export_docs import md_to_plain, to_html
+from ..services.glass_html import CSP_HEADER
 from ..services.protocols import format_clock
 from ..services.segments import author_name
 from . import cursor, ids, render
@@ -470,8 +471,8 @@ async def get_document(meeting_id: str, document_id: str, format: Literal["json"
         return Response(text.rstrip() + "\n", media_type="text/markdown; charset=utf-8")
     if format == "txt":
         return Response(md_to_plain(text), media_type="text/plain; charset=utf-8")
-    return Response(to_html(text, pr.title or m.room.name), media_type="text/html; charset=utf-8",
-                    headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
+    return Response(to_html(text, pr.title or m.room.name, kind="summary" if pr.kind == "summary" else "protocol"), media_type="text/html; charset=utf-8",
+                    headers={"Content-Security-Policy": CSP_HEADER})
 
 
 @router.get("/meetings/{meeting_id}/map", response_model=MapOut, tags=["documents"], summary="Карта разговора", responses=ERR)

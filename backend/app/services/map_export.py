@@ -8,7 +8,7 @@ from html import escape
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "mapview"
-META_PUBLIC = ("model", "model_title", "started_at", "finished_at", "duration_s", "chunks", "retries", "warnings", "items_from_protocol")
+META_PUBLIC = ("warnings", "coverage_pct")        # в документе только то, что нужно читателю: предупреждение о неполноте; модель, токены и повторы — в диагностике администратора
 
 
 def _json_for_script(value: object) -> str:

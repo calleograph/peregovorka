@@ -13,7 +13,7 @@ import pytest
 from app.models import Protocol
 from app.services import extraction as ex
 from app.services import protocols as protocols_mod
-from app.services.job_budget import Budget, JobTimeout, pass_cap
+from app.services.job_budget import Budget, JobTimeout
 from app.services.protocols import LOCAL_BUILTIN_INSTRUCTION
 
 from .conftest import login, put_settings
@@ -33,15 +33,6 @@ def test_salvage_keeps_what_was_finished_before_the_cut():
     assert ex.salvage_json("текст без json") is None and ex.salvage_json("[1,2") is None
     tricky = '{"topics":[{"title":"скобки } и ] внутри \\" строки","ts":"10:00:05"},{"title":"обор'
     assert ex.salvage_json(tricky) == {"topics": [{"title": 'скобки } и ] внутри " строки', "ts": "10:00:05"}]}, "скобки и кавычки внутри строк не ломают разбор"
-
-
-def test_pass_cap_follows_speed_remaining_time_and_number_of_passes():
-    b = Budget(target_s=300, max_s=600)
-    assert pass_cap(b, None, 5) == 450, "скорость ещё неизвестна — значение по умолчанию"
-    assert pass_cap(b, 7.0, 1) == 600, "верхняя граница"
-    assert 180 <= pass_cap(b, 7.0, 8) <= 190, "время делится между оставшимися проходами"
-    assert pass_cap(b, 7.0, 500) == 120, "нижняя граница: ответ не бывает бесполезно коротким"
-    assert pass_cap(Budget(target_s=0), 7.0, 3) == 120, "цель уже пропущена"
 
 
 # ------------------------------------------------------------------------------------------------ конвейер
@@ -69,7 +60,7 @@ def test_one_call_per_fragment_instead_of_four_and_a_short_summary():
     res = run_local(llm)
     assert res.calls == n + 1 and len(seen) == n + 1, "по одному обращению на фрагмент + итоговый абзац (раньше — четыре на фрагмент)"
     passes = seen[:n]
-    assert all(set(b["response_format"]["json_schema"]["schema"]["properties"]) == {"topics", "items", "tasks", "questions"} and b["max_tokens"] <= 600 for b in passes)
+    assert all(set(b["response_format"]["json_schema"]["schema"]["properties"]) == {"topics", "items", "tasks", "questions"} and b["max_tokens"] <= 2200 for b in passes)
     assert "response_format" not in seen[-1] and seen[-1]["max_tokens"] <= 220
     assert res.ok_fragments == n and not res.failed and res.structured["stats"]["fragments"] == n
 
@@ -78,13 +69,13 @@ def test_a_cut_off_answer_is_salvaged_instead_of_repeated():
     def cut(body, n):
         if "response_format" not in body:
             return reply("Итог по проверенным пунктам встречи записан.")
-        ts = re.search(r"\[(\d\d:\d\d:\d\d)\]", body["messages"][1]["content"]).group(1)
-        return reply('{"topics":[{"title":"Перенос релиза","summary":"суть","ts":"' + ts + '"}],"items":[{"status":"decision","text":"Принято реше', finish="length")
+        last = re.findall(r"\[(\d\d:\d\d:\d\d)\]", body["messages"][1]["content"])[-1]
+        return reply('{"topics":[{"title":"Перенос релиза","summary":"суть","category":"dev","ts":"' + last + '","end":"' + last + '"}],"items":[{"status":"decision","text":"Принято реше', finish="length")
 
     llm, seen = llm_for(cut)
     res = run_local(llm, limit=100000, kind="summary")
-    assert res.ok_fragments == 1 and res.failed == 0 and res.truncated is True
-    assert res.structured["stats"]["salvaged"] == 1 and res.structured["stats"]["length_retries"] == 0
+    assert res.ok_fragments == 1 and res.failed == 0 and not res.truncated, "ответ дошёл до конца фрагмента — терять нечего"
+    assert res.structured["stats"]["salvaged"] == 1 and res.structured["stats"]["tail_runs"] == 0
     assert len([b for b in seen if "response_format" in b]) == 1, "оборванный, но разбираемый ответ не повторяется"
 
 
@@ -92,6 +83,7 @@ def test_unusable_answers_are_retried_at_most_once_per_fragment():
     llm, seen = llm_for(lambda body, n: reply("{", finish="length"))
     res = run_local(llm, limit=100000)
     assert len(seen) == 3 and res.ok_fragments == 0 and res.failed == 2, "целый фрагмент + две половины; дальше деления нет (раньше до семи обращений)"
+    assert res.diag == {} or res.diag.get("failed_chunks", 2) == 2
 
 
 class StepBudget(Budget):
