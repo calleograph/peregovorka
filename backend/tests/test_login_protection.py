@@ -233,9 +233,9 @@ def test_forged_forwarded_headers_do_not_reset_or_split_counters(pc):
     setup_group(pc, "captcha", mode="after_failures", failures=3)
     # клиент подключился к web напрямую (публичный адрес) и каждый раз присылает другой X-Forwarded-For/X-Real-IP
     for i in range(3):
-        r = pc.post(LOGIN, json={"login": "alice", "password": "bad"}, headers={"X-PG-Peer": "203.0.113.5", "X-Forwarded-For": f"10.9.8.{i}", "X-Real-IP": f"10.8.8.{i}"})
+        r = pc.post(LOGIN, json={"login": "alice", "password": "bad"}, headers={"X-PG-Peer": "203.0.113.5", "X-Forwarded-For": f"198.51.100.{i}", "X-Real-IP": f"198.51.100.{i}"})
         assert r.status_code == 401
-    r = pc.post(LOGIN, json={"login": "alice", "password": "alice-pass"}, headers={"X-PG-Peer": "203.0.113.5", "X-Forwarded-For": "10.9.8.200", "Forwarded": "for=10.1.1.1"})
+    r = pc.post(LOGIN, json={"login": "alice", "password": "alice-pass"}, headers={"X-PG-Peer": "203.0.113.5", "X-Forwarded-For": "198.51.100.200", "Forwarded": "for=198.51.100.250"})
     assert r.status_code == 428, "подмена заголовков не сбросила счётчик адреса"
 
 
