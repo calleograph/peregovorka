@@ -243,6 +243,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
             {!anything ? "Для вас пока нет доступных комнат." : liveCount > 0 ? `Сейчас идут встречи: ${liveCount}. Выберите комнату, чтобы присоединиться или начать новую.` : "Выберите комнату, чтобы начать встречу. Речь будет записана в стенограмму и станет протоколом."}
           </p>
         </div>
+        <div className="hero-actions">
         {(calendarOn || isAdmin) && (
           <Link className="btn cta" to="/calendar" {...magnet} title={calendarOn ? "Ваш календарь Outlook: неделя, месяц, список; создание встреч с конференцией" : "Раздел «Календарь» пока не включён: страница объяснит, как это сделать"}>
             <Icon name="calendar" size={17} /> Календарь
@@ -263,6 +264,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
             <small className="cta-note">закроется после встречи</small>
           </button>
         )}
+        </div>
       </header>
 
       {anything && (

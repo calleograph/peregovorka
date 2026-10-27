@@ -26,11 +26,14 @@
 .iconbtn.lc.done { transform: scale(1.06); }
 .lc-tip { position: fixed; z-index: 2000; transform: translateX(-100%); max-width: min(280px, calc(100vw - 16px)); padding: 6px 10px; border-radius: 8px; background: var(--text); color: var(--surface); font: 500 12.5px/1.3 var(--sans); box-shadow: 0 6px 18px rgb(0 0 0 / 22%); pointer-events: none; white-space: nowrap; }
 
-/* карточка-плитка: справа вверху до трёх кнопок одного размера на одной линии, заголовок не заходит под них */
-.rc-cell .rc-actions { align-items: center; }
-.rc-cell .rc-top { padding-right: 96px; }
-.rc-cell.has-guest .rc-top { padding-right: 138px; }
-.rc-cell .rc-title h2 { overflow-wrap: anywhere; }
+/* карточка-плитка: кнопки справа на уровне значка, название и статус — отдельной строкой на всю ширину (названия не рвутся посреди слова);
+   теги и нижняя строка прижаты вниз и стоят на одной линии у соседних карточек ряда */
+.rc-cell .rc-actions { align-items: center; top: 22px; }
+.rc-cell .rc-top { flex-direction: column; gap: 10px; padding-right: 0; }
+.rc-cell .rc-title { width: 100%; flex: none; }
+.rc-cell .rc-title h2 { overflow-wrap: break-word; hyphens: manual; }
+.rc-cell .rc-desc { min-height: 0; }
+.rc-cell .rc-tags { margin-top: auto; } .rc-cell .rc-foot { margin-top: 0; }
 /* «Предстоящие встречи»: статус слева, кнопки справа; длинное название переносится и не накрывается */
 .upc-top .rc-actions.inline { margin: -4px -4px -4px 0; flex: none; }
 .upc-top .upc-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -38,6 +41,6 @@
 .upc-row-act .rc-actions.inline { gap: 6px; }
 @media (max-width: 520px) {
   .rc-actions .iconbtn, .iconbtn.lc { width: 32px; height: 32px; }
-  .rc-cell .rc-top { padding-right: 88px; } .rc-cell.has-guest .rc-top { padding-right: 126px; }
+  .rc-cell .rc-actions { top: 23px; }
 }
 @media (prefers-reduced-motion: reduce) { .iconbtn.lc { transition: none; } .iconbtn.lc.done { transform: none; } }
