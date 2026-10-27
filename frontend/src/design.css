@@ -1081,3 +1081,14 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 .comp-table td:nth-child(5) { min-width: 110px; }
 .comp-table .nowrap { white-space: normal; }
 .comp-table td code { overflow-wrap: anywhere; }
+
+/* главная на телефоне: плотнее — действия в ряд, фильтры мельче, чтобы список комнат начинался выше */
+@media (max-width: 560px) {
+  .rooms-hero .hero-actions { flex-direction: row !important; flex-wrap: wrap; gap: 8px; }
+  .rooms-hero .hero-actions > *, .rooms-hero .cta { flex: 1 1 150px; width: auto !important; min-width: 0 !important; }
+  .rooms-hero .cta { padding: 10px 12px; column-gap: 8px; border-radius: 14px; }
+  .rooms-hero .cta .cta-note { font-size: 11px; line-height: 1.25; }
+  .rooms-toolbar .chips .chip, .rooms-toolbar .chips button { padding: 6px 11px; font-size: 13px; }
+  .rooms-toolbar { gap: 8px; }
+}
+@media (max-width: 860px) { .hist-table td.num, .hist-table td.h-people { width: auto; max-width: none; text-align: left; } }
