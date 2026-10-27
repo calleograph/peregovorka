@@ -63,42 +63,21 @@ def parse_networks(raw: str) -> list:
     return out
 
 
-def pick_client_ip(xff: str, peer: str | None, trusted: list, hops: int = 1) -> str:
-    """Адрес клиента из цепочки X-Forwarded-For.
+def resolve_ip(request):
+    """Полный разбор адреса клиента (для диагностики): адрес, откуда взят, цепочка, пояснения. См. security/ipres.py."""
+    from ..security.ipres import NetCfg, resolve  # noqa: PLC0415
 
-    Идём справа налево (подделать можно только левую часть цепочки): пропускаем адреса доверенных прокси (`TRUSTED_PROXY_CIDRS`, по умолчанию
-    loopback — например, локальный TLS-терминатор, который иначе подставлял бы 127.0.0.1 вместо клиента), затем ещё `hops-1` прокси, которые
-    не удалось описать сетью (прежний смысл TRUSTED_PROXY_HOPS). Первый оставшийся адрес — клиент. Нет цепочки — адрес TCP-соединения.
-    """
-    chain: list[str] = []
-    for p in (x.strip() for x in (xff or "").split(",")):
-        if p and _IP_RE.match(p):
-            try:
-                ipaddress.ip_address(p)
-            except ValueError:
-                continue
-            chain.append(p)
-    if not chain:
-        return peer or "unknown"
-    extra = max(0, hops - 1)
-    for i in range(len(chain) - 1, -1, -1):
-        addr = ipaddress.ip_address(chain[i])
-        if any(addr in n for n in trusted):
-            continue
-        if extra > 0:
-            extra -= 1
-            continue
-        return chain[i]
-    return chain[0]  # вся цепочка из доверенных прокси — самый левый адрес
+    holder = getattr(request.app.state, "netcfg", None)
+    cfg = holder.cfg if holder is not None else NetCfg.build(None, request.app.state.settings.trusted_proxy_cidrs, request.app.state.settings.trusted_proxy_hops)
+    return resolve(request.headers, request.client.host if request.client else None, cfg)
 
 
-def client_ip(request: Request) -> str:
-    """Адрес клиента (см. pick_client_ip); настройки — TRUSTED_PROXY_CIDRS и TRUSTED_PROXY_HOPS."""
-    settings: Settings = request.app.state.settings
-    nets = getattr(request.app.state, "trusted_nets", None)
-    if nets is None:
-        nets = request.app.state.trusted_nets = parse_networks(settings.trusted_proxy_cidrs)
-    return pick_client_ip(request.headers.get("x-forwarded-for", ""), request.client.host if request.client else None, nets, settings.trusted_proxy_hops)
+def client_ip(request) -> str:
+    """Адрес клиента. Заголовки принимаются только от доверенных узлов (security/ipres.py); настройки — «Администрирование → Безопасность → Сеть и IP-адреса» (по умолчанию .env)."""
+    cached = request.scope.get("pg_client_ip")
+    if cached is None:
+        cached = request.scope["pg_client_ip"] = resolve_ip(request).ip
+    return cached
 
 
 def _origin_ok(request: Request) -> bool:

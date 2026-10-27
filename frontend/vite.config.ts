@@ -11,7 +11,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: backend, changeOrigin: false, ws: true },
+      // Как контейнер web (nginx.conf): backend получает адрес подключившегося в X-PG-Peer. Для проверок защитного слоя адрес можно подменить заголовком X-Dev-Peer (только dev-прокси).
+      "/api": { target: backend, changeOrigin: false, ws: true, configure: (proxy) => {
+        const peer = (req: import("http").IncomingMessage) => String(req.headers["x-dev-peer"] || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+        proxy.on("proxyReq", (p, req) => { p.removeHeader("x-dev-peer"); p.setHeader("X-PG-Peer", peer(req)); });
+        proxy.on("proxyReqWs", (p, req) => { p.removeHeader("x-dev-peer"); p.setHeader("X-PG-Peer", peer(req)); });
+      } },
       "/drawio": { target: drawio, changeOrigin: false },
     },
   },

@@ -1,21 +1,17 @@
-"""Защита от перебора доменных паролей.
+"""Защита от перебора паролей: адаптер между сценариями входа и центральной защитой (security/loginguard.py).
 
-Главная цель — чтобы САМ сервис не вызвал массовую блокировку учёток в AD:
-после N неудач на логин (N < порога блокировки AD) новые попытки для этого
-логина отклоняются БЕЗ обращения к AD на время блокировки. Дополнительно —
-лимит по IP. Портировано по идее из legacy/php/src/Security/RateLimiter.php
-(там — SQLite и экспоненциальная задержка, здесь — Redis и фиксированное окно).
-
-Осознанный компромисс: злоумышленник может «залочить» чужой логин в нашем
-сервисе (но не в AD) — это безопаснее, чем заблокировать учётку в домене.
-"""
+Главная цель прежняя — чтобы САМ сервис не вызвал массовую блокировку учёток в AD: после серии неудач попытки с неизвестных адресов не доходят до каталога.
+Новое: учётная запись целиком не блокируется (иначе чужую запись можно было бы «залочить» несколькими запросами), а счётчики общие для всех экземпляров backend (Redis)."""
 from __future__ import annotations
 
-import hashlib
+import logging
 
 from redis.asyncio import Redis
 
 from ..config import Settings
+
+
+log = logging.getLogger("app.auth.throttle")
 
 
 class ThrottledError(Exception):
@@ -24,44 +20,37 @@ class ThrottledError(Exception):
         self.retry_after = retry_after
 
 
-def _h(value: str) -> str:
-    # хэш вместо логина в ключах Redis — логины не светятся в дампах/мониторинге
-    return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()[:32]
-
-
 class LoginThrottle:
-    def __init__(self, redis: Redis, settings: Settings):
+    """Прежнее имя и интерфейс для сценариев входа (AuthService); вся логика — в security/loginguard.py (счётчики по записи, адресу и паре, блокировки адресов, защита каталога).
+    Прежние настройки .env (`LOGIN_MAX_FAILURES_*`) больше ничего не определяют: пороги задаются в «Администрирование → Безопасность → Защита входа» и «CAPTCHA»."""
+
+    def __init__(self, redis: Redis, settings: Settings, guard=None):
         self._r = redis
         self._s = settings
-
-    def _keys(self, login: str, ip: str) -> tuple[str, str, str]:
-        return f"login:fail:user:{_h(login)}", f"login:lock:user:{_h(login)}", f"login:fail:ip:{ip}"
+        self.guard = guard
 
     async def check(self, login: str, ip: str) -> None:
-        fail_u, lock_u, fail_ip = self._keys(login, ip)
-        ttl = await self._r.ttl(lock_u)
-        if ttl and ttl > 0:
-            raise ThrottledError(ttl)
-        ip_count = await self._r.get(fail_ip)
-        if ip_count is not None and int(ip_count) >= self._s.login_max_failures_per_ip:
-            raise ThrottledError(max(1, await self._r.ttl(fail_ip)))
+        from ..security.loginguard import GuardUnavailable  # noqa: PLC0415
+
+        try:
+            v = await self.guard.check_block(ip, login)
+        except GuardUnavailable:
+            e = ThrottledError(30)
+            e.unavailable = True                       # type: ignore[attr-defined]
+            raise e from None
+        if not v.allow:
+            raise ThrottledError(v.retry_after)
 
     async def record_failure(self, login: str, ip: str) -> None:
-        fail_u, lock_u, fail_ip = self._keys(login, ip)
-        window = self._s.login_failure_window_seconds
-        n = await self._r.incr(fail_u)
-        if n == 1:
-            await self._r.expire(fail_u, window)
-        if n >= self._s.login_max_failures_per_user:
-            await self._r.set(lock_u, "1", ex=self._s.login_lockout_seconds)
-            await self._r.delete(fail_u)
-        m = await self._r.incr(fail_ip)
-        if m == 1:
-            await self._r.expire(fail_ip, window)
+        from ..security.loginguard import GuardUnavailable  # noqa: PLC0415
 
-    async def record_success(self, login: str) -> None:
-        fail_u, lock_u, _ = self._keys(login, "")
-        await self._r.delete(fail_u, lock_u)
+        try:
+            await self.guard.failure(ip, login)
+        except GuardUnavailable:
+            log.error("Неудачный вход не записан: хранилище защиты недоступно")
+
+    async def record_success(self, login: str, ip: str = "") -> None:
+        await self.guard.success(ip, login)
 
 
 async def within_limit(redis: Redis, key: str, limit: int, window_s: int) -> bool:

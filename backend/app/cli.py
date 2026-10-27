@@ -12,6 +12,10 @@
         Печатает тот же перечень портов, что раздел «Сетевая доступность»: из окружения контейнера и настроек интеграций в базе.
         Без запущенных контейнеров используйте `scripts/ports.sh`: он читает только `.env`.
 
+    python -m app.cli security-reset [--unblock-all] [--actor ИМЯ]
+        Аварийное восстановление доступа: выключает ограничение по доверенным подсетям (список сетей сохраняется), снимает пробный срок и, с --unblock-all, все блокировки адресов.
+        Работает без веб-интерфейса, прямо с базой (нужен доступ к контейнеру backend). Запись попадает в журнал аудита.
+
     python -m app.cli status
         Печатает, есть ли локальный администратор (без паролей).
 
@@ -26,11 +30,23 @@ import sys
 from redis.asyncio import Redis
 from sqlalchemy import delete as sa_delete
 
-from .auth.throttle import _h
+from .security.loginguard import LoginGuard
 from .config import Settings
 from .db import create_engine, create_session_maker
 from .models import UserBackupCode
 from .services import local_admin as la
+
+
+async def disable_ip_access(db, svc, *, actor: str) -> bool:
+    """Выключает ограничение по доверенным подсетям (список сетей остаётся). True — оно было включено."""
+    from .services.audit import write_audit  # noqa: PLC0415
+
+    cur = await svc.get(db, "ip_access")
+    was = bool(cur.enabled)
+    await svc.update(db, "ip_access", {"enabled": False, "pending_until": None}, actor=f"console:{actor}")
+    await write_audit(db, actor_user_id=None, actor_name=f"console:{actor}", action="security.ip_access.console_reset", target_type="settings", target_id="ip_access", actor_type="system", details={"was_enabled": was})
+    await db.commit()
+    return was
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -46,6 +62,22 @@ async def _run(args: argparse.Namespace) -> int:
                 if existing:
                     print(f"USERNAME={existing.sam_account_name}")
                     print(f"MUST_CHANGE_PASSWORD={'1' if existing.must_change_password else '0'}")
+                return 0
+
+            if args.cmd == "security-reset":
+                from .security.secretbox import SecretBox                     # noqa: PLC0415
+                from .services.settings import SettingsService                # noqa: PLC0415
+                svc = SettingsService(SecretBox(s.app_master_key) if s.app_master_key else None, ttl=0)
+                was = await disable_ip_access(db, svc, actor=args.actor or "server")
+                print(f"IP_ACCESS_WAS_ENABLED={'1' if was else '0'}")
+                print("IP_ACCESS_NOW_ENABLED=0")
+                if args.unblock_all:
+                    g = LoginGuard(redis)
+                    n = 0
+                    for b in await g.list_blocks():
+                        n += 1 if await g.unblock_ip(b["ip"].split("/")[0]) else 0
+                    print(f"UNBLOCKED={n}")
+                print("Изменение вступает в силу на всех экземплярах в течение нескольких секунд (перезапуск не нужен).")
                 return 0
 
             if args.cmd == "network":
@@ -89,7 +121,7 @@ async def _run(args: argparse.Namespace) -> int:
                 la.audit(db, f"console:{args.actor or 'server'}", action, str(user.id), {"user": user.sam_account_name})
                 await db.commit()
                 killed = await _drop_sessions(redis, str(user.id))
-                await redis.delete(*[k for u in (user.sam_account_name,) for k in (f"login:fail:user:{_h(u)}", f"login:lock:user:{_h(u)}")])
+                await LoginGuard(redis).reset_account(user.sam_account_name)
                 print(f"USERNAME={user.sam_account_name}")
                 print(f"PASSWORD={password}")
                 print(f"SESSIONS_CLOSED={killed}")
@@ -117,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--username", default="")
     r.add_argument("--create", action="store_true")
     r.add_argument("--actor", default="")
+    sr = sub.add_parser("security-reset")
+    sr.add_argument("--unblock-all", action="store_true")
+    sr.add_argument("--actor", default="")
     nw = sub.add_parser("network")
     nw.add_argument("--format", choices=["text", "md", "csv", "json", "request"], default="text")
     sub.add_parser("status")

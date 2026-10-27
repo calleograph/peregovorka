@@ -639,13 +639,16 @@ class AuthSecuritySettings(_Group):
 
 
 class CaptchaSettings(_Group):
-    """Локальная CAPTCHA (доказательство работы, без внешних сервисов): вход, вход гостя по ссылке, создание временной переговорки."""
+    """CAPTCHA (локальная, без внешних сервисов): вход, вход гостя по ссылке, создание временной переговорки.
+    kind: image — пользователь видит картинку и вводит символы (основной режим); pow — браузер молча решает вычислительную задачу (слабая защита: её решает и бот)."""
 
     mode: str = "after_failures"                                  # off | after_failures | always
-    failures: int = Field(default=20, ge=1, le=1000)              # неудачных попыток с одного IP до включения проверки
-    window_minutes: int = Field(default=60, ge=1, le=1440)        # за какой срок считаются неудачи
-    difficulty: int = Field(default=50000, ge=1000, le=2000000)   # верхняя граница подбираемого числа: больше — дольше решает браузер (в среднем половина)
-    ttl_seconds: int = Field(default=300, ge=30, le=3600)         # срок жизни задачи
+    kind: str = "image"                                           # image | pow
+    failures: int = Field(default=5, ge=1, le=1000)               # неудачных попыток (по IP, по учётной записи или по их паре) до обязательной проверки
+    window_minutes: int = Field(default=15, ge=1, le=1440)        # за какой срок считаются неудачи
+    difficulty: int = Field(default=50000, ge=1000, le=2000000)   # для kind=pow: верхняя граница подбираемого числа
+    ttl_seconds: int = Field(default=180, ge=30, le=3600)         # срок жизни задачи: после него нужно получить новую
+    length: int = Field(default=5, ge=4, le=8)                    # для kind=image: число символов на картинке
 
     @field_validator("mode")
     @classmethod
@@ -653,6 +656,155 @@ class CaptchaSettings(_Group):
         if v not in ("off", "after_failures", "always"):
             raise ValueError("Режим CAPTCHA: off, after_failures или always")
         return v
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in ("image", "pow"):
+            raise ValueError("Вид CAPTCHA: image или pow")
+        return v
+
+
+class LoginProtectionSettings(_Group):
+    """Защита входа от перебора: независимые серверные счётчики по учётной записи, по IP-адресу, по их паре и по общей интенсивности. Состояние хранится в Redis,
+    поэтому не зависит от браузера, cookie, User-Agent, перезапуска и числа экземпляров backend. Пороги CAPTCHA — в разделе «CAPTCHA»."""
+
+    enabled: bool = True
+    window_minutes: int = Field(default=15, ge=1, le=1440)         # окно подсчёта неудач для блокировок
+    slowdown_after: int = Field(default=4, ge=0, le=1000)          # с какой неудачи с одного IP ответ замедляется (0 — не замедлять)
+    slowdown_step_ms: int = Field(default=400, ge=0, le=5000)      # на сколько замедляется каждая следующая неудача
+    slowdown_max_ms: int = Field(default=3000, ge=0, le=10000)
+    account_guard_failures: int = Field(default=10, ge=1, le=1000) # неудач по учётной записи, после которых попытки с НЕИЗВЕСТНЫХ адресов не доходят до каталога (защита от блокировки учётки в AD)
+    ip_block_failures: int = Field(default=25, ge=1, le=10000)     # неудач с одного IP до временной блокировки адреса
+    spray_accounts: int = Field(default=8, ge=2, le=1000)          # разных учётных записей, на которые с одного IP не удалось войти, — признак подбора по списку
+    ip_block_minutes: int = Field(default=15, ge=1, le=1440)       # длительность первой блокировки
+    ip_block_max_minutes: int = Field(default=1440, ge=1, le=10080)  # потолок при повторах (каждый повтор — вдвое дольше)
+    escalation_days: int = Field(default=7, ge=1, le=90)           # как долго помнить прежние блокировки адреса
+    rate_ip_per_minute: int = Field(default=120, ge=5, le=100000)  # запросов к входу с одного IP в минуту (для общих адресов — в 10 раз больше: утро в офисе за NAT)
+    rate_global_per_minute: int = Field(default=600, ge=10, le=10_000_000)   # запросов к входу в минуту со всех адресов: выше — CAPTCHA для всех
+    shared_ip_accounts: int = Field(default=5, ge=2, le=1000)      # столько разных учётных записей успешно вошло с адреса — он считается общим (NAT, прокси): жёстко не блокируется, только CAPTCHA
+    nat_addresses: str = ""                                        # адреса и подсети общих выходов (NAT, VPN), которые никогда не блокируются целиком
+    unknown_device_rule: bool = True                               # применять «защиту каталога» только к адресам, с которых этот логин ещё не входил успешно
+
+    @field_validator("nat_addresses")
+    @classmethod
+    def _nat(cls, v: str) -> str:
+        return _cidr_list(v, "Общие адреса")
+
+
+def _cidr_list(v: str, what: str) -> str:
+    import ipaddress  # noqa: PLC0415
+
+    out = []
+    for part in re.split(r"[,\s;]+", v or ""):
+        if not part:
+            continue
+        try:
+            out.append(str(ipaddress.ip_network(part, strict=False)))
+        except ValueError:
+            raise ValueError(f"{what}: «{part[:60]}» — не адрес и не подсеть (пример: 192.0.2.10 или 192.0.2.0/24 или 2001:db8::/32)") from None
+    return "\n".join(dict.fromkeys(out))
+
+
+class IpAccessSettings(_Group):
+    """Доверенные подсети: ограничение доступа к Peregovorka разрешёнными IP-адресами и подсетями (список — таблица allowed_networks). По умолчанию выключено."""
+
+    enabled: bool = False
+    exempt_guests: bool = False          # не ограничивать гостевые ссылки (гости приходят из любых сетей)
+    exempt_public_api: bool = False      # не ограничивать публичный API (у ключей свои списки адресов)
+    trial_minutes: int = Field(default=5, ge=1, le=60)            # пробный срок после включения: подтвердить из разрешённой сети, иначе откат
+    pending_until: str | None = None     # ISO-время конца пробного срока (служебное)
+    confirmed_at: str | None = None
+    activated_by: str = ""
+
+
+class WafSettings(_Group):
+    """Лёгкий встроенный WAF: режим, режимы отдельных правил, порог перебора путей, исключения."""
+
+    mode: str = "observe"                # off | observe | protect
+    rules: dict[str, str] = Field(default_factory=dict)           # правило → inherit | off | observe | block
+    probe_threshold: int = Field(default=40, ge=10, le=10000)    # ответов 404/405 с одного адреса в минуту до срабатывания «перебора путей»
+    probe_block_minutes: int = Field(default=10, ge=1, le=1440)
+    exclude_paths: str = Field(default="", max_length=4000)      # начала путей, которые не проверяются (по одному в строке)
+    exclude_ips: str = ""                # адреса и подсети, которые не проверяются
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in ("off", "observe", "protect"):
+            raise ValueError("Режим WAF: off, observe или protect")
+        return v
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(cls, v: dict) -> dict:
+        from ..security.waf import RULES  # noqa: PLC0415
+
+        out = {}
+        for k, m in v.items():
+            if k not in RULES:
+                raise ValueError(f"Неизвестное правило WAF: {k[:40]}")
+            if m not in ("inherit", "off", "observe", "block"):
+                raise ValueError("Режим правила: inherit, off, observe или block")
+            if m != "inherit":
+                out[k] = m
+        return out
+
+    @field_validator("exclude_paths")
+    @classmethod
+    def _paths(cls, v: str) -> str:
+        lines = [x.strip() for x in v.replace("\r", "").split("\n") if x.strip()]
+        if any(not x.startswith("/") or len(x) > 200 or " " in x for x in lines):
+            raise ValueError("Пути исключений: каждый с «/», без пробелов, по одному в строке")
+        return "\n".join(dict.fromkeys(lines))
+
+    @field_validator("exclude_ips")
+    @classmethod
+    def _ips(cls, v: str) -> str:
+        return _cidr_list(v, "Исключения по адресам")
+
+
+class SecurityLogSettings(_Group):
+    """Хранение событий безопасности."""
+
+    retention_days: int = Field(default=30, ge=1, le=365)
+    max_rows: int = Field(default=200_000, ge=1000, le=5_000_000)
+
+
+class NetTrustSettings(_Group):
+    """Как определяется адрес клиента. Доверенные прокси — узлы, которым разрешено сообщать настоящий адрес клиента (в заголовках). Это НЕ список разрешённых клиентских сетей.
+    Заголовки принимаются только от узлов, которые подключились к web с доверенного адреса; прямое подключение к backend или от недоверенного узла заголовки не меняет."""
+
+    mode: str = "auto"                 # auto | xff | x_real_ip | forwarded | header | peer
+    header_name: str = ""              # для mode=header: имя заголовка, который выставляет ваш WAF/CDN (например CF-Connecting-IP)
+    trusted_proxies: str = ""          # адреса и подсети доверенных прокси; пусто — значение TRUSTED_PROXY_CIDRS из .env
+    proxy_hops: int | None = Field(default=None, ge=0, le=10)    # сколько ещё прокси перед web не описано сетями; пусто — TRUSTED_PROXY_HOPS из .env
+    accept_from: str = ""              # откуда backend вообще принимает заголовки (сеть контейнеров). Пусто — частные и локальные адреса
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in ("auto", "xff", "x_real_ip", "forwarded", "header", "peer"):
+            raise ValueError("Источник адреса: auto, xff, x_real_ip, forwarded, header или peer")
+        return v
+
+    @field_validator("header_name")
+    @classmethod
+    def _hn(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{1,63}", v):
+            raise ValueError("Имя заголовка: латинские буквы, цифры и дефис")
+        return v
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _tp(cls, v: str) -> str:
+        return _cidr_list(v, "Доверенные прокси")
+
+    @field_validator("accept_from")
+    @classmethod
+    def _af(cls, v: str) -> str:
+        return _cidr_list(v, "Источники заголовков")
 
 
 class ProfilePolicySettings(_Group):
@@ -1073,6 +1225,11 @@ GROUPS: dict[str, type[_Group]] = {
     "auto_backup": AutoBackupSettings,
     "auth_security": AuthSecuritySettings,
     "captcha": CaptchaSettings,
+    "login_protection": LoginProtectionSettings,
+    "net_trust": NetTrustSettings,
+    "ip_access": IpAccessSettings,
+    "waf": WafSettings,
+    "security_log": SecurityLogSettings,
     "profile_policy": ProfilePolicySettings,
     "outlook": OutlookSettings,
     "sip_policy": SipPolicySettings,

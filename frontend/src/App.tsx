@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { api, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
+import { api, isRestricted, onRestricted, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
+import RestrictedPage from "./pages/RestrictedPage";
 import Avatar from "./components/Avatar";
 import { AppFooter, CookieNotice, type BuildInfo } from "./components/ProductInfo";
 import PrivacyPage from "./pages/PrivacyPage";
@@ -35,6 +36,7 @@ const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
+import CaptchaHost from "./components/CaptchaDialog";
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const PlayerHost = lazy(() => import("./player/PlayerHost"));
@@ -209,7 +211,15 @@ function GuestApp() {
   );
 }
 
+
 export default function App() {
+  const [blocked, setBlocked] = useState(isRestricted());
+  useEffect(() => onRestricted(() => setBlocked(true)), []);
+  if (blocked) return <RestrictedPage />;          // адрес вне разрешённых подсетей: вместо интерфейса — нейтральная страница
+  return <><CaptchaHost /><Pages /></>;       // окно проверки «я не робот» живёт в корне: его вызывает любой запрос, на который сервер ответил 428
+}
+
+function Pages() {
   const { pathname } = useLocation();
   const site = useSite();
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
