@@ -159,10 +159,12 @@ export default function AdminPage({ version }: { version: string }) {
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
   const found = needle ? GROUPS.flatMap((g) => g.pages.filter((p) => `${p.label} ${g.title} ${KEYWORDS[p.id] ?? ""}`.toLowerCase().includes(needle)).map((p) => ({ id: p.id, label: p.label, group: g.title }))) : null;
+  const [navOpen, setNavOpen] = useState(false);                     // узкий экран: список разделов свёрнут в одну кнопку с названием текущего
   const setGroups = (s: Set<string>) => { setCollapsed(s); saveCollapsed(s); };
   // переход к странице (из мастера настройки, верхнего меню) раскрывает её раздел, чтобы пункт не оказался скрытым
   const pick = (t: string) => {
     if (t !== tab && !confirmLeave()) return;
+    setNavOpen(false);
     setTab(t);
     try { sessionStorage.setItem("adminTab", t); } catch { /* ignore */ }
     const g = GROUPS.find((x) => x.pages.some((p) => p.id === t));
@@ -182,7 +184,10 @@ export default function AdminPage({ version }: { version: string }) {
     <section>
       <div className="row"><h1>Администрирование</h1><div className="spacer" /><span className="muted small">Версия: {version || "—"}</span></div>
       <div className="admin-layout">
-        <nav className="admin-nav" aria-label="Разделы администрирования">
+        <nav className={`admin-nav ${navOpen ? "nav-open" : ""}`} aria-label="Разделы администрирования">
+          <button type="button" className="nav-toggle" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
+            <span className="muted small">Раздел</span><b>{page?.label ?? "—"}</b><Icon name="chevronD" size={16} className="chev" />
+          </button>
           <input type="search" className="nav-search" placeholder="Найти раздел…" aria-label="Поиск по разделам администрирования" value={q} onChange={(e) => setQ(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter" && found?.length) { pick(found[0].id); setQ(""); } if (e.key === "Escape") setQ(""); }} />
           {found && (

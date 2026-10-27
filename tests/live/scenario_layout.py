@@ -95,7 +95,7 @@ async def main():
             await D.start(); await D.goto("/admin?tab=meetings", 3.5)
             S.check("администрирование → «Встречи»: у идущей встречи есть круглая кнопка «Д»", await D.wait_for("!!document.querySelector('.diag-btn')", 20))
             await D.js("document.querySelector('.diag-btn').click()")
-            S.check("«Д» открывает диагностику полноэкранным окном поверх страницы (без новой вкладки)", await D.wait_for("(()=>{const m=document.querySelector('.diag-full');if(!m)return false;const r=m.getBoundingClientRect();return r.width>=innerWidth-20&&r.height>=innerHeight-2&&m.innerText.includes('Качество связи')})()", 15))
+            S.check("«Д» открывает диагностику полноэкранным окном поверх страницы (без новой вкладки)", await D.wait_for("(()=>{const m=document.querySelector('.diag-full');if(!m)return false;const r=m.getBoundingClientRect();return r.width>=innerWidth-20&&r.height>=innerHeight-2&&m.innerText.includes('Качество связи')})()", 15), await D.js("(()=>{const m=document.querySelector('.diag-full');if(!m)return 'нет окна';const r=m.getBoundingClientRect();return JSON.stringify({w:r.width,h:r.height,iw:innerWidth,ih:innerHeight,t:m.innerText.slice(0,80)})})()"))
             await D.shot("diag-modal")
             await D.send("Input.dispatchKeyEvent", type="rawKeyDown", key="Escape", code="Escape", windowsVirtualKeyCode=27)
             await D.send("Input.dispatchKeyEvent", type="keyUp", key="Escape", code="Escape", windowsVirtualKeyCode=27)

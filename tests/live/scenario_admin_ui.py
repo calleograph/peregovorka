@@ -4,7 +4,7 @@ import asyncio, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import smoke_room as S
 
-GROUPS = ["Обзор", "Встречи", "Комнаты и пользователи", "Интеграции", "Безопасность", "Хранение и журналы", "Система"]
+GROUPS = ["Обзор", "Встречи", "Комнаты и пользователи", "Интеграции", "Windows-клиент", "Безопасность", "Хранение и журналы", "Система"]
 NAV = "(t) => { const b = [...document.querySelectorAll('.admin-nav .nav-items button')].find(x => x.textContent.trim() === t); if (!b) return false; b.click(); return true; }"
 
 
@@ -19,7 +19,7 @@ async def main():
         S.check("в «Интеграции» есть Microsoft Outlook, SIP-телефония и политика телефонии",
                 await R.js("(() => { const g = [...document.querySelectorAll('.nav-group')].find(x => x.querySelector('.nav-head')?.textContent.trim() === 'Интеграции'); const t = g ? [...g.querySelectorAll('.nav-items button')].map(b => b.textContent.trim()) : []; return ['Microsoft Outlook', 'SIP-телефония', 'Политика телефонии'].every(x => t.includes(x)); })()"))
         S.check("в «Безопасность» собраны 2FA, CAPTCHA, шифрование и аудит",
-                await R.js("(() => { const g = [...document.querySelectorAll('.nav-group')].find(x => x.querySelector('.nav-head')?.textContent.trim() === 'Безопасность'); const t = g ? [...g.querySelectorAll('.nav-items button')].map(b => b.textContent.trim()) : []; return t.length === 4 && t.some(x => x.startsWith('Двухфакторная')) && t.includes('CAPTCHA') && t.some(x => x.startsWith('Шифрование')) && t.some(x => x.startsWith('Журнал аудита')); })()"))
+                await R.js("(() => { const g = [...document.querySelectorAll('.nav-group')].find(x => x.querySelector('.nav-head')?.textContent.trim() === 'Безопасность'); const t = g ? [...g.querySelectorAll('.nav-items button')].map(b => b.textContent.trim()) : []; return t.length >= 4 && t.some(x => x.startsWith('Вход и сеансы')) && t.includes('CAPTCHA') && t.some(x => x.startsWith('Шифрование')) && t.some(x => x.startsWith('Журнал аудита')); })()"))
         await R.js("""(() => { const i = document.querySelector('.nav-search'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'телефон'); i.dispatchEvent(new Event('input', {bubbles: true})); })()""")
         S.check("поиск по меню находит SIP-телефонию и политику телефонии", await R.wait_for("(() => { const t = document.querySelector('.nav-found')?.innerText || ''; return t.includes('SIP-телефония') && t.includes('Политика телефонии'); })()", 8),
                 await R.js("document.querySelector('.nav-found')?.innerText"))

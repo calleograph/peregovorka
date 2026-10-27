@@ -12,7 +12,7 @@ import productInfo from "./components/ProductInfo.tsx?raw";
 
 // Страницы входа, списка комнат и истории открываются чаще всего: тяжёлый livekit-client (≈520 кБ) не должен попадать в их основной бандл.
 // Раньше это случилось незаметно: BoardViewer импортировал diagnostics.ts, а тот — livekit-client (основной бандл вырос с 413 до 953 кБ).
-const HEAVY = /from\s+["'](?:\.{1,2}\/)+(?:diagnostics|roomOptions|screenShare|micPrefs)["']|from\s+["']livekit-client["']/;
+const HEAVY = /from\s+["'](?:\.{1,2}\/)+(?:diagnostics|roomOptions|screenShare|micPrefs)["']|from\s+["'](?:livekit-client|three)["']/;
 
 describe("основной бандл не тянет livekit-client", () => {
   const modules: Record<string, string> = { App: appSrc, MeetingPage: meetingPage, RoomsPage: roomsPage, HistoryPage: historyPage, LoginPage: loginPage,
@@ -23,4 +23,11 @@ describe("основной бандл не тянет livekit-client", () => {
       expect(bad, `${name} статически импортирует тяжёлый модуль`).toEqual([]);
     });
   }
+});
+
+describe("Three.js только отдельным чанком страницы входа", () => {
+  it("LoginPage подгружает LoginGlass лениво", () => {
+    expect(loginPage).toMatch(/lazy\(\(\) => import\("\.\.\/components\/LoginGlass"\)\)/);
+    expect(loginPage).not.toMatch(/^import\s+LoginGlass\b/m);
+  });
 });

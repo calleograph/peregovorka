@@ -46,7 +46,7 @@ class Client:
 
     async def start(self):
         self.profile = tempfile.mkdtemp(prefix='edge-s-')          # профиль браузера: удаляется в close() — иначе /tmp заполняется после десятков прогонов
-        self.proc = subprocess.Popen([EDGE, "--headless=new", "--disable-gpu", f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}",
+        self.proc = subprocess.Popen([EDGE, "--headless=new", *([] if os.environ.get("SMOKE_GPU") else ["--disable-gpu"]), f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}",
                                       "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required",
                                       "--window-size=1366,768", *os.environ.get("BROWSER_FLAGS", "").split(), "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(60):

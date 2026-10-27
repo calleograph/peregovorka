@@ -494,7 +494,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 /* ---- 0.8.2: история — значки материалов и карточки на узких экранах ---- */
 .mat { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; color: var(--muted); font-size: 13px; }
 .mat-i { display: inline-flex; align-items: center; gap: 4px; }
-@media (max-width: 760px) {
+@media (max-width: 860px) {
   .table-scroll > .table.hist-table { min-width: 0; display: block; border: 0; box-shadow: none; background: transparent; overflow: visible; }
   .hist-table thead { display: none; }
   .hist-table tbody { display: grid; gap: 10px; }
@@ -999,3 +999,55 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .captcha-form input { font-size: 20px; letter-spacing: .18em; text-transform: uppercase; }
 
 
+
+/* ---- узкие экраны: таблицы — карточками, без горизонтальной прокрутки (stackTables.ts ставит класс stack и подписи ячеек) ---- */
+@media (max-width: 860px) {
+  main table.stack.stack { display: block; width: 100%; min-width: 0; border: 0; box-shadow: none; background: transparent; overflow: visible; margin-top: 8px; }
+  main table.stack.stack thead { display: none; }
+  main table.stack.stack tbody { display: grid; gap: 8px; }
+  main table.stack.stack tr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+  main table.stack.stack td, main table.stack.stack th { display: grid; grid-template-columns: minmax(64px, 34%) minmax(0, 1fr); gap: 4px 10px; padding: 0; border: 0; background: none; text-align: left; overflow-wrap: anywhere; white-space: normal; max-width: none; }
+  main table.stack.stack td[data-label]::before, main table.stack.stack th[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  main table.stack.stack td[data-label=""] { grid-template-columns: minmax(0, 1fr); }
+  main table.stack.stack td[data-label=""]::before { display: none; }
+  main table.stack.stack td:empty { display: none; }
+  main table.stack.stack tr.stack-group { background: var(--soft); padding: 6px 12px; }
+  main table.stack.stack tr.stack-group > * { display: block; font-weight: 600; }
+  main table.stack.stack .msg { max-width: none; white-space: normal; }
+  .table-scroll:has(> table.stack), .journal-scroll:has(table.stack) { overflow: visible; max-height: none; border: 0; }
+  .tabs { flex-wrap: wrap; }
+  .rooms-toolbar .chips, .chips { flex-wrap: wrap !important; overflow-x: visible !important; margin: 0 !important; padding: 2px 0 !important; }
+  .cmd, pre.cmd, .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: visible; }
+}
+
+/* ---- администрирование на узком экране: список разделов — одна кнопка с названием текущего раздела, раскрывается по нажатию ---- */
+.admin-nav .nav-toggle { display: none; }
+@media (max-width: 860px) {
+  .admin-nav { max-height: none; overflow: visible; border-bottom: 0; padding-bottom: 0; position: relative; top: auto; }
+  .admin-nav .nav-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .admin-nav .nav-toggle b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+  .admin-nav .nav-toggle .chev { transition: transform .2s var(--ease, ease); flex: none; }
+  .admin-nav.nav-open .nav-toggle .chev { transform: rotate(180deg); }
+  .admin-nav:not(.nav-open) > :not(.nav-toggle) { display: none; }
+  .admin-nav.nav-open { gap: 8px; }
+  .admin-nav.nav-open > :not(.nav-toggle) { max-width: 100%; }
+  .admin-nav.nav-open .nav-items { max-height: none; }
+  .admin-nav.nav-open { padding-bottom: 6px; max-height: 70dvh; overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .admin-nav .nav-toggle .chev { transition: none; } }
+
+/* таблицы, которые нельзя превратить в карточки (нет строк, объединённые ячейки), на узком экране сжимаются по ширине: текст переносится, ползунка нет */
+@media (max-width: 860px) {
+  main .table:not(.stack) { display: table; width: 100%; min-width: 0; table-layout: auto; }
+  main .table:not(.stack) th, main .table:not(.stack) td { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+  .table-scroll:not(:has(> table.stack)) { overflow-x: visible; }
+}
+/* журнал: сообщения переносятся, горизонтальной прокрутки нет и на широком экране */
+.journal-scroll { overflow-x: hidden; }
+.journal-scroll:not(.dense) .table td { overflow-wrap: anywhere; word-break: normal; }
+.journal-scroll:not(.dense) .table .msg { max-width: none; white-space: normal; }
+
+/* кристаллы Three.js на странице входа: над сеткой, под формой, без перехвата мыши; появляются плавно */
+.login-glass { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; animation: glass-in 1.6s var(--ease, ease) .2s forwards; }
+@keyframes glass-in { to { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .login-glass { animation: none; opacity: .85; } }

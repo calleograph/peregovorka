@@ -259,6 +259,57 @@
    "note": "Нейросетевое шумоподавление в браузере; RNNoise собран внутри пакета (upstream xiph/rnnoise v0.2)."
   },
   {
+   "key": "three_js",
+   "title": "Three.js (WebGL, фон страницы входа)",
+   "group": "Frontend",
+   "pinned": "0.186.1",
+   "tested": "0.186.1",
+   "reviewed_latest": "0.186.1",
+   "source": {
+    "type": "npm",
+    "name": "three"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "three"
+    },
+    {
+     "type": "package-json",
+     "file": "frontend/package.json",
+     "name": "three"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/three?activeTab=versions",
+   "note": "Только отдельный лениво загружаемый чанк страницы входа (components/LoginGlass.tsx); без WebGL, при «уменьшить движение», на слабых и узких устройствах не загружается и не используется. Лицензия MIT."
+  },
+  {
+   "key": "types_three",
+   "title": "@types/three (типы Three.js, только сборка)",
+   "group": "Frontend",
+   "pinned": "0.186.0",
+   "tested": "0.186.0",
+   "reviewed_latest": "0.186.0",
+   "source": {
+    "type": "npm",
+    "name": "@types/three"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "@types/three"
+    },
+    {
+     "type": "package-json",
+     "file": "frontend/package.json",
+     "name": "@types/three"
+    }
+   ],
+   "changelog": "https://www.npmjs.com/package/@types/three?activeTab=versions"
+  },
+  {
    "key": "officejs",
    "title": "Office.js (Outlook, снимок CDN Microsoft в образе web)",
    "group": "Видеосвязь и телефония",

@@ -276,3 +276,49 @@
 }
 
 .linkish { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; text-decoration: underline; font: inherit; text-align: left; }
+
+/* Календарь целиком в окне: страница занимает ровно высоту экрана, сетка прокручивается внутри себя (а не вся страница), поля у́же, шапка плотнее.
+   Класс cal-fit на body ставит CalendarPage на время показа; в очень низком окне (альбомный телефон) сетка не ниже 180 px и страница прокручивается как обычно. */
+body.cal-fit .shell-col { height: 100vh; height: 100dvh; min-height: 0; }
+body.cal-fit .has-rail main, body.cal-fit main { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; padding: 4px 14px 8px; max-width: none; }
+body.cal-fit .cal-page { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+body.cal-fit .cal-page > * { flex: none; }
+body.cal-fit .cal-view { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+body.cal-fit .cal-view > * { flex: 1 1 0; min-height: 0; }
+body.cal-fit .cal-grid { display: flex; flex-direction: column; }
+body.cal-fit .cal-grid > .cal-gh { flex: none; }
+body.cal-fit .cal-scroll { flex: 1 1 0; min-height: 180px; max-height: none; }
+body.cal-fit .cal-month { overflow-y: auto; grid-template-rows: auto; grid-auto-rows: minmax(64px, 1fr); }
+body.cal-fit .cal-month > .cal-dow { align-self: start; }
+body.cal-fit .cal-cell { min-height: 0; }
+body.cal-fit .cal-list { overflow-y: auto; }
+body.cal-fit .cal-page h1 { font-size: 22px; line-height: 1.2; }
+body.cal-fit .app-foot { display: none; }
+@media (min-width: 1100px) { body.cal-fit .has-rail main { padding: 6px 20px 10px; } }
+@media (max-width: 760px) {
+  body.cal-fit .shell.has-rail { padding-bottom: 0; }
+  body.cal-fit .shell-col { height: calc(100dvh - 68px); }
+  body.cal-fit .has-rail main, body.cal-fit main { padding: 2px 8px 6px; }
+  body.cal-fit .has-rail .topbar { padding: 8px 10px 0; }
+}
+/* плотная шапка и легенда на узком разделе */
+@container cal (max-width: 720px) {
+  .cal-head { gap: 6px 8px; }
+  .cal-head-a { gap: 8px; justify-content: space-between; }
+  .cal-head-n { gap: 6px 10px; }
+  .cal-head-b { flex-wrap: nowrap; gap: 6px; }
+  .cal-head-b .seg { flex: 1 1 0; min-width: 0; }
+  .cal-head-b .seg button { padding: 0 6px; flex: 1 1 0; min-width: 0; }
+  .cal-head .btn.cal-tool, .cal-head .btn.icon { flex: none; }
+  .cal-legend { font-size: 11.5px; gap: 2px 10px; }
+  .cal-sub { gap: 2px 12px; }
+}
+@container cal (max-width: 520px) { .cal-legend li:nth-child(n + 5) { display: none; } .cal-sub .cal-health { font-size: 11.5px; } }
+body.cal-fit .cal-foot { font-size: 12px; line-height: 1.3; gap: 2px 8px; }
+body.cal-fit .cal-foot-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+@media (max-height: 800px), (max-width: 760px) { body.cal-fit .cal-foot-hint { display: none; } }
+@container cal (max-width: 520px) {
+  .cal-sub { display: none; }                      /* на телефоне легенда и «подключён» убраны: тип события написан в карточке, неполадки показываются отдельной плашкой */
+  .cal-foot-info { display: none; }
+  .cal-head .cal-period { flex: 1 1 100%; font-size: 15px; }
+}

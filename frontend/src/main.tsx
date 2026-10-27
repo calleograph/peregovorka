@@ -9,6 +9,7 @@ import "./design.css";
 import "./glass.css";
 import "./linkcopy.css";
 import "./calendar.css";
+import "./motion.css";
 import { installCrystalsHotkey } from "./crystalsHotkey";
 
 installCrystalsHotkey();

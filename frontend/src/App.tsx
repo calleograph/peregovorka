@@ -1,3 +1,4 @@
+import { watchTables } from "./stackTables";
 import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, setCsrf, setUnauthorizedHandler, type Me, type Profile } from "./api";
@@ -60,6 +61,7 @@ function StaffApp() {
   const [burger, setBurger] = useState(false);
   const inMeeting = useActiveMeeting() !== null;
   useEffect(() => setBurger(false), [pathname]);
+  useEffect(() => watchTables(), []);                                        // узкий экран: таблицы — карточками (stackTables.ts)
   // приложение Windows: переход по уведомлению и пункт «Чаты» в трее; `?chat=<id>` открывает переписку (ссылка из уведомления)
   useEffect(() => {
     const a = onDesktopCommand("navigate", (c) => { if (c.route?.startsWith("/") && !c.route.startsWith("//")) navigate(c.route); });

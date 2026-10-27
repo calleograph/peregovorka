@@ -109,6 +109,7 @@ export default function CalendarPage() {
   const init = useMemo(loadSession, []);                         // вид, дата, календари и рабочие часы помнятся между переходами по разделам
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const narrow = useNarrow(760);
+  useEffect(() => { document.body.classList.add("cal-fit"); return () => document.body.classList.remove("cal-fit"); }, []);   // календарь занимает окно целиком (calendar.css)
   const [wanted, setMode] = useState<ViewMode>(init.mode);
   const mode: ViewMode = narrow && wanted === "week" ? "day" : wanted;          // семь колонок на узком экране нечитаемы: там неделя заменена днём
   const [anchor, setAnchor] = useState(init.anchor);
@@ -239,7 +240,8 @@ export default function CalendarPage() {
         {mode === "list" && <ListView events={events} from={range.from} to={range.to} onOpen={setOpen} />}
       </div>
       <footer className="cal-foot muted small">
-        Календарь ящика {status.email}. Время показано в вашем часовом поясе ({localZone()}). {status.can_write ? ((mode === "week" || mode === "day") ? "Чтобы создать встречу, выделите интервал мышью или дважды щёлкните по времени. " : "") : "Только просмотр. "}
+        <span className="cal-foot-info">Календарь ящика {status.email}. Время — в вашем часовом поясе ({localZone()}).</span>{" "}
+        <span className="cal-foot-hint">{status.can_write ? ((mode === "week" || mode === "day") ? "Чтобы создать встречу, выделите интервал мышью или дважды щёлкните по времени. " : "") : "Только просмотр. "}</span>
         <button className="linkish" onClick={async () => { try { setStatus(await calendarApi.disconnect()); setData(null); } catch (e) { setErr(errText(e)); } }}>Отключить календарь</button>
       </footer>
       {open && <EventDialog ev={open} status={status} onClose={() => setOpen(null)} onChanged={() => void load(true)} />}
