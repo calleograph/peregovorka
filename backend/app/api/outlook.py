@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
 import uuid
@@ -18,7 +19,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..config import origin_allowed
 from ..auth.throttle import within_limit
-from ..services import captcha
+from ..security.gate import login_gate
 from ..models import Meeting, Room, User, utcnow
 from ..services import outlook as ol
 from ..services import outlook_compat as compat
@@ -132,16 +133,15 @@ async def addin_login(request: Request, body: dict = Body(...), db: AsyncSession
         raise HTTPException(status_code=404, detail="Интеграция с Outlook отключена.")
     login_, password = str(body.get("login") or "")[:256], str(body.get("password") or "")
     ip = client_ip(request)
-    await captcha.guard(request, "login")
+    verdict = await login_gate(request, login_, ip)
     try:
         res = await request.app.state.auth.login(db, login_, password, ip, request.headers.get("user-agent") or "", open_session=False)
     except AuthError as exc:
-        if exc.code in ("invalid_credentials", "throttled"):
-            await captcha.note_failure(request, "login")
+        if exc.code == "invalid_credentials" and verdict.delay_s:
+            await asyncio.sleep(verdict.delay_s)
         request.app.state.journal.emit("outlook", "addin_login_failed", level="warn", ip=ip, message=exc.message, data={"code": exc.code, "where": "panel"})
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}, headers=headers) from None
-    await captcha.note_success(request, "login")
     if res.needs_browser:
         raise HTTPException(status_code=409, detail={"code": "browser_required", "reason": res.needs_browser, "message": "Для вашей учётной записи нужен дополнительный шаг входа."})
     u, p = res.user, res.params or {}

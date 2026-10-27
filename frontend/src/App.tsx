@@ -35,6 +35,7 @@ const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
+import CaptchaHost from "./components/CaptchaDialog";
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const PlayerHost = lazy(() => import("./player/PlayerHost"));
@@ -209,7 +210,12 @@ function GuestApp() {
   );
 }
 
+
 export default function App() {
+  return <><CaptchaHost /><Pages /></>;       // окно проверки «я не робот» живёт в корне: его вызывает любой запрос, на который сервер ответил 428
+}
+
+function Pages() {
   const { pathname } = useLocation();
   const site = useSite();
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);

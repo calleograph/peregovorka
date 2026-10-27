@@ -72,6 +72,9 @@ def check_payload(raw: str, now: float | None = None) -> tuple[str | None, str |
 
 
 # ----------------------------------------------------------------------------------------------- применение в запросах
+IMG_ID, IMG_ANSWER = "x-captcha-id", "x-captcha-answer"
+
+
 def _ip(request: Request) -> str:
     from ..auth.deps import client_ip  # noqa: PLC0415
 
@@ -83,51 +86,103 @@ async def _cfg(app):
         return await app.state.settings_svc.get(db, "captcha")
 
 
-async def required(app, scope: str, ip: str) -> bool:
+async def required(app, scope: str, ip: str, *, known: bool | None = None) -> bool:
+    """Нужна ли проверка. Для входа решение принимает серверная защита входа (по IP, записи и паре — LoginGuard); для остальных назначений — счётчик неудач по IP."""
     cfg = await _cfg(app)
     if cfg.mode == "always":
         return True
-    if cfg.mode == "after_failures" and scope in ("login", "guest"):
-        return int(await app.state.redis.get(f"captcha:fail:{scope}:{ip}") or 0) >= cfg.failures
+    if known is not None:
+        return known
+    if cfg.mode == "after_failures" and scope in ("guest",):
+        from ..security.ipres import ip_key  # noqa: PLC0415
+
+        return int(await app.state.redis.get(f"captcha:fail:{scope}:{ip_key(ip)}") or 0) >= cfg.failures
     return False
 
 
-async def issue(app) -> dict:
+async def issue(app, ip: str = "", scope: str = "login") -> dict:
+    """Новая задача по настройке: картинка (image) или вычислительная (pow)."""
     cfg = await _cfg(app)
-    return make_challenge(cfg.difficulty, cfg.ttl_seconds)
+    from ..security import imgcaptcha  # noqa: PLC0415
+    from ..security.ipres import ip_key  # noqa: PLC0415
+
+    key, limit = f"captcha:issue:{ip_key(ip)}", (20 if cfg.kind == "image" else 60)       # задач в минуту с одного адреса
+    r = app.state.redis
+    if await r.incr(key) == 1:
+        await r.expire(key, 60)
+    if int(await r.get(key) or 0) > limit:
+        raise imgcaptcha.Throttled()
+    if cfg.kind == "image":
+        return await imgcaptcha.issue(app.state.redis, ip, scope, ttl_s=cfg.ttl_seconds, length=cfg.length)
+    return {"kind": "pow", **make_challenge(cfg.difficulty, cfg.ttl_seconds)}
 
 
-async def guard(request: Request, scope: str) -> None:
-    """Пропускает запрос с решённой задачей (заголовок X-Captcha); иначе отвечает 428 с новой задачей. Повторное использование решения и просроченное решение — отказ."""
+async def _event(app, kind: str, ip: str, scope: str, result: str, reason: str = "") -> None:
+    ev = getattr(app.state, "secevents", None)
+    if ev is not None:
+        await ev.emit(kind, ip=ip, result=result, reason=reason, rule=f"captcha:{scope}", component="auth", level="info" if result == "passed" else "warn")
+
+
+async def guard(request: Request, scope: str, *, needed: bool | None = None) -> None:
+    """Пропускает запрос с решённой CAPTCHA; иначе отвечает 428 с новой задачей. `needed` — решение серверной защиты входа (если оно уже принято).
+    Картинка: заголовки X-Captcha-Id и X-Captcha-Answer; задача одноразовая, привязана к адресу и назначению, срок ограничен. PoW (если выбран): заголовок X-Captcha.
+    Нет CAPTCHA, когда она обязательна, — отказ; недоступность хранилища — понятная ошибка 503, а не пропуск."""
     app, ip = request.app, _ip(request)
-    if not await required(app, scope, ip):
+    if not await required(app, scope, ip, known=needed):
         return
-    raw = request.headers.get(HEADER, "")
+    cfg = await _cfg(app)
     err: str | None = "missing"
-    if raw:
-        err, sig, left = check_payload(raw)
-        if err is None and not await app.state.redis.set(f"captcha:used:{sig}", "1", nx=True, ex=left + 5):
-            err = "replay"
-    if err is None:
-        return
-    if err != "missing":                                   # «нет решения» — штатный первый шаг; всё прочее — подозрительно и пишется в аудит
-        from .audit import audit_now  # noqa: PLC0415
+    try:
+        if cfg.kind == "image":
+            from ..security import imgcaptcha  # noqa: PLC0415
 
-        await audit_now(app, actor_user_id=None, actor_name="(CAPTCHA)", action="captcha.rejected", target_type="captcha", target_id=scope, ip=ip, result="denied",
-                        actor_type="user", details={"reason": err})
-    raise HTTPException(status_code=428, detail={"code": "captcha_required", "message": "Подтвердите, что вы не робот: выполняется проверка.", "reason": err,
-                                                 "challenge": await issue(app)})
+            err = await imgcaptcha.verify(app.state.redis, request.headers.get(IMG_ID, ""), request.headers.get(IMG_ANSWER, ""), ip, scope)
+        else:
+            raw = request.headers.get(HEADER, "")
+            if raw:
+                err, sig, left = check_payload(raw)
+                if err is None and not await app.state.redis.set(f"captcha:used:{sig}", "1", nx=True, ex=left + 5):
+                    err = "replay"
+        if err is None:
+            await _event(app, "captcha_passed", ip, scope, "passed")
+            return
+        if err != "missing":                                   # «нет решения» — штатный первый шаг; всё прочее — подозрительно
+            from .audit import audit_now  # noqa: PLC0415
+
+            await audit_now(app, actor_user_id=None, actor_name="(CAPTCHA)", action="captcha.rejected", target_type="captcha", target_id=scope, ip=ip, result="denied",
+                            actor_type="user", details={"reason": err})
+            await _event(app, "captcha_failed", ip, scope, "failed", err)
+        else:
+            await _event(app, "captcha_required", ip, scope, "required")
+        challenge = await issue(app, ip, scope)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — CAPTCHA недоступна (хранилище, шрифт): вход не открываем, говорим причину
+        from ..security.imgcaptcha import Throttled  # noqa: PLC0415
+
+        if isinstance(exc, Throttled):
+            raise HTTPException(status_code=429, detail="Слишком много запросов проверки. Подождите минуту.", headers={"Retry-After": "60"}) from None
+        log.error("CAPTCHA недоступна", exc_info=True)
+        raise HTTPException(status_code=503, detail={"code": "captcha_unavailable", "message": "Проверка «я не робот» временно недоступна. Повторите попытку позже."}) from None
+    raise HTTPException(status_code=428, detail={"code": "captcha_required", "message": "Подтвердите, что вы не робот.", "reason": err, "challenge": challenge})
 
 
 async def note_failure(request: Request, scope: str) -> None:
+    """Неудача для назначений без серверной защиты входа (вход гостя по паролю комнаты)."""
     cfg = await _cfg(request.app)
-    if cfg.mode != "after_failures":
+    if cfg.mode != "after_failures" or scope != "guest":
         return
-    key = f"captcha:fail:{scope}:{_ip(request)}"
+    from ..security.ipres import ip_key  # noqa: PLC0415
+
+    key = f"captcha:fail:{scope}:{ip_key(_ip(request))}"
     r = request.app.state.redis
     if await r.incr(key) == 1:
         await r.expire(key, cfg.window_minutes * 60)
 
 
 async def note_success(request: Request, scope: str) -> None:
-    await request.app.state.redis.delete(f"captcha:fail:{scope}:{_ip(request)}")
+    if scope != "guest":
+        return
+    from ..security.ipres import ip_key  # noqa: PLC0415
+
+    await request.app.state.redis.delete(f"captcha:fail:{scope}:{ip_key(_ip(request))}")

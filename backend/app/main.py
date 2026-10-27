@@ -23,7 +23,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import chats as chats_api, desktop as desktop_api, signing as signing_api, dictation as dictation_api, meeting_access, room_icons as room_icons_api, room_journal, api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_network, admin_restore, calendar as calendar_api, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import chats as chats_api, desktop as desktop_api, signing as signing_api, dictation as dictation_api, meeting_access, room_icons as room_icons_api, room_journal, api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_security, admin_network, admin_restore, calendar as calendar_api, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
@@ -202,6 +202,9 @@ def create_app(
         app.state.sessions = sessions
         app.state.guest_sessions = GuestSessionStore(redis)
         app.state.settings_svc = settings_svc
+        from .security.netcfg import NetCfgHolder  # noqa: PLC0415
+        app.state.netcfg = NetCfgHolder(settings)
+
         app.state.protocols = protocols
         protocols.gate = app.state.perf.gate
         app.state.avatars = AvatarStore(settings.data_dir)
@@ -274,7 +277,13 @@ def create_app(
         app.state.delivery = delivery
         app.state.ca = ca
         app.state.ldap = ldap_service
-        app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings), sessions)
+        from .security.events import SecurityEvents  # noqa: PLC0415
+        from .security.loginguard import LoginGuard  # noqa: PLC0415
+        guard = LoginGuard(redis)                                     # центральная защита входа: счётчики в Redis, общие для всех экземпляров backend
+        guard.bind(settings_svc, session_maker)
+        app.state.login_guard = guard
+        app.state.secevents = guard.events = SecurityEvents(app)     # журнал безопасности
+        app.state.auth = AuthService(settings, directory, LoginThrottle(redis, settings, guard), sessions)
         app.state.auth.settings_svc = settings_svc
 
         # Набор CA и подключения к каталогу из базы. Два РАЗНЫХ шага: сбой перестройки набора CA (например, нет прав на каталог /data/ca)
@@ -306,6 +315,9 @@ def create_app(
         except Exception as exc:  # noqa: BLE001
             log.warning("Не удалось закрыть прерванные формирования документов (%s)", describe_error(exc))
         tasks: list[asyncio.Task] = []
+        if start_workers:                                       # до первого запроса загружаем настройки определения адреса; в тестах фоновые циклы не запускаются (конкурируют за SQLite)
+            await app.state.netcfg.refresh(settings_svc, session_maker)
+            tasks.append(asyncio.create_task(app.state.netcfg.run(settings_svc, session_maker), name="netcfg"))        # настройки определения адреса клиента (security/netcfg.py)
         journal.start()
         set_journal_sink(journal.emit)
         set_audit_key(settings.app_master_key)
@@ -419,7 +431,7 @@ def create_app(
         return _JSON({"detail": "База данных временно недоступна. Повторите через несколько секунд."}, status_code=503, headers={"Retry-After": "5"})
 
     prefix = "/api/v1"
-    for r in (desktop_api.router, signing_api.router, chats_api.router, dictation_api.router, site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, meeting_access.router, room_icons_api.router, room_journal.router, maps_api.router, admin_system.router, admin_network.router, admin_restore.router, calendar_api.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (desktop_api.router, signing_api.router, chats_api.router, dictation_api.router, site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, meeting_access.router, room_icons_api.router, room_journal.router, maps_api.router, admin_system.router, admin_security.router, admin_network.router, admin_restore.router, calendar_api.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(api_docs.router)     # /api/docs: общедоступная документация (выполнение запросов остаётся под аутентификацией)

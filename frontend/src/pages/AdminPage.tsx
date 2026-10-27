@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, authSecurityFields, captchaFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, authSecurityFields, captchaFields, loginProtectionFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -23,6 +23,7 @@ import RoomsAdmin from "./admin/RoomsAdmin";
 import OutlookAdmin from "./admin/OutlookAdmin";
 import { confirmLeave } from "../dirtyGuard";
 import SipAdmin from "./admin/SipAdmin";
+import NetTrustAdmin from "./admin/NetTrustAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
 import RestoreAdmin from "./admin/RestoreAdmin";
@@ -92,9 +93,13 @@ const GROUPS: Group[] = [
     { id: "auth_security", label: "Вход и сеансы", render: () => (
       <SettingsForm key="auth_security" group="auth_security" title="Вход: сеансы, приложение Windows, двухфакторная аутентификация (TOTP)" fields={authSecurityFields}
         intro="Одноразовые коды из приложения-аутентификатора. Если защита обязательна, пользователь при первом входе настраивает её сам (QR-код и резервные коды). Потерянное устройство — «Пользователи → сбросить» или консольная команда admin-reset для локального администратора." />) },
+    { id: "login_protection", label: "Защита входа от перебора", render: () => (
+      <SettingsForm key="login_protection" group="login_protection" title="Защита входа от перебора паролей" fields={loginProtectionFields}
+        intro="Серверные счётчики по учётной записи, по IP-адресу, по их паре и по общей интенсивности запросов; состояние хранится в Redis, поэтому закрытие браузера, режим инкогнито, очистка cookie, смена User-Agent и перезапуск не сбрасывают защиту. Реакции нарастают: CAPTCHA → замедление → защита каталога → временная блокировка адреса. Учётная запись целиком не блокируется. Пороги CAPTCHA — в разделе «CAPTCHA»." />) },
     { id: "captcha", label: "CAPTCHA", render: () => (
-      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (защита от перебора)" fields={captchaFields}
-        intro="Локальная проверка без внешних сервисов: браузер решает небольшую вычислительную задачу (доли секунды). Защищает вход, вход гостя по ссылке и создание временной переговорки." />) },
+      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (проверка «я не робот»)" fields={captchaFields}
+        intro="Локальная проверка без внешних сервисов. По умолчанию — картинка с символами: после заданного числа неудачных попыток сервер не принимает вход без правильно введённых символов. Защищает вход, вход гостя по ссылке и создание временной переговорки. CAPTCHA — не единственная защита: перебор ограничивается и без неё." />) },
+    { id: "net_trust", label: "Сеть и IP-адреса (прокси, WAF)", render: () => <NetTrustAdmin /> },
     { id: "crypto", label: "Шифрование хранилища", render: () => <CryptoAdmin /> },
     { id: "audit", label: "Журнал аудита", render: () => <AuditAdmin /> },
   ] },
@@ -141,7 +146,7 @@ const KEYWORDS: Record<string, string> = {
   restore: "восстановление найти материалы перенос хранилища записи стенограммы протоколы паспорт manifest сканирование диск потерялись не отображаются",
   network: "порты межсетевой экран firewall nat udp tcp livekit публикация интернет reverse proxy turn stun доступность сеть",
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
-  crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", desktop_signing: "windows приложение клиент подпись сертификат code signing authenticode msi exe установщик gpo ad cs обновления", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
+  crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", desktop_signing: "windows приложение клиент подпись сертификат code signing authenticode msi exe установщик gpo ad cs обновления", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha картинка", login_protection: "перебор пароль блокировка ip защита входа брутфорс замедление nat", net_trust: "ip адрес клиента прокси waf x-forwarded-for reverse proxy доверенные заголовок cloudflare", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
   public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок атс инструкция порты rtp журнал вызовов", sip_policy: "телефония политика лимит звонков запрещённые направления перебор", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };

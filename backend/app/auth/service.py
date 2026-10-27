@@ -39,6 +39,11 @@ _MESSAGES = {
     "throttled": ("Слишком много неудачных попыток. Повторите позже.", 429),
     "not_configured": ("Вход доменной учётной записью пока не настроен. Войдите локальным администратором и подключите каталог в разделе «LDAP и доступ».", 503),
 }
+class _LocalBad:
+    """Признак «локальная запись есть, пароль неверен» (отличается от None — «такой локальной записи нет»)."""
+
+
+_LOCAL_BAD = _LocalBad()
 _UNAVAILABLE = ("Служба входа временно недоступна. Повторите позже или обратитесь к администратору.", 503)
 
 
@@ -113,30 +118,40 @@ class AuthService:
         self._sessions = sessions
         self.settings_svc = None  # services.settings.SettingsService — группы доступа из веб-настроек; задаётся при запуске
 
+    @staticmethod
+    def _throttled(exc: ThrottledError) -> "AuthError":
+        """Блокировка — 429 с общим текстом (причина не раскрывается); недоступное хранилище защиты — 503: вход не открывается без защиты, но и не «забывается» навсегда."""
+        if getattr(exc, "unavailable", False):
+            return AuthError("protection_unavailable", "Защита входа временно недоступна. Повторите попытку через минуту.", 503, retry_after=exc.retry_after)
+        return AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after)
+
     async def login(self, db: AsyncSession, login: str, password: str, ip: str, ua: str = "", *, open_session: bool = True) -> LoginResult:
         """open_session=False — только проверка личности и допуска (вход в боковой панели Outlook: сеанс браузера не открывается и не занимает место в лимите сеансов)."""
         try:
             norm, _ = parse_login(login)
         except DirectoryError:
+            await self._throttle.record_failure((login or "")[:128], ip)
             raise AuthError("invalid_credentials", *_MESSAGES["invalid_credentials"]) from None
         if not password or len(password) > 512:
+            await self._throttle.record_failure(norm, ip)
             raise AuthError("invalid_credentials", *_MESSAGES["invalid_credentials"])
 
         try:
             await self._throttle.check(norm, ip)
         except ThrottledError as exc:
             log.warning("Вход отклонён throttle", extra={"login_hash_only": True, "retry_after": exc.retry_after})
-            raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
+            raise self._throttled(exc) from None
 
         local = await self._local_login(db, norm, password, ip, ua, open_session=open_session)
-        if local is not None:
+        local_bad = local is _LOCAL_BAD                 # пароль локальной записи неверен: возможно, это одноимённый доменный пользователь — решает каталог; неудача считается ОДИН раз
+        if local is not None and not local_bad:
             return local
 
         try:
             identity: DirectoryIdentity = await asyncio.to_thread(self._dir.authenticate, login.strip() if "\\" in login or "@" in login else norm, password)
         except DirectoryError as exc:
             code = "invalid_credentials" if exc.code in ("user_not_found", "ambiguous_user") else exc.code
-            if code == "invalid_credentials":
+            if code == "invalid_credentials" or local_bad:
                 await self._throttle.record_failure(norm, ip)
             if code in _MESSAGES:
                 log.info("Вход не выполнен", extra={"reason": code})
@@ -148,12 +163,12 @@ class AuthService:
         decision = await self.access_decision(db, identity)
         is_admin = decision.is_admin
         if not decision.allowed:
-            await self._throttle.record_success(norm)  # пароль верный — это не перебор
+            await self._throttle.record_success(norm, ip)  # пароль верный — это не перебор
             err = AuthError("access_denied", *_MESSAGES["access_denied"])
             err.reason = decision.reason               # для журнала (в ответ пользователю не попадает)
             raise err
 
-        await self._throttle.record_success(norm)
+        await self._throttle.record_success(norm, ip)
         user = await self._upsert_user(db, identity, is_admin)
         if not user.is_active:  # отключён администратором в системе (независимо от AD)
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
@@ -235,7 +250,7 @@ class AuthService:
         try:
             await self._throttle.check(norm, ip)
         except ThrottledError as exc:
-            raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
+            raise self._throttled(exc) from None
         attempts = await r.incr(f"totp:att:{_th(token)}")
         if attempts == 1:
             await r.expire(f"totp:att:{_th(token)}", CHALLENGE_TTL_S)
@@ -247,7 +262,7 @@ class AuthService:
             await self._throttle.record_failure(norm, ip)
             raise AuthError("invalid_code", "Неверный код. Проверьте время на телефоне или используйте резервный код.", 401)
         await r.delete(key, f"totp:att:{_th(token)}")
-        await self._throttle.record_success(norm)
+        await self._throttle.record_success(norm, ip)
         user.last_login_at = utcnow()
         await db.commit()
         cfg2 = await self._totp_cfg(db)
@@ -372,7 +387,7 @@ class AuthService:
         try:
             await self._throttle.check(norm, ip)
         except ThrottledError as exc:
-            raise AuthError("throttled", _MESSAGES["throttled"][0], 429, retry_after=exc.retry_after) from None
+            raise self._throttled(exc) from None
         user = await db.get(User, su.user_id)
         ok = False
         if user is not None and user.is_active:
@@ -385,7 +400,7 @@ class AuthService:
                 except DirectoryError:
                     ok = False
         if ok:
-            await self._throttle.record_success(norm)
+            await self._throttle.record_success(norm, ip)
         else:
             await self._throttle.record_failure(norm, ip)
         return ok
@@ -414,11 +429,10 @@ class AuthService:
         if row is None or not row.password_hash:
             return None
         if not verify_room_password(row.password_hash, password):
-            await self._throttle.record_failure(norm, ip)
-            return None   # возможно, это одноимённый доменный пользователь — пусть решает каталог
+            return _LOCAL_BAD   # возможно, это одноимённый доменный пользователь — пусть решает каталог (неудачу записывает login())
         if not row.is_active:
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)
-        await self._throttle.record_success(norm)
+        await self._throttle.record_success(norm, ip)
         row.last_login_at = utcnow()
         await db.commit()
         res = await self._open(db, row, is_admin=True, groups=[], local=True, must_change=row.must_change_password, ip=ip, ua=ua, open_session=open_session)

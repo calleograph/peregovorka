@@ -11,6 +11,9 @@ from app.main import create_app
 from app.models import Base, Meeting, MeetingParticipant, Room, RoomAcl, RoomModerator, TranscriptSegment, User, utcnow
 from conftest import FakeDirectory, ADMIN_GROUP, STAFF_GROUP
 from app.services import transfer as _tr
+if os.environ.get('LIVE_FIXED_CAPTCHA'):          # только стенд: ответ CAPTCHA известен сценарию (алфавит из одного символа)
+    from app.security import imgcaptcha as _ic
+    _ic.ALPHABET = 'A'
 _tr.SETTLE_S, _tr.RECENT_S, _tr.GRACE_S, _tr.READ_QUIET_S = 0, 0, 3, 4          # стенд: перенос без ожидания «устоявшейся» встречи, отсрочка удаления источника — секунды
 
 DATA = os.environ.get("LIVE_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))

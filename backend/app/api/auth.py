@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
@@ -12,7 +14,7 @@ from ..auth.deps import SessionUser, client_ip, get_db, require_user
 from ..auth.service import AuthError
 from ..auth.directory import parse_login
 from ..config import origin_allowed
-from ..services import captcha
+from ..security.gate import login_gate
 from ..services.audit import audit_now
 from ..models import User
 from ..security.passwords import verify_room_password
@@ -39,7 +41,7 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
         # адрес установки — не секрет (он же в письмах и ссылках); проверку Origin это не ослабляет
         raise HTTPException(status_code=403, detail=f"Недопустимый Origin. Откройте приложение по адресу {settings.app_public_url.rstrip('/')} (вход по IP, localhost или через туннель отклоняется защитой; дополнительный адрес администратор добавляет в ALLOWED_ORIGINS).")
     ip = client_ip(request)
-    await captcha.guard(request, "login")          # после порога неудач (или всегда) нужен решённый CAPTCHA-вызов
+    verdict = await login_gate(request, body.login, ip)     # блокировки, лимит запросов и CAPTCHA — по серверным счётчикам (запись, адрес, пара, общая интенсивность), не по cookie
     journal = request.app.state.journal
     ua = parse_client(request.headers.get("user-agent"))
     try:  # в журнал — только корректный логин: в поле «логин» люди нередко по ошибке вводят пароль
@@ -49,8 +51,6 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
     try:
         result = await request.app.state.auth.login(db, body.login, body.password, ip, request.headers.get("user-agent") or "")
     except AuthError as exc:
-        if exc.code in ("invalid_credentials", "throttled"):
-            await captcha.note_failure(request, "login")
         denied = exc.code in ("access_denied", "throttled")
         await audit_now(request.app, actor_user_id=None, actor_name=login_shown, action="auth.login_locked" if exc.code == "throttled" else "auth.login_denied" if exc.code == "access_denied" else "auth.login_failed",
                         target_type="user", target_id=login_shown[:80], ip=ip, result="denied" if denied else "failure", actor_type="user",
@@ -63,9 +63,12 @@ async def login(body: LoginIn, request: Request, response: Response, db: AsyncSe
         else:
             journal.emit("auth", "login_locked" if exc.code == "throttled" else "login_failed", level="warn", user=login_shown, ip=ip, client=ua,
                          message=exc.message, data={"code": exc.code, "retry_after": exc.retry_after, "http": exc.status})
+        if exc.code == "invalid_credentials":
+            await request.app.state.secevents.emit("login_failed", ip=ip, account=login_shown, result="denied", reason="неверный логин или пароль", component="auth", level="info")
+            if verdict.delay_s:
+                await asyncio.sleep(verdict.delay_s)                # замедление растёт с числом неудач с этого адреса: перебор дорожает, обычная опечатка — нет
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message, **exc.extra}, headers=headers) from None
-    await captcha.note_success(request, "login")
     if result.challenge:                       # пароль верен, нужен второй фактор: сессию и cookie выдаст /auth/login/totp
         response.headers["Cache-Control"] = "no-store"
         return JSONResponse({"totp_required": True, "challenge": result.challenge}, headers={"Cache-Control": "no-store"})

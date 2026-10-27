@@ -67,6 +67,8 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
         changed = await svc.update(db, group, body, actor=su.display_name)
         if group == "api":
             request.app.state.api_cfg_cache = None      # публичный API читает настройки с коротким кэшем; изменение действует сразу
+        if group == "net_trust":
+            await request.app.state.netcfg.refresh(svc, request.app.state.session_maker)     # определение адреса клиента меняется сразу в этом процессе (в остальных — не позже 10 с)
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     secrets = set(GROUPS[group].SECRETS)
@@ -86,6 +88,9 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=f"settings.{group}.update",
                       target_type="settings", target_id=group, ip=client_ip(request), details=details)
     await db.commit()
+    if group in ("captcha", "login_protection", "net_trust", "auth_security") and changed:       # значимые изменения правил безопасности — и в журнал безопасности
+        await request.app.state.secevents.emit("security_settings_changed", ip=client_ip(request), account=su.display_name, result="ok", reason=f"изменены настройки «{group}»: {', '.join(changed)[:200]}",
+                                               component="admin")
     return await svc.public(db, group)
 
 

@@ -33,16 +33,16 @@ def test_wrong_password_is_generic_and_unknown_user_looks_the_same(client):
 
 
 def test_throttle_stops_calls_to_ad_before_lockout_threshold(client, directory):
-    async def captcha_off():                          # CAPTCHA по умолчанию включается на тех же 20 неудачах; здесь проверяется именно блокировка входа
+    async def captcha_off():                          # CAPTCHA включается на тех же неудачах; здесь проверяется именно защита каталога
         async with client.app_obj.state.session_maker() as db:
             await client.app_obj.state.settings_svc.update(db, "captcha", {"mode": "off"}, actor="test")
     client.portal.call(captcha_off)
-    for _ in range(20):  # LOGIN_MAX_FAILURES_PER_USER по умолчанию = 20
+    for _ in range(10):  # «Защита входа»: после 10 неудач по записи попытки с неизвестного адреса в каталог не уходят
         assert client.post("/api/v1/auth/login", json={"login": "alice", "password": "bad"}).status_code == 401
     calls_before = directory.calls
     r = client.post("/api/v1/auth/login", json={"login": "alice", "password": "alice-pass"})  # даже верный пароль
     assert r.status_code == 429 and "Retry-After" in r.headers
-    assert 0 < int(r.headers["Retry-After"]) <= 300, "блокировка входа — 5 минут"
+    assert 0 < int(r.headers["Retry-After"]) <= 900, "защита каталога держится не дольше окна подсчёта"
     assert directory.calls == calls_before, "при блокировке в AD обращаться нельзя"
 
 

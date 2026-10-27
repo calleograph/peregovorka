@@ -26,7 +26,7 @@ import sys
 from redis.asyncio import Redis
 from sqlalchemy import delete as sa_delete
 
-from .auth.throttle import _h
+from .security.loginguard import LoginGuard
 from .config import Settings
 from .db import create_engine, create_session_maker
 from .models import UserBackupCode
@@ -89,7 +89,7 @@ async def _run(args: argparse.Namespace) -> int:
                 la.audit(db, f"console:{args.actor or 'server'}", action, str(user.id), {"user": user.sam_account_name})
                 await db.commit()
                 killed = await _drop_sessions(redis, str(user.id))
-                await redis.delete(*[k for u in (user.sam_account_name,) for k in (f"login:fail:user:{_h(u)}", f"login:lock:user:{_h(u)}")])
+                await LoginGuard(redis).reset_account(user.sam_account_name)
                 print(f"USERNAME={user.sam_account_name}")
                 print(f"PASSWORD={password}")
                 print(f"SESSIONS_CLOSED={killed}")

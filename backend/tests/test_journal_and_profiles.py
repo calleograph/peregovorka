@@ -204,7 +204,7 @@ def test_login_and_room_events_are_journaled_without_password(client):
     evs = events(client)
     names = [e["event"] for e in evs]
     assert {"login_ok", "login_failed", "logout", "app_started"} <= set(names)
-    bad = next(e for e in evs if e["event"] == "login_failed")
+    bad = next(e for e in evs if e["event"] == "login_failed" and e["category"] == "auth")
     assert bad["category"] == "auth" and bad["level"] == "warn" and bad["user"] == "alice" and "Chrome 130" in (bad["client"] or "") and "Windows" in bad["client"]
     assert "SuperSecret" not in json.dumps(evs, ensure_ascii=False)
 

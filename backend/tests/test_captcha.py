@@ -21,9 +21,9 @@ def solve(ch: dict, *, tamper: str = "") -> str:
     return base64.b64encode(json.dumps(p).encode()).decode()
 
 
-def _mode(client, mode="always", **extra):
+def _mode(client, mode="always", kind="pow", **extra):
     login(client, "root")
-    r = client.put("/api/v1/admin/settings/captcha", json={"mode": mode, "difficulty": 2000, **extra})
+    r = client.put("/api/v1/admin/settings/captcha", json={"mode": mode, "kind": kind, "difficulty": 2000, **extra})
     assert r.status_code == 200, r.text
     client.cookies.clear()
     client.headers.pop("X-CSRF-Token", None)
@@ -45,7 +45,7 @@ def test_challenge_roundtrip_unit():
     assert captcha.check_payload(solve(old))[0] == "expired"
 
 
-def test_default_mode_after_failures_not_required_at_first(client):
+def test_default_mode_after_failures_not_required_at_first(client):          # первая попытка проходит без проверки
     r = _login(client)
     assert r.status_code == 200                                         # по умолчанию проверка включается только после серии неудач
 
@@ -77,7 +77,10 @@ def test_after_failures_threshold_then_cleared_by_success(client):
     ok = _login(client, {"X-Captcha": solve(r.json()["detail"]["challenge"])})
     assert ok.status_code == 200
     client.cookies.clear()
-    assert _login(client).status_code == 200                             # успешный вход сбросил счётчик
+    # успешный вход сбрасывает счётчики записи и пары, но НЕ адреса: иначе перебор с одной верной записью обнулял бы сам себя. Пока окно не истекло, с этого адреса проверка остаётся
+    again = _login(client)
+    assert again.status_code == 428 and again.json()["detail"]["code"] == "captcha_required"
+    assert _login(client, {"X-Captcha": solve(again.json()["detail"]["challenge"])}).status_code == 200
 
 
 def test_rejected_solution_is_audited(client):
