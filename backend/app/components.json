@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.41.1",
+ "release": "0.41.2",
  "reviewed_at": "2026-10-27",
  "components": [
   {
@@ -145,7 +145,7 @@
    "group": "Видеосвязь и телефония",
    "pinned": "1.1.21",
    "tested": "1.1.21",
-   "reviewed_latest": "1.1.21",
+   "reviewed_latest": "1.2.0",
    "source": {
     "type": "pypi",
     "name": "livekit"
@@ -173,7 +173,14 @@
     "python_package": "livekit",
     "critical": true
    },
-   "bundle": "livekit"
+   "bundle": "livekit",
+   "deferred": {
+    "version": "1.2.0",
+    "reason": "Новый минор SDK, через который ASR-служба подключается к комнатам LiveKit. Приём звука и переподключение на стенде с 1.2.0 не проверялись, а выпуск 0.41.2 меняет только вид главной страницы.",
+    "issue": "DEP-10",
+    "recheck": "2026-11-10",
+    "plan": "Поднять 1.2.0 вместе с LiveKit Server (DEP-9) на стенде, пройти живые сценарии звука, записи и стенограммы, обновить constraints, requirements и compat.env."
+   }
   },
   {
    "key": "livekit_api_python",
@@ -503,7 +510,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704",
+   "digest": "sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -1009,7 +1016,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704",
+   "digest": "sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
