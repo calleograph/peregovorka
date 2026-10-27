@@ -1,10 +1,11 @@
 import { useRef, useState, type FormEvent } from "react";
 import { calendarApi, type CalendarStatus, type CreatedEvent } from "../calendarApi";
-import { buildCreateBody, defaultForm, DURATIONS, durationText, formError, localZone, newKey, REPEATS, WEEKDAYS, type CreateForm } from "../calendarView";
+import { buildCreateBody, defaultForm, DURATIONS, durationText, endOf, formError, localZone, newKey, REPEATS, WEEKDAYS, type CreateForm } from "../calendarView";
 import { Modal } from "../components/Dialogs";
 import { useToast } from "../components/Toast";
 import { copyText } from "../util";
 import { errText } from "./common";
+import { TimeField } from "./TimeField";
 import { Who } from "./Who";
 
 /** Новая встреча: событие создаётся в календаре самого сотрудника, приглашения рассылает Exchange. Курсор сразу в названии (Modal ставит фокус в первое поле). */
@@ -40,38 +41,48 @@ export function CreateDialog({ status, initial, minutes, onClose, onCreated }: {
       </Modal>
     );
   }
+  const repeatLabel = REPEATS.find((r) => r.id === f.repeat)?.label ?? "";
+  const end = endOf(f.time, f.minutes);
   return (
     <Modal title="Новая встреча" onClose={onClose} wide>
       <form className="form cal-form" onSubmit={(e) => void submit(e)} noValidate>
-        <label>Название<input value={f.title} maxLength={200} onChange={(e) => set({ title: e.target.value })} placeholder="Например: Согласование бюджета" /></label>
-        <div className="cal-when">
-          <label>Дата<input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} /></label>
-          <label>Начало<input type="time" value={f.time} onChange={(e) => set({ time: e.target.value })} step={300} /></label>
-          <label>Длительность<select value={f.minutes} onChange={(e) => set({ minutes: Number(e.target.value) })}>{[...new Set([...DURATIONS, f.minutes])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{durationText(m)}</option>)}</select></label>
-        </div>
-        <label>Место<input value={f.location} maxLength={300} onChange={(e) => set({ location: e.target.value })} placeholder="Переговорная, адрес или оставьте пустым" /></label>
-        <fieldset className="cal-repeat">
-          <legend>Повторение</legend>
-          <div className="row wrap">
-            <select aria-label="Повторение" value={f.repeat} onChange={(e) => set({ repeat: e.target.value as CreateForm["repeat"] })}>{REPEATS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>
-            {f.repeat === "weekly" && <span className="cal-days" role="group" aria-label="Дни недели">{WEEKDAYS.map((w, i) => <button key={w} type="button" className={`chip ${f.days.includes(i) ? "on" : ""}`} aria-pressed={f.days.includes(i)} onClick={() => set({ days: f.days.includes(i) ? f.days.filter((d) => d !== i) : [...f.days, i] })}>{w}</button>)}</span>}
-            {f.repeat !== "none" && (
-              <>
-                <select aria-label="Окончание" value={f.endMode} onChange={(e) => set({ endMode: e.target.value as CreateForm["endMode"] })}><option value="never">Без окончания</option><option value="count">Повторить N раз</option><option value="date">До даты</option></select>
-                {f.endMode === "count" && <input type="number" aria-label="Число повторений" min={1} max={999} value={f.count} onChange={(e) => set({ count: Number(e.target.value) })} style={{ width: 80 }} />}
-                {f.endMode === "date" && <input type="date" aria-label="Повторять до" value={f.until} min={f.date} onChange={(e) => set({ until: e.target.value })} />}
-              </>
+        <div className="cal-form-body">
+          <label className="cal-f">Название<input value={f.title} maxLength={200} onChange={(e) => set({ title: e.target.value })} placeholder="Например: Согласование бюджета" /></label>
+          <div className="cal-when">
+            <label className="cal-f">Дата<input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} /></label>
+            <div className="cal-f"><span className="cal-fl">Начало</span><TimeField label="Начало" value={f.time} onChange={(time) => set({ time })} /></div>
+            <label className="cal-f">Длительность<select value={f.minutes} onChange={(e) => set({ minutes: Number(e.target.value) })}>{[...new Set([...DURATIONS, f.minutes])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{durationText(m)}</option>)}</select></label>
+          </div>
+          {end && <p className="cal-end" aria-live="polite">{f.time} – {end.text}{end.nextDay ? " (на следующий день)" : ""}</p>}
+          <label className="cal-f">Место<input value={f.location} maxLength={300} onChange={(e) => set({ location: e.target.value })} placeholder="Переговорная, адрес или оставьте пустым" /></label>
+          <Who list={f.attendees} onChange={(attendees) => set({ attendees })} onError={setErr} />
+          <details className="cal-sect">
+            <summary>Повторение<span>{repeatLabel}</span></summary>
+            <div className="row wrap cal-sect-body">
+              <select aria-label="Повторение" value={f.repeat} onChange={(e) => set({ repeat: e.target.value as CreateForm["repeat"] })}>{REPEATS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>
+              {f.repeat === "weekly" && <span className="cal-days" role="group" aria-label="Дни недели">{WEEKDAYS.map((w, i) => <button key={w} type="button" className={`chip ${f.days.includes(i) ? "on" : ""}`} aria-pressed={f.days.includes(i)} onClick={() => set({ days: f.days.includes(i) ? f.days.filter((d) => d !== i) : [...f.days, i] })}>{w}</button>)}</span>}
+              {f.repeat !== "none" && (
+                <>
+                  <select aria-label="Окончание" value={f.endMode} onChange={(e) => set({ endMode: e.target.value as CreateForm["endMode"] })}><option value="never">Без окончания</option><option value="count">Повторить N раз</option><option value="date">До даты</option></select>
+                  {f.endMode === "count" && <input type="number" aria-label="Число повторений" min={1} max={999} value={f.count} onChange={(e) => set({ count: Number(e.target.value) })} style={{ width: 88 }} />}
+                  {f.endMode === "date" && <input type="date" aria-label="Повторять до" value={f.until} min={f.date} onChange={(e) => set({ until: e.target.value })} style={{ width: 168 }} />}
+                </>
+              )}
+            </div>
+          </details>
+          <details className="cal-sect">
+            <summary>Описание<span>{f.description.trim() ? "добавлено" : "необязательно"}</span></summary>
+            <div className="cal-sect-body"><textarea aria-label="Описание" value={f.description} maxLength={4000} rows={3} onChange={(e) => set({ description: e.target.value })} placeholder="Повестка или пояснение для участников" /></div>
+          </details>
+          <div className="cal-conf-block">
+            <label className="check"><input type="checkbox" checked={f.conference} onChange={(e) => set({ conference: e.target.checked })} /><span className="check-body">Создать конференцию Peregovorka<span className="help">Ссылка попадёт в приглашение.</span></span></label>
+            {status.guests_allowed && f.conference && (
+              <label className="check"><input type="checkbox" checked={f.guest} onChange={(e) => set({ guest: e.target.checked })} /><span className="check-body">Добавить гостевую ссылку для внешних участников<span className="help">Гость входит без учётной записи и не видит историю и материалы организации.</span></span></label>
             )}
           </div>
-        </fieldset>
-        <Who list={f.attendees} onChange={(attendees) => set({ attendees })} onError={setErr} />
-        <label>Описание<textarea value={f.description} maxLength={4000} rows={3} onChange={(e) => set({ description: e.target.value })} placeholder="Повестка или пояснение для участников (необязательно)" /></label>
-        <label className="check"><input type="checkbox" checked={f.conference} onChange={(e) => set({ conference: e.target.checked })} /> Создать конференцию Peregovorka (ссылка попадёт в приглашение)</label>
-        {status.guests_allowed && f.conference && (
-          <label className="check"><input type="checkbox" checked={f.guest} onChange={(e) => set({ guest: e.target.checked })} /><span className="check-body">Добавить гостевую ссылку для внешних участников<span className="help">Гость входит без учётной записи и не видит историю и материалы организации.</span></span></label>
-        )}
-        {err && <div className="alert error" role="alert">{err}</div>}
-        <div className="row"><button className="btn primary" disabled={busy}>{busy ? "Создаём…" : "Создать и разослать приглашения"}</button><button type="button" className="btn ghost" onClick={onClose} disabled={busy}>Отмена</button></div>
+          {err && <div className="alert error" role="alert">{err}</div>}
+        </div>
+        <div className="cal-form-foot"><button className="btn primary" disabled={busy}>{busy ? "Создаём…" : "Создать и разослать приглашения"}</button><button type="button" className="btn ghost" onClick={onClose} disabled={busy}>Отмена</button></div>
       </form>
     </Modal>
   );

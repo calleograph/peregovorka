@@ -16,7 +16,7 @@ import { useToast } from "../components/Toast";
 
 const REFRESH_MS = 5 * 60_000;          // фоновое обновление открытой страницы: не чаще раза в пять минут (сервер к тому же кэширует ответ Exchange)
 
-/** Узкое окно (телефон, узкая панель): ширина до 640 px. */
+/** Узкое окно (телефон, узкая панель, масштаб 200 % на ноутбуке): ширина до 760 px; неделя из семи колонок там нечитаема, вместо неё — день. */
 function useNarrow(max = 640): boolean {
   const q = `(max-width: ${max}px)`;
   const [n, setN] = useState(() => typeof window !== "undefined" && window.matchMedia?.(q).matches === true);
@@ -108,7 +108,7 @@ function Connect({ status, onDone }: { status: CalendarStatus; onDone: (s: Calen
 export default function CalendarPage() {
   const init = useMemo(loadSession, []);                         // вид, дата, календари и рабочие часы помнятся между переходами по разделам
   const [status, setStatus] = useState<CalendarStatus | null>(null);
-  const narrow = useNarrow();
+  const narrow = useNarrow(760);
   const [wanted, setMode] = useState<ViewMode>(init.mode);
   const mode: ViewMode = narrow && wanted === "week" ? "day" : wanted;          // семь колонок на узком экране нечитаемы: там неделя заменена днём
   const [anchor, setAnchor] = useState(init.anchor);
@@ -123,6 +123,7 @@ export default function CalendarPage() {
   const [open, setOpen] = useState<CalEvent | null>(null);
   const [creating, setCreating] = useState<{ at: Date; minutes?: number } | null>(null);
   const seq = useRef(0);
+  const jump = useRef<HTMLInputElement>(null);
   const [toast, show] = useToast();
   const today = new Date();
   const range = useMemo(() => rangeFor(mode, anchor), [mode, anchor.getFullYear(), anchor.getMonth(), anchor.getDate()]);        // eslint-disable-line react-hooks/exhaustive-deps
@@ -175,52 +176,66 @@ export default function CalendarPage() {
   return (
     <section className="cal-page">
       <header className="cal-head">
-        <h1>Календарь</h1>
-        {status.can_write && <button className="btn primary" onClick={() => setCreating({ at: nextSlot(new Date()) })}><Icon name="plus" size={15} /> Создать встречу</button>}
-        <div className="cal-nav" role="group" aria-label="Период">
-          <button className="btn" onClick={() => go(new Date())}>Сегодня</button>
-          <button className="btn icon" aria-label="Назад" title="Назад" onClick={() => go(shift(mode, anchor, -1))}><Icon name="chevronL" size={16} /></button>
-          <button className="btn icon" aria-label="Вперёд" title="Вперёд" onClick={() => go(shift(mode, anchor, 1))}><Icon name="chevronR" size={16} /></button>
-          <label className="cal-jump"><span className="sr-only">Перейти к дате</span><input type="date" value={dateInput(anchor)} onChange={(e) => { if (e.target.value) go(new Date(`${e.target.value}T12:00`)); }} aria-label="Перейти к дате" /></label>
+        <div className="cal-head-a">
+          <h1>Календарь</h1>
+          {status.can_write && <button className="btn primary" onClick={() => setCreating({ at: nextSlot(new Date()) })}><Icon name="plus" size={15} /> Создать встречу</button>}
         </div>
-        <h2 className="cal-period" aria-live="polite">{periodTitle(mode, anchor)}</h2>
-        <div className="spacer" />
-        <div className="seg" role="group" aria-label="Вид">{MODES.filter((m) => !(narrow && m.id === "week")).map((m) => <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => pickMode(m.id)}>{m.label}</button>)}</div>
-        {calList.length > 1 && (
-          <Pop label="Календари" icon="calendar" align="right">
-            <fieldset className="cal-cals"><legend>Показывать календари</legend>
-              {calList.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={cals.includes(c.id)} onChange={() => toggleCal(c.id)} /> {c.name}{c.default ? " (основной)" : ""}</label>)}
-              <p className="muted small">Только календари вашего ящика. Новые встречи создаются в основном календаре.</p>
-            </fieldset>
-          </Pop>
-        )}
-        {(mode === "week" || mode === "day") && (
-          <Pop label="Рабочие часы" icon="gear" align="right">
-            <fieldset className="cal-cals"><legend>Рабочие часы</legend>
-              <div className="row wrap">
-                <label>с <select value={work.from} onChange={(e) => pickWork({ from: Number(e.target.value) })}>{hoursOptions.slice(0, 23).map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</select></label>
-                <label>до <select value={work.to} onChange={(e) => pickWork({ to: Number(e.target.value) })}>{hoursOptions.slice(1).map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</select></label>
-              </div>
-              <label className="check"><input type="checkbox" checked={work.onlyWork} onChange={(e) => pickWork({ onlyWork: e.target.checked })} /> Показывать только рабочие часы</label>
-              <p className="muted small">События вне рабочих часов не скрываются: сетка расширяется до них.</p>
-            </fieldset>
-          </Pop>
-        )}
-        <button className="btn" onClick={() => void load(true)} disabled={loading} title="Обновить из Exchange"><Icon name="retry" size={15} /> {loading ? "Обновляем…" : "Обновить"}</button>
+        <div className="cal-head-n">
+          <div className="cal-nav" role="group" aria-label="Период">
+            <button className="btn" onClick={() => go(new Date())}>Сегодня</button>
+            <button className="btn icon" aria-label="Назад" title="Назад" onClick={() => go(shift(mode, anchor, -1))}><Icon name="chevronL" size={16} /></button>
+            <button className="btn icon" aria-label="Вперёд" title="Вперёд" onClick={() => go(shift(mode, anchor, 1))}><Icon name="chevronR" size={16} /></button>
+            <span className="cal-jump">
+              <button type="button" className="btn icon" aria-label="Перейти к дате" title="Перейти к дате" onClick={() => { const i = jump.current; if (!i) return; try { i.showPicker(); } catch { i.focus(); i.click(); } }}><Icon name="calendar" size={16} /></button>
+              <input ref={jump} type="date" tabIndex={-1} aria-hidden value={dateInput(anchor)} onChange={(e) => { if (e.target.value) go(new Date(`${e.target.value}T12:00`)); }} />
+            </span>
+          </div>
+          <h2 className="cal-period" aria-live="polite">{periodTitle(mode, anchor)}</h2>
+        </div>
+        <div className="cal-head-b">
+          <div className="seg" role="group" aria-label="Вид">{MODES.filter((m) => !(narrow && m.id === "week")).map((m) => <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => pickMode(m.id)}>{m.label}</button>)}</div>
+          {calList.length > 1 && (
+            <Pop label="Календари" icon="calendar" align="right">
+              <fieldset className="cal-cals"><legend>Показывать календари</legend>
+                {calList.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={cals.includes(c.id)} onChange={() => toggleCal(c.id)} /> {c.name}{c.default ? " (основной)" : ""}</label>)}
+                <p className="muted small">Только календари вашего ящика. Новые встречи создаются в основном календаре.</p>
+              </fieldset>
+            </Pop>
+          )}
+          {(mode === "week" || mode === "day") && (
+            <Pop label="Рабочие часы" icon="gear" align="right">
+              <fieldset className="cal-cals"><legend>Рабочие часы</legend>
+                <div className="row wrap">
+                  <label>с <select value={work.from} onChange={(e) => pickWork({ from: Number(e.target.value) })}>{hoursOptions.slice(0, 23).map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</select></label>
+                  <label>до <select value={work.to} onChange={(e) => pickWork({ to: Number(e.target.value) })}>{hoursOptions.slice(1).map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</select></label>
+                </div>
+                <label className="check"><input type="checkbox" checked={work.onlyWork} onChange={(e) => pickWork({ onlyWork: e.target.checked })} /> Показывать только рабочие часы</label>
+                <p className="muted small">События вне рабочих часов не скрываются: сетка расширяется до них.</p>
+              </fieldset>
+            </Pop>
+          )}
+          <button className={`btn icon cal-refresh${loading ? " busy" : ""}`} onClick={() => void load(true)} disabled={loading} aria-label={loading ? "Обновляем…" : "Обновить из Exchange"} title="Обновить из Exchange"><Icon name="retry" size={16} /></button>
+        </div>
       </header>
-      <div className={`cal-health h-${health.kind}`} role="status" aria-live="polite">
-        <span className="dot" aria-hidden /> <span>{health.text}</span>
-        {(health.kind === "down" || health.kind === "stale") && <button className="linkish" onClick={() => void load(true)}>Повторить</button>}
-        {health.kind === "relogin" && <button className="linkish" onClick={() => { void loadStatus(); }}>Подключить заново</button>}
+      <div className="cal-sub">
+        <ul className="cal-legend" aria-label="Обозначения">
+          <li className="t-meeting">Разовая встреча</li><li className="t-series">Повторяющаяся</li><li className="t-plain">Событие Outlook</li><li className="t-cancelled"><s>Отменено</s></li>
+          <li className="lg-conf"><span className="cal-conf" aria-hidden><Icon name="video" size={11} /></span> Конференция Peregovorka</li>
+        </ul>
+        {(health.kind === "ok" || health.kind === "sync") && <div className={`cal-health h-${health.kind}`} role="status" aria-live="polite"><span className="dot" aria-hidden /> <span>{health.text}</span></div>}
       </div>
-      <ul className="cal-legend" aria-label="Обозначения">
-        <li className="t-meeting">Разовая встреча</li><li className="t-series"><Icon name="retry" size={12} /> Повторяющаяся</li><li className="t-plain">Событие Outlook</li><li className="t-cancelled"><s>Отменено</s></li>
-        <li className="lg-conf"><span className="cal-conf" aria-hidden><Icon name="video" size={11} /></span> Конференция Peregovorka</li>
-      </ul>
+      {health.kind !== "ok" && health.kind !== "sync" && (
+        <div className={`cal-health h-${health.kind}`} role="status" aria-live="polite">
+          <span className="dot" aria-hidden /> <span className="cal-health-text">{health.text}</span>
+          {(health.kind === "down" || health.kind === "stale") && <button className="linkish" onClick={() => void load(true)}>Повторить</button>}
+          {health.kind === "relogin" && <button className="linkish" onClick={() => { void loadStatus(); }}>Подключить заново</button>}
+          {health.detail && <details className="cal-health-more"><summary>Подробности</summary><code>{health.detail}</code></details>}
+        </div>
+      )}
       <div className="cal-view" aria-busy={loading}>
         {mode === "month" && <MonthView events={events} anchor={anchor} today={today} onOpen={setOpen} onDay={toDay} />}
-        {mode === "week" && <Grid events={events} from={range.from} to={range.to} today={today} work={work} onOpen={setOpen} onDay={toDay} onSelect={status.can_write ? (at, minutes) => setCreating({ at, minutes }) : undefined} />}
-        {mode === "day" && <Grid events={events} from={range.from} to={range.to} today={today} work={work} onOpen={setOpen} onSelect={status.can_write ? (at, minutes) => setCreating({ at, minutes }) : undefined} />}
+        {mode === "week" && <Grid events={events} emptyHint={!!data && !err && !data.error} from={range.from} to={range.to} today={today} work={work} onOpen={setOpen} onDay={toDay} onSelect={status.can_write ? (at, minutes) => setCreating({ at, minutes }) : undefined} />}
+        {mode === "day" && <Grid events={events} emptyHint={!!data && !err && !data.error} from={range.from} to={range.to} today={today} work={work} onOpen={setOpen} onSelect={status.can_write ? (at, minutes) => setCreating({ at, minutes }) : undefined} />}
         {mode === "list" && <ListView events={events} from={range.from} to={range.to} onOpen={setOpen} />}
       </div>
       <footer className="cal-foot muted small">

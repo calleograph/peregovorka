@@ -11,6 +11,7 @@ import { copyText } from "../util";
 import { useFocusOnMount } from "../useInitialFocus";
 import { localZone } from "../calendarView";
 import { errText, pathOf } from "./common";
+import { TimeField } from "./TimeField";
 import { Who } from "./Who";
 
 const RESPONSE: Record<string, string> = {
@@ -133,18 +134,20 @@ export function EventDialog({ ev, status, onClose, onChanged }: { ev: CalEvent; 
         )}
         {mode === "edit" && (
           <form className="form cal-form" ref={focusOnMount} onSubmit={(e) => void save(e)} noValidate>
-            <label>Название<input value={name} maxLength={200} onChange={(e) => setName(e.target.value)} /></label>
+            <div className="cal-form-body">
+            <label className="cal-f">Название<input value={name} maxLength={200} onChange={(e) => setName(e.target.value)} /></label>
             <div className="cal-when">
-              <label>Дата<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-              <label>Начало<input type="time" value={time} onChange={(e) => setTime(e.target.value)} step={300} /></label>
-              <label>Длительность<select value={mins} onChange={(e) => setMins(Number(e.target.value))}>{[...new Set([...DURATIONS, mins])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{durationText(m)}</option>)}</select></label>
+              <label className="cal-f">Дата<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+              <div className="cal-f"><span className="cal-fl">Начало</span><TimeField label="Начало" value={time} onChange={setTime} /></div>
+              <label className="cal-f">Длительность<select value={mins} onChange={(e) => setMins(Number(e.target.value))}>{[...new Set([...DURATIONS, mins])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{durationText(m)}</option>)}</select></label>
             </div>
-            <label>Место<input value={place} maxLength={300} onChange={(e) => setPlace(e.target.value)} /></label>
+            <label className="cal-f">Место<input value={place} maxLength={300} onChange={(e) => setPlace(e.target.value)} /></label>
             <Who list={people ?? initialPeople} onChange={setPeople} onError={setErr} />
             {occurrence && <ScopePick value={scope} onChange={setScope} what="изменить" />}
             {occurrence && scope === "series" && <p className="muted small">В серии изменятся время суток и длительность всех занятий, дата начала серии останется прежней.</p>}
             {err && <div className="alert error" role="alert">{err}</div>}
-            <div className="row"><button className="btn primary" disabled={busy}>{busy ? "Сохраняем…" : "Сохранить и уведомить участников"}</button><button type="button" className="btn ghost" onClick={() => setMode("view")} disabled={busy}>Назад</button></div>
+            </div>
+            <div className="cal-form-foot"><button className="btn primary" disabled={busy}>{busy ? "Сохраняем…" : "Сохранить и уведомить участников"}</button><button type="button" className="btn ghost" onClick={() => setMode("view")} disabled={busy}>Назад</button></div>
           </form>
         )}
         {mode === "cancel" && (

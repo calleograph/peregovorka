@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, buildCreateBody, cleanWork, DEFAULT_WORK, FULL_DAY, gridWindow, isConference, selectionOf, timeAt, toneOf, dayKey, defaultForm, describe as describeEvent, formError, groupByDay, layoutDay, newKey, nextSlot, rangeFor, shift, startOfWeek, title, type CalEvent, type CreateForm } from "./calendarView";
+import { addDays, buildCreateBody, cleanWork, DEFAULT_WORK, endOf, FULL_DAY, gridWindow, isConference, selectionOf, timeAt, toneOf, dayKey, defaultForm, describe as describeEvent, formError, groupByDay, layoutDay, newKey, nextSlot, rangeFor, shift, startOfWeek, title, type CalEvent, type CreateForm } from "./calendarView";
 
 const ev = (over: Partial<CalEvent> = {}): CalEvent => ({ id: "1", source: "exchange", title: "Встреча", start: "2026-10-28T07:00:00Z", end: "2026-10-28T08:00:00Z", all_day: false, kind: "meeting", status: "scheduled", recurring: false,
   location: null, etag: null, room_id: null, mine: false, join_url: null, guest_url: null, editable: false, ...over });
@@ -79,10 +79,19 @@ describe("раскладка суток", () => {
     const p = place([at(9, 0, 10, 0, "a"), at(9, 30, 10, 30, "b"), at(14, 0, 15, 0, "c")]);
     expect(p.find((x) => x.slice.ev.id === "c")!.cols).toBe(1);
   });
-  it("очень короткое событие не тоньше 20 минут; событие на весь день в сетку часов не попадает", () => {
+  it("очень короткое событие не тоньше 30 минут (одна строка текста); событие на весь день в сетку часов не попадает", () => {
     const p = place([at(9, 0, 9, 5, "short"), ev({ id: "all", all_day: true })]);
     expect(p).toHaveLength(1);
-    expect(p[0].height).toBeCloseTo(20 / 1440);
+    expect(p[0].height).toBeCloseTo(30 / 1440);
+    expect(p[0].top).toBeCloseTo(9 * 60 / 1440);                 // начало остаётся на своей отметке времени
+  });
+  it("короткие встречи 15 и 30 минут подряд и внахлёст не накладываются: стоят в соседних колонках", () => {
+    const p = place([at(12, 0, 12, 15, "a"), at(12, 15, 12, 30, "b"), at(12, 0, 12, 30, "c")]);
+    const col = (id: string) => p.find((x) => x.slice.ev.id === id)!;
+    expect(col("a").cols).toBe(3);                                // «a» занимает до 12:30 на экране, поэтому «b» встаёт рядом, а не поверх
+    expect(new Set(p.map((x) => x.col)).size).toBe(3);
+    const q = place([at(12, 0, 12, 15, "x"), at(12, 30, 12, 45, "y")]);
+    expect(q.every((x) => x.cols === 1)).toBe(true);              // через полчаса — снова на всю ширину
   });
 });
 
@@ -229,4 +238,13 @@ describe("сутки перехода на летнее и зимнее врем
     const [p] = layoutDay(by.get(dayKey(day)) ?? [], day);
     expect(p.top + p.height).toBeCloseTo(1, 6);
   }));
+});
+
+describe("окончание встречи", () => {
+  it("по началу и длительности; за полночь — следующий день", () => {
+    expect(endOf("09:30", 45)).toEqual({ text: "10:15", nextDay: false });
+    expect(endOf("23:30", 60)).toEqual({ text: "00:30", nextDay: true });
+    expect(endOf("24:00", 30)).toBeNull();
+    expect(endOf("9:3", 30)).toBeNull();
+  });
 });

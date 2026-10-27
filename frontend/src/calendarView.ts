@@ -125,10 +125,10 @@ export interface Placed { slice: Slice; top: number; height: number; col: number
 export interface HourWindow { from: number; to: number }          // показываемые часы суток: [from, to), 0 ≤ from < to ≤ 24
 export const FULL_DAY: HourWindow = { from: 0, to: 24 };
 
-/** Раскладка суток по часам: top и height — доли показываемого окна (0..1); пересекающиеся события делят ширину на колонки. Событие короче 20 минут рисуется не тоньше 20 минут. */
+/** Раскладка суток по часам: top и height — доли показываемого окна (0..1); пересекающиеся события делят ширину на колонки. Событие короче 30 минут рисуется не тоньше 30 минут (одна строка текста): начало остаётся на своей отметке, точное время — во всплывающей карточке. */
 export function layoutDay(slices: Slice[], day: Date, win: HourWindow = FULL_DAY): Placed[] {
   const DAY = (win.to - win.from) * 3600_000;
-  const MIN = 20 * 60_000;
+  const MIN = 30 * 60_000;
   // положение — по «настенным» часам дня, а не по разности миллисекунд: в сутки перехода на летнее/зимнее время (23 или 25 часов) событие остаётся на своей отметке часов
   const wall = (t: Date): number => (sameDay(t, day) ? (t.getHours() * 60 + t.getMinutes()) * 60_000 : 24 * 3600_000) - win.from * 3600_000;
   const items = slices.filter((s) => !s.ev.all_day).map((slice) => {
@@ -225,6 +225,14 @@ export const REPEATS: { id: CreateForm["repeat"]; label: string }[] = [{ id: "no
 export const pad = (n: number): string => String(n).padStart(2, "0");
 export const dateInput = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const timeInput = (d: Date): string => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+/** Время окончания встречи («ЧЧ:ММ») по началу и длительности; nextDay — окончание уже на следующих сутках. Начало не время — null. */
+export function endOf(time: string, minutes: number): { text: string; nextDay: boolean } | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  const total = Number(m[1]) * 60 + Number(m[2]) + minutes;
+  return { text: `${pad(Math.floor(total / 60) % 24)}:${pad(total % 60)}`, nextDay: total >= 1440 };
+}
 
 /** Ближайшее «круглое» время начала: следующие полчаса. */
 export function nextSlot(now: Date): Date {

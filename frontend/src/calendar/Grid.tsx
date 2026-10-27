@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   dayKey, dayLabel, daysOf, gridWindow, groupByDay, layoutDay, sameDay, selectionOf, timeAt, timeLabel, WEEKDAYS, type CalEvent, type HourWindow, type WorkHours,
 } from "../calendarView";
-import { Chip } from "./common";
+import { Chip, chipSize } from "./common";
 
 export const HOUR_PX = 52;
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -10,8 +10,8 @@ const pad = (n: number) => String(n).padStart(2, "0");
 interface Sel { day: Date; a: Date; b: Date }
 
 /** Неделя и день: часы по вертикали, дни по горизонтали, события по реальному времени, пересекающиеся — рядом. Интервал выделяется мышью (или двойным щелчком — полчаса). */
-export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect }: {
-  events: CalEvent[]; from: Date; to: Date; today: Date; work: WorkHours; onOpen: (e: CalEvent) => void; onDay?: (d: Date) => void; onSelect?: (start: Date, minutes: number) => void;
+export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect, emptyHint }: {
+  events: CalEvent[]; emptyHint?: boolean; from: Date; to: Date; today: Date; work: WorkHours; onOpen: (e: CalEvent) => void; onDay?: (d: Date) => void; onSelect?: (start: Date, minutes: number) => void;
 }) {
   const days = daysOf(from, to);
   const by = useMemo(() => groupByDay(events, from, to), [events, from.getTime(), to.getTime()]);        // eslint-disable-line react-hooks/exhaustive-deps
@@ -22,6 +22,17 @@ export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect }:
   const [sel, setSel] = useState<Sel | null>(null);
   const drag = useRef<Sel | null>(null);
 
+  const [sbw, setSbw] = useState(0);
+  // заголовки дней стоят над колонками: ширина полосы прокрутки вычитается и из заголовка, иначе колонки и подписи расходятся
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const measure = () => setSbw(el.offsetWidth - el.clientWidth);
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
   useEffect(() => { const t = window.setInterval(() => setNow(new Date()), 60_000); return () => window.clearInterval(t); }, []);
   // начало прокрутки: рабочие часы (или раньше, если в периоде есть более ранние события)
   const firstHour = useMemo(() => {
@@ -70,7 +81,7 @@ export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect }:
   const offTop = Math.max(0, (work.from - win.from) / hours), offBottom = Math.max(0, (win.to - work.to) / hours);
 
   return (
-    <div className="cal-grid" style={{ ["--cols" as string]: days.length }}>
+    <div className="cal-grid" style={{ ["--cols" as string]: days.length, ["--sbw" as string]: `${sbw}px`, ["--hpx" as string]: `${HOUR_PX}px` }}>
       <div className="cal-gh">
         <span />
         {days.map((d) => <button key={dayKey(d)} type="button" className={`cal-dayhead${sameDay(d, today) ? " today" : ""}`} onClick={() => onDay?.(d)} disabled={!onDay}
@@ -94,7 +105,7 @@ export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect }:
                 {isToday && nowFrac >= 0 && nowFrac <= 1 && <i className="cal-now" style={{ top: `${nowFrac * 100}%` }} aria-hidden title={`Сейчас ${pad(now.getHours())}:${pad(now.getMinutes())}`} />}
                 {placed.map((p) => (
                   <div key={`${p.slice.ev.id}-${p.col}`} className="cal-slot" style={{ top: `${p.top * 100}%`, height: `${p.height * 100}%`, left: `${(p.col / p.cols) * 100}%`, width: `${100 / p.cols}%` }}>
-                    <Chip ev={p.slice.ev} onOpen={onOpen} />
+                    <Chip ev={p.slice.ev} onOpen={onOpen} size={chipSize(p.height * hours * HOUR_PX)} lines={Math.max(1, Math.floor((p.height * hours * HOUR_PX - 30) / 15.5))} />
                   </div>
                 ))}
                 {sel && sameDay(sel.day, d) && (() => { const b = selBox(sel); return <div className="cal-sel" style={{ top: b.top, height: b.height }} aria-hidden><span>{b.label}</span></div>; })()}
@@ -103,6 +114,7 @@ export function Grid({ events, from, to, today, work, onOpen, onDay, onSelect }:
           })}
         </div>
       </div>
+      {emptyHint && events.length === 0 && <p className="cal-emptyhint" role="status">В этот период событий нет{onSelect ? ": выделите интервал мышью, чтобы создать встречу" : ""}.</p>}
     </div>
   );
 }

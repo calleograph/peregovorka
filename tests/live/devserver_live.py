@@ -146,6 +146,13 @@ async def _dev_calendar(body: dict = Body(default={})):
         g.add_event(mb, id="INC", subject="Разбор инцидента", location={"displayName": "http://localhost:5173/rooms/tmp-k7f3p2"}, **span(2, 16, 0, 60))
         g.add_event(mb, id="CANC", subject="Отменённая встреча", isCancelled=True, **span(3, 13))
         g.add_event(mb, id="ALLDAY", subject="Конференция (весь день)", isAllDay=True, **span(4, 0, 0, 1440))
+        # короткие, пересекающиеся и очень длинные события — для проверки вида сетки (scenario_calendar_visual.py)
+        g.add_event(mb, id="S15", subject="Быстрый вопрос", **span(1, 12, 0, 15))
+        g.add_event(mb, id="S30", subject="Короткий созвон", attendees=[att("bob@corp.test", "Боб Петров")], **span(1, 12, 0, 30))
+        g.add_event(mb, id="S30B", subject="Ещё один созвон", **span(1, 12, 15, 30))
+        g.add_event(mb, id="LONGT", subject="Согласование квартального бюджета с финансовым департаментом и подрядчиками", location={"displayName": "Переговорная 7, второй этаж, северное крыло"}, **span(2, 10, 0, 45))
+        g.add_event(mb, id="WORK", subject="Выездной воркшоп", **span(3, 15, 0, 180))
+        g.add_event(mb, id="CONF15", subject="Стендап команды", location={"displayName": "http://localhost:5173/rooms/tmp-st4nd1"}, **span(3, 10, 0, 15))
         g.add_event(mb, id="PROJ", subject="Проектный созвон", calendar="CALPROJ", **span(1, 14, 0, 60))
         app.state.dev_day1 = (now + dt.timedelta(days=1)).date().isoformat()
     out = {"events": len(g.events), "day1": getattr(app.state, "dev_day1", None)}

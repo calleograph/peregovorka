@@ -109,7 +109,7 @@ async def main():
         await A.send("Input.dispatchMouseEvent", type="mouseMoved", x=pos["x"], y=y0 + 78, button="left", buttons=1)
         await A.send("Input.dispatchMouseEvent", type="mouseReleased", x=pos["x"], y=y0 + 78, button="left", buttons=0, clickCount=1)
         S.check("после выделения открылась форма «Новая встреча»", await A.wait_for("!!document.querySelector('.cal-form')", 8))
-        form = await A.js("""(() => ({date: document.querySelector('.cal-when input[type=date]').value, time: document.querySelector('.cal-when input[type=time]').value, mins: document.querySelector('.cal-when select').value}))()""")
+        form = await A.js("""(() => ({date: document.querySelector('.cal-when input[type=date]').value, time: document.querySelector('.cal-when .tf-in').value, mins: document.querySelector('.cal-when select').value}))()""")
         S.check("в форме — выделенные день, начало 13:00 и длительность 90 минут", form["date"] == day1 and form["time"] == "13:00" and form["mins"] == "90", str(form))
         f = await A.js(FIRST)
         S.check("курсор сразу в поле «Название» — без щелчка и Tab", f["tag"] == "INPUT" and f["label"].startswith("Название"), str(f))
@@ -208,7 +208,7 @@ async def main():
         await click_text(A, ".cal-head .seg button", "Неделя"); await asyncio.sleep(0.8)
         # ---------- Exchange недоступен
         dev({"down": True})
-        await click_text(A, ".cal-head button", "Обновить")
+        await A.js("document.querySelector('.cal-refresh').click()")
         S.check("Exchange недоступен: «Нет соединения», данные помечены как возможно устаревшие, события остались", await A.wait_for("document.querySelector('.cal-health')?.innerText.includes('могли устареть')", 15) and len((await A.js(STATE))["chips"]) >= 5, (await A.js(STATE))["health"])
         await A.shot("calendar-offline")
         dev({"down": False})
