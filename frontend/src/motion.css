@@ -18,11 +18,11 @@
   .tabs button:active { transform: scale(.97); }
 
   /* каскад: первые строки карточек-таблиц и журнала проявляются по очереди (плитки комнат уже появляются сами) */
-  main table.stack tbody > tr:nth-child(-n + 10), .journal-scroll tbody > tr:nth-child(-n + 12) { animation: row-in .3s var(--ease, ease) backwards; }
-  main table.stack tbody > tr:nth-child(2) { animation-delay: 30ms; }
-  main table.stack tbody > tr:nth-child(3) { animation-delay: 60ms; }
-  main table.stack tbody > tr:nth-child(4) { animation-delay: 90ms; }
-  main table.stack tbody > tr:nth-child(n + 5) { animation-delay: 120ms; }
+  main table.tbl-cards tbody > tr:nth-child(-n + 10), .journal-scroll tbody > tr:nth-child(-n + 12) { animation: row-in .3s var(--ease, ease) backwards; }
+  main table.tbl-cards tbody > tr:nth-child(2) { animation-delay: 30ms; }
+  main table.tbl-cards tbody > tr:nth-child(3) { animation-delay: 60ms; }
+  main table.tbl-cards tbody > tr:nth-child(4) { animation-delay: 90ms; }
+  main table.tbl-cards tbody > tr:nth-child(n + 5) { animation-delay: 120ms; }
 
   /* переключение темы и акцента без резкой вспышки */
   html { transition: background-color .25s ease; }

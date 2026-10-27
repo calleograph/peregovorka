@@ -1,4 +1,4 @@
-/** Таблицы на узких экранах превращаются в карточки (стили — design.css, «table.stack»): у каждой ячейки подпись из шапки, горизонтальной прокрутки нет. */
+/** Таблицы на узких экранах превращаются в карточки (стили — design.css, «table.tbl-cards»): у каждой ячейки подпись из шапки, горизонтальной прокрутки нет. */
 
 /** Можно ли показать таблицу карточками: одна строка шапки без объединённых ячеек и в каждой строке тела (кроме строк-заголовков групп) столько ячеек, сколько столбцов. */
 export function canStack(headers: string[], rowCells: number[]): boolean {
@@ -15,10 +15,10 @@ function annotate(t: HTMLTableElement): void {
   const merged = heads.some((c) => c.colSpan > 1);
   const counts = rows.map((r) => (r.cells.length === 1 && r.cells[0].colSpan > 1 ? 0 : [...r.cells].some((c) => c.colSpan > 1) ? -1 : r.cells.length));
   const ok = !merged && canStack(headers, counts);
-  t.classList.toggle("stack", ok);
+  t.classList.toggle("tbl-cards", ok);
   if (!ok) return;
-  for (const r of rows) r.classList.toggle("stack-group", r.cells.length === 1 && r.cells[0].colSpan > 1);
-  for (const r of rows) if (!r.classList.contains("stack-group")) [...r.cells].forEach((c, i) => { if (c.getAttribute("data-label") !== headers[i]) c.setAttribute("data-label", headers[i]); });
+  for (const r of rows) r.classList.toggle("tbl-group", r.cells.length === 1 && r.cells[0].colSpan > 1);
+  for (const r of rows) if (!r.classList.contains("tbl-group")) [...r.cells].forEach((c, i) => { if (c.getAttribute("data-label") !== headers[i]) c.setAttribute("data-label", headers[i]); });
 }
 
 /** Подписывает ячейки всех таблиц страницы и следит за изменениями (React перерисовывает строки). Возвращает функцию отключения. */

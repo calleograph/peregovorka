@@ -1006,21 +1006,21 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .sec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
 
 
-/* ---- узкие экраны: таблицы — карточками, без горизонтальной прокрутки (stackTables.ts ставит класс stack и подписи ячеек) ---- */
+/* ---- узкие экраны: таблицы — карточками, без горизонтальной прокрутки (stackTables.ts ставит класс tbl-cards и подписи ячеек) ---- */
 @media (max-width: 860px) {
-  main table.stack.stack { display: block; width: 100%; min-width: 0; border: 0; box-shadow: none; background: transparent; overflow: visible; margin-top: 8px; }
-  main table.stack.stack thead { display: none; }
-  main table.stack.stack tbody { display: grid; gap: 8px; }
-  main table.stack.stack tr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-  main table.stack.stack td, main table.stack.stack th { display: grid; grid-template-columns: minmax(64px, 34%) minmax(0, 1fr); gap: 4px 10px; padding: 0; border: 0; background: none; text-align: left; overflow-wrap: anywhere; white-space: normal; max-width: none; }
-  main table.stack.stack td[data-label]::before, main table.stack.stack th[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
-  main table.stack.stack td[data-label=""] { grid-template-columns: minmax(0, 1fr); }
-  main table.stack.stack td[data-label=""]::before { display: none; }
-  main table.stack.stack td:empty { display: none; }
-  main table.stack.stack tr.stack-group { background: var(--soft); padding: 6px 12px; }
-  main table.stack.stack tr.stack-group > * { display: block; font-weight: 600; }
-  main table.stack.stack .msg { max-width: none; white-space: normal; }
-  .table-scroll:has(> table.stack), .journal-scroll:has(table.stack) { overflow: visible; max-height: none; border: 0; }
+  main table.tbl-cards.tbl-cards { display: block; width: 100%; min-width: 0; border: 0; box-shadow: none; background: transparent; overflow: visible; margin-top: 8px; }
+  main table.tbl-cards.tbl-cards thead { display: none; }
+  main table.tbl-cards.tbl-cards tbody { display: grid; gap: 8px; }
+  main table.tbl-cards.tbl-cards tr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+  main table.tbl-cards.tbl-cards td, main table.tbl-cards.tbl-cards th { display: grid; grid-template-columns: minmax(64px, 34%) minmax(0, 1fr); gap: 4px 10px; padding: 0; border: 0; background: none; text-align: left; overflow-wrap: anywhere; white-space: normal; max-width: none; }
+  main table.tbl-cards.tbl-cards td[data-label]::before, main table.tbl-cards.tbl-cards th[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  main table.tbl-cards.tbl-cards td[data-label=""] { grid-template-columns: minmax(0, 1fr); }
+  main table.tbl-cards.tbl-cards td[data-label=""]::before { display: none; }
+  main table.tbl-cards.tbl-cards td:empty { display: none; }
+  main table.tbl-cards.tbl-cards tr.tbl-group { background: var(--soft); padding: 6px 12px; }
+  main table.tbl-cards.tbl-cards tr.tbl-group > * { display: block; font-weight: 600; }
+  main table.tbl-cards.tbl-cards .msg { max-width: none; white-space: normal; }
+  .table-scroll:has(> table.tbl-cards), .journal-scroll:has(table.tbl-cards) { overflow: visible; max-height: none; border: 0; }
   .tabs { flex-wrap: wrap; }
   .rooms-toolbar .chips, .chips { flex-wrap: wrap !important; overflow-x: visible !important; margin: 0 !important; padding: 2px 0 !important; }
   .cmd, pre.cmd, .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: visible; }
@@ -1044,9 +1044,9 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 
 /* таблицы, которые нельзя превратить в карточки (нет строк, объединённые ячейки), на узком экране сжимаются по ширине: текст переносится, ползунка нет */
 @media (max-width: 860px) {
-  main .table:not(.stack) { display: table; width: 100%; min-width: 0; table-layout: auto; }
-  main .table:not(.stack) th, main .table:not(.stack) td { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
-  .table-scroll:not(:has(> table.stack)) { overflow-x: visible; }
+  main .table:not(.tbl-cards) { display: table; width: 100%; min-width: 0; table-layout: auto; }
+  main .table:not(.tbl-cards) th, main .table:not(.tbl-cards) td { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+  .table-scroll:not(:has(> table.tbl-cards)) { overflow-x: visible; }
 }
 /* журнал: сообщения переносятся, горизонтальной прокрутки нет и на широком экране */
 .journal-scroll { overflow-x: hidden; }
@@ -1068,3 +1068,16 @@ button.sec-tile:hover { border-color: var(--accent); }
 .sec-mode { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
 .sec-mode.on { border-color: var(--accent); background: var(--accent-soft, rgba(37, 99, 235, .06)); }
 .nowrap { white-space: nowrap; }
+
+/* разделы безопасности: переключатель режима в одну строку с подписью, плитки по два в ряд на телефоне */
+label.sec-mode { flex-direction: row; margin-bottom: 0; }
+.sec-mode input[type="radio"] { width: auto; flex: none; margin: 3px 0 0; }
+@media (max-width: 560px) { .sec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sec-tile-v { font-size: 22px; } .sec-tile { padding: 8px 12px; } }
+.table td .badge { white-space: nowrap; }
+.comp-table th, .comp-table td { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+.comp-table { table-layout: auto; width: 100%; }
+.sysadmin .comp-table th, .sysadmin .comp-table td { padding: 6px 7px; }
+.comp-table td:first-child { min-width: 130px; }
+.comp-table td:nth-child(5) { min-width: 110px; }
+.comp-table .nowrap { white-space: normal; }
+.comp-table td code { overflow-wrap: anywhere; }

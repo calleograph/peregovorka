@@ -8,7 +8,7 @@ import smoke_room as S
 PAGES = ["/", "/calendar", "/history", "/profile"]
 ADMIN = ["system", "system_tech", "performance", "clients", "meetings", "recordings", "protocol", "templates", "rooms", "users", "login_access", "access", "profile_policy", "ldap",
          "ca", "mail", "asr", "llm", "anon", "storages", "outlook", "sip", "sip_policy", "bitrix24", "public_api", "desktop_signing", "auth_security", "login_protection", "captcha",
-         "net_trust", "crypto", "audit", "storage", "audio_storage", "chats", "chat_files", "storage_sync", "restore", "journal", "journal_settings", "mail_log", "network", "updates",
+         "net_trust", "security_events", "security_blocks", "ip_access", "waf", "security_log", "crypto", "audit", "storage", "audio_storage", "chats", "chat_files", "storage_sync", "restore", "journal", "journal_settings", "mail_log", "network", "updates",
          "config_backup", "general", "site", "privacy", "screen", "mail_policy", "mail_templates"]
 WIDTHS = [(360, 740), (390, 844), (768, 1024), (1280, 800)]
 
@@ -47,6 +47,8 @@ async def main():
                 await A.goto(path, 1.0)
                 await A.wait_for("document.body.innerText.length > 40", 8)
                 r = await A.js(PROBE)
+                if w >= 1280:                      # на широком экране таблицы остаются таблицами (не карточками)
+                    r["inner"] += await A.js("[...document.querySelectorAll('table')].filter((t) => getComputedStyle(t).display !== 'table' && getComputedStyle(t).display !== 'block').map(() => 'таблица не table')")
                 ok = r["page"] <= 1 and not r["inner"] and not r["beyond"]
                 S.check(f"{w}px {path}: без горизонтальной прокрутки", ok, "" if ok else json.dumps(r, ensure_ascii=False))
                 if not ok:
