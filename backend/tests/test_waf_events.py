@@ -207,3 +207,18 @@ def test_security_pages_need_admin(c):
     login(c, "alice")
     for url in (f"{SEC}/events", f"{SEC}/blocks", f"{SEC}/overview", f"{SEC}/waf", f"{SEC}/ip-diagnostics"):
         assert c.get(url).status_code == 403, url
+
+
+def test_exception_in_the_application_runs_the_handler_once_and_is_not_swallowed_by_the_gate(c):
+    """Регрессия: исключение приложения не должно глотаться защитным слоем (иначе обработчик запускался бы второй раз, после отправленного ответа)."""
+    set_waf(c, mode="observe")
+    calls = []
+
+    @c.app_obj.get("/api/v1/_boom_once")
+    async def boom():
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        anon(c, "/api/v1/_boom_once")
+    assert len(calls) == 1, "обработчик выполнен ровно один раз"

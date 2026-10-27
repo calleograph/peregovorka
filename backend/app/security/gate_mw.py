@@ -58,54 +58,59 @@ class SecurityGate:
             await self.app(scope, receive, send)
             return
         path = scope["path"]
+        action: tuple = ("pass",)
         try:
-            request = HTTPConnection(scope)                       # и для http, и для websocket (Request на websocket-области падает)
-            tcp = request.client.host if request.client else None
-            accept = list(st.netcfg.cfg.accept_from) if getattr(st, "netcfg", None) else []
-            internal = is_internal({"x-pg-peer": request.headers.get("x-pg-peer", "")}, tcp, accept)
-            if internal:
-                await self.app(scope, receive, send)
-                return
-            from ..auth.deps import client_ip  # noqa: PLC0415
-
-            ip = client_ip(request)
-            ipk = ip_key(ip)
-            # 1. доверенные подсети
-            if restricting and not path.startswith(ALWAYS_OPEN) and not exempt_path(path, allow.policy) and not allow.allowed(ip):
-                await self._deny(app, scope, receive, send, ip, path, "access_denied_net", "allowed_networks", "адрес вне разрешённых подсетей")
-                return
-            has_cred = _has_credentials(request, self.settings.cookie_name)
-            # 2. заблокированный адрес: анонимные запросы не принимаются (вошедших пользователей не отключаем)
-            if pol is not None and pol.is_blocked(ipk) and not has_cred and not path.startswith(ALWAYS_OPEN):
-                await self._deny(app, scope, receive, send, ip, path, "blocked_ip_request", "ip_block", "адрес временно заблокирован", status=429)
-                return
-            # 3. WAF
-            if pol is not None and pol.waf.mode != "off" and kind == "http" and path.startswith("/api/") and not path.startswith(ALWAYS_OPEN):
-                w = pol.waf
-                if not (any(path.startswith(p) for p in w.exclude_paths) or in_nets(ip, list(w.exclude_nets))):
-                    hits = waf.inspect(scope["method"], path, scope.get("query_string", b""), request.headers.get("user-agent", ""))
-                    block = None
-                    for h in hits:
-                        act = w.action(h.rule)
-                        if act == "none":
-                            continue
-                        blocked = act == "block" and not has_cred
-                        await self._record(app, h, ip, path, scope, "blocked" if blocked else "observed", w)
-                        if blocked and block is None:
-                            block = h
-                    if block is not None:
-                        scope["pg_gate_denied"] = True
-                        resp = JSONResponse({"detail": {"code": "request_blocked", "message": "Запрос отклонён."}}, status_code=403, headers=_HEAD)
-                        if kind == "http":
-                            await resp(scope, receive, send)
-                            return
-                    # частота 404/405: считается по ответу
-                    if w.action("api_probe") != "none":
-                        await self._probe(app, scope, receive, send, ip, ipk, path, w, has_cred)
-                        return
+            action = await self._decide(app, scope, st, allow, pol, restricting, path)
         except Exception:  # noqa: BLE001 — защитный слой не должен ронять приложение
             log.warning("Сбой защитного слоя запросов (запрос обслужен без проверки)", exc_info=True)
-        await self.app(scope, receive, send)
+        # само приложение и отправка ответа — ВНЕ try: исключение приложения не должно приводить к повторному запуску обработчика
+        if action[0] == "deny":
+            await action[1](scope, receive, send)
+        elif action[0] == "probe":
+            await self._probe(app, scope, receive, send, *action[1:])
+        else:
+            await self.app(scope, receive, send)
+
+    async def _decide(self, app, scope, st, allow, pol, restricting: bool, path: str) -> tuple:
+        """Решение по запросу без вызова приложения: ("pass",) | ("deny", отправитель ответа) | ("probe", ip, ipk, path, политика WAF, есть ли учётные данные)."""
+        kind = scope["type"]
+        request = HTTPConnection(scope)                       # и для http, и для websocket (Request на websocket-области падает)
+        tcp = request.client.host if request.client else None
+        accept = list(st.netcfg.cfg.accept_from) if getattr(st, "netcfg", None) else []
+        if is_internal({"x-pg-peer": request.headers.get("x-pg-peer", "")}, tcp, accept):
+            return ("pass",)
+        from ..auth.deps import client_ip  # noqa: PLC0415
+
+        ip = client_ip(request)
+        ipk = ip_key(ip)
+        # 1. доверенные подсети
+        if restricting and not path.startswith(ALWAYS_OPEN) and not exempt_path(path, allow.policy) and not allow.allowed(ip):
+            return await self._deny(app, scope, ip, path, "access_denied_net", "allowed_networks", "адрес вне разрешённых подсетей")
+        has_cred = _has_credentials(request, self.settings.cookie_name)
+        # 2. заблокированный адрес: анонимные запросы не принимаются (вошедших пользователей не отключаем)
+        if pol is not None and pol.is_blocked(ipk) and not has_cred and not path.startswith(ALWAYS_OPEN):
+            return await self._deny(app, scope, ip, path, "blocked_ip_request", "ip_block", "адрес временно заблокирован", status=429)
+        # 3. WAF
+        if pol is not None and pol.waf.mode != "off" and kind == "http" and path.startswith("/api/") and not path.startswith(ALWAYS_OPEN):
+            w = pol.waf
+            if not (any(path.startswith(p) for p in w.exclude_paths) or in_nets(ip, list(w.exclude_nets))):
+                hits = waf.inspect(scope["method"], path, scope.get("query_string", b""), request.headers.get("user-agent", ""))
+                block = None
+                for h in hits:
+                    act = w.action(h.rule)
+                    if act == "none":
+                        continue
+                    blocked = act == "block" and not has_cred
+                    await self._record(app, h, ip, path, scope, "blocked" if blocked else "observed", w)
+                    if blocked and block is None:
+                        block = h
+                if block is not None:
+                    scope["pg_gate_denied"] = True
+                    resp = JSONResponse({"detail": {"code": "request_blocked", "message": "Запрос отклонён."}}, status_code=403, headers=_HEAD)
+                    return ("deny", resp)
+                if w.action("api_probe") != "none":                  # частота 404/405: считается по ответу
+                    return ("probe", ip, ipk, path, w, has_cred)
+        return ("pass",)
 
     async def _probe(self, app, scope, receive, send, ip, ipk, path, w, has_cred) -> None:
         status = {"code": 0}
@@ -154,7 +159,7 @@ class SecurityGate:
         except Exception:  # noqa: BLE001
             pass
 
-    async def _deny(self, app, scope, receive, send, ip: str, path: str, kind: str, rule: str, reason: str, status: int = 403) -> None:
+    async def _deny(self, app, scope, ip: str, path: str, kind: str, rule: str, reason: str, status: int = 403) -> tuple:
         scope["pg_gate_denied"] = True                      # отказ защитного слоя уже записан как своё событие: «ошибку прав» для него не дублируем
         # событие — не чаще раза в минуту на адрес: сканирование не заполнит журнал
         try:
@@ -170,11 +175,10 @@ class SecurityGate:
         except Exception:  # noqa: BLE001
             pass
         if scope["type"] == "websocket":
-            await receive()
-            await send({"type": "websocket.close", "code": 4403})
-            return
+            async def close(scope, receive, send):
+                await receive()
+                await send({"type": "websocket.close", "code": 4403})
+            return ("deny", close)
         if status == 429:
-            resp = JSONResponse({"detail": {"code": "throttled", "message": "Слишком много запросов. Повторите позже."}}, status_code=429, headers={**_HEAD, "Retry-After": "60"})
-        else:
-            resp = denied_response(path)
-        await resp(scope, receive, send)
+            return ("deny", JSONResponse({"detail": {"code": "throttled", "message": "Слишком много запросов. Повторите позже."}}, status_code=429, headers={**_HEAD, "Retry-After": "60"}))
+        return ("deny", denied_response(path))
