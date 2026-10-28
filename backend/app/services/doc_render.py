@@ -75,7 +75,9 @@ def attendees_markdown(att: dict | None) -> list[str]:
         return []
     L = ["## Присутствовали", ""]
     if att.get("people"):
-        L += _table(["ФИО", "Должность", "Подразделение"], [[p.get("name", ""), p.get("title", ""), p.get("department", "")] for p in att["people"]]) + [""]
+        cols = [("ФИО", "name"), ("Должность", "title"), ("Подразделение", "department")]
+        cols = [(h, k) for h, k in cols if k == "name" or any((p.get(k) or "").strip() for p in att["people"])]      # столбец, где ни у кого нет данных, не выводится (а не ряд прочерков)
+        L += _table([h for h, _k in cols], [[p.get(k, "") for _h, k in cols] for p in att["people"]]) + [""]
     if att.get("guests"):
         L += _table(["Имя", "Статус"], [[g.get("name", ""), g.get("status", "Гость")] for g in att["guests"]]) + [""]
     return L

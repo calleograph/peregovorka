@@ -238,8 +238,8 @@
         c.addEventListener("click", function () { select(t.id); });
         var inner = el("span", "in");
         c.setAttribute("aria-label", t.title + ", " + duration(t.total_s));
-        if (r.w >= 104 && r.h >= 44) inner.appendChild(el("span", "ct", t.title));      // в маленьком блоке мелкого текста нет: название — во всплывающей подсказке и в карточке темы
-        if (r.w > 140 && r.h > 72) {
+        if (r.w >= 132 && r.h >= 44) inner.appendChild(el("span", "ct", t.title));      // в маленьком блоке мелкого текста нет: название — во всплывающей подсказке и в карточке темы
+        if (r.w > 150 && r.h > 72) {
           var a = topicSpan(t);
           inner.appendChild(el("span", "cm", duration(t.total_s) + " · " + wallClock(d.meeting.started_at, d.meeting.timezone, a[0]) + "–" + wallClock(d.meeting.started_at, d.meeting.timezone, a[1])));
         }

@@ -78,3 +78,12 @@ def test_protocol_uses_the_participants_snapshot_taken_at_the_meeting_not_todays
         # DOCX/HTML строятся из того же текста
         html = c.get(f"/api/v1/meetings/{mid}/protocols/{r2.json()['protocol_id']}/export", params={"format": "html"}).text
         assert "Системный администратор" in html and "<table" in html
+
+
+def test_columns_without_any_data_are_not_shown_instead_of_a_row_of_dashes():
+    only_names = {"people": [{"name": "Анна Крылова", "title": "", "department": ""}, {"name": "Иван Петров", "title": "", "department": ""}], "guests": []}
+    md = "\n".join(dr.attendees_markdown(only_names))
+    assert "| ФИО |" in md and "Должность" not in md and "Подразделение" not in md and "—" not in md
+    one_title = {"people": [{"name": "А", "title": "Инженер", "department": ""}, {"name": "Б", "title": "", "department": ""}], "guests": []}
+    md2 = "\n".join(dr.attendees_markdown(one_title))
+    assert "| ФИО | Должность |" in md2 and "Подразделение" not in md2 and "| Б | — |" in md2
