@@ -14,6 +14,7 @@ import UpcomingSection from "../components/UpcomingMeetings";
 import { useCalendarAvailable } from "../useCalendarAvailable";
 import { LinkCopy } from "../components/LinkCopy";
 import { isActual, meetingState, span, tickMs } from "../upcomingStatus";
+import "../live.css";
 
 /** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
 function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: () => void }) {
@@ -39,13 +40,13 @@ function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: 
   );
 }
 
-type Filter = "all" | "upcoming" | "permanent" | "live" | "free";
-const FILTERS: [Filter, string][] = [["all", "Все"], ["upcoming", "Предстоящие"], ["permanent", "Постоянные"], ["live", "Идёт встреча"], ["free", "Свободные"]];
+type Filter = "all" | "upcoming" | "permanent" | "live" | "onair" | "free";
+const FILTERS: [Filter, string][] = [["all", "Все"], ["upcoming", "Предстоящие"], ["permanent", "Постоянные"], ["live", "Идёт встреча"], ["onair", "В эфире"], ["free", "Свободные"]];
 const UPCOMING_POLL_MS = 30_000;        // сверка с сервером; отсчёт между сверками считает браузер
 
 type View = "tiles" | "list";
 const VIEW_KEY = "pg:roomsView";
-const roomUrl = (r: Room) => r.room_type === "peer" ? `${window.location.origin}/p/${r.slug.replace(/^p-/, "")}` : `${window.location.origin}/rooms/${r.slug}`;
+const roomUrl = (r: Room) => r.room_type === "peer" ? `${window.location.origin}/p/${r.slug.replace(/^p-/, "")}` : `${window.location.origin}/rooms/${r.slug}${r.room_type === "broadcast" ? "?as=speaker" : ""}`;          // ссылка трансляционной комнаты для выступающих сразу ведёт ко входу выступающего
 const guestUrl = (r: Room) => `${window.location.origin}/guest/${r.guest_token}`;
 
 type Toast = (text: string, tone?: "ok" | "error") => void;
@@ -84,6 +85,8 @@ function RoomTags({ r }: { r: Room }) {
     <>
       {r.lifetime === "temporary" && <span className="tag" title={r.lifecycle === "grace_period" ? "Все вышли: комната закроется, если никто не вернётся" : "Комната на одну встречу"}>{r.lifecycle === "grace_period" ? "Временная · ждёт возврата" : "Временная"}</span>}
       {r.room_type === "peer" && <span className="tag" title="Равноправная комната: ведущего нет, у всех участников равные права">Равноправная</span>}
+      {r.room_type === "broadcast" && <span className="tag" title="Выступающие общаются в конференции, зрители смотрят эфир по ссылке"><Icon name="broadcast" size={13} /> Трансляция</span>}
+      {r.room_type !== "broadcast" && r.live_enabled && <span className="tag" title="В этой комнате можно вести прямой эфир"><Icon name="broadcast" size={13} /> Эфир возможен</span>}
       {r.room_type === "presentation" && <span className="tag" title="Участники слушают; говорят руководители и те, кому дали слово"><Icon name="screen" size={13} /> Презентация</span>}
       {r.transcription_enabled && <span className="tag" title="Реплики записываются в стенограмму"><Icon name="transcript" size={13} /> Стенограмма</span>}
       {r.auto_record ? <span className="tag warn" title="Запись звука начинается вместе со встречей"><Icon name="record" size={13} /> Запись сразу</span>
@@ -108,6 +111,7 @@ function RoomMini({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
         {r.description && <span className="rm-desc">{r.description}</span>}
       </div>
       <div className="rm-tags"><RoomTags r={r} /></div>
+      {r.live && <span className="pill onair" title={`Идёт прямой эфир${r.live_viewers ? `, зрителей: ${r.live_viewers}` : ""}`}><i className="pulse" aria-hidden />ЭФИР{r.live_viewers ? ` · ${r.live_viewers}` : ""}</span>}
       <span className={`pill ${live ? "live" : "free"}`} title={live ? `Идёт встреча, участников: ${live.participants}` : "Свободна"}><i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants}` : "Свободна"}</span>
       <span className="rm-cap" title="Предел участников"><Icon name="users" size={14} /> {full ? "мест нет" : `до ${r.max_participants}`}</span>
       {menu.node}
@@ -135,6 +139,7 @@ function RoomCard({ r, i, onCopy, isAdmin, onManagePeer }: { r: Room; i: number;
         <RoomIcon name={r.name} icon={r.icon} size={46} className="rc-mark" />
         <div className="rc-title">
           <h2 title={r.name}>{r.name}</h2>
+          {r.live && <span className="pill onair" title={`Идёт прямой эфир${r.live_viewers ? `, зрителей: ${r.live_viewers}` : ""}`}><i className="pulse" aria-hidden />ЭФИР{r.live_viewers ? ` · ${r.live_viewers}` : ""}</span>}
           <span className={`pill ${live ? "live" : "free"}`}>
             <i className="pulse" aria-hidden />{live ? `Идёт встреча · ${live.participants} уч.` : "Свободна"}
           </span>
@@ -204,6 +209,7 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
     if (filter === "upcoming") return false;
     if (q.trim() && !`${r.name} ${r.description ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())) return false;
     if (filter === "live") return !!r.active_meeting;
+    if (filter === "onair") return !!r.live;
     if (filter === "free") return !r.active_meeting;
     return true;
   }), [rooms, q, filter]);
@@ -214,12 +220,12 @@ export default function RoomsPage({ isAdmin = false }: { isAdmin?: boolean }) {
   }, []);
   const counts: Record<Filter, number> = {
     all: rooms?.length ?? 0, upcoming: upcoming.length, permanent: rooms?.length ?? 0,
-    live: (rooms ?? []).filter((r) => r.active_meeting).length, free: (rooms ?? []).filter((r) => !r.active_meeting).length,
+    live: (rooms ?? []).filter((r) => r.active_meeting).length, onair: (rooms ?? []).filter((r) => r.live).length, free: (rooms ?? []).filter((r) => !r.active_meeting).length,
   };
   const adminView = isAdmin && upcoming.some((m) => !m.mine);
   const meetings = useMemo(() => upcoming.filter((m) => {
     if (adminView && mineOnly && !m.mine) return false;
-    if (filter === "permanent" || filter === "free") return false;
+    if (filter === "permanent" || filter === "free" || filter === "onair") return false;
     if (filter === "live" && !m.live) return false;
     return !q.trim() || `${m.name} ${m.organizer ?? ""}`.toLowerCase().includes(q.trim().toLowerCase());
   }), [upcoming, adminView, mineOnly, filter, q]);

@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
+from ..services.live import new_access, new_token
 from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
 from ..security.passwords import hash_room_password
 from ..services import audit as audit_svc
@@ -119,6 +120,9 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         room.record_audio = True  # автоматическая запись предполагает, что запись аудио разрешена
     if room.room_type == "presentation" and room.e2ee_mode == "off" and not room.encrypt_storage and (await request.app.state.settings_svc.get(db, "video")).enabled:
         room.video_mode = "auto"  # презентационная комната записывается автоматически, если администратор разрешил видеозапись (можно сменить в настройках комнаты)
+    if room.room_type == "broadcast" and room.e2ee_mode == "off" and not room.encrypt_storage:
+        room.live_enabled = True                       # трансляционная комната: трансляция включена по умолчанию (можно выключить в настройках комнаты → Трансляция)
+        room.live_token, room.live_view_access, room.live_stream_access = new_token(), new_access(), new_access()
     room.acl = _acl_rows(body.acl)
     room.moderators = _mod_rows(body.moderators)
     db.add(room)

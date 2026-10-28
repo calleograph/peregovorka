@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, type AclEntry, type ApiError, type LlmChoice, type MailDeliverySpec, type RoomManage, type RoomSip, type RoomType } from "../api";
 import { copyText } from "../util";
 import AclPicker from "./AclPicker";
+import LiveSettings from "./LiveSettings";
 import RoomIconPicker from "./RoomIconPicker";
 import { Modal } from "./Dialogs";
 import DeliveryEditor, { emptySpec } from "./DeliveryEditor";
@@ -10,8 +11,8 @@ import TelephonyEditor from "./TelephonyEditor";
 import { choiceLabel, emptyChoice } from "../phone";
 
 /** Разделы сгруппированы по смыслу: что за комната, как проходит встреча, кто допущен, что остаётся после встречи, какая модель и телефония. */
-type TabId = "main" | "mode" | "access" | "materials" | "autosend" | "model" | "phone";
-const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["materials", "Материалы после встречи"], ["autosend", "Автоотправка"], ["model", "Языковая модель"], ["phone", "Телефония"]];
+type TabId = "main" | "mode" | "access" | "live" | "materials" | "autosend" | "model" | "phone";
+const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["live", "Трансляция"], ["materials", "Материалы после встречи"], ["autosend", "Автоотправка"], ["model", "Языковая модель"], ["phone", "Телефония"]];
 const BOARD_OPTIONS: [string, string][] = [["auto", "Как принято для типа комнаты (обычная — все, презентация — руководители и те, кому дали слово)"], ["everyone", "Все участники рисуют"], ["speakers", "Руководители и те, кому дали слово"], ["leaders", "Рисуют только руководители, остальные смотрят (в презентации слово всё равно даёт доску)"], ["private", "Доска только у руководителей (остальные её не видят)"]];
 const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: null, allow_inbound: false, allow_outbound: false, contacts: [] });
 const days = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
@@ -129,6 +130,8 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                   <span className="check-body">Обычная<span className="help">Все участники могут говорить, включать камеру и показывать экран (если это разрешено ниже).</span></span></label>
                 <label className="check"><input type="radio" name="rt" checked={form.room_type === "presentation"} onChange={() => set("room_type", "presentation")} />
                   <span className="check-body">Презентационная<span className="help">Участники входят слушателями: микрофон, камера, показ экрана и доска у них закрыты. Говорят руководители и те, кому руководитель «дал слово» на встрече — временно, до конца встречи.</span></span></label>
+                <label className="check"><input type="radio" name="rt" checked={form.room_type === "broadcast"} onChange={() => set("room_type", "broadcast")} />
+                  <span className="check-body">Трансляционная<span className="help">Выступающие общаются в конференции, а зрители смотрят прямой эфир по отдельной ссылке — без микрофона, камеры и подключения к конференции. Настройки эфира — на вкладке «Трансляция». Эфир можно вести и в обычной комнате: включите его там.</span></span></label>
               </fieldset>
               <fieldset className="group"><legend>Шифрование</legend>
                 <label className="check"><input type="checkbox" checked={form.encrypt_storage} onChange={(e) => set("encrypt_storage", e.target.checked)} />
@@ -240,6 +243,11 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
               </fieldset>
               <p className="help">Автоматическая отправка протокола, резюме, стенограммы и карты настраивается на вкладке «<button type="button" className="linklike" onClick={() => setTab("autosend")}>Автоотправка</button>».</p>
             </div>
+          )}
+
+          {tab === "live" && (
+            <LiveSettings roomId={roomId} roomSlug={room.slug} isBroadcastType={form.room_type === "broadcast"} hasSpeakerPassword={room.has_password}
+              onSpeakerPassword={async (pw) => { const r = await api.manage.patch(roomId, { password: pw }); setRoom(r); onSaved?.(r); }} />
           )}
 
           {tab === "autosend" && (

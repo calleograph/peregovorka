@@ -111,7 +111,7 @@ class RoomView:
 _LIST_COLUMNS = ("id", "slug", "name", "description", "max_participants", "password_hash", "transcription_enabled", "record_audio", "camera_allowed",
                  "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record", "encrypt_storage", "e2ee_mode", "lifetime", "lifecycle",
                  "auto_close_at", "created_by_name", "created_by_user_id", "mute_on_join", "guest_token", "guest_access_enabled", "icon_kind", "icon_key",
-                 "icon_rev", "scheduled_start", "peer_access")
+                 "icon_rev", "scheduled_start", "peer_access", "live_enabled")
 
 
 async def accessible_room_views(db: AsyncSession, su: SessionUser) -> list[RoomView]:

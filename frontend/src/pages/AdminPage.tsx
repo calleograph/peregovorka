@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { videoFields, anonFields, audioStorageFields, authSecurityFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { liveFields, videoFields, anonFields, audioStorageFields, authSecurityFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -24,6 +24,7 @@ import OutlookAdmin from "./admin/OutlookAdmin";
 import { confirmLeave } from "../dirtyGuard";
 import SipAdmin from "./admin/SipAdmin";
 import VideoAdmin from "./admin/VideoAdmin";
+import LiveAdmin from "./admin/LiveAdmin";
 import IpAccessAdmin from "./admin/IpAccessAdmin";
 import SecurityEventsAdmin from "./admin/SecurityEventsAdmin";
 import WafAdmin from "./admin/WafAdmin";
@@ -89,6 +90,7 @@ const GROUPS: Group[] = [
       <SettingsForm key="sip_policy" group="sip_policy" title="Политика телефонии: ограничения и журнал вызовов" fields={sipPolicyFields}
         intro="Ограничения действуют на звонки из комнат и на входящие вызовы. Профили, порты и проверка АТС — в разделе «SIP-телефония»." />) },
     { id: "video", label: "Видеозапись", render: () => <VideoAdmin fields={videoFields} /> },
+    { id: "live", label: "Трансляции", render: () => <LiveAdmin fields={liveFields} /> },
     { id: "bitrix24", label: "Bitrix24 (профили)", render: () => <Bitrix24Admin /> },
     { id: "public_api", label: "Публичный API", render: () => <PublicApiAdmin /> },
   ] },

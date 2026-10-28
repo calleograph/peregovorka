@@ -199,6 +199,8 @@ services:
       HEAVY_MAX_DEFER_SECONDS: ${HEAVY_MAX_DEFER_SECONDS:-1800}
       LIVEKIT_METRICS_URL: ${LIVEKIT_METRICS_URL:-}
       DATA_DIR: /data
+      LIVE_DIR: /data/live
+      LIVE_EGRESS_DIR: /live
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # локальная LLM (контейнер llm-local, профиль llm): внутренний адрес и каталог модели (только чтение — статус, размер, контрольная сумма)
       SIP_ENABLED: ${SIP_ENABLED:-no}
@@ -228,6 +230,7 @@ services:
       - ${DATA_ROOT}/branding:/data/branding
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
+      - ${DATA_ROOT}/live:/data/live            # HLS прямых эфиров (общий с Egress и nginx web)
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления
       - ${DATA_ROOT}/updater:/data/updater
       - ${DATA_ROOT}/models/llm:/models/llm:ro
@@ -361,6 +364,7 @@ services:
           room_composite_cpu_cost: ${VIDEO_CPU_COST:-3.0}
     volumes:
       - ${DATA_ROOT}/recordings:/out
+      - ${DATA_ROOT}/live:/live          # сегменты HLS прямых эфиров: Egress пишет, backend создаёт ссылки доступа и убирает, web (nginx) раздаёт
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
       interval: 15s
@@ -422,6 +426,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - ${DATA_ROOT}/live:/live:ro                        # HLS прямых эфиров раздаёт nginx напрямую
+      - ${DATA_ROOT}/live/nginx:/etc/nginx/live:ro        # секрет подписи ссылок (set $hls_secret), его пишет backend
     ports:
       - "${WEB_BIND_ADDR:?}:${WEB_PORT:?}:8080/tcp"
     healthcheck:

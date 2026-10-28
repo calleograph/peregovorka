@@ -34,6 +34,7 @@ import { watchMeetings } from "./desktopMeetings";
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 import OutlookCenter from "./pages/OutlookCenter";
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
+const LivePage = lazy(() => import("./pages/LivePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
@@ -214,6 +215,22 @@ function GuestApp() {
 }
 
 
+/** Страница зрителя трансляции: без входа в систему и без разделов приложения. */
+function LiveApp() {
+  return (
+    <div className="shell guest-shell">
+      <header className="topbar"><span className="brand"><Brand /></span><span className="muted">Прямой эфир</span></header>
+      <main>
+        <Routes>
+          <Route path="/live/:token" element={<Suspense fallback={<div className="muted">Загрузка…</div>}><LivePage /></Suspense>} />
+          <Route path="*" element={<section className="prejoin card"><h1>Страница не найдена</h1><p className="muted">Проверьте ссылку на трансляцию.</p></section>} />
+        </Routes>
+      </main>
+      <CookieNotice />
+    </div>
+  );
+}
+
 export default function App() {
   const [blocked, setBlocked] = useState(isRestricted());
   useEffect(() => onRestricted(() => setBlocked(true)), []);
@@ -227,6 +244,7 @@ function Pages() {
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
   if (pathname.startsWith("/legal/")) return <><Routes><Route path="/legal/:kind" element={<LegalPage />} /></Routes><CookieNotice /></>;       // документы организации открываются без входа
   if (pathname === "/outlook" || pathname === "/outlook/") return <Routes><Route path="*" element={<OutlookCenter />} /></Routes>;          // центр установки надстройки: открывается без входа
+  if (pathname.startsWith("/live/")) return <LiveApp />;          // страница зрителя трансляции: открывается без входа
   if (pathname.startsWith("/m/")) return <Routes><Route path="/m/:code" element={<MeetPage />} /></Routes>;          // страница конференции из календаря: открывается без входа
   if (pathname === "/privacy") return <><PrivacyPage /><CookieNotice /></>;          // открывается без входа (ссылка «Подробнее» на странице входа)
   return pathname.startsWith("/guest/") ? <GuestApp /> : <StaffApp />;

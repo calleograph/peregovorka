@@ -71,6 +71,9 @@ class RoomOut(BaseModel):
     guest_token: str | None = None            # секрет гостевой ссылки: отдаётся ТОЛЬКО руководителям и администраторам, и только если гостевой вход включён
     active_meeting: ActiveMeetingOut | None = None
     icon: RoomIconOut | None = None
+    live_enabled: bool = False                # в комнате разрешена трансляция (тип «Трансляционная» или включено в настройках)
+    live: bool = False                        # сейчас идёт прямой эфир (метка «ЭФИР» на карточке комнаты)
+    live_viewers: int = 0                     # зрителей сейчас (по их плееру; для ссылок на поток и CDN недоступно)
 
 
 class JoinIn(BaseModel):
@@ -242,7 +245,7 @@ class RoomCreateIn(BaseModel):
     mute_on_join: bool = False
     mask_profanity: bool = True
     welcome_message: str | None = Field(default=None, max_length=2000)
-    room_type: str = Field(default="regular", pattern="^(regular|presentation)$")
+    room_type: str = Field(default="regular", pattern="^(regular|presentation|broadcast)$")
     auto_record: bool = False
     board_allowed: bool = True
     board_access: str = Field(default="auto", pattern="^(auto|everyone|speakers|leaders|private)$")
@@ -284,7 +287,7 @@ class RoomPatchIn(BaseModel):
     mute_on_join: bool | None = None
     mask_profanity: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
-    room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
+    room_type: str | None = Field(default=None, pattern="^(regular|presentation|broadcast)$")
     auto_record: bool | None = None
     board_allowed: bool | None = None
     board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")

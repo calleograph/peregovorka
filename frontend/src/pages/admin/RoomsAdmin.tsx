@@ -210,6 +210,7 @@ export default function RoomsAdmin() {
                   <select value={form.room_type} onChange={(e) => set("room_type", e.target.value as RoomType)}>
                     <option value="regular">Обычная — все участники могут говорить</option>
                     <option value="presentation">Презентационная — участники слушают, говорят руководители и те, кому «дали слово»</option>
+                    <option value="broadcast">Трансляционная — выступающие в конференции, зрители смотрят эфир по ссылке</option>
                   </select></label>
                 <label className="check"><input type="checkbox" checked={form.record_audio || form.auto_record} disabled={form.auto_record} onChange={(e) => set("record_audio", e.target.checked)} />
                   <span className="check-body">Запись аудио разрешена<span className="help">Руководитель комнаты включает и выключает запись кнопкой во время встречи (хранение — в разделе «Хранилища»).</span></span></label>
@@ -305,7 +306,7 @@ export default function RoomsAdmin() {
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>
-              <td className="small">{[r.room_type === "presentation" && "презентация", r.has_password && "пароль", r.auto_record ? "автозапись" : r.record_audio && "запись по кнопке", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
+              <td className="small">{[r.room_type === "presentation" && "презентация", r.room_type === "broadcast" && "трансляция", r.has_password && "пароль", r.auto_record ? "автозапись" : r.record_audio && "запись по кнопке", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
                 r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
               <td className="actions"><button className="btn ghost" onClick={() => open(toForm(r))}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>

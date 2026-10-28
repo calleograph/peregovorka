@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.48.4",
- "reviewed_at": "2026-10-28",
+ "release": "0.49.0",
+ "reviewed_at": "2026-10-29",
  "components": [
   {
    "key": "livekit_server",
@@ -1189,6 +1189,42 @@
    }
   },
   {
+   "key": "hls_js",
+   "title": "hls.js (воспроизведение HLS в браузерах без встроенной поддержки: страница зрителя трансляции)",
+   "group": "Frontend",
+   "pinned": "1.7.3",
+   "tested": "1.7.3",
+   "reviewed_latest": "1.7.4",
+   "source": {
+    "type": "npm",
+    "name": "hls.js"
+   },
+   "locations": [
+    {
+     "type": "npm-lock",
+     "file": "frontend/package-lock.json",
+     "name": "hls.js"
+    },
+    {
+     "type": "package-json",
+     "file": "frontend/package.json",
+     "name": "hls.js"
+    }
+   ],
+   "changelog": "https://github.com/video-dev/hls.js/releases",
+   "runtime": {
+    "how": "web-version-json",
+    "name": "hls.js"
+   },
+   "deferred": {
+    "version": "1.7.4",
+    "reason": "Версия 1.7.4 вышла в день подключения библиотеки (2026-10-28); для первого выпуска трансляций берём версию, которой больше шести недель.",
+    "issue": "DEP-16",
+    "recheck": "2026-11-15",
+    "plan": "Обновить hls.js до 1.7.4 и повторить проверку воспроизведения на Chromium и WebKit."
+   }
+  },
+  {
    "key": "vite",
    "title": "Vite",
    "group": "Frontend",
@@ -1626,7 +1662,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-28",
+  "checked_at": "2026-10-29",
   "source": "osv.dev",
   "advisories": {
    "hydra-core==1.3.7": [
@@ -1634,13 +1670,17 @@
    ],
    "onnx==1.19.1": [
     "GHSA-3r9x-f23j-gc73",
+    "GHSA-48m4-24cq-37qf",
     "GHSA-538c-55jv-c5g9",
+    "GHSA-6pwm-x34p-fvj2",
     "GHSA-cmw6-hcpp-c6jp",
     "GHSA-hqmj-h5c6-369m",
     "GHSA-hwpq-hmq9-wj77",
+    "GHSA-m4pr-6v3c-6fgr",
     "GHSA-p433-9wv8-28xj",
     "GHSA-p893-rvq9-2xf9",
     "GHSA-q56x-g2fj-4rj6",
+    "GHSA-q69g-f4f5-v8m7",
     "PYSEC-2026-103",
     "PYSEC-2026-104",
     "PYSEC-2026-2239",

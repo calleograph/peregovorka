@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
+import { LiveDialog, useLive } from "../components/LiveControl";
 import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room, type VideoState } from "../api";
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
@@ -113,6 +114,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [ended, setEnded] = useState(false);
   const [recording, setRecording] = useState(false);          // идёт запись аудио
   const [video, setVideo] = useState<VideoState | null>(null);   // видеозапись встречи (отдельно от аудио)
+  const lv = useLive(join?.meeting_id);                       // прямой эфир (трансляция) встречи
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveFlag, setLiveFlag] = useState(false);               // «идёт эфир» по событию: гости состояние эфира запросить не могут, а метку видят
+  const liveRefresh = useRef(lv.refresh);
+  liveRefresh.current = lv.refresh;
   const [transcribing, setTranscribing] = useState(true);     // идёт транскрибация (по умолчанию всегда)
   const [sources, setSources] = useState<string[]>(ALL_SOURCES);   // что разрешено публиковать (сервер выдаёт в токене)
   const [hands, setHands] = useState<HandInfo[]>([]);                      // очередь поднятых рук (раньше поднявший — выше)
@@ -1021,6 +1027,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         void lp.setMicrophoneEnabled(false).then(() => { refresh(); setNotice({ kind: "info", text: "Вы включили микрофон на другом своём устройстве — здесь он выключен, чтобы не было эха и двойной стенограммы." }); });
       }
     } else if (e.type === "recording_changed") setRecording(e.enabled);
+    else if (e.type === "live_changed") {
+      liveRefresh.current(); setLiveFlag(e.live);
+      setNotice({ kind: e.live ? "warn" : "info", text: e.live ? "Началась прямая трансляция: изображение и звук комнаты видят зрители, в том числе на внешних площадках." : "Прямая трансляция остановлена." });
+    }
     else if (e.type === "video_recording_changed") {
       setVideo((v) => (v ? { ...v, recording: e.enabled } : v));
       setNotice({ kind: e.enabled ? "warn" : "info", text: e.enabled ? "Началась видеозапись встречи: записываются изображение и звук всех участников." : "Видеозапись встречи остановлена. Файл появится в «Истории» после обработки." });
@@ -1073,6 +1083,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       if (!mid) return;
       loadFloor(mid);
       api.videoState(mid).then(setVideo).catch(() => undefined);
+      liveRefresh.current();
       api.getStage(mid).then(st.applyServer).catch(() => undefined);       // общую сцену могли сменить, пока канал событий был разорван
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1267,6 +1278,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       submenu: PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: PROFILE_LABELS[pr], checked: curProfile === pr,
         hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : undefined, onSelect: () => void chooseProfile(pr) })) },
     { id: "rec", label: `Аудиозапись: ${recording ? "включена" : "выключена"}`, icon: recording ? "recordStop" : "record", hint: recording ? "Нажмите, чтобы остановить запись звука встречи (транскрибация не меняется)" : "Нажмите, чтобы начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
+    { id: "live", label: lv.state?.live ? "Трансляция: идёт эфир" : "Трансляция…", icon: "broadcast", hint: lv.state?.live ? "Остановить эфир, скопировать ссылки, посмотреть состояние" : "Начать прямой эфир для зрителей и внешних площадок, скопировать ссылки", hidden: !lv.state?.enabled, onSelect: () => setLiveOpen(true) },
     { id: "vid", label: `Видеозапись: ${video?.recording ? "включена" : "выключена"}`, icon: video?.recording ? "recordStop" : "video", hint: video?.recording ? "Нажмите, чтобы остановить видеозапись всей встречи (аудиозапись и транскрибация не меняются)" : "Нажмите, чтобы начать видеозапись всей встречи с текущего момента: картинка и звук всех участников, при показе экрана он занимает основное место", hidden: !(video?.can_control && !guest), onSelect: () => void toggleVideo() },
     { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: transcribing ? `Звонок продолжается${recording ? ", аудиозапись — тоже" : ""}` : "Реплики снова будут попадать в стенограмму", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
@@ -1293,6 +1305,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           {presentation && <span className="badge" title="Сколько зрителей сейчас в комнате (без выступающих)">{audienceLabel(audienceView.length)}</span>}
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> АУДИОЗАПИСЬ</span>}
+          {(lv.state ? lv.state.live : liveFlag) && <span className="rec-badge on live" title="Идёт прямая трансляция комнаты: её видят зрители по ссылке и на внешних площадках"><span className="rec-dot" aria-hidden /> ПРЯМОЙ ЭФИР{lv.state?.viewers ? ` · ${lv.state.viewers}` : ""}</span>}
           {video?.recording && <span className="rec-badge on video" title="Идёт видеозапись встречи: изображение и звук всех участников"><span className="rec-dot" aria-hidden /> ВИДЕОЗАПИСЬ</span>}
           {serverTranscript && !transcribing && (
             <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
@@ -1436,7 +1449,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); if (window.innerWidth > 1000) lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
           </Ctl>
           <Ctl error={ctlErr.rec ?? ctlErr.vid ?? ctlErr.tr} onClose={() => { setErr("rec"); setErr("vid"); setErr("tr"); }}>
-            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording ? "rec" : "neutral"} badge={recording || !!video?.recording} disabled={ended}
+            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live} disabled={ended}
                          title="Шумоподавление, устройства, запись, транскрибация и другие действия"
                          onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, moreItems()); }} />
           </Ctl>
@@ -1462,6 +1475,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
       {cardOf && <ParticipantCardDialog meetingId={join.meeting_id} identity={cardOf.identity} name={cardOf.name} role={cardOf.role} localMuted={localMuted.has(cardOf.identity)} onToggleLocalMute={() => toggleLocalMuted(cardOf.identity)} onClose={() => setCardOf(null)} />}
+      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSettings={lv.state.links ? () => { setLiveOpen(false); setManageOpen(true); } : undefined} />}
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
       {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}

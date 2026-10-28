@@ -80,6 +80,7 @@ class MeetingService:
         self._bridge = bridge
         self.on_ended: Callable[[uuid.UUID], None] | None = None  # запуск финализации (экспорт, протокол)
         self.video = None                                                   # VideoRecorder (видеозапись через Egress); задаётся при запуске приложения
+        self.live = None                                                    # LiveBroadcaster (трансляции: HLS и внешние площадки); задаётся при запуске приложения
         self.on_started: Callable[[uuid.UUID], None] | None = None      # встреча началась (например, подготовка входящих телефонных звонков)
         self.on_ended_extra: Callable[[uuid.UUID], None] | None = None  # встреча закончилась (например, снять правило входящих звонков)
         self.on_event: Callable[[str, Meeting], None] | None = None     # события для публичного API: ("meeting.started" | "meeting.ended", встреча)
@@ -110,7 +111,8 @@ class MeetingService:
         if outlook_svc.is_too_early(room):            # запланированная конференция из Outlook: вход открывается за N минут до начала
             raise JoinError("too_early", outlook_svc.gate_message(room), 425)
 
-        if room.password_hash:
+        if room.password_hash and not (room.room_type == "broadcast" and roles.can_manage_room(room, su)):
+            # трансляционная комната: пароль выступающего нужен остальным; владелец, руководители и администраторы входят по своим правам (пароль им не выдаётся и не заменяет права)
             await self._check_room_password(room, su, password)
 
         if await self._r.exists(self._kick_key(room.id, su.user_id)):
@@ -291,6 +293,8 @@ class MeetingService:
         await db.commit()
         if self.video is not None:
             await self.video.on_join(db, meeting)
+        if self.live is not None:
+            await self.live.on_join(db, meeting)
 
     async def on_guest_left(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
         await self.leave_guest(db, meeting_id, guest_id)
@@ -404,6 +408,8 @@ class MeetingService:
                 await self.video.stop(db, meeting, by="meeting_end")        # файл закрывает Egress; итог — webhook или сверка
             except Exception:  # noqa: BLE001 — завершение встречи не должно зависеть от записи
                 log.exception("Не удалось остановить видеозапись при завершении встречи", extra={"meeting_id": str(meeting.id)})
+        if self.live is not None:
+            await self.live.on_meeting_end(db, meeting)
         await self._bridge.stop(meeting_id=str(meeting.id), room_name=meeting.livekit_room)
         await e2ee_svc.drop(self._r, meeting.id)         # ключ сквозного шифрования действует одну встречу
         await self._clear_state(meeting.id)   # «слово» и список руководителей — состояние встречи, после неё сбрасывается
@@ -443,6 +449,8 @@ class MeetingService:
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
         if self.video is not None:
             await self.video.on_join(db, meeting)              # режим комнаты «автоматически»
+        if self.live is not None:
+            await self.live.on_join(db, meeting)               # трансляция в режиме «автоматически»
 
     async def sync_rights_on_join(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, permission) -> bool:
         """Права только что подключившегося участника презентации приводятся к ТЕКУЩЕМУ состоянию слова — в обе стороны.

@@ -25,7 +25,7 @@ from .schemas import MAX_ROOM_PARTICIPANTS, RoomIconOut
 from ..services.room_icons import icon_out
 from ..services.llm_choice import clean_choice, describe, llm_options, resolve_llm, room_choice
 from ..services.sip import normalize_number
-from ..security.passwords import hash_room_password
+from ..security.passwords import hash_room_password, verify_room_password
 from ..services import roles
 from ..services import storage_encryption as se
 from ..services.audit import write_audit
@@ -105,7 +105,7 @@ class RoomManagePatch(BaseModel):
     screen_share_allowed: bool | None = None
     board_allowed: bool | None = None
     board_access: str | None = Field(default=None, pattern="^(auto|everyone|speakers|leaders|private)$")
-    room_type: str | None = Field(default=None, pattern="^(regular|presentation)$")
+    room_type: str | None = Field(default=None, pattern="^(regular|presentation|broadcast)$")
     auto_record: bool | None = None
     encrypt_storage: bool | None = None
     e2ee_mode: str | None = Field(default=None, pattern="^(off|full|trusted)$")
@@ -276,8 +276,13 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             setattr(room, name, fields[name])
     if "password" in fields:
         pw = fields["password"]
+        if pw and room.live_password_hash and verify_room_password(room.live_password_hash, pw):
+            raise HTTPException(status_code=422, detail="Пароль выступающего не должен совпадать с паролем зрителя трансляции")
         room.password_hash = hash_room_password(pw) if pw else None
         changed["password"] = "set" if pw else "cleared"
+    if "room_type" in changed and room.room_type == "broadcast" and not room.live_enabled:
+        room.live_enabled = True            # тип «Трансляционная» включает трансляцию; владелец может выключить её отдельно
+        changed["live_enabled"] = {"from": False, "to": True}
     if room.auto_record and not room.record_audio:
         room.record_audio = True    # автоматическая запись предполагает, что запись аудио разрешена
         changed.setdefault("record_audio", {"from": False, "to": True})

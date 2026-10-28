@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.devices import device_kind
 from ..services import asr_state
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
-from ..models import Meeting, MeetingParticipant, Room, utcnow
+from ..models import Broadcast, Meeting, MeetingParticipant, Room, utcnow
 from ..services import roles, temp_rooms, timings, upcoming
 from ..services import captcha
 from ..services.room_icons import icon_out
@@ -25,7 +25,7 @@ from .schemas import ActiveMeetingOut, E2EEOut, JoinIn, JoinOut, RoomOut
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 
-async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, participants: int = 0, su: SessionUser | None = None) -> RoomOut:
+async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, participants: int = 0, su: SessionUser | None = None, live: tuple[bool, int] = (False, 0)) -> RoomOut:
     manage = bool(su and roles.can_manage_room(room, su))
     return RoomOut(
         can_manage=manage, mute_on_join=room.mute_on_join, guest_token=room.guest_token if (manage and room.guest_access_enabled and room.guest_token) else None,
@@ -36,12 +36,12 @@ async def room_out(db: AsyncSession, room: Room, active: Meeting | None = None, 
         board_allowed=room.board_allowed, board_access=room.board_access, room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode,
         lifetime=room.lifetime, lifecycle=room.lifecycle, auto_close_at=room.auto_close_at, created_by_name=room.created_by_name,
         active_meeting=ActiveMeetingOut(id=active.id, started_at=active.started_at, participants=participants) if active else None,
-        icon=icon_out(room),
+        icon=icon_out(room), live_enabled=room.live_enabled, live=live[0], live_viewers=live[1],
     )
 
 
 @router.get("", response_model=list[RoomOut])
-async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def list_rooms(request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     rooms = await accessible_room_views(db, su)
     if not rooms:
         return []
@@ -54,7 +54,10 @@ async def list_rooms(su: SessionUser = Depends(require_user), db: AsyncSession =
             .where(MeetingParticipant.meeting_id.in_([m.id for m in active.values()]), MeetingParticipant.left_at.is_(None))
             .group_by(MeetingParticipant.meeting_id))
         counts = {mid: n for mid, n in rows}
-    return [await room_out(db, r, active.get(r.id), counts.get(active[r.id].id, 0) if r.id in active else 0, su) for r in rooms]
+    live_ids = {rid for (rid,) in (await db.execute(select(Broadcast.room_id).where(Broadcast.room_id.in_([r.id for r in rooms]), Broadcast.status.in_(("starting", "live"))))).all()} if any(r.live_enabled for r in rooms) else set()
+    lv = request.app.state.live
+    return [await room_out(db, r, active.get(r.id), counts.get(active[r.id].id, 0) if r.id in active else 0, su,
+                           (r.id in live_ids, await lv.viewers(r.id) if r.id in live_ids else 0)) for r in rooms]
 
 
 @router.get("/upcoming")
@@ -93,7 +96,9 @@ async def resolve_room(ref: str, su: SessionUser = Depends(require_user), db: As
         people = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(
             MeetingParticipant.meeting_id == active.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
     info = (await room_out(db, room, active, people, su)).model_dump(mode="json")      # для страницы «перед входом»: описание, возможности, кто уже в комнате
-    return {"id": str(room.id), "slug": room.slug, "name": room.name, "canonical": canonical, "lifetime": room.lifetime, "lifecycle": room.lifecycle, "room": info}
+    # страница зрителя для сотрудника, открывшего трансляционную комнату («Зритель»): тот же адрес, что у внешних зрителей, пароль зрителя действует и для него
+    watch = f"/live/{room.live_token}" if room.live_enabled and room.live_own_hls and room.live_token else None
+    return {"id": str(room.id), "slug": room.slug, "name": room.name, "canonical": canonical, "lifetime": room.lifetime, "lifecycle": room.lifecycle, "room": info, "live_watch": watch}
 
 
 @router.get("/temporary/policy")

@@ -138,6 +138,19 @@ class Room(Base):
     # auto — запись идёт, пока в комнате есть участники (для презентационных комнат включается по умолчанию, если администратор разрешил видеозапись).
     video_mode: Mapped[str] = mapped_column(String(8), default="off", server_default="off", nullable=False)
     video_quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)   # 720p | 1080p
+    # Трансляция (LiveKit Egress → HLS и внешние площадки, зрители смотрят без подключения к LiveKit). Включается на комнате любого типа; тип «broadcast» включает её по умолчанию.
+    live_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    live_start: Mapped[str] = mapped_column(String(8), default="manual", server_default="manual", nullable=False)      # manual | auto (эфир начинается с первым выступающим)
+    live_quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)       # 720p | 1080p
+    live_record: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)    # сохранять MP4-запись эфира в историю
+    live_own_hls: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)   # собственный просмотр (страница зрителя и ссылка на поток); иначе только внешние площадки
+    live_title: Mapped[str | None] = mapped_column(String(200))                  # название мероприятия на странице зрителя (пусто — название комнаты)
+    live_starts_at: Mapped[datetime | None] = mapped_column(UTCDateTime)         # объявленное время начала (страница ожидания, обратный отсчёт)
+    live_token: Mapped[str | None] = mapped_column(String(64), unique=True)      # ссылка зрителя /live/<токен>; перевыпуск отзывает прежнюю
+    live_view_access: Mapped[str | None] = mapped_column(String(40), unique=True)    # идентификатор доступа к HLS для страницы зрителя (имя ссылки в /live/acc); смена — мгновенный отзыв
+    live_stream_access: Mapped[str | None] = mapped_column(String(40), unique=True)  # то же для ссылки на поток (отдельно, отзывается независимо)
+    live_password_hash: Mapped[str | None] = mapped_column(String(255))         # пароль зрителя (argon2id); не совпадает с паролем выступающего (rooms.password_hash)
+    live_password_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Кто работает с общей доской: auto — по типу комнаты (обычная: все, если board_allowed; презентация: только руководитель); everyone — все правят;
@@ -1104,3 +1117,25 @@ class RestoreJob(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
+
+
+class Broadcast(Base):
+    """Один прямой эфир комнаты: процесс Egress (MP4 + HLS + RTMP), каталог HLS, состояние. Строка остаётся как история; каталог HLS удаляется уборщиком."""
+
+    __tablename__ = "broadcasts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    # starting — Egress запущен, плейлист ещё не готов; live — идёт; ending — остановлен, дописывается; ended — завершён; failed — не удался или Egress пропал
+    status: Mapped[str] = mapped_column(String(10), default="starting", server_default="starting", nullable=False, index=True)
+    egress_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    hls_dir: Mapped[str | None] = mapped_column(String(40))                      # каталог HLS в томе /live/b/<hls_dir>; пусто — собственный HLS не нужен
+    quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)
+    started_by: Mapped[str | None] = mapped_column(String(200))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    live_at: Mapped[datetime | None] = mapped_column(UTCDateTime)                # когда появился плейлист (эфир виден зрителям)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    error: Mapped[str | None] = mapped_column(String(300))
+    peak_viewers: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hls_cleaned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)

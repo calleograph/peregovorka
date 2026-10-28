@@ -100,14 +100,14 @@ TABLES: dict[str, TablePolicy] = {
     "legal_revisions": TablePolicy(True, "история редакций документов (подтверждения пользователей не переносятся)", "Редакции документов", order=11,
         columns=_cols({DATA: ["id", "kind", "version", "title", "content_md", "published_at", "published_by", "unpublished_at"]})),
     "rooms": TablePolicy(True, "постоянные переговорки: настройки, роли, запись и транскрибация, инструкции; временные не переносятся; пароль — как хэш", "Переговорки", order=20,
-        where="lifetime = 'permanent'", hashes=("password_hash",),
+        where="lifetime = 'permanent'", hashes=("password_hash", "live_password_hash"),
         columns=_cols({DATA: ["id", "slug", "name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio", "camera_allowed", "screen_share_allowed",
                               "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access", "anonymize_mode", "llm_profile_id", "anonymizer_profile_id",
                               "mute_on_join", "guest_access_enabled", "guest_token", "room_type", "peer_access", "encrypt_storage", "e2ee_mode", "scheduled_start", "scheduled_end", "join_opens_at", "outlook_key", "recurring", "cancelled_at", "auto_record", "recording_mode", "video_mode", "video_quality", "board_allowed", "board_access", "mail_delivery",
                               "llm_mode", "llm_local_model", "llm_summary_mode", "llm_summary_profile_id", "llm_summary_local_model", "sip_mode", "sip_profile_id", "sip_extension",
                               "sip_allow_inbound", "sip_allow_outbound", "sip_contacts", "welcome_message", "auto_map_mode", "slug_history", "lifetime", "lifecycle",
-                              "created_by_name", "created_at", "updated_at", "icon_kind", "icon_key", "mask_profanity"],      # значок из библиотеки переносится; загруженное изображение — файл в каталоге данных, в копию настроек не входит
-                       HASH: ["password_hash"], RESET: ["icon_rev", "sip_dispatch_rule_id", "closed_at", "auto_close_at", "outlook_organizer", "outlook_ews_id", "outlook_rest_id", "outlook_series_id", "outlook_recurrence", "outlook_exceptions", "outlook_tz", "outlook_synced_at", "outlook_sync_state", "outlook_sync_error"], USER_REF: ["created_by_user_id"]}), bound={"sip_dispatch_rule_id": BOUND_LIVEKIT}),
+                              "created_by_name", "created_at", "updated_at", "icon_kind", "icon_key", "mask_profanity", "live_enabled", "live_start", "live_quality", "live_record", "live_own_hls", "live_title", "live_starts_at", "live_password_enabled"],      # значок из библиотеки переносится; загруженное изображение — файл в каталоге данных, в копию настроек не входит
+                       HASH: ["password_hash", "live_password_hash"], RESET: ["live_token", "live_view_access", "live_stream_access", "icon_rev", "sip_dispatch_rule_id", "closed_at", "auto_close_at", "outlook_organizer", "outlook_ews_id", "outlook_rest_id", "outlook_series_id", "outlook_recurrence", "outlook_exceptions", "outlook_tz", "outlook_synced_at", "outlook_sync_state", "outlook_sync_error"], USER_REF: ["created_by_user_id"]}), bound={"sip_dispatch_rule_id": BOUND_LIVEKIT}),
     "room_acl": TablePolicy(True, "кому доступна переговорка (группы и пользователи каталога)", "Доступ к переговоркам", order=21,
         columns=_cols({DATA: ["id", "room_id", "subject_type", "subject_ref", "display_name"]})),
     "room_moderators": TablePolicy(True, "руководители переговорок", "Руководители переговорок", order=21,
@@ -137,7 +137,7 @@ TABLES: dict[str, TablePolicy] = {
     "guest_participants": TablePolicy(False, "данные встреч"), "meetings": TablePolicy(False, "данные встреч"), "meeting_participants": TablePolicy(False, "данные встреч"),
     "meeting_grants": TablePolicy(False, "данные встреч"), "meeting_chat_messages": TablePolicy(False, "переписка встреч"), "meeting_chat_attachments": TablePolicy(False, "вложения чата"),
     "meeting_whiteboards": TablePolicy(False, "схемы встреч"), "transcript_segments": TablePolicy(False, "стенограммы"), "protocols": TablePolicy(False, "протоколы и резюме встреч"),
-    "conversation_maps": TablePolicy(False, "карты разговора"), "recordings": TablePolicy(False, "записи встреч"), "recording_waveforms": TablePolicy(False, "волновые формы записей: производные данные, строятся заново по запросу"),
+    "conversation_maps": TablePolicy(False, "карты разговора"), "recordings": TablePolicy(False, "записи встреч"), "broadcasts": TablePolicy(False, "прямые эфиры: данные встреч (состояние, время, ошибки), не переносятся"), "recording_waveforms": TablePolicy(False, "волновые формы записей: производные данные, строятся заново по запросу"),
     "storage_transfers": TablePolicy(False, "задания переноса записей между хранилищами: состояние выполнения"), "storage_transfer_items": TablePolicy(False, "задания переноса записей между хранилищами: состояние выполнения"),
     "storage_sync_runs": TablePolicy(False, "отчёты сверки хранилища"), "config_backup_runs": TablePolicy(False, "история заданий копирования настроек"), "storage_keys": TablePolicy(False, "ключи шифрования хранилища привязаны к APP_MASTER_KEY и данным в базе: переносятся только вместе с базой, в копию настроек не входят"), "user_backup_codes": TablePolicy(False, "резервные коды входа пользователей: личные данные безопасности, не переносятся"),
     "audit_log": TablePolicy(False, "журнал аудита"), "sip_calls": TablePolicy(False, "журнал телефонных вызовов"), "event_log": TablePolicy(False, "журнал событий"),
@@ -188,6 +188,7 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "outlook": GroupPolicy(title="Надстройка Outlook", bound={"public_url": BOUND_URL}),
     "sip_policy": GroupPolicy(title="Политика телефонии"),
     "video": GroupPolicy(title="Видеозапись встреч"),
+    "live": GroupPolicy(title="Трансляции"),
     "profile_policy": GroupPolicy(title="Правка профиля пользователями"),
     "auth_security": GroupPolicy(title="Двухфакторная аутентификация (политика)"),
     "desktop_channel": GroupPolicy(title="Канал обновлений приложения Windows (адрес и открытый ключ издателя)"),
@@ -225,7 +226,7 @@ ENV: dict[str, str] = {
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
-ENV_OTHER: dict[str, str] = {"VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
+ENV_OTHER: dict[str, str] = {"LIVE_DIR": "том трансляций внутри backend (HLS и ссылки доступа; по умолчанию каталог данных/live): общий с Egress и nginx web", "LIVE_EGRESS_DIR": "тот же том внутри контейнера Egress (по умолчанию /live)", "VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
 
 
 def exported_tables() -> list[str]:
@@ -258,6 +259,7 @@ VOLUMES: dict[str, str] = {
     "avatars": "фото профилей пользователей: не переносятся (пользователи принадлежат серверу)",
     "chat-files": "вложения чата встреч: данные встреч, не переносятся",
     "recordings": "записи встреч: данные встреч, не переносятся (для них — перенос между хранилищами)",
+    "live": "сегменты HLS идущих эфиров и ссылки доступа (временные, удаляются уборщиком) и секрет подписи для nginx (производный от главного ключа): не переносятся",
     "exports": "локальная папка-хранилище материалов: данные, не переносятся; настройки хранилища переносятся",
     "updater": "состояние помощника обновления этого сервера: не переносится",
     "models": "модели распознавания и языковые модели: файлы устанавливаются на сервере отдельно; выбор моделей (настройки) переносится",

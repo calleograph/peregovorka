@@ -23,7 +23,7 @@ from .publicapi.jobs import JobRunner
 from .publicapi.requestlog import RequestLogWriter
 from .publicapi.webhooks import WebhookService
 from .publicapi.routes import router as public_router
-from .api import admin_video, chats as chats_api, desktop as desktop_api, signing as signing_api, dictation as dictation_api, meeting_access, room_icons as room_icons_api, room_journal, api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_security, admin_ip_access, admin_sec_events, admin_captcha_test, admin_network, admin_restore, calendar as calendar_api, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
+from .api import admin_video, admin_live, live as live_api, chats as chats_api, desktop as desktop_api, signing as signing_api, dictation as dictation_api, meeting_access, room_icons as room_icons_api, room_journal, api_docs, config_backup as config_backup_api, media as media_api, storage_admin as storage_admin_api, site as site_api, admin, admin_bitrix, admin_public_api, admin_webhooks, admin_asr, admin_access, admin_mail, admin_storage_sync, admin_auto_backup, admin_crypto, auth_totp, outlook as outlook_api, admin_outlook, peer_rooms as peer_rooms_api, captcha as captcha_api, delivery as delivery_api, meeting_settings, maps as maps_api, admin_journal, admin_llm, admin_sip, telephony, admin_system, admin_security, admin_ip_access, admin_sec_events, admin_captcha_test, admin_network, admin_restore, calendar as calendar_api, admin_performance, admin_updates, auth, client, collab, guest, health, internal, profile, meetings, moderation, room_manage, rooms, templates, ws
 from .auth.deps import client_ip
 from .auth.directory import DirectoryClient
 from .auth.service import AuthService
@@ -218,6 +218,9 @@ def create_app(
         app.state.protocols = protocols
         from .services.video_rec import VideoRecorder  # noqa: PLC0415
         app.state.video = meetings_svc.video = VideoRecorder(settings, bg_sm, redis, settings_svc, export=protocols.export_recording, journal=journal)     # видеозапись (LiveKit Egress)
+        from .services.live import LiveBroadcaster  # noqa: PLC0415
+        app.state.live = meetings_svc.live = LiveBroadcaster(settings, bg_sm, redis, settings_svc, api=app.state.video.api, video=app.state.video, journal=journal)   # трансляции
+        app.state.live.prepare()
         protocols.gate = app.state.perf.gate
         app.state.avatars = AvatarStore(settings.data_dir)
         app.state.room_icons = RoomIconStore(settings.data_dir)
@@ -362,7 +365,7 @@ def create_app(
                 return lambda: asyncio.create_task(make(), name=name)
 
             leader.register("legacy-ldap-import", _task("legacy-ldap-import", lambda: legacy.auto_import(bg_sm, redis, directory)))
-            leader.register("meeting-reaper", _task("meeting-reaper", lambda: run_reaper(bg_sm, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync, manifests=app.state.manifests, video=app.state.video)))
+            leader.register("meeting-reaper", _task("meeting-reaper", lambda: run_reaper(bg_sm, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync, manifests=app.state.manifests, video=app.state.video, live=app.state.live)))
             leader.register("auto-update", _task("auto-update", lambda: run_autoupdate(app.state.autoupdate)))
             leader.register("auto-backup", _task("auto-backup", lambda: run_auto_backup(app.state.auto_backup)))
             leader.register("retention", _task("retention", lambda: run_retention(bg_sm, protocols)))
@@ -454,7 +457,7 @@ def create_app(
         return _JSON({"detail": "База данных временно недоступна. Повторите через несколько секунд."}, status_code=503, headers={"Retry-After": "5"})
 
     prefix = "/api/v1"
-    for r in (admin_video.router, desktop_api.router, signing_api.router, chats_api.router, dictation_api.router, site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, meeting_access.router, room_icons_api.router, room_journal.router, maps_api.router, admin_system.router, admin_security.router, admin_ip_access.router, admin_sec_events.router, admin_captcha_test.router, admin_network.router, admin_restore.router, calendar_api.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
+    for r in (admin_video.router, admin_live.router, live_api.router, live_api.public_router, desktop_api.router, signing_api.router, chats_api.router, dictation_api.router, site_api.router, admin_outlook.router, admin_crypto.router, outlook_api.router, peer_rooms_api.router, config_backup_api.router, media_api.router, storage_admin_api.router, auth.router, admin_bitrix.router, admin_public_api.router, admin_webhooks.router, profile.router, rooms.router, meetings.router, collab.router, guest.router, templates.router, client.router, moderation.router, room_manage.router, admin.router, admin_access.router, admin_mail.router, admin_storage_sync.router, admin_auto_backup.router, auth_totp.router, captcha_api.router, delivery_api.router, delivery_api.templates_router, meeting_settings.router, meeting_access.router, room_icons_api.router, room_journal.router, maps_api.router, admin_system.router, admin_security.router, admin_ip_access.router, admin_sec_events.router, admin_captcha_test.router, admin_network.router, admin_restore.router, calendar_api.router, admin_performance.router, admin_llm.router, admin_sip.router, telephony.router, admin_journal.router, admin_updates.router, admin_asr.router, health.router, ws.router):
         app.include_router(r, prefix=prefix)
     app.include_router(internal.router)
     app.include_router(api_docs.router)     # /api/docs: общедоступная документация (выполнение запросов остаётся под аутентификацией)

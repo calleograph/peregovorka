@@ -28,7 +28,7 @@ ARG APP_VERSION=0.0.0
 ARG APP_GIT_COMMIT=unknown
 ARG APP_BUILT_AT=unknown
 RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' "$APP_VERSION" "$APP_GIT_COMMIT" "$APP_BUILT_AT" > dist/version.json \
-    && node -e "const fs=require('fs');const l=require('./package-lock.json').packages;const v=JSON.parse(fs.readFileSync('dist/version.json','utf8'));v.node=process.version.slice(1);v.components={};for(const k of ['livekit-client','@sapphi-red/web-noise-suppressor','react','react-dom','react-router-dom','vite']){v.components[k]=l['node_modules/'+k].version}fs.writeFileSync('dist/version.json',JSON.stringify(v)+'\n')"
+    && node -e "const fs=require('fs');const l=require('./package-lock.json').packages;const v=JSON.parse(fs.readFileSync('dist/version.json','utf8'));v.node=process.version.slice(1);v.components={};for(const k of ['livekit-client','@sapphi-red/web-noise-suppressor','react','react-dom','react-router-dom','hls.js','vite']){v.components[k]=l['node_modules/'+k].version}fs.writeFileSync('dist/version.json',JSON.stringify(v)+'\n')"
 
 # Редактор схем: draw.io (jgraph/drawio, Apache-2.0) разворачивается у нас как статика и встраивается в страницу встречи iframe'ом — свой
 # редактор схем не пишется. Версия закреплена тегом; клонирование с повторами (как и npm ci). Остаётся только нужное редактору (prune.sh).

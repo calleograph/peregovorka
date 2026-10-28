@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react";
 const backend = process.env.DEV_BACKEND_URL ?? "http://127.0.0.1:8000";
 // Редактор схем draw.io в контейнере web лежит в /drawio/ (frontend/Dockerfile); в разработке его можно отдать любым статическим сервером.
 const drawio = process.env.DEV_DRAWIO_URL ?? "http://127.0.0.1:8771";
+// HLS прямых эфиров в контейнере web раздаёт nginx (/hls/…); в разработке — любой nginx с тем же конфигом (tests/live/egress/run_live.py).
+const hls = process.env.DEV_HLS_URL ?? "http://127.0.0.1:18088";
 
 export default defineConfig({
   plugins: [react()],
@@ -18,6 +20,7 @@ export default defineConfig({
         proxy.on("proxyReqWs", (p, req) => { p.removeHeader("x-dev-peer"); p.setHeader("X-PG-Peer", peer(req)); });
       } },
       "/drawio": { target: drawio, changeOrigin: false },
+      "/hls": { target: hls, changeOrigin: false },
     },
   },
   // livekit-client даёт крупный чанк страницы комнаты: это не ошибка (грузится лениво), порог предупреждения поднят.

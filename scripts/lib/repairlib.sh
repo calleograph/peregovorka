@@ -41,7 +41,7 @@ _repair_dir_mode() { stat -c '%a' "$1" 2>/dev/null || echo x; }
 repair_detect_data_dirs() {
   local d bad=() base="${DATA_ROOT:-}"
   [ -n "$base" ] || return 1
-  for d in recordings exports ca chat-files avatars branding; do
+  for d in recordings live exports ca chat-files avatars branding; do
     if [ ! -d "$base/$d" ]; then bad+=("$d: нет каталога")
     elif [ "$(_repair_dir_owner "$base/$d")" != "$BACKEND_UID" ]; then bad+=("$d: чужой владелец"); fi
   done
@@ -191,10 +191,10 @@ repair_json() { # печатает JSON последнего repair_scan
 # ---- исправления. Каждое идемпотентно, меняет только объекты проекта, печатает ход работы (попадает в журнал окна). Код 0 — исправлено.
 repair_apply_data_dirs() {
   local base="$DATA_ROOT" d rc=0
-  for d in postgres redis models/gigaam recordings exports backups state updater ca chat-files avatars branding; do
+  for d in postgres redis models/gigaam recordings live exports backups state updater ca chat-files avatars branding; do
     [ -d "$base/$d" ] || mkdir -p "$base/$d" || { fail "Не удалось создать $base/$d"; rc=1; }
   done
-  for d in recordings exports ca chat-files avatars branding; do
+  for d in recordings live exports ca chat-files avatars branding; do
     chown "$BACKEND_UID:$BACKEND_UID" "$base/$d" || { fail "Не удалось назначить владельца $base/$d"; rc=1; }
   done
   chmod 1777 "$base/updater" || rc=1

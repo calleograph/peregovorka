@@ -123,6 +123,7 @@ class VideoRecorder:
         self.api = api or EgressApi(settings)
         self.export = export                 # async (db, rec) → выгрузка во внешнее хранилище (protocols.export_recording)
         self.journal = journal
+        self.live_owner = None               # async (db, egress_id) → bool: процесс Egress принадлежит идущему эфиру (services.live); его запись закрывается вместе с эфиром
 
     # ------------------------------------------------------------------ настройки и состояние
     async def cfg(self, db):
@@ -222,6 +223,11 @@ class VideoRecorder:
     async def stop(self, db, meeting: Meeting, *, by: str = "", manual: bool = False) -> int:
         """Остановить видеозапись встречи (идущие фрагменты). Файл дописывает и закрывает Egress; итог приходит webhook-ом или сверкой."""
         rows = await self.active_rows(db, meeting.id)
+        if self.live_owner is not None:
+            mine = [r for r in rows if await self.live_owner(db, r.egress_id)]
+            if mine and manual:
+                raise VideoError("live_active", "Запись идёт в составе прямого эфира: остановите эфир (меню «Ещё» → «Трансляция»), и файл закроется.")
+            rows = [r for r in rows if r not in mine]
         if manual:
             await self._r.set(f"video:manual_off:{meeting.id}", "1", ex=24 * 3600)      # автозапуск после ручной остановки не перебивает решение руководителя
         for r in rows:

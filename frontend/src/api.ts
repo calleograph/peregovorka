@@ -42,14 +42,42 @@ export interface Room {
   id: string; slug: string; name: string; description: string | null; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; active_meeting: ActiveMeeting | null;
-  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation" | "peer"; auto_record?: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted";
+  board_allowed?: boolean; board_access?: string; room_type?: "regular" | "presentation" | "peer" | "broadcast"; auto_record?: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted";
   /** temporary — временная переговорка (создана пользователем на одну встречу); lifecycle: active → grace_period → closed. */
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; auto_close_at?: string | null; created_by_name?: string | null;
   /** Только в списке комнат: вошедший — руководитель/администратор; секрет гостевой ссылки отдаётся только им и только при включённом гостевом входе. */
   can_manage?: boolean; guest_token?: string | null;
   mute_on_join?: boolean;
+  /** Трансляция: разрешена в комнате; идёт сейчас (метка «ЭФИР»); зрителей по их плееру. */
+  live_enabled?: boolean; live?: boolean; live_viewers?: number;
 }
-export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room }
+
+export interface LiveAdminStatus {
+  enabled: boolean; service_installed: boolean; livekit_ok: boolean; livekit_error: string | null; running: number; max_concurrent: number; viewers: number;
+  active: { room: string; status: string; since: string; quality: string; viewers: number; hls: boolean; hls_ready: boolean; by: string | null }[];
+  hls_bytes: number; free_bytes: number | null; secret_ok: boolean; failed: { room: string; error: string | null; at: string }[]; warnings: string[]; now: string;
+}
+/** Трансляции. Состояние эфира комнаты: видно всем участникам; ссылки и площадки получают только те, кто может управлять. */
+export interface LiveState {
+  enabled: boolean; available: boolean; live: boolean; status: "idle" | "starting" | "live" | "ending" | "ended" | "failed"; since: string | null;
+  quality: string; record: boolean; own_hls: boolean; viewers: number; error: string | null; hls_ready: boolean; limit: number; can_start: boolean;
+  can_control?: boolean; links?: LiveRoomSettings;
+}
+export interface LiveRoomSettings {
+  enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
+  password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
+  state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
+}
+export interface LivePatchBody {
+  live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
+  live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
+}
+export interface LiveViewerInfo {
+  title: string; starts_at: string | null; status: "waiting" | "starting" | "live" | "ended"; password_required: boolean; own_hls: boolean;
+  ended_at: string | null; quality: string; available: boolean; now: string;
+}
+export interface LiveAccess { path: string; expires_at: number; refresh_in: number; vid: string; pass?: string }
+export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
   screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
@@ -138,7 +166,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "video" | "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "ip_access" | "waf" | "security_log" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "video" | "live" | "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "ip_access" | "waf" | "security_log" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -270,7 +298,7 @@ export interface JournalStats {
   size_bytes: number; avg_bytes_per_event: number; audit: { total: number; size_bytes: number | null }; retention_days: number; keep_local: boolean;
   external: { enabled: boolean; mode: string; ok: boolean | null; at: string | null; error: string | null; files: number }; queue_dropped: number; written_since_start: number;
 }
-export type RoomType = "regular" | "presentation";
+export type RoomType = "regular" | "presentation" | "broadcast";
 export interface StorageProfile {
   id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
   /** Для хранилища-папки: на том поставлена метка (запись в отключённый том блокируется). */
@@ -916,9 +944,20 @@ export const api = {
   },
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
+  adminLiveStatus: () => request<LiveAdminStatus>("GET", "/admin/live/status"),
   adminVideoStatus: () => request<VideoStatus>("GET", "/admin/video/status"),
   videoState: (meetingId: string) => request<VideoState>("GET", `/meetings/${meetingId}/video-recording`),
   setVideoRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/video-recording`, { enabled }),
+  liveRoom: (roomId: string) => request<LiveRoomSettings>("GET", `/rooms/${roomId}/live`),
+  patchLive: (roomId: string, body: LivePatchBody) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live`, body),
+  setLivePassword: (roomId: string, password: string | null) => request<LiveRoomSettings>("PUT", `/rooms/${roomId}/live/password`, { password }),
+  revokeLive: (roomId: string, which: "view" | "stream" | "all") => request<LiveRoomSettings>("POST", `/rooms/${roomId}/live/links/${which}/revoke`),
+  liveState: (meetingId: string) => request<LiveState>("GET", `/meetings/${meetingId}/live`),
+  setLive: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/live`, { enabled }),
+  /** Страница зрителя: без входа в систему. */
+  liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
+  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
+  livePing: (token: string, vid: string) => request<{ viewers: number }>("POST", `/live/${encodeURIComponent(token)}/ping`, { vid }),
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
   micOwner: (meetingId: string, identity: string) => request<void>("POST", `/meetings/${meetingId}/mic-owner`, { identity }),
