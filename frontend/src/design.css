@@ -1052,11 +1052,7 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .journal-scroll { overflow-x: hidden; }
 .journal-scroll:not(.dense) .table td { overflow-wrap: anywhere; word-break: normal; }
 .journal-scroll:not(.dense) .table .msg { max-width: none; white-space: normal; }
-
 /* кристаллы Three.js на странице входа: над сеткой, под формой, без перехвата мыши; появляются плавно */
-.login-glass { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; animation: glass-in 1.6s var(--ease, ease) .2s forwards; }
-@keyframes glass-in { to { opacity: .85; } }
-@media (prefers-reduced-motion: reduce) { .login-glass { animation: none; opacity: .85; } }
 /* Раздел «События и блокировки», WAF */
 .sec-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 8px; }
 .sec-tile { text-align: left; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); font: inherit; color: inherit; }
@@ -1132,3 +1128,21 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 .pj-foot .pj-rec { padding: 5px 10px; font-size: 12.5px; }
 .pj-body { scrollbar-gutter: stable; }
 @media (max-height: 460px) { .pj-hero { padding: 4px 12px; } .pj-mark { display: none; } .pj-hero h1 { font-size: 15px; } }
+
+/* ---- 0.47.0: фон входа «встреча на связи» (components/LoginNetwork.tsx) — вместо летающих кубов. Только transform/opacity/stroke, без перерисовки макета. ---- */
+.login-net { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0; animation: net-in 1.4s var(--ease, ease) .15s forwards; }
+.login-net .ln-tile { fill: color-mix(in srgb, var(--surface) 62%, transparent); stroke: color-mix(in srgb, var(--accent) 30%, transparent); stroke-width: 1.2; filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--accent) 16%, transparent)); }
+.login-net .ln-head, .login-net .ln-body { fill: color-mix(in srgb, var(--accent) 34%, transparent); }
+.login-net .ln-ava { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: color-mix(in srgb, var(--accent) 38%, transparent); stroke-width: 1.2; }
+.login-net .ln-dot { fill: color-mix(in srgb, var(--accent) 55%, transparent); }
+.login-net .ln-line { fill: none; stroke: color-mix(in srgb, var(--accent) 26%, transparent); stroke-width: 1.2; stroke-dasharray: 3 7; stroke-linecap: round; }
+.login-net .ln-pulse { fill: var(--accent); opacity: 0; offset-rotate: 0deg; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent)); }
+.login-net.moving .ln-node { animation: net-float 10s ease-in-out infinite alternate; }
+.login-net.moving .ln-line { animation: net-dash 18s linear infinite; }
+.login-net.moving .ln-pulse { animation: net-pulse 9s ease-in-out infinite; }
+.login-net.paused .ln-node, .login-net.paused .ln-line, .login-net.paused .ln-pulse { animation-play-state: paused; }
+@keyframes net-in { to { opacity: 1; } }
+@keyframes net-float { from { transform: translate(var(--tx, 0), 0); } to { transform: translate(var(--tx, 0), -10px); } }
+@keyframes net-dash { to { stroke-dashoffset: -100; } }
+@keyframes net-pulse { 0% { offset-distance: 0%; opacity: 0; } 12% { opacity: .9; } 88% { opacity: .9; } 100% { offset-distance: 100%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .login-net { animation: none; opacity: 1; } .login-net * { animation: none !important; } .login-net .ln-pulse { display: none; } }

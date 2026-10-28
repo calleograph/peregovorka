@@ -1,27 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { follow, rng, shardCount, shardLayout, wantsWebGL } from "./glassMath";
+import { NET_LINKS, NET_NODES, linkPath, wantsMotion, wantsNetwork } from "./glassMath";
 
-describe("glassMath", () => {
-  it("раскладка детерминирована и не занимает середину", () => {
-    const a = shardLayout(8, 5, 10), b = shardLayout(8, 5, 10);
-    expect(a).toEqual(b);
-    expect(a.every((s) => Math.abs(s.x) >= 8 * 0.46 - 1e-9)).toBe(true);
-    expect(a.every((s) => Math.abs(s.y) <= 5)).toBe(true);
-    expect(new Set(a.map((s) => Math.sign(s.x))).size).toBe(2);               // есть кристаллы и слева, и справа
+describe("фон входа «встреча на связи»", () => {
+  it("узлы не заходят в середину окна, где форма входа", () => {
+    for (const n of NET_NODES) {
+      const left = n.x + n.w <= 520, right = n.x >= 680;
+      expect(left || right, n.id).toBe(true);
+      expect(n.x).toBeGreaterThanOrEqual(0); expect(n.x + n.w).toBeLessThanOrEqual(1200); expect(n.y + n.h).toBeLessThanOrEqual(800);
+    }
   });
-  it("генератор даёт значения в [0,1)", () => { const r = rng(1); for (let i = 0; i < 100; i++) { const v = r(); expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThan(1); } });
-  it("follow приближается к цели и не перелетает", () => {
-    let v = 0;
-    for (let i = 0; i < 60; i++) { const n = follow(v, 1, 1 / 30); expect(n).toBeGreaterThanOrEqual(v); expect(n).toBeLessThanOrEqual(1); v = n; }
-    expect(v).toBeGreaterThan(0.9);
-    expect(follow(0.3, 1, 0)).toBe(0.3);
+  it("все связи ведут к существующим узлам, кривая — корректный путь", () => {
+    const ids = new Set(NET_NODES.map((n) => n.id));
+    for (const [a, b] of NET_LINKS) { expect(ids.has(a) && ids.has(b)).toBe(true); expect(linkPath(NET_NODES.find((n) => n.id === a)!, NET_NODES.find((n) => n.id === b)!)).toMatch(/^M[\d.]+ [\d.]+ Q-?\d+ -?\d+ [\d.]+ [\d.]+$/); }
   });
-  it("WebGL не включается при «уменьшить движение», экономии трафика, слабом устройстве и узком экране", () => {
-    expect(wantsWebGL({ reduced: false, cores: 8, width: 1280 })).toBe(true);
-    expect(wantsWebGL({ reduced: true, cores: 8, width: 1280 })).toBe(false);
-    expect(wantsWebGL({ reduced: false, cores: 8, saveData: true, width: 1280 })).toBe(false);
-    expect(wantsWebGL({ reduced: false, cores: 2, width: 1280 })).toBe(false);
-    expect(wantsWebGL({ reduced: false, cores: 8, width: 390 })).toBe(false);
+  it("движение выключено при «уменьшить движение», экономии трафика и слабом устройстве", () => {
+    expect(wantsMotion({ reduced: false, cores: 8 })).toBe(true);
+    expect(wantsMotion({ reduced: true, cores: 8 })).toBe(false);
+    expect(wantsMotion({ reduced: false, cores: 8, saveData: true })).toBe(false);
+    expect(wantsMotion({ reduced: false, cores: 2 })).toBe(false);
   });
-  it("кристаллов тем больше, чем шире окно", () => { expect(shardCount(390)).toBeLessThan(shardCount(1280)); expect(shardCount(1280)).toBeLessThan(shardCount(1920)); });
+  it("на узком телефоне композиции нет", () => { expect(wantsNetwork(390)).toBe(false); expect(wantsNetwork(1366)).toBe(true); });
 });

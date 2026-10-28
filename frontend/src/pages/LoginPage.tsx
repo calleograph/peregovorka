@@ -9,7 +9,7 @@ import { useSite } from "../site";
 
 // Фон — только здесь (после входа компонент размонтируется); отдельный чанк, чтобы не утяжелять основной пакет
 const LoginBackdrop = lazy(() => import("../components/LoginBackdrop"));
-const LoginGlass = lazy(() => import("../components/LoginGlass"));          // Three.js — отдельный чанк, только для входа
+const LoginNetwork = lazy(() => import("../components/LoginNetwork"));          // лёгкий SVG-фон «встреча на связи»
 
 /** Страница входа: бренд, одна фраза, форма и мелкая служебная строка. Всё остальное — внутри продукта. */
 export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void; info: BuildInfo | null }) {
@@ -69,7 +69,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
 
   return (
     <div className="login-simple login-px">
-      <Suspense fallback={null}><LoginBackdrop /><LoginGlass /></Suspense>
+      <Suspense fallback={null}><LoginBackdrop /><LoginNetwork /></Suspense>
       <main className="login-center">
         <div className="px-shell">
           <div className="px-brand">

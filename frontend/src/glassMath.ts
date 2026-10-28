@@ -1,39 +1,36 @@
-/** Математика «стеклянных кристаллов» на странице входа (components/LoginGlass.tsx, Three.js). Отдельно от компонента, чтобы проверяться тестами. */
+/** Решения о фоне страницы входа (components/LoginNetwork.tsx). Отдельно от компонента, чтобы проверяться тестами. */
 
-export interface Shard { x: number; y: number; z: number; r: number; octa: boolean; spin: number; phase: number }
+export interface NetNode { id: string; x: number; y: number; w: number; h: number; delay: number; dur: number; cam: boolean }
 
-/** Детерминированный генератор (mulberry32): раскладка одинакова при каждом открытии страницы и в тестах. */
-export function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+/** Участники по краям окна (холст 1200×800): середина — форма входа — свободна. Раскладка постоянная: одинакова при каждом открытии и в тестах. */
+export const NET_NODES: NetNode[] = [
+  { id: "a", x: 70, y: 90, w: 150, h: 100, delay: 0, dur: 9, cam: true },
+  { id: "b", x: 250, y: 300, w: 120, h: 82, delay: 1.6, dur: 11, cam: false },
+  { id: "c", x: 60, y: 520, w: 140, h: 94, delay: 3.1, dur: 10, cam: true },
+  { id: "d", x: 230, y: 650, w: 110, h: 76, delay: 0.8, dur: 12, cam: false },
+  { id: "e", x: 980, y: 80, w: 140, h: 94, delay: 2.2, dur: 10, cam: false },
+  { id: "f", x: 850, y: 320, w: 130, h: 88, delay: 0.4, dur: 11, cam: true },
+  { id: "g", x: 990, y: 520, w: 150, h: 100, delay: 3.6, dur: 9, cam: false },
+  { id: "h", x: 820, y: 660, w: 120, h: 80, delay: 1.2, dur: 12, cam: true },
+];
+
+/** Связи «кто с кем на связи»: пары идентификаторов узлов. */
+export const NET_LINKS: [string, string][] = [["a", "b"], ["b", "c"], ["c", "d"], ["b", "d"], ["e", "f"], ["f", "g"], ["g", "h"], ["f", "h"], ["a", "e"], ["c", "g"], ["d", "h"]];
+
+/** Кривая связи между центрами двух узлов (лёгкий изгиб; середина холста обходится стороной). */
+export function linkPath(a: NetNode, b: NetNode): string {
+  const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const nx = -(by - ay), ny = bx - ax, len = Math.hypot(nx, ny) || 1;
+  const bend = Math.min(60, len * 0.18) * (mx < 600 ? -1 : 1);       // изгиб наружу, от центра
+  return `M${ax} ${ay} Q${Math.round(mx + (nx / len) * bend)} ${Math.round(my + (ny / len) * bend)} ${bx} ${by}`;
 }
 
-/** Кристаллы по краям окна: середина (форма входа) свободна. `halfW`/`halfH` — половина видимой области сцены в единицах сцены. */
-export function shardLayout(halfW: number, halfH: number, count: number, seed = 7): Shard[] {
-  const rand = rng(seed);
-  const out: Shard[] = [];
-  for (let i = 0; i < count; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const x = side * halfW * (0.46 + rand() * 0.62);                 // не ближе 46 % полуширины к центру
-    const y = (rand() * 2 - 1) * halfH * 0.95;
-    out.push({ x, y, z: -2 + rand() * 4, r: 0.55 + rand() * 0.95, octa: rand() > 0.6, spin: (rand() - 0.5) * 0.5, phase: rand() * Math.PI * 2 });
-  }
-  return out;
-}
-
-/** Плавное следование за целью (экспоненциальное сглаживание): не зависит от частоты кадров. */
-export function follow(cur: number, target: number, dtSec: number, rate = 3): number {
-  return cur + (target - cur) * (1 - Math.exp(-rate * Math.max(0, dtSec)));
-}
-
-/** Нужна ли сцена WebGL: нет — «уменьшить движение», экономия трафика, слабое устройство или узкий телефон (там остаётся плоская сетка). */
-export function wantsWebGL(env: { reduced: boolean; cores?: number; saveData?: boolean; width: number }): boolean {
+/** Нужна ли движущаяся картинка: нет — «уменьшить движение», экономия трафика, слабое устройство (остаётся спокойная статичная композиция). */
+export function wantsMotion(env: { reduced: boolean; cores?: number; saveData?: boolean }): boolean {
   if (env.reduced || env.saveData) return false;
-  if ((env.cores ?? 4) <= 2) return false;
-  return env.width >= 560;
+  return (env.cores ?? 4) > 2;
 }
 
-/** Число кристаллов по ширине окна. */
-export function shardCount(width: number): number {
-  return width < 900 ? 6 : width < 1500 ? 9 : 12;
-}
+/** Показывать ли композицию совсем: на узком телефоне её заменяет спокойный фон (форма занимает всю ширину). */
+export function wantsNetwork(width: number): boolean { return width >= 560; }

@@ -25,9 +25,9 @@ describe("основной бандл не тянет livekit-client", () => {
   }
 });
 
-describe("Three.js только отдельным чанком страницы входа", () => {
-  it("LoginPage подгружает LoginGlass лениво", () => {
-    expect(loginPage).toMatch(/lazy\(\(\) => import\("\.\.\/components\/LoginGlass"\)\)/);
-    expect(loginPage).not.toMatch(/^import\s+LoginGlass\b/m);
+describe("анимация страницы входа — отдельным чанком", () => {
+  it("LoginPage подгружает LoginNetwork лениво", () => {
+    expect(loginPage).toMatch(/lazy\(\(\) => import\("\.\.\/components\/LoginNetwork"\)\)/);
+    expect(loginPage).not.toMatch(/^import\s+LoginNetwork\b/m);
   });
 });
