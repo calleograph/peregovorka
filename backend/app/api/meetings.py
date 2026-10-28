@@ -16,6 +16,7 @@ from ..services import roles
 from ..services.room_icons import icon_out
 from ..services.audit import audit_now, write_audit
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
+from ..services.doc_render import with_incomplete_notice
 from ..services.glass_html import CSP_HEADER
 from ..services.llm_choice import once_options
 from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
@@ -432,7 +433,7 @@ async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
     title = p.title or ("Протокол встречи" if p.kind == "protocol" else "Краткое резюме") + f": {meeting.room.name}"
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.export", target_type="protocol", target_id=str(p.id), ip=client_ip(request),
                     details={"format": format, "kind": p.kind, "meeting_id": str(meeting_id)})
-    return _file_response(_render(format, p.content, title, p.kind), format, f"{p.kind}-{str(p.id)[:8]}", inline=inline)
+    return _file_response(_render(format, with_incomplete_notice(p.content, p.meta), title, p.kind), format, f"{p.kind}-{str(p.id)[:8]}", inline=inline)
 
 
 # ----------------------------------------------------------------------------------------- записи (admin)

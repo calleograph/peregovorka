@@ -29,6 +29,7 @@ from .export_docs import md_to_plain, to_docx, to_html, to_pdf
 from .mail import MailError, MailService, build_message, send, valid_email
 from .settings import MailPolicySettings, SettingsService
 from .storage import safe_component
+from .doc_render import with_incomplete_notice
 
 log = logging.getLogger("app.maildelivery")
 
@@ -63,7 +64,7 @@ async def _protocol_like(svc: "DeliveryService", db: AsyncSession, meeting: Meet
                                                  Protocol.content.is_not(None)).order_by(Protocol.updated_at.desc()))).scalars().first()
     if p is None or not (p.content or "").strip():
         return None
-    return Material(kind, label, p.title or f"{default_title}: {meeting.room.name}", p.content)
+    return Material(kind, label, p.title or f"{default_title}: {meeting.room.name}", with_incomplete_notice(p.content, p.meta))
 
 
 async def _protocol(svc, db, meeting):

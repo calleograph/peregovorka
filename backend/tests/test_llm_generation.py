@@ -214,6 +214,14 @@ def test_truncated_answer_is_marked_and_counted(tmp_path, directory):
         st = c.get(f"{ADM}/llm/stats").json()
         row = [m for m in st["models"] if m["kind"] == "protocol"][0]
         assert row["truncated"] == 1 and row["length_hits"] == 1 and row["documents"] == 1
+        # оборванный документ не выдаётся за полный ни в одной выгрузке
+        login(c, "alice")
+        for fmt in ("md", "txt", "html"):
+            body = c.get(f"/api/v1/meetings/{mid}/protocols/{pid}/export", params={"format": fmt}).text
+            assert "неполным" in body, fmt
+        from app.services.doc_render import with_incomplete_notice
+        assert with_incomplete_notice("# T", {"truncated": True}).count("неполным") == 1 and with_incomplete_notice("# T", {}) == "# T"
+        assert with_incomplete_notice(with_incomplete_notice("# T", {"truncated": True}), {"truncated": True}).count("неполным") == 1, "пометка не дублируется"
 
 
 def test_failed_attempt_keeps_model_and_time_and_is_counted_as_an_error(tmp_path, directory):

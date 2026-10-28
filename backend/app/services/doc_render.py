@@ -198,3 +198,15 @@ def section_accent(heading: str) -> str | None:
 
 def warn_text(text: str) -> bool:
     return bool(re.search(r"\[проверить\]", text))
+
+
+INCOMPLETE_NOTE = ("> ⚠ [проверить] Документ может быть неполным: ответ модели был оборван по лимиту длины. "
+                   "Сверьте с записью или сформируйте заново, выбрав другую модель.")
+
+
+def with_incomplete_notice(md: str, meta: dict | None) -> str:
+    """Оборванный по лимиту длины документ не выдаётся за полный: во всех выгрузках (HTML, Word, PDF, Markdown, письмо, публичный API) сверху стоит заметная пометка.
+    У собранного кодом документа такая пометка уже есть (`incomplete`) — второй раз не добавляется."""
+    if (meta or {}).get("truncated") and "может быть неполным" not in md:
+        return INCOMPLETE_NOTE + "\n\n" + md
+    return md

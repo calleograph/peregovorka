@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services.doc_render import with_incomplete_notice
 from ..services import profanity
 from ..auth.deps import client_ip, get_db
 from ..models import (ConversationMap, GuestParticipant, Meeting, MeetingChatMessage, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User)
@@ -136,6 +137,7 @@ class DocOut(BaseModel):
     edited_at: datetime | None = None
     model: str | None = None
     error: str | None = None
+    incomplete: bool = False          # ответ модели оборван по лимиту длины: документ может быть неполным
 
 
 class DocFull(DocOut):
@@ -432,7 +434,7 @@ _KIND_SCOPE = {"protocol": "protocols:read", "summary": "summaries:read", "trans
 
 def _doc(pr: Protocol, full: bool = False) -> DocOut | DocFull:
     base = dict(id=ids.pub("protocol", pr.id), meeting_id=ids.pub("meeting", pr.meeting_id), kind=pr.kind, status=pr.status, title=pr.title, created_at=_utc(pr.created_at),
-                updated_at=_utc(pr.updated_at), edited_at=_utc(pr.edited_at), model=(pr.meta or {}).get("model"), error=pr.error)
+                updated_at=_utc(pr.updated_at), edited_at=_utc(pr.edited_at), model=(pr.meta or {}).get("model"), error=pr.error, incomplete=bool((pr.meta or {}).get("truncated")))
     return DocFull(**base, content=pr.content, instruction=pr.instruction) if full else DocOut(**base)
 
 
@@ -466,7 +468,7 @@ async def get_document(meeting_id: str, document_id: str, format: Literal["json"
         return _doc(pr, full=True)
     if pr.status != "ready" or pr.content is None:
         raise ApiError(409, "not_ready", "Документ ещё не готов.")
-    text = pr.content
+    text = with_incomplete_notice(pr.content, pr.meta)
     if format == "md":
         return Response(text.rstrip() + "\n", media_type="text/markdown; charset=utf-8")
     if format == "txt":
