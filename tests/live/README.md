@@ -11,6 +11,7 @@
 ## Запуск
 1. `livekit-server` той же версии, что в `.env.example` (`LIVEKIT_IMAGE_TAG`), с ключом `devkey` и секретом из 40 символов `s`, на `127.0.0.1:7880`, RTC-порты 50000–50100 (`node_ip: 127.0.0.1`).
 2. `python tests/live/devserver_live.py` — backend на 8000 (нужны зависимости backend + Pillow); `npm run dev` в `frontend` — страница на 5173 (прокси на 8000).
+   - `LIVE_MOCK_LLM=1` — подставная языковая модель (`mock_llm.py`: протокол, карта, резюме по репликам) и завершённая встреча со стенограммой в «ИТ-1 · Планёрка»: так проверяются протокол «Стекло», карта разговора и выбор модели без настоящего провайдера (модель `bad` отвечает 401, `empty` — пустым ответом с `finish_reason=length`; профили с такими моделями создаются через «Внешние API»). `LIVE_FIXED_CAPTCHA=1` — ответ CAPTCHA на стенде `AAAAA`.
 3. `pip install websockets`; `python tests/live/smoke_room.py` (переменные: `BROWSER_PATH`, `PEREGOVORKA_URL`, `SMOKE_OUT`).
    Под Linux: `BROWSER_PATH` — Chromium (например, из Playwright), а если AppArmor запрещает песочнице пространства имён (Ubuntu 23.10+), — `BROWSER_FLAGS=--no-sandbox`
    (только для тестового браузера, открывающего локальный стенд).
