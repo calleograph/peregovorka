@@ -68,10 +68,10 @@ function CaptchaTestDialog({ onClose }: { onClose: () => void }) {
           <table className="table small"><tbody>
             <tr><th>Режим</th><td>{MODE[diag.mode] ?? diag.mode}{diag.mode === "after_failures" ? ` — после ${diag.failures} неудач за ${diag.window_minutes} мин` : ""}</td></tr>
             <tr><th>Вид</th><td>{diag.kind === "image" ? `картинка, ${diag.length} символов` : "вычислительная (доказательство работы)"}</td></tr>
-            <tr><th>Срок жизни</th><td>{diag.ttl_seconds} с, одна попытка на задачу</td></tr>
-            <tr><th>Хранилище задач</th><td>{diag.redis ? "работает" : `недоступно${diag.redis_error ? ` (${diag.redis_error})` : ""}`}</td></tr>
-            {diag.font && <tr><th>Шрифт картинки</th><td>{diag.font}</td></tr>}
-            <tr><th>Где применяется</th><td>{diag.scopes.join(", ")}</td></tr>
+            <tr><th>Срок</th><td>{diag.ttl_seconds} с, одна попытка на задачу</td></tr>
+            <tr><th>Хранилище</th><td>{diag.redis ? "работает" : `недоступно${diag.redis_error ? ` (${diag.redis_error})` : ""}`}</td></tr>
+            {diag.font && <tr><th>Шрифт</th><td>{diag.font}</td></tr>}
+            <tr><th>Где нужна</th><td>{diag.scopes.join(", ")}</td></tr>
           </tbody></table>
         )}
         <div className="row">
