@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.48.1",
+ "release": "0.48.2",
  "reviewed_at": "2026-10-28",
  "components": [
   {
@@ -377,7 +377,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "2.11.0",
    "tested": "2.11.0",
-   "reviewed_latest": "2.11.0",
+   "reviewed_latest": "2.11.1",
    "source": {
     "type": "pypi",
     "name": "torchaudio"
@@ -394,6 +394,13 @@
     "service": "asr",
     "python_package": "torchaudio",
     "prefix_match": true
+   },
+   "deferred": {
+    "version": "2.11.1",
+    "reason": "Патч вышел в день выпуска 0.48.2. torchaudio идёт в паре с torch (обновление torch отложено, DEP-15) и определяет образ ASR; без AVX и GPU поведение проверить нельзя, а выпуск меняет только формирование протоколов.",
+    "issue": "DEP-15",
+    "recheck": "2026-11-15",
+    "plan": "Обновить вместе с torch (DEP-15): constraints ASR, пересборка образа, тесты ASR."
    }
   },
   {
