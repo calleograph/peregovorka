@@ -208,7 +208,8 @@ async def components(request: Request, refresh: bool = False, su: SessionUser = 
         if any(v.get("latest") for v in latest.values()):  # недоступный интернет не кэшируем надолго — повторим при следующем открытии
             await r.set(CACHE_KEY, json.dumps({"latest": latest, "at": fetched_at}), ex=CACHE_TTL)
     installed = await comp.installed_versions(request.app, m)
-    rows = comp.build_rows(m, installed, latest, sip_enabled=str(request.app.state.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on"))
+    rows = comp.build_rows(m, installed, latest, sip_enabled=str(request.app.state.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on"),
+                           video_enabled=str(request.app.state.settings.video_enabled).strip().lower() in ("yes", "true", "1", "on"))
     internet = any(v.get("latest") for v in latest.values())
     return {"rows": rows, "internet": internet, "fetched_at": fetched_at, "tested": comp.tested_map(m), "project_latest": (latest.get("project") or {}).get("latest"),
             "release": m["release"], "reviewed_at": m["reviewed_at"], "security": {"checked_at": (m.get("security") or {}).get("checked_at"), "source": (m.get("security") or {}).get("source")},

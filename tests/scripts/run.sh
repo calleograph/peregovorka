@@ -165,6 +165,8 @@ source "$ROOT/tests/scripts/part_prereq.sh"
 source "$ROOT/tests/scripts/part_llm.sh"
 # shellcheck source=part_sip.sh
 source "$ROOT/tests/scripts/part_sip.sh"
+# shellcheck source=part_video.sh
+source "$ROOT/tests/scripts/part_video.sh"
 # shellcheck source=part_security_reset.sh
 source "$ROOT/tests/scripts/part_security_reset.sh"
 # shellcheck source=part_release_channel.sh

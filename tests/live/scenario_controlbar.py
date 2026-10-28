@@ -75,9 +75,9 @@ async def main():
         await R.shot("bar-admin-hand")
         await stable(A, "микрофон выкл → вкл", lambda: A.click_btn("Микрофон выкл.") or A.click_btn("Микрофон"), "участник")
         await stable(A, "камера", lambda: A.click_btn("Камера выкл.") or A.click_btn("Камера"), "участник")
-        await stable(R, "запись: начать", lambda: more(R, "Начать запись"), "администратор")
+        await stable(R, "запись: начать", lambda: more(R, "Аудиозапись: выключена"), "администратор")
         await R.shot("bar-admin-recording")
-        await stable(R, "запись: остановить", lambda: more(R, "Остановить запись"), "администратор")
+        await stable(R, "запись: остановить", lambda: more(R, "Аудиозапись: включена"), "администратор")
         await stable(R, "транскрибация: остановить", lambda: more(R, "Остановить транскрибацию"), "администратор")
         await stable(R, "транскрибация: возобновить", lambda: more(R, "Возобновить транскрибацию"), "администратор")
         # показ экрана: на стенде вместо экрана подставляется холст (см. README) — кнопка меняет подпись и «со звуком» скрывается

@@ -202,6 +202,7 @@ services:
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # локальная LLM (контейнер llm-local, профиль llm): внутренний адрес и каталог модели (только чтение — статус, размер, контрольная сумма)
       SIP_ENABLED: ${SIP_ENABLED:-no}
+      VIDEO_ENABLED: ${VIDEO_ENABLED:-no}
       SIP_SIGNALING_PORT: ${SIP_SIGNALING_PORT:-5060}
       SIP_RTP_START: ${SIP_RTP_START:-20000}
       SIP_RTP_END: ${SIP_RTP_END:-20100}
@@ -323,6 +324,45 @@ services:
         media_nat_1_to_1_ip: ${SIP_MEDIA_IP:-${LIVEKIT_NODE_IP}}
         logging:
           level: info
+    logging: *default-logging
+
+  # Видеозапись встреч: LiveKit Egress (профиль `video`, по умолчанию не запускается). Внутри — браузер Chrome, который «смотрит» комнату и кодирует MP4 (H.264 + AAC),
+  # поэтому службе нужны процессор (≈ 2–4 ядра на запись) и право SYS_ADMIN для песочницы браузера. Портов наружу нет: служба получает задания через общий Redis
+  # (db 1, как у SIP) и пишет файлы в том записей (/out = ${DATA_ROOT}/recordings, тот же каталог, что у backend). Включение — scripts/video.sh enable / «Администрирование → Видеозапись».
+  livekit-egress:
+    profiles: ["video"]
+    image: ${VIDEO_IMAGE:-livekit/egress:v1.15.0@sha256:ac244a40268ce1dd1510fbff6eb529609ec68aceff1602343f79be8ca08c355b}
+    restart: unless-stopped
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:?}
+        api_secret: ${LIVEKIT_API_SECRET:?}
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+          password: ${REDIS_PASSWORD:?}
+          db: 1
+        health_port: 8082
+        log_level: info
+        cpu_cost:
+          room_composite_cpu_cost: ${VIDEO_CPU_COST:-3.0}
+    volumes:
+      - ${DATA_ROOT}/recordings:/out
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s      # активные записи при остановке службы дописываются и закрываются
+    shm_size: "1gb"             # Chrome без достаточной общей памяти падает на тяжёлых страницах
     logging: *default-logging
 
   # Локальная LLM (Qwen3 1.7B Q4_K_M): llama.cpp, CPU. OpenAI-совместимый API (/v1/chat/completions) доступен только backend через

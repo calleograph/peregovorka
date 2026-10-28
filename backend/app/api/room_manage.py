@@ -38,7 +38,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "recording_mode", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode", "mask_profanity")
+                 "record_audio", "recording_mode", "video_mode", "video_quality", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode", "mask_profanity")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -63,6 +63,9 @@ class RoomManageOut(BaseModel):
     e2ee_mode: str = "off"
     record_audio: bool
     recording_mode: str = "audio"
+    video_mode: str = "off"
+    video_quality: str = "720p"
+    video_enabled: bool = False          # администратор разрешил видеозапись на сервере (иначе режим комнаты ничего не запускает)
     transcription_enabled: bool
     mute_on_join: bool
     mask_profanity: bool = True          # скрывать нецензурную лексику в стенограмме
@@ -108,6 +111,8 @@ class RoomManagePatch(BaseModel):
     e2ee_mode: str | None = Field(default=None, pattern="^(off|full|trusted)$")
     record_audio: bool | None = None
     recording_mode: str | None = Field(default=None, pattern="^(audio|audio_video|off)$")
+    video_mode: str | None = Field(default=None, pattern="^(off|manual|auto)$")
+    video_quality: str | None = Field(default=None, pattern="^(720p|1080p)$")
     mute_on_join: bool | None = None
     mask_profanity: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)
@@ -151,7 +156,8 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         ch = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None)
         chs = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None, "summary")
         sip, sip_opts = await _sip_block(request, db, room)
-        extra = {"llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
+        video_enabled = bool((await st.settings_svc.get(db, "video")).enabled)
+        extra = {"video_enabled": video_enabled, "llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
     return RoomManageOut(
         icon=icon_out(room),
         protocol_instructions=room.protocol_instructions,
@@ -159,7 +165,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode,
+        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode, video_mode=room.video_mode, video_quality=room.video_quality,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],
@@ -247,6 +253,16 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
     fields = body.model_dump(exclude_unset=True)
     if fields.get("recording_mode") == "audio_video" and room.recording_mode != "audio_video":
         raise HTTPException(409, "Запись видео пока в разработке: выберите «Только аудио» или «Без общей записи».")   # не принимаем режим, который не выполняется
+    if fields.get("video_mode") not in (None, "off"):
+        if (fields.get("e2ee_mode") or room.e2ee_mode) != "off":
+            raise HTTPException(409, "Видеозапись недоступна при сквозном шифровании: у сервера нет ключа, чтобы собрать картинку. Отключите шифрование или видеозапись.")
+        if fields.get("encrypt_storage") or (room.encrypt_storage and fields.get("encrypt_storage") is not False):
+            raise HTTPException(409, "Видеозапись пока не поддерживается вместе с шифрованием хранилища комнаты.")
+    if fields.get("room_type") == "presentation" and room.room_type != "presentation" and "video_mode" not in fields and room.video_mode == "off" \
+            and (await request.app.state.settings_svc.get(db, "video")).enabled and room.e2ee_mode == "off" and not room.encrypt_storage:
+        fields["video_mode"] = "auto"      # презентационная комната записывается автоматически, если администратор разрешил видеозапись
+    if (fields.get("e2ee_mode") not in (None, "off") or fields.get("encrypt_storage")) and (fields.get("video_mode") or room.video_mode) != "off":
+        raise HTTPException(409, "В комнате включена видеозапись, а она несовместима с шифрованием. Сначала отключите видеозапись (Настройки комнаты → Запись).")
     if fields.get("e2ee_mode") not in (None, "off") and room.sip_mode != "off":
         raise HTTPException(409, "Телефонные участники (SIP) не поддерживают сквозное шифрование: отключите телефонию в этой комнате или оставьте E2EE выключенным.")
     if fields.get("encrypt_storage") and not room.encrypt_storage and not await se.ensure_ready(request.app):

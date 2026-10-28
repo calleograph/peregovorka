@@ -177,7 +177,7 @@ def _security(m: dict, c: dict) -> dict:
     return {"state": "advisories" if ids else "ok", "ids": ids[:6], "checked_at": sec.get("checked_at")}
 
 
-def build_rows(m: dict, installed: dict[str, str | None], live: dict[str, dict], sip_enabled: bool, llm_enabled: bool = False) -> list[dict]:
+def build_rows(m: dict, installed: dict[str, str | None], live: dict[str, dict], sip_enabled: bool, llm_enabled: bool = False, video_enabled: bool = False) -> list[dict]:
     rows = []
     for c in m["components"]:
         key = c["key"]
@@ -189,10 +189,10 @@ def build_rows(m: dict, installed: dict[str, str | None], live: dict[str, dict],
         src = (c.get("source") or {}).get("type")
         rt = c.get("runtime")
         pinned = c["pinned"]
-        optional = key in ("livekit_sip", "llama_cpp")
+        optional = key in ("livekit_sip", "llama_cpp", "livekit_egress")
         if src == "none":
             status, note = "manual", c.get("note") or "Версия определяется образом или внешним сервисом; автоматической проверки нет."
-        elif optional and ((key == "livekit_sip" and not sip_enabled) or key == "llama_cpp"):
+        elif optional and ((key == "livekit_sip" and not sip_enabled) or (key == "livekit_egress" and not video_enabled) or key == "llama_cpp"):
             status, note = "off", "Необязательная служба: сейчас не запущена на этом сервере, версия образа закреплена релизом."
         elif rt and not inst:
             status, note = "error", "Не удалось определить версию работающего компонента (служба не запущена или не отвечает)."

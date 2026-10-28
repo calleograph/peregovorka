@@ -117,6 +117,8 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         raise HTTPException(status_code=409, detail="Шифрование хранилища недоступно: не задан APP_MASTER_KEY или ключи не загружены.")
     if room.auto_record:
         room.record_audio = True  # автоматическая запись предполагает, что запись аудио разрешена
+    if room.room_type == "presentation" and room.e2ee_mode == "off" and not room.encrypt_storage and (await request.app.state.settings_svc.get(db, "video")).enabled:
+        room.video_mode = "auto"  # презентационная комната записывается автоматически, если администратор разрешил видеозапись (можно сменить в настройках комнаты)
     room.acl = _acl_rows(body.acl)
     room.moderators = _mod_rows(body.moderators)
     db.add(room)

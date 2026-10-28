@@ -138,7 +138,7 @@ export interface AdminUser {
   last_login_at: string | null; ad_guid: string; totp_enabled?: boolean;
 }
 export interface DirHit { kind: "group" | "user"; ref: string; name: string; sam?: string; email?: string; description?: string }
-export type SettingsGroup = "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "ip_access" | "waf" | "security_log" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
+export type SettingsGroup = "video" | "chats" | "autoupdate" | "auth_security" | "captcha" | "login_protection" | "net_trust" | "ip_access" | "waf" | "security_log" | "profile_policy" | "outlook" | "sip_policy" | "privacy" | "access" | "mail_policy" | "storage_sync" | "storage" | "audio_storage" | "chat_files" | "anonymizer" | "llm" | "protocol" | "screen" | "general" | "asr" | "journal" | "bitrix24" | "api" | "site";
 export interface BitrixLookup { ok: boolean; message: string; fields?: Record<string, string>; external_id?: string | null; has_photo?: boolean }
 export interface BitrixStep { name: string; ok: boolean; message: string }
 export interface BitrixDiagnose { ok: boolean; who: string | null; scopes: string[] | null; steps: BitrixStep[]; will_use: Record<string, boolean>; ms: number }
@@ -209,6 +209,10 @@ export interface ConfigReport {
 export interface WaveformData { status: "ready" | "processing" | "failed"; bucket_ms?: number; peaks?: string; error?: string | null }
 export interface SubtitleCue { id: number; start: number; end: number; speaker: string; text: string }
 export interface SubtitleData { available: boolean; reason: string | null; message: string | null; scope: "meeting" | "participant"; segments: SubtitleCue[] }
+/** Видеозапись встречи (LiveKit Egress): видна всем участникам; управляют руководители. */
+export interface VideoState { enabled: boolean; mode: "off" | "manual" | "auto"; quality: "720p" | "1080p"; recording: boolean; since: string | null; fragments: number; can_start: boolean; can_control: boolean }
+export interface VideoStatus { enabled: boolean; livekit_ok: boolean; livekit_error: string | null; running: number; max_concurrent: number; files: { ready: number; failed: number; bytes: number };
+  quota_gb: number; min_free_gb: number; free_bytes: number | null; warnings: string[] }
 export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; recording_mode: "audio" | "audio_video" | "off" }
 export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
@@ -296,7 +300,7 @@ export interface TransferDetail extends TransferJob { problems: { recording_id: 
 export interface RoomManage {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
-  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off";
+  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off"; video_mode?: "off" | "manual" | "auto"; video_quality?: "720p" | "1080p"; video_enabled?: boolean;
   transcription_enabled: boolean; mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
@@ -912,6 +916,9 @@ export const api = {
   },
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
+  adminVideoStatus: () => request<VideoStatus>("GET", "/admin/video/status"),
+  videoState: (meetingId: string) => request<VideoState>("GET", `/meetings/${meetingId}/video-recording`),
+  setVideoRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/video-recording`, { enabled }),
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
   micOwner: (meetingId: string, identity: string) => request<void>("POST", `/meetings/${meetingId}/mic-owner`, { identity }),

@@ -103,7 +103,7 @@ TABLES: dict[str, TablePolicy] = {
         where="lifetime = 'permanent'", hashes=("password_hash",),
         columns=_cols({DATA: ["id", "slug", "name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio", "camera_allowed", "screen_share_allowed",
                               "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access", "anonymize_mode", "llm_profile_id", "anonymizer_profile_id",
-                              "mute_on_join", "guest_access_enabled", "guest_token", "room_type", "peer_access", "encrypt_storage", "e2ee_mode", "scheduled_start", "scheduled_end", "join_opens_at", "outlook_key", "recurring", "cancelled_at", "auto_record", "recording_mode", "board_allowed", "board_access", "mail_delivery",
+                              "mute_on_join", "guest_access_enabled", "guest_token", "room_type", "peer_access", "encrypt_storage", "e2ee_mode", "scheduled_start", "scheduled_end", "join_opens_at", "outlook_key", "recurring", "cancelled_at", "auto_record", "recording_mode", "video_mode", "video_quality", "board_allowed", "board_access", "mail_delivery",
                               "llm_mode", "llm_local_model", "llm_summary_mode", "llm_summary_profile_id", "llm_summary_local_model", "sip_mode", "sip_profile_id", "sip_extension",
                               "sip_allow_inbound", "sip_allow_outbound", "sip_contacts", "welcome_message", "auto_map_mode", "slug_history", "lifetime", "lifecycle",
                               "created_by_name", "created_at", "updated_at", "icon_kind", "icon_key", "mask_profanity"],      # значок из библиотеки переносится; загруженное изображение — файл в каталоге данных, в копию настроек не входит
@@ -187,6 +187,7 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "net_trust": GroupPolicy(export=False, reason="определение адреса клиента зависит от сети конкретной установки (прокси, WAF)", title="Определение адреса клиента"),
     "outlook": GroupPolicy(title="Надстройка Outlook", bound={"public_url": BOUND_URL}),
     "sip_policy": GroupPolicy(title="Политика телефонии"),
+    "video": GroupPolicy(title="Видеозапись встреч"),
     "profile_policy": GroupPolicy(title="Правка профиля пользователями"),
     "auth_security": GroupPolicy(title="Двухфакторная аутентификация (политика)"),
     "desktop_channel": GroupPolicy(title="Канал обновлений приложения Windows (адрес и открытый ключ издателя)"),
@@ -212,7 +213,7 @@ ENV: dict[str, str] = {
     "livekit_api_secret": "секрет LiveKit этой установки (не копируется)", "livekit_token_ttl_seconds": ENV_REASON_DEFAULT, "livekit_server_version": "определяется установленным LiveKit",
     "asr_internal_url": "адрес службы распознавания этой установки", "web_internal_url": "адрес службы web этой установки", "local_llm_url": "адрес локальной модели этой установки", "local_llm_models_dir": "каталог моделей этой установки",
     "local_llm_enabled": ENV_REASON_DEFAULT, "local_llm_model_file": ENV_REASON_DEFAULT, "local_llm_model_alias": ENV_REASON_DEFAULT, "local_llm_model_bytes": ENV_REASON_DEFAULT, "local_llm_model_sha256": ENV_REASON_DEFAULT,
-    "sip_enabled": ENV_REASON_DEFAULT, "sip_signaling_port": "сеть этой установки", "sip_rtp_start": "сеть этой установки", "sip_rtp_end": "сеть этой установки", "sip_media_ip": "сеть этой установки",
+    "sip_enabled": ENV_REASON_DEFAULT, "video_enabled": ENV_REASON_DEFAULT, "sip_signaling_port": "сеть этой установки", "sip_rtp_start": "сеть этой установки", "sip_rtp_end": "сеть этой установки", "sip_media_ip": "сеть этой установки",
     "sip_allowed_cidrs": "сеть этой установки", "sip_health_url": "адрес службы этой установки", "livekit_node_ip": "сеть этой установки", "livekit_rtc_tcp_port": "сеть этой установки", "livekit_rtc_udp_port": "сеть этой установки",
     "ldap_uris": "прежние параметры каталога из .env: при первом запуске автоматически становятся подключением в базе, которое переносится", "ldap_base_dn": "см. ldap_uris",
     "ldap_bind_dn": "см. ldap_uris", "ldap_bind_password": "см. ldap_uris (секрет не копируется из .env)", "ldap_ca_file": "файл сертификатов этой установки; сертификаты из базы переносятся",
@@ -224,7 +225,7 @@ ENV: dict[str, str] = {
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
-ENV_OTHER: dict[str, str] = {"FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
+ENV_OTHER: dict[str, str] = {"VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
 
 
 def exported_tables() -> list[str]:

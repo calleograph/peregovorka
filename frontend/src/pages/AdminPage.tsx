@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, authSecurityFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { videoFields, anonFields, audioStorageFields, authSecurityFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -23,6 +23,7 @@ import RoomsAdmin from "./admin/RoomsAdmin";
 import OutlookAdmin from "./admin/OutlookAdmin";
 import { confirmLeave } from "../dirtyGuard";
 import SipAdmin from "./admin/SipAdmin";
+import VideoAdmin from "./admin/VideoAdmin";
 import IpAccessAdmin from "./admin/IpAccessAdmin";
 import SecurityEventsAdmin from "./admin/SecurityEventsAdmin";
 import WafAdmin from "./admin/WafAdmin";
@@ -87,6 +88,7 @@ const GROUPS: Group[] = [
     { id: "sip_policy", label: "Политика телефонии", render: () => (
       <SettingsForm key="sip_policy" group="sip_policy" title="Политика телефонии: ограничения и журнал вызовов" fields={sipPolicyFields}
         intro="Ограничения действуют на звонки из комнат и на входящие вызовы. Профили, порты и проверка АТС — в разделе «SIP-телефония»." />) },
+    { id: "video", label: "Видеозапись", render: () => <VideoAdmin fields={videoFields} /> },
     { id: "bitrix24", label: "Bitrix24 (профили)", render: () => <Bitrix24Admin /> },
     { id: "public_api", label: "Публичный API", render: () => <PublicApiAdmin /> },
   ] },
@@ -157,7 +159,7 @@ const KEYWORDS: Record<string, string> = {
   config_backup: "экспорт импорт настройки перенос восстановление архив бэкап пароль секреты", system: "состояние здоровье сервисы проблемы", system_tech: "cpu память ядро asr rtf тайминги обслуживание очистка", ldap: "active directory ad ldaps домен каталог", ca: "сертификат ssl tls корневой",
   crypto: "шифрование ключи aes хранилище чат стенограммы мастер-ключ", desktop_signing: "windows приложение клиент подпись сертификат code signing authenticode msi exe установщик gpo ad cs обновления", outlook: "outlook календарь надстройка office exchange приглашение расписание манифест", profile_policy: "профиль правка редактирование поля ldap должность телефон", captcha: "капча captcha перебор бот защита altcha картинка", login_protection: "перебор пароль блокировка ip защита входа брутфорс замедление nat", security_events: "события безопасности журнал блокировки неудачные входы отчёт заблокированные ip", security_blocks: "заблокированные адреса снять блокировку разблокировать вручную ip", waf: "waf межсетевой экран правила наблюдение защита сканирование sql xss инъекции owasp", security_log: "хранение событий безопасности срок размер", ip_access: "доверенные подсети разрешённые ip адреса сети cidr ограничить доступ firewall allowlist whitelist", net_trust: "ip адрес клиента прокси waf x-forwarded-for reverse proxy доверенные заголовок cloudflare", auth_security: "2fa totp двухфакторная аутентификация код приложение qr резервные коды", login_access: "группы вход доступ ldap", access: "администратор права роли", storages: "smb cifs сетевая папка каталог nas", storage_sync: "сверка целостность хранилище",
   mail: "smtp почта письма сервер", mail_policy: "рассылка вложения получатели", llm: "модель языковая qwen api ключ openai", asr: "whisper распознавание речи транскрибация", anon: "docclean персональные данные",
-  public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", sip: "телефония asterisk звонок атс инструкция порты rtp журнал вызовов", sip_policy: "телефония политика лимит звонков запрещённые направления перебор", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
+  public_api: "ключи токены интеграции rest webhook scopes права swagger openapi", video: "видеозапись egress mp4 запись видео экран качество 720p 1080p квота", sip: "телефония asterisk звонок атс инструкция порты rtp журнал вызовов", sip_policy: "телефония политика лимит звонков запрещённые направления перебор", bitrix24: "битрикс портал должность подразделение фото аватарка сотрудники профиль webhook", journal: "события ошибки лог", audit: "аудит действия", privacy: "cookie данные политика", site: "название логотип favicon цвет тема оформление брендинг организация контакты поддержка документы политика согласие соглашение персональные данные", screen: "показ экрана трансляция", users: "учётные записи сотрудники", rooms: "переговорки комнаты ссылки",
 };
 
 export default function AdminPage({ version }: { version: string }) {

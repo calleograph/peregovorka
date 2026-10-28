@@ -61,8 +61,18 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 for rec in recs:
                     if rec.meeting_id in mixing:
                         continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
+                    if rec.kind == "mix_video" and rec.status in ("processing", "finishing"):
+                        continue                  # видеофайл ещё пишет Egress — живую запись по сроку не удаляем
                     await protocols.purge_recording(db, rec)
                     stats["recordings"] += 1
+        settings_svc0 = getattr(protocols, "_svc", None) or getattr(protocols, "settings_svc", None)
+        vdays = (await settings_svc0.get(db, "video")).retention_days if settings_svc0 is not None else 0
+        if vdays:         # общий срок хранения видеофайлов (стенограмма и протокол остаются); 0 — хранить до удаления администратором
+            old = (await db.execute(select(Recording).where(Recording.kind == "mix_video", Recording.status.in_(("ready", "failed")),
+                                                            Recording.created_at < now - timedelta(days=vdays)))).scalars().all()
+            for rec in old:
+                await protocols.purge_recording(db, rec)
+                stats["video_recordings"] = stats.get("video_recordings", 0) + 1
         if protocols.chat_files is not None:
             orphans = await protocols.chat_files.purge_orphans(db)   # загружены, но не отправлены
             if orphans:

@@ -106,6 +106,8 @@ compose_args() {
   if declare -F llm_local_active >/dev/null 2>&1 && llm_local_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile llm "${COMPOSE_ARGS[@]:1}"); fi
   # SIP-телефония (контейнер livekit-sip): только если включена (SIP_ENABLED=yes) и образ скачан
   if declare -F sip_active >/dev/null 2>&1 && sip_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile sip "${COMPOSE_ARGS[@]:1}"); fi
+  # видеозапись (контейнер livekit-egress): только если включена (VIDEO_ENABLED=yes) и образ скачан
+  if declare -F video_active >/dev/null 2>&1 && video_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile video "${COMPOSE_ARGS[@]:1}"); fi
 }
 
 dc() { compose_args; docker "${COMPOSE_ARGS[@]}" "$@"; }
@@ -183,6 +185,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"
 # shellcheck source=siplib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/siplib.sh"
+# shellcheck source=videolib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/videolib.sh"
 
 # Процессов backend по числу vCPU (отправная точка): 4 процесса выдерживают 2000 активных пользователей на 8 vCPU вместе с PostgreSQL (docs/DB_AND_SCALING.md);
 # на общем сервере ядра делят распознавание речи и языковая модель — процессов меньше. Каждый процесс — около 300 МБ памяти.

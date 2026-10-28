@@ -24,6 +24,8 @@ GUEST_IDENTITY_PREFIX = "g-"
 PHONE_IDENTITY_PREFIX = "p-"      # исходящий звонок из комнаты (identity выдаём мы)
 SIP_IDENTITY_PREFIX = "sip_"      # входящий звонок (identity выдаёт LiveKit SIP)
 SERVICE_IDENTITY_PREFIX = "asr-"
+EGRESS_IDENTITY_PREFIX = "EG_"          # скрытый участник-«рекордер» LiveKit Egress: не человек, в присутствии и подсчётах не учитывается
+SERVICE_IDENTITY_PREFIXES = (SERVICE_IDENTITY_PREFIX, EGRESS_IDENTITY_PREFIX)
 
 
 _DEVICE_RE = re.compile(r"^[0-9a-f]{4,12}$")
@@ -245,7 +247,7 @@ async def list_present_identities(settings: Settings, room_name: str) -> set[str
     try:
         async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
             resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
-        return {p.identity for p in resp.participants if not p.identity.startswith(SERVICE_IDENTITY_PREFIX)}
+        return {p.identity for p in resp.participants if not p.identity.startswith(SERVICE_IDENTITY_PREFIXES)}
     except Exception as exc:  # noqa: BLE001
         text = str(exc).lower()
         if "not_found" in text or "not found" in text or "does not exist" in text:
@@ -278,7 +280,7 @@ async def mute_sources(settings: Settings, room_name: str, sources: set[str], *,
         async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
             resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
             for p in resp.participants:
-                if p.identity.startswith(SERVICE_IDENTITY_PREFIX) or p.identity in exclude or (only is not None and p.identity not in only):
+                if p.identity.startswith(SERVICE_IDENTITY_PREFIXES) or p.identity in exclude or (only is not None and p.identity not in only):
                     continue
                 hit = False
                 for t in p.tracks:

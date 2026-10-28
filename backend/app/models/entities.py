@@ -132,8 +132,12 @@ class Room(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Начинать запись аудио автоматически при старте встречи (иначе — вручную). Транскрибация идёт всегда (её можно остановить во встрече).
     auto_record: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
-    # Общая запись всей встречи: audio — единая аудиозапись; audio_video — видеозапись со звуком (нужна служба LiveKit Egress); off — общая запись не создаётся.
+    # Общая запись всей встречи: audio — единая аудиозапись; audio_video — зарезервировано (видео включается отдельно: rooms.video_mode); off — общая запись не создаётся.
     recording_mode: Mapped[str] = mapped_column(String(12), default="audio", server_default="audio", nullable=False)
+    # Видеозапись всей встречи одним файлом (MP4, LiveKit Egress), независимо от записи аудио: off — нет; manual — руководитель запускает и останавливает сам;
+    # auto — запись идёт, пока в комнате есть участники (для презентационных комнат включается по умолчанию, если администратор разрешил видеозапись).
+    video_mode: Mapped[str] = mapped_column(String(8), default="off", server_default="off", nullable=False)
+    video_quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)   # 720p | 1080p
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Кто работает с общей доской: auto — по типу комнаты (обычная: все, если board_allowed; презентация: только руководитель); everyone — все правят;
@@ -256,6 +260,7 @@ class Meeting(Base):
     llm_summary_override: Mapped[dict | None] = mapped_column(JSONType)
     transcription_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     record_audio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    record_video: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)     # видеозапись идёт сейчас (задача Egress запущена)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     room: Mapped[Room] = relationship(lazy="joined")
@@ -472,6 +477,7 @@ class Recording(Base):
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)    # момент, которому соответствует 0:00 записи: по нему реплики стенограммы связываются с плеером
     sha256: Mapped[str | None] = mapped_column(String(64))              # контрольная сумма (заполняется при переносе между хранилищами)
     has_video: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    egress_id: Mapped[str | None] = mapped_column(String(64), index=True)                                      # задача LiveKit Egress, создавшая файл (видеозапись)
 
 
 class RecordingWaveform(Base):

@@ -52,7 +52,7 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None | str:
 
 
 def _item(r: Recording, can_download: bool) -> dict:
-    return {"id": str(r.id), "kind": r.kind, "mime": r.mime, "status": r.status, "error": r.error, "size_bytes": r.size_bytes, "duration_s": r.duration_s, "has_video": r.has_video,
+    return {"id": str(r.id), "kind": r.kind, "mime": r.mime, "status": "processing" if r.status == "finishing" else r.status, "error": r.error, "size_bytes": r.size_bytes, "duration_s": r.duration_s, "has_video": r.has_video,
             "started_at": r.started_at, "created_at": r.created_at, "file_state": r.file_state, "can_download": can_download}
 
 
@@ -130,7 +130,7 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
     meeting, rec = await _load(request, db, meeting_id, recording_id, su)
     if download and not can_edit_protocol(meeting, su):
         raise HTTPException(status_code=403, detail="Скачивать записи могут администратор, руководитель комнаты и организатор встречи")
-    if rec.status == "processing":
+    if rec.status in ("processing", "finishing"):
         raise HTTPException(status_code=409, detail={"code": "processing", "message": "Запись ещё формируется. Обновите страницу через несколько минут."})
     if rec.status == "failed":
         raise HTTPException(status_code=409, detail={"code": "failed", "message": rec.error or "Запись не удалось сформировать."})

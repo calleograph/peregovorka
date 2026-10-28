@@ -37,6 +37,33 @@ if os.environ.get("LIVE_MOCK_LLM") == "1":          # подставная мо�
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import mock_llm
     app.state.test_transports = {"llm": httpx.MockTransport(mock_llm.handler)}
+if os.environ.get("LIVE_FAKE_EGRESS") == "1":        # вместо LiveKit Egress: при остановке ffmpeg создаёт настоящий короткий MP4 (H.264 + AAC), затем «приходит» итог. Служба Egress НЕ проверяется
+    import asyncio as _aio, subprocess as _sp, types as _types
+    from livekit.protocol import egress as _eg
+    os.environ["VIDEO_EGRESS_OUT"] = os.path.join(DATA, "recordings")
+    class _FakeEgress:
+        def __init__(self): self.jobs = {}; self.n = 0
+        async def start(self, req):
+            self.n += 1; eid = f"EG_stand{self.n}"; self.jobs[eid] = req.outputs[0].file.filepath
+            return _eg.EgressInfo(egress_id=eid, status=_eg.EgressStatus.EGRESS_ACTIVE)
+        async def stop(self, egress_id):
+            path = self.jobs.pop(egress_id, None)
+            if path:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                _sp.run(["/usr/bin/ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30", "-f", "lavfi", "-i", "sine=frequency=440",
+                         "-t", "6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", path], check=True)
+                info = _eg.EgressInfo(egress_id=egress_id, status=_eg.EgressStatus.EGRESS_COMPLETE)
+                info.file_results.add(duration=6_000_000_000, size=os.path.getsize(path))
+                async def _later():
+                    await _aio.sleep(1)
+                    async with app.state.session_maker() as db:
+                        await app.state.video.on_egress_event(db, _types.SimpleNamespace(event="egress_ended", egress_info=info))
+                _aio.get_running_loop().create_task(_later())
+            return _eg.EgressInfo(egress_id=egress_id, status=_eg.EgressStatus.EGRESS_ENDING)
+        async def get(self, egress_id): return None
+        async def probe(self): return None
+    from app.services import video_rec as _vr
+    _vr.EgressApi = lambda settings: _FakeEgress()        # VideoRecorder берёт EgressApi при создании (при запуске приложения)
 # Только для стенда: подсунуть реплику стенограммы (вместо ASR) — так проверяются стенограмма, история и протоколы без распознавания речи
 from fastapi import Body
 @app.post("/__dev/segment")

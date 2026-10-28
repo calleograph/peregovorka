@@ -15,6 +15,7 @@ from ..services.access import accessible_history, can_access_meeting, release_le
 from ..services import roles
 from ..services.room_icons import icon_out
 from ..services.audit import audit_now, write_audit
+from ..services.video_rec import VideoError
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.doc_render import with_incomplete_notice
 from ..services.glass_html import CSP_HEADER
@@ -237,6 +238,50 @@ async def toggle_recording(meeting_id: uuid.UUID, request: Request, body: dict =
                       target_type="meeting", target_id=str(meeting_id), details={"enabled": state, "room": meeting.room.slug})
     await db.commit()
     return {"enabled": state}
+
+
+# ------------------------------------------------------------------------------------- видеозапись вкл/выкл
+def _video_http(exc: VideoError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message})
+
+
+@router.get("/{meeting_id}/video-recording")
+async def video_state(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Состояние видеозаписи встречи — видно всем участникам (индикатор «Идёт видеозапись»)."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    st = await request.app.state.video.state(db, meeting)
+    st["can_control"] = bool(st["can_start"] and roles.can_control_meeting(meeting.room, su))
+    return st
+
+
+@router.post("/{meeting_id}/video-recording")
+async def toggle_video_recording(meeting_id: uuid.UUID, request: Request, body: dict = Body(...),
+                                 su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """«Начать видеозапись» / «Остановить видеозапись» — независимо от записи аудио и транскрибации. Руководитель комнаты (или администратор);
+    в комнате без руководителей — любой участник. Начинается с текущего момента; остановка и повторный запуск дают новый фрагмент, прежний файл сохраняется."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not roles.can_control_meeting(meeting.room, su):
+        raise HTTPException(status_code=403, detail="Видеозаписью управляют руководители комнаты")
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=422, detail="Ожидается enabled: true|false")
+    video = request.app.state.video
+    try:
+        if enabled:
+            await video.start(db, meeting, by=su.display_name)
+            await _forget_manual_off(request, meeting_id)
+        else:
+            await video.stop(db, meeting, by=su.display_name, manual=True)
+    except VideoError as exc:
+        raise _video_http(exc) from None
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.video_recording",
+                      target_type="meeting", target_id=str(meeting_id), details={"enabled": enabled, "room": meeting.room.slug})
+    await db.commit()
+    return {"enabled": enabled}
+
+
+async def _forget_manual_off(request: Request, meeting_id: uuid.UUID) -> None:
+    await request.app.state.redis.delete(f"video:manual_off:{meeting_id}")          # ручной запуск снимает запрет автозапуска
 
 
 # -------------------------------------------------------------------------------- протоколы и резюме (LLM)

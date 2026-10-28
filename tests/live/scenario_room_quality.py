@@ -59,9 +59,9 @@ async def main():
         ok = await BOB.wait_for(f"{PANEL}.includes('Транскрибация остановлена. Звонок продолжается')", 15)
         S.check("Боб видит «Транскрибация остановлена» без ложного «запись продолжается»", ok and not await BOB.js(f"{PANEL}.includes('запись звука продолжаются') || {PANEL}.includes('Аудиозапись продолжается')"),
                 await BOB.js(f"{PANEL}.slice(0, 300)"))
-        S.check("Алиса: «Начать запись»", await more_click(PC, "Начать запись"))
+        S.check("Алиса: «Начать запись»", await more_click(PC, "Аудиозапись: выключена"))
         S.check("запись идёт: «Транскрибация остановлена. Аудиозапись продолжается»", await BOB.wait_for(f"{PANEL}.includes('Транскрибация остановлена. Аудиозапись продолжается')", 15))
-        await more_click(PC, "Остановить запись")
+        await more_click(PC, "Аудиозапись: включена")
         S.check("запись остановлена — снова без упоминания записи", await BOB.wait_for(f"{PANEL}.includes('Транскрибация остановлена. Звонок продолжается')", 15))
         await more_click(PC, "Возобновить транскрибацию")
         await BOB.wait_for(f"!{PANEL}.includes('Транскрибация остановлена')", 15)

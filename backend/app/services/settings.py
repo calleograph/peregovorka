@@ -780,6 +780,18 @@ class SecurityLogSettings(_Group):
     max_rows: int = Field(default=200_000, ge=1000, le=5_000_000)
 
 
+class VideoSettings(_Group):
+    """Видеозапись встреч (служба LiveKit Egress). Выключена, пока администратор не включит; сама служба ставится отдельно (профиль `video` в compose)."""
+
+    enabled: bool = False
+    max_concurrent: int = Field(default=2, ge=1, le=20)           # одновременных записей на весь сервер: каждая — отдельный браузер внутри Egress, ≈ 2–4 ядра процессора
+    min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе записей — новая запись не начинается, идущие останавливаются
+    max_hours: int = Field(default=6, ge=1, le=24)                # предел одной записи; длиннее — файл закрывается и запись продолжается следующим фрагментом
+    default_quality: str = Field(default="720p", pattern="^(720p|1080p)$")
+    quota_gb: int = Field(default=0, ge=0, le=1_000_000)          # общий объём видеозаписей; 0 — без предела. При превышении новые записи не начинаются, старые не удаляются
+    retention_days: int = Field(default=0, ge=0, le=3650)         # 0 — хранить, пока администратор не удалит; иначе видеофайлы старше срока удаляются (стенограмма и протокол остаются)
+
+
 class NetTrustSettings(_Group):
     """Как определяется адрес клиента. Доверенные прокси — узлы, которым разрешено сообщать настоящий адрес клиента (в заголовках). Это НЕ список разрешённых клиентских сетей.
     Заголовки принимаются только от узлов, которые подключились к web с доверенного адреса; прямое подключение к backend или от недоверенного узла заголовки не меняет."""
@@ -1242,6 +1254,7 @@ GROUPS: dict[str, type[_Group]] = {
     "profile_policy": ProfilePolicySettings,
     "outlook": OutlookSettings,
     "sip_policy": SipPolicySettings,
+    "video": VideoSettings,
 }
 
 

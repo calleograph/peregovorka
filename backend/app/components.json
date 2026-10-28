@@ -105,6 +105,48 @@
    }
   },
   {
+   "key": "livekit_egress",
+   "title": "LiveKit Egress (livekit/egress, видеозапись)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "v1.15.0",
+   "tested": "v1.15.0",
+   "reviewed_latest": "1.15.0",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "livekit/egress",
+    "track": "^v(\\d+\\.\\d+\\.\\d+)$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "\\$\\{VIDEO_IMAGE:-livekit/egress:(\\S+?)\\}",
+     "with_digest": true
+    },
+    {
+     "type": "image-ref",
+     "file": "scripts/lib/videolib.sh",
+     "regex": "VIDEO_DEFAULT_IMAGE=\"livekit/egress:([^\"]+)\"",
+     "with_digest": true
+    },
+    {
+     "type": "image-ref",
+     "file": ".env.example",
+     "regex": "^# VIDEO_IMAGE=livekit/egress:(\\S+)",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://github.com/livekit/egress/releases",
+   "image": {
+    "registry": "hub",
+    "repo": "livekit/egress"
+   },
+   "bundle": "livekit",
+   "digest": "sha256:ac244a40268ce1dd1510fbff6eb529609ec68aceff1602343f79be8ca08c355b",
+   "note": "Необязательная служба видеозаписи. Образ закреплён, но на стенде разработчика не запускался (нет места под образ ≈ 1,3 ГБ): «проверено с» относится к логике приложения на подставной реализации."
+  },
+  {
    "key": "livekit_client_js",
    "title": "livekit-client (браузер)",
    "group": "Frontend",

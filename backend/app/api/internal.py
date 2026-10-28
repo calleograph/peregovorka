@@ -43,6 +43,12 @@ async def livekit_webhook(request: Request):
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=401, detail="Недействительная подпись webhook") from None
 
+    if event.event in ("egress_started", "egress_updated", "egress_ended"):
+        video = getattr(request.app.state, "video", None)
+        if video is not None:
+            async with request.app.state.session_maker() as db:
+                await video.on_egress_event(db, event)
+        return {"ok": True}
     meeting_id = parse_meeting_room_name(event.room.name) if event.room and event.room.name else None
     user_id = parse_user_identity(event.participant.identity) if event.participant and event.participant.identity else None
     ident = event.participant.identity if event.participant and event.participant.identity else ""

@@ -134,7 +134,7 @@ ENV_IMPORTANT = {
     "app_public_url": "внешний адрес: от него строятся ссылки в письмах и приглашениях", "livekit_public_url": "адрес сервера звонков, который получают браузеры",
     "default_text_retention_days": "срок хранения текста по умолчанию", "default_audio_retention_days": "срок хранения аудио по умолчанию",
     "trusted_proxy_hops": "доверенные прокси: определение адреса клиента", "trusted_proxy_cidrs": "доверенные прокси: определение адреса клиента",
-    "cookie_secure": "защищённые cookie (нужен HTTPS)", "local_llm_enabled": "встроенная локальная модель", "sip_enabled": "SIP-телефония",
+    "cookie_secure": "защищённые cookie (нужен HTTPS)", "local_llm_enabled": "встроенная локальная модель", "sip_enabled": "SIP-телефония", "video_enabled": "служба видеозаписи",
 }
 
 

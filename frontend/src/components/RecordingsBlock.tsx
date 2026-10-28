@@ -34,21 +34,25 @@ export default function RecordingsBlock({ meetingId }: { meetingId: string }) {
   return (
     <div className="card rec-block" aria-label="Записи встречи">
       <h2>Записи</h2>
-      {data.mixes.map((m) => (
+      {data.mixes.map((m) => {
+        const vids = data.mixes.filter((x) => x.has_video);
+        const title = (TITLE[m.kind] ?? "Запись") + (m.has_video && vids.length > 1 ? ` — часть ${vids.indexOf(m) + 1} из ${vids.length}` : "");   // остановка и повторный запуск видеозаписи дают отдельные фрагменты
+        return (
         <div key={m.id} className="rec-row">
           <Icon name={m.has_video ? "video" : "mic"} size={20} />
           <div className="rec-info">
-            <b>{TITLE[m.kind] ?? "Запись"}</b>
+            <b>{title}</b>
             <span className="muted small">
-              {m.status === "processing" ? "формируется…" : m.status === "failed" ? `не удалось сформировать: ${m.error ?? "ошибка"}` : m.file_state === "missing" ? "файл удалён из хранилища"
+              {m.status === "processing" ? (m.has_video ? "идёт запись или обработка файла…" : "формируется…") : m.status === "failed" ? `не удалось сформировать: ${m.error ?? "ошибка"}` : m.file_state === "missing" ? "файл удалён из хранилища"
                 : `${fmtTime(m.duration_s ?? 0)} · ${bytes(m.size_bytes)} · ${m.has_video ? "MP4" : "M4A"}${m.started_at ? ` · с ${fmt(m.started_at)}` : ""}`}
             </span>
           </div>
-          <button type="button" className="btn primary" disabled={m.status !== "ready" || m.file_state === "missing"} onClick={() => open(m, TITLE[m.kind] ?? "Запись")}>
+          <button type="button" className="btn primary" disabled={m.status !== "ready" || m.file_state === "missing"} onClick={() => open(m, title)}>
             {m.has_video ? "Смотреть" : "Слушать"}
           </button>
         </div>
-      ))}
+        );
+      })}
       {data.participants.length > 0 && (
         <details className="rec-individual">
           <summary>Индивидуальные записи участников ({data.participants.length})</summary>

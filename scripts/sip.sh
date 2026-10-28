@@ -64,7 +64,7 @@ case "$CMD" in
     need_root
     [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; read -r -p "Выключить SIP-телефонию? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }
     dc stop livekit-sip >/dev/null 2>&1 || true; dc rm -f livekit-sip >/dev/null 2>&1 || true
-    upd_env_set_key "$ENV_FILE" SIP_ENABLED no; upd_env_set_key "$ENV_FILE" LIVEKIT_REDIS_LINE ""
+    upd_env_set_key "$ENV_FILE" SIP_ENABLED no; if [ "${VIDEO_ENABLED:-no}" != "yes" ]; then upd_env_set_key "$ENV_FILE" LIVEKIT_REDIS_LINE ""; fi      # общая шина Redis нужна и видеозаписи
     unset SIP_ENABLED LIVEKIT_REDIS_LINE; load_env "$ENV_FILE"; sip_refresh
     dc up -d --no-build livekit || warn "LiveKit не перезапущен (scripts/logs.sh livekit)"
     ok "Телефония выключена: контейнер livekit-sip остановлен, порты SIP/RTP не публикуются. Правила файрвола, если вы их создавали, удалите вручную (ufw status numbered)." ;;

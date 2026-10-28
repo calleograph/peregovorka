@@ -79,6 +79,7 @@ class MeetingService:
         self._r = redis
         self._bridge = bridge
         self.on_ended: Callable[[uuid.UUID], None] | None = None  # запуск финализации (экспорт, протокол)
+        self.video = None                                                   # VideoRecorder (видеозапись через Egress); задаётся при запуске приложения
         self.on_started: Callable[[uuid.UUID], None] | None = None      # встреча началась (например, подготовка входящих телефонных звонков)
         self.on_ended_extra: Callable[[uuid.UUID], None] | None = None  # встреча закончилась (например, снять правило входящих звонков)
         self.on_event: Callable[[str, Meeting], None] | None = None     # события для публичного API: ("meeting.started" | "meeting.ended", встреча)
@@ -288,6 +289,8 @@ class MeetingService:
         guest.connected_at = guest.connected_at or utcnow()
         meeting.empty_since = None
         await db.commit()
+        if self.video is not None:
+            await self.video.on_join(db, meeting)
 
     async def on_guest_left(self, db: AsyncSession, meeting_id: uuid.UUID, guest_id: uuid.UUID) -> None:
         await self.leave_guest(db, meeting_id, guest_id)
@@ -363,6 +366,8 @@ class MeetingService:
         elif open_count > 0:
             meeting.empty_since = None
         await db.commit()
+        if open_count == 0 and self.video is not None:
+            await self.video.on_empty(db, meeting)                # пустую комнату не записываем
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
 
     # ------------------------------------------------------------ завершение
@@ -394,6 +399,11 @@ class MeetingService:
             if self.settings_svc is not None:
                 minutes = (await self.settings_svc.get(db, "general")).post_meeting_access_minutes
             await grant_leases(self._r, meeting.id, online, minutes)
+        if self.video is not None and meeting.record_video:
+            try:
+                await self.video.stop(db, meeting, by="meeting_end")        # файл закрывает Egress; итог — webhook или сверка
+            except Exception:  # noqa: BLE001 — завершение встречи не должно зависеть от записи
+                log.exception("Не удалось остановить видеозапись при завершении встречи", extra={"meeting_id": str(meeting.id)})
         await self._bridge.stop(meeting_id=str(meeting.id), room_name=meeting.livekit_room)
         await e2ee_svc.drop(self._r, meeting.id)         # ключ сквозного шифрования действует одну встречу
         await self._clear_state(meeting.id)   # «слово» и список руководителей — состояние встречи, после неё сбрасывается
@@ -431,6 +441,8 @@ class MeetingService:
         meeting.empty_since = None
         await db.commit()
         await self._sync_room(db, await db.get(Room, meeting.room_id), meeting)
+        if self.video is not None:
+            await self.video.on_join(db, meeting)              # режим комнаты «автоматически»
 
     async def sync_rights_on_join(self, db: AsyncSession, meeting_id: uuid.UUID, identity: str, permission) -> bool:
         """Права только что подключившегося участника презентации приводятся к ТЕКУЩЕМУ состоянию слова — в обе стороны.

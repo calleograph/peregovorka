@@ -309,6 +309,8 @@ phase2() {
   if [ "$SKIP_MODELS" -eq 0 ]; then llm_prepare soft; llm_local_refresh; else info "Локальная LLM: пропущено (--skip-models)"; fi
   # SIP-телефония (если включена на сервере): образ livekit-sip скачивается заранее, без интернета — предупреждение
   sip_prepare soft
+  # видеозапись (если включена на сервере): образ livekit-egress скачивается заранее, без интернета или места — предупреждение, остальное обновляется
+  video_prepare soft
 
   upd_ensure_updater_dir
   upd_ensure_data_dirs
