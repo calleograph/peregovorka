@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 
 from app.integrations.llm import strip_thinking
-from app.services import local_llm as ll
+from app.services import fact_engine as fe, local_llm as ll
 
 from .conftest import login, make_settings, put_settings, running_app
 from .test_access_and_protocols import end_by_alice, meeting_with_two
@@ -242,7 +242,7 @@ def test_long_input_is_split_by_the_model_limit_not_the_global_one(tmp_path, dir
         _drain(c)
         passes = [b for b in rt.seen if "response_format" in b]
         assert len(passes) == 1 and len(rt.seen) == 2, "один фрагмент (реплика не делится) → ОДИН проход по схеме (раньше четыре) + короткое резюме по проверенным пунктам"
-        assert "response_format" not in rt.seen[-1] and rt.seen[-1]["max_tokens"] <= 220 and all(p["max_tokens"] <= 600 for p in passes)
+        assert "response_format" not in rt.seen[-1] and rt.seen[-1]["max_tokens"] <= 220 and all(p["max_tokens"] <= fe.LOCAL_OUT_CAP for p in passes)
         assert set(passes[0]["response_format"]["json_schema"]["schema"]["properties"]) == {"topics", "items", "tasks", "questions"}
 
 
