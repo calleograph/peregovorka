@@ -229,6 +229,10 @@ export interface MapState {
   plan: { ready: boolean; reason: string | null; model: string | null; profile: string; local: boolean; source: string };
   categories: { id: string; label: string }[];
   data?: unknown; meta?: Record<string, unknown> | null; error?: string | null; created_by?: string | null; updated_at?: string;
+  /** Идёт пересоздание, показана прежняя карта. */
+  stale?: boolean; can_restore?: boolean;
+  /** Модели для выбора при формировании (только руководителям комнаты и администраторам). */
+  llm_choices?: { key: string; label: string; local: boolean }[];
 }
 export interface MapTopicEdit { title?: string; category?: string | null; note?: string }
 export interface AclEntry { subject_type: "group" | "user"; subject_ref: string; display_name?: string | null }
@@ -785,6 +789,9 @@ export interface IpAccessState { enabled: boolean; active: boolean; forced_off: 
   entries: IpAccessEntry[]; my_ip: string; my_ip_allowed: boolean; denied_24h: number; warnings: string[]; covered: { id: string; title: string; detail: string }[]; not_covered: { id: string; title: string; detail: string }[] }
 export interface SecEvent { id: number; at: string; ip: string | null; account: string | null; kind: string; kind_title: string; result: string; reason: string | null; rule: string | null; until: string | null; component: string; details: Record<string, unknown> | null; explain?: string | null }
 export interface SecBlock { ip: string; reason: string; rule: string; manual: boolean; actor: string; failures: number; level: number; since: number; until: number; failures_24h: number; recent: { at: string; kind_title: string; reason: string | null; rule: string | null }[] }
+export interface CaptchaDiag { mode: string; kind: string; length: number; ttl_seconds: number; failures: number; window_minutes: number; difficulty: number; redis: boolean; redis_error: string | null; font: string | null; scopes: string[]; note: string }
+export interface CaptchaTestStart { challenge: ({ kind: "image"; id: string; image: string; ttl: number; length: number } | ({ kind: "pow" } & CaptchaChallenge)); diag: CaptchaDiag }
+export interface CaptchaTestVerdict { ok: boolean; reason: string; level: "ok" | "fail"; message: string }
 export interface SecOverview { protection: { login_protection: boolean; captcha_mode: string; captcha_kind: string; ip_access: { enabled: boolean; active: boolean; networks: number }; waf_mode: string };
   blocked_now: number; failed_logins_24h: number; login_blocked_24h: number; captcha_shown_24h: number; captcha_passed_24h: number; denied_net_24h: number; waf_hits_24h: number; top_rules: { rule: string; count: number }[]; attention: string[] }
 export interface WafRule { id: string; title: string; blurb: string; verified: boolean; mode: "inherit" | "off" | "observe" | "block"; observed_24h: number; blocked_24h: number; last_seen: string | null }
@@ -950,7 +957,8 @@ export const api = {
   },
 
   conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),
-  createMap: (meetingId: string) => request<{ status: string }>("POST", `/meetings/${meetingId}/map`),
+  createMap: (meetingId: string, llmOnce?: string) => request<{ status: string }>("POST", `/meetings/${meetingId}/map`, llmOnce ? { llm_once: llmOnce } : undefined),
+  restoreMap: (meetingId: string) => request<MapState>("POST", `/meetings/${meetingId}/map/restore`),
   editMapTopic: (meetingId: string, topicId: string, patch: MapTopicEdit) => request<MapState>("PATCH", `/meetings/${meetingId}/map/topics/${encodeURIComponent(topicId)}`, patch),
   logBoardExport: (meetingId: string, format: string, pages: number) => request<void>("POST", `/meetings/${meetingId}/whiteboard/export`, { format, pages }),
   logMapExport: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/map/export`),
@@ -1134,6 +1142,8 @@ export const api = {
     ipAccessAdd: (body: { cidr: string; comment: string; enabled?: boolean }) => request<IpAccessState>("POST", "/admin/security/ip-access/entries", body),
     ipAccessUpdate: (id: string, body: Record<string, unknown>) => request<IpAccessState>("PATCH", `/admin/security/ip-access/entries/${id}`, body),
     ipAccessDelete: (id: string, body: Record<string, unknown> = {}) => request<IpAccessState>("DELETE", `/admin/security/ip-access/entries/${id}`, body),
+    captchaTestChallenge: () => request<CaptchaTestStart>("POST", "/admin/security/captcha-test/challenge"),
+    captchaTestVerify: (body: { id?: string; answer?: string; solution?: string }) => request<CaptchaTestVerdict>("POST", "/admin/security/captcha-test/verify", body),
     secOverview: () => request<SecOverview>("GET", "/admin/security/overview"),
     secEvents: (q: Record<string, string | number>) => request<{ total: number; items: SecEvent[]; kinds: { id: string; title: string }[] }>("GET", `/admin/security/events?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, String(v)]))}`),
     secEventsExportUrl: (q: Record<string, string | number>, format: "csv" | "json") => `/api/v1/admin/security/events/export?${new URLSearchParams({ ...Object.fromEntries(Object.entries(q).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, String(v)])), format })}`,

@@ -45,18 +45,27 @@ function CaptchaForm({ pending, onDone }: { pending: Pending; onDone: (a: Captch
       <form onSubmit={submit} className="captcha-form">
         <p className="muted small" style={{ margin: 0 }}>Введите символы с картинки. Регистр не важен. Проверка нужна после нескольких неудачных попыток входа.</p>
         {(note || err) && <div className="alert error small" role="alert">{err || note}</div>}
-        <div className="captcha-img-row">
-          <img src={img.image} alt="Картинка с символами для проверки" width={img.length * 34 + 80} height={84} className="captcha-img" />
-          <button type="button" className="btn ghost mini" onClick={refresh} disabled={busy} title="Показать другую картинку" aria-label="Показать другую картинку">↻ Другая</button>
-        </div>
-        <label>Символы с картинки
-          <input value={answer} onChange={(e) => setAnswer(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={16} inputMode="text" aria-label="Символы с картинки" />
-        </label>
+        <CaptchaImageField img={img} answer={answer} setAnswer={setAnswer} onRefresh={refresh} busy={busy} />
         <div className="row">
           <button className="btn primary" type="submit" disabled={!answer.trim() || busy}>Продолжить</button>
           <button className="btn ghost" type="button" onClick={() => onDone(null)}>Отмена</button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Картинка с символами, «Другая» и поле ввода: общая часть окна входа и администраторской проверки CAPTCHA (одна вёрстка, один вид). */
+export function CaptchaImageField({ img, answer, setAnswer, onRefresh, busy }: { img: ImageChallenge; answer: string; setAnswer: (v: string) => void; onRefresh: () => void; busy: boolean }) {
+  return (
+    <>
+      <div className="captcha-img-row">
+        <img src={img.image} alt="Картинка с символами для проверки" width={img.length * 34 + 80} height={84} className="captcha-img" />
+        <button type="button" className="btn ghost mini" onClick={onRefresh} disabled={busy} title="Показать другую картинку" aria-label="Показать другую картинку">↻ Другая</button>
+      </div>
+      <label>Символы с картинки
+        <input value={answer} onChange={(e) => setAnswer(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={16} inputMode="text" aria-label="Символы с картинки" />
+      </label>
+    </>
   );
 }

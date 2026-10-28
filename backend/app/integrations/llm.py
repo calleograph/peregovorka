@@ -34,7 +34,10 @@ class LlmError(Exception):
             "rate_limited": "Превышен лимит запросов провайдера. Повторите позже.",
             "bad_request": "Провайдер отклонил запрос (возможно, превышен контекст модели).",
             "not_found": "Модель или адрес API не найдены.",
-            "empty": "Модель вернула пустой ответ.",
+            "empty": self.detail or "Модель вернула пустой ответ.",
+            "empty_length": self.detail or "Модель израсходовала весь лимит ответа на «рассуждения» и не написала текст.",
+            "empty_refusal": self.detail or "Модель отказалась отвечать.",
+            "empty_filtered": self.detail or "Ответ модели скрыт фильтром провайдера.",
             "unavailable": self.detail or "Выбранная языковая модель недоступна.",
             "invalid_response": "Неожиданный формат ответа провайдера.",
             "timeout": "Таймаут при обращении к LLM.",
@@ -48,6 +51,8 @@ class LlmError(Exception):
         return f"Ошибка LLM: {c}."
 
 
+MAX_RETRY_TOKENS = 16000     # потолок единственного повтора, если окно контекста модели неизвестно
+
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
 
 
@@ -58,6 +63,30 @@ def strip_thinking(text: str) -> str:
     if i != -1:
         text = text[:i]
     return text.replace("</think>", "").strip()
+
+
+def _parse_answer(data: dict, *, anthropic: bool) -> dict:
+    """Ответ провайдера → текст и признаки. Учтены ответы шлюзов: content строкой или списком частей, reasoning_content/reasoning,
+    refusal, блоки thinking у Anthropic. Неожиданная структура — KeyError/TypeError (вызывающий превращает в invalid_response)."""
+    if anthropic:
+        blocks = data["content"]
+        usage = data.get("usage") or {}
+        finish = str(data.get("stop_reason") or "")
+        return {"text": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"), "pt": usage.get("input_tokens"), "ct": usage.get("output_tokens"),
+                "finish": finish, "truncated": finish == "max_tokens", "refusal": "", "reasoning": any(b.get("type") in ("thinking", "redacted_thinking") for b in blocks)}
+    choice = data["choices"][0]
+    msg = choice["message"]
+    content = msg.get("content") or ""
+    if isinstance(content, list):
+        content = "".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type", "text") in ("text", "output_text"))
+    if not isinstance(content, str):
+        raise TypeError("content")
+    usage = data.get("usage") or {}
+    finish = str(choice.get("finish_reason") or "")
+    details = usage.get("completion_tokens_details") or {}
+    reasoning = bool(msg.get("reasoning_content") or msg.get("reasoning") or details.get("reasoning_tokens"))
+    return {"text": content, "pt": usage.get("prompt_tokens"), "ct": usage.get("completion_tokens"), "finish": finish, "truncated": finish == "length",
+            "refusal": str(msg.get("refusal") or ""), "reasoning": reasoning}
 
 
 @dataclass
@@ -87,11 +116,13 @@ class LlmClient:
         return (self._c.base_url or _DEFAULT_BASE.get(self._c.type, "")).rstrip("/")
 
     async def complete(self, system: str, user: str, *, max_tokens: int | None = None, json_schema: dict | None = None,
-                       temperature: float | None = None) -> LlmResult:
+                       temperature: float | None = None, _retried: bool = False) -> LlmResult:
         c = self._c
         temp = c.temperature if temperature is None else temperature
         cap, _note = c.output_limit(self.purpose)
         limit = min(cap, max_tokens) if max_tokens else cap
+        if _retried and max_tokens:
+            limit = max_tokens                  # повтор после «пустого» ответа: лимит заведомо выше обычного потолка задачи
         if not c.enabled or not c.model:
             raise LlmError("not_configured")
         started = time.monotonic()
@@ -135,6 +166,11 @@ class LlmClient:
                     log.warning("Провайдер отклонил temperature — повтор без параметра", extra={"model": c.model})
                     body.pop("temperature")
                     resp = await client.post(url, headers=headers, json=body)
+                if resp.status_code == 400 and "max_tokens" in body and "max_completion_tokens" in resp.text:
+                    # модели с «рассуждениями» (o-серия, gpt-5…) принимают только max_completion_tokens
+                    log.warning("Провайдер требует max_completion_tokens — повтор с ним", extra={"model": c.model})
+                    body["max_completion_tokens"] = body.pop("max_tokens")
+                    resp = await client.post(url, headers=headers, json=body)
         except httpx.TimeoutException:
             raise LlmError("timeout") from None
         except httpx.HTTPError as exc:
@@ -145,23 +181,13 @@ class LlmClient:
             raise LlmError(code)
         try:
             data = resp.json()
-            if c.type == "anthropic":
-                text = "".join(b.get("text", "") for b in data["content"] if b.get("type") == "text")
-                usage = data.get("usage") or {}
-                pt, ct = usage.get("input_tokens"), usage.get("output_tokens")
-                finish = str(data.get("stop_reason") or "")
-                truncated = finish == "max_tokens"
-            else:
-                text = data["choices"][0]["message"]["content"] or ""
-                usage = data.get("usage") or {}
-                pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
-                finish = str(data["choices"][0].get("finish_reason") or "")
-                truncated = finish == "length"
+            parsed = _parse_answer(data, anthropic=c.type == "anthropic")
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise LlmError("invalid_response") from None
+        text, pt, ct, finish, truncated = parsed["text"], parsed["pt"], parsed["ct"], parsed["finish"], parsed["truncated"]
+        if "<think" in text.lower():
+            parsed["reasoning"] = True
         text = strip_thinking(text)
-        if not text.strip():
-            raise LlmError("empty")
         dur = int((time.monotonic() - started) * 1000)
         st = self.stats
         st["calls"] += 1
@@ -169,10 +195,39 @@ class LlmClient:
         st["ms"] += dur
         st["max_tokens"] = max(st["max_tokens"], limit)
         st["finish"][finish or "?"] = st["finish"].get(finish or "?", 0) + 1
+        if not text.strip():
+            return await self._empty(system, user, parsed, limit, dur, _retried, max_tokens=max_tokens, json_schema=json_schema, temperature=temperature)
         log.info("LLM ответила", extra={"model": c.model, "prompt_tokens": pt, "completion_tokens": ct, "duration_ms": dur})
         if truncated:
             log.warning("Ответ LLM оборван по лимиту длины", extra={"model": c.model, "completion_tokens": ct, "max_tokens": limit})
         return LlmResult(text.strip(), pt, ct, dur, truncated, finish, limit)
+
+    async def _empty(self, system: str, user: str, parsed: dict, limit: int, dur: int, retried: bool, **kw) -> LlmResult:
+        """Пустой текст ответа: причина берётся из ответа провайдера, а не угадывается. Единственный случай, где повтор оправдан, — лимит ответа
+        целиком ушёл на «рассуждения» модели (finish=length, текста нет): один повтор с лимитом вдвое больше (в пределах окна контекста)."""
+        c, finish = self._c, parsed["finish"]
+        ct = parsed["ct"]
+        ctx = f"модель {c.model}, finish_reason={finish or 'нет'}, токенов ответа {ct if ct is not None else '?'} из {limit}"
+        if parsed["refusal"] or finish == "refusal":
+            code, why = "empty_refusal", "Модель отказалась отвечать на этот запрос" + (f": «{parsed['refusal'][:160]}»" if parsed["refusal"] else "") + "."
+        elif finish in ("content_filter", "safety", "blocked"):
+            code, why = "empty_filtered", "Ответ скрыт фильтром безопасности провайдера. Выберите другую модель или измените материалы."
+        elif parsed["truncated"]:
+            code = "empty_length"
+            why = (f"Модель израсходовала весь лимит ответа ({limit} токенов) на «рассуждения» и не успела написать текст. "
+                   "Увеличьте лимит ответа в настройках подключения, отключите режим рассуждений у модели или выберите другую модель.")
+            hard = max(256, c.context_window - 2048) if c.context_window > 4096 else (c.context_window // 2 if c.context_window else MAX_RETRY_TOKENS)
+            bigger = min(limit * 2, hard)
+            if not retried and bigger > limit:
+                self.stats["empty_retries"] = self.stats.get("empty_retries", 0) + 1
+                log.warning("Пустой ответ: лимит ушёл на рассуждения — один повтор с большим лимитом", extra={"model": c.model, "max_tokens": limit, "retry_max_tokens": bigger})
+                kw["max_tokens"] = bigger
+                return await self.complete(system, user, _retried=True, **kw)
+        else:
+            code, why = "empty", "Модель вернула пустой ответ" + (" (в ответе были только «рассуждения»)" if parsed["reasoning"] else "") + "."
+        self.stats.setdefault("empty", []).append({"code": code, "finish": finish, "completion_tokens": ct, "max_tokens": limit, "reasoning": parsed["reasoning"], "retried": retried})
+        log.warning("Пустой ответ LLM", extra={"model": c.model, "code": code, "finish": finish, "completion_tokens": ct, "max_tokens": limit, "duration_ms": dur})
+        raise LlmError(code, f"{why} ({ctx})")
 
     async def test(self) -> tuple[bool, str, int]:
         started = time.monotonic()

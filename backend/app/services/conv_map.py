@@ -27,7 +27,7 @@ from ..integrations.llm import LlmClient, LlmError
 from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, Protocol, TranscriptSegment, utcnow
 from .extraction import Line, _parse, _stems, chunk_lines, norm, snap
-from .llm_choice import resolve_llm
+from .llm_choice import parse_once, resolve_llm
 from .segments import author_name
 
 log = logging.getLogger("app.conv_map")
@@ -498,16 +498,31 @@ class MapService:
     async def get(self, db: AsyncSession, meeting_id: uuid.UUID) -> ConversationMap | None:
         return (await db.execute(select(ConversationMap).where(ConversationMap.meeting_id == meeting_id))).scalars().first()
 
-    async def request(self, db: AsyncSession, meeting_id: uuid.UUID, actor: str) -> ConversationMap:
-        """Создаёт (или сбрасывает) запись «в очереди». Пользовательские правки сохраняются. Запуск — start()."""
+    async def request(self, db: AsyncSession, meeting_id: uuid.UUID, actor: str, once: str | None = None) -> ConversationMap:
+        """Создаёт (или сбрасывает) запись «в очереди». Пользовательские правки и ПРЕЖНЯЯ готовая карта сохраняются: пока строится новая, видна старая,
+        а при сбое остаётся она (`_fail`). `once` — модель на один раз (local:… | profile:…), выбранная руководителем. Запуск — start()."""
         rec = await self.get(db, meeting_id)
         now = utcnow()
         if rec is None:
             rec = ConversationMap(meeting_id=meeting_id, status="pending", created_by=actor)
             db.add(rec)
         else:
+            keep = self._keep(rec)
             rec.status, rec.error, rec.created_by = "pending", None, actor
-        rec.meta = {"requested_at": now.isoformat()}
+            rec.meta = {"requested_at": now.isoformat(), **({"keep": keep} if keep else {}), **({"llm_once": once} if once else {})}
+            return await self._commit_request(db, meeting_id, rec)
+        rec.meta = {"requested_at": now.isoformat(), **({"llm_once": once} if once else {})}
+        return await self._commit_request(db, meeting_id, rec)
+
+    @staticmethod
+    def _keep(rec: ConversationMap) -> dict | None:
+        """Метаданные последней ГОТОВОЙ карты (если у записи есть данные): возвращаются, если новое построение не удалось."""
+        m = rec.meta or {}
+        if m.get("keep"):
+            return m["keep"]
+        return {k: v for k, v in m.items() if k not in ("previous", "regen_failed")} if rec.data and rec.status == "ready" else None
+
+    async def _commit_request(self, db: AsyncSession, meeting_id: uuid.UUID, rec: ConversationMap) -> ConversationMap:
         try:
             await db.commit()
         except IntegrityError:                                 # два одновременных запроса «построить карту»: запись уже создана другим — используем её (не 500)
@@ -526,8 +541,13 @@ class MapService:
     async def refresh(self, db: AsyncSession, rec: ConversationMap | None) -> ConversationMap | None:
         """Запись «в очереди/строится», задания которой нет ни в одном процессе (сервис перезапускали), — не вечное «Обрабатывается», а понятная ошибка."""
         if rec is not None and rec.status in ("pending", "running") and rec.id not in self._active and not await self.ps.job_alive(f"map-{rec.id}"):
-            rec.status, rec.error = "failed", "Формирование прервано перезапуском сервиса. Нажмите «Пересоздать»."
-            rec.meta = {**(rec.meta or {}), "failed": True, "interrupted": True}
+            msg = "Формирование прервано перезапуском сервиса. Нажмите «Переформировать»."
+            keep = (rec.meta or {}).get("keep")
+            if keep and rec.data:                      # прежняя карта остаётся готовой
+                rec.status, rec.error, rec.meta = "ready", None, {**keep, "regen_failed": {"error": msg, "at": utcnow().isoformat(), "interrupted": True}}
+            else:
+                rec.status, rec.error = "failed", msg
+                rec.meta = {**(rec.meta or {}), "failed": True, "interrupted": True}
             await db.commit()
         return rec
 
@@ -575,6 +595,7 @@ class MapService:
             if rec is None:
                 return
             requested = rec.meta.get("requested_at") if rec.meta else None
+            carry = {k: rec.meta[k] for k in ("keep", "llm_once") if rec.meta and rec.meta.get(k)}      # прежняя карта и модель «на один раз» переживают смену статусов
             await release(db)
         async with self._sem:                                    # очередь: одна карта за раз
             started = datetime.now(timezone.utc)
@@ -583,36 +604,41 @@ class MapService:
                 if rec is None:
                     return
                 rec.status = "running"
-                rec.meta = {"requested_at": requested, "started_at": started.isoformat()}
+                rec.meta = {"requested_at": requested, "started_at": started.isoformat(), **carry}
                 meeting_id = rec.meeting_id
                 await db.commit()
             info: dict = {}
             try:
                 async with self.ps._sm() as db:                  # этап чтения: всё нужное — в обычные объекты, затем сессия закрывается
-                    prep = await self._prepare(db, meeting_id, info)
+                    prep = await self._prepare(db, meeting_id, info, carry.get("llm_once"))
                 data, meta = await self._compute(prep, info)    # LLM: ни одной транзакции PostgreSQL
-                meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat())
+                meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat(), llm_once=carry.get("llm_once"))
                 meta["duration_s"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
                 async with self.ps._sm() as db:
                     rec = await db.get(ConversationMap, map_id)
                     if rec is None:
                         return
+                    if rec.data and carry.get("keep"):                    # предыдущую готовую карту можно вернуть («Вернуть прежнюю карту»)
+                        meta["previous"] = {"data": rec.data, "meta": carry["keep"]}
                     rec.data, rec.meta, rec.status, rec.error = data, meta, "ready", None
                     await db.commit()
                 self._emit("map_ready", rec, level="info", data={k: meta.get(k) for k in ("model", "chunks", "retries", "duration_s", "topics")})
             except (LlmError, MapError, ValueError) as exc:
                 msg = exc.describe() if isinstance(exc, LlmError) else str(exc)
-                await self._fail(map_id, msg[:480], {**self._base_meta(requested, started, info), "failed": True}, "map_failed")
+                await self._fail(map_id, msg[:480], {**self._base_meta(requested, started, info), "failed": True}, "map_failed", carry.get("keep"))
             except Exception:  # noqa: BLE001
                 log.exception("Ошибка формирования карты разговора", extra={"map": str(map_id)})
-                await self._fail(map_id, "Внутренняя ошибка (см. журнал сервера)", {**self._base_meta(requested, started, info), "failed": True}, "map_failed")
+                await self._fail(map_id, "Внутренняя ошибка (см. журнал сервера)", {**self._base_meta(requested, started, info), "failed": True}, "map_failed", carry.get("keep"))
 
-    async def _fail(self, map_id: uuid.UUID, error: str, meta: dict, event: str) -> None:
+    async def _fail(self, map_id: uuid.UUID, error: str, meta: dict, event: str, keep: dict | None = None) -> None:
         async with self.ps._sm() as db:
             rec = await db.get(ConversationMap, map_id)
             if rec is None:
                 return
-            rec.status, rec.error, rec.meta = "failed", error, meta
+            if keep and rec.data:        # новое построение не удалось, а прежняя карта есть: она остаётся готовой, сбой показывается рядом (и в диагностике)
+                rec.status, rec.error, rec.meta = "ready", None, {**keep, "regen_failed": {"error": error, "at": utcnow().isoformat(), "model": meta.get("model"), "llm_profile": meta.get("llm_profile")}}
+            else:
+                rec.status, rec.error, rec.meta = "failed", error, meta
             await db.commit()
         self._emit(event, rec, level="error", message=error)
 
@@ -626,13 +652,13 @@ class MapService:
         if self.journal is not None:
             self.journal.emit("llm", event, level=level, meeting_id=str(rec.meeting_id), message=message or event, data={"kind": "map", **(data or {})})
 
-    async def _prepare(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict) -> dict:
+    async def _prepare(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict, once: str | None = None) -> dict:
         """Чтение из базы для построения карты: возвращает обычные данные (без привязки к сессии). После возврата сессия закрывается, соединение свободно."""
         ps = self.ps
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             raise MapError("Встреча не найдена")
-        choice = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map")
+        choice = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map", once=parse_once(once))
         if not choice.available:
             raise LlmError("unavailable", choice.reason or "")
         eff, is_local = ps.local_llm.effective(choice.settings)

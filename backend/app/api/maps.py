@@ -12,16 +12,16 @@ from ..auth.throttle import within_limit
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.conv_map import CATEGORIES, apply_edits, clean_edit
-from ..services.llm_choice import resolve_llm
+from ..services.llm_choice import once_options, parse_once, resolve_llm
 from .meetings import get_meeting_for_user
 
 router = APIRouter(prefix="/meetings/{meeting_id}/map", tags=["maps"])
 
 
-async def _plan(request: Request, db: AsyncSession, meeting) -> dict:
-    """Какая модель будет строить карту и готова ли она."""
+async def _plan(request: Request, db: AsyncSession, meeting, once: str | None = None) -> dict:
+    """Какая модель будет строить карту и готова ли она (`once` — выбранная на один раз)."""
     ps = request.app.state.protocols
-    ch = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map")
+    ch = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map", once=parse_once(once))
     eff, is_local = ps.local_llm.effective(ch.settings)
     lm = ps.local_llm.limits(ch.settings)
     ready, reason = bool(eff.enabled) and ch.available, ch.reason
@@ -42,9 +42,11 @@ def _state(rec, meeting, plan: dict, can_edit: bool) -> dict:
     out: dict[str, Any] = {"status": rec.status if rec else "none", "plan": plan, "can_edit": can_edit, "categories": [{"id": i, "label": label} for i, label, _d in CATEGORIES],
                            "finished": meeting.ended_at is not None}
     if rec is not None:
-        out.update(meta=rec.meta, error=rec.error, created_by=rec.created_by, updated_at=rec.updated_at.isoformat())
-        if rec.status == "ready" and rec.data:
+        meta = {k: v for k, v in (rec.meta or {}).items() if k not in ("previous", "keep")}      # прежняя карта целиком клиенту не нужна — только факт, что её можно вернуть
+        out.update(meta=meta, error=rec.error, created_by=rec.created_by, updated_at=rec.updated_at.isoformat(), can_restore=bool((rec.meta or {}).get("previous")) and rec.status == "ready")
+        if rec.data and rec.status in ("ready", "pending", "running"):
             out["data"] = apply_edits(rec.data, rec.edits)
+            out["stale"] = rec.status != "ready"                     # идёт пересоздание: показана прежняя карта
     return out
 
 
@@ -57,12 +59,16 @@ async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
 
     st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
     st["can_generate"] = can_edit_protocol(meeting, su)
+    if st["can_generate"] and roles.can_manage_room(meeting.room, su):
+        ps = request.app.state.protocols
+        st["llm_choices"] = await once_options(ps.profiles, ps.local_llm, db)      # модели для выбора при (пере)формировании: только уже настроенные и разрешённые
     return st
 
 
 @router.post("", status_code=202)
-async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """Сформировать (или пересоздать) карту. Выполняется в фоне и в очереди: клиент опрашивает состояние."""
+async def create_map(meeting_id: uuid.UUID, request: Request, body: dict[str, Any] | None = Body(None), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Сформировать (или пересоздать) карту. Выполняется в фоне и в очереди: клиент опрашивает состояние. `llm_once` — модель на один раз (руководитель комнаты, администратор):
+    только из списка настроенных моделей; настройки комнаты и системы не меняются."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
     from .meetings import can_edit_protocol  # noqa: PLC0415
 
@@ -73,7 +79,18 @@ async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     ps = request.app.state.protocols
     if not await ps.has_materials(meeting_id):
         raise HTTPException(status_code=409, detail="В встрече нет реплик — строить карту не из чего")
-    plan = await _plan(request, db, meeting)
+    once = (body or {}).get("llm_once") or None
+    if once is not None:
+        if not isinstance(once, str) or len(once) > 80:
+            raise HTTPException(status_code=422, detail="llm_once: строка local:<модель> или profile:<профиль>")
+        if not roles.can_manage_room(meeting.room, su):
+            raise HTTPException(status_code=403, detail="Другую модель выбирают руководители комнаты и администраторы")
+        if once not in {c["key"] for c in await once_options(ps.profiles, ps.local_llm, db)}:
+            raise HTTPException(status_code=422, detail="Эта модель недоступна: она не настроена или выключена. Выберите другую из списка.")
+    try:
+        plan = await _plan(request, db, meeting, once)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     if not plan["ready"]:
         raise HTTPException(status_code=409, detail=plan["reason"])
     maps = request.app.state.maps
@@ -83,12 +100,35 @@ async def create_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = 
     if not await within_limit(request.app.state.redis, f"rl:map:{su.user_id}", 12, 3600):
         raise HTTPException(status_code=429, detail="Слишком много запросов на построение карт за час. Повторите позже.", headers={"Retry-After": "600"})
     again = cur is not None
-    rec = await maps.request(db, meeting_id, su.display_name)
+    rec = await maps.request(db, meeting_id, su.display_name, once)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.recreate" if again else "map.create", target_type="meeting",
-                      target_id=str(meeting_id), ip=client_ip(request), details={"model": plan["model"], "model_source": plan["source"]})
+                      target_id=str(meeting_id), ip=client_ip(request), details={"model": plan["model"], "model_source": plan["source"], "llm_once": once})
     await db.commit()
     await maps.start(rec.id)
     return {"status": "pending"}
+
+
+@router.post("/restore")
+async def restore_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Вернуть прежнюю карту, если новая оказалась хуже: версии меняются местами (повторное нажатие возвращает новую)."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    from .meetings import can_edit_protocol  # noqa: PLC0415
+
+    if not can_edit_protocol(meeting, su):
+        raise HTTPException(status_code=403, detail="Формировать документы могут администратор, руководитель комнаты и организатор встречи")
+    rec = await request.app.state.maps.get(db, meeting_id)
+    prev = (rec.meta or {}).get("previous") if rec else None
+    if rec is None or rec.status != "ready" or not prev or not prev.get("data"):
+        raise HTTPException(status_code=404, detail="Прежней карты нет")
+    cur_meta = {k: v for k, v in (rec.meta or {}).items() if k not in ("previous", "keep", "regen_failed")}
+    rec.meta = {**(prev.get("meta") or {}), "previous": {"data": rec.data, "meta": cur_meta}}
+    rec.data = prev["data"]
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.restore", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
+                      details={"model": (rec.meta or {}).get("model")})
+    await db.commit()
+    st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su))
+    st["can_generate"] = True
+    return st
 
 
 @router.patch("/topics/{topic_id}")

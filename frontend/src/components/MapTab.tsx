@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ApiError, type MapState, type MapTopicEdit } from "../api";
 import { buildStandaloneHtml } from "../mapExport";
 import { downloadText, fileBase } from "../util";
+import { Modal } from "./Dialogs";
+import ModelChoice from "./ModelChoice";
 
 interface Props {
   meetingId: string;
@@ -30,6 +32,8 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [height, setHeight] = useState(900);
+  const [pick, setPick] = useState(false);          // окно «Модель и параметры»
+  const [llmKey, setLlmKey] = useState("");
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const timer = useRef<number | undefined>(undefined);
@@ -49,7 +53,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
 
   const send = useCallback(() => {
     const s = stRef.current, w = frame.current?.contentWindow;
-    if (!s || s.status !== "ready" || !s.data || !w || !ready.current) return;
+    if (!s || (s.status !== "ready" && !s.stale) || !s.data || !w || !ready.current) return;
     w.postMessage({ pg: "map", type: "data", payload: { data: s.data, meta: s.meta ?? null, canEdit: s.can_edit, categories: s.categories } }, "*");
   }, []);
   useEffect(send, [st, send]);
@@ -71,9 +75,13 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
     return () => window.removeEventListener("message", onMsg);
   }, [meetingId, onGoto, onToast, send]);
 
-  const generate = async () => {
+  const generate = async (key = "") => {
     setBusy(true); setError("");
-    try { await api.createMap(meetingId); await load(); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
+    try { await api.createMap(meetingId, key || undefined); setPick(false); setLlmKey(""); await load(); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
+  };
+  const restore = async () => {
+    setBusy(true); setError("");
+    try { setSt(await api.restoreMap(meetingId)); onToast?.("Версия карты заменена на предыдущую. Вернуть новую можно той же кнопкой."); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
   };
 
   const download = async () => {
@@ -88,6 +96,10 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
   if (!st) return <div className="card muted">{error || "Загрузка…"}</div>;
   const working = st.status === "pending" || st.status === "running";
   const meta = st.meta ?? {};
+  const failedRegen = meta.regen_failed as { error?: string; model?: string } | undefined;
+  const canGen = (st.can_generate ?? true) && !busy && !working && st.finished && hasMaterials && st.plan.ready;
+  const genWord = st.status === "ready" || st.status === "failed" ? "Переформировать" : "Сформировать карту";
+  const choices = st.llm_choices ?? [];
   const secs = (k: string) => (typeof meta[k] === "number" ? (meta[k] as number) : null);
 
   return (
@@ -99,15 +111,19 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
           {st.status !== "none" && st.updated_at && <span className="muted small">{new Date(st.updated_at).toLocaleString("ru-RU")}</span>}
           <span style={{ flex: 1 }} />
           {st.status === "ready" && <button className="btn" onClick={download} title="Один файл: открывается без сервера, внутри данные карты, стили и скрипт">Скачать HTML</button>}
-          {(st.can_generate ?? true) && <button className="btn primary" disabled={busy || working || !st.finished || !hasMaterials || !st.plan.ready} onClick={generate}
+          {st.can_restore && !working && <button className="btn" onClick={() => void restore()} disabled={busy} title="Поменять местами текущую и предыдущую версии карты">Вернуть прежнюю карту</button>}
+          {(st.can_generate ?? true) && choices.length > 0 && <button className="btn" disabled={!canGen} onClick={() => setPick(true)} title="Выбрать другую модель для этого формирования">Модель…</button>}
+          {(st.can_generate ?? true) && <button className="btn primary" disabled={!canGen} onClick={() => void generate()}
                   title={!st.finished ? "Карта формируется после завершения встречи" : !hasMaterials ? "В стенограмме нет реплик" : !st.plan.ready ? st.plan.reason ?? "" : ""}>
-            {working ? "Формируется…" : st.status === "ready" || st.status === "failed" ? "Пересоздать" : "Сформировать карту"}</button>}
+            {working ? "Формируется…" : genWord}</button>}
         </div>
         <p className="muted small" style={{ margin: "6px 0 0" }}>
           Темы встречи, их порядок и длительность, участники и ссылки на реплики. Карту строит {st.plan.model ? <b>{st.plan.model}</b> : "языковая модель"}
           {st.plan.local ? " (локально, текст не покидает сервер)" : ""}; на сервере без видеокарты это занимает несколько минут. Пользовательские правки хранятся отдельно и при пересоздании не теряются.
         </p>
         {!st.plan.ready && <div className="alert info small" style={{ marginTop: 8 }}>{st.plan.reason}</div>}
+        {failedRegen && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Новую карту построить не удалось{failedRegen.model ? ` (модель ${failedRegen.model})` : ""}: {failedRegen.error}. Показана прежняя карта; можно выбрать другую модель («Модель…») и повторить.</div>}
+        {st.stale && <div className="alert info small" style={{ marginTop: 8 }}>Идёт пересоздание: пока показана прежняя карта. Она заменится, только если новая будет построена успешно.</div>}
         {st.status === "failed" && <div className="alert error small" style={{ marginTop: 8 }}>{st.error || "Не удалось построить карту."}</div>}
         {working && <div className="alert info small" style={{ marginTop: 8 }}>
           {st.status === "pending" ? "Карта в очереди: тяжёлые задачи выполняются по одной." : "Модель разбирает стенограмму по частям."} Можно уйти со страницы — карта сформируется в фоне.
@@ -119,8 +135,19 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
             · фрагментов {String(meta.chunks ?? "—")}, повторов {String(meta.retries ?? 0)}{meta.completion_tokens ? `, ответ ${String(meta.completion_tokens)} токенов` : ""}{meta.tokens_per_s ? ` (${String(meta.tokens_per_s)}/с)` : ""}</p>
         )}
       </div>
-      {st.status === "ready" && !!st.data && (
+      {(st.status === "ready" || !!st.stale) && !!st.data && (
         <iframe ref={frame} title="Карта разговора" src="/mapview/index.html" sandbox="allow-scripts" className="map-frame" style={{ height }} />
+      )}
+      {pick && (
+        <Modal title="Модель и параметры" onClose={() => setPick(false)} noAutofocus>
+          <p style={{ margin: 0 }}>Сейчас карту строит <b>{st.plan.profile || st.plan.model || "модель по умолчанию"}</b>{st.plan.model ? ` (${st.plan.model})` : ""}{st.plan.local ? " · локально, текст не покидает сервер" : ""}.</p>
+          <ModelChoice choices={choices} value={llmKey} onChange={setLlmKey} currentName={st.plan.profile} disabled={busy} what="построения карты" />
+          {st.status === "ready" && <p className="muted small" style={{ margin: "6px 0 0" }}>Текущая карта не удаляется, пока не построена новая; при неудаче она останется, а после замены её можно вернуть.</p>}
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn primary" disabled={busy || !st.plan.ready} onClick={() => void generate(llmKey)}>{genWord}</button>
+            <button className="btn ghost" onClick={() => setPick(false)}>Отмена</button>
+          </div>
+        </Modal>
       )}
       {st.status === "none" && !working && (
         <div className="card muted">Карта ещё не сформирована. Нажмите «Сформировать карту» — по умолчанию карты не строятся сами, чтобы не загружать сервер

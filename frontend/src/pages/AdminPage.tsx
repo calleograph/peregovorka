@@ -11,7 +11,7 @@ import PublicApiAdmin from "./admin/PublicApiAdmin";
 import CaAdmin from "./admin/CaAdmin";
 import SiteAdmin from "./admin/SiteAdmin";
 import ClientDiagAdmin from "./admin/ClientDiagAdmin";
-import { anonFields, audioStorageFields, authSecurityFields, captchaFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
+import { anonFields, audioStorageFields, authSecurityFields, loginProtectionFields, securityLogFields, chatFilesFields, chatsFields, sipPolicyFields, profilePolicyFields, generalFields, journalFields, mailPolicyFields, privacyFields, protocolFields, screenFields, storageFields } from "./admin/fields";
 import ApiProfilesAdmin from "./admin/ApiProfilesAdmin";
 import JournalAdmin from "./admin/JournalAdmin";
 import LdapAdmin from "./admin/LdapAdmin";
@@ -26,6 +26,7 @@ import SipAdmin from "./admin/SipAdmin";
 import IpAccessAdmin from "./admin/IpAccessAdmin";
 import SecurityEventsAdmin from "./admin/SecurityEventsAdmin";
 import WafAdmin from "./admin/WafAdmin";
+import CaptchaAdmin from "./admin/CaptchaAdmin";
 import NetTrustAdmin from "./admin/NetTrustAdmin";
 import SettingsForm from "./admin/SettingsForm";
 import StorageSyncAdmin from "./admin/StorageSyncAdmin";
@@ -101,9 +102,7 @@ const GROUPS: Group[] = [
     { id: "login_protection", label: "Защита входа от перебора", render: () => (
       <SettingsForm key="login_protection" group="login_protection" title="Защита входа от перебора паролей" fields={loginProtectionFields}
         intro="Серверные счётчики по учётной записи, по IP-адресу, по их паре и по общей интенсивности запросов; состояние хранится в Redis, поэтому закрытие браузера, режим инкогнито, очистка cookie, смена User-Agent и перезапуск не сбрасывают защиту. Реакции нарастают: CAPTCHA → замедление → защита каталога → временная блокировка адреса. Учётная запись целиком не блокируется. Пороги CAPTCHA — в разделе «CAPTCHA»." />) },
-    { id: "captcha", label: "CAPTCHA", render: () => (
-      <SettingsForm key="captcha" group="captcha" title="CAPTCHA (проверка «я не робот»)" fields={captchaFields}
-        intro="Локальная проверка без внешних сервисов. По умолчанию — картинка с символами: после заданного числа неудачных попыток сервер не принимает вход без правильно введённых символов. Защищает вход, вход гостя по ссылке и создание временной переговорки. CAPTCHA — не единственная защита: перебор ограничивается и без неё." />) },
+    { id: "captcha", label: "CAPTCHA", render: () => <CaptchaAdmin intro="Локальная проверка без внешних сервисов. По умолчанию — картинка с символами: после заданного числа неудачных попыток сервер не принимает вход без правильно введённых символов. Защищает вход, вход гостя по ссылке и создание временной переговорки. CAPTCHA — не единственная защита: перебор ограничивается и без неё." /> },
     { id: "waf", label: "Защита веб-приложения (WAF)", render: () => <WafAdmin /> },
     { id: "security_log", label: "Хранение журнала безопасности", render: () => (
       <SettingsForm key="security_log" group="security_log" title="Хранение событий безопасности" fields={securityLogFields}

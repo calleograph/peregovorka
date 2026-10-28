@@ -283,7 +283,7 @@ def test_map_left_running_by_a_restarted_service_is_reported_as_interrupted_and_
         _drain(c)
 
         async def _stale():
-            async with c.app_obj.state.session_maker() as db:
+            async with c.app.state.session_maker() as db:
                 await db.execute(update(ConversationMap).values(status="running"))      # как будто процесс убили посреди работы
                 await db.commit()
 
@@ -334,3 +334,96 @@ def test_no_database_connection_is_held_while_the_model_is_working(tmp_path, dir
         assert max(seen) == 0, f"во время запроса к модели занято соединений: {seen}"
         stats = c.app_obj.state.db_stats
         assert stats.long_holds == 0
+
+
+# ------------------------------------------------------------------------------------------------ выбор модели карты и безопасная замена
+def _models_app(tmp_path, directory, seen: list[str]):
+    def llm(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        seen.append(body["model"])
+        if body["model"] == "model-bad":
+            return httpx.Response(401, json={})
+        return topics_llm(req)
+    return running_app(make_settings(tmp_path), directory, transports={"llm": httpx.MockTransport(llm)})
+
+
+def test_map_model_is_chosen_by_a_manager_from_configured_models_and_the_real_model_is_recorded(tmp_path, directory):
+    from .test_llm_admin_api import add_profile
+    seen: list[str] = []
+    with _models_app(tmp_path, directory, seen) as c:
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        a = add_profile(c, "Подключение A", "model-a")
+        _room, mid = finished_meeting(c)
+        login(c, "alice")                                              # организатор: формирует, но модель выбирать не может
+        st = c.get(f"{API}/{mid}/map").json()
+        assert st["can_generate"] and "llm_choices" not in st
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": f"profile:{a['id']}"}).status_code == 403
+        login(c, "root")
+        st = c.get(f"{API}/{mid}/map").json()
+        assert f"profile:{a['id']}" in {x["key"] for x in st["llm_choices"]}
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": "profile:нет-такого"}).status_code == 422, "модель вне списка настроенных подменить нельзя"
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": "x" * 200}).status_code == 422
+        assert c.post(f"{API}/{mid}/map").status_code == 202                      # без выбора — модель по умолчанию, как раньше
+        _drain(c)
+        assert seen[-1] == "m" and c.get(f"{API}/{mid}/map").json()["meta"]["model"] == "m"
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": f"profile:{a['id']}"}).status_code == 202
+        _drain(c)
+        meta = c.get(f"{API}/{mid}/map").json()["meta"]
+        assert seen[-1] == "model-a" and meta["model"] == "model-a" and meta["llm_once"] == f"profile:{a['id']}", "в диагностике — реально использованная модель"
+        acts = [a_["details"] for a_ in c.get("/api/v1/admin/audit").json() if a_["action"] == "map.recreate"]
+        assert any(d.get("llm_once") == f"profile:{a['id']}" for d in acts)
+
+
+def test_failed_recreate_keeps_the_previous_map_and_the_previous_version_can_be_restored(tmp_path, directory):
+    from .test_llm_admin_api import add_profile
+    seen: list[str] = []
+    with _models_app(tmp_path, directory, seen) as c:
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        bad = add_profile(c, "Плохое", "model-bad")
+        a = add_profile(c, "Хорошее", "model-a")
+        _room, mid = finished_meeting(c)
+        login(c, "root")
+        assert c.post(f"{API}/{mid}/map").status_code == 202
+        _drain(c)
+        first = c.get(f"{API}/{mid}/map").json()
+        assert first["status"] == "ready" and not first["can_restore"]
+        # новая попытка провалилась (провайдер отклонил ключ) — прежняя карта осталась готовой и видимой
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": f"profile:{bad['id']}"}).status_code == 202
+        _drain(c)
+        st = c.get(f"{API}/{mid}/map").json()
+        assert st["status"] == "ready" and st["data"]["topics"] == first["data"]["topics"], "старая карта не пропала"
+        assert st["meta"]["regen_failed"]["model"] == "model-bad" and "ключ" in st["meta"]["regen_failed"]["error"].lower()
+        assert "previous" not in st["meta"] and "keep" not in st["meta"]
+        # успешная замена: прежняя версия доступна для возврата, возврат обратим
+        assert c.post(f"{API}/{mid}/map", json={"llm_once": f"profile:{a['id']}"}).status_code == 202
+        _drain(c)
+        new = c.get(f"{API}/{mid}/map").json()
+        assert new["meta"]["model"] == "model-a" and new["can_restore"]
+        back = c.post(f"{API}/{mid}/map/restore").json()
+        assert back["meta"]["model"] == "m" and back["can_restore"], "вернули прежнюю; новую тоже можно вернуть"
+        again = c.post(f"{API}/{mid}/map/restore").json()
+        assert again["meta"]["model"] == "model-a"
+        login(c, "bob")
+        assert c.post(f"{API}/{mid}/map/restore").status_code in (403, 404)
+
+
+def test_old_map_is_shown_while_a_new_one_is_being_built(tmp_path, directory):
+    with map_app(tmp_path, directory) as c:
+        put_settings(c, "llm", enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", allow_http=True)
+        _room, mid = finished_meeting(c)
+        login(c, "root")
+        c.post(f"{API}/{mid}/map")
+        _drain(c)
+        topics = c.get(f"{API}/{mid}/map").json()["data"]["topics"]
+
+        async def _mark():
+            from sqlalchemy import select
+            from app.models import ConversationMap
+            async with c.app.state.session_maker() as db:
+                rec = (await db.execute(select(ConversationMap))).scalars().first()
+                rec.status = "running"
+                await db.commit()
+                c.app.state.maps._active.add(rec.id)             # задание «живое» в этом процессе
+        c.portal.call(_mark)
+        st = c.get(f"{API}/{mid}/map").json()
+        assert st["status"] == "running" and st["stale"] is True and st["data"]["topics"] == topics

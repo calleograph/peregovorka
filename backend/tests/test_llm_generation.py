@@ -316,3 +316,84 @@ def test_effective_models_panel_shows_what_will_actually_be_called(client):
     d = client.get(f"{ADM}/llm/effective").json()
     assert d["protocol"]["local"] is False and d["protocol"]["model"] == "gpt-x" and d["protocol"]["max_output_tokens"] == 6144 and "окном контекста" in d["protocol"]["max_output_note"]
     assert d["summary"]["enabled"] is False and d["rooms_with_own_model"] == {"protocol": 0, "summary": 0, "map": 0}
+
+
+# ------------------------------------------------------------------ пустой ответ: причина берётся из ответа провайдера
+def _answer(content="", finish="stop", **msg):
+    return httpx.Response(200, json={"choices": [{"message": {"content": content, **msg}, "finish_reason": finish}], "usage": {"prompt_tokens": 100, "completion_tokens": 50}})
+
+
+def _client(handler, **kw):
+    return LlmClient(ext(**kw), transport=httpx.MockTransport(handler))
+
+
+def test_empty_answer_with_length_is_reasoning_overflow_with_one_bounded_retry():
+    seen: list[int] = []
+
+    def h(req):
+        seen.append(json.loads(req.content)["max_tokens"])
+        return _answer("", "length", reasoning_content="долго думаю…")
+    c = _client(h, max_tokens_protocol=1000)
+    with pytest.raises(LlmError) as e:
+        run(c.complete("s", "u"))
+    assert e.value.code == "empty_length" and "рассуждения" in e.value.describe()
+    assert seen == [1000, 2000]                                  # ровно один повтор, лимит вдвое больше
+    assert c.stats["empty_retries"] == 1 and c.stats["empty"][0]["reasoning"] is True
+
+
+def test_empty_length_is_recovered_by_the_single_retry_when_the_bigger_limit_is_enough():
+    calls = []
+
+    def h(req):
+        calls.append(1)
+        return _answer("", "length") if len(calls) == 1 else _answer("Готовый протокол", "stop")
+    r = run(_client(h, max_tokens_protocol=1000).complete("s", "u"))
+    assert r.text == "Готовый протокол" and len(calls) == 2
+
+
+def test_empty_answer_without_length_is_not_retried_and_names_the_reason():
+    calls = []
+
+    def h(req):
+        calls.append(1)
+        return _answer("", "content_filter")
+    with pytest.raises(LlmError) as e:
+        run(_client(h).complete("s", "u"))
+    assert e.value.code == "empty_filtered" and len(calls) == 1
+    with pytest.raises(LlmError) as e:
+        run(_client(lambda r: _answer(None, "stop", refusal="Не могу помочь")).complete("s", "u"))
+    assert e.value.code == "empty_refusal" and "Не могу помочь" in e.value.describe()
+    with pytest.raises(LlmError) as e:
+        run(_client(lambda r: _answer("", "stop")).complete("s", "u"))
+    assert e.value.code == "empty" and "finish_reason=stop" in e.value.describe()
+
+
+def test_unclosed_think_block_in_a_truncated_answer_is_empty_length_not_a_silent_empty():
+    with pytest.raises(LlmError) as e:
+        run(_client(lambda r: _answer("<think>рассуждаю бесконечно", "length"), max_tokens_protocol=1000, context_window=2000).complete("s", "u"))
+    assert e.value.code == "empty_length"
+
+
+def test_content_given_as_a_list_of_parts_is_read():
+    r = run(_client(lambda r: _answer([{"type": "text", "text": "Часть 1. "}, {"type": "text", "text": "Часть 2."}])).complete("s", "u"))
+    assert r.text == "Часть 1. Часть 2."
+
+
+def test_provider_that_needs_max_completion_tokens_is_retried_with_it():
+    bodies = []
+
+    def h(req):
+        b = json.loads(req.content)
+        bodies.append(b)
+        if "max_tokens" in b:
+            return httpx.Response(400, json={"error": {"message": "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead."}})
+        return _answer("ok")
+    assert run(_client(h).complete("s", "u")).text == "ok" and "max_completion_tokens" in bodies[1]
+
+
+def test_anthropic_answer_with_only_thinking_is_a_clear_empty():
+    def h(req):
+        return httpx.Response(200, json={"content": [{"type": "thinking", "thinking": "…"}], "stop_reason": "end_turn", "usage": {"input_tokens": 5, "output_tokens": 5}})
+    with pytest.raises(LlmError) as e:
+        run(_client(h, type="anthropic", base_url="").complete("s", "u"))
+    assert e.value.code == "empty" and "рассуждения" in e.value.describe()

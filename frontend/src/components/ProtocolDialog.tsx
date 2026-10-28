@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ModelChoice from "./ModelChoice";
 import { api, type ApiError, type LlmChoiceOnce, type ProtocolKind, type ProtocolPlan, type ProtocolTemplate } from "../api";
 import { Modal } from "./Dialogs";
 
@@ -93,13 +94,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
             {plan.once ? " · выбрана на один раз" : plan.llm_source === "meeting" ? " · настройка встречи" : plan.llm_source === "room" ? " · настройка переговорки" : plan.llm_source === "system" ? " · системная по умолчанию" : ""}
           </p>
           {canOverride && (
-            <label style={{ marginTop: 6 }}>Использовать другую модель только для этого формирования
-              <select value={llmKey} onChange={(e) => setLlmKey(e.target.value)} disabled={busy}>
-                <option value="">Не менять: как настроено ({plan && !plan.once ? plan.llm_profile : "по настройкам"})</option>
-                {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-              </select>
-              <span className="help">Настройки переговорки и системы не меняются. Для внешней модели действует обезличивание по правилам переговорки; факт выбора записывается в журнал.</span>
-            </label>
+            <ModelChoice choices={choices} value={llmKey} onChange={setLlmKey} currentName={plan.llm_profile} once={plan.once} disabled={busy} />
           )}
           {plan.forecast && (
             <p className="small" style={{ margin: "6px 0 0" }}>Ожидаемое время: <b>{plan.forecast.text}</b>
