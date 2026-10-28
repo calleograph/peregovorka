@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Meeting, Room
 from .api_profiles import ProfileService, Resolved
 from .local_llm import LOCAL_MODELS, VISIBLE_MODELS, LocalLlm
-from .settings import LlmSettings, SettingsError
+from .settings import TASK_LIMIT_DEFAULTS, LlmSettings, SettingsError
 
 MODES = ("inherit", "local", "profile", "off")
 
@@ -33,6 +33,8 @@ class LlmChoice:
     available: bool             # False — «модель недоступна» (есть причина в reason)
     reason: str | None = None   # почему недоступна
     note: str | None = None     # пометка: например, использована системная модель вместо недоступной выбранной
+    limit_requested: int | None = None    # запрошенный предел ответа: ГЛОБАЛЬНАЯ настройка задачи на момент запуска
+    limit_note: str | None = None         # чем и почему предел ограничен у подключения (если ограничен)
 
 
 def room_choice(room: Room, purpose: str = "protocol") -> dict:
@@ -108,15 +110,40 @@ async def system_llm(profiles: ProfileService, db: AsyncSession, purpose: str = 
 
 
 async def apply_task_limit(profiles: ProfileService, db: AsyncSession, ch: "LlmChoice", purpose: str) -> "LlmChoice":
-    """Потолок ответа по задаче (системные `limit_*`): итог = min(потолок задачи, предел подключения), далее — окно контекста (в output_limit)."""
+    """Предел ответа по задаче. Глобальная настройка (`limit_*`, по умолчанию 60 000 / 40 000 / 60 000) читается при КАЖДОМ запуске, а не берётся из комнаты,
+    встречи или прежнего задания. Итог = min(глобальный предел, предел подключения, если администратор задал его явно); далее — окно контекста (в output_limit).
+    Чем и почему предел уменьшен, фиксируется в `limit_note` и попадает в диагностику задания."""
     main = await profiles.get_settings(db, "llm", None)
-    cap = getattr(main.settings, f"limit_{purpose}", None)
-    if not cap or not ch.available or ch.settings.effective_provider == "local":      # локальной модели пользовательские потолки не нужны: границы задаёт она сама
+    cap = getattr(main.settings, f"limit_{purpose}", None) or TASK_LIMIT_DEFAULTS[purpose]
+    ch.limit_requested = cap
+    if not ch.available or ch.settings.effective_provider == "local":      # локальной модели пользовательские потолки не нужны: границы задаёт она сама
         return ch
     field = f"max_tokens_{purpose}"
     cur = getattr(ch.settings, field, None)
+    if cur is None and purpose == "protocol" and ch.settings.max_tokens != 4000:
+        cur = ch.settings.max_tokens                                    # прежняя единая настройка подключения, если её меняли вручную
+    if cur is not None and cur < cap:
+        ch.limit_note = f"ограничено настройкой подключения «{ch.name}» ({cur} токенов); общая настройка — {cap}"
     ch.settings = ch.settings.model_copy(update={field: cap if cur is None else min(cur, cap)})
     return ch
+
+
+def limit_report(ch: "LlmChoice", eff: LlmSettings, purpose: str, stats: dict) -> str | None:
+    """Почему фактический предел ответа отличается от запрошенного общей настройкой (для диагностики задания): подключение, окно контекста, отказ/оборыв на стороне модели."""
+    parts: list[str] = []
+    if ch.limit_note:
+        parts.append(ch.limit_note)
+    if eff.effective_provider != "local":
+        note = eff.output_limit(purpose)[1]
+        if note:
+            parts.append(note)
+    elif ch.limit_requested and stats.get("max_tokens") and stats["max_tokens"] < ch.limit_requested:
+        parts.append(f"локальная модель {eff.model} принимает не более {stats['max_tokens']} токенов ответа (общая настройка — {ch.limit_requested}): предел задаёт сама модель и её окно контекста")
+    for c in stats.get("clamps") or []:
+        parts.append(f"модель {c.get('model') or ''} не поддерживает {c['requested']} токенов ответа — применено {c['applied']} (предел назвал провайдер)".replace("модель  ", "модель "))
+    if stats.get("provider_cap"):
+        parts.append(f"провайдер оборвал ответ на {stats['provider_cap']} токенах при запрошенных {stats.get('requested') or '?'}: фактический предел задаёт модель или шлюз")
+    return "; ".join(dict.fromkeys(parts)) or None
 
 
 def parse_once(key: str | None) -> dict | None:

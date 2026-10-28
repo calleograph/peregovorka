@@ -28,7 +28,7 @@ from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError
 from . import llm_stats
-from .llm_choice import parse_once, resolve_llm
+from .llm_choice import limit_report, parse_once, resolve_llm
 from .extraction import local_pipeline, structured_pipeline
 from .fact_engine import FactsCache, load_facts
 from .job_budget import MAX_S, Budget, JobTimeout
@@ -1051,7 +1051,7 @@ class ProtocolService:
             pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
                                           has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
                                           external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att, budget=budget,
-                                          cache=cache, model=eff_cfg.model, external_limit=ext_limit, out_cap=min(out_cap, 6000))
+                                          cache=cache, model=eff_cfg.model, external_limit=ext_limit, out_cap=out_cap)
         finally:
             info["llm_finished"] = datetime.now(timezone.utc)
             info["llm_stats"] = dict(llm.stats)
@@ -1072,7 +1072,8 @@ class ProtocolService:
         meta.update(instruction_builtin=True if info.get("instruction_builtin") else None, coverage=(pipe.structured or {}).get("coverage"),
                     model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
                     retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)), length_hits=st["length"], finish=dict(st["finish"]),
-                    max_tokens=st["max_tokens"] or None, limit_note=eff_cfg.output_limit(purpose)[1] or None, llm_source=llm_res.source)
+                    max_tokens=st["max_tokens"] or None, limit_requested=llm_res.limit_requested, limit_applied=st["max_tokens"] or None,
+                    limit_note=limit_report(llm_res, eff_cfg, purpose, st), llm_source=llm_res.source)
         return out, meta
 
     async def _export_generated(self, db: AsyncSession, rec: Protocol) -> None:

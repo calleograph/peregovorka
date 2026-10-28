@@ -230,9 +230,12 @@ def merge_secret_headers(old: dict, new: dict) -> dict[str, str]:
     return res
 
 
-DEFAULT_MAX_SUMMARY = 2000
-DEFAULT_MAX_PROTOCOL = 7000
-DEFAULT_MAX_MAP = 4000
+# Предельная длина ответа ПО УМОЛЧАНИЮ для задач (глобально, «Языковая модель → Параметры генерации»). Это запрошенный предел, а не гарантия: модель может
+# поддерживать меньше — тогда фактический предел и причина видны в диагностике задания. Пустое значение в настройках = значение по умолчанию.
+DEFAULT_MAX_SUMMARY = 40_000
+DEFAULT_MAX_PROTOCOL = 60_000
+DEFAULT_MAX_MAP = 60_000
+TASK_LIMIT_DEFAULTS = {"protocol": DEFAULT_MAX_PROTOCOL, "summary": DEFAULT_MAX_SUMMARY, "map": DEFAULT_MAX_MAP}
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
 _FORBIDDEN_HEADERS = {"host", "content-length", "transfer-encoding", "connection", "content-type"}
 
@@ -272,9 +275,9 @@ class LlmSettings(_Group):
     summary_profile: str | None = None
     map_profile: str | None = None
     # Потолок длины ответа ПО ЗАДАЧЕ (системный): итоговый предел = min(потолок задачи, предел подключения, свободное окно контекста). Пусто — без потолка задачи.
-    limit_protocol: int | None = Field(default=None, ge=64, le=200000)
-    limit_summary: int | None = Field(default=None, ge=64, le=200000)
-    limit_map: int | None = Field(default=None, ge=64, le=200000)
+    limit_protocol: int | None = Field(default=DEFAULT_MAX_PROTOCOL, ge=64, le=200000)
+    limit_summary: int | None = Field(default=DEFAULT_MAX_SUMMARY, ge=64, le=200000)
+    limit_map: int | None = Field(default=DEFAULT_MAX_MAP, ge=64, le=200000)
     max_tokens_map: int | None = Field(default=None, ge=64, le=200000)
     # Что делать, если выбранная для комнаты/встречи модель недоступна (профиль удалён, локальная модель не загружена):
     # system — использовать системную модель по умолчанию (с пометкой); unavailable — оставить состояние «модель недоступна».
@@ -305,6 +308,12 @@ class LlmSettings(_Group):
     use_corporate_ca: bool = True
     allow_http: bool = False
     routing_provider: str = ""  # для шлюзов вида LLM-шлюз: provider.only
+
+    @field_validator("limit_protocol", "limit_summary", "limit_map", mode="before")
+    @classmethod
+    def _task_limit(cls, v, info):
+        # настройки, сохранённые до 0.46.0, хранят здесь null («не задано»): это значение по умолчанию, а не «без потолка»; заданное администратором число не меняется
+        return TASK_LIMIT_DEFAULTS[info.field_name.removeprefix("limit_")] if v in (None, "") else v
 
     @field_validator("base_url")
     @classmethod

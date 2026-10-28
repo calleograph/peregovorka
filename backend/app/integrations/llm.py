@@ -35,6 +35,7 @@ class LlmError(Exception):
             "bad_request": "Провайдер отклонил запрос (возможно, превышен контекст модели).",
             "not_found": "Модель или адрес API не найдены.",
             "empty": self.detail or "Модель вернула пустой ответ.",
+            "limit_rejected": self.detail or "Провайдер отклонил запрошенную длину ответа.",
             "empty_length": self.detail or "Модель израсходовала весь лимит ответа на «рассуждения» и не написала текст.",
             "empty_refusal": self.detail or "Модель отказалась отвечать.",
             "empty_filtered": self.detail or "Ответ модели скрыт фильтром провайдера.",
@@ -89,6 +90,29 @@ def _parse_answer(data: dict, *, anthropic: bool) -> dict:
             "refusal": str(msg.get("refusal") or ""), "reasoning": reasoning}
 
 
+_CAP_PATTERNS = (
+    re.compile(r"supports at most (\d+)", re.I),                                    # OpenAI: «This model supports at most 16384 completion tokens»
+    re.compile(r">\s*(\d+),\s*which is the maximum", re.I),                        # Anthropic: «max_tokens: 100000 > 64000, which is the maximum allowed…»
+    re.compile(r"range of max_tokens is \[\s*\d+\s*,\s*(\d+)\s*\]", re.I),           # DeepSeek: «the valid range of max_tokens is [1, 8192]»
+    re.compile(r"(?:max_tokens|max_completion_tokens)[^.\n]{0,80}?(?:less than or equal to|at most|no more than|<=|not exceed|maximum (?:of|is|value is))\s*(\d+)", re.I),
+)
+_CTX_PATTERN = re.compile(r"maximum context length is (\d+) tokens.{0,80}?\((\d+) in the messages", re.I | re.S)
+
+
+def provider_token_cap(text: str, requested: int) -> int | None:
+    """Предел длины ответа, который назвал сам провайдер в отказе «слишком большой max_tokens» (разные API формулируют по-разному). None — не названо или не меньше запрошенного."""
+    for pat in _CAP_PATTERNS:
+        m = pat.search(text or "")
+        if m and 64 <= int(m.group(1)) < requested:
+            return int(m.group(1))
+    m = _CTX_PATTERN.search(text or "")
+    if m:
+        room = int(m.group(1)) - int(m.group(2)) - 32            # окно контекста минус вход (с небольшим запасом)
+        if 64 <= room < requested:
+            return room
+    return None
+
+
 @dataclass
 class LlmResult:
     text: str
@@ -98,7 +122,8 @@ class LlmResult:
     # Ответ оборван по лимиту длины (finish_reason=length / stop_reason=max_tokens): текст неполный, вызывающий код обязан сообщить об этом пользователю
     truncated: bool = False
     finish_reason: str = ""         # причина остановки как её назвал провайдер (stop / length / end_turn / max_tokens …)
-    max_tokens: int | None = None   # лимит ответа, который был отправлен в запросе
+    max_tokens: int | None = None   # лимит ответа, который был отправлен в запросе (фактически применённый)
+    requested: int | None = None    # лимит, запрошенный настройками задачи; отличается от max_tokens, если провайдер назвал меньший предел
 
 
 class LlmClient:
@@ -107,7 +132,7 @@ class LlmClient:
         self._c = cfg
         self.purpose = purpose      # summary | protocol — от задачи зависит максимальная длина ответа
         # счётчики за время жизни клиента (один документ): вызовы, обрывы по длине, причины остановки, время ответов — для журнала и статистики моделей
-        self.stats: dict = {"calls": 0, "length": 0, "finish": {}, "ms": 0, "max_tokens": 0}
+        self.stats: dict = {"calls": 0, "length": 0, "finish": {}, "ms": 0, "max_tokens": 0, "requested": 0, "clamps": [], "provider_cap": 0}
         self.local = local          # встроенная локальная модель (Qwen3): отключаем «размышления» и чистим служебные блоки из ответа
         self._verify: str | bool = ca_file if (cfg.use_corporate_ca and ca_file) else True
         self._transport = transport
@@ -121,6 +146,7 @@ class LlmClient:
         temp = c.temperature if temperature is None else temperature
         cap, _note = c.output_limit(self.purpose)
         limit = min(cap, max_tokens) if max_tokens else cap
+        requested = limit
         if _retried and max_tokens:
             limit = max_tokens                  # повтор после «пустого» ответа: лимит заведомо выше обычного потолка задачи
         if not c.enabled or not c.model:
@@ -171,6 +197,16 @@ class LlmClient:
                     log.warning("Провайдер требует max_completion_tokens — повтор с ним", extra={"model": c.model})
                     body["max_completion_tokens"] = body.pop("max_tokens")
                     resp = await client.post(url, headers=headers, json=body)
+                if resp.status_code in (400, 422):
+                    # Модель не поддерживает запрошенный объём ответа и называет свой предел: один повтор с ним. Это НЕ молчаливое уменьшение —
+                    # запрошенное и применённое значения и причина фиксируются в диагностике задания; не названный предел остаётся понятной ошибкой ниже.
+                    pcap = provider_token_cap(resp.text, limit)
+                    if pcap:
+                        key = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
+                        log.warning("Провайдер назвал предел длины ответа — повтор с ним", extra={"model": c.model, "requested": limit, "provider_cap": pcap})
+                        self.stats["clamps"].append({"requested": limit, "applied": pcap, "reason": "provider", "model": c.model})
+                        body[key] = limit = pcap
+                        resp = await client.post(url, headers=headers, json=body)
         except httpx.TimeoutException:
             raise LlmError("timeout") from None
         except httpx.HTTPError as exc:
@@ -178,6 +214,10 @@ class LlmClient:
         if not resp.is_success:
             code = {401: "unauthorized", 403: "forbidden", 404: "not_found", 429: "rate_limited",
                     400: "bad_request", 413: "bad_request", 422: "bad_request"}.get(resp.status_code, f"http_{resp.status_code}")
+            if code == "bad_request" and re.search(r"token|context", resp.text or "", re.I):
+                said = " ".join((resp.text or "").split())[:200]
+                raise LlmError("limit_rejected", f"Провайдер отклонил запрос из-за длины (запрошено токенов ответа: {limit}, модель {c.model}): «{said}». "
+                                                  "Уменьшите «Максимальную длину ответа» в настройках подключения или укажите окно контекста модели.")
             raise LlmError(code)
         try:
             data = resp.json()
@@ -194,13 +234,16 @@ class LlmClient:
         st["length"] += 1 if truncated else 0
         st["ms"] += dur
         st["max_tokens"] = max(st["max_tokens"], limit)
+        st["requested"] = max(st["requested"], requested)
+        if truncated and ct and limit >= 4000 and ct < limit // 4:
+            st["provider_cap"] = max(st["provider_cap"], ct)         # оборван намного раньше лимита запроса: предел задаёт провайдер/шлюз, а не настройки
         st["finish"][finish or "?"] = st["finish"].get(finish or "?", 0) + 1
         if not text.strip():
             return await self._empty(system, user, parsed, limit, dur, _retried, max_tokens=max_tokens, json_schema=json_schema, temperature=temperature)
         log.info("LLM ответила", extra={"model": c.model, "prompt_tokens": pt, "completion_tokens": ct, "duration_ms": dur})
         if truncated:
             log.warning("Ответ LLM оборван по лимиту длины", extra={"model": c.model, "completion_tokens": ct, "max_tokens": limit})
-        return LlmResult(text.strip(), pt, ct, dur, truncated, finish, limit)
+        return LlmResult(text.strip(), pt, ct, dur, truncated, finish, limit, requested)
 
     async def _empty(self, system: str, user: str, parsed: dict, limit: int, dur: int, retried: bool, **kw) -> LlmResult:
         """Пустой текст ответа: причина берётся из ответа провайдера, а не угадывается. Единственный случай, где повтор оправдан, — лимит ответа
@@ -212,6 +255,11 @@ class LlmClient:
             code, why = "empty_refusal", "Модель отказалась отвечать на этот запрос" + (f": «{parsed['refusal'][:160]}»" if parsed["refusal"] else "") + "."
         elif finish in ("content_filter", "safety", "blocked"):
             code, why = "empty_filtered", "Ответ скрыт фильтром безопасности провайдера. Выберите другую модель или измените материалы."
+        elif parsed["truncated"] and ct and limit >= 4000 and ct < limit // 4:
+            code = "empty_length"
+            self.stats["provider_cap"] = max(self.stats["provider_cap"], ct)
+            why = (f"Провайдер оборвал ответ на {ct} токенах, хотя запрошено {limit}: фактический предел задаёт сама модель или шлюз, а не настройки Peregovorka. "
+                   "Проверьте ограничения модели и шлюза (максимум токенов ответа) или выберите другую модель.")
         elif parsed["truncated"]:
             code = "empty_length"
             why = (f"Модель израсходовала весь лимит ответа ({limit} токенов) на «рассуждения» и не успела написать текст. "

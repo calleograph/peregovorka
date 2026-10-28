@@ -384,33 +384,53 @@ phase2() {
     *) warn "Сверка компонентов не выполнена — обновление не остановлено, но состояние комплекта не подтверждено"; WARN_N=$((WARN_N + 1)); upd_state_set components_status skipped ;;
   esac
 
-  SM="skipped"; SMRC=0; SMISS=""
+  WARN_C=$((WARN_N - ${#VERIFY_WARNINGS[@]})); CMP_FAIL=0; [ "$CMPRC" -eq 2 ] && CMP_FAIL=1
+  SM="skipped"; SMRC=0; SMISS=""; SMCRIT=""; SW=0
   step "Smoke-test"
-  if [ "$SKIP_SMOKE" -eq 1 ]; then info "Пропущено (--skip-smoke)"
-  else
-    SMLOG="$(mktemp)"; "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE" 2>&1 | tee "$SMLOG"; SMRC=${PIPESTATUS[0]}
-    case "$SMRC" in 0) SM="PASS" ;; 3) SM="INTEGRATION" ;; *) SM="FAIL" ;; esac
-    SMISS="$(sed -n 's/^Integration issues: //p' "$SMLOG" | tail -1 | tr -d '\r' | cut -c1-200)"
-    SW="$(grep -o 'Предупреждений: [0-9]*' "$SMLOG" | grep -o '[0-9]*$' | tail -1)"; WARN_N=$((WARN_N + ${SW:-0})); rm -f "$SMLOG"
+  if [ "$SKIP_SMOKE" -eq 1 ]; then info "Пропущено (--skip-smoke)"; else upd_smoke_run; WARN_N=$((WARN_N + SW)); fi
+
+  # Первая проверка нашла ошибки собственной системы: безопасно исправимое (права, не запущенные сервисы) исправляется автоматически, временные состояния
+  # (прогрев ASR) получают время, затем проверка повторяется. Итог — по последней проверке; первая и действия остаются в журнале и отчёте.
+  INITIAL_NOTE=""
+  if [ "$VF" -ne 0 ] || [ "$SMRC" -eq 1 ]; then
+    INITIAL_NOTE="первая проверка после запуска: verify — ошибок ${VF}, smoke — ${SM}${SMCRIT:+ ($SMCRIT)}"
+    step "Автоматическое исправление безопасных причин и повторная проверка"
+    upd_action "$INITIAL_NOTE"
+    upd_self_heal
+    verify_deployment; VF=$?; VF=$((VF + CMP_FAIL)); WARN_N=$((${#VERIFY_WARNINGS[@]} + WARN_C)); VSTAGES="$(print_verify_stages)"
+    [ "$VF" -eq 0 ] && ok "Verify (повторно): PASS" || fail "Verify (повторно): FAIL (ошибок: $VF)"
+    SM="skipped"; SMRC=0; SMISS=""; SMCRIT=""; SW=0
+    if [ "$SKIP_SMOKE" -ne 1 ]; then upd_smoke_run; WARN_N=$((WARN_N + SW)); fi
+    if [ "$VF" -eq 0 ] && [ "$SMRC" -ne 1 ]; then upd_action "повторная проверка пройдена — обновление считается успешным"; ok "Повторная проверка пройдена: первая ошибка была временной или исправлена автоматически"
+    else upd_action "повторная проверка тоже нашла ошибки${SMCRIT:+: $SMCRIT}"; fi
   fi
 
   # Четыре независимых итога. Сбой проверки интеграций (например, каталога LDAP) НЕ делает обновление «неудачным»:
   # код, образы, миграции и запуск выполнены, сервисы здоровы — это отдельное предупреждение с кнопкой в диагностику.
   upd_classify_outcome "$VF" "$SMRC" "$SM"
-  upd_state_set health_status "$H_ST"; upd_state_set integration_status "$I_ST"; upd_state_set integration_issues "$SMISS"
+  upd_state_set health_status "$H_ST"; upd_state_set integration_status "$I_ST"; upd_state_set integration_issues "$SMISS"; upd_state_set health_reason "$SMCRIT"
   repair_verify_record "$([ "$H_ST" = ok ] && { [ "$I_ST" = fail ] && echo integration || echo pass; } || echo fail)"
   summary "$VF" "$SM" "$WARN_N" "$H_ST" "$I_ST" "$SMISS"
   rm -f "$(upd_marker_file)"
   upd_ensure_helper
   if [ "$H_ST" = ok ]; then
-    upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok
-    upd_report_write "успешно" "" "$([ "$I_ST" = fail ] && echo "Интеграции требуют внимания: ${SMISS:-см. проверку}")"
+    upd_state_set result "ok"; upd_state_set completed_at "$(date -Is)"; upd_history_append ok "${INITIAL_NOTE:+после автоматического исправления; $INITIAL_NOTE}"
+    upd_report_write "успешно" "" "$([ "$I_ST" = fail ] && echo "Версия установлена и работает. Требует внимания администратора (проблема окружения, не ошибка обновления): ${SMISS:-см. проверку}")"
     [ "$I_ST" = fail ] && exit 3
     exit 0
   fi
   upd_state_set result "health_failed"; upd_history_append failed "проверка работоспособности после обновления"
-  upd_report_write "установлено, но проверка работоспособности нашла ошибки" "Verify/Smoke: см. журнал" "Откройте «Исправить автоматически» или посмотрите журнал проверок; откат кода: ./scripts/rollback.sh"
+  upd_report_write "установлено, но проверка работоспособности нашла ошибки" "${SMCRIT:-проверка verify нашла ошибки (${VF}); подробности в журнале}${INITIAL_NOTE:+ · $INITIAL_NOTE}" "Устраните названную причину и нажмите «Проверить заново» (Администрирование → Обзор → «Найденные проблемы»): при успехе статус обновления исправится сам. Журнал проверок — в журнале обновления; откат кода: ./scripts/rollback.sh"
   exit 1
+}
+
+# Один прогон smoke-test: SM (PASS|INTEGRATION|FAIL), SMRC, SMISS (внешние проблемы с причинами), SMCRIT (ошибки самой системы с причинами), SW (предупреждения).
+upd_smoke_run() {
+  local log; log="$(mktemp)"; "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE" 2>&1 | tee "$log"; SMRC=${PIPESTATUS[0]}
+  case "$SMRC" in 0) SM="PASS" ;; 3) SM="INTEGRATION" ;; *) SM="FAIL" ;; esac
+  SMISS="$(sed -n 's/^Integration issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"
+  SMCRIT="$(sed -n 's/^Critical issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"
+  SW="$(grep -o 'Предупреждений: [0-9]*' "$log" | grep -o '[0-9]*$' | tail -1)"; SW="${SW:-0}"; rm -f "$log"
 }
 
 # Итоговый вывод: коротко и по делу.
@@ -423,7 +443,7 @@ summary() { # vf smoke warnings health integration integration_issues
   log
   printf 'Update:       %s\nDeployment:   %s\nHealth:       %s\nIntegrations: %s\n' "$up_s" "$dep_s" "$h_s" "$i_s"
   if [ "$5" = fail ]; then
-    warn "Интеграции требуют внимания (${6:-см. журнал выше}). Обновление и сервисы в порядке. Откройте веб-интерфейс: Администрирование → LDAP и доступ → Диагностика."
+    warn "Внешнее окружение требует внимания (${6:-см. журнал выше}). Обновление и сервисы в порядке; это не ошибка обновления. Когда причина устранена — Администрирование → Обзор → «Проверить заново» либо scripts/smoke-test.sh."
   fi
   log
   local oldv newv

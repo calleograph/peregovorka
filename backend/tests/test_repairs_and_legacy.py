@@ -106,7 +106,7 @@ def test_outcome_separates_update_deployment_health_and_integrations(client):
               health_status="ok", integration_status="fail", integration_issues="LDAP/LDAPS")
     login(client, "root")
     o = client.get(U).json()["outcome"]
-    assert o == {"update": "ok", "deployment": "ok", "health": "ok", "integrations": "fail", "integration_issues": "LDAP/LDAPS", "needs_attention": True}
+    assert o == {"update": "ok", "deployment": "ok", "health": "ok", "integrations": "fail", "integration_issues": "LDAP/LDAPS", "health_reason": "", "needs_attention": True}
     assert client.get(f"{U}/log").json()["outcome"]["integrations"] == "fail"
 
 

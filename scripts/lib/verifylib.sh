@@ -134,28 +134,33 @@ ws_verdict() {
   return 0
 }
 
-# ws_route_verdict КОД [direct|proxy] → проверка СУЩЕСТВОВАНИЯ маршрута /rtc/v1 (запрос без join_request, который передаёт только настоящий SDK).
-# LiveKit 1.13 отвечает на него 400 «join_request is required» — это значит «маршрут есть»; устаревший сервер ответил бы 404 (SDK тратил бы секунды на /rtc).
+# RTC_JOIN_REQUEST — фиксированный параметр join_request, каким SDK LiveKit открывает /rtc/v1 (WrappedJoinRequest{join_request=JoinRequest{client_info}}, base64url).
+# Запрос без него сервер правильно отвечает 400 «join_request is required», а прокси и WAF — каждый по-своему, поэтому такой ответ не доказательство ни
+# исправности, ни поломки. Проверка маршрута ведётся ТЕМ ЖЕ запросом, что у браузера (проверено на LiveKit 1.13: Upgrade → 101, /rtc/v1/validate → 200).
+RTC_JOIN_REQUEST="Eg0KCwgBEgVzbW9rZRgP"
+
+# ws_route_verdict КОД [direct|proxy] [URL_/rtc/v1_С_ПАРАМЕТРАМИ] → проверка маршрута /rtc/v1 запросом, как у SDK (с join_request): 101 = маршрут и Upgrade исправны.
+# Иначе причина уточняется так же, как делает SDK, — запросом /rtc/v1/validate с теми же параметрами (200 «success» у исправного LiveKit; 404 = устаревший сервер
+# или прокси не передаёт путь; 401 = токен отклонён). Диагностика НЕ смягчает итог: ответ без признаков LiveKit остаётся FAIL, но с точным описанием.
 ws_route_verdict() {
-  local body="${WS_BODY:+ («${WS_BODY}»)}" url="${3:-}" code0 body0
-  case "${1:-}" in
-    101) WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (101)" ;;
-    400) if printf '%s' "${WS_BODY:-}" | grep -qi 'join_request'; then WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует (LiveKit ответил 400 «join_request is required» — так он отвечает на запрос без параметров SDK)"
-         else
-           # Ответ 400 без текста «join_request» (прокси или версия LiveKit формулируют иначе) сам по себе не доказывает поломку: второй вопрос — доходит ли запрос до LiveKit.
-           # Тот же адрес с заведомо неверным токеном LiveKit отклоняет своим «401 invalid authorization token»: значит, маршрут и прокси исправны.
-           # Ошибки соединения, 404, 5xx и страницы прокси по-прежнему дают FAIL.
-           code0="${WS_CODE:-}"; body0="${WS_BODY:-}"
-           if [ -n "$url" ]; then
-             ws_upgrade_probe "${url%%\?*}?access_token=invalid" "${WS_PROBE_TIMEOUT:-8}"
-             if [ "$WS_CODE" = 401 ] && printf '%s' "${WS_BODY:-}" | grep -qi 'invalid authorization token'; then
-               WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует: LiveKit отвечает (с неверным токеном — 401 «invalid authorization token»); на запрос с тестовым токеном вернулся HTTP 400${body0:+ («$body0»)}"
-               return 0
-             fi
-           fi
-           WS_CODE="$code0"; WS_BODY="$body0"; body="${WS_BODY:+ («${WS_BODY}»)}"
-           WS_STATUS=FAIL; WS_NOTE="HTTP 400${body} на /rtc/v1 — ответ без признака LiveKit; сравните с запросом напрямую"; fi ;;
-    *) ws_verdict "${1:-}" "${2:-}" ;;
+  local code="${1:-}" where="${2:-}" url="${3:-}" body0="${WS_BODY:-}" vc vb vf base qs
+  if [ "$code" = 101 ]; then WS_STATUS=OK; WS_NOTE="маршрут /rtc/v1 существует: WebSocket Upgrade с join_request выполнен (101), как у браузера"; return 0; fi
+  ws_verdict "$code" "$where"
+  case "$code" in 000|"") return 0 ;; esac                    # нет соединения: причина уже названа этапом сбоя
+  [ -n "$url" ] || return 0
+  base="${url%%\?*}"; qs=""; case "$url" in *\?*) qs="${url#*\?}" ;; esac
+  vf="$(mktemp 2>/dev/null || echo "/tmp/ws-validate.$$")"          # обычный GET, как у SDK (fetch), URL с токеном — через stdin
+  vc="$(printf 'url = "%s"\n' "${base}/validate${qs:+?$qs}" | curl -s -o "$vf" -m "${WS_PROBE_TIMEOUT:-8}" -w '%{http_code}' -K - 2>/dev/null)"
+  vb="$(head -c 200 "$vf" 2>/dev/null | tr -d '\r\n\000')"; rm -f "$vf"
+  case "$vc" in
+    200) WS_NOTE="HTTP ${code} на WebSocket Upgrade /rtc/v1${body0:+ («$body0»)}, хотя обычная проверка того же адреса (/rtc/v1/validate) проходит: LiveKit достижим, а Upgrade на этом пути обрывает прокси или WAF (нужны proxy_http_version 1.1, заголовки Upgrade/Connection, разрешённый путь /rtc/v1)"; WS_STATUS=FAIL ;;
+    404) WS_NOTE="HTTP 404 на /rtc/v1/validate: LiveKit устаревшей версии (docs/COMPATIBILITY.md) либо прокси не передаёт путь /rtc/v1"; WS_STATUS=FAIL ;;
+    401|403) WS_NOTE="сервер достигнут, но тестовый токен отклонён (HTTP ${vc}${vb:+ «$vb»}) — проверьте LIVEKIT_API_KEY/SECRET"; WS_STATUS=WARNING ;;
+    400) if printf '%s' "$vb" | grep -qi 'join_request is required'; then
+           WS_NOTE="LiveKit ответил, что join_request отсутствует, хотя он передан: прокси или WAF отбрасывает параметры запроса (query) на /rtc/v1"
+         else WS_NOTE="HTTP 400${vb:+ («$vb»)} на /rtc/v1 без признаков ответа LiveKit: запрос отклоняет прокси или WAF перед LiveKit (правило, не пропускающее WebSocket или длинный query)"; fi
+       WS_STATUS=FAIL ;;
+    *) : ;;                                                   # прочее уже описано ws_verdict
   esac
   return 0
 }

@@ -53,6 +53,37 @@ upd_db_restore_exact() { # upd_db_restore_exact ДАМП
   return 1
 }
 
+# Безопасное самоисправление после неудачной ПЕРВОЙ проверки. Только обратимые действия над объектами этого проекта: права на каталоги данных и запуск
+# сервисов проекта без пересборки. Прокси, сертификаты, сетевые правила, .env и настройки безопасности не затрагиваются. Каждое действие — в журнал отчёта.
+# Затем пауза на прогрев (временные состояния: модель ASR ещё грузится, сервис только что перезапущен). Проверку повторяет вызывающий.
+upd_self_heal() {
+  local s bad=()
+  REPAIR_DETAIL=""
+  if repair_detect_data_dirs 2>/dev/null; then
+    info "Права на каталоги данных неверны (${REPAIR_DETAIL:-?}) — исправляю"
+    if repair_apply_data_dirs && ! repair_detect_data_dirs 2>/dev/null; then upd_action "исправлены права на каталоги данных"
+    else upd_action "права на каталоги данных исправить не удалось (нужен запуск от root: «Исправить автоматически» в разделе «Обзор»)"; fi
+  fi
+  for s in "${UPD_SERVICES[@]}"; do [ "$(upd_svc_state "$s")" = healthy ] || bad+=("$s"); done
+  if [ "${#bad[@]}" -gt 0 ]; then
+    info "Не готовы сервисы: ${bad[*]} — запускаю без пересборки"
+    dc up -d --no-build "${bad[@]}" >/dev/null 2>&1
+    if upd_wait_healthy "${UPD_HEAL_WAIT:-90}"; then upd_action "запущены не готовые сервисы: ${bad[*]}"; else upd_action "сервисы не стали готовы: ${UPD_UNHEALTHY[*]:-${bad[*]}}"; fi
+  fi
+  sleep "${UPD_SETTLE:-10}"
+}
+
+# Повторная проверка после ЗАВЕРШИВШЕГОСЯ ошибкой обновления прошла: состояние, история и отчёт приводятся в соответствие. Запись о первой попытке
+# в истории остаётся (она достоверна), добавляется новая запись о результате исправления; отчёт перезаписывается итогом «успешно».
+upd_recovered() { # ПОЯСНЕНИЕ_В_ЖУРНАЛ ИНТЕГРАЦИИ_СТАТУС ПРОБЛЕМЫ
+  upd_state_set health_status ok; upd_state_set integration_status "${2:-ok}"; upd_state_set integration_issues "${3:-}"; upd_state_set health_reason ""
+  upd_state_set result ok; upd_state_set completed_at "$(date -Is)"
+  upd_action "$1"
+  OLD="$(upd_state_get previous_git_commit)"; TARGET="$(upd_state_get target_git_commit)"
+  upd_history_append ok "повторная проверка пройдена после ошибки первой"
+  upd_report_write "успешно" "" "$([ "${2:-ok}" = fail ] && echo "Требует внимания администратора: ${3:-см. проверку}")"
+}
+
 # ------------------------------------------------------------------------------------------- отчёт
 _rep_running_version() { # версия и commit, которые сообщает работающий backend
   dc exec -T backend python -c "

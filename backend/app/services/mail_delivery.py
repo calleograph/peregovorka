@@ -38,8 +38,9 @@ FORMAT_MIME = {"html": "text/html; charset=utf-8", "docx": "application/vnd.open
                "txt": "text/plain; charset=utf-8", "md": "text/markdown; charset=utf-8"}
 MAX_MANUAL_EMAILS = 50
 MAX_RECIPIENTS = 300
-MODES = ("none", "leader", "all", "selected")
-MODE_LABEL = {"none": "Не отправлять", "leader": "Только руководителю", "all": "Всем участникам встречи", "selected": "Выбранным пользователям"}
+MODES = ("none", "leader", "owner", "organizer", "all", "selected")
+MODE_LABEL = {"none": "Не отправлять", "leader": "Руководителям комнаты", "owner": "Владельцу комнаты", "organizer": "Организатору встречи", "all": "Всем участникам встречи",
+              "selected": "Выбранным пользователям"}
 
 
 @dataclass
@@ -49,6 +50,7 @@ class Material:
     title: str
     md: str
     html: bytes | None = None    # готовый автономный файл (карта разговора): вкладывается как есть, выбранные форматы документов на него не влияют
+    incomplete: bool = False     # документ оборван по лимиту или построен не по всей встрече: автоматически как готовый не отправляется (вручную — с пометкой)
 
 
 @dataclass
@@ -64,7 +66,7 @@ async def _protocol_like(svc: "DeliveryService", db: AsyncSession, meeting: Meet
                                                  Protocol.content.is_not(None)).order_by(Protocol.updated_at.desc()))).scalars().first()
     if p is None or not (p.content or "").strip():
         return None
-    return Material(kind, label, p.title or f"{default_title}: {meeting.room.name}", with_incomplete_notice(p.content, p.meta))
+    return Material(kind, label, p.title or f"{default_title}: {meeting.room.name}", with_incomplete_notice(p.content, p.meta), incomplete=bool((p.meta or {}).get("truncated")))
 
 
 async def _protocol(svc, db, meeting):
@@ -94,7 +96,8 @@ async def _map(svc, db, meeting):
     if m is None or not m.data:
         return None
     title = f"Карта разговора: {meeting.room.name}"
-    return Material("map", "Карта разговора", title, "", html=standalone_html(title, apply_edits(m.data, m.edits), m.meta))
+    return Material("map", "Карта разговора", title, "", html=standalone_html(title, apply_edits(m.data, m.edits), m.meta),
+                    incomplete=bool((m.data or {}).get("unprocessed")))
 
 
 def not_ready_reason(kind: str) -> str:
@@ -121,7 +124,7 @@ def clean_spec(raw: dict | None) -> dict:
     spec = {"enabled": bool(raw.get("enabled")), "archive": bool(raw.get("archive")), "materials": [],
             "template_id": str(raw.get("template_id") or "") or None, "if_missing": "skip" if raw.get("if_missing") == "skip" else "send",
             "formats": [f for f in dict.fromkeys(raw.get("formats") or []) if f in FORMATS],
-            "recipients": {"leaders": False, "participants": False, "users": [], "emails": []}}
+            "recipients": {"leaders": False, "owner": False, "organizer": False, "participants": False, "users": [], "emails": []}}
     for k in raw.get("materials") or []:
         if k not in MATERIALS:
             raise ValueError(f"Неизвестный материал: {k}")
@@ -129,6 +132,7 @@ def clean_spec(raw: dict | None) -> dict:
             spec["materials"].append(k)
     r = raw.get("recipients") or {}
     spec["recipients"]["leaders"] = bool(r.get("leaders"))
+    spec["recipients"]["owner"], spec["recipients"]["organizer"] = bool(r.get("owner")), bool(r.get("organizer"))
     spec["recipients"]["participants"] = bool(r.get("participants"))
     seen: set[str] = set()
     for u in r.get("users") or []:
@@ -199,7 +203,8 @@ def recipients_spec(spec: dict, kind: str) -> dict:
     if not pm:
         return spec
     e = pm.get(kind) or {"mode": "none", "users": []}
-    return {**spec, "recipients": {"leaders": e["mode"] == "leader", "participants": e["mode"] == "all", "users": e["users"] if e["mode"] == "selected" else [], "emails": []}}
+    return {**spec, "recipients": {"leaders": e["mode"] == "leader", "owner": e["mode"] == "owner", "organizer": e["mode"] == "organizer", "participants": e["mode"] == "all",
+                                   "users": e["users"] if e["mode"] == "selected" else [], "emails": []}}
 
 
 def group_by_recipients(spec: dict, kinds: list[str], resolved: dict[str, list]) -> list[tuple[list[str], list]]:
@@ -218,7 +223,7 @@ def group_by_recipients(spec: dict, kinds: list[str], resolved: dict[str, list])
 class Recipient:
     email: str
     name: str
-    source: str            # leader | participant | user | manual
+    source: str            # leader | owner | organizer | participant | user | manual
     problem: str | None = None   # no_email | invalid_email | domain_not_allowed
 
     def public(self) -> dict:
@@ -275,6 +280,16 @@ class DeliveryService:
             out[key] = Recipient(email, name, source, problem)
 
         r = spec["recipients"]
+        if r.get("owner"):
+            # владелец комнаты — её создатель; у комнат без известного создателя — первый руководитель-пользователь (иначе в просмотре будет видно «нет адреса»)
+            owner = await db.get(User, room.created_by_user_id) if room.created_by_user_id else None
+            if owner is None:
+                first = next((m for m in room.moderators if m.subject_type == "user"), None)
+                owner = (await db.execute(select(User).where(func.lower(User.ad_guid) == first.subject_ref.lower()))).scalar_one_or_none() if first else None
+            add(owner.email if owner else None, (owner.display_name if owner else None) or room.created_by_name or "владелец комнаты", "owner")
+        if r.get("organizer") and meeting is not None:
+            org = await db.get(User, meeting.started_by_user_id) if meeting.started_by_user_id else None
+            add(org.email if org else None, (org.display_name if org else None) or "организатор встречи", "organizer")
         if r["leaders"]:
             for m in room.moderators:
                 if m.subject_type == "user":
@@ -307,7 +322,7 @@ class DeliveryService:
             if d is None:
                 continue
             m = await d.load(self, db, meeting)
-            mats.append({"kind": k, "label": d.label, "available": m is not None,
+            mats.append({"kind": k, "label": d.label, "available": m is not None, "incomplete": bool(m and m.incomplete),
                          "reason": None if m else not_ready_reason(k)})
         by_mat: dict[str, list] = {}
         if spec.get("per_material"):
@@ -401,6 +416,11 @@ class DeliveryService:
                 meeting = await db.get(Meeting, meeting_id)
                 plan = await self.plan(db, meeting, spec)
                 have = [m["kind"] for m in plan["materials"] if m["available"]]
+                # автоматически уходит только полный готовый документ: оборванный по лимиту или построенный не по всей встрече считается неготовым (вручную можно отправить с пометкой)
+                partial = [m["kind"] for m in plan["materials"] if m["available"] and m.get("incomplete")]
+                if partial:
+                    self._emit("mail_material_incomplete", "warn", meeting, "Автоматически не отправлены неполные материалы: " + ", ".join(MATERIALS[k].label for k in partial) + " — отправьте вручную после проверки", {"incomplete": partial})
+                have = [k for k in have if k not in partial]
                 missing = [k for k in spec["materials"] if k not in have]
                 recipients = [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in plan["recipients"]]
                 by_kind = {k: [Recipient(r["email"], r["name"], r["source"], r["problem"]) for r in rs] for k, rs in (plan.get("by_material") or {}).items()}

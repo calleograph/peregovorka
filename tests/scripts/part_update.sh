@@ -299,4 +299,30 @@ t "итог: сбой сервисов (smoke 1) → здоровье fail" eq "
 t "итог: verify нашёл ошибки → здоровье fail" eq "$(outcome 2 0 PASS)" "fail/ok"
 t "итог: smoke пропущен → интеграции skipped, здоровье ok" eq "$(outcome 0 0 skipped)" "ok/skipped"
 t "итог: smoke-test.sh различает сбой системы (1) и сбой интеграции (3), update.sh отдаёт код 3" bash -c 'grep -q "exit 3" "$1/scripts/smoke-test.sh" && grep -q "is_integration" "$1/scripts/smoke-test.sh" && grep -q "exit 3" "$1/scripts/update.sh" && grep -q "Integrations:" "$1/scripts/update.sh"' _ "$ROOT"
+
+# Ложные ошибки обновления: проверка публичного адреса — внешнее окружение (код 3), а не отказ системы; названа причина; безопасное самоисправление и согласованность
+t "smoke-test: публичный адрес и TLS — внешнее окружение (код 3, причина названа), а «через web» и «напрямую» остаются проверками самой системы" bash -c 'f="$1/scripts/smoke-test.sh"; l="$(grep "^is_integration()" "$f")"; [[ "$l" == *"маршрут (публичный URL)"* && "$l" == *"WebSocket /rtc (публичный URL)"* && "$l" == *"TLS (публичный URL)"* ]] && [[ "$l" != *"через web"* && "$l" != *"напрямую"* ]] && grep -q "Critical issues:" "$f" && grep -q "INTEG_NOTES" "$f"' _ "$ROOT"
+t "smoke-test: /rtc/v1 проверяется запросом с join_request, как у браузера (а не «голым»)" bash -c 'grep -q "QV1=" "$1/scripts/smoke-test.sh" && grep -q "join_request=\${RTC_JOIN_REQUEST}" "$1/scripts/smoke-test.sh" && ! grep -q "ws_route_verdict \"\$WS_CODE\" proxy \"\${BASE}/livekit/rtc/v1\"" "$1/scripts/smoke-test.sh"' _ "$ROOT"
+HF="$TMP/heal"; mkdir -p "$HF/data/state" "$HF/data/updater" "$HF/repo"; export HF
+healrun() { bash -c 'source "$1/scripts/lib/common.sh"; DATA_ROOT="$2/data"; REPO_ROOT="$2/repo"; UPD_SETTLE=0; UPD_SERVICES=(web backend); HFD="$2"; : > "$DATA_ROOT/state/update-actions.log"
+  DETAIL_N=0; repair_detect_data_dirs() { DETAIL_N=$((DETAIL_N+1)); [ "$DETAIL_N" -eq 1 ] && REPAIR_DETAIL="recordings" && return 0; return 1; }; repair_apply_data_dirs() { echo CHOWN; }
+  upd_svc_state() { if [ "$1" = web ] && [ ! -e "$HFD/up" ]; then echo starting; else echo healthy; fi; }
+  dc() { touch "$HFD/up"; echo "dc $*" >> "$HFD/dc.log"; }; upd_wait_healthy() { return 0; }
+  upd_self_heal 2>&1; cat "$DATA_ROOT/state/update-actions.log"' _ "$ROOT" "$HF"; }
+export -f healrun
+t "самоисправление: права на каталоги исправляются, не готовые сервисы запускаются БЕЗ пересборки, каждое действие записано в журнал" bash -c 'r="$(healrun)"; grep -q CHOWN <<<"$r" && grep -q "исправлены права на каталоги данных" <<<"$r" && grep -q "запущены не готовые сервисы: web" <<<"$r" && grep -q -- "--no-build web" "$1/dc.log"' _ "$HF"
+t "самоисправление не трогает прокси, сертификаты, сеть и .env: в функции нет таких действий" bash -c '! sed -n "/^upd_self_heal()/,/^}/p" "$1/scripts/lib/updtxn.sh" | grep -Eq "nginx|certbot|iptables|ufw|sysctl|\.env|tls|chmod 777"' _ "$ROOT"
+t "итог обновления: после повторной проверки учитывается ПОСЛЕДНЯЯ (update.sh повторяет verify и smoke и считает предупреждения заново)" bash -c 'grep -q "upd_self_heal" "$1/scripts/update.sh" && grep -q "Verify (повторно)" "$1/scripts/update.sh" && grep -q "WARN_C" "$1/scripts/update.sh" && grep -q "upd_smoke_run" "$1/scripts/update.sh"' _ "$ROOT"
+t "итог обновления: «Исправить автоматически» не называется, если такой кнопки нет — вместо неё «Проверить заново» и названная причина" bash -c '! grep -q "Откройте «Исправить автоматически» или посмотрите журнал" "$1/scripts/update.sh" && grep -q "Проверить заново" "$1/scripts/update.sh" && grep -q "SMCRIT" "$1/scripts/update.sh"' _ "$ROOT"
+export RV="$TMP/rv"; mkdir -p "$RV/data/state" "$RV/repo"; git -C "$RV/repo" init -q 2>/dev/null; git -C "$RV/repo" -c user.email=t@example.org -c user.name=t commit -q --allow-empty -m x 2>/dev/null
+rvd() { bash -c 'source "$1/scripts/lib/common.sh"; DATA_ROOT="$2/data"; REPO_ROOT="$2/repo"; head="$(git -C "$REPO_ROOT" rev-parse HEAD)"; printf "%s %s 1\n" "$head" "$3" > "$DATA_ROOT/state/last-verify.state"
+  upd_state_set health_reason "LiveKit: нет ответа"; if repair_detect_reverify; then echo "found:$REPAIR_DETAIL"; else echo none; fi' _ "$ROOT" "$RV" "$1"; }
+export -f rvd
+t "«Проверить заново»: после проверки с ошибками пункт появляется с причиной, после успешной — исчезает" bash -c 'r="$(rvd fail)"; [[ "$r" == "found:"*"нашла ошибки: LiveKit: нет ответа"* ]] && [ "$(rvd pass)" = none ] && [ "$(rvd integration)" = none ]'
+t "успешная повторная проверка согласует состояние, историю и отчёт; запись о первой неудачной попытке в истории остаётся" bash -c 'source "$1/scripts/lib/common.sh"; DATA_ROOT="$2/data"; REPO_ROOT="$2/repo"; mkdir -p "$DATA_ROOT/updater"; dc() { return 1; }
+  printf "{\"at\":1,\"result\":\"failed\",\"stage\":\"проверка работоспособности после обновления\"}\n" > "$DATA_ROOT/updater/history.ndjson"
+  upd_state_set result health_failed; upd_state_set health_status fail; upd_actions_reset
+  upd_recovered "повторная проверка пройдена" ok ""
+  [ "$(upd_state_get health_status)" = ok ] && [ "$(upd_state_get result)" = ok ] && [ "$(wc -l < "$DATA_ROOT/updater/history.ndjson")" -eq 2 ] && grep -q "\"result\":\"failed\"" "$DATA_ROOT/updater/history.ndjson" && tail -1 "$DATA_ROOT/updater/history.ndjson" | grep -q "\"result\":\"ok\"" \
+    && python3 -c "import json,sys; d=json.load(open(sys.argv[1], encoding=\"utf-8\")); assert d[\"ok\"] is True and not d[\"cause\"] and any(\"повторная проверка пройдена\" in a for a in d[\"actions\"])" "$DATA_ROOT/updater/report.json"' _ "$ROOT" "$RV"
 t "итог: update.sh пишет четыре статуса в last-update.state" bash -c 'for k in update_status deploy_status health_status integration_status integration_issues; do grep -q "upd_state_set $k" "$1/scripts/update.sh" || exit 1; done' _ "$ROOT"

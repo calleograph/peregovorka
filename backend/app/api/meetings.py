@@ -262,7 +262,7 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
          "timing": {k: (p.meta or {}).get(k) for k in ("requested_at", "started_at", "llm_started_at", "llm_finished_at", "finished_at", "queue_s", "prepare_s", "llm_s", "total_s")},
          # как создан документ: модель, локальная ли, тип API, сколько частей и повторов, причины остановки; ошибка/обрыв видны в статусе
          "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "llm_local", "api_type", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
-                                                               "length_hits", "finish", "max_tokens", "limit_note", "input_chars", "output_chars", "prompt_tokens",
+                                                               "length_hits", "finish", "max_tokens", "limit_requested", "limit_applied", "limit_note", "input_chars", "output_chars", "prompt_tokens",
                                                                "completion_tokens", "structured", "failed", "error_code")}}
     # привязка времён документа к стенограмме: секунды суток начала встречи в часовом поясе, в котором записаны метки [ЧЧ:ММ:СС] (переход от пункта к реплике)
     d["time_base"] = ((p.meta or {}).get("time_base") or {}).get("offset_s")

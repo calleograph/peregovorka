@@ -98,7 +98,7 @@ def test_extra_and_secret_headers_are_sent_but_cannot_override_service_headers()
 
 def test_response_limit_is_split_between_summary_and_protocol_and_respects_context_window():
     c = ext()
-    assert c.output_limit("summary") == (2000, "") and c.output_limit("protocol") == (7000, "")
+    assert c.output_limit("summary") == (40000, "") and c.output_limit("protocol") == (60000, "") and c.output_limit("map") == (60000, "")
     assert ext(max_tokens_summary=1500, max_tokens_protocol=8000).output_limit("protocol") == (8000, "")
     tokens, note = ext(max_tokens_protocol=9000, context_window=8192).output_limit("protocol")
     assert tokens == 6144 and "окном контекста" in note
@@ -113,7 +113,7 @@ def test_response_limit_is_split_between_summary_and_protocol_and_respects_conte
     assert seen[-1]["max_tokens"] == 1234 and r.truncated and r.finish_reason == "length" and r.max_tokens == 1234
     c2 = LlmClient(ext(), transport=httpx.MockTransport(h))
     run(c2.complete("s", "u"))
-    assert c2.stats["length"] == 1 and c2.stats["finish"] == {"length": 1} and c2.stats["max_tokens"] == 7000
+    assert c2.stats["length"] == 1 and c2.stats["finish"] == {"length": 1} and c2.stats["max_tokens"] == 60000
 
 
 # ----------------------------------------------------------------------------- секретные заголовки в настройках
@@ -188,12 +188,12 @@ def test_document_records_timing_model_and_generation_details(tmp_path, director
         assert t["total_s"] >= t["llm_s"] >= 0 and t["queue_s"] >= 0 and t["prepare_s"] is not None
         assert datetime.fromisoformat(t["requested_at"]) <= datetime.fromisoformat(t["finished_at"])
         assert g["model"] == "m" and g["llm_local"] is False and g["api_type"] == "openai" and g["input_chars"] > 0 and g["output_chars"] > 0 and g["llm_calls"] >= 1
-        assert g["llm_source"] == "system" and g["max_tokens"] == 2000, "для резюме действует свой предел длины ответа"
-        assert seen[-1]["max_tokens"] == 2000 and seen[-1]["temperature"] == 0.0
+        assert g["llm_source"] == "system" and g["max_tokens"] == 40000, "для резюме действует свой предел длины ответа (по умолчанию 40 000)"
+        assert seen[-1]["max_tokens"] == 40000 and seen[-1]["temperature"] == 0.0
         pid2 = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "Подробно"}).json()["protocol_id"]
         _drain(c)
-        assert seen[-1]["max_tokens"] == 7000
-        assert c.get(f"/api/v1/meetings/{mid}/protocols/{pid2}").json()["generation"]["max_tokens"] == 7000
+        assert seen[-1]["max_tokens"] == 60000
+        assert c.get(f"/api/v1/meetings/{mid}/protocols/{pid2}").json()["generation"]["max_tokens"] == 60000
 
 
 def test_truncated_answer_is_marked_and_counted(tmp_path, directory):
@@ -293,7 +293,7 @@ def test_dialog_plan_shows_forecast_limit_and_one_time_model_only_to_managers(tm
         login(c, "alice")
         d = c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction", params={"kind": "protocol"}).json()
         assert d["can_override"] is False and "llm_choices" not in d
-        assert d["plan"]["forecast"]["basis"] == "estimate" and d["plan"]["forecast"]["text"] and d["plan"]["max_output_tokens"] == 7000
+        assert d["plan"]["forecast"]["basis"] == "estimate" and d["plan"]["forecast"]["text"] and d["plan"]["max_output_tokens"] == 60000
         r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x", "llm_once": f"profile:{prof['id']}"})
         assert r.status_code == 403, "участник без прав руководителя не выбирает другую модель"
         assert not seen

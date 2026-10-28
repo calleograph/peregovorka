@@ -10,8 +10,8 @@ import TelephonyEditor from "./TelephonyEditor";
 import { choiceLabel, emptyChoice } from "../phone";
 
 /** Разделы сгруппированы по смыслу: что за комната, как проходит встреча, кто допущен, что остаётся после встречи, какая модель и телефония. */
-type TabId = "main" | "mode" | "access" | "materials" | "model" | "phone";
-const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["materials", "Материалы после встречи"], ["model", "Языковая модель"], ["phone", "Телефония"]];
+type TabId = "main" | "mode" | "access" | "materials" | "autosend" | "model" | "phone";
+const TABS: [TabId, string][] = [["main", "Основное"], ["mode", "Встреча и запись"], ["access", "Доступ и гости"], ["materials", "Материалы после встречи"], ["autosend", "Автоотправка"], ["model", "Языковая модель"], ["phone", "Телефония"]];
 const BOARD_OPTIONS: [string, string][] = [["auto", "Как принято для типа комнаты (обычная — все, презентация — руководители и те, кому дали слово)"], ["everyone", "Все участники рисуют"], ["speakers", "Руководители и те, кому дали слово"], ["leaders", "Рисуют только руководители, остальные смотрят (в презентации слово всё равно даёт доску)"], ["private", "Доска только у руководителей (остальные её не видят)"]];
 const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: null, allow_inbound: false, allow_outbound: false, contacts: [] });
 const days = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
@@ -99,7 +99,7 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
         <form className="form room-form" onSubmit={save} noValidate>
           {room.lifetime === "temporary" && <p className="muted small" style={{ marginTop: 0 }}>Временная переговорка: показаны только основные настройки. Кого пригласить — на вкладке «Доступ и гости»; языковая модель, телефония и рассылка материалов берутся из системных настроек.</p>}
           <div className="tabs" role="tablist" aria-label="Разделы настроек комнаты">
-            {TABS.filter(([id]) => room.lifetime !== "temporary" || !["model", "phone", "materials"].includes(id)).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
+            {TABS.filter(([id]) => room.lifetime !== "temporary" || !["model", "phone", "materials", "autosend"].includes(id)).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
           </div>
 
           {tab === "main" && (
@@ -220,9 +220,14 @@ export default function RoomManageDialog({ roomId, onClose, onSaved }: { roomId:
                             placeholder="Например: фиксируй решения и сроки по проектам, не выделяй обсуждение погоды" />
                   <span className="help">Добавляется к общей инструкции организации и показывается в окне «Сформировать протокол» — участник видит и может изменить её перед отправкой.</span></label>
               </fieldset>
-              <h3 style={{ margin: "14px 0 4px" }}>Рассылка протокола участникам</h3>
+              <p className="help">Автоматическая отправка протокола, резюме, стенограммы и карты настраивается на вкладке «<button type="button" className="linklike" onClick={() => setTab("autosend")}>Автоотправка</button>».</p>
+            </div>
+          )}
+
+          {tab === "autosend" && (
+            <div role="tabpanel">
               <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} localModel={form.llm.mode === "local" || (form.llm.mode === "inherit" && room.llm_options?.system.provider === "local")} />
-              <p className="help">Эти значения действуют для каждой встречи этой комнаты по умолчанию. Для конкретной встречи руководитель может изменить их кнопкой «Эта встреча» в комнате.</p>
+              <p className="help">Эти значения действуют для каждой встречи этой комнаты по умолчанию. Для конкретной встречи руководитель может изменить их кнопкой «Эта встреча» в комнате. Настройки сохраняются кнопкой «Сохранить» и записываются в журнал аудита (кто и что изменил).</p>
             </div>
           )}
 

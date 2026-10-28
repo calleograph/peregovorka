@@ -70,7 +70,7 @@
 **Caddy, Traefik** — WebSocket проходит автоматически; **панели вида Nginx Proxy Manager** — включить «Websockets Support» для хоста.
 
 **Как проверить, что WebSocket действительно проходит:** `scripts/smoke-test.sh` выполняет *настоящий* Upgrade с тестовым токеном
-(строки «LiveKit WebSocket /rtc (напрямую / через web / публичный URL)»; код `101` — норма; отдельно проверяется, что маршрут `/rtc/v1` существует: без параметров SDK LiveKit отвечает на него `400 join_request is required`, и это нормально, а `404` — признак устаревшего LiveKit). Вручную:
+(строки «LiveKit WebSocket /rtc (напрямую / через web / публичный URL)»; код `101` — норма; отдельно проверяется маршрут `/rtc/v1`: запрос идёт с `join_request`, как у браузера, и ожидается `101`; при отказе причину уточняет `/rtc/v1/validate` с теми же параметрами (SDK проверяет именно его: `404` — устаревший LiveKit, `401` — ключи, `200` при отказе Upgrade или `400` без признаков LiveKit — прокси/WAF). Запрос без параметров SDK даёт `400 join_request is required` — это норма сервера, но проверкой не служит). Вручную:
 
 ```bash
 curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \

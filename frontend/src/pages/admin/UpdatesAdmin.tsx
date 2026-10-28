@@ -102,6 +102,7 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
   // Итоги раздельно: сбой проверки интеграций (LDAP и т. п.) — не «обновление завершено с ошибкой»: версия установлена, сервисы работают
   const finishedOk = u?.state === "idle" && u?.result === "ok", finishedBad = u?.state === "idle" && u?.result === "failed";
   const integFail = finishedOk && !isRepair && oc?.integrations === "fail";
+  const healthFail = finishedBad && !isRepair && oc?.update === "ok" && oc?.health === "fail";
   const st = (v?: string) => (v === "ok" ? <span className="badge ok">успешно</span> : v === "fail" || v === "failed" ? <span className="badge warn">ошибка</span> : v === "skipped" ? <span className="badge">пропущено</span> : <span className="badge">нет данных</span>);
   const behind = rem?.behind ?? 0;
 
@@ -199,8 +200,8 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
             {running && <span className="badge rec">выполняется</span>}
             {finishedOk && !integFail && <span className="badge ok">завершено успешно</span>}
             {integFail && <span className="badge ok">обновление завершено</span>}
-            {integFail && <span className="badge warn">интеграции: нужна проверка</span>}
-            {finishedBad && <span className="badge warn">{isRepair ? "исправить не удалось" : "остановлено"} (код {u?.exit_code})</span>}
+            {integFail && <span className="badge warn">окружение: нужна проверка</span>}
+            {finishedBad && <span className="badge warn">{isRepair ? "исправить не удалось" : healthFail ? "установлено, проверка нашла ошибки" : "остановлено"} (код {u?.exit_code})</span>}
             {u?.by && <span className="muted small">запустил: {u.by}</span>}
             {u?.finished_at ? <span className="muted small">окончание: {fmt(new Date(u.finished_at * 1000).toISOString())}</span> : null}
             <div className="spacer" />
@@ -219,18 +220,24 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
               <li>Обновление программы: {st(oc.update)}</li>
               <li>Развёртывание (сервисы запущены): {st(oc.deployment)}</li>
               <li>Работоспособность (база, ASR, звонки, веб): {st(oc.health)}</li>
-              <li>Интеграции (каталог LDAP и др.): {oc.integrations === "fail" ? <span className="badge warn">требуют внимания{oc.integration_issues ? `: ${oc.integration_issues}` : ""}</span> : st(oc.integrations)}</li>
+              <li>Внешнее окружение (каталог LDAP, публичный адрес): {oc.integrations === "fail" ? <span className="badge warn">требуют внимания{oc.integration_issues ? `: ${oc.integration_issues}` : ""}</span> : st(oc.integrations)}</li>
             </ul>
           )}
           {integFail && (
             <div className="alert info">
-              <b>Версия установлена, сервисы работают.</b> Проверка подключения к каталогу{oc?.integration_issues ? ` (${oc.integration_issues})` : ""} не прошла — это не ошибка обновления, но вход по домену может не работать.
+              <b>Версия установлена, сервисы работают.</b> Не прошла проверка внешнего окружения{oc?.integration_issues ? `: ${oc.integration_issues}` : ""} — это не ошибка обновления, но указанное нужно исправить на стороне окружения (каталог, прокси, сертификат).
               <div className="row" style={{ marginTop: 6 }}>
-                <button className="btn primary" onClick={() => onOpen?.("ldap")}>Исправить LDAP / открыть диагностику LDAP</button>
+                {/LDAP|AD/.test(oc?.integration_issues ?? "") && <button className="btn primary" onClick={() => onOpen?.("ldap")}>Открыть диагностику LDAP</button>}
                 <button className="btn" onClick={() => onOpen?.("system")}>Обзор</button></div>
+              <div className="small muted">Когда причина устранена, нажмите «Проверить заново» в блоке «Найденные проблемы» — отчёт обновится сам.</div>
             </div>
           )}
-          {finishedBad && <div className="alert error">{isRepair ? "Исправление не выполнено. Остальная система не затронута; причина — в последних строках журнала." : "Обновление остановилось."} Данные, настройки и модели не затронуты. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) либо выполните <code>./scripts/update.sh</code> на сервере.</div>}
+          {healthFail && (
+            <div className="alert error">
+              <b>Версия установлена, но проверка работоспособности нашла ошибки{oc?.health_reason ? `: ${oc.health_reason}` : ""}.</b> Данные, настройки и модели не затронуты. Когда причина устранена (или была временной), нажмите «Проверить заново» в блоке «Найденные проблемы» ниже: при успехе статус обновления исправится сам, а запись о первой проверке останется в истории. Откат кода: <code>./scripts/rollback.sh</code>.
+            </div>
+          )}
+          {finishedBad && !healthFail && <div className="alert error">{isRepair ? "Исправление не выполнено. Остальная система не затронута; причина — в последних строках журнала." : "Обновление остановилось."} Данные, настройки и модели не затронуты. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) либо выполните <code>./scripts/update.sh</code> на сервере.</div>}
           {finishedOk && !isRepair && <div className="alert ok">Обновление выполнено{integFail ? "" : ": проверки пройдены"}. Обновите страницу, чтобы загрузить новую версию интерфейса.
             <button className="btn mini primary" onClick={() => window.location.reload()}>Обновить страницу</button></div>}
         </div>

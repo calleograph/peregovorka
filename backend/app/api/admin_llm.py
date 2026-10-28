@@ -45,9 +45,10 @@ async def effective_models(request: Request, su: SessionUser = Depends(require_a
         res = await apply_task_limit(st.protocols.profiles, db, _wrap(res0), purpose)           # потолок задачи учитывается в «фактическом пределе»
         eff, is_local = local.effective(res.settings)       # type: ignore[arg-type]
         lim, note = eff.output_limit(purpose) if eff.enabled else (None, "")
+        note = "; ".join(x for x in (res.limit_note, note) if x)
         item = {"label": label, "enabled": bool(eff.enabled), "local": is_local, "name": res0.name, "model": eff.model if eff.enabled else None,
                 "api_type": ("local" if is_local else eff.type) if eff.enabled else None, "profile_id": res0.profile_id,
-                "max_output_tokens": lim, "max_output_note": note or ("контекст модели не указан" if eff.enabled and not eff.context_window else ""),
+                "max_output_tokens": lim, "requested_tokens": res.limit_requested, "max_output_note": note or ("контекст модели не указан" if eff.enabled and not eff.context_window else ""),
                 "context_window": eff.context_window or None, "ready": bool(eff.enabled), "problem": None}
         if eff.enabled and is_local:
             m = local.model(res.settings.local_model)       # type: ignore[attr-defined]

@@ -154,10 +154,12 @@ repair_verify_record() { # RESULT
   printf '%s %s %s\n' "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" "$1" "$(date +%s)" > "$f" 2>/dev/null || true
 }
 repair_detect_reverify() {
-  local f head last; f="$(repair_verify_file)"
+  local f head last res; f="$(repair_verify_file)"
   head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
   if [ ! -s "$f" ]; then REPAIR_DETAIL="Полная проверка ещё ни разу не выполнялась."; return 0; fi
-  last="$(cut -d' ' -f1 "$f")"
+  last="$(cut -d' ' -f1 "$f")"; res="$(cut -d' ' -f2 "$f")"
+  # последняя проверка нашла ошибки: пункт остаётся, пока повторная проверка не пройдёт (после этого он исчезает, а отчёт и история обновляются)
+  if [ "$res" = fail ]; then local why; why="$(upd_state_get health_reason 2>/dev/null)"; REPAIR_DETAIL="Последняя проверка нашла ошибки${why:+: $why}. Если причина была временной или уже устранена, повторная проверка это подтвердит."; return 0; fi
   [ "$last" = "$head" ] && return 1
   REPAIR_DETAIL="Последняя проверка была для другой версии программы."
   return 0
@@ -272,10 +274,19 @@ repair_apply_sip_enable() { "$REPO_ROOT/scripts/sip.sh" enable --env "$ENV_FILE"
 repair_apply_sip_disable() { "$REPO_ROOT/scripts/sip.sh" disable --env "$ENV_FILE" --yes; }
 
 repair_apply_reverify() {
-  local vf=0 sm=0
+  local vf=0 sm=0 prev log label iss
+  prev="$(cut -d' ' -f2 "$(repair_verify_file)" 2>/dev/null)"
   verify_deployment; vf=$?
-  "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE"; sm=$?
-  if [ "$vf" -eq 0 ]; then repair_verify_record "$([ "$sm" -eq 0 ] && echo pass || echo integration)"; return 0; fi
+  log="$(mktemp)"; "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE" 2>&1 | tee "$log"; sm=${PIPESTATUS[0]}
+  case "$sm" in 0) label=PASS ;; 3) label=INTEGRATION ;; *) label=FAIL ;; esac
+  iss="$(sed -n 's/^Integration issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"
+  upd_state_set health_reason "$(sed -n 's/^Critical issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"; rm -f "$log"
+  upd_classify_outcome "$vf" "$sm" "$label"
+  if [ "$H_ST" = ok ]; then
+    repair_verify_record "$([ "$I_ST" = fail ] && echo integration || echo pass)"
+    [ "$prev" = fail ] && upd_recovered "повторная проверка работоспособности пройдена (первая проверка после обновления нашла ошибки)" "$I_ST" "$iss"
+    return 0
+  fi
   repair_verify_record fail; return 1
 }
 

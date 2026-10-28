@@ -29,7 +29,7 @@ from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, Protocol, TranscriptSegment, utcnow
 from .extraction import Item, Line, _stems, merge_items, norm, parse_transcript, to_structured
 from .fact_engine import Extraction, FactsCache, diagnostics, extract, load_facts
-from .llm_choice import parse_once, resolve_llm
+from .llm_choice import limit_report, parse_once, resolve_llm
 from .segments import author_name
 from .topic_categories import CAT_IDS, CAT_LABEL, CATEGORIES  # noqa: F401
 
@@ -637,7 +637,7 @@ class MapService:
         _ = meeting.room, meeting.started_at                         # подгрузить связанное до закрытия сессии
         await release(db)
         return {"meeting": meeting, "choice": choice, "eff": eff, "is_local": is_local, "lines": lines, "tz": tz, "clock_offset": clock_offset, "llm": llm, "header": header,
-                "limit": frag_limit, "cache": cache, "cap": min(out_cap, 6000) if not is_local else None}
+                "limit": frag_limit, "cache": cache, "cap": out_cap if not is_local else None}
 
     async def _compute(self, prep: dict, info: dict) -> tuple[dict, dict]:
         """Обращение к модели и сборка карты — без базы данных."""
@@ -656,7 +656,8 @@ class MapService:
         res = ext.res
         meta = {"model": eff.model, "model_title": info["model_title"], "llm_profile": choice.name, "llm_source": choice.source, "llm_local": is_local,
                 "chunks": ext.frags, "llm_calls": res.calls, "retries": diag["retries"]["length"] + diag["retries"]["format"], "failed_chunks": res.failed,
-                "length_hits": st["length"], "finish": dict(st["finish"]), "input_chars": sum(len(m.line.render()) + 1 for m in lines),
+                "length_hits": st["length"], "finish": dict(st["finish"]), "max_tokens": st["max_tokens"] or None, "limit_requested": choice.limit_requested,
+                "limit_applied": st["max_tokens"] or None, "limit_note": limit_report(choice, eff, "map", st), "input_chars": sum(len(m.line.render()) + 1 for m in lines),
                 "prompt_tokens": res.prompt_tokens, "completion_tokens": res.completion_tokens, "tokens_per_s": diag["tokens_per_s"], "llm_s": info["llm_s"],
                 "topics": len(data["topics"]), "warnings": run.warnings, "rejected": run.rejected_reasons, "coverage_pct": diag["coverage_pct"], "cache_hits": cache.hits,
                 "diag": diag, "facts": res.facts or None}

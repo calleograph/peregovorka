@@ -28,7 +28,7 @@ export default function RepairsPanel({ onOpen, quiet = false }: { onOpen?: (page
     if (!working || !info) return;
     const cur = info.current;
     if (cur && cur.repair_id === working && cur.state === "idle" && cur.finished_at) {
-      setMsg(cur.result === "ok" ? { ok: true, text: "Исправлено. Проверка повторена." } : { ok: false, text: "Исправить не удалось — подробности в журнале на странице «Обновления и версии». Остальная система не затронута." });
+      setMsg(cur.result === "ok" ? { ok: true, text: working === "reverify" ? "Повторная проверка пройдена: статус обновления и отчёт обновлены." : "Исправлено. Проверка повторена." } : { ok: false, text: "Исправить не удалось — подробности в журнале на странице «Обновления и версии». Остальная система не затронута." });
       wasWorking.current = working; setWorking("");
     }
   }, [info, working]);
@@ -63,7 +63,7 @@ export default function RepairsPanel({ onOpen, quiet = false }: { onOpen?: (page
             <div className="row" style={{ marginTop: 6 }}>
               <button className="btn primary" disabled={busy || !it.fixable} onClick={() => void fix(it)}
                       title={it.fixable ? undefined : "Нужен помощник обновлений с правами администратора сервера"}>
-                {working === it.id ? "Исправляю…" : it.kind === "backend" ? "Перенести настройки" : "Исправить автоматически"}</button>
+                {working === it.id ? (it.id === "reverify" ? "Проверяю…" : "Исправляю…") : it.kind === "backend" ? "Перенести настройки" : it.id === "reverify" ? "Проверить заново" : "Исправить автоматически"}</button>
               {it.id === "ldap_legacy" && onOpen && <button className="btn" onClick={() => onOpen("ldap")}>Открыть настройки LDAP</button>}
               {working === it.id && <span className="muted small">Выполняется на сервере, это может занять до нескольких минут. Страницу можно не закрывать.</span>}
             </div>

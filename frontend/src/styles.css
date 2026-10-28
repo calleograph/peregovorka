@@ -221,7 +221,7 @@ main { max-width: 1900px; }
 @media (max-width: 860px) { .admin-layout { grid-template-columns: 1fr; } .admin-nav { position: static; flex-direction: row; flex-wrap: wrap; } }
 .help { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.4; }
 .example { font-size: 12px; font-weight: 400; color: var(--muted); } .example code { font-size: 12px; }
-fieldset.group { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 4px; margin: 0 0 14px; } fieldset.group legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
+fieldset.group { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 4px; margin: 0 0 14px; min-width: 0; } fieldset.group select { max-width: 100%; } fieldset.group legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
 .kpi { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
 .kpi .card { padding: 10px 12px; } .kpi .v { font-size: 22px; font-weight: 600; } .kpi .l { color: var(--muted); font-size: 12px; }
 .bar { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; margin-top: 6px; } .bar > i { display: block; height: 100%; background: var(--ok); } .bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--danger); }

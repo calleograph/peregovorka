@@ -11,7 +11,8 @@
 # тестовая комната (внутренняя сессия без реального пользователя).
 # С --login ЛОГИН: реальная аутентификация через AD (пароль без эха, нигде не сохраняется/не логируется).
 # Токены и пароли в вывод не попадают. Код возврата: 0 — ошибок нет (предупреждения допустимы); 1 — сбой самой системы (сервисы, БД, ASR, LiveKit, web);
-# 3 — система работает, но не прошла проверка ИНТЕГРАЦИЙ (подключение к каталогу LDAP и т. п.): это не отказ обновления/установки, а повод открыть диагностику.
+# 3 — система работает, но не прошли проверки ВНЕШНЕГО окружения: интеграции (каталог LDAP) и публичный адрес (прокси/WAF перед сервисом, сертификат).
+# Это не отказ обновления/установки, а конкретная проблема окружения с описанием причины (строка «Integration issues: имя: причина» в конце).
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/verifylib.sh"
@@ -27,15 +28,17 @@ done
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars WEB_PORT LIVEKIT_HTTP_PORT POSTGRES_USER POSTGRES_DB INTERNAL_API_TOKEN
 
-T_NAME=(); T_ST=(); T_NOTE=(); FAILS=0; WARNS=0; INTEG_FAILS=0; INTEG_NAMES=()
-is_integration() { case "$1" in "LDAP/LDAPS"|"Вход через AD") return 0 ;; esac; return 1; }
+T_NAME=(); T_ST=(); T_NOTE=(); FAILS=0; WARNS=0; INTEG_FAILS=0; INTEG_NAMES=(); INTEG_NOTES=(); FAIL_NOTES=()
+# Проверки ВНЕШНЕГО окружения: каталог LDAP и публичный адрес (его обслуживает прокси/WAF/сертификат администратора, а не компоненты Peregovorka).
+# Их провал — реальная проблема с указанной причиной, но не отказ самой системы и не отказ обновления.
+is_integration() { case "$1" in "LDAP/LDAPS"|"Вход через AD"|"LiveKit /rtc/v1: маршрут (публичный URL)"|"LiveKit WebSocket /rtc (публичный URL)"|"TLS (публичный URL)") return 0 ;; esac; return 1; }
 rec() { # rec ИМЯ СТАТУС [ПОЯСНЕНИЕ]
   T_NAME+=("$1"); T_ST+=("$2"); T_NOTE+=("${3:-}")
   case "$2" in
     OK|configured) ok "$1: ${3:-$2}" ;;
     WARNING) WARNS=$((WARNS+1)); warn "$1: ${3:-}" ;;
     SKIP) info "$1: ${3:-пропущено}" ;;
-    *) if is_integration "$1"; then INTEG_FAILS=$((INTEG_FAILS+1)); INTEG_NAMES+=("$1"); fail "$1: ${3:-}"; else FAILS=$((FAILS+1)); fail "$1: ${3:-}"; fi ;;
+    *) if is_integration "$1"; then INTEG_FAILS=$((INTEG_FAILS+1)); INTEG_NAMES+=("$1"); INTEG_NOTES+=("$1: ${3:-}"); fail "$1: ${3:-}"; else FAILS=$((FAILS+1)); FAIL_NOTES+=("$1: ${3:-}"); fail "$1: ${3:-}"; fi ;;
   esac
 }
 WEB_ADDR="${WEB_BIND_ADDR:-127.0.0.1}"; [ "$WEB_ADDR" = "0.0.0.0" ] && WEB_ADDR="127.0.0.1"
@@ -135,14 +138,15 @@ r=urllib.request.Request('http://127.0.0.1:8000/internal/v1/diag/token',headers=
 print(json.load(urllib.request.urlopen(r,timeout=15))['token'])" | tr -d '\r\n')"
 if [ -n "$TOKEN" ]; then
   Q="?access_token=${TOKEN}&auto_subscribe=0&sdk=js&protocol=15&version=smoke"
-  # через web-контейнер: маршрут /rtc/v1 и настоящий Upgrade на /rtc (простая проверка WebSocket: /rtc → 101; /rtc/v1 без join_request даёт 400 — это норма)
-  ws_upgrade_probe "${BASE}/livekit/rtc/v1${Q}"; ws_route_verdict "$WS_CODE" proxy "${BASE}/livekit/rtc/v1"; rec "LiveKit /rtc/v1: маршрут (через web)" "$WS_STATUS" "$WS_NOTE"
+  QV1="${Q}&join_request=${RTC_JOIN_REQUEST}"       # /rtc/v1 проверяется тем же запросом, что у браузера (без join_request любой сервер и прокси отвечают 400 по-своему)
+  # через web-контейнер: маршрут /rtc/v1 (Upgrade с join_request → 101) и настоящий Upgrade на /rtc (→ 101)
+  ws_upgrade_probe "${BASE}/livekit/rtc/v1${QV1}"; ws_route_verdict "$WS_CODE" proxy "${BASE}/livekit/rtc/v1${QV1}"; rec "LiveKit /rtc/v1: маршрут (через web)" "$WS_STATUS" "$WS_NOTE"
   ws_upgrade_probe "${BASE}/livekit/rtc${Q}"; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (через web)" "$WS_STATUS" "$WS_NOTE"
   PUB="${LIVEKIT_PUBLIC_URL:-}"
   if [ "$NO_PUBLIC" = 1 ] || [ -z "$PUB" ]; then rec "LiveKit WebSocket /rtc (публичный URL)" SKIP "не проверялся"
   else
     purl="$(printf '%s' "$PUB" | sed -e 's#^wss://#https://#' -e 's#^ws://#http://#')"
-    ws_upgrade_probe "${purl%/}/rtc/v1${Q}" 8; ws_route_verdict "$WS_CODE" proxy "${purl%/}/rtc/v1"; rec "LiveKit /rtc/v1: маршрут (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
+    ws_upgrade_probe "${purl%/}/rtc/v1${QV1}" 8; ws_route_verdict "$WS_CODE" proxy "${purl%/}/rtc/v1${QV1}"; rec "LiveKit /rtc/v1: маршрут (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
     ws_upgrade_probe "${purl%/}/rtc${Q}" 8; ws_verdict "$WS_CODE" proxy; rec "LiveKit WebSocket /rtc (публичный URL)" "$WS_STATUS" "${PUB}: $WS_NOTE"
   fi
 else rec "LiveKit WebSocket" WARNING "не удалось получить тестовый токен у backend"; fi
@@ -196,9 +200,9 @@ log "==============================================="
 if [ "$FAILS" -eq 0 ]; then
   [ "$WARNS" -gt 0 ] && warn "Предупреждений: $WARNS (не блокируют; см. пояснения выше)"
   if [ "$INTEG_FAILS" -gt 0 ]; then
-    warn "Сервисы Peregovorka работают, но проверка интеграций не пройдена: ${INTEG_NAMES[*]}. Откройте Администрирование → LDAP и доступ → Диагностика."
-    log "Integration issues: ${INTEG_NAMES[*]}"; log "Smoke test: INTEGRATION"; exit 3
+    warn "Сервисы Peregovorka работают, но внешняя проверка не пройдена (интеграции или публичный адрес) — причины ниже."
+    log "Integration issues: $(printf '%s; ' "${INTEG_NOTES[@]}" | cut -c1-600)"; log "Smoke test: INTEGRATION"; exit 3
   fi
   ok "SMOKE TEST ПРОЙДЕН"; log "Smoke test: PASS"; exit 0
 fi
-fail "SMOKE TEST: ошибок — $FAILS"; exit 1
+fail "SMOKE TEST: ошибок — $FAILS"; log "Critical issues: $(printf '%s; ' "${FAIL_NOTES[@]}" | cut -c1-600)"; exit 1

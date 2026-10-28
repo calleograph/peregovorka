@@ -45,40 +45,25 @@ OUTB="$(runbk)"; RCB=$?
 t "BACKUP_COPY_DIR недоступен: предупреждение, а локальная копия остаётся (код 0)" bash -c '[ "$1" -eq 0 ] && ls "$2"/data/backups/pg-bk-db-*.dump >/dev/null && printf "%s" "$3" | grep -q "удалось скопировать"' _ "$RCB" "$TMP/bk" "$OUTB"
 
 # ---------------------------------------------------------------------------------- WebSocket LiveKit: маршрут и Upgrade
-t "ws_route_verdict: 400 «join_request is required» = маршрут /rtc/v1 существует (OK)" bash -c 'set -u; source "$1"; WS_BODY="join_request is required"; ws_route_verdict 400 direct; [ "$WS_STATUS" = OK ] && [[ "$WS_NOTE" == *существует* ]]' _ "$VL"
-t "ws_route_verdict: 400 без «join_request» через публичный адрес — OK, если с неверным токеном LiveKit отвечает 401; иначе FAIL (реальные ошибки по-прежнему видны)" bash -c 'set -u; source "$1"
+t "ws_route_verdict: 101 на запросе с join_request (как у браузера) = маршрут существует (OK); join_request в запросе — фиксированная константа" bash -c 'set -u; source "$1"; ws_route_verdict 101 proxy; [ "$WS_STATUS" = OK ] && [[ "$WS_NOTE" == *"join_request"* ]] && [ -n "$RTC_JOIN_REQUEST" ]' _ "$VL"
+t "ws_route_verdict: причина не-101 уточняется запросом /rtc/v1/validate (как делает SDK), итог не смягчается: 200 → FAIL про Upgrade, 404 → FAIL про устаревший LiveKit, 401 → WARNING про ключи, 400 с чужим текстом → FAIL про WAF, 400 «join_request is required» при переданном параметре → FAIL про отброшенный query" bash -c 'set -u; source "$1"
   d="$(mktemp -d)"; cat > "$d/s.py" <<PY
 import http.server, sys
 mode = sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        bad = "access_token=invalid" in self.path
-        code, body = ((401, b"invalid authorization token") if bad and mode != "all400" else (400, b"Bad Request"))
-        if mode == "404": code, body = 404, b"not found"
+        validate = self.path.startswith("/rtc/v1/validate")
+        if not validate: code, body = (404, b"404 page not found") if mode == "404" else (400, b"Bad Request")
+        else: code, body = {"upgrade": (200, b"success"), "404": (404, b"404 page not found"), "token": (401, b"invalid authorization token"), "waf": (400, b"Request blocked"), "strip": (400, b"join_request is required")}[mode]
         self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PY
-  verdict() { python3 "$d/s.py" "$1" "$2" & local p=$!; sleep 0.7; ws_upgrade_probe "http://127.0.0.1:$1/rtc/v1?access_token=VALID" 4; ws_route_verdict "$WS_CODE" proxy "http://127.0.0.1:$1/rtc/v1"; kill $p 2>/dev/null; wait $p 2>/dev/null; printf %s "$WS_STATUS"; }
-  a="$(verdict 18741 normal)"; b="$(verdict 18742 all400)"; c="$(verdict 18743 404)"
-  rm -rf "$d"; [ "$a$b$c" = OKFAILFAIL ]' _ "$VL"
-t "ws_route_verdict: перепроверка не маскирует сбои — 401 с чужим текстом, 403, 502, недоступный адрес дают FAIL (новая ветка после 400)" bash -c 'set -u; source "$1"
-  d="$(mktemp -d)"; cat > "$d/s.py" <<PY
-import http.server, sys
-mode = sys.argv[2]
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        bad = "access_token=invalid" in self.path
-        if not bad: code, body = (401, b"invalid authorization token") if mode == "auth" else (400, b"Bad Request")
-        else: code, body = {"plain401": (401, b"Unauthorized"), "403": (403, b"forbidden"), "502": (502, b"Bad Gateway"), "auth": (401, b"invalid authorization token")}[mode]
-        self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-    def log_message(self, *a): pass
-http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-PY
-  verdict() { python3 "$d/s.py" "$1" "$2" & local p=$!; sleep 0.7; ws_upgrade_probe "http://127.0.0.1:$1/rtc/v1?access_token=VALID" 4; ws_route_verdict "$WS_CODE" proxy "http://127.0.0.1:$1/rtc/v1"; kill $p 2>/dev/null; wait $p 2>/dev/null; printf %s "$WS_STATUS"; }
-  a="$(verdict 18751 plain401)"; b="$(verdict 18752 403)"; c="$(verdict 18753 502)"
-  WS_BODY="Bad Request"; ws_route_verdict 400 proxy "http://127.0.0.1:1/rtc/v1"; f=$WS_STATUS
-  rm -rf "$d"; [ "$a$b$c$f" = FAILFAILFAILFAIL ]' _ "$VL"
+  verdict() { python3 "$d/s.py" "$1" "$2" & local p=$!; sleep 0.7; ws_upgrade_probe "http://127.0.0.1:$1/rtc/v1?access_token=VALID&join_request=$RTC_JOIN_REQUEST" 4; ws_route_verdict "$WS_CODE" proxy "http://127.0.0.1:$1/rtc/v1?access_token=VALID&join_request=$RTC_JOIN_REQUEST"; kill $p 2>/dev/null; wait $p 2>/dev/null; printf "%s|%s" "$WS_STATUS" "$WS_NOTE"; }
+  a="$(verdict 18741 upgrade)"; b="$(verdict 18742 404)"; c="$(verdict 18743 token)"; e="$(verdict 18744 waf)"; f="$(verdict 18745 strip)"
+  rm -rf "$d"
+  [ "${a%%|*}" = FAIL ] && [[ "$a" == *"Upgrade"*"WAF"* ]] && [ "${b%%|*}" = FAIL ] && [[ "$b" == *"устаревшей"* ]] && [ "${c%%|*}" = WARNING ] && [[ "$c" == *LIVEKIT_API_KEY* ]] && [ "${e%%|*}" = FAIL ] && [[ "$e" == *"без признаков ответа LiveKit"* ]] && [ "${f%%|*}" = FAIL ] && [[ "$f" == *"отбрасывает"* ]]' _ "$VL"
+t "ws_route_verdict: недоступный адрес и 5xx остаются ошибками с названным этапом (диагностика не маскирует сбои)" bash -c 'set -u; source "$1"; WS_RC=7; WS_BODY=""; ws_route_verdict 000 proxy "http://127.0.0.1:1/rtc/v1"; a="$WS_STATUS$WS_NOTE"; WS_BODY=""; ws_route_verdict 502 proxy; [ "$WS_STATUS" = FAIL ] && [[ "$a" == WARNING*"TCP"* ]]' _ "$VL"
 t "host nginx: схема порта определяется сама — HTTPS с SNI (доверенный сертификат) 200, HTTP 200, недоверенный сертификат — предупреждение, «plain HTTP to HTTPS port» — HTTPS, а не «сайт не работает», чужой vhost — 404" bash -c 'set -u; source "$1"
   d="$(mktemp -d)"; cat > "$d/s.py" <<PY
 import http.server, socket, ssl, sys
@@ -107,7 +92,7 @@ PY
   a="$(CURL_CA_BUNDLE="$d/c.pem" probe 18761 https)"; b="$(probe 18762 https)"; c="$(probe 18763 http)"; e="$(probe 18764 plain-on-https)"; f="$(probe 18765 http other.example.org)"
   rm -rf "$d"
   [ "$a" = "https/200/" ] && [[ "$b" == https/000/*"не доверяет"* ]] && [ "$c" = "http/200/" ] && [[ "$e" == https/000/*"TLS-соединение"* ]] && [ "$f" = "http/404/" ]' _ "$VL"
-t "ws_route_verdict: 400 без join_request — FAIL, 404 — FAIL с указанием на устаревший LiveKit, 101 — OK" bash -c 'set -u; source "$1"; WS_BODY="что-то другое"; ws_route_verdict 400; a=$WS_STATUS; WS_BODY=""; ws_route_verdict 404; b=$WS_STATUS; n=$WS_NOTE; ws_route_verdict 101; [ "$a$b$WS_STATUS" = FAILFAILOK ] && [[ "$n" == *rtc/v1* ]]' _ "$VL"
+t "ws_route_verdict без адреса для уточнения: 400 и 404 — FAIL, 404 указывает на устаревший LiveKit" bash -c 'set -u; source "$1"; WS_BODY="что-то другое"; ws_route_verdict 400; a=$WS_STATUS; WS_BODY=""; ws_route_verdict 404; b=$WS_STATUS; n=$WS_NOTE; [ "$a$b" = FAILFAIL ] && [[ "$n" == *rtc/v1* ]]' _ "$VL"
 t "ws_verdict 400 напрямую: это ответ самого LiveKit, прокси не обвиняется" bash -c 'set -u; source "$1"; WS_BODY="boom"; ws_verdict 400 direct; [ "$WS_STATUS" = FAIL ] && [[ "$WS_NOTE" == *"самого LiveKit"* ]] && [[ "$WS_NOTE" != *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *boom* ]]' _ "$VL"
 t "ws_verdict через прокси: напрямую 101 → виноват прокси" bash -c 'set -u; source "$1"; DIRECT_WS_CODE=101; WS_BODY=""; ws_verdict 400 proxy; [[ "$WS_NOTE" == *"проблема в прокси"* ]] && [[ "$WS_NOTE" == *Upgrade* ]]' _ "$VL"
 t "ws_verdict через прокси: напрямую тоже 400 → «прокси ни при чём»" bash -c 'set -u; source "$1"; DIRECT_WS_CODE=400; WS_BODY=""; ws_verdict 400 proxy; [[ "$WS_NOTE" == *"прокси ни при чём"* ]] && [[ "$WS_NOTE" != *"проблема в прокси"* ]]' _ "$VL"

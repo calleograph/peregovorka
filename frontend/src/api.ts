@@ -462,12 +462,12 @@ export interface AccessState {
 }
 export interface RoomJournalEvent { at: string; kind: string; action: string; title: string; actor: string | null; meeting_id: string | null; result: string | null; details: Record<string, unknown> }
 export interface RoomJournal { items: RoomJournalEvent[]; total: number; kinds: Record<string, string> | string[]; meetings: { id: string; started_at: string }[] }
-export type PerMode = "none" | "leader" | "all" | "selected";
+export type PerMode = "none" | "leader" | "owner" | "organizer" | "all" | "selected";
 export interface PerMaterial { mode: PerMode; users: { ref: string; name: string; email: string }[] }
 export interface MailDeliverySpec {
   per_material?: Record<string, PerMaterial>; converted_from_legacy?: boolean;
   enabled: boolean; archive?: boolean; materials: string[]; template_id?: string | null; formats?: string[]; if_missing?: "send" | "skip";
-  recipients: { leaders: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
+  recipients: { leaders: boolean; owner?: boolean; organizer?: boolean; participants: boolean; users: { ref: string; name: string; email: string }[]; emails: string[] };
 }
 export interface DeliveryRecipient { email: string; name: string; source: string; problem: string | null }
 export interface DeliveryMaterialInfo { kind: string; label: string; describe?: string; available?: boolean; reason?: string | null }
@@ -538,7 +538,7 @@ export interface RemoteInfo {
 }
 /** Итог обновления раздельно: обновление ПО · развёртывание · работоспособность · проверка интеграций (LDAP и т. п.). */
 export interface UpdateOutcome {
-  update: string; deployment: string; health: string; integrations: string; integration_issues: string; needs_attention: boolean;
+  update: string; deployment: string; health: string; integrations: string; integration_issues: string; health_reason?: string; needs_attention: boolean;
 }
 /** Помощник обновлений на сервере (служба от root). problem: not_installed — не запущен; no_privileges — запущен без прав (служба прежней версии). */
 export type HelperState = "ok" | "manual_process" | "wrong_user" | "unresponsive" | "installed_inactive" | "failed" | "stale_unit" | "not_installed";

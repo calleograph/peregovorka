@@ -85,11 +85,11 @@ clean_exec() {
 fresh_env() { sanitize_project_env; load_env "$ENV_FILE"; }
 
 STATE="idle"; REQ_ID=""; STEP_NO=0; STEP_TOTAL=$STEPS_DEFAULT; STEP_NAME=""; STARTED=0; FINISHED=0; EXIT_CODE=null; RESULT=""; BY=""
-ACTION=""; REPAIR_ID=""; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""; PING_ID=""; PING_AT=0
+ACTION=""; REPAIR_ID=""; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""; ST_REASON=""; PING_ID=""; PING_AT=0
 write_status() {
-  printf '{"ts":%s,"pid":%s,"uid":%s,"state":"%s","action":"%s","repair_id":"%s","request_id":"%s","step_no":%s,"step_total":%s,"step_name":"%s","started_at":%s,"finished_at":%s,"exit_code":%s,"result":"%s","update_status":"%s","deploy_status":"%s","health_status":"%s","integration_status":"%s","integration_issues":"%s","by":"%s","ping_id":"%s","ping_at":%s,"project":"%s"}\n' \
+  printf '{"ts":%s,"pid":%s,"uid":%s,"state":"%s","action":"%s","repair_id":"%s","request_id":"%s","step_no":%s,"step_total":%s,"step_name":"%s","started_at":%s,"finished_at":%s,"exit_code":%s,"result":"%s","update_status":"%s","deploy_status":"%s","health_status":"%s","integration_status":"%s","integration_issues":"%s","health_reason":"%s","by":"%s","ping_id":"%s","ping_at":%s,"project":"%s"}\n' \
     "$(date +%s)" "$$" "$(id -u)" "$STATE" "$ACTION" "$REPAIR_ID" "$REQ_ID" "$STEP_NO" "$STEP_TOTAL" "$(jesc "$STEP_NAME")" "$STARTED" "$FINISHED" "$EXIT_CODE" "$RESULT" \
-    "$ST_UPDATE" "$ST_DEPLOY" "$ST_HEALTH" "$ST_INTEG" "$(jesc "$ST_ISSUES")" "$(jesc "$BY")" "$PING_ID" "$PING_AT" "$COMPOSE_PROJECT_NAME" \
+    "$ST_UPDATE" "$ST_DEPLOY" "$ST_HEALTH" "$ST_INTEG" "$(jesc "$ST_ISSUES")" "$(jesc "$ST_REASON")" "$(jesc "$BY")" "$PING_ID" "$PING_AT" "$COMPOSE_PROJECT_NAME" \
     | atomic_write "$CH/status.json"
 }
 
@@ -179,14 +179,14 @@ strip_ansi() { sed -u -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r$//'; }
 # Итог раздельно: обновление · развёртывание · работоспособность · интеграции (их пишет update.sh в last-update.state).
 read_update_statuses() {
   ST_UPDATE="$(upd_state_get update_status)"; ST_DEPLOY="$(upd_state_get deploy_status)"; ST_HEALTH="$(upd_state_get health_status)"
-  ST_INTEG="$(upd_state_get integration_status)"; ST_ISSUES="$(upd_state_get integration_issues)"
+  ST_INTEG="$(upd_state_get integration_status)"; ST_ISSUES="$(upd_state_get integration_issues)"; ST_REASON="$(upd_state_get health_reason)"
 }
 
 do_update() { # do_update FORCE PULL
   local force="$1" pull="$2" rc line args=(--yes --env "$ENV_FILE")
   [ "$force" = 1 ] && args+=(--force-build)
   [ "$pull" = 1 ] && args+=(--pull)
-  ACTION="update"; REPAIR_ID=""; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""
+  ACTION="update"; REPAIR_ID=""; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""; ST_REASON=""
   STATE="updating"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_NAME="запуск"; write_status
   reset_log
   printf '=== Обновление запущено %s (запросил: %s) ===\n$ scripts/update.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" "${args[*]}" >> "$LOG"
@@ -220,7 +220,7 @@ do_scan() { # обнаружить известные проблемы → repai
 do_repair() { # do_repair ID — одно исправление из белого списка; проверка ID ещё раз здесь, а не только в веб-интерфейсе
   local id="$1" rc
   repair_id_valid "$id" || { warn "Исправление «$id» не из белого списка — отклонено"; return 2; }
-  ACTION="repair"; REPAIR_ID="$id"; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""
+  ACTION="repair"; REPAIR_ID="$id"; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""; ST_REASON=""
   STATE="repairing"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_TOTAL=1; STEP_NAME="Исправление"; write_status
   reset_log
   printf '=== Исправление «%s» запущено %s (запросил: %s) ===\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" >> "$LOG"

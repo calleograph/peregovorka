@@ -252,6 +252,7 @@ def outcome_summary(st: dict) -> dict | None:
     health = st.get("health_status") or ("ok" if res == "ok" else "unknown")
     integ = st.get("integration_status") or ("ok" if res == "ok" else "unknown")
     return {"update": upd, "deployment": dep, "health": health, "integrations": integ, "integration_issues": st.get("integration_issues") or "",
+            "health_reason": st.get("health_reason") or "",
             "needs_attention": integ == "fail" or res != "ok"}
 
 
