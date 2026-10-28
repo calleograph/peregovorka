@@ -1092,3 +1092,43 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
   .rooms-toolbar { gap: 8px; }
 }
 @media (max-width: 860px) { .hist-table td.num, .hist-table td.h-people { width: auto; max-width: none; text-align: left; } }
+
+/* ---- 0.46.1: экран перед входом — главное действие всегда в видимой области. Карточка не выше окна, настройки прокручиваются ВНУТРИ, нижняя панель с «Войти» закреплена;
+   сведения о встрече — короткие метки + «Подробнее о встрече» (записи и шифрование остаются на виду). Высота считается по dvh, а не по ширине. ---- */
+.prejoin-pro { --pj-avail: calc(100dvh - var(--hdr, 57px) - 50px); min-height: 0; height: var(--pj-avail); display: flex; align-items: center; justify-content: center; padding: 4px 0; box-sizing: border-box; }
+.pj-card { max-height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.pj-card.pj-single { max-height: 100%; }
+.pj-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+.pj-foot { flex: none; position: static; box-shadow: 0 -8px 18px -14px rgba(0, 0, 0, .35); }
+.pj-hero h1 { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.pj-video { max-height: min(46dvh, 100%); width: min(100%, calc(46dvh * 16 / 9)); margin-inline: auto; }
+.pj-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pj-chips li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: var(--soft); color: var(--text); font-size: 12.5px; line-height: 1.3; }
+.pj-chips li svg { color: var(--accent); flex: none; }
+.pj-more { font-size: 13px; }
+.pj-more > summary { cursor: pointer; color: var(--accent); font-weight: 600; width: fit-content; border-radius: 6px; }
+.pj-more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pj-more[open] > summary { margin-bottom: 6px; }
+.pj-more .pj-facts { grid-template-columns: 1fr; }
+.pc-perm .pc-p { display: none; }
+.pc-perm { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pc-perm .pc-h { flex: 1 1 100%; }
+.pc-perm .pc-pills { flex: 1 1 auto; }
+.pc-perm .pc-btns { margin-top: 0; }
+@media (max-width: 860px) {
+  .prejoin-pro { height: auto; min-height: 0; display: block; padding: 0; }
+  .pj-card { max-height: calc(100dvh - var(--hdr, 57px) - 84px); }       /* внизу — закреплённая панель разделов (≈68px) */
+  .pj-body { grid-template-columns: minmax(0, 1fr); }
+  .pj-video { max-height: 30dvh; width: min(100%, calc(30dvh * 16 / 9)); }
+  .pj-foot { position: static; }
+}
+@media (max-height: 640px) {
+  .pj-hero { padding-top: 6px; padding-bottom: 6px; } .pj-hero .pill { display: none; } .pj-mark { width: 34px; height: 34px; font-size: 14px; }
+  .pj-body { padding-top: 8px; padding-bottom: 8px; gap: 8px 14px; } .pj-desc { display: none; }
+  .pj-video { max-height: 38dvh; width: min(100%, calc(38dvh * 16 / 9)); }
+  .pj-foot { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (max-height: 460px) { .pj-hero h1 { font-size: 16px; } .pj-video { max-height: 30dvh; width: min(100%, calc(30dvh * 16 / 9)); } }
+.pj-foot .pj-rec { padding: 5px 10px; font-size: 12.5px; }
+.pj-body { scrollbar-gutter: stable; }
+@media (max-height: 460px) { .pj-hero { padding: 4px 12px; } .pj-mark { display: none; } .pj-hero h1 { font-size: 15px; } }

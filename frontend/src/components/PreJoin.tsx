@@ -57,22 +57,26 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
           <div className="pj-col pj-info">
             {onHw && !busy && room?.camera_allowed !== false && <div className="pj-preview" ref={setPreviewHost} />}
             {room?.description && <p className="pj-desc">{room.description}</p>}
-            <h2 className="pj-h">Перед входом</h2>
-            <ul className="pj-facts" aria-label="Что произойдёт после входа">
-              {facts.map(([icon, title, text], i) => (
-                <li key={title} style={{ "--i": i } as CSSProperties}>
-                  <span className="fi" aria-hidden><Icon name={icon} size={16} /></span>
-                  <div><b>{title}</b><p>{text}</p></div>
-                </li>
-              ))}
+            <ul className="pj-chips" aria-label="Что произойдёт после входа">
+              {facts.map(([icon, title], i) => <li key={title} style={{ "--i": i } as CSSProperties}><Icon name={icon} size={14} /> {title}</li>)}
             </ul>
             {room?.e2ee_mode && room.e2ee_mode !== "off" && (
               <div className="alert info pj-rec" role="note"><b>Сквозное шифрование звука и видео.</b> {room.e2ee_mode === "full"
                 ? "Сервер не имеет ключа: стенограмма и серверная запись звука в этой комнате отключены. Нужен современный браузер."
                 : "Стенограмму и запись выполняет доверенный компонент сервера, которому комната выдаёт ключ встречи. Нужен современный браузер."}</div>
             )}
-            {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
             {site.recording_text && <div className="alert info pj-rec" role="note" style={{ whiteSpace: "pre-wrap" }}>{site.recording_text}</div>}
+            <details className="pj-more" open={mode !== "regular" ? true : undefined}>
+              <summary>Подробнее о встрече</summary>
+              <ul className="pj-facts" aria-label="Подробности">
+                {facts.map(([icon, title, text], i) => (
+                  <li key={title} style={{ "--i": i } as CSSProperties}>
+                    <span className="fi" aria-hidden><Icon name={icon} size={16} /></span>
+                    <div><b>{title}</b><p>{text}</p></div>
+                  </li>
+                ))}
+              </ul>
+            </details>
           </div>
           {onHw && !busy && (
             <div className="pj-col pj-hw">
@@ -97,6 +101,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
                      onKeyDown={(e) => { if (e.key === "Enter" && password && !busy) onJoin(); }} />
             </label>
           )}
+          {rec && <div className="alert warn pj-rec" role="note"><Icon name="record" size={15} /> {rec}</div>}
           {micDenied && <div className="alert warn pj-nomic" role="alert"><b>Вы войдёте без возможности говорить:</b> микрофон заблокирован в браузере.</div>}
           {error && <div className="alert error" role="alert">{error}</div>}
           {progress}
