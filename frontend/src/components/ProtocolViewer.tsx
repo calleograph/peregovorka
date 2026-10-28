@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./Dialogs";
 import GenerationInfo, { docState, generationLine } from "./GenerationInfo";
 import JobProgress from "./JobProgress";
 import { Markdown } from "./Markdown";
+import GlassDoc from "./GlassDoc";
 import Menu from "./Menu";
 
 interface Props {
@@ -17,13 +18,15 @@ interface Props {
   /** Формировать заново могут администратор, руководитель и организатор; остальные только читают. */
   canGenerate?: boolean;
   onDeleted: (id: string) => void;
+  /** Перейти к реплике стенограммы по времени от начала встречи (клик по метке источника [ЧЧ:ММ:СС] в документе). */
+  onGoto?: (sec: number, segmentId: number | null) => void;
 }
 
 const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summary: "Краткое резюме" };
-const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["html", "Веб-страница (.html)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
+const FORMATS: [ExportFormat, string][] = [["html", "Веб-страница (.html)"], ["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
 
 /** Просмотр протокола: отрисованный Markdown / исходник, правка вручную, копирование, скачивание, повторное формирование. */
-export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, onRegenerate, onDeleted, canGenerate = true }: Props) {
+export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, onRegenerate, onDeleted, canGenerate = true, onGoto }: Props) {
   const [mode, setMode] = useState<"view" | "source" | "edit">("view");
   const [draft, setDraft] = useState(item.content ?? "");
   const [title, setTitle] = useState(item.title ?? "");
@@ -32,6 +35,10 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const content = item.content ?? "";
+  // метка источника [ЧЧ:ММ:СС] — время суток; time_base — секунды суток начала встречи: разность — секунды от начала встречи
+  const goto = onGoto && typeof item.time_base === "number"
+    ? (clock: string) => { const [h, m, sc] = clock.split(":").map(Number); onGoto(Math.max(0, (((h * 3600 + m * 60 + sc) - (item.time_base as number)) + 86400) % 86400), null); }
+    : undefined;
   const cancelJob = async () => {
     setCancelling(true);
     try { await api.cancelProtocol(meetingId, item.id); } catch (e) { setCancelling(false); flash(false, (e as ApiError).message); }
@@ -84,10 +91,12 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         </span>
       </div>
       <p className="muted small" style={{ margin: "0 0 2px" }}>{fmt(item.created_at)}{item.created_by ? ` · сформировал: ${item.created_by}` : ""}{item.edited_at ? ` · изменён: ${fmt(item.edited_at)}` : ""}</p>
-      <details className="tech-details"><summary>Как создан документ</summary>
-        <p className="muted small" style={{ margin: "4px 0" }}>{item.model ? `Модель: ${item.model}` : "Модель не указана"}{item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}</p>
-        {generationLine(item) && <p className="small" style={{ margin: "0 0 6px" }}>{generationLine(item)}</p>}
-      </details>
+      {(isAdmin || item.can_edit) && (
+        <details className="tech-details"><summary>Как создан документ</summary>
+          <p className="muted small" style={{ margin: "4px 0" }}>{item.model ? `Модель: ${item.model}` : "Модель не указана"}{item.edited_at ? ` · правка: ${item.edited_by ?? ""} ${fmt(item.edited_at)}` : ""}</p>
+          {isAdmin && generationLine(item) && <p className="small" style={{ margin: "0 0 6px" }}>{generationLine(item)}</p>}
+        </details>
+      )}
       {item.truncated && <div className="alert error" role="alert"><b>Документ может быть неполным:</b> ответ модели оборван по лимиту длины. Проверьте текст целиком, увеличьте «Максимальную длину ответа» для этой задачи (Администрирование → Языковая модель) или сформируйте документ заново другой моделью.</div>}
 
       {item.warnings?.map((w) => (
@@ -102,6 +111,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
           </Menu>
         </span>
         <Menu label="Скачать">
+          <a href={`${api.protocolExportUrl(meetingId, item.id, "html")}&inline=true`} target="_blank" rel="noopener noreferrer">Открыть для просмотра и печати</a>
           {FORMATS.map(([f, l]) => <a key={f} href={api.protocolExportUrl(meetingId, item.id, f)} download>{l}</a>)}
         </Menu>
         {mode !== "edit" && item.can_edit && <button className="btn" onClick={() => { setDraft(content); setMode("edit"); }}>Редактировать</button>}
@@ -110,7 +120,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
       </div>
       {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
 
-      {mode === "view" && <Markdown source={content} />}
+      {mode === "view" && <GlassDoc source={content} title={item.title ?? undefined} kind={item.kind === "summary" ? "summary" : "protocol"} onGoto={goto} />}
       {mode === "source" && <pre className="proto card" style={{ overflow: "auto" }}>{content}</pre>}
       {mode === "edit" && (
         <div>
@@ -129,7 +139,7 @@ export default function ProtocolViewer({ meetingId, item, isAdmin, onChanged, on
         </div>
       )}
 
-      <GenerationInfo item={item} />
+      {isAdmin && <GenerationInfo item={item} />}
       {item.instruction && (
         <details style={{ marginTop: 12 }}>
           <summary className="muted small">Инструкция, по которой создан документ</summary>

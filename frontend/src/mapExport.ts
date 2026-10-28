@@ -3,8 +3,8 @@ import type { Segment } from "./api";
 
 export interface MapPayload { data: unknown; meta: Record<string, unknown> | null; canEdit?: boolean; categories?: unknown }
 
-/** Что из сведений о формировании попадает в выгрузку: только для подписи «чем и за сколько сделано». Ни имён профилей API, ни кто нажал, ни адресов. */
-const META_PUBLIC = ["model", "model_title", "started_at", "finished_at", "duration_s", "chunks", "retries", "warnings", "items_from_protocol"] as const;
+/** Что из сведений о формировании попадает в файл: только предупреждения о полноте. Ни модели, ни повторов и токенов (это диагностика для администратора), ни имён профилей API, ни кто нажал, ни адресов. */
+const META_PUBLIC = ["warnings", "items_from_protocol", "coverage_pct"] as const;
 export function publicMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
   if (!meta) return null;
   const out: Record<string, unknown> = {};
@@ -30,10 +30,11 @@ function inlineScript(js: string): string {
 export function buildStandaloneHtml(title: string, css: string, js: string, payload: MapPayload): string {
   const body: MapPayload = { data: payload.data, meta: publicMeta(payload.meta) };
   return `<!doctype html>
-<html lang="ru">
+<html lang="ru" class="gd gd-html" data-gd-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>${escapeHtml(title)}</title>
 <style>

@@ -32,6 +32,11 @@ s = Settings(database_url=f"sqlite+aiosqlite:///{DATA}/dev.db", redis_url="redis
              app_master_key=base64.b64encode(os.urandom(32)).decode(), internal_api_token="t", ldap_admin_group_dn=ADMIN_GROUP, data_dir=DATA,
              docs_enabled=False, log_level="WARNING", segment_consumer_block_ms=50, app_version=open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "VERSION"), encoding="utf-8").read().strip(), app_git_commit="abcdef012345")
 app = create_app(s, redis_factory=lambda _: FakeAsyncRedis(decode_responses=True), directory_factory=lambda _: d)
+if os.environ.get("LIVE_MOCK_LLM") == "1":          # подставная модель вместо провайдера: документы и карта строятся без сети (см. mock_llm.py)
+    import httpx
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import mock_llm
+    app.state.test_transports = {"llm": httpx.MockTransport(mock_llm.handler)}
 # Только для стенда: подсунуть реплику стенограммы (вместо ASR) — так проверяются стенограмма, история и протоколы без распознавания речи
 from fastapi import Body
 @app.post("/__dev/segment")
@@ -262,6 +267,24 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
             for i, p in enumerate(people[:n]):
                 db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st + dt.timedelta(seconds=i * 20), left_at=st + dt.timedelta(minutes=55)))
             db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=room.id, user_id=people[0].id, participant_identity="u0", started_at=st, ended_at=st + dt.timedelta(seconds=4), text="Начинаем."))
+        if os.environ.get("LIVE_MOCK_LLM") == "1":       # завершённая встреча с живой стенограммой: на ней проверяются протокол и карта разговора
+            st = utcnow() - dt.timedelta(hours=3)
+            m = Meeting(room_id=rooms[0].id, livekit_room="lk-mock", started_at=st, ended_at=st + dt.timedelta(minutes=48), end_reason="manual", started_by_user_id=alice.id)
+            db.add(m); db.flush()
+            for p in (alice, people[1], people[2]):
+                db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st, left_at=st + dt.timedelta(minutes=48)))
+            script = [("Начнём с сертификатов сервера: срок действия заканчивается в ноябре.", 0), ("Нужно заменить сертификаты до конца октября, пока не поздно.", 1),
+                      ("Решили заменить сертификаты сервера до конца октября.", 2), ("Кто у нас закажет новые сертификаты у поставщика?", 0),
+                      ("Закажу сертификаты в понедельник, согласую цену.", 1), ("Теперь про бюджет на следующий год, нужны рамки расходов.", 0),
+                      ("Предлагаю оставить расходы на уровне этого года.", 2), ("Решили утвердить бюджет на уровне этого года.", 0),
+                      ("Сколько стоит лицензия на мониторинг в следующем году?", 1), ("Пока неизвестно, поставщик обещал прислать цену.", 2),
+                      ("Последний вопрос: доступ подрядчиков к тестовому стенду.", 0), ("Подрядчикам нужен доступ только на чтение.", 1),
+                      ("Решили выдать подрядчикам доступ только на чтение на две недели.", 2), ("Спасибо всем, на этом закончим.", 0)]
+            who = (alice, people[1], people[2])
+            for i, (text, w) in enumerate(script):
+                a = st + dt.timedelta(seconds=i * 200 + 5)
+                db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=rooms[0].id, user_id=who[w].id, participant_identity=who[w].sam_account_name,
+                                         started_at=a, ended_at=a + dt.timedelta(seconds=40), text=text))
         rooms[6].moderators.append(RoomModerator(subject_type="user", subject_ref=ALICE_GUID, display_name="Алиса Крылова"))   # alice — руководитель «Продаж»
         db.commit()
     eng.dispose()

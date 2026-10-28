@@ -73,7 +73,7 @@ function block(b: Block, key: number, goto: Goto): ReactNode {
       const kinds = labels.map((l) => (["№", "N", "#"].includes(l) ? "num" : /где в записи|источник/i.test(l) ? "src" : ""));
       return (
         <div key={key} className="gd-tablewrap">
-          <table className="gd-table stack">
+          <table className="gd-table gd-stack">
             <thead><tr>{b.head.map((h, k) => <th key={k} className={kinds[k] || undefined}>{inline(h, goto)}</th>)}</tr></thead>
             <tbody>{b.rows.map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j} className={kinds[j] || undefined} data-label={labels[j]}>{inline(c, goto)}</td>)}</tr>)}</tbody>
           </table>
@@ -161,6 +161,16 @@ export function GlassArticle({ source, title, kind = "protocol", onGoto }: { sou
   );
 }
 
+/** Таблица стилей документов подключается при первом показе документа (а не на каждой странице приложения); повторно не добавляется. */
+function ensureCss(): boolean {
+  if (typeof document !== "undefined" && !document.getElementById("gd-css")) {
+    const l = document.createElement("link");
+    l.id = "gd-css"; l.rel = "stylesheet"; l.href = "/glassdoc.css";
+    document.head.appendChild(l);
+  }
+  return true;
+}
+
 const THEME_KEY = "pg-gd-theme";
 function savedTheme(): "light" | "dark" {
   try { return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light"; } catch { return "light"; }
@@ -168,6 +178,7 @@ function savedTheme(): "light" | "dark" {
 
 /** Документ целиком: панель «Тема / Печать», светлое оформление «Стекло» по умолчанию (тема системы и приложения на документ не влияет), чистая печать. */
 export default function GlassDoc({ source, title, kind = "protocol", onGoto, extraTools }: { source: string; title?: string; kind?: GdKind; onGoto?: Goto; extraTools?: ReactNode }) {
+  useState(ensureCss);
   const [theme, setTheme] = useState<"light" | "dark">(savedTheme);
   const [printing, setPrinting] = useState(false);
   const flip = () => { const t = theme === "dark" ? "light" : "dark"; setTheme(t); try { localStorage.setItem(THEME_KEY, t); } catch { /* без хранилища тема просто не запоминается */ } };

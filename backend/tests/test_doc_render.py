@@ -44,9 +44,9 @@ def test_document_has_the_contract_and_tables_keep_full_text_without_ellipsis():
     assert d["tasks"][1]["assignee"] == "не назначен" and d["tasks"][1]["deadline"] == "не указан"
     md = dr.document_to_markdown(d)
     assert LONG.strip() in md and "…" not in md and "..." not in md, "длинная ячейка переносится, а не обрезается"
-    assert "| № | Тема | Что обсуждали | Чем закончилось | Где в записи |" in md and "| № | Задача | Ответственный | Срок | Где в записи |" in md
-    assert "## Итог" in md and "Обсудили падение сервера и бюджет." in md
-    assert "Кто платит за лицензию / и когда" in md, "символ | не ломает таблицу"
+    assert "### 1. Падение сервера" in md and "**Чем закончилось:**" in md and "| № | Задача | Ответственный | Срок | Где в записи |" in md, "обсуждения — карточками, поручения — таблицей"
+    assert "## Краткие итоги" in md and "Обсудили падение сервера и бюджет." in md and "## Решения\n\n1. Обновить библиотеку до 4.2.1" in md
+    assert "## Открытые вопросы\n\n1. Кто платит за лицензию" in md
     assert "неполным" not in md
     assert "неполным" in dr.document_to_markdown(sample_doc(incomplete=True)) and "[проверить]" in dr.document_to_markdown(sample_doc(incomplete=True))
 
@@ -54,7 +54,8 @@ def test_document_has_the_contract_and_tables_keep_full_text_without_ellipsis():
 def test_empty_values_are_honest_not_invented():
     d = dr.build_document(["Переговорка: Тест"], [], summary="")
     md = dr.document_to_markdown(d)
-    assert "темы не выделены" in md and "не принималось" in md and "## Итог" not in md
+    assert "темы не выделены" in md, "обсуждения показываются всегда, чтобы не было пустого документа"
+    assert all(h not in md for h in ("## Краткие итоги", "## Решения", "## Задачи и поручения", "## Открытые вопросы")), "пустые разделы не выводятся"
 
 
 # ------------------------------------------------------------------------------------------------ Word
@@ -67,15 +68,15 @@ def test_docx_tables_wrap_repeat_header_and_wide_tables_go_landscape():
     sec = doc.sections[0]
     assert sec.orientation == WD_ORIENT.LANDSCAPE and sec.page_width > sec.page_height, "таблицы из 5 столбцов — альбомная ориентация"
     usable = sec.page_width - sec.left_margin - sec.right_margin
-    assert len(doc.tables) >= 4
+    assert len(doc.tables) >= 1
     for t in doc.tables:
         xml = t._tbl.xml
         assert "w:tblHeader" in xml and "w:cantSplit" in xml, "шапка повторяется на страницах, строки не рвутся"
         widths = [c.width for c in t.rows[0].cells]
         assert sum(widths) <= usable + 10 and all(w and w > 0 for w in widths), "таблица не выходит за поля"
-    assert LONG.strip()[:80] in doc.tables[0].cell(1, 2).text and "…" not in doc.tables[0].cell(1, 2).text
-    fills = [t._tbl.xml for t in doc.tables]
-    assert any("E3F2E7" in x for x in fills) and any("E3EEFA" in x for x in fills), "решения — зелёный, задачи — голубой акцент"
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert LONG.strip()[:80] in text and "…" not in text, "обсуждение — полный текст абзацем, без обрезки"
+    assert any("E3EEFA" in t._tbl.xml for t in doc.tables), "задачи — голубой акцент"
     # узкие таблицы остаются книжными; код — моноширинным с фоном
     narrow = xd.to_docx("# T\n\n| № | Решение |\n|---|---|\n| 1 | да |\n\n```\nGet-Service | Where-Object Status -eq Running\n```\n")
     d2 = Document(io.BytesIO(narrow))
@@ -89,20 +90,21 @@ def test_html_is_self_contained_escaped_and_marks_sections():
     d = sample_doc()
     d["decisions"][0]["decision"] = "<script>alert(1)</script> Обновить"
     page = xd.to_html(dr.document_to_markdown(d), "Протокол <b>x</b>")
-    assert page.startswith("<!doctype html>") and "<style>" in page and "<script" not in page.replace("&lt;script", "")
+    assert page.startswith("<!doctype html>") and "<style>" in page
+    assert page.count("<script") == 1, "единственный скрипт — собственный (тема и «копировать»), текст модели скриптом стать не может"
     assert "&lt;script&gt;alert(1)" in page and "<title>Протокол &lt;b&gt;x&lt;/b&gt;</title>" in page
-    assert '<table class="ok">' in page and '<table class="info">' in page and "<thead>" in page
+    assert 'class="gd-tablewrap"' in page and "<thead>" in page and 'class="gd-cards"' in page
     assert LONG.strip() in page.replace("&amp;", "&")
     flag = xd.to_html(dr.document_to_markdown(sample_doc(incomplete=True)))
-    assert 'class="flag"' in flag
+    assert "gd-notice" in flag and "неполным" in flag
 
 
 # ------------------------------------------------------------------------------------------------ структурный режим внешней модели
 def test_external_model_in_structured_mode_gets_the_same_document_and_falls_back_when_it_cannot():
     llm, seen = llm_for(good)
     res = asyncio.run(run_llm_pipeline(llm, kind="protocol", instruction="x", text=TEXT, limit=100000, local=None, anonymized=False, external_structured=True))
-    assert "## Итог" in res.text and "| № | Задача | Ответственный | Срок | Где в записи |" in res.text and res.structured["document"]["decisions"]
-    assert len(seen) == 5 and "response_format" in seen[0]
+    assert "## Краткие итоги" in res.text and "| № | Задача | Ответственный | Срок | Где в записи |" in res.text and res.structured["document"]["decisions"]
+    assert len(seen) == 2 and "response_format" in seen[0] and "response_format" not in seen[1], "один запрос на фрагмент (темы, решения, поручения, вопросы вместе) + один на итог; раньше было 5"
     # модель не отдаёт разбираемый JSON → обычный режим с предупреждением
     llm2, seen2 = llm_for(lambda b, n: reply("**Протокол**\n\n* пункт") if "response_format" not in b else reply("не JSON"))
     res2 = asyncio.run(run_llm_pipeline(llm2, kind="protocol", instruction="x", text=TEXT, limit=100000, local=None, anonymized=False, external_structured=True))
@@ -112,7 +114,7 @@ def test_external_model_in_structured_mode_gets_the_same_document_and_falls_back
 def test_summary_failure_leaves_the_document_without_summary_but_complete():
     llm, _ = llm_for(lambda b, n: good(b, n) if "response_format" in b else reply("Оборвано", finish="length"))
     res = asyncio.run(ex.structured_pipeline(llm, kind="protocol", instruction="x", text=TEXT, limit=100000))
-    assert "## Итог" not in res.text and "| № | Решение | Где в записи |" in res.text and not res.structured["document"]["incomplete"]
+    assert "## Краткие итоги" not in res.text and "## Решения" in res.text and not res.structured["document"]["incomplete"]
 
 
 # ------------------------------------------------------------------------------------------------ выгрузка через API
@@ -143,4 +145,4 @@ def test_protocol_can_be_downloaded_as_html_docx_and_markdown(tmp_path, director
 
 def test_standalone_html_forbids_network_and_scripts_by_its_own_policy():
     page = xd.to_html(dr.document_to_markdown(sample_doc()), "T")
-    assert 'http-equiv="Content-Security-Policy"' in page and "default-src 'none'" in page and "script-src" not in page, "документ — без скриптов и сети"
+    assert 'http-equiv="Content-Security-Policy"' in page and "default-src 'none'" in page and "script-src 'sha256-" in page and "http://" not in page and "https://" not in page, "документ — без сети и чужих скриптов: разрешён только собственный по хэшу"

@@ -67,7 +67,7 @@ def _table(b: Block) -> str:
             lab = _esc(labels[i]) if i < len(labels) else ""
             tds.append(f'<td{f" class={chr(34)}{k}{chr(34)}" if k else ""} data-label="{lab}">{_runs(c)}</td>')
         body.append("<tr>" + "".join(tds) + "</tr>")
-    return f'<div class="gd-tablewrap"><table class="gd-table stack"><thead><tr>{th}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+    return f'<div class="gd-tablewrap"><table class="gd-table gd-stack"><thead><tr>{th}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
 
 
 def _is_fact(b: Block) -> tuple[str, list[Run]] | None:

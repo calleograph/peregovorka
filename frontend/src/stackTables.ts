@@ -7,7 +7,7 @@ export function canStack(headers: string[], rowCells: number[]): boolean {
 }
 
 function annotate(t: HTMLTableElement): void {
-  if (t.classList.contains("hist-table") || t.classList.contains("no-stack")) return;      // у истории своя раскладка карточек
+  if (t.classList.contains("hist-table") || t.classList.contains("no-stack") || t.closest(".gd")) return;      // у истории и у документов Glass своя раскладка карточек
   const hr = t.tHead && t.tHead.rows.length === 1 ? t.tHead.rows[0] : null;
   const heads = hr ? [...hr.cells] : [];
   const headers = heads.map((c) => (c.textContent ?? "").trim());

@@ -35,6 +35,7 @@ from .topic_categories import CAT_IDS, CAT_LABEL, CATEGORIES  # noqa: F401
 
 log = logging.getLogger("app.conv_map")
 
+COMMON_STEMS = {norm(w)[:4] for w in ("обсуждение", "обсудили", "вопрос", "встреча", "совещание", "тема", "также", "нужно", "необходимо", "участники", "говорили", "решили")}
 MAP_VERSION = 2
 CHUNK_CHARS = 6000                 # размер фрагмента для локальной модели (как у протокола: общий кэш требует одинаковых фрагментов)
 MIN_TOPICS = 12                    # сколько тем карта показывает самое меньшее; для длинной встречи — больше (см. max_topics)
@@ -109,6 +110,24 @@ def speaker_seconds(lines: list[MapLine]) -> dict[str, int]:
 _WS = re.compile(r"\s+")
 
 
+_END = ".!?…»)\""
+
+
+def whole_sentences(text: str, limit: int) -> str:
+    """Текст не длиннее `limit` и ЗАКОНЧЕННЫЙ: целые предложения. Оборванный хвост (ответ модели упёрся в лимит) отбрасывается; если не уместилось ни одного целого
+    предложения — обрезка по границе слова с многоточием (видно, что это сокращение, а не оборванная мысль)."""
+    t = _WS.sub(" ", str(text or "")).strip()
+    if len(t) <= limit and t[-1:] in _END:
+        return t
+    cut = t[:limit]
+    ends = [m.end() for m in re.finditer(r"[.!?…](?=\s|$)", cut)]
+    if ends and ends[-1] >= 20:
+        return cut[:ends[-1]].strip()
+    if len(t) <= limit:                                   # короткий текст без точки — не обрыв по лимиту, а так записан: завершаем точкой
+        return t + "."
+    return cut.rsplit(" ", 1)[0].rstrip(" ,;:—-") + "…"
+
+
 def clean_text(s: object, limit: int) -> str:
     """Текст от модели: без управляющих символов и разметки-обёрток, ограниченной длины. Показывается как обычный текст."""
     t = _WS.sub(" ", str(s or "")).strip(" \t\"'«»`*#-—")
@@ -173,7 +192,7 @@ def merge_topics(found: list[dict]) -> list[dict]:
             g = {"key": key, "title": t["title"], "summaries": [], "cats": {}, "segs": []}
             groups.append(g)
         if t["summary"] and t["summary"] not in g["summaries"]:
-            g["summaries"].append(t["summary"])
+            g["summaries"].append(whole_sentences(t["summary"], 400))
         dur = max(1, t["end_s"] - t["start_s"])
         g["cats"][t["category"]] = g["cats"].get(t["category"], 0) + dur
         g["segs"].append({"start_s": t["start_s"], "end_s": t["end_s"], "first": t["first"], "last": t["last"]})
@@ -220,7 +239,7 @@ def cap_topics(groups: list[dict], run: MapRun, limit: int = MIN_TOPICS) -> None
         return
     ranked = sorted(groups, key=lambda g: -sum(s["end_s"] - s["start_s"] for s in g["segs"]))
     keep, rest = ranked[:limit - 1], ranked[limit - 1:]
-    members = [{"title": g["title"], "summary": " ".join(g["summaries"][:1])[:220], "start_s": min(s["start_s"] for s in g["segs"]), "end_s": max(s["end_s"] for s in g["segs"])}
+    members = [{"title": g["title"], "summary": whole_sentences(" ".join(g["summaries"][:1]), 220), "start_s": min(s["start_s"] for s in g["segs"]), "end_s": max(s["end_s"] for s in g["segs"])}
                for g in sorted(rest, key=lambda g: min(s["start_s"] for s in g["segs"]))]
     other = {"key": frozenset(), "title": "Прочие обсуждения", "summaries": ["Короткие темы, не вошедшие в основной перечень: " + "; ".join(m["title"] for m in members[:12]) + ("…" if len(members) > 12 else "") + "."],
              "cats": {"general": 1}, "segs": [s for g in rest for s in g["segs"]], "other": True, "members": members}
@@ -250,7 +269,7 @@ def build_map(meeting: Meeting, tz_name: str, lines: list[MapLine], groups: list
                 sources.append({"sec": first.rel, "speaker": first.line.speaker, "quote": first.line.text[:QUOTE_LEN], "segment_id": first.seg_id})
         cat = max(g["cats"], key=lambda c: g["cats"][c]) if g["cats"] else "general"
         title = g["title"]
-        summary = " ".join(g["summaries"][:3])[:520]
+        summary = whole_sentences(" ".join(g["summaries"][:3]), 520)
         t = {"id": OTHER_ID if g.get("other") else topic_id(title), "ai_title": title, "title": title, "summary": summary, "category": cat, "ai_category": cat, "total_s": total,
              "segments": [{"start_s": s["start_s"], "end_s": s["end_s"]} for s in segs],
              "speakers": [{"name": n, "seconds": v} for n, v in sorted(sp.items(), key=lambda kv: -kv[1])],
@@ -265,16 +284,13 @@ def build_map(meeting: Meeting, tz_name: str, lines: list[MapLine], groups: list
         seen[t["id"]] = n + 1
         if n:
             t["id"] += f"_{n + 1}"
-    # соседи по времени: тема непосредственно до/после
-    spans = sorted(((s["start_s"], s["end_s"], t["id"]) for t in topics for s in t["segments"]))
-    rel: dict[str, list[str]] = {t["id"]: [] for t in topics}
-    for (a0, a1, ai), (b0, b1, bi) in zip(spans, spans[1:]):
-        if ai != bi and b0 - a1 <= 120:
-            for x, y in ((ai, bi), (bi, ai)):
-                if y not in rel[x]:
-                    rel[x].append(y)
+    # связанные обсуждения — по СМЫСЛУ (общие основы слов в названии и описании), а не по соседству во времени: хронология видна на шкале «Ход встречи»
+    stems = {t["id"]: _stems(f"{t['title']} {t['summary']}") - COMMON_STEMS for t in topics}
     for t in topics:
-        t["related"] = rel[t["id"]][:4]
+        mine = stems[t["id"]]
+        scored = sorted(((len(mine & stems[o["id"]]) / max(1, min(len(mine), len(stems[o["id"]]))), len(mine & stems[o["id"]]), o["id"])
+                         for o in topics if o["id"] != t["id"] and o.get("id") != OTHER_ID), reverse=True)
+        t["related"] = [i for sim, n, i in scored if n >= 2 and sim >= 0.34][:3]
     unassigned = {"decisions": [], "tasks": [], "questions": []}
     if structured and clock_offset is not None:
         _attach_items(topics, structured, clock_offset, unassigned)
@@ -448,7 +464,7 @@ class MapService:
         m = rec.meta or {}
         if m.get("keep"):
             return m["keep"]
-        return {k: v for k, v in m.items() if k not in ("previous", "regen_failed")} if rec.data and rec.status == "ready" else None
+        return {k: v for k, v in m.items() if k not in ("previous", "regen_failed", "facts")} if rec.data and rec.status == "ready" else None
 
     async def _commit_request(self, db: AsyncSession, meeting_id: uuid.UUID, rec: ConversationMap) -> ConversationMap:
         try:

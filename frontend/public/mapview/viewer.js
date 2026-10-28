@@ -162,18 +162,26 @@
     h.appendChild(el("h1", "", "Карта разговора"));
     h.appendChild(el("div", "sub", m.title));
     var facts = [fullDate(m.started_at, m.timezone), duration(m.duration_s), m.participants + " " + plural(m.participants, "участник", "участника", "участников")];
-    if (meta.model_title || meta.model) facts.push(meta.model_title || meta.model);
-    if (meta.duration_s != null) facts.push("сформировано за " + duration(meta.duration_s));
     var f = el("div", "facts");
     facts.forEach(function (x) { f.appendChild(el("span", "chip", x)); });
     h.appendChild(f);
+    var tools = el("div", "tools noprint");
+    var tb = btn(root.document.documentElement.getAttribute("data-gd-theme") === "dark" ? "Светлая тема" : "Тёмная тема", "ghost", function () {
+      var dark = root.document.documentElement.getAttribute("data-gd-theme") !== "dark";
+      root.document.documentElement.setAttribute("data-gd-theme", dark ? "dark" : "light");
+      tb.textContent = dark ? "Светлая тема" : "Тёмная тема";
+      try { root.localStorage.setItem("pg-gd-theme", dark ? "dark" : "light"); } catch (e) { /* в окне без доступа к хранилищу тема просто не запоминается */ }
+    });
+    tools.appendChild(tb);
+    if (STATE.standalone) tools.appendChild(btn("Печать", "ghost", function () { root.print(); }));
+    h.appendChild(tools);
     return h;
   }
 
   function timeline() {
     var d = STATE.data, total = Math.max(d.meeting.duration_s, 1), L = lit();
     var sec = el("section", "card");
-    sec.appendChild(el("h2", "", "Как шла встреча"));
+    sec.appendChild(el("h2", "", "Ход встречи"));
     var bar = el("div", "tl");
     timelineBars(d.topics, total).forEach(function (b) {
       var t = topicById(b.topic);
@@ -185,6 +193,11 @@
       hover(s, function () { return [t.title, wallClock(d.meeting.started_at, d.meeting.timezone, b.start) + "–" + wallClock(d.meeting.started_at, d.meeting.timezone, b.end), duration(b.end - b.start)]; });
       bar.appendChild(s);
     });
+    (d.unprocessed || []).forEach(function (u) {
+      var g = el("span", "gap"); g.style.left = (u.start_s / total * 100) + "%"; g.style.width = Math.max(0.4, (u.end_s - u.start_s) / total * 100) + "%";
+      hover(g, function () { return ["Не разобрано", clockOffset(u.start_s) + "–" + clockOffset(u.end_s), u.why || ""]; });
+      bar.appendChild(g);
+    });
     sec.appendChild(bar);
     var ax = el("div", "ax");
     ticks(total).forEach(function (s) {
@@ -193,15 +206,24 @@
       ax.appendChild(tk);
     });
     sec.appendChild(ax);
-    if (d.uncovered_s > 60) sec.appendChild(el("p", "note", "Светлые промежутки — время, не отнесённое ни к одной теме (" + duration(d.uncovered_s) + "): паузы, приветствия, короткие реплики."));
+    var skipped = (d.unprocessed || []).reduce(function (a, u) { return a + (u.end_s - u.start_s); }, 0);
+    if (skipped > 0) {
+      var warn = el("p", "note warn", "Не удалось разобрать " + (d.unprocessed.length) + " " + plural(d.unprocessed.length, "участок", "участка", "участков") + " (≈ " + duration(skipped) + ") — они отмечены на шкале штриховкой. Темы в этих местах могут быть пропущены; сверьте со стенограммой.");
+      sec.appendChild(warn);
+    }
+    var plain = Math.max(0, d.uncovered_s - skipped);
+    if (plain > 60) sec.appendChild(el("p", "note", "Светлые промежутки — время вне тем (" + duration(plain) + "): паузы, приветствия, короткие реплики."));
     return sec;
   }
 
   function treemap() {
     var d = STATE.data, L = lit();
     var sec = el("section", "card");
-    sec.appendChild(el("h2", "", "На что ушла встреча"));
-    sec.appendChild(el("p", "note", "Размер блока — потраченное время, а не важность темы."));
+    var h2 = el("h2", "", "Темы обсуждения");
+    var hint = el("span", "hint", "ⓘ");                          // вместо постоянного пояснения — ненавязчивая подсказка
+    hint.title = "Площадь блока отражает продолжительность обсуждения"; hint.tabIndex = 0; hint.setAttribute("role", "img"); hint.setAttribute("aria-label", hint.title);
+    h2.appendChild(hint);
+    sec.appendChild(h2);
     var box = el("div", "tm");
     sec.appendChild(box);
     STATE.tmFill = function () {                                    // после вставки в страницу: нужна реальная ширина, чтобы блоки были пропорциональны времени
@@ -216,8 +238,8 @@
         c.addEventListener("click", function () { select(t.id); });
         var inner = el("span", "in");
         c.setAttribute("aria-label", t.title + ", " + duration(t.total_s));
-        if (r.w >= 72 && r.h >= 32) inner.appendChild(el("span", "ct", t.title));      // в совсем маленьком блоке название — во всплывающей подсказке
-        if (r.w > 90 && r.h > 54) {
+        if (r.w >= 104 && r.h >= 44) inner.appendChild(el("span", "ct", t.title));      // в маленьком блоке мелкого текста нет: название — во всплывающей подсказке и в карточке темы
+        if (r.w > 140 && r.h > 72) {
           var a = topicSpan(t);
           inner.appendChild(el("span", "cm", duration(t.total_s) + " · " + wallClock(d.meeting.started_at, d.meeting.timezone, a[0]) + "–" + wallClock(d.meeting.started_at, d.meeting.timezone, a[1])));
         }
@@ -240,7 +262,7 @@
 
   function people() {
     var d = STATE.data, sec = el("section", "card");
-    sec.appendChild(el("h2", "", "Кто говорил"));
+    sec.appendChild(el("h2", "", "Активность участников"));
     var max = Math.max.apply(null, d.speakers.map(function (s) { return s.seconds; }).concat([1]));
     var list = el("div", "ppl");
     d.speakers.forEach(function (s) {
@@ -302,7 +324,7 @@
   function card() {
     var t = STATE.selected && topicById(STATE.selected), d = STATE.data, m = d.meeting;
     var sec = el("section", "card topic");
-    if (!t) { sec.appendChild(el("p", "note", "Выберите тему на шкале или в блоке «На что ушла встреча» — здесь появятся её содержание, участники, решения и ссылки на реплики.")); return sec; }
+    if (!t) { sec.appendChild(el("p", "note", "Выберите тему на шкале или среди тем обсуждения — здесь появятся её содержание, участники, решения и ссылки на реплики.")); return sec; }
     var a = topicSpan(t);
     var top = el("div", "tc-top");
     top.appendChild(el("h2", "c-" + t.category + " ttl", t.title));
@@ -315,10 +337,10 @@
     if (t.summary) {
       var s = el("div", "blk"); s.appendChild(el("h4", "", "Краткое содержание"));
       s.appendChild(el("p", "", t.summary));
-      s.appendChild(el("span", "badge ai", "AI-интерпретация"));
+      s.appendChild(el("span", "badge ai", "Вывод языковой модели — сверяйте с репликами"));
       sec.appendChild(s);
     }
-    var segs = el("div", "blk"); segs.appendChild(el("h4", "", t.segments.length > 1 ? "Фрагменты обсуждения (возвращались к теме)" : "Фрагмент обсуждения"));
+    var segs = el("div", "blk"); segs.appendChild(el("h4", "", t.segments.length > 1 ? "Когда обсуждали (возвращались к теме)" : "Когда обсуждали"));
     var sr = el("div", "chips");
     t.segments.forEach(function (x) {
       var c = btn(wallClock(m.started_at, m.timezone, x.start_s) + "–" + wallClock(m.started_at, m.timezone, x.end_s) + " · " + duration(x.end_s - x.start_s), "src", function () { post({ type: "goto", sec: x.start_s, segmentId: null }); });
@@ -336,12 +358,12 @@
       sec.appendChild(el("p", "note", d.items_from_protocol ? "Решений, задач и открытых вопросов по этой теме в протоколе нет." : "Решения и задачи подтягиваются из протокола. Сформируйте протокол локальной моделью — они появятся здесь вместе с цитатами-основаниями."));
     }
     if (t.sources && t.sources.length) {
-      var so = el("div", "blk"); so.appendChild(el("h4", "", "Реплики-источники"));
+      var so = el("div", "blk"); so.appendChild(el("h4", "", "Подтверждающие реплики"));
       t.sources.forEach(function (x) { var r = el("div", "it"); r.appendChild(goto(x)); if (x.quote) r.appendChild(el("blockquote", "", "«" + x.quote + "»")); so.appendChild(r); });
       sec.appendChild(so);
     }
     if (t.related && t.related.length) {
-      var rl = el("div", "blk"); rl.appendChild(el("h4", "", "Соседние по времени темы"));
+      var rl = el("div", "blk"); rl.appendChild(el("h4", "", "Связанные обсуждения"));
       var ch = el("div", "chips");
       t.related.forEach(function (id) { var o = topicById(id); if (o) ch.appendChild(btn(o.title, "chipbtn c-" + o.category, function () { select(o.id); })); });
       rl.appendChild(ch); sec.appendChild(rl);
@@ -351,15 +373,8 @@
 
   function footer() {
     var meta = STATE.meta || {}, f = el("footer", "ft");
-    var bits = [];
-    if (meta.model_title || meta.model) bits.push("Модель: " + (meta.model_title || meta.model));
-    if (meta.started_at) bits.push("Начато: " + new Date(meta.started_at).toLocaleTimeString("ru-RU"));
-    if (meta.finished_at) bits.push("Готово: " + new Date(meta.finished_at).toLocaleTimeString("ru-RU"));
-    if (meta.duration_s != null) bits.push("Время: " + duration(meta.duration_s));
-    if (meta.chunks != null) bits.push("Фрагментов: " + meta.chunks + ", повторов: " + (meta.retries || 0));
-    f.appendChild(el("div", "", bits.join(" · ")));
     (meta.warnings || []).forEach(function (w) { f.appendChild(el("div", "warn", w)); });
-    f.appendChild(el("div", "", "Темы и краткое содержание — интерпретация модели; время, участники и цитаты берутся из стенограммы. Проверьте важные выводы по первоисточнику."));
+    f.appendChild(el("div", "", "Темы и краткое содержание — вывод языковой модели; время, участники и цитаты берутся из стенограммы. Важное сверяйте с подтверждающими репликами."));
     return f;
   }
 
@@ -394,6 +409,7 @@
 
   function boot() {
     app = document.getElementById("app");
+    try { if (root.localStorage.getItem("pg-gd-theme") === "dark") root.document.documentElement.setAttribute("data-gd-theme", "dark"); } catch (e) { /* хранилища нет — остаётся светлая тема */ }
     var embedded = document.getElementById("pg-map-data");
     if (embedded) {
       STATE.standalone = true;

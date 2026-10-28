@@ -205,7 +205,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           <div style={{ minWidth: 0 }}>
             {opened ? <ProtocolViewer key={opened.id} meetingId={meetingId} item={opened} isAdmin={isAdmin}
                 onChanged={(p) => { setOpened(p); void loadProtocols(); }} onDeleted={afterDelete}
-                canGenerate={canGen} onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
+                canGenerate={canGen} onGoto={gotoSource} onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
               : <div className="card muted">Выберите документ слева.</div>}
           </div>
         </div>
@@ -227,7 +227,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       {tab === "journal" && (isAdmin || meeting.can_manage_access) && <RoomJournal roomId={meeting.room_id} meetingId={meetingId} />}
 
       {tab === "map" && finished && (
-        <MapTab meetingId={meetingId} roomName={meeting.room_name} startedAt={meeting.started_at} hasMaterials={segments.length > 0} onGoto={gotoSource} onToast={toast} />
+        <MapTab meetingId={meetingId} roomName={meeting.room_name} startedAt={meeting.started_at} hasMaterials={segments.length > 0} isAdmin={isAdmin} onGoto={gotoSource} onToast={toast} />
       )}
 
       {tab === "chat" && (

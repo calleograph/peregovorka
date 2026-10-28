@@ -7,6 +7,8 @@ import re
 from html import escape
 from pathlib import Path
 
+from .glassdoc_css import GLASSDOC_CSS
+
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "mapview"
 META_PUBLIC = ("warnings", "coverage_pct")        # в документе только то, что нужно читателю: предупреждение о неполноте; модель, токены и повторы — в диагностике администратора
 
@@ -17,14 +19,15 @@ def _json_for_script(value: object) -> str:
 
 
 def standalone_html(title: str, data: object, meta: dict | None) -> bytes:
-    css = (ASSETS / "viewer.css").read_text(encoding="utf-8")
+    css = GLASSDOC_CSS + "\n" + (ASSETS / "viewer.css").read_text(encoding="utf-8")
     js = (ASSETS / "viewer.js").read_text(encoding="utf-8")
     body = {"data": data, "meta": {k: meta[k] for k in META_PUBLIC if k in meta} if meta else None}
     return f"""<!doctype html>
-<html lang="ru">
+<html lang="ru" class="gd gd-html" data-gd-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>{escape(title)}</title>
 <style>

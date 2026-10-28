@@ -11,6 +11,8 @@ interface Props {
   startedAt: string;
   /** Есть ли что-то для построения карты (реплики). */
   hasMaterials: boolean;
+  /** Администратор видит диагностику формирования (модель, обращения, повторы, токены, покрытие); остальным она не нужна. */
+  isAdmin?: boolean;
   /** Перейти к реплике стенограммы (секунды от начала встречи; id записи, если известен). */
   onGoto: (sec: number, segmentId: number | null) => void;
   onToast?: (text: string, kind?: "ok" | "error") => void;
@@ -27,7 +29,7 @@ export function humanSeconds(s: number): string {
 const STAGE: Record<string, string> = { pending: "В очереди", running: "Обрабатывается", ready: "Готово", failed: "Ошибка", none: "Не сформирована" };
 
 /** Вкладка «Карта разговора»: формирование в фоне, просмотр (окно /mapview без доступа к API), правки тем, скачивание HTML. */
-export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, onGoto, onToast }: Props) {
+export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, isAdmin = false, onGoto, onToast }: Props) {
   const [st, setSt] = useState<MapState | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,8 +89,8 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
   const download = async () => {
     if (!st?.data) return;
     try {
-      const [css, js] = await Promise.all(["viewer.css", "viewer.js"].map((f) => fetch(`/mapview/${f}`).then((r) => { if (!r.ok) throw new Error(f); return r.text(); })));
-      downloadText(buildStandaloneHtml(`Карта разговора — ${roomName}`, css, js, { data: st.data, meta: st.meta ?? null }), `${fileBase(roomName, startedAt)}_карта.html`, "text/html;charset=utf-8");
+      const [glass, css, js] = await Promise.all(["/glassdoc.css", "/mapview/viewer.css", "/mapview/viewer.js"].map((f) => fetch(f).then((r) => { if (!r.ok) throw new Error(f); return r.text(); })));
+      downloadText(buildStandaloneHtml(`Карта разговора — ${roomName}`, `${glass}\n${css}`, js, { data: st.data, meta: st.meta ?? null }), `${fileBase(roomName, startedAt)}_карта.html`, "text/html;charset=utf-8");
       void api.logMapExport(meetingId).catch(() => undefined);
     } catch { onToast?.("Не удалось собрать файл: не загрузились файлы просмотра", "error"); }
   };
@@ -118,21 +120,27 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, o
             {working ? "Формируется…" : genWord}</button>}
         </div>
         <p className="muted small" style={{ margin: "6px 0 0" }}>
-          Темы встречи, их порядок и длительность, участники и ссылки на реплики. Карту строит {st.plan.model ? <b>{st.plan.model}</b> : "языковая модель"}
-          {st.plan.local ? " (локально, текст не покидает сервер)" : ""}; на сервере без видеокарты это занимает несколько минут. Пользовательские правки хранятся отдельно и при пересоздании не теряются.
+          Темы встречи, их порядок и длительность, участники и ссылки на реплики.{choices.length > 0 && st.plan.model ? <> Карту строит <b>{st.plan.model}</b>{st.plan.local ? " (локально, текст не покидает сервер)" : ""}.</> : ""} Правки хранятся отдельно и при переформировании не теряются.
         </p>
         {!st.plan.ready && <div className="alert info small" style={{ marginTop: 8 }}>{st.plan.reason}</div>}
-        {failedRegen && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Новую карту построить не удалось{failedRegen.model ? ` (модель ${failedRegen.model})` : ""}: {failedRegen.error}. Показана прежняя карта; можно выбрать другую модель («Модель…») и повторить.</div>}
+        {failedRegen && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Новую карту построить не удалось{failedRegen.model ? ` (модель ${failedRegen.model})` : ""}: {(failedRegen.error ?? "").replace(/[.\s]+$/, "")}. Показана прежняя карта; можно выбрать другую модель («Модель…») и повторить.</div>}
         {st.stale && <div className="alert info small" style={{ marginTop: 8 }}>Идёт пересоздание: пока показана прежняя карта. Она заменится, только если новая будет построена успешно.</div>}
         {st.status === "failed" && <div className="alert error small" style={{ marginTop: 8 }}>{st.error || "Не удалось построить карту."}</div>}
         {working && <div className="alert info small" style={{ marginTop: 8 }}>
           {st.status === "pending" ? "Карта в очереди: тяжёлые задачи выполняются по одной." : "Модель разбирает стенограмму по частям."} Можно уйти со страницы — карта сформируется в фоне.
           {secs("requested_at") === null && typeof meta.requested_at === "string" && <> Запрошено в {new Date(meta.requested_at).toLocaleTimeString("ru-RU")}.</>}
         </div>}
-        {st.status === "ready" && typeof meta.started_at === "string" && typeof meta.finished_at === "string" && (
-          <p className="muted small" style={{ margin: "6px 0 0" }}>
-            Начато {new Date(meta.started_at).toLocaleTimeString("ru-RU")} · готово {new Date(meta.finished_at).toLocaleTimeString("ru-RU")} · время {secs("duration_s") !== null ? humanSeconds(secs("duration_s") as number) : "—"}
-            · фрагментов {String(meta.chunks ?? "—")}, повторов {String(meta.retries ?? 0)}{meta.completion_tokens ? `, ответ ${String(meta.completion_tokens)} токенов` : ""}{meta.tokens_per_s ? ` (${String(meta.tokens_per_s)}/с)` : ""}</p>
+        {isAdmin && st.status === "ready" && (
+          <details className="tech-details"><summary>Диагностика формирования</summary>
+            <table className="table small"><tbody>
+              <tr><th>Модель</th><td>{String(meta.model_title ?? meta.model ?? "—")}{meta.llm_profile ? ` · ${String(meta.llm_profile)}` : ""}{meta.llm_once ? " · выбрана на один раз" : ""}</td></tr>
+              <tr><th>Время</th><td>{secs("duration_s") !== null ? humanSeconds(secs("duration_s") as number) : "—"}{typeof meta.started_at === "string" ? ` · начато ${new Date(meta.started_at).toLocaleTimeString("ru-RU")}` : ""}</td></tr>
+              <tr><th>Обращений к модели</th><td>{String(meta.llm_calls ?? "—")} · фрагментов {String(meta.chunks ?? "—")} · повторов {String(meta.retries ?? 0)}{meta.length_hits ? ` · обрывов по длине ${String(meta.length_hits)}` : ""}</td></tr>
+              <tr><th>Токены</th><td>{meta.prompt_tokens ? `вход ${String(meta.prompt_tokens)}, ` : ""}ответ {String(meta.completion_tokens ?? "—")}{meta.tokens_per_s ? ` (${String(meta.tokens_per_s)}/с)` : ""}</td></tr>
+              {meta.coverage_pct !== undefined && <tr><th>Охвачено стенограммы</th><td>{String(meta.coverage_pct)}%</td></tr>}
+              {failedRegen && <tr><th>Последняя неудача</th><td>{failedRegen.model ? `${failedRegen.model}: ` : ""}{failedRegen.error}</td></tr>}
+            </tbody></table>
+          </details>
         )}
       </div>
       {(st.status === "ready" || !!st.stale) && !!st.data && (

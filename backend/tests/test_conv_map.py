@@ -176,7 +176,7 @@ def test_map_data_has_time_participants_sources_and_its_own_verified_items_witho
     assert [q["text"] for q in t2["questions"]] == ["Сколько выделят на следующий год"] and not t1["decisions"]
     assert data["speakers"][0]["name"] in ("Анна", "Иван") and abs(sum(s["share"] for s in data["speakers"]) - 1) < 0.01
     assert [c["id"] for c in data["categories"]] == ["infra", "finance"], "на карте только использованные категории"
-    assert data["topics"][0]["related"] == [data["topics"][1]["id"]] or data["topics"][0]["related"] == []
+    assert isinstance(data["topics"][0]["related"], list)
 
 
 def test_a_fragment_the_model_could_not_answer_is_marked_on_the_map_instead_of_being_hidden():
@@ -468,3 +468,30 @@ def test_old_map_is_shown_while_a_new_one_is_being_built(tmp_path, directory):
         c.portal.call(_mark)
         st = c.get(f"{API}/{mid}/map").json()
         assert st["status"] == "running" and st["stale"] is True and st["data"]["topics"] == topics
+
+
+# ------------------------------------------------------------------------------------------------ законченные описания и связанные обсуждения
+def test_topic_descriptions_are_whole_sentences_never_cut_in_the_middle():
+    long = "Обсудили перенос релиза на ноябрь. Выяснили, что тесты не готовы. " + "Подробности про сертификаты и ключи шифрования, которые мы будем менять на всех серверах " * 8
+    out = cm.whole_sentences(long, 120)
+    assert out == "Обсудили перенос релиза на ноябрь. Выяснили, что тесты не готовы." and out[-1] == "."
+    assert cm.whole_sentences("Одно длинное предложение без точек " * 10, 60).endswith("…"), "не уместилось целое предложение — видно, что это сокращение"
+    assert cm.whole_sentences("Коротко без точки", 100) == "Коротко без точки."
+    assert cm.whole_sentences("Всё хорошо.", 100) == "Всё хорошо."
+
+
+def test_related_topics_are_related_by_meaning_not_by_being_next_to_each_other_in_time():
+    lines = lines_of([(0, 60, "Анна", "а"), (60, 120, "Иван", "б"), (120, 180, "Анна", "в"), (180, 240, "Иван", "г")])
+    groups = [{"key": frozenset(), "title": "Замена сертификатов сервера", "summaries": ["Нужно заменить сертификаты сервера до ноября."], "cats": {"dev": 1}, "segs": [{"start_s": 0, "end_s": 60}]},
+              {"key": frozenset(), "title": "Бюджет следующего года", "summaries": ["Утвердили бюджет на следующий год."], "cats": {"finance": 1}, "segs": [{"start_s": 60, "end_s": 120}]},
+              {"key": frozenset(), "title": "Покупка новых сертификатов", "summaries": ["Заказываем сертификаты сервера у нового поставщика."], "cats": {"dev": 1}, "segs": [{"start_s": 180, "end_s": 240}]}]
+
+    class M:
+        room = type("R", (), {"name": "Т"})
+        started_at = __import__("datetime").datetime(2026, 10, 1, 10, 0, tzinfo=__import__("datetime").timezone.utc)
+        ended_at = None
+    data = cm.build_map(M, "UTC", lines, groups, None, None)
+    by = {t["title"]: t for t in data["topics"]}
+    sert, bud, buy = by["Замена сертификатов сервера"], by["Бюджет следующего года"], by["Покупка новых сертификатов"]
+    assert buy["id"] in sert["related"] and sert["id"] in buy["related"], "темы про сертификаты связаны, хотя между ними — бюджет"
+    assert bud["id"] not in sert["related"] and sert["id"] not in bud["related"], "соседство во времени связью не считается"

@@ -264,7 +264,7 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
                                                                "length_hits", "finish", "max_tokens", "limit_note", "input_chars", "output_chars", "prompt_tokens",
                                                                "completion_tokens", "structured", "failed", "error_code")}}
     # привязка времён документа к стенограмме: секунды суток начала встречи в часовом поясе, в котором записаны метки [ЧЧ:ММ:СС] (переход от пункта к реплике)
-    d["time_base"] = (p.meta or {}).get("time_base")
+    d["time_base"] = ((p.meta or {}).get("time_base") or {}).get("offset_s")
     # техническая диагностика формирования (обращения, повторы по причинам, токены, покрытие) — только администратору; обычному пользователю достаточно состояния и предупреждений
     if admin:
         d["diagnostics"] = (p.meta or {}).get("diag")

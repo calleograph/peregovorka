@@ -21,7 +21,7 @@ describe("выгрузка карты в HTML", () => {
   });
   it("в файл не попадают служебные сведения: профиль API, кто нажал, токены", () => {
     const meta = { model: "m", model_title: "Qwen", llm_profile: "Корпоративный шлюз", created_by: "Иванов", duration_s: 12, token: "secret", warnings: ["w"] };
-    expect(publicMeta(meta)).toEqual({ model: "m", model_title: "Qwen", duration_s: 12, warnings: ["w"] });
+    expect(publicMeta(meta)).toEqual({ warnings: ["w"] });                          // модель, длительность и повторы — диагностика администратора, в файл не идут
     const html = buildStandaloneHtml("t", "", "", { data: {}, meta });
     expect(html).not.toContain("Корпоративный шлюз");
     expect(html).not.toContain("secret");
