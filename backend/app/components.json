@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.46.0",
+ "release": "0.46.1",
  "reviewed_at": "2026-10-28",
  "components": [
   {
@@ -561,7 +561,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:6b25cbe6577518889d553cdd5a5da97d259348d8f6e45b527dd731caaba27a07",
+   "digest": "sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -742,7 +742,7 @@
    "group": "Backend",
    "pinned": "2.16.1",
    "tested": "2.16.1",
-   "reviewed_latest": "2.16.1",
+   "reviewed_latest": "2.16.2",
    "source": {
     "type": "pypi",
     "name": "pydantic-settings"
@@ -763,6 +763,13 @@
    "runtime": {
     "service": "backend",
     "python_package": "pydantic-settings"
+   },
+   "deferred": {
+    "version": "2.16.2",
+    "reason": "Патч вышел в день выпуска 0.46.1, который меняет только вид экрана перед входом; чтение настроек сервера с новой версией не проверялось.",
+    "issue": "DEP-14",
+    "recheck": "2026-11-15",
+    "plan": "Обновить закрепление вместе с очередной ревизией (freeze обоих constraints) и прогнать backend-тесты."
    }
   },
   {
@@ -1074,7 +1081,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:6b25cbe6577518889d553cdd5a5da97d259348d8f6e45b527dd731caaba27a07",
+   "digest": "sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
