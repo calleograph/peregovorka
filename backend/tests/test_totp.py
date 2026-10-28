@@ -51,7 +51,15 @@ def _policy(client, **patch):
     assert r.status_code == 200, r.text
 
 
+def _safe_step(margin: float = 6.0) -> None:
+    """Тесты сравнивают коды «того же шага»: если до смены 30-секундного шага осталось мало, ждём новый шаг (иначе тест изредка падает на границе)."""
+    left = 30 - (time.time() % 30)
+    if left < margin:
+        time.sleep(left + 0.2)
+
+
 def _enroll(client, user="alice", password=None):
+    _safe_step()
     csrf = login(client, user, password)
     s = client.post("/api/v1/auth/totp/setup", json={"password": password or f"{user}-pass"})
     assert s.status_code == 200, s.text
