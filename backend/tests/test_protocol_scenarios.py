@@ -168,7 +168,7 @@ def test_long_transcript_uses_per_fragment_notes_and_a_failed_fragment_is_repeat
     assert p["status"] == "ready", p.get("error")
     sent = [r["messages"][-1]["content"][:30] for r in env.prov.requests[n:]]
     parts = {s for s in sent if s.startswith("Фрагмент")}
-    assert len(sent) == p["generation"]["llm_calls"] + 1, sent
+    assert len(sent) == p["generation"]["llm_calls"], sent          # «запросов к модели» в диагностике — реальное число, с повтором пустого фрагмента
     assert sum(1 for s in sent if s.startswith("Фрагмент 2 ")) == 2 and sum(1 for s in sent if s.startswith("Фрагмент 1 ")) == 1, "повторён только неудавшийся фрагмент"
     assert sent[-1].startswith("Заметки по фрагментам") and parts
 

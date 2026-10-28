@@ -235,6 +235,12 @@ class LlmClient:
         self.local = local          # встроенная локальная модель (Qwen3): отключаем «размышления» и чистим служебные блоки из ответа
         self._verify: str | bool = ca_file if (cfg.use_corporate_ca and ca_file) else True
         self._transport = transport
+        # рассуждения модели отключены (reasoning.effort=none): всегда (off) или после первого обрыва лимита «мыслями» (auto) — дальше действует на все запросы документа
+        self._no_reasoning = getattr(cfg, "reasoning", "auto") == "off"
+
+    def scaled_cap(self, floor: int, ceil: int, chars: int) -> int:
+        """Потолок ответа, растущий вместе со входом (≈ 1/12 знаков, не меньше floor и не больше ceil); у локальной модели — floor: на процессоре длинный ответ стоит минуты."""
+        return floor if self.local else max(floor, min(ceil, chars // 12))
 
     def _base(self) -> str:
         return (self._c.base_url or _DEFAULT_BASE.get(self._c.type, "")).rstrip("/")
@@ -285,6 +291,8 @@ class LlmClient:
                 body["messages"][0]["content"] = system + "\n/no_think"
             if c.type == "openai_compatible" and c.routing_provider:
                 body["provider"] = {"only": [c.routing_provider]}
+            if self._no_reasoning and not self.local and c.type in ("openai_compatible", "custom"):
+                body["reasoning"] = {"effort": "none"}
         extra = c.all_headers()
         if extra:
             headers = {**extra, **headers}          # служебные заголовки провайдера (ключ, content-type) не перекрываются
@@ -312,6 +320,11 @@ class LlmClient:
                         # часть API не принимает temperature (или ограничивает диапазон): повторяем без него; в настройках стоит снять «Передавать temperature»
                         log.warning("Провайдер отклонил temperature — повтор без параметра", extra={"model": c.model})
                         body.pop("temperature")
+                    elif "reasoning" in body and "reasoning" in low:
+                        log.warning("Провайдер не принимает параметр reasoning — повтор без него", extra={"model": c.model})
+                        body.pop("reasoning")
+                        self._no_reasoning = False
+                        self.stats["reasoning"] = "rejected"
                     elif "max_tokens" in body and "max_completion_tokens" in low:
                         # модели с «рассуждениями» (o-серия, gpt-5…) принимают только max_completion_tokens
                         log.warning("Провайдер требует max_completion_tokens — повтор с ним", extra={"model": c.model})
@@ -413,6 +426,12 @@ class LlmClient:
                    "Увеличьте лимит ответа в настройках подключения, отключите режим рассуждений у модели или выберите другую модель.")
             hard = max(256, c.context_window - 2048) if c.context_window > 4096 else (c.context_window // 2 if c.context_window else MAX_RETRY_TOKENS)
             bigger = min(limit * 2, hard)
+            if not retried and not self._no_reasoning and parsed["reasoning"] and c.type in ("openai_compatible", "custom") and not self.local \
+                    and getattr(c, "reasoning", "auto") == "auto" and self.stats.get("reasoning") != "rejected":
+                # Лимит целиком ушёл на «мысли» модели: в этом документе рассуждения больше не нужны — отключаем их и повторяем (лимит заодно вдвое больше, на случай если шлюз параметр проигнорирует)
+                self._no_reasoning = True
+                self.stats["reasoning"] = "off_auto"
+                log.warning("Лимит ушёл на рассуждения — отключаем их для этого документа", extra={"model": c.model, "max_tokens": limit})
             if not retried and bigger > limit:
                 self.stats["empty_retries"] = self.stats.get("empty_retries", 0) + 1
                 log.warning("Пустой ответ: лимит ушёл на рассуждения — один повтор с большим лимитом", extra={"model": c.model, "max_tokens": limit, "retry_max_tokens": bigger})
@@ -436,3 +455,36 @@ class LlmClient:
             return True, f"LLM отвечает (модель {self._c.model}): «{res.text[:60]}»", int((time.monotonic() - started) * 1000)
         except LlmError as exc:
             return False, exc.describe(), int((time.monotonic() - started) * 1000)
+
+
+_WINDOWS: dict[tuple[str, str], tuple[float, int]] = {}      # (адрес, модель) → (годен до, окно контекста); 0 — провайдер не сообщил
+WINDOW_TTL_S, WINDOW_MISS_TTL_S = 86400.0, 600.0
+
+
+async def discover_window(cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> LlmSettings:
+    """Окно контекста не указано: шлюзы вида OpenRouter сообщают его сами в списке моделей (GET /models → context_length). Узнав окно, длинная встреча идёт одним запросом, а не
+    заметками по частям (быстрее и без потерь). Не получилось (нет списка, нет модели, ошибка сети) — настройки не меняются: работает прежний путь по частям. Ответ кэшируется на сутки."""
+    if cfg.context_window or cfg.effective_provider != "external" or cfg.type not in ("openai_compatible", "custom") or not cfg.base_url or not cfg.model:
+        return cfg
+    base = cfg.base_url.rstrip("/")
+    key = (base, cfg.model)
+    hit = _WINDOWS.get(key)
+    if not hit or hit[0] < time.monotonic():
+        ctx = 0
+        headers = {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(8, connect=5), verify=ca_file if (cfg.use_corporate_ca and ca_file) else True,
+                                         transport=transport, follow_redirects=False) as client:
+                r = await client.get(f"{base}/models", headers={**cfg.all_headers(), **headers})
+            if r.is_success:
+                for m in r.json().get("data") or []:
+                    if isinstance(m, dict) and m.get("id") == cfg.model:
+                        top = m.get("top_provider") if isinstance(m.get("top_provider"), dict) else {}
+                        ctx = int(top.get("context_length") or m.get("context_length") or 0)
+                        break
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            ctx = 0
+        ctx = min(max(ctx, 0), 4_000_000)
+        _WINDOWS[key] = hit = (time.monotonic() + (WINDOW_TTL_S if ctx else WINDOW_MISS_TTL_S), ctx)
+        log.info("Окно контекста модели по списку провайдера", extra={"model": cfg.model, "context_window": ctx})
+    return cfg.model_copy(update={"context_window": hit[1]}) if hit[1] else cfg

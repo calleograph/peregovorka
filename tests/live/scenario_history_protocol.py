@@ -70,7 +70,7 @@ def main_api():
 
 
 async def browser(mid):
-    proc = subprocess.Popen([EDGE, "--headless=new", "--disable-gpu", "--remote-debugging-port=9441", f"--user-data-dir={tempfile.mkdtemp(prefix='edge-f-')}", "--window-size=1366,900", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([EDGE, "--headless=new", "--disable-gpu", "--remote-debugging-port=9441", f"--user-data-dir={tempfile.mkdtemp(prefix='edge-f-')}", "--window-size=1366,900", *os.environ.get("BROWSER_FLAGS", "").split(), "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(60):
             try:
@@ -121,7 +121,9 @@ async def browser(mid):
         await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Сформировать протокол')?.click()")
         check("открылось окно «Сформировать протокол»", await wait("!!document.querySelector('[role=dialog], .modal')", 8))
         await shot("flow-protocol-dialog.png")
-        await js("""(()=>{const d=document.querySelector('[role=dialog], .modal');const b=[...d.querySelectorAll('button')].find(x=>/Сформировать|Создать|Запустить/.test(x.textContent)&&!x.disabled);b&&b.click();return !!b})()""")
+        btn = "(()=>{const d=document.querySelector('[role=dialog], .modal');return d&&[...d.querySelectorAll('button')].find(x=>x.textContent.trim()==='Сформировать'&&!x.disabled)})()"
+        check("кнопка «Сформировать» доступна", await wait("!!" + btn, 15))
+        await js(btn.replace("find(", "find(").rstrip(")") + ")?.click()" if False else "(()=>{const b=" + btn + ";b&&b.click();return !!b})()")
         ok = await wait("document.body.innerText.includes('Утвердить бюджет проекта (по итогам обсуждения)')", 40)
         check("протокол сформирован и показан (подставная LLM)", ok, str(LLM.calls))
         await shot("flow-protocol.png")

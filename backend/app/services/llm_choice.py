@@ -142,6 +142,8 @@ def limit_report(ch: "LlmChoice", eff: LlmSettings, purpose: str, stats: dict) -
     for c in stats.get("clamps") or []:
         why = {"provider": "предел назвал провайдер", "rejected": "провайдер отклонил запрошенную длину и не назвал предел — взята ближайшая ступень", "context": "остальное окно контекста занято стенограммой"}.get(c.get("reason"), "")
         parts.append(f"модель {c.get('model') or ''}: запрошено {c['requested']} токенов ответа — применено {c['applied']} ({why})".replace("модель  ", "модель "))
+    if stats.get("reasoning") == "off_auto":
+        parts.append(f"модель {eff.model} тратила лимит ответа на «рассуждения» — они отключены на время этого документа (настройка «Рассуждения модели»: автоматически)")
     if stats.get("provider_cap"):
         parts.append(f"провайдер оборвал ответ на {stats['provider_cap']} токенах при запрошенных {stats.get('requested') or '?'}: фактический предел задаёт модель или шлюз")
     return "; ".join(dict.fromkeys(parts)) or None

@@ -182,6 +182,87 @@ def test_reasoning_only_answer_is_not_blamed_on_an_empty_model_and_is_not_blindl
     assert n["i"] == 1 and "рассуждения" in e.value.describe()
 
 
+def _reasoning_gateway(seen: list[dict]):
+    """Шлюз рассуждающей модели: пока рассуждения не отключены параметром reasoning, весь лимит уходит на «мысли» (текста нет, finish=length)."""
+    def h(req):
+        b = json.loads(req.content)
+        seen.append(b)
+        if b.get("reasoning") == {"effort": "none"}:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "Протокол готов"}, "finish_reason": "stop"}], "usage": {"completion_tokens": 40}})
+        n = b["max_tokens"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "", "reasoning": "думаю…"}, "finish_reason": "length"}],
+                                         "usage": {"completion_tokens": n, "completion_tokens_details": {"reasoning_tokens": n}}})
+    return h
+
+
+def test_limit_eaten_by_reasoning_switches_reasoning_off_for_the_rest_of_the_document():
+    seen: list[dict] = []
+    c = client(_reasoning_gateway(seen), stream_response=False, reasoning="auto")
+    r = run(c.complete("s", "u", max_tokens=600))
+    assert r.text == "Протокол готов" and len(seen) == 2 and "reasoning" not in seen[0] and seen[1]["reasoning"] == {"effort": "none"}
+    run(c.complete("s", "u", max_tokens=600))                       # следующий запрос документа сразу без рассуждений и с обычным лимитом: лишних обращений нет
+    assert len(seen) == 3 and seen[2]["reasoning"] == {"effort": "none"} and seen[2]["max_tokens"] == 600 and c.stats["reasoning"] == "off_auto"
+
+
+def test_reasoning_off_mode_sends_the_parameter_from_the_first_request_and_model_mode_never():
+    seen: list[dict] = []
+    run(client(_reasoning_gateway(seen), stream_response=False).complete("s", "u", max_tokens=600))        # по умолчанию — off
+    assert len(seen) == 1 and seen[0]["reasoning"] == {"effort": "none"}
+    seen.clear()
+    with pytest.raises(LlmError) as e:
+        run(client(_reasoning_gateway(seen), stream_response=False, reasoning="model").complete("s", "u", max_tokens=600))
+    assert len(seen) == 2 and all("reasoning" not in b for b in seen) and e.value.code == "empty_length"
+
+
+def test_gateway_that_rejects_the_reasoning_parameter_gets_the_request_without_it():
+    seen: list[dict] = []
+
+    def h(req):
+        b = json.loads(req.content)
+        seen.append(b)
+        if "reasoning" in b:
+            return httpx.Response(400, json={"error": {"message": "Unknown parameter: reasoning"}})
+        return ok_json()
+
+    c = client(h, stream_response=False, reasoning="off")
+    assert run(c.complete("s", "u")).text and len(seen) == 2 and "reasoning" not in seen[1]
+    run(c.complete("s", "u"))
+    assert "reasoning" not in seen[-1] and c.stats["reasoning"] == "rejected"
+
+
+def test_anthropic_never_gets_the_reasoning_parameter():
+    seen: list[dict] = []
+
+    def h(req):
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    run(client(h, stream_response=False, type="anthropic", reasoning="off").complete("s", "u"))
+    assert "reasoning" not in seen[0]
+
+
+def test_context_window_is_read_from_the_provider_model_list_once_and_a_miss_changes_nothing():
+    from app.integrations.llm import _WINDOWS, discover_window
+    _WINDOWS.clear()
+    n = {"i": 0}
+
+    def h(req):
+        n["i"] += 1
+        assert req.url.path.endswith("/models") and req.headers["authorization"] == "Bearer k"
+        return httpx.Response(200, json={"data": [{"id": "other", "context_length": 8000}, {"id": "m", "context_length": 1048576, "top_provider": {"context_length": 262144}}]})
+
+    t = httpx.MockTransport(h)
+    assert run(discover_window(ext(), transport=t)).context_window == 262144          # окно подключённого провайдера, а не общее у шлюза
+    assert run(discover_window(ext(), transport=t)).context_window == 262144 and n["i"] == 1       # повторно — из кэша
+    assert run(discover_window(ext(context_window=32000), transport=t)).context_window == 32000      # заданное администратором не перекрывается
+    _WINDOWS.clear()
+    assert run(discover_window(ext(model="нет такой"), transport=t)).context_window == 0
+    _WINDOWS.clear()
+    assert run(discover_window(ext(), transport=httpx.MockTransport(lambda r: httpx.Response(404)))).context_window == 0      # списка нет — настройки не меняются
+    _WINDOWS.clear()
+    assert run(discover_window(ext(type="anthropic"), transport=t)).context_window == 0
+
+
 def test_text_in_stream_with_think_block_keeps_the_answer():
     r = run(client(lambda req: sse(delta("<think>размышляю</think>"), delta("Итог встречи"), delta(None, "stop"))).complete("s", "u"))
     assert r.text == "Итог встречи"

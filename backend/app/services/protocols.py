@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from . import profanity
 from ..config import Settings
 from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
-from ..integrations.llm import LlmClient, LlmError
+from ..integrations.llm import LlmClient, LlmError, discover_window
 from . import llm_stats
 from .llm_choice import limit_report, parse_once, resolve_llm
 from .extraction import local_pipeline, structured_pipeline
@@ -81,6 +81,7 @@ NOTES_PROMPT = ("Ты — секретарь совещания. Из фрагм
                 "(если срок не назван — «не указан»); (3) открытые вопросы. Каждый пункт — одна короткая строка своими словами. "
                 "НЕ копируй реплики из стенограммы. Ничего не выдумывай (в частности, адреса, версии и числа, которых нет в тексте). Если пунктов нет — напиши «нет».")
 NOTES_ANON_HINT = " Метки вроде [ФИО_1] сохраняй как есть."
+NOTES_MAX_EXTERNAL = 8000   # потолок конспекта фрагмента у внешней модели: ≈ 1/12 знаков фрагмента
 NOTES_MAX_TOKENS = 600     # хороший список короткий; если модель вместо списка начинает переписывать текст, это видно по обрезке и не тратит минуты на CPU
 
 # Короткие промпты для облегчённой локальной модели: подробный шаблон (нумерованная структура, таблицы) она возвращает пустым каркасом без содержания.
@@ -98,6 +99,8 @@ LOCAL_BUILTIN_INSTRUCTION = ("Подготовь краткий, структу�
                              "Не показывай внутренние рассуждения.")
 TRUNCATED_LOCAL = ("Локальная модель не смогла полностью обработать стенограмму: ответ оборвался по лимиту длины{where}. "
                    "Результат может быть неполным — проверьте его или сформируйте документ более сильной (внешней) моделью.")
+TRUNCATED_NOTES = ("Конспект фрагмента оборван по лимиту длины{where}: часть решений и сроков может отсутствовать в документе. "
+                   "Укажите окно контекста модели в настройках подключения (тогда встреча идёт одним запросом) или выберите модель с большим допустимым ответом.")
 TRUNCATED_EXTERNAL = ("Ответ языковой модели оборван по лимиту длины{where}: результат неполный. "
                       "Увеличьте «Максимальную длину ответа» в настройках языковой модели или сократите материалы.")
 
@@ -228,7 +231,7 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
         res.completion_tokens += r.completion_tokens or 0
         if r.truncated:
             res.truncated = True
-            res.warnings.append(msg.format(where=where))
+            res.warnings.append((TRUNCATED_NOTES if where.startswith(" (часть") and local is None else msg).format(where=where))
 
     parts = split_for_llm(text, limit)
     res.parts = len(parts)
@@ -239,7 +242,8 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
         return res
     notes_system = NOTES_PROMPT + (NOTES_ANON_HINT if anonymized else "")
     for i, part in enumerate(parts, 1):    # длинная встреча: краткое извлечение по фрагментам → итоговый документ
-        r = await complete_with_one_retry(llm, notes_system, f"Фрагмент {i} из {len(parts)}:\n\n{part}", max_tokens=NOTES_MAX_TOKENS)
+        # Потолок конспекта растёт вместе с фрагментом у внешней модели (в фрагменте на 60 тыс. знаков десятки решений со сроками: 600 токенов их обрезают); у локальной остаётся 600
+        r = await complete_with_one_retry(llm, notes_system, f"Фрагмент {i} из {len(parts)}:\n\n{part}", max_tokens=llm.scaled_cap(NOTES_MAX_TOKENS, NOTES_MAX_EXTERNAL, len(part)))
         res.notes.append(r.text)
         account(r, f" (часть {i} из {len(parts)})")
     r = await complete_with_one_retry(llm, system, "Заметки по фрагментам встречи:\n\n" + "\n\n---\n\n".join(res.notes))
@@ -959,6 +963,7 @@ class ProtocolService:
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
         llm = await resolve_llm(self.profiles, self.local_llm, db, room, meeting, purpose, once=once_choice)    # разово → встреча → комната → система
+        llm.settings = await discover_window(llm.settings, ca_file=self._ca(), transport=self._transports.get("llm"))       # type: ignore[arg-type]
         eff, is_local = self.local_llm.effective(llm.settings)
         mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
         an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
@@ -994,6 +999,8 @@ class ProtocolService:
         if out["llm_ready"] and out["input_chars"] is not None:
             pr = await self._svc.get(db, "protocol")
             limit = min(pr.max_input_chars, lm.max_input_chars) if lm else pr.max_input_chars   # type: ignore[attr-defined]
+            if not is_local and eff.context_window > 16000:
+                limit = max(limit, min(1_000_000, int((eff.context_window - 8192 - 2500) * 2.0)))        # как при формировании: встреча, помещающаяся в окно, идёт одним запросом
             out["forecast"] = llm_stats.forecast(await llm_stats.recent_runs(db, 600), kind=purpose, model=eff.model, local=is_local,
                                                  profile="" if is_local else llm.name, chars=out["input_chars"], limit=limit)
         return out
@@ -1022,6 +1029,10 @@ class ProtocolService:
         if not llm_res.available:
             raise LlmError("unavailable", llm_res.reason or "")
         llm_cfg = llm_res.settings
+        found = await discover_window(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"))       # type: ignore[arg-type]
+        if found.context_window != llm_cfg.context_window:
+            llm_cfg = found
+            llm_res.limit_note = "; ".join(x for x in (llm_res.limit_note, f"окно контекста {found.context_window} токенов определено автоматически по списку моделей провайдера") if x)
         eff_cfg, is_local = self.local_llm.effective(llm_cfg)
         lm = self.local_llm.limits(llm_cfg)
         if is_local:                                     # локальная модель: только встроенная инструкция; пользовательские остаются для внешних моделей
@@ -1097,7 +1108,8 @@ class ProtocolService:
         sstats = (pipe.structured or {}).get("stats") or {}
         meta.update(instruction_builtin=True if info.get("instruction_builtin") else None, coverage=(pipe.structured or {}).get("coverage"),
                     model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
-                    retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)), length_hits=st["length"], finish=dict(st["finish"]),
+                    retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)) + int(st.get("empty_retries", 0)),
+                    llm_calls=max(pipe.calls, st["calls"]), length_hits=st["length"], finish=dict(st["finish"]),
                     max_tokens=st["max_tokens"] or None, limit_requested=llm_res.limit_requested, limit_applied=st["max_tokens"] or None,
                     limit_note=limit_report(llm_res, eff_cfg, purpose, st), llm_source=llm_res.source)
         return out, meta
