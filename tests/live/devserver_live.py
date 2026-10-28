@@ -28,7 +28,7 @@ d.add("alice", "alice-pass", name="Алиса Крылова", guid=ALICE_GUID)
 d.add("bob", "bob-pass", name="Борис Мартынов")
 d.add("dave", "dave-pass", name="Дмитрий Соколов")      # сотрудник без участия во встречах — получатель доступа в scenario_room_leader
 s = Settings(database_url=f"sqlite+aiosqlite:///{DATA}/dev.db", redis_url="redis://x", app_public_url="http://localhost:5173", cookie_secure=False,
-             livekit_api_key="devkey", livekit_api_secret="s" * 40, livekit_public_url="ws://127.0.0.1:7880", livekit_internal_url="http://127.0.0.1:7880",
+             livekit_api_key="devkey", livekit_api_secret="s" * 40, livekit_public_url=f"ws://127.0.0.1:{os.environ.get('LIVE_LK_PORT', '7880')}", livekit_internal_url=f"http://127.0.0.1:{os.environ.get('LIVE_LK_PORT', '7880')}",
              app_master_key=base64.b64encode(os.urandom(32)).decode(), internal_api_token="t", ldap_admin_group_dn=ADMIN_GROUP, data_dir=DATA,
              docs_enabled=False, log_level="WARNING", segment_consumer_block_ms=50, app_version=open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "VERSION"), encoding="utf-8").read().strip(), app_git_commit="abcdef012345")
 app = create_app(s, redis_factory=lambda _: FakeAsyncRedis(decode_responses=True), directory_factory=lambda _: d)

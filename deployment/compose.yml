@@ -338,9 +338,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Запуск от того же uid, что backend и ASR (10001): иначе Egress создаёт каталоги встречи от uid 1001 с правами 755, и backend не сможет удалить видеофайл, а звук
+    # не сможет писаться в уже созданную папку встречи (проверено на настоящем Egress). Домашний каталог — в памяти, образ Egress ждёт там пользователя egress.
+    user: "10001:0"
+    tmpfs:
+      - /home/egress:uid=10001,gid=0,mode=0770,size=2g
     cap_add:
       - SYS_ADMIN
     environment:
+      HOME: /home/egress
       EGRESS_CONFIG_BODY: |
         api_key: ${LIVEKIT_API_KEY:?}
         api_secret: ${LIVEKIT_API_SECRET:?}

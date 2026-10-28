@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
+import subprocess
 import uuid
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
@@ -21,21 +23,23 @@ from pathlib import Path
 
 from livekit import api as lkapi
 from livekit.protocol import egress as eg
+from livekit.protocol import models as lkm
 from sqlalchemy import func, select
 
 from ..config import Settings
 from ..models import Meeting, Recording, Room
-from . import events
+from . import events, mixdown
 from .livekit import EGRESS_IDENTITY_PREFIX, list_present_identities  # noqa: F401
 from .storage import meeting_relpath
 
 log = logging.getLogger("app.video")
 
 LAYOUT = "speaker"                          # экран — основное место, остальные — миниатюры; без экрана — говорящий и сетка
-# 720p: ≈ 2,5 Мбит/с видео + 128 кбит/с звук (≈ 1,2 ГБ/час); 1080p: ≈ 4,5 Мбит/с (≈ 2,1 ГБ/час). Значения — расчётные, замер на реальных материалах: docs/VIDEO_RECORDING.md
+# Верхний предел видеобитрейта: 720p — 2,5 Мбит/с, 1080p — 4,5 Мбит/с (потолок ≈ 1,2 и ≈ 2,1 ГБ/час с учётом звука). Измерено на настоящем Egress (синтетические камеры и слайд): 0,56 и 0,78 ГБ/час, docs/VIDEO_RECORDING.md
 QUALITY = {"720p": (1280, 720, 2500), "1080p": (1920, 1080, 4500)}
 ACTIVE_LK = {eg.EgressStatus.EGRESS_STARTING, eg.EgressStatus.EGRESS_ACTIVE, eg.EgressStatus.EGRESS_ENDING}
 DONE_OK = eg.EgressStatus.EGRESS_COMPLETE
+STALL_GRACE_S = 45                          # столько секунд после старта рекордер может ещё не быть в комнате (запуск браузера)
 STOP_GRACE_S = 180                          # после остановки ждём итог Egress (webhook) столько; потом сверяем сами
 
 
@@ -67,6 +71,19 @@ class EgressApi:
             resp = await lk.egress.list_egress(lkapi.ListEgressRequest(egress_id=egress_id))
         return resp.items[0] if resp.items else None
 
+    async def recorder_present(self, room_name: str, egress_id: str) -> bool | None:
+        """Есть ли в комнате скрытый участник-рекордер этой записи (его identity = id задачи). У упавшей службы Egress LiveKit ещё долго считает запись активной,
+        а рекордер из комнаты пропадает — по этому признаку и находят «мёртвую» запись. None — LiveKit недоступен (ничего не решаем)."""
+        try:
+            async with self._lk() as lk:
+                resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
+            return any(p.identity == egress_id for p in resp.participants)
+        except Exception as exc:  # noqa: BLE001
+            text = str(exc).lower()
+            if "not_found" in text or "not found" in text or "does not exist" in text:
+                return False                       # комнаты нет — рекордера тоже
+            return None
+
     async def probe(self) -> None:
         """Достаточно ли связи с LiveKit, чтобы управлять записью (сама служба Egress этим не проверяется)."""
         async with self._lk() as lk:
@@ -78,9 +95,22 @@ def build_request(room_name: str, out_path: str, quality: str, *, template_url: 
     w, h, vbr = QUALITY.get(quality, QUALITY["720p"])
     tpl = eg.TemplateSource(layout=LAYOUT, custom_base_url=template_url) if template_url else eg.TemplateSource(layout=LAYOUT)
     enc = eg.EncodingOptions(width=w, height=h, depth=24, framerate=30, video_bitrate=vbr, audio_bitrate=128, audio_frequency=48000, key_frame_interval=4.0)
-    enc.video_codec = 3        # H264_HIGH
-    enc.audio_codec = 1        # AAC (OPUS в MP4 плеерами поддерживается хуже)
-    return eg.StartEgressRequest(room_name=room_name, template=tpl, advanced=enc, outputs=[eg.Output(file=eg.FileOutput(file_type=eg.EncodedFileType.MP4, filepath=out_path))])
+    enc.video_codec = lkm.VideoCodec.H264_HIGH
+    enc.audio_codec = lkm.AudioCodec.AAC        # OPUS в MP4 плеерами поддерживается хуже (проверено на настоящем Egress: значение 1 — именно OPUS)
+    return eg.StartEgressRequest(room_name=room_name, template=tpl, advanced=enc, outputs=[eg.Output(file=eg.FileOutput(file_type=eg.EncodedFileType.MP4, filepath=out_path, disable_manifest=True))])
+
+
+def readable_duration(path: Path) -> int | None:
+    """Длительность MP4 по заголовку (ffmpeg -i без декодирования); None — файл не читается (например, запись оборвана и не записан индекс moov) или ffmpeg нет."""
+    ff = mixdown.ffmpeg_path()
+    if ff is None:
+        return None
+    r = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", str(path)], capture_output=True, text=True, timeout=60, check=False)   # noqa: S603
+    m = re.findall(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
+    if not m:
+        return None
+    h, mi, sec = m[-1]
+    return int(float(h) * 3600 + float(mi) * 60 + float(sec))
 
 
 def _ns_to_s(v: int) -> int:
@@ -239,7 +269,7 @@ class VideoRecorder:
                 log.exception("Не удалось остановить видеозапись пустой комнаты", extra={"meeting_id": str(meeting.id)})
 
     # ------------------------------------------------------------------ итог файла
-    async def finalize(self, db, rec: Recording, info: eg.EgressInfo | None) -> None:
+    async def finalize(self, db, rec: Recording, info: eg.EgressInfo | None, *, lost: bool = False) -> None:
         """Egress закончил (или сверка нашла итог): размер/длительность, статус, выгрузка. Ошибка Egress — запись failed с причиной, файл (если есть) остаётся."""
         if rec.status not in ("processing", "finishing"):
             return
@@ -253,10 +283,20 @@ class VideoRecorder:
                 rec.started_at = datetime.fromtimestamp(fr.started_at / 1e9, tz=timezone.utc)      # 0:00 файла — по нему реплики привязываются к плееру
             size = size or int(fr.size or 0)
         rec.size_bytes = size
+        unreadable = False
+        if size > 0 and not failed:
+            dur = await asyncio.to_thread(readable_duration, path) if mixdown.ffmpeg_path() else -1
+            if dur is None:
+                unreadable = True                      # файл есть, но не читается: запись оборвана, индекс MP4 не записан
+            elif dur > 0 and not rec.duration_s:
+                rec.duration_s = dur
         if size <= 0:
             rec.status, rec.error = "failed", ((info.error if info is not None and info.error else "") or "Egress не создал файл")[:290]
         elif failed:
             rec.status, rec.error = "failed", (info.error or "запись прервана")[:290]
+        elif unreadable or lost:
+            rec.status = "failed"
+            rec.error = ("Служба записи перестала отвечать во время записи" if lost else "Запись оборвана") + ": файл не читается" + (" (индекс MP4 не записан)" if unreadable else "") + ". Файл оставлен на диске для ручного разбора."
         else:
             rec.status, rec.error = "ready", (info.error[:290] if info is not None and info.error else None)
             if info is not None and info.status == eg.EgressStatus.EGRESS_LIMIT_REACHED:
@@ -295,6 +335,18 @@ class VideoRecorder:
             try:
                 info = await self.api.get(rec.egress_id)
             except Exception:  # noqa: BLE001 — LiveKit недоступен: ничего не решаем, повторим в следующий проход
+                continue
+            if info is not None and info.status in ACTIVE_LK and meeting is not None and meeting.ended_at is None \
+                    and (datetime.now(timezone.utc) - (rec.started_at or rec.created_at)).total_seconds() > STALL_GRACE_S \
+                    and await self.api.recorder_present(meeting.livekit_room, rec.egress_id) is False:
+                log.warning("Рекордер записи пропал из комнаты — служба Egress, вероятно, упала", extra={"meeting_id": str(meeting.id), "egress": rec.egress_id})
+                try:
+                    await asyncio.wait_for(self.api.stop(rec.egress_id), 10)           # вдруг ещё откликнется; не откликнется — закрываем сами
+                except Exception:  # noqa: BLE001
+                    pass
+                await self.finalize(db, rec, None, lost=True)
+                self._emit("video_failed", meeting, level="error", error=rec.error)
+                closed += 1
                 continue
             if info is not None and info.status in ACTIVE_LK:
                 limit = (await self.cfg(db)).max_hours * 3600

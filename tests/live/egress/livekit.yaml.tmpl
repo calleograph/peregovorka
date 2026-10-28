@@ -1,0 +1,20 @@
+# Тестовый LiveKit для проверки видеозаписи на настоящем Egress. NODE_IP — реальный адрес этого компьютера (НЕ 127.0.0.1: Chrome внутри Egress петлевые адреса не использует).
+port: 7890
+bind_addresses: ["0.0.0.0"]
+log_level: info
+rtc:
+  tcp_port: 7891
+  udp_port: 7892
+  use_external_ip: false
+  node_ip: NODE_IP
+redis:
+  address: 127.0.0.1:6390
+keys:
+  devkey: ssssssssssssssssssssssssssssssssssssssss
+webhook:
+  api_key: devkey
+  urls:
+    - http://127.0.0.1:8002/internal/v1/livekit/webhook
+room:
+  departure_timeout: 20
+  empty_timeout: 60

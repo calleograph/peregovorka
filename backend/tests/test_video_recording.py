@@ -27,7 +27,11 @@ class FakeEgress:
         self.infos: dict[str, eg.EgressInfo | None] = {}
         self.fail_start = False
         self.fail_stop = ""
+        self.alive = True            # есть ли в комнате скрытый участник-рекордер (False — служба Egress упала)
         self.n = 0
+
+    async def recorder_present(self, room_name, egress_id):
+        return self.alive
 
     async def start(self, req):
         if self.fail_start:
@@ -56,6 +60,7 @@ def video(client, monkeypatch):
         return present["set"]
 
     monkeypatch.setattr(video_rec, "list_present_identities", fake_present)
+    monkeypatch.setattr(video_rec, "readable_duration", lambda p: 60)            # подставные «файлы» в тестах — не настоящий MP4
     client.fake, client.present = fake, present
     return client
 
@@ -108,7 +113,8 @@ def test_request_uses_start_egress_template_h264_aac_mp4_and_the_chosen_quality(
         req = build_request("room-x", "/out/a/b.mp4", q)
         assert req.room_name == "room-x" and req.template.layout == "speaker" and not req.template.custom_base_url
         assert (req.advanced.width, req.advanced.height, req.advanced.video_bitrate) == (w, h, kbps)
-        assert req.advanced.video_codec == 3 and req.advanced.audio_codec == 1, "H.264 High и AAC"
+        from livekit.protocol import models as lkm
+        assert req.advanced.video_codec == lkm.VideoCodec.H264_HIGH and req.advanced.audio_codec == lkm.AudioCodec.AAC, "H.264 High и AAC (по именам, а не числам)"
         out = req.outputs[0].file
         assert out.filepath == "/out/a/b.mp4" and out.file_type == eg.EncodedFileType.MP4
     assert build_request("r", "/out/x.mp4", "720p", template_url="https://tpl.example.org/t").template.custom_base_url == "https://tpl.example.org/t"
@@ -397,3 +403,38 @@ def test_custom_template_url_is_validated_and_reaches_the_egress_request(video):
     mid = live(video, room, template_url="https://rec.example.org/tpl")
     assert toggle(video, mid, True).status_code == 200
     assert video.fake.started[0].template.custom_base_url == "https://rec.example.org/tpl" and video.fake.started[0].template.layout == "speaker"
+
+
+def test_recording_whose_recorder_vanished_from_the_room_is_closed_not_left_running(video, settings, monkeypatch):
+    """Настоящий Egress при падении службы: LiveKit продолжает считать запись активной, а рекордер из комнаты пропадает — по этому признаку запись закрывается."""
+    monkeypatch.setattr(video_rec, "STALL_GRACE_S", 0)
+    room = make_room(video, moderators=LEADERS)
+    mid = live(video, room)
+    toggle(video, mid, True)
+    (rec,) = rows(video, mid)
+    video.fake.infos[rec.egress_id] = eg.EgressInfo(egress_id=rec.egress_id, status=eg.EgressStatus.EGRESS_ACTIVE)
+    svc = video.app_obj.state.video
+    assert call(video, svc.reconcile) == 0, "рекордер на месте — запись идёт"
+    video.fake.alive = False
+    f = Path(settings.recordings_path, rec.path)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"z" * 1024)
+    assert call(video, svc.reconcile) == 1
+    got = rows(video, mid)[0]
+    assert call(video, lambda db: db.get(Meeting, uuid.UUID(mid))).record_video is False
+    assert got.status == "failed" and "перестала отвечать" in got.error, "оборванная служба — запись failed с понятной причиной"
+
+
+def test_file_that_cannot_be_read_is_failed_with_a_reason_and_left_on_disk(video, settings, monkeypatch):
+    monkeypatch.setattr(video_rec, "readable_duration", lambda p: None)
+    room = make_room(video, moderators=LEADERS)
+    mid = live(video, room)
+    svc = video.app_obj.state.video
+    toggle(video, mid, True)
+    (rec,) = rows(video, mid)
+    f = Path(settings.recordings_path, rec.path)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"broken" * 100)
+    call(video, lambda db: svc.on_egress_event(db, finish_event(rec.egress_id, duration_s=30)))
+    got = rows(video, mid)[0]
+    assert got.status == "failed" and "не читается" in got.error and f.exists()

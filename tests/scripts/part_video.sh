@@ -22,3 +22,4 @@ t "video.sh status при выключенной видеозаписи: объ�
 t "video.sh enable без root и без --yes отказывается" bash -c '[ "$(id -u)" -eq 0 ] && exit 0; ! env -i PATH="$PATH" HOME="$TMP" bash "$1/scripts/video.sh" enable --env "$2" >/dev/null 2>&1' _ "$ROOT" "$VP/env"
 t "video.sh: неизвестная команда — ошибка" bash -c '! env -i PATH="$PATH" HOME="$TMP" bash "$1/scripts/video.sh" bogus --env "$2" >/dev/null 2>&1' _ "$ROOT" "$VP/env"
 t "sip.sh disable не убирает общую шину Redis, если включена видеозапись" bash -c 'grep -q "VIDEO_ENABLED:-no.*!= \"yes\"" "$1/scripts/sip.sh"' _ "$ROOT"
+t "video: compose — Egress от uid backend (10001) и домашний каталог в памяти (иначе файлы записи принадлежат чужому uid)" bash -c 'b="$(awk "/^  livekit-egress:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; grep -q "user: \"10001:0\"" <<<"$b" && grep -q "/home/egress:uid=10001" <<<"$b"' _ "$ROOT"
