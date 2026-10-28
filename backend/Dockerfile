@@ -1,5 +1,5 @@
 # Базовый образ закреплён тегом и digest (scripts/deps.py apply): сборка воспроизводима, исправления образа приходят через ревизию релиза и Dependabot.
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:6b25cbe6577518889d553cdd5a5da97d259348d8f6e45b527dd731caaba27a07
 FROM ${PYTHON_IMAGE}
 
 # Версия/commit/время сборки — в КОНЦЕ файла: их изменение не должно сбрасывать кэш слоёв с зависимостями.
