@@ -387,3 +387,13 @@ def test_recording_longer_than_the_limit_is_closed_and_auto_mode_starts_the_next
     call(video, age)
     call(video, svc.reconcile)
     assert video.fake.stopped == [first.egress_id] and len(video.fake.started) == 2, "предельная запись закрыта, следующий фрагмент начат"
+
+
+def test_custom_template_url_is_validated_and_reaches_the_egress_request(video):
+    login(video, "root")
+    r = video.put("/api/v1/admin/settings/video", json={"template_url": "http://x.example.org/t"})
+    assert r.status_code in (400, 422), "только https"
+    room = make_room(video, moderators=LEADERS)
+    mid = live(video, room, template_url="https://rec.example.org/tpl")
+    assert toggle(video, mid, True).status_code == 200
+    assert video.fake.started[0].template.custom_base_url == "https://rec.example.org/tpl" and video.fake.started[0].template.layout == "speaker"

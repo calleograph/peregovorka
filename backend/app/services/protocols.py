@@ -135,6 +135,25 @@ def split_for_llm(text: str, limit: int) -> list[str]:
     return parts
 
 
+RETRY_PAUSE_S = 2.0          # пауза перед единственным повтором при временном сбое провайдера
+TRANSIENT_CODES = ("timeout", "rate_limited", "provider_error", "invalid_response")
+
+
+async def complete_with_one_retry(llm: LlmClient, *args, **kw):
+    """Обращение к модели с единственным повтором ТОЛЬКО при временном сбое провайдера (таймаут, 429, 5xx, обрыв соединения, ошибка в теле ответа). Повторяется именно
+    этот запрос — фрагмент или итоговый документ, остальные части не пересылаются. Отказы по ключу, длине, фильтру и пустой ответ сюда не относятся (их разбирает клиент)."""
+    try:
+        return await llm.complete(*args, **kw)
+    except LlmError as exc:
+        c = exc.code
+        if not (c in TRANSIENT_CODES or c.startswith("transport_") or (c.startswith("http_5"))):
+            raise
+        llm.stats["transient_retries"] = llm.stats.get("transient_retries", 0) + 1
+        log.warning("Временный сбой провайдера — один повтор этого запроса", extra={"code": c})
+        await asyncio.sleep(RETRY_PAUSE_S)
+        return await llm.complete(*args, **kw)
+
+
 @dataclass
 class PipelineResult:
     text: str = ""
@@ -214,16 +233,16 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
     parts = split_for_llm(text, limit)
     res.parts = len(parts)
     if len(parts) == 1:
-        r = await llm.complete(system, ("Материалы встречи:\n\n" if mixed else "Стенограмма встречи:\n\n") + parts[0])
+        r = await complete_with_one_retry(llm, system, ("Материалы встречи:\n\n" if mixed else "Стенограмма встречи:\n\n") + parts[0])
         account(r)
         res.text = r.text
         return res
     notes_system = NOTES_PROMPT + (NOTES_ANON_HINT if anonymized else "")
     for i, part in enumerate(parts, 1):    # длинная встреча: краткое извлечение по фрагментам → итоговый документ
-        r = await llm.complete(notes_system, f"Фрагмент {i} из {len(parts)}:\n\n{part}", max_tokens=NOTES_MAX_TOKENS)
+        r = await complete_with_one_retry(llm, notes_system, f"Фрагмент {i} из {len(parts)}:\n\n{part}", max_tokens=NOTES_MAX_TOKENS)
         res.notes.append(r.text)
         account(r, f" (часть {i} из {len(parts)})")
-    r = await llm.complete(system, "Заметки по фрагментам встречи:\n\n" + "\n\n---\n\n".join(res.notes))
+    r = await complete_with_one_retry(llm, system, "Заметки по фрагментам встречи:\n\n" + "\n\n---\n\n".join(res.notes))
     account(r, " (итоговый документ)")
     res.text = r.text
     return res
@@ -781,6 +800,9 @@ class ProtocolService:
                     rec.status, rec.meta = "running", {**(rec.meta or {}), "run_started_at": info["started"].isoformat()}
                     await db.commit()
                     budget = Budget()
+                    cfg_limit = float((await self._svc.get(db, "protocol")).job_limit_s)      # type: ignore[attr-defined]
+                    if budget.max_s == MAX_S:
+                        budget.max_s = cfg_limit                      # предел из настроек (по умолчанию прежние 600 с)
                     self._live[protocol_id] = budget
                     try:
                         async with asyncio.timeout(budget.max_s):
@@ -801,7 +823,7 @@ class ProtocolService:
                 await self._export_generated(db, rec)
             except JobTimeout as exc:
                 rec.status, rec.error = "timeout", "Превышено время выполнения. " + str(exc)
-                rec.meta = {**self._failure_meta(info, once, "timeout"), "progress": exc.progress or None, "limit_s": int(MAX_S)}
+                rec.meta = {**self._failure_meta(info, once, "timeout"), "progress": exc.progress or None, "limit_s": int(budget.max_s)}
                 log.warning("Формирование документа остановлено по времени", extra={"protocol": str(protocol_id), "progress": exc.progress})
                 await db.commit()
                 self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": "timeout", "stage": "timeout", "progress": exc.progress or None})
@@ -951,7 +973,7 @@ class ProtocolService:
         tokens, tnote = eff.output_limit(purpose)
         out["max_output_tokens"], out["max_output_note"] = (None, "подбирается автоматически") if is_local else (tokens, tnote)
         out["builtin_instruction"] = is_local
-        out["job_limit_s"] = int(MAX_S)
+        out["job_limit_s"] = int((await self._svc.get(db, "protocol")).job_limit_s)         # type: ignore[attr-defined]
         lm = self.local_llm.limits(llm.settings)
         if lm is not None and llm.available:
             fs = await asyncio.to_thread(self.local_llm.file_state, lm)
@@ -1044,6 +1066,10 @@ class ProtocolService:
         start_local = meeting.started_at.astimezone(tz)
         time_base = {"offset_s": start_local.hour * 3600 + start_local.minute * 60 + start_local.second}
         out_cap, _ = eff_cfg.output_limit(purpose)
+        if not is_local and eff_cfg.context_window > 16000:
+            # Окно контекста известно: встреча, которая в него помещается (с запасом ≈ 8 тыс. токенов под документ), идёт ОДНИМ запросом, а не заметками по частям — это быстрее и без потерь.
+            # Русский текст — ≈ 2 знака на токен (берём с запасом). Заданный администратором предел «Максимум знаков стенограммы» в этом случае только расширяется, а не сужается.
+            limit = max(limit, min(1_000_000, int((eff_cfg.context_window - 8192 - 2500) * 2.0)))
         ext_limit = external_fragment_chars(eff_cfg.context_window or 0, out_cap, limit)
         await release(db)
         info["llm_started"] = datetime.now(timezone.utc)

@@ -294,7 +294,7 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
             for i, p in enumerate(people[:n]):
                 db.add(MeetingParticipant(meeting_id=m.id, user_id=p.id, joined_at=st + dt.timedelta(seconds=i * 20), left_at=st + dt.timedelta(minutes=55)))
             db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=room.id, user_id=people[0].id, participant_identity="u0", started_at=st, ended_at=st + dt.timedelta(seconds=4), text="Начинаем."))
-        if os.environ.get("LIVE_MOCK_LLM") == "1":       # завершённая встреча с живой стенограммой: на ней проверяются протокол и карта разговора
+        if os.environ.get("LIVE_MOCK_LLM") == "1" or os.environ.get("LIVE_SEED_MEETING") == "1":       # (LIVE_SEED_MEETING — то же без подставной модели: для проверки на настоящей) завершённая встреча с живой стенограммой: на ней проверяются протокол и карта разговора
             st = utcnow() - dt.timedelta(hours=3)
             m = Meeting(room_id=rooms[0].id, livekit_room="lk-mock", started_at=st, ended_at=st + dt.timedelta(minutes=48), end_reason="manual", started_by_user_id=alice.id)
             db.add(m); db.flush()
@@ -315,4 +315,4 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
         rooms[6].moderators.append(RoomModerator(subject_type="user", subject_ref=ALICE_GUID, display_name="Алиса Крылова"))   # alice — руководитель «Продаж»
         db.commit()
     eng.dispose()
-uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("LIVE_PORT", "8000")), log_level="warning")

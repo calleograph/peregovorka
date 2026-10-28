@@ -110,13 +110,32 @@ def test_model_that_names_its_limit_gets_one_retry_with_it_and_the_clamp_is_reco
     assert "16384" in note and "60000" in note and "предел назвал провайдер" in note
 
 
-def test_unparsable_length_refusal_is_a_clear_error_not_a_silent_reduction():
+def test_unparsable_length_refusal_steps_down_visibly_and_ends_with_a_clear_error():
+    sent: list[int] = []
+
     def h(req):
+        sent.append(json.loads(req.content)["max_tokens"])
         return httpx.Response(400, json={"error": {"message": "Request too large for model: tokens"}})
 
+    c = LlmClient(ext(), transport=httpx.MockTransport(h))
     with pytest.raises(LlmError) as e:
-        run(LlmClient(ext(), transport=httpx.MockTransport(h)).complete("s", "u"))
+        run(c.complete("s", "u"))
     assert e.value.code == "limit_rejected" and "60000" in e.value.describe() and "Request too large" in e.value.describe()
+    assert sent == [60000, 16384, 8192, 4096], "четыре быстрых отказа, ни одного молчаливого уменьшения: каждая ступень записана"
+    assert [x["applied"] for x in c.stats["clamps"]] == [16384, 8192, 4096] and {x["reason"] for x in c.stats["clamps"]} == {"rejected"}
+
+
+def test_unparsable_refusal_succeeds_on_a_lower_step_and_the_report_says_so():
+    def h(req):
+        if json.loads(req.content)["max_tokens"] > 8192:
+            return httpx.Response(400, json={"error": {"message": "max_tokens too large for this deployment"}})
+        return ok_json()
+
+    c = LlmClient(ext(), transport=httpx.MockTransport(h))
+    r = run(c.complete("s", "u"))
+    assert r.max_tokens == 8192 and r.requested == 60000
+    note = limit_report(LlmChoice(ext(), "Основной", "system", True, limit_requested=60000), ext(), "protocol", c.stats)
+    assert "8192" in note and "не назвал предел" in note
 
 
 # ------------------------------------------------------------------------------------------------ фактический предел провайдера 1200

@@ -297,6 +297,7 @@ class LlmSettings(_Group):
     context_window: int = Field(default=0, ge=0, le=4_000_000)
     temperature: float = Field(default=0.0, ge=0, le=2)     # для протоколов и резюме — 0 (воспроизводимый, не «творческий» ответ)
     timeout: int = Field(default=180, ge=5, le=1800)
+    stream_response: bool = True      # ответ потоком (SSE): время ожидания считается между кусками, длинный документ не обрывается шлюзом; провайдер без потока — обычный ответ автоматически
     # Возможности провайдера: параметр передаётся, только если провайдер его принимает (часть API отвергает temperature или даёт узкий диапазон).
     send_temperature: bool = True
     supports_system: bool = True        # отдельное системное сообщение; иначе инструкция вставляется в начало сообщения пользователя
@@ -441,6 +442,7 @@ class ProtocolSettings(_Group):
     external_mode: Literal["free", "structured"] = "free"
     auto_map: bool = False          # формировать «Карту разговора» после каждой встречи (по умолчанию выключено: карта тратит время и процессор); комната может переопределить
     max_input_chars: int = Field(default=60000, ge=2000, le=1_000_000)
+    job_limit_s: int = Field(default=600, ge=60, le=7200)         # жёсткий предел одного задания (протокол, резюме): по истечении запросы отменяются, документ не выдаётся за готовый
 
 
 class ScreenSettings(_Group):
@@ -790,6 +792,15 @@ class VideoSettings(_Group):
     default_quality: str = Field(default="720p", pattern="^(720p|1080p)$")
     quota_gb: int = Field(default=0, ge=0, le=1_000_000)          # общий объём видеозаписей; 0 — без предела. При превышении новые записи не начинаются, старые не удаляются
     retention_days: int = Field(default=0, ge=0, le=3650)         # 0 — хранить, пока администратор не удалит; иначе видеофайлы старше срока удаляются (стенограмма и протокол остаются)
+    template_url: str = Field(default="", max_length=500)         # свой шаблон раскладки (веб-страница Egress, https://…); пусто — встроенная раскладка «speaker» (экран — основное место, остальные — миниатюры)
+
+    @field_validator("template_url")
+    @classmethod
+    def _template_url(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.match(r"^https://[^\s/]+(/\S*)?$", v):
+            raise ValueError("Адрес шаблона должен начинаться с https:// и не содержать пробелов")
+        return v
 
 
 class NetTrustSettings(_Group):

@@ -140,7 +140,8 @@ def limit_report(ch: "LlmChoice", eff: LlmSettings, purpose: str, stats: dict) -
     elif ch.limit_requested and stats.get("max_tokens") and stats["max_tokens"] < ch.limit_requested:
         parts.append(f"локальная модель {eff.model} принимает не более {stats['max_tokens']} токенов ответа (общая настройка — {ch.limit_requested}): предел задаёт сама модель и её окно контекста")
     for c in stats.get("clamps") or []:
-        parts.append(f"модель {c.get('model') or ''} не поддерживает {c['requested']} токенов ответа — применено {c['applied']} (предел назвал провайдер)".replace("модель  ", "модель "))
+        why = {"provider": "предел назвал провайдер", "rejected": "провайдер отклонил запрошенную длину и не назвал предел — взята ближайшая ступень", "context": "остальное окно контекста занято стенограммой"}.get(c.get("reason"), "")
+        parts.append(f"модель {c.get('model') or ''}: запрошено {c['requested']} токенов ответа — применено {c['applied']} ({why})".replace("модель  ", "модель "))
     if stats.get("provider_cap"):
         parts.append(f"провайдер оборвал ответ на {stats['provider_cap']} токенах при запрошенных {stats.get('requested') or '?'}: фактический предел задаёт модель или шлюз")
     return "; ".join(dict.fromkeys(parts)) or None

@@ -173,7 +173,7 @@ class VideoRecorder:
             quality = meeting.room.video_quality if meeting.room.video_quality in QUALITY else cfg.default_quality
             installed = str(getattr(self._s, "video_enabled", "yes")).strip().lower() in ("yes", "true", "1", "on")
             try:
-                info = await self.api.start(build_request(meeting.livekit_room, f"{self.out_dir()}/{rel}", quality))
+                info = await self.api.start(build_request(meeting.livekit_room, f"{self.out_dir()}/{rel}", quality, template_url=cfg.template_url))
             except Exception as exc:  # noqa: BLE001 — Egress не установлен/недоступен: пользователю — понятная причина, подробности в журнале
                 log.warning("Не удалось запустить Egress", extra={"meeting_id": str(meeting.id), "error": str(exc)[:300]})
                 hint = "" if installed else " На сервере она не установлена (VIDEO_ENABLED=no): sudo scripts/video.sh enable."
