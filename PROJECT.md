@@ -273,6 +273,8 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
+0za. **Android 0.1.1 / сервер 0.49.6: клавиатура, навигация, вход в конференцию.** `imePadding`+`consumeWindowInsets`, скрытие нижней панели при клавиатуре; сайт внутри приложения (`PeregovorkaApp/` в User-Agent → `.in-app`) без своей навигации, `/chats`, перехват ссылок на конференции; «Назад» в конференции не сворачивает приложение; служба звонка: `stopService`, `startForeground` всегда первым. **Сворачивание при входе на эмуляторах 10/14/16 не воспроизведено** (причина на устройстве тестировщика не установлена): при повторении собрать `adb logcat -s PGLIFE`. Эмуляторные тесты (`KeyboardTest`, `JoinFlowTest`) идут в CI на трёх версиях Android с настоящим LiveKit.
+
 0z. **SMTP AUTH NTLM (0.49.5).** `mail.py`: `auth_type = none | login | ntlm`; NTLM — pyspnego, только NTLMv2 (Type 3 проверяется до отправки), только STARTTLS или SSL/TLS, обмен через `docmd`; этап диагностики `auth_methods` (способы до и после STARTTLS); `SMTPException` больше не «нет соединения». Логгер `spnego` закрыт на WARNING (NTLM-сообщения в DEBUG). Не проверено на настоящем Exchange; нет Extended Protection и Kerberos для SMTP.
 
 0y. **Сборка в сети хоста (0.49.4).** `BUILD_NETWORK=host` выбирается только после повторных проверок моста (`NETCHECK_BRIDGE_RETRIES`) и проверки, что Docker умеет так собирать (`select_host_build_mode`: BuildKit с `network.host` либо классический builder; иначе остановка до сборки с `subsystem=build-network-host`). Не воспроизведено на стенде с buildx и отдельным builder'ом (откат проверен подменой ответа BuildKit и реальной сборкой классическим builder'ом).

@@ -96,8 +96,18 @@ fun resetApp(server: FakePeregovorka? = null) {
 
 fun launchApp(): ActivityScenario<MainActivity> = ActivityScenario.launch(Intent(appContext(), MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
+/** Закрывает системное окно «Приложение не отвечает» (на только что загруженном эмуляторе оно бывает у самого лаунчера и закрывает наше приложение). true — окно было. */
+fun UiDevice.dismissSystemNotResponding(): Boolean {
+    val btn = findObject(By.res("android:id/aerr_wait")) ?: findObject(By.res("android:id/aerr_close")) ?: return false
+    android.util.Log.w("PGTEST", "закрыто системное окно «не отвечает»")
+    btn.click(); Thread.sleep(500)
+    return true
+}
+
 fun UiDevice.waitFor(selector: BySelector, ms: Long = 15_000): UiObject2? {
-    val found = wait(Until.findObject(selector), ms)
+    dismissSystemNotResponding()
+    var found = wait(Until.findObject(selector), ms)
+    if (found == null && dismissSystemNotResponding()) found = wait(Until.findObject(selector), ms)
     if (found == null) {        // что реально на экране — в журнал устройства (иначе по «не найдено» причину не понять)
         val out = java.io.ByteArrayOutputStream()
         runCatching { dumpWindowHierarchy(out) }
