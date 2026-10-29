@@ -207,6 +207,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/siplib.sh"
 # shellcheck source=videolib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/videolib.sh"
+# shellcheck source=complib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/complib.sh"
 
 # Процессов backend по числу vCPU (отправная точка): 4 процесса выдерживают 2000 активных пользователей на 8 vCPU вместе с PostgreSQL (docs/DB_AND_SCALING.md);
 # на общем сервере ядра делят распознавание речи и языковая модель — процессов меньше. Каждый процесс — около 300 МБ памяти.

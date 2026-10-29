@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type DiagResult, type LdapProfile, type LegacyLdap } from "../../api";
 import { SecretInput, StageList, secretToSend } from "./common";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 interface Form {
   id?: string; name: string; enabled: boolean; host: string; port: number; protocol: "ldaps" | "starttls"; base_dn: string; upn_suffix: string; netbios_domain: string;
@@ -111,23 +112,23 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
           </div>
           <fieldset className="group"><legend>Сервер</legend>
             <div className="cols">
-              <label>Сервер (имя или IP)<input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="dc1.example.local" autoCapitalize="none" spellCheck={false} />
-                <span className="help">Без схемы и слэшей. Имя должно совпадать с именем в сертификате сервера.</span></label>
+              <label><span className="field-title">Сервер (имя или IP)<InfoTip>Без схемы и слэшей. Имя должно совпадать с именем в сертификате сервера.</InfoTip></span><input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="dc1.example.local" autoCapitalize="none" spellCheck={false} />
+                </label>
               <label>Протокол
                 <select value={form.protocol} onChange={(e) => { const v = e.target.value as "ldaps" | "starttls"; setForm((f) => (f ? { ...f, protocol: v, port: v === "ldaps" ? 636 : 389 } : f)); }}>
                   <option value="ldaps">LDAPS (шифрование с первого байта)</option><option value="starttls">LDAP + STARTTLS</option>
                 </select></label>
-              <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} />
-                <span className="help">LDAPS — 636 (или 3269 для глобального каталога), STARTTLS — 389.</span></label>
-              <label>Таймаут<input type="number" min={1} max={60} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /><span className="help">секунд</span></label>
+              <label><span className="field-title">Порт<InfoTip>LDAPS — 636 (или 3269 для глобального каталога), STARTTLS — 389.</InfoTip></span><input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} />
+                </label>
+              <label><span className="field-title">Таймаут<span className="muted small"> (секунд)</span></span><input type="number" min={1} max={60} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
             </div>
-            <label>Base DN<input value={form.base_dn} onChange={(e) => set("base_dn", e.target.value)} placeholder="DC=example,DC=local" spellCheck={false} />
-              <span className="help">Корень поиска пользователей и групп.</span></label>
+            <label><span className="field-title">Base DN<InfoTip>Корень поиска пользователей и групп.</InfoTip></span><input value={form.base_dn} onChange={(e) => set("base_dn", e.target.value)} placeholder="DC=example,DC=local" spellCheck={false} />
+              </label>
             <div className="cols">
-              <label>Домен (NetBIOS)<input value={form.netbios_domain} onChange={(e) => set("netbios_domain", e.target.value)} placeholder="EXAMPLE" />
-                <span className="help">Для входа в виде <code>EXAMPLE\user1</code>.</span></label>
-              <label>Суффикс UPN<input value={form.upn_suffix} onChange={(e) => set("upn_suffix", e.target.value)} placeholder="example.local" />
-                <span className="help">Для входа в виде <code>user1@example.local</code>.</span></label>
+              <label><span className="field-title">Домен (NetBIOS)<InfoTip>Для входа в виде <code>EXAMPLE\user1</code>.</InfoTip></span><input value={form.netbios_domain} onChange={(e) => set("netbios_domain", e.target.value)} placeholder="EXAMPLE" />
+                </label>
+              <label><span className="field-title">Суффикс UPN<InfoTip>Для входа в виде <code>user1@example.local</code>.</InfoTip></span><input value={form.upn_suffix} onChange={(e) => set("upn_suffix", e.target.value)} placeholder="example.local" />
+                </label>
             </div>
           </fieldset>
           <fieldset className="group"><legend>Сервисная учётная запись (только чтение)</legend>
@@ -136,16 +137,16 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
           </fieldset>
           <fieldset className="group"><legend>Для чего используется</legend>
             <label className="check"><input type="checkbox" checked={form.use_for_users} onChange={(e) => set("use_for_users", e.target.checked)} />
-              <span className="check-body">Вход пользователей<span className="help">Сотрудники этого каталога входят в комнаты и историю.</span></span></label>
+              <span className="check-body">Вход пользователей<InfoTip>Сотрудники этого каталога входят в комнаты и историю.</InfoTip></span></label>
             <label className="check"><input type="checkbox" checked={form.use_for_admins} onChange={(e) => set("use_for_admins", e.target.checked)} />
-              <span className="check-body">Вход администраторов<span className="help">Члены групп из раздела «Администраторы» получают права администратора. Если выключено — через это подключение администратором не войти (локальный администратор не затрагивается).</span></span></label>
+              <span className="check-body">Вход администраторов<InfoTip>Члены групп из раздела «Администраторы» получают права администратора. Если выключено — через это подключение администратором не войти (локальный администратор не затрагивается).</InfoTip></span></label>
           </fieldset>
           <details className="group"><summary>Атрибуты каталога (обычно менять не нужно)</summary>
             <div className="cols">
               <label>Логин<input value={form.login_attribute} onChange={(e) => set("login_attribute", e.target.value)} /></label>
               <label>Отображаемое имя<input value={form.display_name_attribute} onChange={(e) => set("display_name_attribute", e.target.value)} /></label>
-              <label>Электронная почта<input value={form.email_attribute} onChange={(e) => set("email_attribute", e.target.value)} />
-                <span className="help">Откуда брать адрес для рассылки материалов встреч.</span></label>
+              <label><span className="field-title">Электронная почта<InfoTip>Откуда брать адрес для рассылки материалов встреч.</InfoTip></span><input value={form.email_attribute} onChange={(e) => set("email_attribute", e.target.value)} />
+                </label>
             </div>
           </details>
           <div className="row form-actions">
@@ -176,7 +177,7 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
               <button className="btn ghost" onClick={() => void toggle(p)}>{p.enabled ? "Выключить" : "Включить"}</button>
               <button className="btn ghost danger" onClick={() => void remove(p)}>Удалить</button>
             </div>
-            {d && d !== "run" && <StageList result={d} />}
+            {d && d !== "run" && <StageList result={d} doc="https://github.com/calleograph/peregovorka/wiki/Решение-проблем-входа-и-каталога" />}
           </div>
         );
       })}

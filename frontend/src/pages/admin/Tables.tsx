@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../components/Dialogs";
 import ClientDiagAdmin from "./ClientDiagAdmin";
 import { ListFooter, useInfinite } from "../../useInfinite";
 import { bytes, fmt } from "../../util";
+import InfoTip from "../../components/InfoTip";
 
 export function UsersAdmin() {
   const [q, setQ] = useState("");
@@ -29,7 +30,7 @@ export function UsersAdmin() {
   return (
     <section>
       <h2>Пользователи</h2>
-      <p className="muted">Локальное представление доменных пользователей: они появляются после первого входа. Отключённый пользователь теряет сессию и не может войти, пока не включён снова. Пароли в системе не хранятся. Права администратора определяются членством в группе AD (LDAP_ADMIN_GROUP_DN).</p>
+      <p className="muted small">Локальное представление доменных пользователей: они появляются после первого входа.<InfoTip>Отключённый пользователь теряет сессию и не может войти, пока не включён снова. Пароли в системе не хранятся. Права администратора определяются членством в группе AD (LDAP_ADMIN_GROUP_DN).</InfoTip></p>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск по имени или логину, например: иванов" style={{ maxWidth: 360 }} aria-label="Поиск пользователя" />
       {err && <div className="alert error">{err}</div>}
       {sessOf && (
@@ -77,7 +78,7 @@ export function MeetingsAdmin() {
     <section>
       <div className="row"><h2>Встречи</h2><div className="spacer" />
         <label className="check"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Только идущие</label></div>
-      <p className="muted">Идущие встречи можно завершить принудительно (все участники будут отключены). Для завершённых доступны материалы, выдача доступа и удаление: отдельно только аудио или встречи целиком — с подтверждением и записью в аудит.</p>
+      <p className="muted small">Идущие встречи можно завершить принудительно (все участники будут отключены).<InfoTip>Для завершённых доступны материалы, выдача доступа и удаление: отдельно только аудио или встречи целиком — с подтверждением и записью в аудит.</InfoTip></p>
       {(err || list.error) && <div className="alert error">{err || list.error}</div>}
       <div className="table-scroll"><table className="table">
         <thead><tr><th>Комната</th><th>Начало</th><th>Окончание</th><th>Участники</th><th>Материалы</th><th /></tr></thead>
@@ -123,8 +124,7 @@ export function AuditAdmin() {
   return (
     <section>
       <h2>Журнал аудита</h2>
-      <p className="muted">Кто, что и когда сделал: изменения настроек, удаления записей, протоколов и встреч, выдача доступа, скачивание аудио. Хранится отдельно от журнала событий и вручную не удаляется; пароли и секреты в него не попадают.
-        Записи аудита также отражаются в «Журнале событий» (категория «администрирование») и попадают в его архив. Время хранится в UTC.</p>
+      <p className="muted small">Кто, что и когда сделал: изменения настроек, удаления записей, протоколов и встреч, выдача доступа, скачивание аудио.<InfoTip>Хранится отдельно от журнала событий и вручную не удаляется; пароли и секреты в него не попадают. Записи аудита также отражаются в «Журнале событий» (категория «администрирование») и попадают в его архив. Время хранится в UTC.</InfoTip></p>
       <div className="row filter-row">
         <input className="grow" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} placeholder="Поиск по исполнителю, действию, объекту, IP" aria-label="Поиск" />
         <input value={f.actor} onChange={(e) => setF({ ...f, actor: e.target.value })} placeholder="Кто выполнил" aria-label="Исполнитель" style={{ maxWidth: 220 }} />
@@ -160,6 +160,8 @@ export function AuditAdmin() {
 
 const EXPORT_LABEL: Record<string, string> = { exported: "выгружена", pending: "ожидает выгрузки", failed: "ошибка выгрузки", disabled: "хранилище выключено", local: "локально" };
 
+const KIND_LABEL: Record<string, string> = { mix_video: "видеозапись", mix_audio: "общая аудиозапись", participant: "участник" };
+
 export function RecordingsAdmin() {
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
@@ -173,15 +175,15 @@ export function RecordingsAdmin() {
   };
   return (
     <section>
-      <div className="row"><h2>Записи аудио</h2><div className="spacer" />
+      <div className="row"><h2>Записи встреч</h2><div className="spacer" />
         <button className="btn" onClick={retry} disabled={busy}>Повторить выгрузку записей{failed ? ` (${failed})` : ""}</button></div>
-      <p className="muted">Файлы по участникам (WAV, 16 кГц). Срок хранения задаётся в настройках комнаты, внешнее хранилище — в разделе «Хранилище записей». Если хранилище было недоступно, запись не теряется: она остаётся локально и выгружается повторно. Скачивание доступно только администраторам и пишется в аудит.</p>
+      <p className="muted small">Видеозаписи (MP4), общие аудиозаписи (M4A) и файлы участников (WAV, 16 кГц).<InfoTip>Срок хранения аудиозаписей задаётся в настройках комнаты, видеозаписей — в разделе «Видеозапись»; внешнее хранилище — в «Хранилище аудиозаписей» и «Видеозапись». Если хранилище было недоступно, запись не теряется: она остаётся локально и выгружается повторно. Скачивание доступно только администраторам и пишется в аудит.</InfoTip></p>
       {(err || list.error) && <div className="alert error">{err || list.error}</div>}
       {note && <div className="alert ok">{note}</div>}
       <div className="table-scroll"><table className="table">
         <thead><tr><th>Комната</th><th>Дата</th><th>Файл</th><th>Длительность</th><th>Размер</th><th>Хранилище</th><th /></tr></thead>
         <tbody>{list.items.map((r) => (
-          <tr key={r.id}><td>{r.room}</td><td>{fmt(r.created_at)}</td><td>{r.path.split("/").pop()}</td><td>{r.duration_s ? `${Math.floor(r.duration_s / 60)}:${String(r.duration_s % 60).padStart(2, "0")}` : "—"}</td>
+          <tr key={r.id}><td>{r.room}</td><td>{fmt(r.created_at)}</td><td>{r.path.split("/").pop()}<div className="muted small">{KIND_LABEL[r.kind ?? ""] ?? "запись"}</div></td><td>{r.duration_s ? `${Math.floor(r.duration_s / 60)}:${String(r.duration_s % 60).padStart(2, "0")}` : "—"}</td>
             <td>{bytes(r.size_bytes)}</td>
             <td>{r.export_status === "failed" ? <span className="badge warn" title={r.export_error ?? ""}>{EXPORT_LABEL.failed}</span> : EXPORT_LABEL[r.export_status ?? ""] ?? r.export_status ?? "—"}
               {r.export_error && <div className="small muted">{r.export_error}</div>}</td>

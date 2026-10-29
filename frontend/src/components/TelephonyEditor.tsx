@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RoomSip, SipOptions } from "../api";
 import { normalizeNumber } from "../phone";
+import InfoTip from "./InfoTip";
 
 /** Раздел «Телефония» в настройках комнаты: SIP-профиль, внутренний номер для входящих, разрешение входящих/исходящих, сохранённые номера. */
 export default function TelephonyEditor({ sip, options, onChange }: { sip: RoomSip; options: SipOptions | null | undefined; onChange: (s: RoomSip) => void }) {
@@ -22,9 +23,9 @@ export default function TelephonyEditor({ sip, options, onChange }: { sip: RoomS
       {options.server_enabled && !options.profiles.length && <div className="alert info">Нет ни одного включённого SIP-профиля. Администратор добавляет подключение к АТС в разделе «Администрирование → SIP-телефония».</div>}
       <fieldset className="group"><legend>Телефония в этой комнате</legend>
         <label className="check"><input type="radio" name="sipmode" checked={off} onChange={() => set({ mode: "off", profile_id: null })} />
-          <span className="check-body">Телефония отключена<span className="help">Позвонить в комнату и из комнаты нельзя.</span></span></label>
+          <span className="check-body">Телефония отключена<InfoTip>Позвонить в комнату и из комнаты нельзя.</InfoTip></span></label>
         <label className="check"><input type="radio" name="sipmode" checked={sip.mode === "default"} onChange={() => set({ mode: "default", profile_id: null })} />
-          <span className="check-body">Использовать SIP-профиль по умолчанию<span className="help">Сейчас по умолчанию: {options.default ?? "не выбран"}.</span></span></label>
+          <span className="check-body">Использовать SIP-профиль по умолчанию<InfoTip>Сейчас по умолчанию: {options.default ?? "не выбран"}.</InfoTip></span></label>
         <label className="check"><input type="radio" name="sipmode" checked={sip.mode === "profile"} disabled={!options.profiles.length}
                                          onChange={() => set({ mode: "profile", profile_id: sip.profile_id ?? options.profiles[0]?.id ?? null })} />
           <span className="check-body">Конкретный SIP-профиль
@@ -36,9 +37,9 @@ export default function TelephonyEditor({ sip, options, onChange }: { sip: RoomS
         <>
           <fieldset className="group"><legend>Звонки</legend>
             <label className="check"><input type="checkbox" checked={sip.allow_outbound} onChange={(e) => set({ allow_outbound: e.target.checked })} />
-              <span className="check-body">Разрешить исходящие звонки<span className="help">Руководитель нажимает «Позвонить» во время встречи, вводит номер или выбирает сохранённый — абонент появляется среди участников как «Телефон: номер». Его речь попадает в стенограмму и запись.</span></span></label>
+              <span className="check-body">Разрешить исходящие звонки<InfoTip>Руководитель нажимает «Позвонить» во время встречи, вводит номер или выбирает сохранённый — абонент появляется среди участников как «Телефон: номер». Его речь попадает в стенограмму и запись.</InfoTip></span></label>
             <label className="check"><input type="checkbox" checked={sip.allow_inbound} onChange={(e) => set({ allow_inbound: e.target.checked })} />
-              <span className="check-body">Разрешить входящие звонки<span className="help">Звонок на внутренний номер комнаты попадает в идущую встречу. Когда встречи нет, звонок отклоняется.</span></span></label>
+              <span className="check-body">Разрешить входящие звонки<InfoTip>Звонок на внутренний номер комнаты попадает в идущую встречу. Когда встречи нет, звонок отклоняется.</InfoTip></span></label>
             <label>Внутренний номер комнаты <span className="muted small">(для входящих; 2–16 цифр, уникален)</span>
               <input value={sip.extension ?? ""} onChange={(e) => set({ extension: e.target.value.replace(/[^0-9]/g, "").slice(0, 16) || null })} inputMode="numeric" placeholder="201" style={{ maxWidth: 200 }} aria-invalid={sip.allow_inbound && !sip.extension} />
               {sip.allow_inbound && !sip.extension && <span className="field-err" role="alert">Для входящих звонков укажите внутренний номер.</span>}

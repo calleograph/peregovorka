@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type RoomAdmin, type WebhookDeliveryItem, type WebhookEndpointIn, type WebhookEndpointItem, type WebhookIssued } from "../../api";
 import { ConfirmDialog, Modal } from "../../components/Dialogs";
+import InfoTip from "../../components/InfoTip";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU") : "—");
 const STATUS: Record<WebhookEndpointItem["status"], string> = { active: "работает", degraded: "деградация", disabled: "отключён" };
@@ -51,8 +52,7 @@ export default function WebhooksAdmin() {
   return (
     <div className="card form">
       <div className="row"><h2>Подписки на события (webhooks)</h2><div className="spacer" /><button className="btn primary" onClick={() => open()}>Новый получатель</button></div>
-      <p className="muted small">Сервер отправляет получателю события (встреча началась/завершилась, документ готов, задача завершена) с подписью HMAC. В событиях только идентификаторы — содержимое получатель запрашивает через API.
-        Адрес проверяется политикой безопасности: внутренние адреса запрещены, пока не разрешены в настройках («Разрешённые внутренние узлы»).</p>
+      <p className="muted small">Сервер отправляет получателю события (встреча началась/завершилась, документ готов, задача завершена) с подписью HMAC.<InfoTip>В событиях только идентификаторы — содержимое получатель запрашивает через API. Адрес проверяется политикой безопасности: внутренние адреса запрещены, пока не разрешены в настройках («Разрешённые внутренние узлы»).</InfoTip></p>
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
       {!items.length && <p className="muted">Получателей пока нет.</p>}

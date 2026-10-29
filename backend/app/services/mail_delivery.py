@@ -125,9 +125,12 @@ def clean_spec(raw: dict | None) -> dict:
             "template_id": str(raw.get("template_id") or "") or None, "if_missing": "skip" if raw.get("if_missing") == "skip" else "send",
             "formats": [f for f in dict.fromkeys(raw.get("formats") or []) if f in FORMATS],
             "recipients": {"leaders": False, "owner": False, "organizer": False, "participants": False, "users": [], "emails": []}}
-    for k in raw.get("materials") or []:
-        if k not in MATERIALS:
-            raise ValueError(f"Неизвестный материал: {k}")
+    mats = raw.get("materials") or []
+    if not isinstance(mats, list):
+        raise ValueError("Материалы рассылки — список")
+    for k in mats:
+        if not isinstance(k, str) or k not in MATERIALS:       # не строка (в том числе объект) — тоже понятный отказ, а не сбой сервера
+            raise ValueError(f"Неизвестный материал: {str(k)[:40]}")
         if k not in spec["materials"]:
             spec["materials"].append(k)
     r = raw.get("recipients") or {}

@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type StorageProfile, type TestResult } from "../../api";
 import StorageTransferAdmin from "./StorageTransferAdmin";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
@@ -16,11 +17,11 @@ const toForm = (p: StorageProfile): Form => ({
 });
 
 const FOLDER_HELP: [string, string][] = [
-  ["Audio", "записи аудио"], ["Transcripts", "стенограммы"], ["Protocols", "протоколы и резюме"], ["Chat", "переписка и вложения чата"], ["Boards", "схемы доски"], ["Logs", "журнал событий"],
+  ["Audio", "аудиозаписи"], ["Video", "видеозаписи (MP4)"], ["Transcripts", "стенограммы"], ["Protocols", "протоколы и резюме"], ["Chat", "переписка и вложения чата"], ["Boards", "схемы доски"], ["Logs", "журнал событий"],
 ];
 
 /**
- * Хранилища создаются один раз: «Файловый сервер №1 → SMB → \\сервер\ресурс → учётная запись». Функции (записи, протоколы, вложения чата, журнал)
+ * Хранилища создаются один раз: «Файловый сервер №1 → SMB → \\сервер\ресурс → учётная запись». Функции (аудио- и видеозаписи, протоколы, вложения чата, журнал)
  * потом лишь выбирают хранилище в своих разделах — адрес и пароль второй раз вводить не нужно. Подпапки внутри создаются автоматически.
  */
 export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => void }) {
@@ -79,36 +80,35 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
           <h3 style={{ margin: 0 }}>{form.id ? `Изменение хранилища «${form.name}»` : "Новое хранилище"}</h3>
           <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Файловый сервер №1" maxLength={120} />
             <span className="example">Пример: <code>Файловый сервер №1</code></span></label>
-          <label>Тип
-            <select value={form.kind} disabled={!!form.id} onChange={(e) => set("kind", e.target.value as "local" | "smb")}>
+          <label><span className="field-title">Тип<InfoTip>Приложение подключается к SMB само — монтировать ресурс в систему не нужно. Тип после создания не меняется.</InfoTip></span><select value={form.kind} disabled={!!form.id} onChange={(e) => set("kind", e.target.value as "local" | "smb")}>
               <option value="smb">Сетевой ресурс SMB (общая папка Windows / NAS)</option>
               <option value="local">Локальный каталог на сервере приложения</option>
             </select>
-            <span className="help">Приложение подключается к SMB само — монтировать ресурс в систему не нужно. Тип после создания не меняется.</span></label>
+            </label>
           {form.kind === "local" ? (
-            <label>Каталог внутри контейнера<input value={form.local_path} onChange={(e) => set("local_path", e.target.value)} placeholder="/data/exports" />
-              <span className="help">Абсолютный путь внутри контейнера приложения (лежит в разделе DATA_ROOT на сервере). Не путь Windows.</span></label>
+            <label><span className="field-title">Каталог внутри контейнера<InfoTip>Абсолютный путь внутри контейнера приложения (лежит в разделе DATA_ROOT на сервере). Не путь Windows.</InfoTip></span><input value={form.local_path} onChange={(e) => set("local_path", e.target.value)} placeholder="/data/exports" />
+              </label>
           ) : null}
           {form.kind === "local" ? (
             <label className="check"><input type="checkbox" checked={form.external_volume} onChange={(e) => set("external_volume", e.target.checked)} />
-              <span className="check-body">Внешний том: смонтированная сетевая папка или диск<span className="help">Включает защиту: кнопка «Проверить» ставит на том метку и запоминает, что он смонтирован, — если том отключится, запись, выгрузка и перенос в него остановятся, а не заполнят системный диск. Отмечайте, когда том сейчас подключён (проверка откажет, если каталог лежит на системном диске). Для переноса записей в папку отметка обязательна; обычная папка на диске сервера работает без неё.</span></span></label>
+              <span className="check-body">Внешний том: смонтированная сетевая папка или диск<InfoTip>Включает защиту: кнопка «Проверить» ставит на том метку и запоминает, что он смонтирован, — если том отключится, запись, выгрузка и перенос в него остановятся, а не заполнят системный диск. Отмечайте, когда том сейчас подключён (проверка откажет, если каталог лежит на системном диске). Для переноса записей в папку отметка обязательна; обычная папка на диске сервера работает без неё.</InfoTip></span></label>
           ) : (
             <fieldset className="group"><legend>Сетевой ресурс SMB</legend>
               <div className="cols">
-                <label>Сервер (имя или IP)<input value={form.smb_server} onChange={(e) => set("smb_server", e.target.value)} placeholder="files.corp.local" />
-                  <span className="help">Без схемы (smb://) и слэшей.</span></label>
-                <label>Общий ресурс (имя шары)<input value={form.smb_share} onChange={(e) => set("smb_share", e.target.value)} placeholder="meetings" />
-                  <span className="help">Итоговый адрес: <code>\\{form.smb_server || "сервер"}\{form.smb_share || "ресурс"}{form.smb_base_path ? `\\${form.smb_base_path.replace(/[\\/]+/g, "\\")}` : ""}</code></span></label>
+                <label><span className="field-title">Сервер (имя или IP)<InfoTip>Без схемы (smb://) и слэшей.</InfoTip></span><input value={form.smb_server} onChange={(e) => set("smb_server", e.target.value)} placeholder="files.corp.local" />
+                  </label>
+                <label><span className="field-title">Общий ресурс (имя шары)<InfoTip>Итоговый адрес: <code>\\{form.smb_server || "сервер"}\{form.smb_share || "ресурс"}{form.smb_base_path ? `\\${form.smb_base_path.replace(/[\\/]+/g, "\\")}` : ""}</code></InfoTip></span><input value={form.smb_share} onChange={(e) => set("smb_share", e.target.value)} placeholder="meetings" />
+                  </label>
               </div>
-              <label>Подкаталог на ресурсе <span className="muted small">(необязательно)</span><input value={form.smb_base_path} onChange={(e) => set("smb_base_path", e.target.value)} placeholder="peregovorka" />
-                <span className="help">Подпапки Audio, Protocols и другие создаются внутри него.</span></label>
+              <label><span className="field-title">Подкаталог на ресурсе<InfoTip>Подпапки Audio, Protocols и другие создаются внутри него.</InfoTip></span><span className="muted small">(необязательно)</span><input value={form.smb_base_path} onChange={(e) => set("smb_base_path", e.target.value)} placeholder="peregovorka" />
+                </label>
               <div className="cols">
                 <label>Домен <span className="muted small">(необязательно)</span><input value={form.smb_domain} onChange={(e) => set("smb_domain", e.target.value)} placeholder="CORP" /></label>
                 <label>Учётная запись с правом записи<input value={form.smb_username} onChange={(e) => set("smb_username", e.target.value)} placeholder="svc-peregovorka" autoComplete="off" /></label>
               </div>
-              <label>Пароль учётной записи {form.id && <span className="muted small">— {form.secret_set ? "задан (пусто — не менять)" : "не задан"}</span>}
+              <label><span className="field-title">Пароль учётной записи<InfoTip>Хранится в зашифрованном виде и после сохранения не показывается.</InfoTip></span>{form.id && <span className="muted small">— {form.secret_set ? "задан (пусто — не менять)" : "не задан"}</span>}
                 <input type="password" value={form.secret} onChange={(e) => set("secret", e.target.value)} autoComplete="new-password" placeholder={form.secret_set ? "••••••••" : ""} />
-                <span className="help">Хранится в зашифрованном виде и после сохранения не показывается.</span></label>
+                </label>
             </fieldset>
           )}
           <div className="row form-actions"><button className="btn primary" disabled={busy}>{busy ? "Сохранение…" : "Сохранить"}</button><button type="button" className="btn ghost" onClick={() => setForm(null)}>Отмена</button></div>
@@ -127,7 +127,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
                   <td>{p.name}<div className="muted small">{p.kind === "smb" ? `SMB${p.config.smb_username ? ` · ${p.config.smb_domain ? `${p.config.smb_domain}\\` : ""}${p.config.smb_username}` : ""}` : "локальный каталог"}</div></td>
                   <td className="small"><code>{p.address}</code></td>
                   <td className="small">{p.used_by.length ? p.used_by.join(", ") : <span className="muted">пока никем</span>}
-                    {t && t !== "run" && <div className={t.ok ? "ok-text" : "err"} role="status">{t.ok ? "✓ " : "✗ "}{t.message}</div>}</td>
+                    {t && t !== "run" && <div className={t.ok ? "ok-text" : "err"} role="status">{t.ok ? "✓ " : "✗ "}{t.message}{!t.ok && <> <a href="https://github.com/calleograph/peregovorka/wiki/Решение-проблем-файловых-хранилищ" target="_blank" rel="noopener noreferrer">Как решить</a></>}</div>}</td>
                   <td className="actions">
                     <button className="btn ghost" disabled={t === "run"} onClick={() => void test(p)} title="Пробная запись и создание подпапок">{t === "run" ? "Проверка…" : "Проверить"}</button>
                     <button className="btn ghost" onClick={() => { setForm(toForm(p)); setError(""); setNote(""); }}>Изменить</button>
@@ -139,7 +139,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
           </tbody>
         </table>
       )}</div>
-      {onOpen && items.length > 0 && <p className="muted small">Выбрать хранилище: «Хранилище протоколов», «Хранилище записей», «Вложения чата», «Хранение журнала».</p>}
+      {onOpen && items.length > 0 && <p className="muted small">Выбрать хранилище: «Хранилище документов встреч», «Хранилище аудиозаписей», «Видеозапись», «Хранилище вложений чата», «Хранение журнала».</p>}
       {items.length > 0 && <StorageTransferAdmin />}
     </section>
   );

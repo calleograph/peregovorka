@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type DiagResult, type MailMessageRow, type MailProfile } from "../../api";
 import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 interface Form {
   id?: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login" | "ntlm"; username: string; secret: string; secret_set: boolean;
@@ -86,7 +87,7 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
                   <option value="starttls">STARTTLS (обычно порт 587)</option><option value="ssl">SSL/TLS (обычно порт 465)</option><option value="none">Без шифрования (порт 25, только внутри сети)</option>
                 </select></label>
               <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
-              <label>Таймаут<input type="number" min={3} max={120} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /><span className="help">секунд</span></label>
+              <label><span className="field-title">Таймаут<span className="muted small"> (секунд)</span></span><input type="number" min={3} max={120} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
             </div>
             {form.security === "none" && <div className="alert info small">Без шифрования письма (и пароль, если он задан) идут открытым текстом. Используйте только для внутреннего relay в доверенной сети.</div>}
           </fieldset>
@@ -104,20 +105,20 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
             {form.auth_type !== "none" && (
               <div className="cols">
                 <label>{form.auth_type === "ntlm" ? "Учётная запись" : "Логин"}<input value={form.username} onChange={(e) => set("username", e.target.value)} placeholder={form.auth_type === "ntlm" ? "ДОМЕН\\svc-mail или svc-mail@example.local" : "svc-mail@example.local"} autoComplete="off" spellCheck={false} />
-                  {form.auth_type === "ntlm" && <span className="help">Домен и логин — в виде <code>ДОМЕН\логин</code> или <code>логин@домен</code>.</span>}</label>
+                  {form.auth_type === "ntlm" && <InfoTip>Домен и логин — в виде <code>ДОМЕН\логин</code> или <code>логин@домен</code>.</InfoTip>}</label>
                 <SecretInput label="Пароль" isSet={form.secret_set} value={form.secret} onChange={(v) => set("secret", v)} help="Хранится в зашифрованном виде и после сохранения не показывается." />
               </div>
             )}
           </fieldset>
           <fieldset className="group"><legend>Отправитель</legend>
             <div className="cols">
-              <label>Адрес отправителя<input value={form.from_address} onChange={(e) => set("from_address", e.target.value)} placeholder="noreply@example.local" autoCapitalize="none" spellCheck={false} />
-                <span className="help">Как правило, noreply-адрес. Сервер должен разрешать отправку от него.</span></label>
+              <label><span className="field-title">Адрес отправителя<InfoTip>Как правило, noreply-адрес. Сервер должен разрешать отправку от него.</InfoTip></span><input value={form.from_address} onChange={(e) => set("from_address", e.target.value)} placeholder="noreply@example.local" autoCapitalize="none" spellCheck={false} />
+                </label>
               <label>Отображаемое имя<input value={form.from_name} onChange={(e) => set("from_name", e.target.value)} placeholder="Peregovorka" maxLength={200} /></label>
             </div>
           </fieldset>
           <label className="check"><input type="checkbox" checked={form.verify_cert} onChange={(e) => set("verify_cert", e.target.checked)} />
-            <span className="check-body">Проверять сертификат сервера почты<span className="help">Рекомендуется. Отключайте только временно и только для внутреннего сервера с самоподписанным сертификатом — лучше загрузите его CA.</span></span></label>
+            <span className="check-body">Проверять сертификат сервера почты<InfoTip>Рекомендуется. Отключайте только временно и только для внутреннего сервера с самоподписанным сертификатом — лучше загрузите его CA.</InfoTip></span></label>
           <div className="row form-actions"><button className="btn primary" disabled={busy}>{busy ? "Сохранение…" : "Сохранить"}</button><button type="button" className="btn ghost" onClick={() => setForm(null)}>Отмена</button></div>
         </form>
       )}
@@ -135,7 +136,7 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
               {!p.is_active && <button className="btn" onClick={() => void activate(p)}>Сделать активным</button>}
               <button className="btn ghost danger" onClick={() => void remove(p)}>Удалить</button>
             </div>
-            {d && d !== "run" && <StageList result={d} />}
+            {d && d !== "run" && <StageList result={d} doc="https://github.com/calleograph/peregovorka/wiki/Решение-проблем-Outlook-и-почты" />}
             <div className="row tight test-send">
               <input type="email" value={to[p.id] ?? ""} onChange={(e) => setTo((t) => ({ ...t, [p.id]: e.target.value }))} placeholder="Адрес получателя тестового письма: user1@example.local" aria-label="Адрес для тестового письма" />
               <button className="btn" disabled={s === "run" || !(to[p.id] ?? "").includes("@")} onClick={() => void testSend(p.id)}>{s === "run" ? "Отправка…" : "Отправить тестовое письмо"}</button>

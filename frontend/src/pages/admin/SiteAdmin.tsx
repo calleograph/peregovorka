@@ -7,6 +7,7 @@ import { loadSite, useSite } from "../../site";
 import { fmt } from "../../util";
 import type { Field } from "./SettingsForm";
 import SettingsForm from "./SettingsForm";
+import InfoTip from "../../components/InfoTip";
 
 const BRAND_FIELDS: Field[] = [
   { name: "name", label: "Название системы", type: "text", example: "Переговорка", help: "Показывается в верхней панели, на странице входа, во вкладке браузера и в письмах ({{project_name}})." },
@@ -153,7 +154,7 @@ function LegalTab() {
   return (
     <div className="card form">
       <h2>Юридические документы организации</h2>
-      <p className="muted">Тексты, их публикацию и необходимость подтверждения определяет организация: продукт не содержит юридических формулировок и не заявляет соответствия законодательству. Каждый документ необязателен. Показ — безопасный Markdown, без HTML.</p>
+      <p className="muted small">Тексты, их публикацию и необходимость подтверждения определяет организация: продукт не содержит юридических формулировок и не заявляет соответствия законодательству.<InfoTip>Каждый документ необязателен. Показ — безопасный Markdown, без HTML.</InfoTip></p>
       <div className="tabs" role="tablist">{docs.map((d) => <button key={d.kind} role="tab" aria-selected={d.kind === kind} className={`tab ${d.kind === kind ? "active" : ""}`} onClick={() => setKind(d.kind)}>{d.label}{d.published ? " ●" : ""}</button>)}</div>
       <p className="small">{doc.published ? <><span className="badge ok">опубликован</span> редакция {doc.version} от {doc.published_at ? fmt(doc.published_at) : "—"}</> : <span className="badge">{doc.version ? `снят с публикации (последняя редакция ${doc.version})` : "не опубликован"}</span>}
         {doc.has_changes && doc.published && <span className="badge warn" style={{ marginLeft: 8 }}>есть неопубликованные правки</span>}
@@ -171,7 +172,7 @@ function LegalTab() {
             <button type="button" className="btn mini" onClick={() => file.current?.click()}>Загрузить файл .md…</button>
           </div>
           <label className="check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            <span className="check-body">Требовать подтверждение при входе<span className="help">Сотрудник после входа, а гость перед подключением явно подтверждает ознакомление. Подтверждение хранится вместе с версией документа; при публикации новой редакции запрашивается заново.</span></span></label>
+            <span className="check-body">Требовать подтверждение при входе<InfoTip>Сотрудник после входа, а гость перед подключением явно подтверждает ознакомление. Подтверждение хранится вместе с версией документа; при публикации новой редакции запрашивается заново.</InfoTip></span></label>
         </>
       )}
       {view === "preview" && <div className="card legal-card"><h1>{title || doc.label}</h1><Markdown source={text} /></div>}

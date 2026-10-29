@@ -3,6 +3,7 @@ import { api, type ApiError, type TransferDetail, type TransferJob } from "../..
 import { bytes } from "../../util";
 import { fmtDate } from "./common";
 import { DIRECTION_TITLE, nextStep, progressPercent, stateTitle } from "../../storageMath";
+import InfoTip from "../../components/InfoTip";
 
 function Job({ j, onChange }: { j: TransferJob; onChange: () => void }) {
   const [detail, setDetail] = useState<TransferDetail | null>(null);
@@ -48,9 +49,7 @@ export default function StorageTransferAdmin() {
   return (
     <section aria-label="Перенос данных">
       <h3>Перенос данных</h3>
-      <p className="muted small">Записи аудио можно перенести с локального диска во внешнее хранилище (SMB или сетевую папку из «Файловые хранилища → Аудиозаписи») и обратно — все сразу или по одной встрече (на странице встречи). Перенос идёт в фоне:
-        для каждого файла проверяется источник и место, файл копируется, сверяются размер и контрольная сумма, затем запись в базе переключается на новое место, и только потом удаляется старый файл. Ссылки и права доступа не меняются.
-        Файлы идущих встреч и записи, которые ещё формируются, пропускаются. Если хранилище недоступно или нет места, перенос останавливается — после исправления его можно продолжить.</p>
+      <p className="muted small">Аудио- и видеозаписи можно перенести с локального диска во внешнее хранилище (SMB или сетевую папку из «Файловые хранилища → Аудиозаписи») и обратно — все сразу или по одной встрече (на странице встречи).<InfoTip>Перенос идёт в фоне: для каждого файла проверяется источник и место, файл копируется, сверяются размер и контрольная сумма, затем запись в базе переключается на новое место, и только потом удаляется старый файл. Ссылки и права доступа не меняются. Файлы идущих встреч и записи, которые ещё формируются, пропускаются. Если хранилище недоступно или нет места, перенос останавливается — после исправления его можно продолжить.</InfoTip></p>
       <div className="row"><button className="btn primary" disabled={busy || live} onClick={() => void start("to_external")}>Перенести на внешнее хранилище</button>
         <button className="btn" disabled={busy || live} onClick={() => void start("to_local")}>Вернуть на локальный диск</button></div>
       {err && <div className="alert error" role="alert">{err}</div>}

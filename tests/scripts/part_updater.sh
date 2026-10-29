@@ -80,6 +80,12 @@ if [ -n "$PYJ" ]; then
   t "repair: ID вне белого списка отклонён, request.txt удалён, ничего не запущено" waitfor 20 bash -c '[ ! -f "$1/request.txt" ] && [ ! -e /tmp/pwned-repair ] && [ "$(jget "$1/status.json" "d[\"action\"]")" != repair ]' _ "$CHD"
   printf 'id=%s\naction=format-disk\nforce_build=0\npull=0\nby=admin\nat=%s\n' f2f2f2f2f2f2f2f2 "$(date +%s)" > "$CHD/request.txt"
   t "неизвестное действие запроса игнорируется" waitfor 20 bash -c '[ ! -f "$1/request.txt" ]' _ "$CHD"
+  # действия с компонентами: только ID из белого списка complib.sh; «state» лишь опрашивает службы (components.json), ничего не меняя
+  printf 'id=%s\naction=component\nop=%s\nforce_build=0\npull=0\nby=admin\nat=%s\n' f4f4f4f4f4f4f4f4 'video_enable; touch /tmp/pwned-comp' "$(date +%s)" > "$CHD/request.txt"
+  t "component: действие вне белого списка отклонено, ничего не выполнено" waitfor 20 bash -c '[ ! -f "$1/request.txt" ] && [ ! -e /tmp/pwned-comp ] && [ "$(jget "$1/status.json" "d[\"action\"]")" != component ]' _ "$CHD"
+  rm -f "$CHD/components.json"
+  printf 'id=%s\naction=component\nop=state\nforce_build=0\npull=0\nby=admin\nat=%s\n' f5f5f5f5f5f5f5f5 "$(date +%s)" > "$CHD/request.txt"
+  t "component: «state» пишет components.json (что включено в .env, есть ли Docker), состояние помощника не меняется" waitfor 20 bash -c '[ "$(jget "$1/components.json" "type(d[\"env\"][\"video_enabled\"]).__name__")" = bool ] && [ "$(jget "$1/status.json" "d[\"action\"]")" != component ]' _ "$CHD"
   # запрос-символьная ссылка (подмена файла другим локальным пользователем) отклоняется и не читается: update.sh не запускается, ссылка удаляется, цель цела
   : > "$FAKE_ARGS_FILE"; SYMTARGET="$(mktemp)"; printf 'id=%s\naction=update\nforce_build=1\npull=0\nby=admin\nat=%s\n' d3d3d3d3d3d3d3d3 "$(date +%s)" > "$SYMTARGET"
   ln -s "$SYMTARGET" "$CHD/request.txt"

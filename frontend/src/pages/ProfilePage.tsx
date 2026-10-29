@@ -8,6 +8,7 @@ import { chatSoundEnabled, playChatSound, setChatSoundEnabled, setSoundVolume, s
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import { fmt } from "../util";
 import { THEMES, effectiveTheme, setUserTheme, useSite, type ThemeId } from "../site";
+import InfoTip from "../components/InfoTip";
 
 /** «Активные устройства»: сессии этой учётной записи; можно завершить любую (в том числе все остальные). Вход с другого устройства сессию на этом не завершает. */
 function ActiveDevices() {
@@ -65,9 +66,9 @@ function SoundSettings() {
       <h2>Уведомления</h2>
       <p className="muted small" style={{ margin: "0 0 6px" }}>Звуки в комнате — только на этом устройстве.</p>
       <label className="check"><input type="checkbox" checked={chat} onChange={(e) => { setChatSoundEnabled(e.target.checked); setChat(e.target.checked); }} />
-        <span className="check-body">Звук новых сообщений чата<span className="help">Короткий сигнал на сообщение другого участника.</span></span></label>
+        <span className="check-body">Звук новых сообщений чата<InfoTip>Короткий сигнал на сообщение другого участника.</InfoTip></span></label>
       <label className="check"><input type="checkbox" checked={hand} onChange={(e) => { setHandSoundEnabled(e.target.checked); setHand(e.target.checked); }} />
-        <span className="check-body">Звук поднятой руки<span className="help">Другой сигнал, не похожий на чат.</span></span></label>
+        <span className="check-body">Звук поднятой руки<InfoTip>Другой сигнал, не похожий на чат.</InfoTip></span></label>
       <label>Громкость уведомлений
         <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setSoundVolume(v); setVol(v); }} aria-valuetext={`${Math.round(vol * 100)} %`} /></label>
       <div className="row">

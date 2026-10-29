@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type ApiError, type DeliveryPlan } from "../api";
 import { Modal } from "./Dialogs";
 import { FORMAT_LABEL, MATERIAL_KINDS, RecipientTable } from "./DeliveryEditor";
+import InfoTip from "./InfoTip";
 
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
@@ -73,7 +74,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
             <label>Ещё адреса <span className="muted small">(необязательно)</span>
               <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="user1@example.local, partner@example.org" spellCheck={false} aria-invalid={badExtra.length > 0} />
               {badExtra.length > 0 && <span className="field-err" role="alert">Некорректный адрес: {badExtra[0]}</span>}</label>
-            {plan.allowed_domains.length > 0 && <span className="help">Разрешены только адреса доменов: {plan.allowed_domains.join(", ")}.</span>}
+            {plan.allowed_domains.length > 0 && <InfoTip>Разрешены только адреса доменов: {plan.allowed_domains.join(", ")}.</InfoTip>}
           </fieldset>
           <fieldset className="group"><legend>Какие материалы</legend>
             {(plan.available_kinds ?? plan.materials).map((k) => {
@@ -81,14 +82,14 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
               const avail = m ? m.available : k.available;
               return (
                 <label key={k.kind} className="check"><input type="checkbox" checked={kinds.includes(k.kind)} disabled={avail === false} onChange={() => toggleKind(k.kind)} />
-                  <span className="check-body">{k.label}{avail === false && <span className="badge warn">не готов</span>}{avail === false && (m?.reason ?? k.reason) && <span className="help">{m?.reason ?? k.reason}</span>}
-                    {k.describe && avail !== false && <span className="help">{k.describe}</span>}</span></label>);
+                  <span className="check-body">{k.label}{avail === false && <span className="badge warn">не готов</span>}{avail === false && (m?.reason ?? k.reason) && <InfoTip>{m?.reason ?? k.reason}</InfoTip>}
+                    {k.describe && avail !== false && <InfoTip>{k.describe}</InfoTip>}</span></label>);
             })}
           </fieldset>
           <fieldset className="group"><legend>Формат документов</legend>
             <div className="checks">{(plan.formats ?? ["docx", "pdf", "html", "txt", "md"]).map((f) => (
               <label key={f} className="check"><input type="checkbox" checked={formats.includes(f)} onChange={() => toggleFmt(f)} /> {FORMAT_LABEL[f] ?? f}</label>))}</div>
-            <span className="help">Если документы вместе больше {plan.max_attachment_mb} МБ, они не вкладываются — в письме будет ссылка на страницу встречи.{kinds.includes("map") ? " Карта разговора всегда вкладывается отдельным HTML-файлом." : ""}</span>
+            <InfoTip>Если документы вместе больше {plan.max_attachment_mb} МБ, они не вкладываются — в письме будет ссылка на страницу встречи.{kinds.includes("map") ? " Карта разговора всегда вкладывается отдельным HTML-файлом." : ""}</InfoTip>
           </fieldset>
           <fieldset className="group"><legend>Письмо</legend>
             <label>Шаблон
@@ -97,7 +98,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
               </select></label>
             <label>Тема<input value={subject} maxLength={300} onChange={(e) => setSubject(e.target.value)} /></label>
             <label>Текст письма<textarea rows={9} value={body} maxLength={8000} onChange={(e) => setBody(e.target.value)} /></label>
-            <span className="help">Правки относятся только к этому письму — сам шаблон не меняется. Список материалов и ссылка на встречу добавляются под текстом автоматически.</span>
+            <InfoTip>Правки относятся только к этому письму — сам шаблон не меняется. Список материалов и ссылка на встречу добавляются под текстом автоматически.</InfoTip>
           </fieldset>
           <div className="row"><button className="btn primary" disabled={busy || !plan.mail_configured || kinds.length === 0 || uniq.length === 0 || badExtra.length > 0 || !subject.trim() || !body.trim() || (!onlyMap && formats.length === 0)} onClick={() => void send()}>
             {busy ? "Отправка…" : `Отправить (${uniq.length})`}</button><button className="btn ghost" onClick={onClose}>Отмена</button></div>

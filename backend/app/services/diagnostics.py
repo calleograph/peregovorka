@@ -369,7 +369,8 @@ async def build_report(app, db_ok: bool | None = None) -> dict:
         async with app.state.session_maker() as db:
             st = await app.state.settings_svc.get(db, "storage")
             au = await app.state.settings_svc.get(db, "audio_storage")
-        c["storage"] = {"protocols": {"enabled": st.enabled, "type": st.type}, "audio": {"enabled": au.enabled, "type": au.type}}
+            vi = await app.state.settings_svc.get(db, "video")
+        c["storage"] = {"protocols": {"enabled": st.enabled, "type": st.type}, "audio": {"enabled": au.enabled, "type": au.type}, "video": {"storage": vi.storage}}
     except Exception as exc:  # noqa: BLE001
         c["storage"] = {"ok": False, "error": type(exc).__name__}
 

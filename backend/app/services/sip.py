@@ -20,6 +20,7 @@ import socket
 import ssl
 import time
 import uuid
+from . import server_components as _sc
 from datetime import timedelta
 from typing import Any, Callable
 
@@ -528,7 +529,7 @@ async def service_status(settings: Settings, gateway: SipGateway, profiles: list
     """Состояние телефонии: включена ли на сервере, запущена ли служба SIP, связь с LiveKit и Redis, активные транки, порты. Без секретов."""
     import httpx  # noqa: PLC0415
 
-    enabled = str(settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on")
+    enabled = _sc.enabled_on_server(settings, _sc.channel_for(settings), "sip")
     ports = {"signaling_port": settings.sip_signaling_port, "rtp_start": settings.sip_rtp_start, "rtp_end": settings.sip_rtp_end,
              "media_ip": settings.sip_media_ip or None, "allowed_cidrs": [c for c in re.split(r"[\s,;]+", settings.sip_allowed_cidrs or "") if c]}
     out: dict = {"enabled_on_server": enabled, "ports": ports, "service": {"running": None, "detail": ""}, "livekit": {"ok": None, "detail": ""}, "redis": {"ok": None, "detail": ""},

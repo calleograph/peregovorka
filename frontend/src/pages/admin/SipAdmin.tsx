@@ -4,6 +4,8 @@ import { normalizeNumber } from "../../phone";
 import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
 import { ConnectionCheck, SipCallLog, SipGuideDialog } from "../../components/SipGuide";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
+import { ComponentCard, useComponents, WIKI } from "./ServerComponents";
 
 interface Form {
   id?: string; name: string; enabled: boolean; is_default: boolean; direction: SipProfile["direction"]; host: string; port: number; transport: SipProfile["transport"];
@@ -34,7 +36,7 @@ export default function SipAdmin() {
   const [diag, setDiag] = useState<Record<string, DiagResult | "run">>({});
   const [callNum, setCallNum] = useState<Record<string, string>>({});
   const [callRes, setCallRes] = useState<Record<string, { ok: boolean; text: string } | "run">>({});
-  const [srvBusy, setSrvBusy] = useState(false);
+  const ctl = useComponents();
   const [guide, setGuide] = useState(false);
   const [conn, setConn] = useState(false);
   const [connId, setConnId] = useState("");
@@ -87,12 +89,6 @@ export default function SipAdmin() {
     try { const r = await api.admin.testCallSip(p.id, n); setCallRes((x) => ({ ...x, [p.id]: { ok: r.ok, text: `${r.message} (${r.ms} мс)` } })); await load(); }
     catch (e) { setCallRes((x) => ({ ...x, [p.id]: { ok: false, text: (e as ApiError).message } })); }
   };
-  const server = async (id: "sip_enable" | "sip_disable") => {
-    setError(""); setNote(""); setSrvBusy(true);
-    try { await api.admin.repairFix(id); setNote(id === "sip_enable" ? "Включение запущено на сервере (перезапуск LiveKit и запуск службы SIP — до минуты; идущие звонки прервутся)." : "Выключение запущено на сервере."); window.setTimeout(() => void load(), 6000); }
-    catch (e) { setError((e as ApiError).message); }
-    setSrvBusy(false);
-  };
 
   const ports = st?.ports;
   return (
@@ -108,17 +104,15 @@ export default function SipAdmin() {
             {items.length > 1 && <label className="inline">Профиль <select value={connId} onChange={(e) => setConnId(e.target.value)}>{items.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}</div>
           {items.find((p) => p.id === connId) && <ConnectionCheck profile={items.find((p) => p.id === connId)!} onChanged={() => void load()} />}
         </div>)}
-      <p className="muted">Подключение телефонной станции (Asterisk или другой SIP-АТС) и звонки в комнаты: АТС ↔ SIP-транк ↔ <b>LiveKit SIP Service</b> ↔ комната. Телефонный абонент появляется среди участников как обычный, его речь попадает в стенограмму и запись.
-        Asterisk — первый проверенный вариант; профили не привязаны к конкретной АТС.</p>
+      <p className="muted small">АТС ↔ SIP-транк ↔ LiveKit SIP ↔ комната<InfoTip doc={`${WIKI}Как-подключить-SIP-телефонию`}>Телефонный абонент появляется среди участников как обычный, его речь попадает в стенограмму и запись. Asterisk — первый проверенный вариант; профили не привязаны к конкретной АТС.</InfoTip></p>
       {error && <div className="alert error" role="alert">{error}</div>}
       {note && <div className="alert ok" role="status">{note}</div>}
 
       <div className="card sip-status" aria-label="Состояние телефонии">
         <div className="row"><h3 style={{ margin: 0 }}>Состояние</h3><div className="spacer" />
           <button className="btn mini" onClick={() => void load()}>Обновить</button>
-          {st && !st.enabled_on_server && <button className="btn mini primary" disabled={srvBusy} onClick={() => void server("sip_enable")} title="Запустить службу LiveKit SIP и открыть порты на сервере (выполняет помощник обновлений)">Включить телефонию на сервере</button>}
-          {st?.enabled_on_server && <button className="btn mini" disabled={srvBusy} onClick={() => { if (window.confirm("Выключить телефонию на сервере? Служба SIP остановится, порты перестанут публиковаться; профили сохранятся.")) void server("sip_disable"); }}>Выключить</button>}
         </div>
+        <ComponentCard name="sip" ctl={ctl} />
         {!st ? <p className="muted">Загрузка…</p> : (
           <table className="table compact"><tbody>
             <tr><td>Телефония на сервере</td><td><Dot ok={st.enabled_on_server ? true : null} /> {st.enabled_on_server ? "включена" : "выключена — служба не запущена, порты не открыты"}</td></tr>
@@ -149,7 +143,7 @@ export default function SipAdmin() {
           <div className="cols">
             <label>Название<input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Asterisk, офис" maxLength={120} /></label>
             <label className="check"><input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.target.checked)} /><span className="check-body">Профиль включён</span></label>
-            <label className="check"><input type="checkbox" checked={form.is_default} onChange={(e) => set("is_default", e.target.checked)} /><span className="check-body">Профиль по умолчанию<span className="help">Используется комнатами с вариантом «профиль по умолчанию».</span></span></label>
+            <label className="check"><input type="checkbox" checked={form.is_default} onChange={(e) => set("is_default", e.target.checked)} /><span className="check-body">Профиль по умолчанию<InfoTip>Используется комнатами с вариантом «профиль по умолчанию».</InfoTip></span></label>
           </div>
           <fieldset className="group"><legend>Подключение к АТС</legend>
             <div className="cols">
@@ -157,44 +151,44 @@ export default function SipAdmin() {
                 <select value={form.direction} onChange={(e) => set("direction", e.target.value as Form["direction"])}>
                   <option value="both">Двусторонний (входящие и исходящие)</option><option value="outbound">Исходящий (комната звонит на телефоны)</option><option value="inbound">Входящий (на телефоны комнат звонят с АТС)</option>
                 </select></label>
-              <label>Адрес АТС (SIP host)<input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="pbx.example.local" autoCapitalize="none" spellCheck={false} />
-                <span className="help">Имя или IP, без схемы. Для Asterisk — адрес сервера с PJSIP.</span></label>
+              <label><span className="field-title">Адрес АТС (SIP host)<InfoTip>Имя или IP, без схемы. Для Asterisk — адрес сервера с PJSIP.</InfoTip></span><input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="pbx.example.local" autoCapitalize="none" spellCheck={false} />
+                </label>
               <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
               <label>Транспорт
                 <select value={form.transport} onChange={(e) => { const v = e.target.value as Form["transport"]; setForm((f) => (f ? { ...f, transport: v, port: v === "tls" && f.port === 5060 ? 5061 : v !== "tls" && f.port === 5061 ? 5060 : f.port } : f)); }}>
                   <option value="udp">UDP</option><option value="tcp">TCP</option><option value="tls">TLS</option></select></label>
             </div>
             <div className="cols">
-              <label>Логин<input value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" spellCheck={false} placeholder="необязательно" />
-                <span className="help">Для Asterisk — имя в секции auth. Если АТС сопоставляет транк только по IP (<code>identify</code>), логин и пароль не нужны.</span></label>
+              <label><span className="field-title">Логин<InfoTip>Для Asterisk — имя в секции auth. Если АТС сопоставляет транк только по IP (<code>identify</code>), логин и пароль не нужны.</InfoTip></span><input value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" spellCheck={false} placeholder="необязательно" />
+                </label>
               <SecretInput label="Пароль" isSet={form.secret_set} value={form.secret} onChange={(v) => set("secret", v)} help="Хранится в зашифрованном виде и после сохранения не показывается." />
             </div>
             <div className="cols">
-              <label>Caller ID / номер<input value={form.caller_id} onChange={(e) => set("caller_id", e.target.value)} placeholder="+70001112233" inputMode="tel" />
-                <span className="help">С какого номера звонит комната. Многие АТС отклоняют вызов без разрешённого номера.</span></label>
-              <label>Realm / домен<input value={form.realm} onChange={(e) => set("realm", e.target.value)} placeholder="pbx.example.local" spellCheck={false} /><span className="help">Для входящей авторизации, если АТС её требует.</span></label>
+              <label><span className="field-title">Caller ID / номер<InfoTip>С какого номера звонит комната. Многие АТС отклоняют вызов без разрешённого номера.</InfoTip></span><input value={form.caller_id} onChange={(e) => set("caller_id", e.target.value)} placeholder="+70001112233" inputMode="tel" />
+                </label>
+              <label><span className="field-title">Realm / домен<InfoTip>Для входящей авторизации, если АТС её требует.</InfoTip></span><input value={form.realm} onChange={(e) => set("realm", e.target.value)} placeholder="pbx.example.local" spellCheck={false} /></label>
             </div>
           </fieldset>
           <fieldset className="group"><legend>Номера и адреса</legend>
-            <label>Допустимые номера назначения <span className="muted small">(префиксы через запятую; пусто — любые)</span>
+            <label><span className="field-title">Допустимые номера назначения<InfoTip>Куда разрешено звонить из комнат: номер должен начинаться с одного из префиксов. Защита от случайных и дорогих звонков.</InfoTip></span><span className="muted small">(префиксы через запятую; пусто — любые)</span>
               <input value={form.allowed_numbers} onChange={(e) => set("allowed_numbers", e.target.value)} placeholder="+7, 8, 2" spellCheck={false} />
-              <span className="help">Куда разрешено звонить из комнат: номер должен начинаться с одного из префиксов. Защита от случайных и дорогих звонков.</span></label>
-            <label>Принимаемые входящие номера <span className="muted small">(пусто — любые)</span>
+              </label>
+            <label><span className="field-title">Принимаемые входящие номера<InfoTip>Внутренние номера, на которые транк принимает звонки.</InfoTip></span><span className="muted small">(пусто — любые)</span>
               <input value={form.inbound_numbers} onChange={(e) => set("inbound_numbers", e.target.value)} placeholder="201, 202" spellCheck={false} />
-              <span className="help">Внутренние номера, на которые транк принимает звонки.</span></label>
-            <label>Разрешённые адреса АТС для входящих <span className="muted small">(IP или подсети через запятую)</span>
+              </label>
+            <label><span className="field-title">Разрешённые адреса АТС для входящих<InfoTip>Звонки принимаются только с этих адресов — так в Asterisk сопоставляют входящий транк по IP. Для входящих рекомендуется всегда.</InfoTip></span><span className="muted small">(IP или подсети через запятую)</span>
               <input value={form.allowed_addresses} onChange={(e) => set("allowed_addresses", e.target.value)} placeholder="192.0.2.10, 192.0.2.0/24" spellCheck={false} />
-              <span className="help">Звонки принимаются только с этих адресов — так в Asterisk сопоставляют входящий транк по IP. Для входящих рекомендуется всегда.</span></label>
+              </label>
           </fieldset>
           <details className="group"><summary>Кодеки, шифрование и время ожидания</summary>
             <div className="checks">{CODECS.map((c) => (
               <label key={c} className="check"><input type="checkbox" checked={form.codecs.includes(c)} onChange={(e) => set("codecs", e.target.checked ? [...form.codecs, c] : form.codecs.filter((x) => x !== c))} /> {c}</label>))}</div>
-            <span className="help">Ничего не отмечено — кодеки по умолчанию LiveKit. Если отмечено, используются только выбранные (должны быть разрешены и на АТС).</span>
+            <InfoTip>Ничего не отмечено — кодеки по умолчанию LiveKit. Если отмечено, используются только выбранные (должны быть разрешены и на АТС).</InfoTip>
             <div className="cols">
               <label>Шифрование медиа (SRTP)
                 <select value={form.media_encryption} onChange={(e) => set("media_encryption", e.target.value as Form["media_encryption"])}>
                   <option value="disable">Отключено</option><option value="allow">Допускается</option><option value="require">Обязательно</option></select></label>
-              <label>Ждать ответа абонента<input type="number" min={5} max={120} value={form.ring_timeout_s} onChange={(e) => set("ring_timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /><span className="help">секунд</span></label>
+              <label><span className="field-title">Ждать ответа абонента<span className="muted small"> (секунд)</span></span><input type="number" min={5} max={120} value={form.ring_timeout_s} onChange={(e) => set("ring_timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
             </div>
           </details>
           <div className="row form-actions">
@@ -224,7 +218,7 @@ export default function SipAdmin() {
               <button className="btn" onClick={() => void check(p)} disabled={d === "run"}>{d === "run" ? "Проверка…" : "Проверить настройки"}</button>
               <button className="btn" onClick={() => void sync(p)} disabled={busy === `sync-${p.id}`} title="Создать/обновить транки профиля в LiveKit">Синхронизировать</button>
             </div>
-            {d && d !== "run" && <StageList result={d} />}
+            {d && d !== "run" && <StageList result={d} doc="https://github.com/calleograph/peregovorka/wiki/Как-подключить-SIP-телефонию" />}
             {!d && p.last_check?.stages && <div className="muted small">Последняя проверка ({fmtDate(p.last_check_at)}): {p.last_check.ok ? "успешно" : "были проблемы — нажмите «Проверить настройки»"}.</div>}
             {p.direction !== "inbound" && (
               <div className="row" style={{ marginTop: 8 }}>

@@ -56,7 +56,7 @@ const GROUPS: Group[] = [
   ] },
   { title: "Встречи", pages: [
     { id: "meetings", label: "Встречи", render: () => <MeetingsAdmin /> },
-    { id: "recordings", label: "Аудиозаписи", render: () => <RecordingsAdmin /> },
+    { id: "recordings", label: "Записи встреч", render: () => <RecordingsAdmin /> },
     { id: "protocol", label: "Протоколы: инструкции и режим", render: () => (
       <SettingsForm key="protocol" group="protocol" title="Инструкции и режим формирования протоколов" fields={protocolFields}
         intro="Что по умолчанию просит модель и когда документы создаются сами. Пользователь всегда видит инструкцию в окне «Сформировать протокол» и может её изменить." />) },

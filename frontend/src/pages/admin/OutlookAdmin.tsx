@@ -3,6 +3,7 @@ import { api, type ApiError, type JournalRow, type OutlookCenterInfo, type Outlo
 import SettingsForm from "./SettingsForm";
 import { outlookFields } from "./fields";
 import { fmtDate } from "./common";
+import InfoTip from "../../components/InfoTip";
 
 const mark = (ok: boolean | null) => (ok === true ? "✓" : ok === false ? "✗" : "•");
 const STATE: Record<string, string> = { waiting: "ждёт начала", open: "вход открыт", live: "идёт", ended: "завершена", cancelled: "отменена" };
@@ -71,8 +72,7 @@ export default function OutlookAdmin() {
   return (
     <section>
       <h2>Microsoft Outlook</h2>
-      <p className="muted">Кнопка «Добавить конференцию» в окне встречи Outlook создаёт связанную комнату Peregovorka и вставляет ссылку в приглашение; вход открывается за заданное время до начала.
-        Надстройка использует веб-компоненты и API этого сервера: администратор один раз устанавливает готовый манифест, дальше всё обновляется вместе с Peregovorka.</p>
+      <p className="muted small">Кнопка «Добавить конференцию» в окне встречи Outlook создаёт связанную комнату Peregovorka и вставляет ссылку в приглашение; вход открывается за заданное время до начала.<InfoTip>Надстройка использует веб-компоненты и API этого сервера: администратор один раз устанавливает готовый манифест, дальше всё обновляется вместе с Peregovorka.</InfoTip></p>
       {err && <div className="alert error" role="alert">{err}</div>}
 
       <div className="card" aria-label="Состояние интеграции">
@@ -162,7 +162,7 @@ export default function OutlookAdmin() {
 
       <div className="card" aria-label="Журнал ошибок надстройки">
         <div className="row"><h3 style={{ margin: 0 }}>Журнал надстройки и сверки</h3><div className="spacer" /><button className="btn mini" onClick={() => void loadLists()}>Обновить</button></div>
-        <p className="muted small">Ошибки, которые пользователь видел в панели или уведомлении Outlook (этап и код в квадратных скобках, в скобках — клиент Outlook и поддерживаемые наборы API), и итоги серверной сверки. Полный журнал — «Хранение и журналы → Журнал событий», категория outlook.</p>
+        <p className="muted small">Ошибки, которые пользователь видел в панели или уведомлении Outlook (этап и код в квадратных скобках, в скобках — клиент Outlook и поддерживаемые наборы API), и итоги серверной сверки.<InfoTip>Полный журнал — «Хранение и журналы → Журнал событий», категория outlook.</InfoTip></p>
         {log && !log.length && <p className="muted">Ошибок нет.</p>}
         {log && log.length > 0 && (
           <ul className="stage-list">{log.map((l) => (

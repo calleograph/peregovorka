@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from ..services import server_components as _sc
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -137,15 +138,28 @@ async def _room_for_leader(request: Request, db: AsyncSession, room_id: uuid.UUI
     return room
 
 
-async def _sip_block(request: Request, db: AsyncSession, room: Room) -> tuple[dict, dict]:
+async def sip_options(request: Request, db: AsyncSession) -> dict:
     st = request.app.state
     profiles = [p for p in await st.sip.list(db) if p.enabled]
-    enabled = str(st.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on")
+    enabled = _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "sip")
+    return {"server_enabled": enabled, "profiles": [{"id": str(p.id), "name": p.name, "direction": p.direction, "is_default": p.is_default, "synced": bool(p.lk_outbound_trunk_id or p.lk_inbound_trunk_id)} for p in profiles],
+            "default": next((p.name for p in profiles if p.is_default), None)}
+
+
+async def _sip_block(request: Request, db: AsyncSession, room: Room) -> tuple[dict, dict]:
     sip = {"mode": room.sip_mode, "profile_id": str(room.sip_profile_id) if room.sip_profile_id else None, "extension": room.sip_extension,
            "allow_inbound": room.sip_allow_inbound, "allow_outbound": room.sip_allow_outbound, "contacts": list(room.sip_contacts or [])}
-    opts = {"server_enabled": enabled, "profiles": [{"id": str(p.id), "name": p.name, "direction": p.direction, "is_default": p.is_default, "synced": bool(p.lk_outbound_trunk_id or p.lk_inbound_trunk_id)} for p in profiles],
-            "default": next((p.name for p in profiles if p.is_default), None)}
-    return sip, opts
+    return sip, await sip_options(request, db)
+
+
+async def template_extra(request: Request, db: AsyncSession) -> dict:
+    """Сведения для формы НОВОЙ комнаты (администратор): те же списки выбора, что и при изменении, — модели, телефония, видеозапись, наследуемые значения."""
+    st = request.app.state
+    room = Room(name="", slug="", llm_mode="inherit", llm_summary_mode="inherit")
+    ch = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None)
+    chs = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None, "summary")
+    return {"video_enabled": bool((await st.settings_svc.get(db, "video")).enabled), "llm_effective": describe(ch), "llm_summary_effective": describe(chs),
+            "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip_options": await sip_options(request, db)}
 
 
 async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request | None = None) -> RoomManageOut:
@@ -161,7 +175,8 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
     return RoomManageOut(
         icon=icon_out(room),
         protocol_instructions=room.protocol_instructions,
-        retention={"text_days": room.text_retention_days, "audio_days": room.audio_retention_days, "history_access": room.history_access, "anonymize_mode": room.anonymize_mode},
+        retention={"text_days": room.text_retention_days, "audio_days": room.audio_retention_days, "history_access": room.history_access, "anonymize_mode": room.anonymize_mode,
+                   **({"anonymizer_profile_id": str(room.anonymizer_profile_id) if room.anonymizer_profile_id else None} if su.is_admin else {})},
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,

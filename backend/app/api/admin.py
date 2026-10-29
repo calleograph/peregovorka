@@ -32,6 +32,14 @@ _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcri
               "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access", "encrypt_storage", "e2ee_mode")
 
 
+@router.get("/rooms/template")
+async def room_template(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Списки выбора для формы новой комнаты (модели, телефония, видеозапись): форма создания та же, что и изменения."""
+    from .room_manage import template_extra  # noqa: PLC0415
+
+    return await template_extra(request, db)
+
+
 def new_guest_token() -> str:
     return secrets.token_urlsafe(24)
 

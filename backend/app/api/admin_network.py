@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from ..services import server_components as _sc
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -95,7 +96,7 @@ async def build_current(settings: Any, settings_svc: Any, db: AsyncSession, env:
     env["LIVEKIT_NODE_IP"] = env.get("LIVEKIT_NODE_IP") or settings.livekit_node_ip
     env["LIVEKIT_RTC_TCP_PORT"] = env.get("LIVEKIT_RTC_TCP_PORT") or str(settings.livekit_rtc_tcp_port or "")
     env["LIVEKIT_RTC_UDP_PORT"] = env.get("LIVEKIT_RTC_UDP_PORT") or str(settings.livekit_rtc_udp_port or "")
-    env["SIP_ENABLED"] = settings.sip_enabled
+    env["SIP_ENABLED"] = "yes" if _sc.enabled_on_server(settings, _sc.channel_for(settings), "sip") else "no"     # .env мог измениться после запуска backend (включение из панели)
     env["LIVEKIT_PUBLIC_URL"] = settings.livekit_public_url
     env["TLS_LOCAL_CONFIGURED"] = "1" if settings.tls_local_configured else ""
     env["LDAP_URIS"] = settings.ldap_uris

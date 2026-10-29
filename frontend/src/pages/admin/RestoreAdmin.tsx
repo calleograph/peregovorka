@@ -3,6 +3,7 @@ import { api, type ApiError } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
 import { countsText, defaultSelection, FILE_STATE, filesText, isActive, jobStatus, jobTitle, KIND_LABEL, selectable, STATUS, summary, TRUST, type RestoreItem, type RestoreJobView } from "../../restoreView";
 import { fmtDate } from "./common";
+import InfoTip from "../../components/InfoTip";
 
 const errText = (e: unknown) => (e as ApiError)?.message || "Не удалось выполнить действие";
 
@@ -88,10 +89,10 @@ export default function RestoreAdmin() {
 
       <div className="card stack">
         <h3 style={{ margin: 0 }}>Найти материалы</h3>
-        <label>Подкаталог (необязательно)<input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="Например: Переговорная Север/2026-10-24, Суббота" disabled={scanning || restoring} maxLength={300} />
-          <span className="help">Пусто — искать во всех хранилищах целиком. Путь указывается внутри папок Audio, Transcripts, Protocols, Chat, Boards.</span></label>
+        <label><span className="field-title">Подкаталог (необязательно)<InfoTip>Пусто — искать во всех хранилищах целиком. Путь указывается внутри папок Audio, Transcripts, Protocols, Chat, Boards.</InfoTip></span><input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="Например: Переговорная Север/2026-10-24, Суббота" disabled={scanning || restoring} maxLength={300} />
+          </label>
         <label className="check"><input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} disabled={scanning || restoring} />
-          <span className="check-body">Проверить контрольные суммы при поиске<span className="help">Читает каждый файл целиком — для больших архивов долго. Без этого при поиске сверяются имена и размеры, а суммы проверяются при восстановлении по каждому файлу.</span></span></label>
+          <span className="check-body">Проверить контрольные суммы при поиске<InfoTip>Читает каждый файл целиком — для больших архивов долго. Без этого при поиске сверяются имена и размеры, а суммы проверяются при восстановлении по каждому файлу.</InfoTip></span></label>
         {err && <div className="alert error" role="alert">{err}</div>}
         <div className="row">
           <button className="btn primary" onClick={() => void start()} disabled={busy || scanning || restoring}>{scanning ? "Идёт поиск…" : "Найти и восстановить материалы встреч"}</button>
@@ -157,7 +158,7 @@ export default function RestoreAdmin() {
           {run.result?.report?.map((r) => (
             <details key={r.id}><summary><b>{r.dir}</b> — {r.outcome === "restored" ? "восстановлено достоверно" : r.outcome === "isolated" ? "помещено в изолированную область" : r.outcome === "failed" ? "ошибка" : "пропущено"}</summary>
               <ul className="small plain">{r.lines.map((l, i) => <li key={i}>{l}</li>)}</ul></details>))}
-          {run.status === "done" && <p className="muted small">Изолированные материалы лежат в комнате «Восстановленные материалы» (выключена, видна администратору в разделе «Встречи»): перенесите нужные в рабочие комнаты вручную. Повторный запуск безопасен: уже восстановленное не дублируется.</p>}
+          {run.status === "done" && <p className="muted small">Изолированные материалы лежат в комнате «Восстановленные материалы» (выключена, видна администратору в разделе «Встречи»): перенесите нужные в рабочие комнаты вручную.<InfoTip>Повторный запуск безопасен: уже восстановленное не дублируется.</InfoTip></p>}
         </div>
       )}
 
@@ -169,7 +170,7 @@ export default function RestoreAdmin() {
       {confirm && (
         <ConfirmDialog title="Восстановить выбранные материалы?" confirmLabel="Восстановить" danger={false} onClose={() => setConfirm(false)} onConfirm={apply}
           body={<div className="stack"><p>В приложение будут добавлены встречи и материалы: достоверно — {sum.certain}, предположительно (в изолированную область) — {sum.supposed}.</p>
-            <p className="muted small">Исходные файлы в хранилище не изменяются и не удаляются. У достоверных встреч комната создаётся выключенной, если её нет; права берутся только из подписанного паспорта и только для существующих учётных записей. Операцию можно повторить: дубли не создаются.</p></div>} />
+            <p className="muted small">Исходные файлы в хранилище не изменяются и не удаляются.<InfoTip>У достоверных встреч комната создаётся выключенной, если её нет; права берутся только из подписанного паспорта и только для существующих учётных записей. Операцию можно повторить: дубли не создаются.</InfoTip></p></div>} />
       )}
     </section>
   );

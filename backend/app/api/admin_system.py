@@ -65,6 +65,12 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
                     build_storage(new, request.app.state.settings.data_dir)  # type: ignore[arg-type]
             except StorageError as exc:
                 raise SettingsError(str(exc)) from None
+        if group == "video":                     # видеозаписи: выбранное хранилище должно существовать
+            new = await svc.preview(db, group, body)
+            if new.storage == "profile":  # type: ignore[attr-defined]
+                if not new.profile_id:  # type: ignore[attr-defined]
+                    raise SettingsError("Выберите файловое хранилище для видеозаписей или вариант «Как аудиозаписи».")
+                await request.app.state.files.row(db, new.profile_id)   # type: ignore[attr-defined]
         changed = await svc.update(db, group, body, actor=su.display_name)
         if group == "api":
             request.app.state.api_cfg_cache = None      # публичный API читает настройки с коротким кэшем; изменение действует сразу

@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import FieldsEditor from "./FieldsEditor";
+import InfoTip from "../../components/InfoTip";
 import { useDirty } from "../../dirtyGuard";
 import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import { api, type ApiError, type SettingsGroup, type SettingsValues, type StorageProfile, type TestResult } from "../../api";
@@ -10,8 +11,10 @@ export interface Field {
   label: string;
   type: "text" | "number" | "bool" | "select" | "textarea" | "secret" | "headers";
   options?: [string, string][];
-  /** Что делает поле и на что влияет. */
+  /** Что делает поле и на что влияет — показывается в подсказке ⓘ рядом с названием. */
   help?: string;
+  /** Статья вики «Подробнее» для подсказки. */
+  doc?: string;
   /** Пример заполнения (показывается под полем). */
   example?: string;
   placeholder?: string;
@@ -86,8 +89,8 @@ export default function SettingsForm({ group, title, intro, fields, testable, no
 
   return (
     <form className="card form" onSubmit={save}>
-      <h2>{title}</h2>
-      {intro && <p className="muted">{intro}</p>}
+      <h2 className="field-title">{title}{intro && intro.length > 140 && <InfoTip>{intro}</InfoTip>}</h2>
+      {intro && intro.length <= 140 && <p className="muted small">{intro}</p>}
       <FieldsEditor fields={shown} values={values} onChange={set} secrets={secrets} onSecret={(n, v) => setSecrets((x) => ({ ...x, [n]: v }))} headers={headers} onHeaders={setHeaders} />
       {note && <p className="muted small">{note}</p>}
       <div className="row">

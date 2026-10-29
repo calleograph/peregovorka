@@ -50,6 +50,7 @@ def lv(client, monkeypatch, tmp_path):
     app.state.video.api = fake
     app.state.live.api = fake
     app.state.destinations.api = fake
+    monkeypatch.setattr(app.state.settings, "video_enabled", "yes")
     present = {"set": {"u-1"}}
 
     async def fake_present(settings, room_name):

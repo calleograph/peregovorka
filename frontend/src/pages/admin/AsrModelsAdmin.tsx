@@ -3,6 +3,7 @@ import { api, type ApiError, type AsrCompare, type AsrModel, type AsrModels, typ
 import { bytes } from "../../util";
 import { vadFields } from "./fields";
 import SettingsForm from "./SettingsForm";
+import InfoTip from "../../components/InfoTip";
 
 const RUNTIME_LABEL: Record<string, string> = { pytorch: "PyTorch", gguf: "GGUF · transcribe.cpp", onnx: "ONNX" };
 const STATUS: Record<string, [string, string]> = {
@@ -77,7 +78,7 @@ export default function AsrModelsAdmin() {
   return (
     <section>
       <h2>Распознавание речи (ASR)</h2>
-      <p className="muted">Транскрибацию выполняет полная модель GigaAM v3 e2e RNNT (PyTorch): она распознаёт точнее квантованных вариантов, которые больше не поставляются. Здесь видно, загружена ли модель и на каком устройстве она работает, и можно проверить скорость на встроенном аудио. Если в каталоге появятся другие модели, выбор между ними выполняется без остановки: новая модель загружается в фоне, прежняя работает до готовности новой.</p>
+      <p className="muted small">Транскрибацию выполняет полная модель GigaAM v3 e2e RNNT (PyTorch): она распознаёт точнее квантованных вариантов, которые больше не поставляются.<InfoTip>Здесь видно, загружена ли модель и на каком устройстве она работает, и можно проверить скорость на встроенном аудио. Если в каталоге появятся другие модели, выбор между ними выполняется без остановки: новая модель загружается в фоне, прежняя работает до готовности новой.</InfoTip></p>
       {!data.reachable && <div className="alert error" role="alert">{data.error}</div>}
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
 

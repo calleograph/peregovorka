@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type ApiError, type DeliveryRecipient, type DirHit, type MailDeliverySpec, type PerMaterial, type PerMode } from "../api";
+import InfoTip from "./InfoTip";
 
 export const MATERIAL_KINDS: { kind: string; label: string; help: string }[] = [
   { kind: "protocol", label: "Протокол", help: "Официальный протокол совещания (формирует языковая модель)." },
@@ -37,7 +38,7 @@ export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRec
  * «Уведомления и доставка материалов» для руководителя комнаты: что отправлять после встречи и кому. Реквизиты почтового сервера здесь не видны и не меняются —
  * это настройка администратора системы.
  */
-export default function DeliveryEditor({ roomId, spec, onChange, localModel = false }: { roomId: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void; localModel?: boolean }) {
+export default function DeliveryEditor({ roomId, spec, onChange, localModel = false }: { roomId?: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void; localModel?: boolean }) {
   const [emailsText, setEmailsText] = useState(spec.recipients.emails.join("\n"));
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<DirHit[]>([]);
@@ -65,7 +66,7 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
 
   const search = async () => {
     setHint("");
-    try { const r = await api.manage.search(roomId, "user", q); setHits(r); if (!r.length) setHint("Ничего не найдено"); } catch (e) { setHits([]); setHint((e as ApiError).message); }
+    try { const r = roomId ? await api.manage.search(roomId, "user", q) : await api.admin.search("user", q); setHits(r); if (!r.length) setHint("Ничего не найдено"); } catch (e) { setHits([]); setHint((e as ApiError).message); }
   };
   const addUser = (kind: string, h: DirHit) => {
     const cur = pm[kind];
@@ -74,20 +75,21 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
   };
   const check = async () => {
     setErr("");
+    if (!roomId) { setErr("Проверка получателей станет доступна после создания комнаты."); return; }
     try { setPreview(await api.manage.deliveryPreview(roomId, spec)); } catch (e) { setPreview(null); setErr((e as ApiError).message); }
   };
 
   return (
     <div role="tabpanel">
       <fieldset className="group"><legend>Что отправлять автоматически после завершения встречи</legend>
-        <span className="help">По умолчанию всё выключено: протокол, резюме, стенограмма и карта могут быть конфиденциальными. Каждый материал включается отдельно, включение одного не включает остальные. Автоматически уходит только полностью сформированный документ: черновик, ошибочный или оборванный по длине документ не отправляется (о причине останется запись в журнале), отправить такой можно вручную («Отправить материалы»). Пересозданный материал повторно сам не уходит — рассылка выполняется один раз на встречу; журнал покажет, что уже отправлялось. Рассылка по почте не даёт права открывать остальные материалы встречи; доступ к встрече выдаётся отдельно («Управление доступом» в истории встречи).</span>
+        <InfoTip>По умолчанию всё выключено: протокол, резюме, стенограмма и карта могут быть конфиденциальными. Каждый материал включается отдельно, включение одного не включает остальные. Автоматически уходит только полностью сформированный документ: черновик, ошибочный или оборванный по длине документ не отправляется (о причине останется запись в журнале), отправить такой можно вручную («Отправить материалы»). Пересозданный материал повторно сам не уходит — рассылка выполняется один раз на встречу; журнал покажет, что уже отправлялось. Рассылка по почте не даёт права открывать остальные материалы встречи; доступ к встрече выдаётся отдельно («Управление доступом» в истории встречи).</InfoTip>
         {MATERIAL_KINDS.map((m) => {
           const on = pm[m.kind].mode !== "none";
           return (
             <div key={m.kind} className="picker autosend-row" data-material={m.kind}>
               <label className="check"><input type="checkbox" checked={on} aria-label={`Автоматически отправлять: ${m.label}`}
                 onChange={(e) => { if (e.target.checked) { const mode = lastMode[m.kind] ?? "leader"; setMat(m.kind, { mode, users: mode === "selected" ? pm[m.kind].users : [] }); if (mode === "selected") setPickFor(m.kind); } else { setLastMode((l) => ({ ...l, [m.kind]: pm[m.kind].mode })); setMat(m.kind, { mode: "none", users: [] }); } }} />
-                <span className="check-body"><b>{m.label}</b><span className="help">Автоматически отправлять: <b>{on ? "Да" : "Нет"}</b>. {m.help}</span></span></label>
+                <span className="check-body"><b>{m.label}</b><InfoTip>Автоматически отправлять: <b>{on ? "Да" : "Нет"}</b>. {m.help}</InfoTip></span></label>
               {on && (
                 <label>Кому
                   <select value={pm[m.kind].mode} onChange={(e) => { const mode = e.target.value as PerMode; setMat(m.kind, { mode, users: mode === "selected" ? pm[m.kind].users : [] }); if (mode === "selected") setPickFor(m.kind); }}>
@@ -101,22 +103,21 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
             </div>);
         })}
         <label className="check"><input type="checkbox" checked={!!spec.archive} onChange={(e) => set({ archive: e.target.checked })} disabled={spec.materials.length < 2} />
-          <span className="check-body">Отправлять одним архивом (zip)<span className="help">{spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : "Все материалы для одних получателей кладутся в один файл."}</span></span></label>
-        <span className="help">Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа; открыть её сможет только тот, у кого есть доступ).</span>
+          <span className="check-body">Отправлять одним архивом (zip)<InfoTip>{spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : "Все материалы для одних получателей кладутся в один файл."}</InfoTip></span></label>
+        <InfoTip>Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа; открыть её сможет только тот, у кого есть доступ).</InfoTip>
       </fieldset>
       {anyText && localModel && <div className="alert warn" role="status">Протокол этой комнаты формирует встроенная локальная модель. Она небольшая и может ошибаться: документ уйдёт <b>без предварительной проверки человеком</b>. Для важных встреч лучше отправлять вручную после просмотра.</div>}
 
       <fieldset className="group"><legend>Письмо и документы</legend>
-        <label>Шаблон письма
-          <select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
+        <label><span className="field-title">Шаблон письма<InfoTip>Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</InfoTip></span><select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
             <option value="">По умолчанию{tpls.find((t) => t.is_default) ? ` («${tpls.find((t) => t.is_default)!.name}»)` : ""}</option>
             {tpls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select><span className="help">Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</span></label>
+          </select></label>
         <div><b className="small">Формат документов</b>
           <div className="checks">{fmts.map((f) => (
             <label key={f} className="check"><input type="checkbox" checked={(spec.formats ?? []).includes(f)}
               onChange={(e) => set({ formats: e.target.checked ? [...(spec.formats ?? []), f] : (spec.formats ?? []).filter((x) => x !== f) })} /> {FORMAT_LABEL[f] ?? f}</label>))}</div>
-          <span className="help">Ничего не выбрано — формат по умолчанию из правил рассылки.</span></div>
+          <InfoTip>Ничего не выбрано — формат по умолчанию из правил рассылки.</InfoTip></div>
         <label>Если какой-то материал не готов (например, протокол завершился ошибкой)
           <select value={spec.if_missing ?? "send"} onChange={(e) => set({ if_missing: e.target.value as "send" | "skip" })}>
             <option value="send">Отправить то, что готово (событие записывается в журнал)</option>

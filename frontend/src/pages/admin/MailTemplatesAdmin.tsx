@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type MailTemplate } from "../../api";
 import { useContextMenu } from "../../components/ContextMenu";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 const empty = { name: "", subject: "", body: "", signature: "", materials: ["protocol", "summary"] as string[], is_default: false };
 
@@ -37,8 +38,7 @@ export default function MailTemplatesAdmin() {
   return (
     <section>
       <div className="row"><h2>Шаблоны писем</h2><div className="spacer" /><button className="btn primary" onClick={() => setForm({ ...empty })}>＋ Новый шаблон</button></div>
-      <p className="muted">Шаблон используется при отправке материалов встречи — вручную из истории и автоматически после встречи. Перед ручной отправкой тему и текст можно поправить только для этого письма: сам шаблон не изменится.
-        Первоначальный шаблон создан для примера — измените его под свои правила.</p>
+      <p className="muted small">Шаблон используется при отправке материалов встречи — вручную из истории и автоматически после встречи.<InfoTip>Перед ручной отправкой тему и текст можно поправить только для этого письма: сам шаблон не изменится. Первоначальный шаблон создан для примера — измените его под свои правила.</InfoTip></p>
       {error && <div className="alert error" role="alert">{error}</div>}
       {note && <div className="alert ok" role="status">{note}</div>}
       {form && (

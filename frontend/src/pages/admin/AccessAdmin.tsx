@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type AclEntry, type ApiError, type DirHit, type LocalAdminInfo } from "../../api";
 import { Chips } from "../../components/AclPicker";
 import { fmtDate } from "./common";
+import InfoTip from "../../components/InfoTip";
 
 const asEntries = (dns: string[]): AclEntry[] => dns.map((d) => ({ subject_type: "group", subject_ref: d }));
 
@@ -64,7 +65,7 @@ function LocalAdminCard({ info, onChanged }: { info: LocalAdminInfo | null; onCh
         <form onSubmit={(e) => void change(e)} className="form" style={{ padding: 0, boxShadow: "none", border: 0 }}>
           <div className="cols">
             <label>Текущий пароль<input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} /></label>
-            <label>Новый пароль<input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /><span className="help">Не короче 12 символов, не менее двух видов символов, без имени пользователя.</span></label>
+            <label><span className="field-title">Новый пароль<InfoTip>Не короче 12 символов, не менее двух видов символов, без имени пользователя.</InfoTip></span><input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></label>
           </div>
           {msg && <div className={`alert ${msg.ok ? "ok" : "error"}`} role="status">{msg.text}</div>}
           <div className="row"><button className="btn" disabled={busy || !cur || !next}>Сменить пароль</button></div>

@@ -7,6 +7,7 @@ import ApiProfilesAdmin from "./ApiProfilesAdmin";
 import LocalLlmPanel from "./LocalLlmPanel";
 import SettingsForm from "./SettingsForm";
 import { llmApiFields, llmTaskFields, structuredFields } from "./fields";
+import InfoTip from "../../components/InfoTip";
 
 const TABS = [["assign", "Назначения"], ["local", "Локальные модели"], ["external", "Внешние API"], ["gen", "Параметры генерации"], ["stats", "Статистика"], ["diag", "Диагностика"]] as const;
 type Tab = (typeof TABS)[number][0];
@@ -99,7 +100,7 @@ function FallbackPolicy({ value, onSaved }: { value: "system" | "unavailable"; o
           <option value="system">Использовать системное назначение задачи (с пометкой)</option>
           <option value="unavailable">Не формировать: показать «модель недоступна»</option>
         </select></label>
-      <span className="help">Разовый выбор модели при формировании документа молча не заменяется.</span>
+      <InfoTip>Разовый выбор модели при формировании документа молча не заменяется.</InfoTip>
       {err && <div className="alert error">{err}</div>}
     </div>
   );
@@ -121,7 +122,7 @@ function AssignDialog({ task, ch, onClose, onSaved }: { task: TaskKey; ch: LlmCh
   };
   const opt = (value: string, title: string, sub?: string, disabled = false) => (
     <label key={value} className="check"><input type="radio" name="assign" checked={pick === value} disabled={disabled} onChange={() => setPick(value)} />
-      <span className="check-body">{title}{sub && <span className="help">{sub}</span>}</span></label>);
+      <span className="check-body">{title}{sub && <InfoTip>{sub}</InfoTip>}</span></label>);
   return (
     <Modal title={`Модель для задачи: ${label}`} onClose={onClose}>
       <div className="stack">

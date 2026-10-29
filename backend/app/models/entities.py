@@ -479,6 +479,8 @@ class Recording(Base):
     export_location: Mapped[str | None] = mapped_column(String(1000))
     export_error: Mapped[str | None] = mapped_column(String(500))
     exported_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # в каком хранилище лежит выгруженный файл: audio — хранилище аудиозаписей, video — видеозаписей (раздел «Видеозапись»); у записей до 0.52.0 — audio
+    export_area: Mapped[str | None] = mapped_column(String(10))
     # ok — файл есть (по последней сверке); missing — удалён из хранилища/с диска вне приложения: ссылка не отдаётся
     file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
     file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

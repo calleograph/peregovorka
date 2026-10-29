@@ -115,3 +115,33 @@ def test_room_leader_sees_and_opens_meetings_of_own_room_only(client):
     assert client.get(f"/api/v1/meetings/{oid}").status_code == 404
     login(client, "alice")
     assert client.get(f"/api/v1/meetings/{mid}").json()["can_send_materials"] is True        # организатор встречи (начала её) отправлять материалы тоже может
+
+
+def test_one_editor_for_create_and_edit_saves_every_tab_and_reloads_it(client):
+    """Единый редактор: администратор создаёт комнату, затем тем же запросом руководителя сохраняет все вкладки; повторное открытие показывает сохранённое.
+    Шаблон новой комнаты (списки моделей, телефонии, состояние видеозаписи) — только администратору."""
+    login(client, "carol")
+    assert client.get("/api/v1/admin/rooms/template").status_code == 403
+    login(client, "root")
+    tpl = client.get("/api/v1/admin/rooms/template")
+    assert tpl.status_code == 200 and {"llm_options", "sip_options", "video_enabled", "llm_effective"} <= set(tpl.json())
+    room = make_room(client, moderators=LEADERS, history_access="participants", text_retention_days=30)
+    bad = client.patch(url(room), json={"mail_delivery": {"enabled": True, "materials": [{"kind": "protocol"}]}})
+    assert bad.status_code in (400, 422), "неверный формат рассылки — понятный отказ, а не сбой сервера"
+    spec = {"enabled": True, "materials": ["protocol"], "recipients": {"participants": True, "emails": [], "users": []}}
+    r = client.patch(url(room), json={"video_mode": "auto", "video_quality": "1080p", "recording_mode": "off", "auto_map_mode": "on", "mail_delivery": spec,
+                                      "board_access": "private", "guest_access_enabled": True, "llm": {"mode": "inherit"}})
+    assert r.status_code == 200, r.text
+    got = client.get(url(room)).json()
+    assert (got["video_mode"], got["video_quality"], got["recording_mode"], got["auto_map_mode"], got["board_access"], got["guest_access_enabled"]) == ("auto", "1080p", "off", "on", "private", True)
+    assert got["mail_delivery"]["enabled"] is True and got["retention"]["history_access"] == "participants" and got["retention"]["text_days"] == 30
+    assert got["can_edit_system_fields"] is True and "anonymizer_profile_id" in got["retention"], "администратору видны и системные поля"
+    # руководитель меняет те же вкладки, но системных полей не видит; администратор — в любой комнате, кто бы её ни создал
+    login(client, "carol")
+    lead = client.get(url(room)).json()
+    assert lead["can_edit_system_fields"] is False and "anonymizer_profile_id" not in lead["retention"]
+    assert client.patch(url(room), json={"video_mode": "manual"}).status_code == 200
+    login(client, "alice")
+    assert client.patch(url(room), json={"video_mode": "off"}).status_code in (403, 404)
+    login(client, "root")
+    assert client.get(url(room)).json()["video_mode"] == "manual"

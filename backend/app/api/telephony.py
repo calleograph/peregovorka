@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import uuid
+from ..services import server_components as _sc
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -44,7 +45,7 @@ async def phone_state(room_id: uuid.UUID, request: Request, su: SessionUser = De
         rows = (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id, GuestParticipant.participant_type == "phone",
                                                                 GuestParticipant.left_at.is_(None)))).scalars().all()
         phones = [{"guest_id": str(g.id), "display_name": g.display_name} for g in rows]
-    enabled = str(st.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on")
+    enabled = _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "sip")
     reason = None
     if room.sip_mode == "off":
         reason = "Телефония для комнаты отключена (Настройки комнаты → Телефония)."

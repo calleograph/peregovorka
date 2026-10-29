@@ -664,24 +664,70 @@ class ProtocolService:
             log.error("Хранилище записей недоступно", extra={"error": str(exc)})
             return None
 
+    @staticmethod
+    def area_of_kind(kind: str) -> str:
+        return "video" if kind == "mix_video" else "audio"
+
+    def area_of(self, rec: Recording) -> str:
+        """Где лежит (или будет лежать) внешняя копия записи: у выгруженной — там, куда её выгрузили; иначе — по виду записи."""
+        if rec.export_status == "exported" and rec.export_area in ("audio", "video"):
+            return rec.export_area
+        return self.area_of_kind(rec.kind)
+
+    async def storage_for(self, db: AsyncSession, rec: Recording | None = None, *, area: str | None = None):
+        """Внешнее хранилище записи (аудио — раздел «Хранилища → Аудиозаписи», видео — «Видеозапись»); None — недоступно или не настроено."""
+        area = area or (self.area_of(rec) if rec is not None else "audio")
+        if area != "video":
+            return await self._audio_storage(db)
+        try:
+            return await self.files.video_backend(db)
+        except StorageError as exc:
+            log.error("Хранилище видеозаписей недоступно", extra={"error": str(exc)})
+            return None
+
+    async def export_target(self, db: AsyncSession, area: str) -> tuple[bool, bool]:
+        """(выгружать ли записи этой области, оставлять ли локальную копию)."""
+        if area == "video":
+            v = await self._svc.get(db, "video")
+            if v.storage == "local":  # type: ignore[attr-defined]
+                return False, True
+            if v.storage == "audio":  # type: ignore[attr-defined]
+                a = await self._svc.get(db, "audio_storage")
+                return bool(a.enabled), bool(v.keep_local_copy)  # type: ignore[attr-defined]
+            return True, bool(v.keep_local_copy)  # type: ignore[attr-defined]
+        a = await self._svc.get(db, "audio_storage")
+        return bool(a.enabled), bool(a.keep_local_copy)  # type: ignore[attr-defined]
+
     async def export_recording(self, db: AsyncSession, rec: Recording) -> None:
-        """Выгрузка WAV во внешнее хранилище записей. Запись НЕ теряется: при сбое остаётся на локальном томе
-        в статусе failed и выгружается повторно (retry_pending_exports)."""
-        cfg = await self._svc.get(db, "audio_storage")
-        if not cfg.enabled:  # type: ignore[attr-defined]
+        """Выгрузка записи (аудио — WAV/M4A, видео — MP4) во внешнее хранилище своей области. Запись НЕ теряется: при сбое остаётся на локальном томе
+        в статусе failed и выгружается повторно (retry_pending_exports). Размер в хранилище сверяется всегда; локальный исходник удаляется
+        только после совпадения и размера, и SHA-256 копии в хранилище."""
+        area = self.area_of_kind(rec.kind)
+        enabled, keep_local = await self.export_target(db, area)
+        if not enabled:
             rec.export_status = "local"
             await db.commit()
             return
-        storage = await self._audio_storage(db)
+        storage = await self.storage_for(db, area=area)
         from pathlib import Path
+
+        from .transfer import sha256_file, sha256_storage  # noqa: PLC0415
 
         src = Path(self._s.recordings_path, rec.path)
         try:
             if storage is None:
-                raise StorageError("хранилище записей недоступно или настроено некорректно")
+                raise StorageError("хранилище " + ("видеозаписей" if area == "video" else "записей") + " недоступно или настроено некорректно")
+            size = (await asyncio.to_thread(src.stat)).st_size
+            digest = await asyncio.to_thread(sha256_file, src)
             loc = await asyncio.to_thread(storage.copy_in, rec.path, str(src))      # потоком: запись встречи может быть большой
+            got = await asyncio.to_thread(storage.size_of, rec.path)
+            if got != size:
+                raise StorageError(f"размер копии в хранилище ({got}) не совпал с исходным ({size})")
+            if not keep_local and await asyncio.to_thread(sha256_storage, storage, rec.path, size) != digest:
+                raise StorageError("контрольная сумма копии в хранилище не совпала с исходной")
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
-            if not cfg.keep_local_copy:  # type: ignore[attr-defined]
+            rec.export_area, rec.sha256, rec.size_bytes = area, digest, size
+            if not keep_local:
                 await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
         except (OSError, StorageError) as exc:
             rec.export_status, rec.export_error = "failed", str(exc)[:480]
@@ -689,19 +735,21 @@ class ProtocolService:
                       extra={"recording": str(rec.id), "error": str(exc)})
             if self.journal is not None:
                 self.journal.emit("storage", "recording_export_failed", level="error", meeting_id=str(rec.meeting_id),
-                                  message=str(exc)[:300], data={"recording": str(rec.id), "size_bytes": rec.size_bytes})
+                                  message=str(exc)[:300], data={"recording": str(rec.id), "size_bytes": rec.size_bytes, "area": area})
         await db.commit()
         await self._mark_manifest(rec.meeting_id)
 
     async def retry_pending_exports(self, db: AsyncSession) -> int:
-        cfg = await self._svc.get(db, "audio_storage")
-        if not cfg.enabled:  # type: ignore[attr-defined]
-            return 0
-        recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed")), Recording.file_state != "missing"))).scalars().all()
         n = 0
-        for rec in recs:
-            await self.export_recording(db, rec)
-            n += rec.export_status == "exported"
+        for area in ("audio", "video"):
+            if not (await self.export_target(db, area))[0]:
+                continue
+            kinds = [Recording.kind == "mix_video"] if area == "video" else [Recording.kind != "mix_video"]
+            recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed")), Recording.file_state != "missing",
+                                                             Recording.status == "ready", *kinds))).scalars().all()
+            for rec in recs:
+                await self.export_recording(db, rec)
+                n += rec.export_status == "exported"
         return n
 
     async def read_recording(self, db: AsyncSession, rec: Recording) -> bytes:
@@ -712,8 +760,7 @@ class ProtocolService:
         full = (root / rec.path).resolve()
         if root in full.parents and full.is_file():
             return await asyncio.to_thread(full.read_bytes)
-        cfg = await self._svc.get(db, "audio_storage")
-        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
+        storage = await self.storage_for(db, rec) if rec.export_status == "exported" else None
         if storage is None:
             raise StorageError("Файл записи недоступен")
         return await asyncio.to_thread(storage.read_bytes, rec.path)
@@ -724,7 +771,7 @@ class ProtocolService:
         root = Path(self._s.recordings_path).resolve()
         full = (root / rec.path).resolve()
         # Внешнее хранилище готовим заранее: если пока запрос идёт, файл переносят и локальный источник исчезает, чтение продолжится оттуда (ссылка и права не меняются)
-        storage = await self._audio_storage(db) if rec.export_status == "exported" else None
+        storage = await self.storage_for(db, rec) if rec.export_status == "exported" else None
         if root in full.parents and full.is_file():
             def local(start: int, end: int):
                 try:
@@ -758,7 +805,7 @@ class ProtocolService:
         if w is not None:
             await db.delete(w)
         if rec.export_status == "exported":
-            storage = await self._audio_storage(db)
+            storage = await self.storage_for(db, rec)
             if storage is not None:
                 try:
                     await asyncio.to_thread(storage.delete, rec.path)

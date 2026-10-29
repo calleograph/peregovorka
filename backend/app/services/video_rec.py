@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from . import server_components as _sc
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,9 +104,15 @@ class EgressApi:
             return None
 
     async def probe(self) -> None:
-        """Достаточно ли связи с LiveKit, чтобы управлять записью (сама служба Egress этим не проверяется)."""
+        """Отвечает ли LiveKit на запросы службы записи. Без подключённого Egress (видеоподсистема выключена) LiveKit отвечает ошибкой,
+        поэтому сам по себе отказ здесь не означает «нет связи с сервером звонков» — для этого есть probe_livekit."""
         async with self._lk() as lk:
             await lk.egress.list_egress(lkapi.ListEgressRequest(active=True))
+
+    async def probe_livekit(self) -> None:
+        """Связь с сервером звонков как таковым (список комнат), независимо от службы Egress."""
+        async with self._lk() as lk:
+            await lk.room.list_rooms(lkapi.ListRoomsRequest())
 
 
 def build_request(room_name: str, out_path: str, quality: str, *, template_url: str = "") -> eg.StartEgressRequest:
@@ -180,7 +187,7 @@ class VideoRecorder:
         if not cfg.enabled:
             raise VideoError("video_disabled", "Видеозапись выключена администратором (Администрирование → Видеозапись).")
         if getattr(room, "video_mode", "off") == "off":
-            raise VideoError("video_forbidden", "В этой комнате видеозапись не включена (настройки комнаты → Запись).")
+            raise VideoError("video_forbidden", "В этой комнате видеозапись не включена (настройки комнаты → «Встреча и запись»).")
         if room.e2ee_mode != "off":
             raise VideoError("e2ee", "При сквозном шифровании видеозапись недоступна: у сервера нет ключа, чтобы собрать картинку.")
         if room.encrypt_storage:
@@ -220,12 +227,12 @@ class VideoRecorder:
             now = datetime.now(timezone.utc)
             rel = f"{meeting_relpath(meeting.room.name, meeting.started_at.astimezone(await self._tz(db)))}/video-{n}.mp4"
             quality = meeting.room.video_quality if meeting.room.video_quality in QUALITY else cfg.default_quality
-            installed = str(getattr(self._s, "video_enabled", "yes")).strip().lower() in ("yes", "true", "1", "on")
+            installed = _sc.enabled_on_server(self._s, _sc.channel_for(self._s), "video")
             try:
                 info = await self.api.start(build_request(meeting.livekit_room, f"{self.out_dir()}/{rel}", quality, template_url=cfg.template_url))
             except Exception as exc:  # noqa: BLE001 — Egress не установлен/недоступен: пользователю — понятная причина, подробности в журнале
                 log.warning("Не удалось запустить Egress", extra={"meeting_id": str(meeting.id), "error": str(exc)[:300]})
-                hint = "" if installed else " На сервере она не установлена (VIDEO_ENABLED=no): sudo scripts/video.sh enable."
+                hint = "" if installed else " Видеоподсистема на сервере выключена."
                 raise VideoError("egress_unavailable", "Служба видеозаписи (LiveKit Egress) недоступна или не установлена." + hint + " Сообщите администратору: Администрирование → Видеозапись.", 503) from exc
             rec = Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="meeting", path=rel, size_bytes=0, kind="mix_video", mime="video/mp4",
                             status="processing", has_video=True, egress_id=info.egress_id, started_at=now)

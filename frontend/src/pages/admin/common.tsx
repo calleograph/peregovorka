@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DiagResult } from "../../api";
+import InfoTip from "../../components/InfoTip";
 
 const STAGE_TITLE: Record<string, string> = {
   config: "Настройка", livekit: "LiveKit", service: "Служба SIP", listen: "Порт службы SIP", pbx: "Ответ АТС", dns: "DNS", tcp: "TCP-соединение", connect: "Подключение", tls: "Защита (TLS)", certificate: "Сертификат", bind: "Вход сервисной записи",
@@ -7,7 +8,7 @@ const STAGE_TITLE: Record<string, string> = {
 };
 
 /** Результат пошаговой проверки подключения (LDAPS, SMTP): каждый этап — отдельной строкой с понятной причиной. */
-export function StageList({ result }: { result: DiagResult }) {
+export function StageList({ result, doc }: { result: DiagResult; /** статья вики «Как решить» — показывается при неудаче */ doc?: string }) {
   return (
     <div className={`alert ${result.ok ? "ok" : "error"}`} role="status">
       <strong>{result.ok ? "✓ Проверка пройдена" : "✗ Проверка не пройдена"}</strong>
@@ -20,6 +21,7 @@ export function StageList({ result }: { result: DiagResult }) {
         ))}
         {!result.ok && result.stages.length === 0 && result.message && <li className="bad"><span>{result.message}</span></li>}
       </ul>
+      {!result.ok && doc && <a href={doc} target="_blank" rel="noopener noreferrer">Как решить</a>}
     </div>
   );
 }
@@ -46,7 +48,7 @@ export function SecretInput({ label, isSet, value, onChange, onClear, help, plac
           {isSet && <button type="button" className="btn mini" onClick={() => onChange("")}>Отмена</button>}
         </span>
       )}
-      {help && <span className="help">{help}</span>}
+      {help && <InfoTip>{help}</InfoTip>}
     </label>
   );
 }

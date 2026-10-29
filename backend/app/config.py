@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     local_llm_model_sha256: str = "72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
     # --- SIP-телефония (контейнер livekit-sip, профиль compose `sip`; по умолчанию выключена и порты не открыты)
     sip_enabled: str = "no"
-    video_enabled: str = "no"          # служба записи (контейнер livekit-egress) установлена на сервере: scripts/video.sh enable
+    video_enabled: str = "no"          # служба записи (контейнер livekit-egress) включена на сервере (.env); фактическое состояние — components.json помощника (services/server_components.py)
     sip_signaling_port: int = 5060
     sip_rtp_start: int = 20000
     sip_rtp_end: int = 20100

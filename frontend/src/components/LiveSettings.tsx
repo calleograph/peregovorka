@@ -4,6 +4,7 @@ import { copyText } from "../util";
 import { Icon } from "./Icons";
 import LiveDestinations from "./LiveDestinations";
 import "../live.css";
+import InfoTip from "./InfoTip";
 
 /**
  * «Настройки комнаты → Трансляция»: всё, что нужно владельцу, на одном экране — ссылки (копировать, отозвать, выпустить заново), пароли выступающих и зрителей,
@@ -50,7 +51,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
     <div role="tabpanel" className="lv-panel">
       {!cfg.global.enabled && <div className="alert warn">Трансляции пока отключены администратором сервера (Администрирование → Трансляции). Настройки можно подготовить заранее.</div>}
       <label className="check"><input type="checkbox" checked={cfg.enabled} disabled={busy || (live && cfg.enabled)} onChange={(e) => void patch({ live_enabled: e.target.checked }, e.target.checked ? "Трансляция в комнате включена" : "Трансляция в комнате выключена")} />
-        <span className="check-body">Разрешить трансляции в этой комнате<span className="help">{isBroadcastType ? "Комната создана как трансляционная: выступающие общаются в конференции, зрители смотрят эфир по ссылке." : "Эфир можно вести и в обычной или презентационной комнате: зрители смотрят по ссылке, не подключаясь к конференции."}</span></span></label>
+        <span className="check-body">Разрешить трансляции в этой комнате<InfoTip>{isBroadcastType ? "Комната создана как трансляционная: выступающие общаются в конференции, зрители смотрят эфир по ссылке." : "Эфир можно вести и в обычной или презентационной комнате: зрители смотрят по ссылке, не подключаясь к конференции."}</InfoTip></span></label>
       {cfg.enabled && (<>
         {cfg.state.live && <p className="lv-note"><span className="live-tag on"><i aria-hidden />Идёт эфир</span> зрителей: {cfg.state.viewers}. Пароли и ссылки можно менять сразу — конференция и запись не прерываются.</p>}
 
@@ -83,7 +84,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
           </div>
 
           <label className="check"><input type="checkbox" checked={cfg.password_enabled} disabled={busy || (!cfg.password_enabled && !cfg.has_password)} onChange={(e) => void patch({ live_password_enabled: e.target.checked }, e.target.checked ? "Просмотр защищён паролем" : "Пароль зрителя выключен: просмотр по ссылке без пароля")} />
-            <span className="check-body">Защитить трансляцию паролем<span className="help">По умолчанию выключено: любой с действующей ссылкой смотрит без пароля. Пароль защищает и страницу, и сам поток. {cfg.has_password ? "" : "Сначала задайте пароль ниже."}</span></span></label>
+            <span className="check-body">Защитить трансляцию паролем<InfoTip>По умолчанию выключено: любой с действующей ссылкой смотрит без пароля. Пароль защищает и страницу, и сам поток. {cfg.has_password ? "" : "Сначала задайте пароль ниже."}</InfoTip></span></label>
           <form className="row" onSubmit={setViewer} aria-label="Пароль зрителя">
             <label style={{ flex: "1 1 220px" }}>Пароль зрителя {cfg.has_password && <span className="muted small">(задан; новый заменит прежний)</span>}
               <input type="password" autoComplete="new-password" value={viewerPw} onChange={(e) => setViewerPw(e.target.value)} maxLength={128} placeholder="не короче 6 знаков, не как у выступающих" /></label>
@@ -104,23 +105,22 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
               <option value="auto">Автоматически: эфир начинается, когда подключился первый выступающий</option>
             </select></label>
           <label className="check"><input type="checkbox" checked={cfg.replay} disabled={busy || !cfg.record} onChange={(e) => void patch({ live_replay: e.target.checked }, e.target.checked ? "После эфира зрители смогут посмотреть запись" : "Запись зрителям не показывается")} />
-            <span className="check-body">Разрешить зрителям смотреть запись после эфира<span className="help">На странице «Эфир завершён» появится кнопка «Смотреть запись» (последний эфир комнаты). Действует тот же пароль зрителя; ссылка на запись отзывается вместе со ссылкой зрителя. Файл отдаёт сервер приложения, поэтому для больших аудиторий лучше выложить запись на площадку. Нужна включённая запись эфира.</span></span></label>
+            <span className="check-body">Разрешить зрителям смотреть запись после эфира<InfoTip>На странице «Эфир завершён» появится кнопка «Смотреть запись» (последний эфир комнаты). Действует тот же пароль зрителя; ссылка на запись отзывается вместе со ссылкой зрителя. Файл отдаёт сервер приложения, поэтому для больших аудиторий лучше выложить запись на площадку. Нужна включённая запись эфира.</InfoTip></span></label>
           <label className="check"><input type="checkbox" checked={cfg.record} disabled={busy || live} onChange={(e) => void patch({ live_record: e.target.checked }, "Сохранено")} />
-            <span className="check-body">Сохранять запись эфира в историю (MP4)<span className="help">Запись идёт тем же процессом, что и эфир: лишней нагрузки нет. Файл появится в «Истории» после завершения.</span></span></label>
+            <span className="check-body">Сохранять запись эфира в историю (MP4)<InfoTip>Запись идёт тем же процессом, что и эфир: лишней нагрузки нет. Файл появится в «Истории» после завершения.</InfoTip></span></label>
         </fieldset>
 
         <LiveDestinations roomId={roomId} cfg={cfg} onChange={apply} />
 
         <details className="lv-sect"><summary>Дополнительно</summary>
-          <label>Качество
-            <select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" }, "Качество сохранено")}>
+          <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</InfoTip></span><select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" }, "Качество сохранено")}>
               <option value="720p">720p — экономичное (≈ 0,6 ГБ/час записи)</option>
               <option value="1080p">1080p — для презентаций с мелким текстом (≈ 0,8 ГБ/час записи, больше нагрузка)</option>
-            </select><span className="help">Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</span></label>
+            </select></label>
           <label className="check"><input type="checkbox" checked={cfg.cdn} disabled={busy || !cfg.cdn_available} onChange={(e) => void patch({ live_cdn: e.target.checked }, e.target.checked ? "Эфир этой комнаты раздаётся через CDN" : "Раздача через CDN выключена")} />
-            <span className="check-body">Раздавать через CDN<span className="help">{cfg.cdn_available ? "Плеер зрителя и ссылка на поток берут видео прямо с CDN администратора, а не с этого сервера — так можно показывать эфир сотням и тысячам зрителей." : "CDN не подключён администратором сервера (Администрирование → Трансляции). Без CDN каждый зритель получает отдельный поток с основного сервера."}</span></span></label>
+            <span className="check-body">Раздавать через CDN<InfoTip>{cfg.cdn_available ? "Плеер зрителя и ссылка на поток берут видео прямо с CDN администратора, а не с этого сервера — так можно показывать эфир сотням и тысячам зрителей." : "CDN не подключён администратором сервера (Администрирование → Трансляции). Без CDN каждый зритель получает отдельный поток с основного сервера."}</InfoTip></span></label>
           <label className="check"><input type="checkbox" checked={cfg.own_hls} disabled={busy || live} onChange={(e) => void patch({ live_own_hls: e.target.checked }, "Сохранено")} />
-            <span className="check-body">Собственный просмотр в Peregovorka (страница зрителя и ссылка на поток)<span className="help">Выключите, если эфир нужен только внешним площадкам: сервер не будет хранить и раздавать сегменты.</span></span></label>
+            <span className="check-body">Собственный просмотр в Peregovorka (страница зрителя и ссылка на поток)<InfoTip>Выключите, если эфир нужен только внешним площадкам: сервер не будет хранить и раздавать сегменты.</InfoTip></span></label>
         </details>
       </>)}
       {msg && <div className="alert ok" role="status">{msg}</div>}

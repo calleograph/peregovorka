@@ -49,11 +49,22 @@ class FakeEgress:
     async def get(self, egress_id):
         return self.infos.get(egress_id)
 
+    async def probe(self):
+        if self.fail_start:
+            raise RuntimeError("egress not connected")
+
+    async def probe_livekit(self):
+        return None
+
+    async def cpu_load(self, health_url):
+        return None
+
 
 @pytest.fixture
 def video(client, monkeypatch):
     fake = FakeEgress()
     client.app_obj.state.video.api = fake
+    monkeypatch.setattr(client.app_obj.state.settings, "video_enabled", "yes")    # служба Egress «установлена» (сведений помощника в тестах нет)
     present = {"set": {"u-1"}}
 
     async def fake_present(settings, room_name):

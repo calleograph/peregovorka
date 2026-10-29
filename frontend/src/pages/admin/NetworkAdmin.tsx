@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type NetRule, type NetworkInfo, type NetworkProbe } from "../../api";
 import { useToast } from "../../components/Toast";
 import { originMismatch } from "../../networkView";
+import InfoTip from "../../components/InfoTip";
 
 const REQ: Record<NetRule["required"], string> = { required: "обязательно", recommended: "рекомендуется", conditional: "если используется" };
 const SCOPE_IN: Record<string, string> = { internet: "из интернета, от клиентов", internal: "внутренняя сеть", pbx: "только от АТС", local: "только сервер" };
@@ -97,7 +98,7 @@ export default function NetworkAdmin() {
             </>
           )}
           <h3>Как подтвердить доступ снаружи</h3>
-          <p className="muted small">Достоверно — войти в звонок с компьютера вне сети организации (например, через мобильную сеть) и открыть «Диагностика клиентов»: там видно, шёл ли звук по UDP или по TCP. Проверка порта с сервера или из этого окна такого подтверждения не даёт.</p>
+          <p className="muted small">Достоверно — войти в звонок с компьютера вне сети организации (например, через мобильную сеть) и открыть «Диагностика клиентов»: там видно, шёл ли звук по UDP или по TCP.<InfoTip>Проверка порта с сервера или из этого окна такого подтверждения не даёт.</InfoTip></p>
           <h3>Ограничения</h3>
           <ul className="muted small">{info.limits.map((l, i) => <li key={i}>{l}</li>)}</ul>
         </>

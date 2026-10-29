@@ -10,6 +10,7 @@
     Chat/         переписка встречи и вложения чата
     Boards/       схемы доски (.drawio)
     Logs/         журнал
+    Video/        видеозаписи встреч (MP4)
 
 Все потребители работают через интерфейс `StorageBackend` (services/storage.py: локальный диск и SMB); ни чат, ни записи, ни протоколы не
 реализуют SMB сами. Старые настройки (адрес прямо в группе, без профиля) продолжают работать как раньше — плоская раскладка без подпапок.
@@ -32,10 +33,10 @@ from .storage import LocalStorage, SmbStorage, StorageBackend, StorageError, bui
 
 log = logging.getLogger("app.filestore")
 
-AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS = "Audio", "Transcripts", "Protocols", "Chat", "Boards", "Logs"
-FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS)
+AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS, VIDEO = "Audio", "Transcripts", "Protocols", "Chat", "Boards", "Logs", "Video"
+FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS, VIDEO)
 # какая группа настроек выбирает профиль
-FUNCTION_GROUPS = {"audio_storage": "Записи аудио", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
+FUNCTION_GROUPS = {"audio_storage": "Аудиозаписи", "video": "Видеозаписи", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
 _CONFIG_KEYS = ("local_path", "smb_server", "smb_share", "smb_base_path", "smb_username", "smb_domain")
 _EXTRA_KEYS = ("external_volume",)          # отметка администратора: каталог — смонтированный внешний том (сетевая папка, диск): включает защиту от записи на системный диск при отключении
 
@@ -151,11 +152,18 @@ class FileStore:
     # ------------------------------------------------------------------------ чтение
     async def _usage(self, db: AsyncSession) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
+        out_audio = ""
         for group, title in FUNCTION_GROUPS.items():
             try:
-                pid = getattr(await self._svc.get(db, group), "profile_id", "")
+                cfg = await self._svc.get(db, group)
             except SettingsError:
                 continue
+            pid = getattr(cfg, "profile_id", "")
+            if group == "video":              # видеозаписи «как аудиозаписи» — то же хранилище, что выбрано для аудио (подпапка Video/)
+                mode = getattr(cfg, "storage", "local")
+                pid = pid if mode == "profile" else (out_audio if mode == "audio" else "")
+            if group == "audio_storage":
+                out_audio = pid if getattr(cfg, "enabled", False) else ""
             if pid:
                 out.setdefault(pid, []).append(title)
         return out
@@ -265,6 +273,27 @@ class FileStore:
         if legacy is None:
             return None
         return PrefixedStorage(legacy, legacy_prefix) if legacy_prefix else legacy
+
+    async def video_backend(self, db: AsyncSession) -> StorageBackend | None:
+        """Хранилище видеозаписей или None — только локальный диск. «Как аудиозаписи»: то же хранилище, подпапка Video/ (у старых настроек без профиля —
+        подкаталог video/ рядом с audio/); «Выбранное хранилище»: профиль, подпапка Video/. Недоступность — `StorageError`."""
+        cfg = await self._svc.get(db, "video")
+        mode = getattr(cfg, "storage", "local")
+        if mode == "local":
+            await release(db)
+            return None
+        if mode == "profile":
+            pid = getattr(cfg, "profile_id", "")
+            if not pid:
+                raise StorageError("Для видеозаписей не выбрано файловое хранилище")
+            try:
+                row = await self.row(db, pid)
+                await release(db)
+                base = await asyncio.to_thread(self.build, row)
+            except SettingsError as exc:
+                raise StorageError(f"Хранилище видеозаписей недоступно: {exc}") from None
+            return PrefixedStorage(base, VIDEO)
+        return await self.backend(db, "audio_storage", VIDEO, legacy_prefix="video")
 
     async def chat_backend(self, db: AsyncSession) -> tuple[StorageBackend, uuid.UUID | None]:
         """Где лежат вложения чата: выбранный профиль (подпапка Chat/files) или локальный диск приложения. Возвращает и id профиля."""

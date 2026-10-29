@@ -50,6 +50,7 @@ export function HelperAlert({ h, onReload }: { h: HelperInfo; onReload: () => Pr
       <div className="row" style={{ marginTop: 6 }}>
         {h.available && <button className="btn mini" onClick={() => void check()} disabled={busy}>{busy ? "Проверяю…" : "Проверить связь"}</button>}
         {facts.length > 0 && <button className="btn mini ghost" onClick={() => setMore(!more)}>{more ? "Скрыть подробности" : "Подробности проверки"}</button>}
+        <a className="small" href="https://github.com/calleograph/peregovorka/wiki/Решение-проблем-обновления" target="_blank" rel="noopener noreferrer">Как решить</a>
       </div>
       {ping && <div className={`alert ${ping.ok ? "ok" : "error"}`} role="status">{ping.text}</div>}
       {more && facts.length > 0 && <ul className="small">{facts.map(([k, l]) => <li key={k}>{l}: <code>{String(h.details![k])}</code></li>)}</ul>}

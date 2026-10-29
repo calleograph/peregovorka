@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import re
 import hmac
 import json
 import logging
@@ -41,7 +42,7 @@ KNOWN: dict[str, tuple[str, str]] = {
     "protocol.txt": ("transcript", "txt"), "official-protocol.md": ("protocol", "md"), "summary.md": ("summary", "md"),
     "chat.txt": ("chat", "txt"), "whiteboard.drawio": ("board", "drawio"), "Общая запись встречи.m4a": ("audio_mix", "m4a"),
 }
-FOLDERS = ("Audio", "Transcripts", "Protocols", "Chat", "Boards")
+FOLDERS = ("Audio", "Video", "Transcripts", "Protocols", "Chat", "Boards")
 
 
 def classify(name: str) -> tuple[str, str] | None:
@@ -51,6 +52,8 @@ def classify(name: str) -> tuple[str, str] | None:
     low = name.lower()
     if low.endswith(".wav") and not low.endswith(".tmp"):
         return "audio_participant", "wav"
+    if re.fullmatch(r"video-\d{1,4}\.mp4", low):
+        return "video_mix", "mp4"
     return None
 
 
@@ -196,17 +199,23 @@ class ManifestService:
             for d in sorted(dirs):
                 out.append((folder, d, st, group))
         recs = (await db.execute(select(Recording).where(Recording.meeting_id == meeting.id))).scalars().all()
-        adirs = {posixpath.dirname(r.path) for r in recs if r.path and posixpath.dirname(r.path)}
-        if adirs:
+        adirs = {posixpath.dirname(r.path) for r in recs if r.path and posixpath.dirname(r.path) and not (r.kind == "mix_video" and r.export_area != "audio")}
+        vdirs = {posixpath.dirname(r.path) for r in recs if r.path and posixpath.dirname(r.path) and r.kind == "mix_video" and r.export_area != "audio"}
+        local_done: set[str] = set()
+        for folder, dirs, getter, group in (("Audio", adirs, lambda: self._files.backend(db, "audio_storage", "Audio", legacy_prefix="audio"), "audio_storage"),
+                                            ("Video", vdirs, lambda: self._files.video_backend(db), "video")):
+            if not dirs:
+                continue
             try:
-                ast = await self._files.backend(db, "audio_storage", "Audio", legacy_prefix="audio")
+                ast = await getter()
             except StorageError:
                 ast = None
-            for d in sorted(adirs):
+            for d in sorted(dirs):
                 if ast is not None:
-                    out.append(("Audio", d, ast, "audio_storage"))
-                if Path(self._rec_path, d).is_dir():                       # локальная копия (если её хранят): паспорт и рядом с ней
-                    out.append(("Audio", d, LocalStorage(self._rec_path), "local"))
+                    out.append((folder, d, ast, group))
+                if d not in local_done and Path(self._rec_path, d).is_dir():   # локальная копия (если её хранят): паспорт и рядом с ней
+                    local_done.add(d)
+                    out.append((folder, d, LocalStorage(self._rec_path), "local"))
         return out
 
     async def refresh(self, db: AsyncSession, meeting_id: uuid.UUID) -> dict:

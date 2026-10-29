@@ -9,6 +9,7 @@ import asyncio
 import re
 import time
 import uuid
+from ..services import server_components as _sc
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -34,7 +35,7 @@ def _st(request: Request):
 async def _sync(request: Request, db: AsyncSession, row: SipProfile) -> dict:
     """Приводит транки LiveKit в соответствие с профилем. Ошибка не мешает сохранению профиля — она возвращается для показа администратору."""
     st = _st(request)
-    if str(st.settings.sip_enabled).strip().lower() not in ("yes", "true", "1", "on"):
+    if not _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "sip"):
         return {"ok": None, "message": "Телефония выключена на сервере: профиль сохранён, транки в LiveKit будут созданы после её включения."}
     try:
         ids = await st.sip_gateway.sync_profile(row, st.sip.decrypt(row))
@@ -155,7 +156,7 @@ async def check_profile(pid: str, request: Request, su: SessionUser = Depends(re
     probe = await asyncio.to_thread(sip_options_probe, row.host, row.port, row.transport)
     add("pbx", probe["ok"], probe["message"], probe["ms"])
     started = time.monotonic()
-    enabled = str(st.settings.sip_enabled).strip().lower() in ("yes", "true", "1", "on")
+    enabled = _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "sip")
     if not enabled:
         add("livekit", None, "Телефония выключена на сервере (SIP_ENABLED=no): проверка транков LiveKit пропущена. Включите её в разделе «Состояние».")
     else:

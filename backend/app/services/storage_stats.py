@@ -82,15 +82,20 @@ class StorageStats:
 
     async def _measure(self, prev: dict[str, dict]) -> dict:
         async with self._sm() as db:
-            rows = (await db.execute(select(Recording.kind, Recording.export_status, Recording.path, Recording.size_bytes).where(Recording.status == "ready"))).all()
+            rows = (await db.execute(select(Recording.kind, Recording.export_status, Recording.path, Recording.size_bytes, Recording.export_area).where(Recording.status == "ready"))).all()
             att = (await db.execute(select(func.count(), func.coalesce(func.sum(ChatAttachment.size), 0)).where(ChatAttachment.message_id.is_not(None)))).one()
             cfg = await self._ps._svc.get(db, "audio_storage")
             enabled = bool(getattr(cfg, "enabled", False))
             title, kind, address = await self._describe(db, cfg) if enabled else ("", "", "")
             storage = await self._ps._audio_storage(db) if enabled else None
+            vcfg = await self._ps._svc.get(db, "video")
+            # видеозаписи в отдельном файловом хранилище (не «как аудиозаписи») — свой том в сводке
+            vsplit = vcfg.storage == "profile" and bool(vcfg.profile_id) and vcfg.profile_id != getattr(cfg, "profile_id", "")  # type: ignore[attr-defined]
+            vtitle, vkind, vaddress = await self._describe(db, vcfg) if vsplit else ("", "", "")
+            vstorage = await self._ps.storage_for(db, area="video") if vsplit else None
             last = (await db.execute(select(StorageSyncRun).order_by(StorageSyncRun.started_at.desc()).limit(1))).scalar_one_or_none()
         root = self._ps._s.recordings_path
-        local, external = await asyncio.to_thread(self._tally, rows, root)
+        local, external, external_video = await asyncio.to_thread(self._tally, rows, root, vsplit)
         legacy_ext = "" if getattr(cfg, "profile_id", "") else "audio"
         ext_scan = os.path.join(address, "Audio" if getattr(cfg, "profile_id", "") else legacy_ext) if enabled and kind == "local" and address else None
         local_scan, ext_scan_res = await asyncio.gather(asyncio.to_thread(scan_dir, root), asyncio.to_thread(scan_dir, ext_scan) if ext_scan else _none())
@@ -100,7 +105,10 @@ class StorageStats:
         if enabled:
             out["volumes"].append(await self._volume("external", title or "Внешнее хранилище записей", kind, address, external, None,
                                                      (lambda: storage.volume()) if storage is not None else None, prev.get("external"), unavailable=storage is None, scan=ext_scan_res))
-        else:
+        if vsplit:
+            out["volumes"].append(await self._volume("external_video", vtitle or "Хранилище видеозаписей", vkind, vaddress, external_video, None,
+                                                     (lambda: vstorage.volume()) if vstorage is not None else None, prev.get("external_video"), unavailable=vstorage is None))
+        if not enabled:
             out["volumes"].append({"id": "external", "title": "Внешнее хранилище записей", "kind": "", "address": "", "state": "not_configured", "total": None, "free": None,
                                    "used_percent": None, "files": _empty(), "measured_at": _now(), "last_ok_at": None, "stale": False})
         out["other"] = {"title": "Вложения чата", "count": int(att[0]), "bytes": int(att[1]),
@@ -121,15 +129,17 @@ class StorageStats:
         return "Внешнее хранилище записей (папка)", "local", str(getattr(cfg, "local_path", ""))
 
     @staticmethod
-    def _tally(rows, root: str) -> tuple[dict, dict]:
-        """Разложить записи по месту: локальный диск (не выгруженные и выгруженные с локальной копией) и внешнее хранилище (выгруженные)."""
-        local, external = _empty(), _empty()
-        for kind, status, path, size in rows:
+    def _tally(rows, root: str, split_video: bool = False) -> tuple[dict, dict, dict]:
+        """Разложить записи по месту: локальный диск (не выгруженные и выгруженные с локальной копией) и внешние хранилища (выгруженные);
+        видеозаписи в отдельном хранилище — третьим итогом."""
+        local, external, external_video = _empty(), _empty(), _empty()
+        for kind, status, path, size, area in rows:
             k = kind if kind in KINDS else "participant"
             size = int(size or 0)
             if status == "exported":
-                external[k]["count"] += 1
-                external[k]["bytes"] += size
+                ext = external_video if split_video and area == "video" else external
+                ext[k]["count"] += 1
+                ext[k]["bytes"] += size
                 try:
                     if not os.path.isfile(os.path.join(root, path)):
                         continue
@@ -137,7 +147,7 @@ class StorageStats:
                     continue
             local[k]["count"] += 1
             local[k]["bytes"] += size
-        return local, external
+        return local, external, external_video
 
     async def _volume(self, vid, title, kind, address, files, other, probe, prev, unavailable: bool = False, scan: dict | None = None) -> dict:
         db_bytes = sum(x["bytes"] for x in files.values())

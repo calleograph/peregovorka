@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ProtocolTemplate } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 interface Form { id?: string; name: string; kind: "any" | "protocol" | "summary"; instruction: string }
 const empty: Form = { name: "", kind: "any", instruction: "" };
@@ -43,9 +44,8 @@ export default function TemplatesAdmin() {
           <label>Для какого документа
             <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as Form["kind"] })}>
               <option value="any">Любой (полный протокол и резюме)</option><option value="protocol">Только полный протокол</option><option value="summary">Только краткое резюме</option></select></label>
-          <label>Инструкция для модели
-            <textarea rows={7} value={form.instruction} onChange={(e) => setForm({ ...form, instruction: e.target.value })} required maxLength={20000} />
-            <span className="help">Опишите структуру документа и требования к стилю. Стенограмма добавляется автоматически после обезличивания.</span>
+          <label><span className="field-title">Инструкция для модели<InfoTip>Опишите структуру документа и требования к стилю. Стенограмма добавляется автоматически после обезличивания.</InfoTip></span><textarea rows={7} value={form.instruction} onChange={(e) => setForm({ ...form, instruction: e.target.value })} required maxLength={20000} />
+            
             <span className="example">Пример: <code>Выдели только принятые решения и поручения. Для каждого поручения укажи ответственного и срок. Не выдумывай данные.</code></span></label>
           <div className="row"><button className="btn primary">Сохранить</button><button type="button" className="btn ghost" onClick={() => setForm(null)}>Отмена</button></div>
         </form>

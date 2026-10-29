@@ -13,11 +13,12 @@
 # $DATA_ROOT/updater, а этот скрипт — «помощник» на хосте, служба systemd ОТ ROOT (иначе без пароля sudo нельзя ни выдать права на
 # каталоги, ни обновить свой nginx-site) — выполняет ТОЛЬКО фиксированный набор действий:
 #   check   — сверка с GitHub;      update — штатный scripts/update.sh --yes (флаги из белого списка);
-#   repair  — одно исправление из белого списка scripts/lib/repairlib.sh («Исправить автоматически»);   scan — обнаружить проблемы.
+#   repair  — одно исправление из белого списка scripts/lib/repairlib.sh («Исправить автоматически»);   scan — обнаружить проблемы;
+#   component — одно действие с дополнительным компонентом из белого списка scripts/lib/complib.sh (включить видеоподсистему, перезапустить Egress…).
 # Произвольные команды и пути из веб-интерфейса выполнить нельзя: запрос — простые строки key=value, каждое значение проверяется.
 # Дочерние команды запускаются в СТЕРИЛЬНОМ окружении (env -i): настройки берутся только из .env, а не из унаследованных ASR_*/NGINX_*/LIVEKIT_*.
 #
-# Файлы обмена ($DATA_ROOT/updater): request.txt (из веб-интерфейса), status.json, remote.json, repairs.json, update.log (пишет этот скрипт).
+# Файлы обмена ($DATA_ROOT/updater): request.txt (из веб-интерфейса), status.json, remote.json, repairs.json, components.json, update.log (пишет этот скрипт).
 set -uo pipefail
 # Как systemd завершил службу (переменные ExecStopPost) — запоминаем до того, как общие библиотеки и сам скрипт задействуют такие же имена.
 SD_RESULT="${SERVICE_RESULT:-}"; SD_EXIT_CODE="${EXIT_CODE:-}"; SD_EXIT_STATUS="${EXIT_STATUS:-}"
@@ -215,6 +216,30 @@ do_scan() { # обнаружить известные проблемы → repai
   # в фоне + wait: сигнал остановки обрабатывается сразу, а не после окончания долгой проверки
   ( ( fresh_env; repair_scan; repair_json ) 2>/dev/null | atomic_write "$CH/repairs.json" ) &
   wait $! 2>/dev/null
+  do_components
+}
+
+do_components() { # фактическое состояние дополнительных компонентов → components.json (complib.sh)
+  ( ( fresh_env; comp_state_json ) 2>/dev/null | atomic_write "$CH/components.json" ) &
+  wait $! 2>/dev/null
+}
+
+do_component() { # do_component ID — одно действие с компонентом из белого списка COMPONENT_OPS (проверка ID ещё раз здесь, а не только в веб-интерфейсе)
+  local id="$1" rc
+  comp_op_valid "$id" || { warn "Действие «$id» не из белого списка — отклонено"; return 2; }
+  if [ "$id" = state ]; then do_components; return 0; fi
+  ACTION="component"; REPAIR_ID="$id"; ST_UPDATE=""; ST_DEPLOY=""; ST_HEALTH=""; ST_INTEG=""; ST_ISSUES=""; ST_REASON=""
+  STATE="component"; STARTED="$(date +%s)"; FINISHED=0; EXIT_CODE=null; RESULT=""; STEP_NO=0; STEP_TOTAL=2; STEP_NAME="$(comp_text "$id")"; write_status
+  reset_log
+  printf '=== %s: запущено %s (запросил: %s) ===\n' "$(comp_text "$id")" "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" >> "$LOG"
+  ( fresh_env; DRY_RUN=0; comp_apply "$id" 2>&1 ) | strip_ansi | mask_stream | pump_log
+  rc="${PIPESTATUS[0]}"
+  FINISHED="$(date +%s)"; EXIT_CODE="$rc"; STATE="idle"; STEP_NO=2
+  if [ "$rc" -eq 0 ]; then RESULT="ok"; else RESULT="failed"; fi
+  printf '=== Завершено %s: %s ===\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$([ "$rc" -eq 0 ] && echo 'успешно' || echo 'не удалось')" >> "$LOG"
+  write_status
+  do_scan || true      # состояние компонентов и список проблем — по факту после действия
+  return "$rc"
 }
 
 do_repair() { # do_repair ID — одно исправление из белого списка; проверка ID ещё раз здесь, а не только в веб-интерфейсе
@@ -238,7 +263,7 @@ do_repair() { # do_repair ID — одно исправление из белог
 req_get() { sed -n "s/^$1=//p" "$CH/request.txt" 2>/dev/null | head -1 | tr -d '\r'; }
 
 handle_request() {
-  local f="$CH/request.txt" action rid force pull by at now repair
+  local f="$CH/request.txt" action rid force pull by at now repair op
   [ -f "$f" ] || return 0
   # Каталог обмена открыт на запись (1777: контейнер backend пишет туда от uid 10001), поэтому на общем сервере положить файл мог бы и любой локальный пользователь.
   # Берём запрос только от своих: символьная ссылка отклоняется, владелец — root, сам исполнитель или пользователь контейнера backend.
@@ -246,7 +271,7 @@ handle_request() {
   if [ -L "$f" ] || ! [[ "$owner" =~ ^(0|$(id -u)|${BACKEND_UID:-10001})$ ]]; then
     warn "Запрос отклонён: файл — символьная ссылка или создан посторонним пользователем (uid $owner)"; rm -f "$f"; return 0
   fi
-  rid="$(req_get id)"; action="$(req_get action)"; force="$(req_get force_build)"; pull="$(req_get pull)"; by="$(req_get by)"; at="$(req_get at)"; repair="$(req_get repair)"
+  rid="$(req_get id)"; action="$(req_get action)"; force="$(req_get force_build)"; pull="$(req_get pull)"; by="$(req_get by)"; at="$(req_get at)"; repair="$(req_get repair)"; op="$(req_get op)"
   rm -f "$f"   # запрос выполняется один раз (rm удаляет и symlink, не следуя за ним)
   [[ "$rid" =~ ^[a-f0-9]{8,32}$ ]] || { warn "Запрос отклонён: некорректный id"; return 0; }
   [[ "$at" =~ ^[0-9]+$ ]] || { warn "Запрос отклонён: нет времени"; return 0; }
@@ -264,6 +289,8 @@ handle_request() {
     scan) info "Поиск проблем по запросу ($by)"; do_scan || true ;;
     repair) if [[ "$repair" =~ ^[a-z_]{3,30}$ ]] && repair_id_valid "$repair"; then info "Исправление «$repair» по запросу ($by)"; do_repair "$repair" || warn "Исправление «$repair» не удалось — см. $LOG"
             else warn "Запрос $rid: исправление «$repair» не из белого списка — отклонён"; fi ;;
+    component) if [[ "$op" =~ ^[a-z_]{3,30}$ ]] && comp_op_valid "$op"; then info "Компонент: «$op» по запросу ($by)"; do_component "$op" || warn "Действие «$op» не выполнено — см. $LOG"
+               else warn "Запрос $rid: действие «$op» не из белого списка — отклонён"; fi ;;
     *) warn "Неизвестное действие запроса: $action" ;;
   esac
 }
@@ -271,7 +298,7 @@ handle_request() {
 # После обновления файл этого скрипта мог измениться (git merge): запущенный процесс помнит старый код, поэтому перезапускаем себя новой версией
 # (иначе новые исправления и проверки заработали бы только после перезапуска службы). Блокировка снимается перед exec.
 SELF_SUM=""
-self_sum() { sha256sum "${BASH_SOURCE[0]}" "$REPO_ROOT/scripts/lib/repairlib.sh" "$REPO_ROOT/scripts/lib/prereqlib.sh" 2>/dev/null | cut -d' ' -f1 | tr -d '\n'; }
+self_sum() { sha256sum "${BASH_SOURCE[0]}" "$REPO_ROOT/scripts/lib/repairlib.sh" "$REPO_ROOT/scripts/lib/prereqlib.sh" "$REPO_ROOT/scripts/lib/complib.sh" 2>/dev/null | cut -d' ' -f1 | tr -d '\n'; }
 reload_if_changed() {
   [ -n "$SELF_SUM" ] || return 0
   [ "$(self_sum)" = "$SELF_SUM" ] && return 0

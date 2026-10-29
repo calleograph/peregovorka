@@ -87,16 +87,16 @@ class TransferService:
     async def create(self, db: AsyncSession, direction: str, *, meeting_id: uuid.UUID | None, actor: str) -> StorageTransfer:
         if direction not in DIRECTIONS:
             raise TransferError("Направление: to_external или to_local")
-        cfg = await self._ps._svc.get(db, "audio_storage")
-        if not getattr(cfg, "enabled", False):
-            raise TransferError("Внешнее хранилище записей не настроено: включите его в «Файловые хранилища» и «Аудиозаписи».")
-        if not getattr(cfg, "profile_id", ""):
-            raise TransferError("Перенос работает с хранилищем из раздела «Файловые хранилища»: выберите профиль в «Аудиозаписи».")
+        areas = await self.areas(db)
+        if not areas:
+            raise TransferError("Внешнее хранилище записей не настроено: выберите хранилище из раздела «Файловые хранилища» в «Аудиозаписи» или «Видеозапись».")
         busy = (await db.execute(select(StorageTransfer.id).where(StorageTransfer.state.in_(("queued", "running"))).limit(1))).first()
         if busy:
             raise TransferError("Уже выполняется другой перенос — дождитесь его завершения или остановите.")
         stmt = select(Recording.id, Recording.size_bytes).where(Recording.status == "ready")
         stmt = stmt.where(Recording.export_status != "exported") if direction == "to_external" else stmt.where(Recording.export_status == "exported")
+        if areas != {"audio", "video"}:          # переносятся только записи тех видов, у которых есть внешнее хранилище
+            stmt = stmt.where(Recording.kind == "mix_video") if areas == {"video"} else stmt.where(Recording.kind != "mix_video")
         if meeting_id is not None:
             stmt = stmt.where(Recording.meeting_id == meeting_id)
         rows = (await db.execute(stmt.order_by(Recording.created_at, Recording.id))).all()
@@ -112,6 +112,18 @@ class TransferService:
         await db.commit()
         self._wake.set()
         return job
+
+    async def areas(self, db: AsyncSession) -> set[str]:
+        """Области записей, для которых настроено внешнее хранилище из «Файловых хранилищ» (перенос работает только с ними, не со старыми настройками без профиля)."""
+        out = set()
+        a = await self._ps._svc.get(db, "audio_storage")
+        audio_profile = bool(getattr(a, "enabled", False) and getattr(a, "profile_id", ""))
+        if audio_profile:
+            out.add("audio")
+        v = await self._ps._svc.get(db, "video")
+        if (v.storage == "profile" and v.profile_id) or (v.storage == "audio" and audio_profile):  # type: ignore[attr-defined]
+            out.add("video")
+        return out
 
     async def cancel(self, db: AsyncSession, job_id: uuid.UUID, actor: str) -> StorageTransfer | None:
         job = await db.get(StorageTransfer, job_id)
@@ -254,10 +266,17 @@ class TransferService:
             return "уже на локальном диске"
         return await self._to_local(db, rec, item)
 
-    async def _storage(self, db: AsyncSession):
-        storage = await self._ps._audio_storage(db)
+    def _area(self, rec: Recording, *, to_external: bool) -> str:
+        """Перенос наружу — в хранилище своего вида (видео → «Видеозапись», остальное → «Аудиозаписи»); всё остальное — там, где копия лежит сейчас."""
+        if to_external or not rec.export_area:
+            return self._ps.area_of_kind(rec.kind)
+        return rec.export_area
+
+    async def _storage(self, db: AsyncSession, rec: Recording, *, to_external: bool = False):
+        area = self._area(rec, to_external=to_external)
+        storage = await self._ps.storage_for(db, area=area)
         if storage is None:
-            raise Unavailable("Внешнее хранилище записей недоступно или выключено.")
+            raise Unavailable("Внешнее хранилище " + ("видеозаписей" if area == "video" else "записей") + " недоступно или выключено.")
         base = getattr(storage, "_base", storage)
         if isinstance(base, LocalStorage) and not getattr(base, "_marker", None):
             raise Unavailable("Хранилище-папка не отмечено как внешний том: отметьте «внешний том» в настройках хранилища и нажмите «Проверить» (ставится метка), иначе при отключении сетевой папки файлы попали бы на локальный диск.")
@@ -274,7 +293,7 @@ class TransferService:
         st = src.stat()
         if time.time() - st.st_mtime < RECENT_S:
             raise _skip("файл изменён меньше двух минут назад (возможно, ещё записывается)")
-        storage = await self._storage(db)
+        storage = await self._storage(db, rec, to_external=True)
         size = st.st_size
         try:
             _, free = await asyncio.to_thread(storage.volume)
@@ -299,12 +318,13 @@ class TransferService:
             await self._drop(storage, rec.path)
             raise
         rec.export_status, rec.export_location, rec.export_error, rec.exported_at, rec.sha256, rec.size_bytes = "exported", loc, None, utcnow(), digest, size
+        rec.export_area = self._area(rec, to_external=True)
         item.cleanup_at = utcnow() + timedelta(seconds=GRACE_S)
         await db.commit()                                                 # переключение в базе — до удаления источника; источник уберёт sweep после отсрочки
         return None
 
     async def _to_local(self, db: AsyncSession, rec: Recording, item: StorageTransferItem) -> str | None:
-        storage = await self._storage(db)
+        storage = await self._storage(db, rec)
         try:
             size = await asyncio.to_thread(storage.size_of, rec.path)
         except StorageError as exc:
@@ -380,7 +400,7 @@ class TransferService:
         if direction == "to_external":
             if rec.export_status != "exported" or not rec.sha256 or not local.is_file():
                 return False
-            storage = await self._storage(db)
+            storage = await self._storage(db, rec)
             ok = False
             try:
                 ok = await asyncio.to_thread(storage.size_of, rec.path) == rec.size_bytes and await asyncio.to_thread(sha256_storage, storage, rec.path, rec.size_bytes) == rec.sha256
@@ -397,7 +417,7 @@ class TransferService:
             return True
         if rec.export_status != "local" or not local.is_file():
             return False
-        storage = await self._storage(db)
+        storage = await self._storage(db, rec)
         if local.stat().st_size != rec.size_bytes or await asyncio.to_thread(sha256_file, local) != rec.sha256:
             if await asyncio.to_thread(storage.exists, rec.path):
                 rec.export_status, rec.export_error = "exported", "перенос отменён: локальная копия не прошла проверку"       # локальная копия испорчена — «живая» внешняя

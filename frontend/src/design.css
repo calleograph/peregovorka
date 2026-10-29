@@ -1150,3 +1150,37 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 @keyframes net-dash { to { stroke-dashoffset: -100; } }
 @keyframes net-pulse { 0% { offset-distance: 0%; opacity: 0; } 12% { opacity: .9; } 88% { opacity: .9; } 100% { offset-distance: 100%; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .login-net { animation: none; opacity: 1; } .login-net * { animation: none !important; } .login-net .ln-pulse { display: none; } }
+
+/* ---- ⓘ: подробное пояснение параметра во всплывающей подсказке (components/InfoTip.tsx) */
+.infotip { position: relative; display: inline-flex; vertical-align: baseline; margin-left: 4px; }
+.infotip-btn { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 13px; line-height: 1;
+  color: var(--muted); font-weight: 600; }
+.infotip-btn:hover, .infotip-btn[aria-expanded="true"] { color: var(--accent); background: var(--accent-soft); }
+.infotip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.infotip-pop { position: absolute; z-index: 60; left: -8px; top: calc(100% + 6px); width: max-content; max-width: min(360px, 80vw); padding: 9px 11px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgb(0 0 0 / .16);
+  font-size: 12.5px; line-height: 1.45; font-weight: 400; white-space: normal; text-align: left; text-transform: none; letter-spacing: normal; }
+.infotip-pop a { color: var(--link); }
+@media (max-width: 600px) {
+  /* на телефоне — полосой у нижнего края: не выходит за экран, что бы ни было рядом */
+  .infotip-pop { position: fixed; left: 12px; right: 12px; bottom: 12px; top: auto; max-width: none; width: auto; max-height: 50vh; overflow: auto; }
+}
+/* подпись поля + ⓘ в одной строке; длинное пояснение больше не растягивает форму */
+.field-title { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0 2px; }
+
+/* ---- проверки по цепочке (Видеозапись, Трансляции) и карточки компонентов сервера */
+.checks-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.checks-list li { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: start; padding: 6px 8px; border-radius: var(--radius-sm); font-size: 13px; }
+.checks-list li.error { background: var(--danger-bg); }
+.checks-list li.off { background: var(--soft); }
+.checks-list li.skipped { color: var(--muted); }
+.checks-list .ck-mark { font-weight: 700; text-align: center; }
+.checks-list li.ok .ck-mark { color: var(--ok-text, var(--accent)); }
+.checks-list li.error .ck-mark { color: var(--danger-text); }
+.checks-list .ck-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 600px) { .checks-list li { grid-template-columns: 20px 1fr; } .checks-list .ck-actions { grid-column: 2; justify-content: flex-start; } }
+.comp-card { display: grid; gap: 6px; }
+.comp-card .comp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.comp-log { max-height: 180px; overflow: auto; margin: 0; padding: 8px; font-size: 11.5px; background: var(--soft); border-radius: var(--radius-sm); white-space: pre-wrap; }
+.consequences { margin: 6px 0 10px; padding-left: 18px; }
+.consequences li { margin: 3px 0; }

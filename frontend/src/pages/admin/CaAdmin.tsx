@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ApiError, type CaCert, type CaInfo } from "../../api";
 import { fmtDate } from "./common";
+import InfoTip from "../../components/InfoTip";
 
 function toBase64(buf: ArrayBuffer): string {
   let s = "";
@@ -75,8 +76,7 @@ export default function CaAdmin() {
   return (
     <section>
       <div className="row"><h2>Сертификаты (CA)</h2></div>
-      <p className="muted">Корневые и промежуточные сертификаты удостоверяющего центра, которым подписаны сертификаты ваших серверов каталога (и почты). Нужны, чтобы система проверяла, что соединяется именно с вашим сервером, а не с подменой.
-        Закрытые ключи сюда загружать нельзя — только сертификат.</p>
+      <p className="muted small">Корневые и промежуточные сертификаты удостоверяющего центра, которым подписаны сертификаты ваших серверов каталога (и почты).<InfoTip>Нужны, чтобы система проверяла, что соединяется именно с вашим сервером, а не с подменой. Закрытые ключи сюда загружать нельзя — только сертификат.</InfoTip></p>
       {note && <div className="alert ok" role="status">{note}</div>}
       {error && <div className="alert error" role="alert">{error}</div>}
 

@@ -57,6 +57,20 @@ export interface LiveAdminStatus {
   active: { room: string; status: string; since: string; quality: string; viewers: number; hls: boolean; hls_ready: boolean; by: string | null }[];
   egress_cpu_load: number | null; max_cpu_load: number; destinations: Record<string, number>; recordings_running: number; cdn: { enabled: boolean; base_url: string };
   hls_bytes: number; free_bytes: number | null; secret_ok: boolean; failed: { room: string; error: string | null; at: string }[]; warnings: string[]; now: string;
+  checks?: MediaCheck[];
+}
+/** Действие с дополнительным компонентом сервера (выполняет помощник обновлений на хосте по белому списку). */
+export interface ComponentOp { id: string; label: string; title: string; consequences: string[]; interrupts_calls: boolean; danger: boolean; primary?: boolean }
+export interface ServerComponent { id: "video" | "sip" | "livekit" | "web"; title: string; what: string; doc: string; state: "ok" | "off" | "error" | "starting" | "unknown"; enabled: boolean; message: string; ops: ComponentOp[] }
+export interface ComponentsInfo {
+  helper: { available: boolean; privileged: boolean; state: string; message: string; fix: string | null; busy: boolean; busy_with: string | null;
+    last: { op: string; title: string; result: string | null; running: boolean; step_name: string | null; started_at: number | null; finished_at: number | null; exit_code: number | null } | null };
+  facts_ts: number | null; free_gb: number | null; items: ServerComponent[];
+}
+/** Проверка по цепочке зависимостей: ok · error (неисправность) · off (возможность выключена) · skipped (проверить пока нельзя) · info. */
+export interface MediaCheck {
+  id: string; title: string; status: "ok" | "error" | "off" | "skipped" | "info"; message: string; doc: string | null;
+  action: ({ kind: "component"; component: ServerComponent["id"] } & Omit<ComponentOp, "id" | "primary"> & { op: string }) | { kind: "repair"; repair: string; label: string } | { kind: "anchor"; label: string; target: string } | null;
 }
 /** Трансляции. Состояние эфира комнаты: видно всем участникам; ссылки и площадки получают только те, кто может управлять. */
 export interface LiveState {
@@ -219,7 +233,7 @@ export interface AutoBackupStatus {
 export type AuditFilter = { q?: string; actor?: string; action?: string; result?: string; actor_type?: string; object_type?: string; ip?: string; since?: string; until?: string }
 export interface AuditVerify { signed: boolean; checked: number; ok: number; unsigned: number; bad: number[]; gaps: number[][]; intact?: boolean; note: string }
 export interface RecordingRow {
-  id: string; meeting_id: string; room: string; identity: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
+  id: string; meeting_id: string; room: string; identity: string; kind?: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
   export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing";
 }
 /** Запись из блока «Записи»: общая (mix_audio / mix_video) или файл участника (только администратору). */
@@ -249,7 +263,7 @@ export interface SubtitleData { available: boolean; reason: string | null; messa
 /** Видеозапись встречи (LiveKit Egress): видна всем участникам; управляют руководители. */
 export interface VideoState { enabled: boolean; mode: "off" | "manual" | "auto"; quality: "720p" | "1080p"; recording: boolean; since: string | null; fragments: number; can_start: boolean; can_control: boolean }
 export interface VideoStatus { enabled: boolean; livekit_ok: boolean; livekit_error: string | null; running: number; max_concurrent: number; files: { ready: number; failed: number; bytes: number };
-  quota_gb: number; min_free_gb: number; free_bytes: number | null; warnings: string[] }
+  quota_gb: number; min_free_gb: number; free_bytes: number | null; warnings: string[]; checks?: MediaCheck[] }
 export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; recording_mode: "audio" | "audio_video" | "off" }
 export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
@@ -344,7 +358,7 @@ export interface RoomManage {
   mail_delivery?: MailDeliverySpec | null;
   protocol_instructions?: string | null;
   /** Сроки хранения и обезличивание задаёт администратор: руководителю показываются только для сведения. */
-  retention?: { text_days: number | null; audio_days: number | null; history_access: string; anonymize_mode: string } | null;
+  retention?: { text_days: number | null; audio_days: number | null; history_access: string; anonymize_mode: string; anonymizer_profile_id?: string | null } | null;
   llm?: LlmChoice | null; llm_effective?: LlmEffective | null; llm_options?: LlmOptions | null;
   /** Модель для краткого резюме — отдельная цепочка «система → комната → встреча». */
   llm_summary?: LlmChoice | null; llm_summary_effective?: LlmEffective | null;
@@ -958,6 +972,9 @@ export const api = {
   adminLiveCdnCheck: () => request<{ ok: boolean; message: string; ms?: number }>("POST", "/admin/live/cdn/check"),
   adminLiveStatus: () => request<LiveAdminStatus>("GET", "/admin/live/status"),
   adminVideoStatus: () => request<VideoStatus>("GET", "/admin/video/status"),
+  adminComponents: () => request<ComponentsInfo>("GET", "/admin/components"),
+  adminComponentsRefresh: () => request<{ request_id: string | null }>("POST", "/admin/components/refresh"),
+  adminComponentRun: (name: string, op: string) => request<{ request_id: string }>("POST", `/admin/components/${encodeURIComponent(name)}/${encodeURIComponent(op)}`, { confirm: true }),
   videoState: (meetingId: string) => request<VideoState>("GET", `/meetings/${meetingId}/video-recording`),
   setVideoRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/video-recording`, { enabled }),
   liveRoom: (roomId: string) => request<LiveRoomSettings>("GET", `/rooms/${roomId}/live`),
@@ -1092,6 +1109,7 @@ export const api = {
     rooms: (includeClosed = false) => request<RoomAdmin[]>("GET", `/admin/rooms${includeClosed ? "?include_closed=true" : ""}`),
     guestLink: (id: string, action: "rotate" | "revoke") => request<RoomAdmin>("POST", `/admin/rooms/${id}/guest-link/${action}`),
     createRoom: (body: Record<string, unknown>) => request<RoomAdmin>("POST", "/admin/rooms", body),
+    roomTemplate: () => request<Pick<RoomManage, "video_enabled" | "llm_effective" | "llm_summary_effective" | "llm_options" | "sip_options">>("GET", "/admin/rooms/template"),
     patchRoom: (id: string, body: Record<string, unknown>) => request<RoomAdmin>("PATCH", `/admin/rooms/${id}`, body),
     deleteRoom: (id: string) => request<void>("DELETE", `/admin/rooms/${id}`),
     settings: (g: SettingsGroup) => request<SettingsValues>("GET", `/admin/settings/${g}`),

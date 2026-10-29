@@ -52,8 +52,8 @@ export default function StorageStatsCard() {
   const refresh = async () => { try { await api.admin.storageStatsRefresh(); } catch (e) { setErr((e as ApiError).message); } await load(); setTimeout(() => void load(), 1200); };
 
   return (
-    <section aria-label="Хранилище записей">
-      <div className="row"><h3 style={{ margin: 0 }}>Хранилище записей</h3><div className="spacer" />
+    <section aria-label="Хранилище записей встреч">
+      <div className="row"><h3 style={{ margin: 0 }}>Хранилище записей встреч</h3><div className="spacer" />
         <button className="btn mini" onClick={() => void refresh()} disabled={!!data?.refreshing}>{data?.refreshing ? "Измеряется…" : "Обновить"}</button></div>
       <p className="muted small">Данные считаются в фоне раз в 10 минут и по кнопке; страница показывает готовый замер{data?.measured_at ? ` от ${fmtDate(data.measured_at)}` : ""}.</p>
       {err && <div className="alert error" role="alert">{err}</div>}

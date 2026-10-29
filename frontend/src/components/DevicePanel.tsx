@@ -5,6 +5,7 @@ import { describeMediaError } from "../mediaErrors";
 import type { MicPrefs } from "../micPrefs";
 import { NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import MicProbe from "./MicProbe";
+import InfoTip from "./InfoTip";
 
 type Kind = "audioinput" | "audiooutput" | "videoinput";
 const LABELS: Record<Kind, string> = { audioinput: "Микрофон", audiooutput: "Динамики", videoinput: "Камера" };
@@ -61,15 +62,15 @@ export default function DevicePanel({ room, prefs, onPrefs, inline = false }: { 
             <span className="noise-title">Шумоподавление</span>
             {NOISE_MODES.map((m) => (
               <label key={m} className="check"><input type="radio" name="noise-mode" checked={prefs.noiseMode === m} onChange={() => onPrefs({ ...prefs, noiseMode: m }, `noise_${m}`)} />
-                <span className="check-body">{NOISE_LABEL[m]}<span className="help">{NOISE_HINT[m]}</span></span></label>
+                <span className="check-body">{NOISE_LABEL[m]}<InfoTip>{NOISE_HINT[m]}</InfoTip></span></label>
             ))}
           </div>
           <label className="check"><input type="checkbox" checked={prefs.echoCancellation} onChange={(e) => onPrefs({ ...prefs, echoCancellation: e.target.checked }, e.target.checked ? "echo_on" : "echo_off")} />
-            <span className="check-body">Эхоподавление<span className="help">Нужно, если слушаете через колонки. В наушниках можно выключить.</span></span></label>
+            <span className="check-body">Эхоподавление<InfoTip>Нужно, если слушаете через колонки. В наушниках можно выключить.</InfoTip></span></label>
           <label className="check"><input type="checkbox" checked={prefs.autoGainControl} onChange={(e) => onPrefs({ ...prefs, autoGainControl: e.target.checked }, e.target.checked ? "agc_on" : "agc_off")} />
-            <span className="check-body">Автоусиление<span className="help">Выравнивает громкость голоса.</span></span></label>
+            <span className="check-body">Автоусиление<InfoTip>Выравнивает громкость голоса.</InfoTip></span></label>
           <label className="check"><input type="checkbox" checked={prefs.releaseOnMute} onChange={(e) => onPrefs({ ...prefs, releaseOnMute: e.target.checked }, e.target.checked ? "release_on" : "release_off")} />
-            <span className="check-body">Освобождать микрофон, когда он выключен<span className="help">Выключенный микрофон полностью отпускается, и им могут пользоваться другие программы. Включение чуть медленнее; на Bluetooth-гарнитурах звук может на мгновение переключаться. Применяется при следующем входе в комнату.</span></span></label>
+            <span className="check-body">Освобождать микрофон, когда он выключен<InfoTip>Выключенный микрофон полностью отпускается, и им могут пользоваться другие программы. Включение чуть медленнее; на Bluetooth-гарнитурах звук может на мгновение переключаться. Применяется при следующем входе в комнату.</InfoTip></span></label>
         </fieldset>
       )}
       {prefs && <MicProbe />}

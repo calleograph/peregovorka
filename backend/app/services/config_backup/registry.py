@@ -168,7 +168,7 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "privacy": GroupPolicy(title="Конфиденциальность и сроки хранения", bound={"policy_url": BOUND_URL}),
     "site": GroupPolicy(title="Оформление и документы организации", bound={"org_url": BOUND_URL, "support_url": BOUND_URL, "portal_url": BOUND_URL}),
     "storage": GroupPolicy(title="Хранилище протоколов и материалов", bound={"local_path": BOUND_PATH, "smb_server": BOUND_SMB, "smb_share": BOUND_SMB, "smb_base_path": BOUND_SMB}),
-    "audio_storage": GroupPolicy(title="Хранилище записей", bound={"local_path": BOUND_PATH, "smb_server": BOUND_SMB, "smb_share": BOUND_SMB, "smb_base_path": BOUND_SMB}),
+    "audio_storage": GroupPolicy(title="Хранилище аудиозаписей", bound={"local_path": BOUND_PATH, "smb_server": BOUND_SMB, "smb_share": BOUND_SMB, "smb_base_path": BOUND_SMB}),
     "chat_files": GroupPolicy(title="Вложения чата"),
     "chats": GroupPolicy(title="Корпоративные чаты"),
     "anonymizer": GroupPolicy(title="Обезличивание", bound={"base_url": BOUND_URL}),

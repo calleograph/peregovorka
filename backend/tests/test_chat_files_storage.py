@@ -162,7 +162,7 @@ def test_storage_profile_is_created_once_and_functions_only_choose_it(client, se
         extra = {"enabled": True} if group != "chat_files" else {}
         put_settings(client, group, profile_id=p["id"], **extra)
     listed = client.get("/api/v1/admin/storages").json()
-    assert set(listed["items"][0]["used_by"]) == {"Вложения чата", "Записи аудио", "Протоколы и материалы встречи"}
+    assert set(listed["items"][0]["used_by"]) == {"Вложения чата", "Аудиозаписи", "Видеозаписи", "Протоколы и материалы встречи"}   # видеозаписи по умолчанию «как аудиозаписи» — то же хранилище, папка Video/
     assert "Chat" in listed["folders"] and "Audio" in listed["folders"]
     # используемое хранилище удалить нельзя
     assert client.delete(f"/api/v1/admin/storages/{p['id']}").status_code == 409

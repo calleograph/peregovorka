@@ -1,8 +1,9 @@
-"""Админка → «Видеозапись»: состояние функции (включена ли, сколько записей идёт и занято, свободное место, связь с LiveKit). Только чтение.
-Сама служба Egress из приложения не видна (это отдельный контейнер): её состояние — `scripts/video.sh status`; первая же запись покажет, работает ли она."""
+"""Админка → «Видеозапись»: состояние функции (сколько записей идёт и занято, свободное место) и проверки по цепочке зависимостей (services/media_checks.py).
+Состояние и управление службой Egress — /admin/components (помощник на хосте видит контейнер, backend — нет)."""
 from __future__ import annotations
 
 import shutil
+from ..services import server_components as _sc
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, get_db, require_admin
 from ..models import Recording
+from ..services import media_checks
 
 router = APIRouter(prefix="/admin/video", tags=["admin"])
 
@@ -29,19 +31,18 @@ async def video_status(request: Request, su: SessionUser = Depends(require_admin
         free = None
     livekit_ok, livekit_error = True, None
     try:
-        await st.video.api.probe()
+        await st.video.api.probe_livekit()
     except Exception as exc:  # noqa: BLE001
         livekit_ok, livekit_error = False, type(exc).__name__
+    items = await media_checks.checks(st, db, "video")
     running = by.get("processing", (0, 0))[0] + by.get("finishing", (0, 0))[0]
     return {
-        "enabled": bool(cfg.enabled), "service_installed": str(st.settings.video_enabled).strip().lower() in ("yes", "true", "1", "on"), "livekit_ok": livekit_ok, "livekit_error": livekit_error,
+        "enabled": bool(cfg.enabled), "service_installed": _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "video"), "livekit_ok": livekit_ok, "livekit_error": livekit_error,
         "running": running, "max_concurrent": cfg.max_concurrent,
         "files": {"ready": by.get("ready", (0, 0))[0], "failed": by.get("failed", (0, 0))[0], "bytes": sum(b for _, b in by.values())},
         "quota_gb": cfg.quota_gb, "min_free_gb": cfg.min_free_gb, "free_bytes": free,
-        "warnings": [w for w in (
-            f"Свободного места меньше {cfg.min_free_gb} ГБ: новые записи не начнутся." if free is not None and free < cfg.min_free_gb * 1024**3 else None,
+        "warnings": media_checks.warnings_of(items) + [w for w in (
             f"Объём видеозаписей достиг предела {cfg.quota_gb} ГБ: новые записи не начнутся." if cfg.quota_gb and sum(b for _, b in by.values()) >= cfg.quota_gb * 1024**3 else None,
-            "Нет связи с сервером звонков: видеозапись недоступна." if not livekit_ok else None,
-            "Служба записи не установлена на сервере (VIDEO_ENABLED=no): запись не начнётся. Установка: sudo scripts/video.sh enable." if cfg.enabled and str(st.settings.video_enabled).strip().lower() not in ("yes", "true", "1", "on") else None,
         ) if w],
+        "checks": items, "summary": media_checks.summary_of(items),
     }

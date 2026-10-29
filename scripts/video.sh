@@ -28,7 +28,7 @@ free_gb() { df -Pk "$DATA_ROOT" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576
 
 case "$CMD" in
   status)
-    if video_enabled; then ok "Видеозапись включена на сервере (VIDEO_ENABLED=yes)"; else info "Видеозапись выключена (VIDEO_ENABLED=no): служба Egress не запущена. Включить: sudo scripts/video.sh enable"; fi
+    if video_enabled; then ok "Видеозапись включена на сервере (VIDEO_ENABLED=yes)"; else info "Видеозапись выключена (VIDEO_ENABLED=no): служба Egress не запущена. Включить: Администрирование → Видеозапись → «Установить и включить» или sudo scripts/video.sh enable"; fi
     log "  Образ: $(video_image)"
     log "  Свободно на томе записей: $(free_gb) ГБ; процессоров: $(nproc 2>/dev/null || echo ?)"
     if video_enabled; then
@@ -46,7 +46,7 @@ case "$CMD" in
     video_prepare || die "Не удалось скачать образ Egress"
     info "Перезапуск LiveKit с подключением к Redis и запуск livekit-egress…"
     dc up -d --no-build livekit livekit-egress || die "docker compose up не выполнен (scripts/logs.sh livekit-egress)"
-    ok "Видеозапись включена на сервере. Теперь в приложении: Администрирование → Видеозапись → «Включить видеозапись», затем режим в настройках комнаты (вкладка «Запись»)." ;;
+    ok "Видеоподсистема включена на сервере. Теперь в приложении: Администрирование → Видеозапись → «Включить видеозапись» (и/или Трансляции), затем режим в настройках комнаты (вкладка «Встреча и запись»)." ;;
   disable)
     need_root
     [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; read -r -p "Выключить видеозапись (идущие записи будут закрыты)? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }

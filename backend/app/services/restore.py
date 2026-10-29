@@ -44,7 +44,7 @@ MAX_TEXT = 4 * 1024 * 1024               # текстовый материал �
 STALE_AFTER = timedelta(minutes=10)
 ISOLATED_SLUG = "restored-materials"
 ISOLATED_NAME = "Восстановленные материалы (проверьте права)"
-AREAS = (("Audio", "audio_storage", "audio"), ("Transcripts", "storage", ""), ("Protocols", "storage", ""), ("Chat", "storage", ""), ("Boards", "storage", ""))
+AREAS = (("Audio", "audio_storage", "audio"), ("Video", "video", "video"), ("Transcripts", "storage", ""), ("Protocols", "storage", ""), ("Chat", "storage", ""), ("Boards", "storage", ""))
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DATE_DIR = re.compile(r"^(\d{4})-(\d{2})-(\d{2}), ")
 _TIME_DIR = re.compile(r"^(\d{2})-(\d{2})(?: \(.+\))?$")
@@ -141,7 +141,7 @@ class RestoreService:
         out: list[tuple[str, StorageBackend]] = []
         for folder, group, legacy in AREAS:
             try:
-                st = await self._files.backend(db, group, folder, legacy_prefix=legacy)
+                st = await (self._files.video_backend(db) if group == "video" else self._files.backend(db, group, folder, legacy_prefix=legacy))
             except StorageError:
                 st = None
             if st is not None:
@@ -328,6 +328,7 @@ class RestoreService:
         recs = (await db.execute(select(Recording.path).where(Recording.path.like(directory + "/%")))).scalars().all()
         for p in recs:
             out[("Audio", posixpath.basename(p))] = True
+            out[("Video", posixpath.basename(p))] = True
         for kind, name, area in (("transcript", "protocol.txt", "Transcripts"), ("protocol", "official-protocol.md", "Protocols"), ("summary", "summary.md", "Protocols")):
             rows = (await db.execute(select(Protocol.meta).where(Protocol.kind == kind, Protocol.status == "ready"))).scalars().all()
             if any((m or {}).get("dir") == directory for m in rows):
@@ -553,7 +554,14 @@ class RestoreService:
                     continue
                 db.add(Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="restored" if kind == "audio_participant" else "meeting", path=rel, size_bytes=size,
                                  kind="participant" if kind == "audio_participant" else "mix_audio", mime="audio/wav" if name.lower().endswith(".wav") else "audio/mp4", status="ready",
-                                 export_status="exported", export_location=f"{area}/{rel}", file_state="ok", sha256=digest, created_at=utcnow()))
+                                 export_status="exported", export_location=f"{area}/{rel}", export_area="audio", file_state="ok", sha256=digest, created_at=utcnow()))
+                added.append(name)
+            elif kind == "video_mix":
+                if rel in have_paths:
+                    continue
+                db.add(Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="meeting", path=rel, size_bytes=size, kind="mix_video", mime="video/mp4",
+                                 has_video=True, status="ready", export_status="exported", export_location=f"{area}/{rel}", export_area="video" if area == "Video" else "audio",
+                                 file_state="ok", sha256=digest, created_at=utcnow()))
                 added.append(name)
             elif kind in ("transcript", "protocol", "summary"):
                 if (kind, d) in protos:
@@ -582,7 +590,7 @@ class RestoreService:
         return added
 
 
-LINKABLE = {"audio_participant", "audio_mix", "transcript", "protocol", "summary", "board"}
+LINKABLE = {"audio_participant", "audio_mix", "video_mix", "transcript", "protocol", "summary", "board"}
 
 
 def _is_uuid(v: Any) -> bool:

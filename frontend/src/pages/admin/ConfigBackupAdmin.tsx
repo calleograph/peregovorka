@@ -3,13 +3,14 @@ import { api, type ApiError, type ConfigHeader, type ConfigInfo, type ConfigPrev
 import { archivePasswordComplete, backupFileName, canApply, groupPassword, groupWarnings, statusTitle, statusTone } from "../../configBackupMath";
 import { copyText } from "../../util";
 import AutoBackupPanel from "./AutoBackupPanel";
+import InfoTip from "../../components/InfoTip";
 
 /** «Сервер → Резервная копия конфигурации»: шифрованный экспорт и импорт настроек. Архив нигде не сохраняется на сервере; пароль архива показывается один раз. */
 export default function ConfigBackupAdmin() {
   return (
     <section aria-label="Резервная копия конфигурации">
       <h2>Резервная копия конфигурации</h2>
-      <p className="muted">Все настройки, подключения, сертификаты и секреты — одним зашифрованным файлом, чтобы восстановить работающую систему на новом сервере. Данные встреч (записи, стенограммы, протоколы, история, чат), журналы, сессии и фото не входят.</p>
+      <p className="muted small">Все настройки, подключения, сертификаты и секреты — одним зашифрованным файлом, чтобы восстановить работающую систему на новом сервере.<InfoTip>Данные встреч (записи, стенограммы, протоколы, история, чат), журналы, сессии и фото не входят.</InfoTip></p>
       <AutoBackupPanel />
       <ExportPanel />
       <ImportPanel />

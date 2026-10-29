@@ -6,6 +6,7 @@ import FieldsEditor from "./FieldsEditor";
 import { headersFromValues, headersPayload, type HeaderRow } from "./HeadersEditor";
 import type { Field } from "./SettingsForm";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 const SECRET: Record<ProfileKind, string> = { llm: "api_key", anonymizer: "token" };
 const DEFAULTS: Record<ProfileKind, SettingsValues> = {
@@ -138,9 +139,9 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
       {edit && (
         <form ref={focusOnMount} className="form" onSubmit={save}>
           <h3>{edit.id ? "Изменение API" : "Новый API"}</h3>
-          <label>Название<input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required maxLength={120}
+          <label><span className="field-title">Название<InfoTip>Так профиль называется в списках и в настройках переговорок.</InfoTip></span><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required maxLength={120}
                                 placeholder={kind === "llm" ? "Внутренняя модель" : "DocClean резервный"} />
-            <span className="help">Так профиль называется в списках и в настройках переговорок.</span></label>
+            </label>
           <FieldsEditor fields={editFields} values={edit.values} secrets={edit.secrets}
                         onChange={(n, v) => setEdit({ ...edit, values: { ...edit.values, [n]: v } })}
                         onSecret={(n, v) => setEdit({ ...edit, secrets: { ...edit.secrets, [n]: v } })} headers={headers} onHeaders={setHeaders} />

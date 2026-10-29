@@ -9,8 +9,8 @@
     updater  →  update.log    построчный вывод scripts/update.sh (его показывает окно обновления)
     update.sh →  report.json  единый отчёт последнего обновления (итог, этап, причина, автоматические действия, сборка, сервисы; секреты скрыты)
 
-Исполнитель (служба от root) выполняет только фиксированный набор действий: `check`, `scan`, `update` (scripts/update.sh --yes с разрешёнными флагами)
-и `repair` с ID из белого списка REPAIR_IDS (зеркало scripts/lib/repairlib.sh; совпадение проверяется тестом). Произвольные команды из
+Исполнитель (служба от root) выполняет только фиксированный набор действий: `check`, `scan`, `update` (scripts/update.sh --yes с разрешёнными флагами),
+`component` с ID из COMPONENT_OPS (services/server_components.py) и `repair` с ID из белого списка REPAIR_IDS (зеркало scripts/lib/repairlib.sh; совпадение проверяется тестом). Произвольные команды из
 веб-интерфейса выполнить нельзя. Найденные проблемы исполнитель пишет в `repairs.json`.
 """
 from __future__ import annotations
@@ -37,7 +37,9 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 # Белый список исправлений («Исправить автоматически»): зеркало REPAIR_IDS в scripts/lib/repairlib.sh. Backend передаёт исполнителю только эти ID.
 REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "deploy_incomplete", "image_commit", "migrations", "reverify", "llm_model", "sip_enable", "sip_disable")
-BUSY_STATES = ("updating", "repairing")
+# Действия с дополнительными компонентами (Видеозапись, Трансляции, SIP): зеркало COMPONENT_OPS в scripts/lib/complib.sh (совпадение проверяется тестом)
+COMPONENT_OPS = ("video_enable", "video_disable", "video_restart", "sip_enable", "sip_disable", "sip_restart", "livekit_restart", "web_restart", "state")
+BUSY_STATES = ("updating", "repairing", "component")
 
 STARTED_AT = time.time()          # запуск процесса: сведения помощника старше него могут описывать прежний код
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
@@ -160,13 +162,19 @@ class Channel:
             r["age_s"] = int(time.time() - float(r["checked_at"]))
         return r
 
-    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False, repair: str | None = None) -> str:
-        if action not in ("check", "update", "scan", "repair", "ping"):
+    def components(self) -> dict | None:
+        """Фактическое состояние дополнительных компонентов (components.json пишет исполнитель, scripts/lib/complib.sh)."""
+        return self._json("components.json")
+
+    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False, repair: str | None = None, op: str | None = None) -> str:
+        if action not in ("check", "update", "scan", "repair", "ping", "component"):
             raise ValueError("action")
         if action == "repair" and repair not in REPAIR_IDS:
             raise ValueError("repair")
+        if action == "component" and op not in COMPONENT_OPS:
+            raise ValueError("op")
         rid = uuid.uuid4().hex[:16]
-        extra = [f"repair={repair}"] if action == "repair" else []
+        extra = [f"repair={repair}"] if action == "repair" else [f"op={op}"] if action == "component" else []
         body = "\n".join([f"id={rid}", f"action={action}", f"force_build={int(force_build)}", f"pull={int(pull)}", *extra,
                           f"by={_SAFE.sub('_', by)[:60]}", f"at={int(time.time())}"]) + "\n"
         tmp = self.dir / f".request.{rid}.tmp"

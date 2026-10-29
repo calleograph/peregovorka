@@ -3,6 +3,7 @@ import { api, type ApiError, type SigningAgent, type SigningCert, type SigningJo
 import { Icon } from "../../components/Icons";
 import { fmtDate } from "./common";
 import { useFocusOnMount } from "../../useInitialFocus";
+import InfoTip from "../../components/InfoTip";
 
 /** «Windows-клиент → Подпись и корпоративные сборки»: подписывающие узлы и их сертификаты, корпоративные установщики, канал обновлений, диагностика,
  *  инструкции. Закрытые ключи, пароли PFX и токены агентов здесь не показываются и через браузер не передаются вовсе. */
@@ -235,8 +236,8 @@ function BuildsTab({ ov, busy, act }: TabProps) {
         <div className="cols">
           <label>Организация (так подключение будет подписано у сотрудников)<input value={f.org_name} onChange={(e) => set({ org_name: e.target.value })} maxLength={60} required placeholder="Головной офис" /></label>
           <label>Адрес сервера Peregovorka<input value={f.server_url} onChange={(e) => set({ server_url: e.target.value })} required placeholder="https://meet.example.org" pattern="https://[^/\s]+/?" /></label>
-          <label>Версия клиента<input value={f.version} onChange={(e) => set({ version: e.target.value })} required placeholder="1.0.1" pattern="\d+\.\d+\.\d+" />
-            <span className="help">Номер выпуска издателя (например, из вкладки «Обновления»).</span></label>
+          <label><span className="field-title">Версия клиента<InfoTip>Номер выпуска издателя (например, из вкладки «Обновления»).</InfoTip></span><input value={f.version} onChange={(e) => set({ version: e.target.value })} required placeholder="1.0.1" pattern="\d+\.\d+\.\d+" />
+            </label>
           <label>Сертификат подписи<select value={cert} onChange={(e) => set({ cert_id: e.target.value })} required>
             {usable.map((c) => <option key={c.id} value={c.id}>{cn(c.subject)} · {c.kind === "self" ? "собственный" : "организации"} · до {fmtDate(c.not_after).split(",")[0]}</option>)}</select></label>
           <label>Обновления<select value={f.update_policy} onChange={(e) => set({ update_policy: e.target.value })}>

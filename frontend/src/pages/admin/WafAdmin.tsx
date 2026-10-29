@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type WafRule, type WafState } from "../../api";
 import { useToast } from "../../components/Toast";
 import { fmt } from "../../util";
+import InfoTip from "../../components/InfoTip";
 
 const MODES: [WafState["mode"], string, string][] = [
   ["off", "Выключен", "Запросы не проверяются."],
@@ -37,7 +38,7 @@ export default function WafAdmin() {
             </label>
           ))}
         </div>
-        <p className="muted small" style={{ margin: "8px 0 0" }}>Если перед сервером уже стоит настоящий WAF, оставьте здесь «Наблюдение» или «Выключен». Настройки WAF не раскрываются неавторизованным пользователям; откат — переключатель режима (действует в течение нескольких секунд на всех экземплярах).</p>
+        <p className="muted small" style={{ margin: "8px 0 0" }}>Если перед сервером уже стоит настоящий WAF, оставьте здесь «Наблюдение» или «Выключен».<InfoTip>Настройки WAF не раскрываются неавторизованным пользователям; откат — переключатель режима (действует в течение нескольких секунд на всех экземплярах).</InfoTip></p>
       </div>
       <div className="card">
         <h2>Правила</h2>

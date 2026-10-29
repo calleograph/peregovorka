@@ -2,6 +2,13 @@ import { Fragment } from "react";
 import type { SettingsValues } from "../../api";
 import type { Field } from "./SettingsForm";
 import HeadersEditor, { type HeaderRow } from "./HeadersEditor";
+import InfoTip from "../../components/InfoTip";
+
+/** Пояснение и пример поля — во всплывающей подсказке ⓘ (форма остаётся компактной; на телефоне подсказка открывается нажатием). */
+function FieldTip({ f }: { f: Field }) {
+  if (!f.help && !f.example) return null;
+  return <InfoTip doc={f.doc}>{f.help}{f.example && <>{f.help ? " " : ""}Пример: <code>{f.example}</code></>}</InfoTip>;
+}
 
 /**
  * Редактор набора полей (название, пояснение, пример — у каждого). Используется и общей формой настроек, и профилями API.
@@ -18,20 +25,19 @@ export default function FieldsEditor({ fields, values, onChange, secrets, onSecr
   const visible = fields.filter((f) => !f.showIf || f.showIf(values));
   const renderField = (f: Field) => f.type === "headers" ? (
     <div key={f.name} className="field-block">
-      <span>{f.label}</span>
+      <span className="field-title">{f.label}<FieldTip f={f} /></span>
       <HeadersEditor rows={headers ?? []} onChange={(r) => onHeaders?.(r)} />
-      {f.help && <span className="help">{f.help}</span>}
     </div>
   ) : (
     <label key={f.name} className={f.type === "bool" ? "check" : ""}>
       {f.type === "bool" ? (
         <>
           <input type="checkbox" checked={Boolean(values[f.name])} onChange={(e) => set(f.name, e.target.checked)} />
-          <span className="check-body"><span>{f.label}</span>{f.help && <span className="help">{f.help}</span>}{f.example && <span className="example">Пример: <code>{f.example}</code></span>}</span>
+          <span className="check-body"><span className="field-title">{f.label}<FieldTip f={f} /></span></span>
         </>
       ) : (
         <>
-          <span>{f.label}{f.unit && <span className="muted small"> ({f.unit})</span>}{f.type === "secret" && <span className="muted small"> — {values[`${f.name}_set`] ? "задан (оставьте пустым, чтобы не менять)" : "не задан"}</span>}</span>
+          <span className="field-title">{f.label}{f.unit && <span className="muted small"> ({f.unit})</span>}{f.type === "secret" && <span className="muted small"> — {values[`${f.name}_set`] ? "задан (пусто — не менять)" : "не задан"}</span>}<FieldTip f={f} /></span>
           {f.type === "select" && <select value={String(values[f.name] ?? "")} onChange={(e) => set(f.name, e.target.value)}>{f.options?.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}
           {f.type === "textarea" && <textarea rows={f.rows ?? 5} value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />}
           {f.type === "text" && <input value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />}
@@ -49,8 +55,6 @@ export default function FieldsEditor({ fields, values, onChange, secrets, onSecr
           )}
         </>
       )}
-      {f.type !== "bool" && f.help && <span className="help">{f.help}</span>}
-      {f.type !== "bool" && f.example && <span className="example">Пример: <code>{f.example}</code></span>}
     </label>
   );
 

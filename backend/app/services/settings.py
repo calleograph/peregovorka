@@ -797,6 +797,20 @@ class VideoSettings(_Group):
     quota_gb: int = Field(default=0, ge=0, le=1_000_000)          # общий объём видеозаписей; 0 — без предела. При превышении новые записи не начинаются, старые не удаляются
     retention_days: int = Field(default=0, ge=0, le=3650)         # 0 — хранить, пока администратор не удалит; иначе видеофайлы старше срока удаляются (стенограмма и протокол остаются)
     template_url: str = Field(default="", max_length=500)         # свой шаблон раскладки (веб-страница Egress, https://…); пусто — встроенная раскладка «speaker» (экран — основное место, остальные — миниатюры)
+    # Где хранить готовые видеозаписи (services/filestore.py → video_backend): «audio» — там же, где аудиозаписи (подпапка Video/ того же хранилища);
+    # «profile» — выбранное файловое хранилище (подпапка Video/); «local» — только на диске сервера. Файл сначала дописывается локально (Egress пишет
+    # на том записей), затем переносится; локальный исходник удаляется только после проверки размера и SHA-256 в хранилище (если не оставлять копию).
+    storage: Literal["audio", "profile", "local"] = "audio"
+    profile_id: str = ""
+    keep_local_copy: bool = True
+
+    @field_validator("profile_id")
+    @classmethod
+    def _profile(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.fullmatch(r"[0-9a-fA-F-]{32,36}", v):
+            raise ValueError("profile_id: идентификатор хранилища")
+        return v.lower()
 
     @field_validator("template_url")
     @classmethod

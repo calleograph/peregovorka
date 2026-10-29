@@ -53,7 +53,7 @@ async def mark_missing(db: AsyncSession, obj, journal=None, what: str = "фай�
 class Obj:
     model: str                 # recording | protocol | attachment | protocol_extra
     row: object
-    backend_key: str           # ключ хранилища: "audio" | "docs:<папка>" | "chat:<profile>" | "local"
+    backend_key: str           # ключ хранилища: "audio" | "video" | "docs:<папка>" | "chat:<profile>" | "local"
     dir: str
     name: str
     # для recording с локальной копией
@@ -103,6 +103,8 @@ class Reconciler:
         try:
             if key == "audio":
                 b = await self._files.backend(db, "audio_storage", AUDIO, legacy_prefix="audio")
+            elif key == "video":
+                b = await self._files.video_backend(db)
             elif key.startswith("docs:"):
                 b = await self._files.backend(db, "storage", key[5:])
             elif key.startswith("chat:"):
@@ -127,7 +129,8 @@ class Reconciler:
         for r in recs:
             d, n = split_key(r.path)
             local = os.path.isfile(os.path.join(self._rec_path, r.path))
-            out.append(Obj("recording", r, "audio" if r.export_status == "exported" else "local", d, n, local_ok=local, label=r.path.rsplit("/", 1)[-1]))
+            area = (r.export_area or ("video" if r.kind == "mix_video" else "audio")) if r.export_status == "exported" else "local"
+            out.append(Obj("recording", r, area, d, n, local_ok=local, label=r.path.rsplit("/", 1)[-1]))
         prots = (await db.execute(select(Protocol).where(Protocol.meeting_id.in_(meeting_ids), Protocol.status == "ready"))).scalars().all()
         for p in prots:
             meta = p.meta or {}
@@ -255,7 +258,7 @@ class Reconciler:
     async def _present(self, db: AsyncSession, o: Obj, cache, dir_cache, rep: Report, expected):
         """True — файл есть, False — нет (хранилище отвечает), None — проверить не удалось, "skip" — выгрузка выключена."""
         if o.model == "recording":
-            if o.backend_key != "audio":                       # единственная копия — на локальном диске приложения
+            if o.backend_key not in ("audio", "video"):       # единственная копия — на локальном диске приложения
                 return bool(o.local_ok)
             if o.local_ok:
                 return True                                    # локальная копия есть — запись доступна (даже если выгрузка исчезла)

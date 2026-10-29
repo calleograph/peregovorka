@@ -1,34 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type VideoStatus } from "../../api";
 import { bytes } from "../../util";
+import InfoTip from "../../components/InfoTip";
 import SettingsForm, { type Field } from "./SettingsForm";
+import { ChecksList, ComponentCard, useComponents, WIKI } from "./ServerComponents";
 
-/** «Видеозапись»: состояние (идёт записей, занято места, предупреждения) и настройки. Службу Egress ставит администратор сервера: sudo scripts/video.sh enable. */
+/** «Видеозапись»: служба на сервере (включение из панели), проверки по цепочке, сводка файлов и настройки, включая хранилище видеозаписей. */
 export default function VideoAdmin({ fields }: { fields: Field[] }) {
   const [st, setSt] = useState<VideoStatus | null>(null);
   const [err, setErr] = useState("");
+  const ctl = useComponents();
   const load = useCallback(() => { api.adminVideoStatus().then((s) => { setSt(s); setErr(""); }).catch((e) => setErr((e as Error).message || "Не удалось получить состояние")); }, []);
-  useEffect(() => { load(); const t = window.setInterval(load, 15000); return () => window.clearInterval(t); }, [load]);
+  const busy = !!ctl.info?.helper.busy;
+  useEffect(() => { load(); const t = window.setInterval(load, busy ? 4000 : 15000); return () => window.clearInterval(t); }, [load, busy]);
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="row"><b>Состояние</b><span className={`badge ${st?.enabled ? "ok" : ""}`}>{st ? (st.enabled ? "включена" : "выключена") : "…"}</span>
-          <div className="spacer" /><button className="btn mini" onClick={load}>Обновить</button></div>
+        <ComponentCard name="video" ctl={ctl} />
         {err && <div className="alert warn small" role="alert">{err}</div>}
+        {st?.checks && <ChecksList checks={st.checks} ctl={ctl} onRepair={async (id) => { await api.admin.repairFix(id); }} />}
         {st && (
-          <>
-            <p className="small" style={{ margin: "8px 0 0" }}>
-              Идёт записей: <b>{st.running}</b> из {st.max_concurrent} · готовых файлов: <b>{st.files.ready}</b> · с ошибкой: <b>{st.files.failed}</b> · занято: <b>{bytes(st.files.bytes)}</b>
-              {st.quota_gb ? ` из ${st.quota_gb} ГБ` : ""} · свободно на томе: <b>{st.free_bytes == null ? "нет данных" : bytes(st.free_bytes)}</b>
-            </p>
-            {st.warnings.map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}
-          </>
+          <p className="small" style={{ margin: "8px 0 0" }}>
+            Идёт записей: <b>{st.running}</b> из {st.max_concurrent} · готовых: <b>{st.files.ready}</b> · с ошибкой: <b>{st.files.failed}</b> · занято: <b>{bytes(st.files.bytes)}</b>
+            {st.quota_gb ? ` из ${st.quota_gb} ГБ` : ""}
+            <InfoTip doc={`${WIKI}Как-записать-видео-встречи`}>Один MP4 со всей встречей: изображение и звук всех участников, показ экрана — на основном месте. Режим выбирается в настройках каждой комнаты (вкладка «Встреча и запись»). Служба записи общая с трансляциями.</InfoTip>
+            <button className="btn mini ghost" style={{ marginLeft: 8 }} onClick={load}>Обновить</button>
+          </p>
         )}
-        <p className="muted small" style={{ marginBottom: 0 }}>Службу записи (LiveKit Egress, браузер внутри контейнера) устанавливает администратор сервера: <code>sudo scripts/video.sh enable</code>; состояние службы — <code>scripts/video.sh status</code>.
-          Если служба не установлена, кнопка записи в комнате сообщит об этом понятным текстом.</p>
+        {st?.warnings.filter((w) => !st.checks?.some((c) => w.startsWith(c.title))).map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}
       </div>
-      <SettingsForm key="video" group="video" title="Видеозапись встреч" fields={fields}
-        intro="Один MP4 со всей встречей (изображение и звук всех участников; при показе экрана он занимает основное место). Режим выбирается в настройках каждой комнаты; по умолчанию видеозапись выключена." />
+      <div id="settings">
+        <SettingsForm key="video" group="video" title="Настройки видеозаписи" fields={fields} />
+      </div>
     </>
   );
 }

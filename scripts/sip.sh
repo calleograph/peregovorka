@@ -37,7 +37,7 @@ need_root() { [ "$(id -u)" -eq 0 ] || die "Нужны права root: sudo scri
 
 case "$CMD" in
   status)
-    if sip_enabled; then ok "Телефония включена на сервере (SIP_ENABLED=yes)"; else info "Телефония выключена (SIP_ENABLED=no): служба SIP не запущена, порты не открыты. Включить: sudo scripts/sip.sh enable"; fi
+    if sip_enabled; then ok "Телефония включена на сервере (SIP_ENABLED=yes)"; else info "Телефония выключена (SIP_ENABLED=no): служба SIP не запущена, порты не открыты. Включить: Администрирование → SIP-телефония → «Установить и включить» или sudo scripts/sip.sh enable"; fi
     ports_text
     if sip_enabled; then
       cid="$(dc ps -q livekit-sip 2>/dev/null | head -1)"

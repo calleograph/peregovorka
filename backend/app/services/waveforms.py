@@ -132,7 +132,7 @@ class WaveformService:
             else:                                                    # запись во внешнем хранилище: потоком копируем во временный файл
                 async with self._sm() as db:
                     rec = await db.get(Recording, rec_id)
-                    storage = await self._ps._audio_storage(db) if rec.export_status == "exported" else None
+                    storage = await self._ps.storage_for(db, rec) if rec.export_status == "exported" else None
                 if storage is None:
                     raise StorageError("файл записи недоступен")
                 fd, tmp = tempfile.mkstemp(prefix="wave-", suffix=Path(path).suffix or ".bin")
