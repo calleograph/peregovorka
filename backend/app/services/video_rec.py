@@ -71,6 +71,11 @@ class EgressApi:
             resp = await lk.egress.list_egress(lkapi.ListEgressRequest(egress_id=egress_id))
         return resp.items[0] if resp.items else None
 
+    async def update_stream(self, egress_id: str, *, add: list[str] | None = None, remove: list[str] | None = None) -> eg.EgressInfo:
+        """Добавить или убрать адреса RTMP-выхода работающего Egress (эфир, MP4 и HLS не прерываются)."""
+        async with self._lk() as lk:
+            return await lk.egress.update_stream(eg.UpdateStreamRequest(egress_id=egress_id, add_output_urls=add or [], remove_output_urls=remove or []))
+
     async def recorder_present(self, room_name: str, egress_id: str) -> bool | None:
         """Есть ли в комнате скрытый участник-рекордер этой записи (его identity = id задачи). У упавшей службы Egress LiveKit ещё долго считает запись активной,
         а рекордер из комнаты пропадает — по этому признаку и находят «мёртвую» запись. None — LiveKit недоступен (ничего не решаем)."""

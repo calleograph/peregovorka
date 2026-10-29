@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.49.0",
+ "release": "0.49.1",
  "reviewed_at": "2026-10-29",
  "components": [
   {
@@ -1337,7 +1337,7 @@
     "repo": "library/node",
     "suffix": "-alpine"
    },
-   "digest": "sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53",
+   "digest": "sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85",
    "note": "Вместе с Node поставляется npm 11.",
    "deferred": {
     "version": "26",

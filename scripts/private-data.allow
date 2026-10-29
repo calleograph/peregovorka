@@ -48,6 +48,12 @@ livekit.io
 jitsi.org
 proglib.io
 sberdevices.ru
+rutube.ru
+vk.ru
+vkvideo.ru
+twitch.tv
+google.com
+youtube.com
 
 # --- IP: loopback, «неопределённый», документационные диапазоны и числа из тестов
 ip:127\.\d+\.\d+\.\d+
@@ -58,6 +64,8 @@ ip:198\.51\.100\.\d+
 ip:203\.0\.113\.\d+
 ip:10\.0\.0\.\d+
 ip:10\.10\.0\.5
+ip:93\.184\.216\.34
+ip:192\.168\.0\.5
 ip:10\.20\.30\.40
 ip:172\.16\.48\.7
 ip:172\.18\.0\.1

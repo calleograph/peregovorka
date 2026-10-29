@@ -277,7 +277,7 @@ class LiveBroadcaster:
             if cur is not None and cur.status in ("starting", "live"):
                 return cur                                   # повторное нажатие — не второй эфир
             cfg = await self.cfg(db)
-            urls = await self.destinations.start_urls(db, room) if self.destinations is not None else []
+            urls, _ids = await self.destinations.start_urls(db, room) if self.destinations is not None else ([], [])
             await self._guards(db, meeting, cfg, urls)
             present = await list_present_identities(self._s, meeting.livekit_room)
             if present is None:
@@ -394,6 +394,8 @@ class LiveBroadcaster:
                 b.error = "Достигнут предел длительности эфира."
         b.peak_viewers = max(b.peak_viewers, await self.viewers(b.room_id))
         await db.commit()
+        if self.destinations is not None:
+            await self.destinations.finish_all(db, b.room_id)
         meeting = await db.get(Meeting, b.meeting_id)
         if meeting is not None:
             await self._announce(meeting, False, "egress")

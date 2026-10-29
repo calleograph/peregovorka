@@ -22,6 +22,7 @@ from ..security.passwords import hash_room_password, verify_room_password
 from ..services import roles
 from ..services.audit import audit_now, write_audit
 from ..services.live import LiveError, hls_path, hls_secret, new_token
+from ..services.live_destinations import PLATFORMS, DestinationError
 from .guest import _throttle
 from .meetings import get_meeting_for_user
 
@@ -33,7 +34,7 @@ PW_FAILS, PW_WINDOW = 8, 600                # неверных паролей з
 MIN_PASSWORD = 6
 
 
-def _err(exc: LiveError) -> HTTPException:
+def _err(exc: LiveError | DestinationError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message})
 
 
@@ -94,7 +95,7 @@ class LivePatch(BaseModel):
 
 
 async def _out(request: Request, db: AsyncSession, room: Room, su: SessionUser) -> dict:
-    live, svc = request.app.state.live, request.app.state.settings_svc
+    live, svc, dests = request.app.state.live, request.app.state.settings_svc, request.app.state.destinations
     cfg = await svc.get(db, "live")
     secret = hls_secret(request.app.state.settings)
     stream = None
@@ -104,7 +105,10 @@ async def _out(request: Request, db: AsyncSession, room: Room, su: SessionUser) 
             "title": room.live_title or "", "starts_at": _utc(room.live_starts_at), "password_enabled": room.live_password_enabled, "has_password": bool(room.live_password_hash),
             "speaker_password_set": bool(room.password_hash), "view_path": f"/live/{room.live_token}" if room.live_token else None, "stream_path": stream,
             "state": await live.state(db, room), "global": {"enabled": bool(cfg.enabled), "direct_viewers_warn": int(cfg.direct_viewers_warn), "max_concurrent": int(cfg.max_concurrent)},
-            "is_broadcast_room": room.room_type == "broadcast"}
+            "is_broadcast_room": room.room_type == "broadcast",
+            "destinations": [dests.public(r) for r in await dests.rows(db, room)],
+            "platforms": [{"id": k, "name": v} for k, v in PLATFORMS.items() if getattr(cfg, f"allow_{k}", True)], "max_destinations": int(cfg.max_destinations),
+            "allow_private_destinations": bool(cfg.allow_private_destinations)}
 
 
 @router.get("/rooms/{room_id}/live")
@@ -299,3 +303,106 @@ async def viewer_ping(token: str, request: Request, body: dict = Body(default={}
         raise HTTPException(status_code=422, detail="vid")
     n = await request.app.state.live.viewer_ping(room.id, vid)
     return {"viewers": n}
+
+
+# ------------------------------------------------------------------------------------------------ внешние площадки
+async def _dest(request: Request, db: AsyncSession, room: Room, did: uuid.UUID):
+    from ..models import LiveDestination  # noqa: PLC0415
+
+    row = await db.get(LiveDestination, did)
+    if row is None or row.room_id != room.id:
+        raise HTTPException(status_code=404, detail="Площадка не найдена")           # площадка другой комнаты не раскрывается
+    return row
+
+
+def _audit_dest(db, su, action: str, room: Room, row, **extra):
+    return write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=action, target_type="room", target_id=str(room.id),
+                       details={"room": room.slug, "platform": row.platform, "destination": row.name, **extra})       # ключ в аудит не попадает
+
+
+@router.post("/rooms/{room_id}/live/destinations", status_code=201)
+async def create_destination(room_id: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    room = await _room_for_manager(request, db, room_id, su)
+    try:
+        row = await request.app.state.destinations.create(db, room, body)
+    except DestinationError as exc:
+        raise _err(exc) from None
+    await _audit_dest(db, su, "room.live_destination_added", room, row)
+    await db.commit()
+    return await _out(request, db, room, su)
+
+
+@router.patch("/rooms/{room_id}/live/destinations/{did}")
+async def update_destination(room_id: uuid.UUID, did: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    room = await _room_for_manager(request, db, room_id, su)
+    row = await _dest(request, db, room, did)
+    try:
+        await request.app.state.destinations.update(db, row, body)
+    except DestinationError as exc:
+        raise _err(exc) from None
+    await _audit_dest(db, su, "room.live_destination_changed", room, row, key_replaced=bool(body.get("key")), fields=sorted(k for k in body if k != "key"))
+    await db.commit()
+    return await _out(request, db, room, su)
+
+
+@router.delete("/rooms/{room_id}/live/destinations/{did}")
+async def delete_destination(room_id: uuid.UUID, did: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    room = await _room_for_manager(request, db, room_id, su)
+    row = await _dest(request, db, room, did)
+    live = request.app.state.live
+    cur = await live.current(db, room.id)
+    if cur is not None and row.status in ("live", "connecting") and row.enabled:
+        try:
+            await request.app.state.destinations.set_live(db, cur, row, False)          # идущий поток на эту площадку закрывается до удаления
+        except DestinationError:
+            pass
+    await _audit_dest(db, su, "room.live_destination_removed", room, row)
+    await db.delete(row)
+    await db.commit()
+    return await _out(request, db, room, su)
+
+
+@router.post("/rooms/{room_id}/live/destinations/probe")
+async def probe_new_destination(room_id: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Проверка адреса до сохранения: формат, политика (внутренние адреса), имя разрешается, сервер отвечает по сети. Ключ потока проверяет сама площадка."""
+    await _room_for_manager(request, db, room_id, su)
+    await _throttle(request, "live:probe", 30, 600)
+    try:
+        return await request.app.state.destinations.probe(db, server_url=str(body.get("server_url") or ""))
+    except DestinationError as exc:
+        return {"ok": False, "message": exc.message}
+
+
+@router.post("/rooms/{room_id}/live/destinations/{did}/probe")
+async def probe_destination(room_id: uuid.UUID, did: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    room = await _room_for_manager(request, db, room_id, su)
+    row = await _dest(request, db, room, did)
+    await _throttle(request, "live:probe", 30, 600)
+    try:
+        return await request.app.state.destinations.probe(db, row)
+    except DestinationError as exc:
+        return {"ok": False, "message": exc.message}
+
+
+@router.post("/meetings/{meeting_id}/live/destinations/{did}")
+async def toggle_destination(meeting_id: uuid.UUID, did: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Включить или выключить площадку в этой встрече. Идёт эфир — адрес добавляется в выход Egress или убирается из него без остановки эфира; не идёт — меняется настройка комнаты."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not roles.can_control_meeting(meeting.room, su):
+        raise HTTPException(status_code=403, detail="Площадками управляют руководители комнаты")
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=422, detail="Ожидается enabled: true|false")
+    row = await _dest(request, db, meeting.room, did)
+    dests, live = request.app.state.destinations, request.app.state.live
+    cur = await live.current(db, meeting.room_id)
+    try:
+        if cur is not None and cur.status in ("starting", "live"):
+            await dests.set_live(db, cur, row, enabled)
+        else:
+            await dests.update(db, row, {"enabled": enabled})
+    except DestinationError as exc:
+        raise _err(exc) from None
+    await _audit_dest(db, su, "meeting.live_destination", meeting.room, row, enabled=enabled)
+    await db.commit()
+    return await live.state(db, meeting.room, meeting)

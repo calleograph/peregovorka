@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type LivePatchBody, type LiveRoomSettings } from "../api";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
+import LiveDestinations from "./LiveDestinations";
 import "../live.css";
 
 /**
@@ -105,6 +106,8 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
           <label className="check"><input type="checkbox" checked={cfg.record} disabled={busy || live} onChange={(e) => void patch({ live_record: e.target.checked }, "Сохранено")} />
             <span className="check-body">Сохранять запись эфира в историю (MP4)<span className="help">Запись идёт тем же процессом, что и эфир: лишней нагрузки нет. Файл появится в «Истории» после завершения.</span></span></label>
         </fieldset>
+
+        <LiveDestinations roomId={roomId} cfg={cfg} onChange={apply} />
 
         <details className="lv-sect"><summary>Дополнительно</summary>
           <label>Качество

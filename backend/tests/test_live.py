@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import time
 import uuid
@@ -23,13 +24,28 @@ from .test_transcripts import _join
 from .test_video_recording import FakeEgress, call, finish_event
 
 
+class LiveFake(FakeEgress):
+    """Egress с выходом RTMP: запоминает добавленные и убранные адреса."""
+    def __init__(self):
+        super().__init__()
+        self.updates: list[tuple[str, list[str], list[str]]] = []
+        self.fail_update = ""
+
+    async def update_stream(self, egress_id, *, add=None, remove=None):
+        if self.fail_update:
+            raise RuntimeError(self.fail_update)
+        self.updates.append((egress_id, list(add or []), list(remove or [])))
+        return eg.EgressInfo(egress_id=egress_id, status=eg.EgressStatus.EGRESS_ACTIVE)
+
+
 @pytest.fixture
 def lv(client, monkeypatch, tmp_path):
     monkeypatch.setenv("LIVE_DIR", str(tmp_path))
-    fake = FakeEgress()
+    fake = LiveFake()
     app = client.app_obj
     app.state.video.api = fake
     app.state.live.api = fake
+    app.state.destinations.api = fake
     present = {"set": {"u-1"}}
 
     async def fake_present(settings, room_name):
@@ -504,3 +520,193 @@ def test_failed_broadcast_is_reported_to_the_room_with_its_reason(lv):
     st = lv.get(f"/api/v1/meetings/{mid}/live").json()
     assert st["live"] is False and st["status"] == "failed" and "connection refused" in st["error"], "после падения эфира руководитель видит причину"
     assert st["can_start"] is True, "и может начать эфир заново"
+
+
+# --------------------------------------------------------------------------------------------- внешние площадки
+KEY_A, KEY_B = "live_abcd1234efgh", "live_zyxw9876vuts"
+EXAMPLE = "rtmps://rtmp.example.org/live"
+
+
+def dest(client, room, user="carol", **over):
+    login(client, user)
+    body = {"platform": "custom", "name": "Площадка", "server_url": EXAMPLE, "key": KEY_A} | over
+    return client.post(f"/api/v1/rooms/{room['id']}/live/destinations", json=body)
+
+
+@pytest.fixture
+def public_dns(monkeypatch):
+    """Имена разрешаются в публичный адрес (в тестах нет сети)."""
+    import app.services.live_destinations as d
+
+    async def fake(self, host, *a, **k):
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)
+            return [(2, 1, 6, "", (host, 0))]
+        except ValueError:
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr("asyncio.unix_events._UnixSelectorEventLoop.getaddrinfo", fake, raising=False)
+    return d
+
+
+def test_destination_addresses_are_checked_against_ssrf_and_nonsense(lv, public_dns):
+    room = room_live(lv)
+    for bad, code in [("http://rtmp.example.org/live", "bad_scheme"), ("rtmp://user:pw@rtmp.example.org/live", "bad_url"), ("rtmp://rtmp.example.org/live?key=1", "bad_url"),
+                      ("rtmp://rtmp.example.org:22/live", "bad_port"), ("rtmp://rtmp.example.org:6379/live", "bad_port"), ("rtmp://rtmp example.org/live", "bad_url"),
+                      ("rtmp://127.0.0.1/live", "forbidden_address"), ("rtmp://169.254.169.254/latest", "forbidden_address"), ("rtmp://10.1.2.3/live", "private_address"),
+                      ("rtmp://192.168.0.5:1935/live", "private_address"), ("rtmp://[::1]/live", "forbidden_address")]:
+        r = dest(lv, room, server_url=bad)
+        assert r.status_code in (422, 403) and r.json()["detail"]["code"] == code, (bad, r.status_code, r.text[:160])
+    assert dest(lv, room, key="плохой ключ").json()["detail"]["code"] == "bad_key"
+    assert dest(lv, room, platform="icq").json()["detail"]["code"] == "bad_platform"
+    put_settings(lv, "live", allow_private_destinations=True)
+    assert dest(lv, room, server_url="rtmp://10.1.2.3/live").status_code == 201, "внутренний сервер — только если администратор разрешил"
+    assert dest(lv, room, server_url="rtmp://169.254.169.254/latest").json()["detail"]["code"] == "forbidden_address", "служебные адреса запрещены всегда"
+
+
+def test_destination_key_is_encrypted_never_returned_and_never_in_audit(lv, public_dns):
+    room = room_live(lv)
+    r = dest(lv, room, platform="youtube", name="Канал", channel="Мой канал", watch_url="https://youtube.example.org/watch?v=1")
+    assert r.status_code == 201
+    out = r.json()["destinations"][0]
+    assert out["has_key"] is True and "key" not in out and KEY_A not in r.text and out["platform_name"] == "YouTube"
+
+    async def raw(db):
+        from app.models import LiveDestination
+        row = (await db.execute(select(LiveDestination))).scalars().first()
+        return row.key_enc, lv.app_obj.state.settings_svc.box.decrypt(row.key_enc, aad=f"live_destination.{row.id}".encode())
+    enc, plain = call(lv, raw)
+    assert plain == KEY_A and KEY_A not in enc, "в базе — шифртекст, расшифровка привязана к строке"
+    login(lv, "carol")
+    assert KEY_A not in lv.get(f"/api/v1/rooms/{room['id']}/live").text
+    login(lv, "root")
+    audit = lv.get("/api/v1/admin/audit?limit=100")
+    assert KEY_A not in audit.text and KEY_A not in str(lv.get("/api/v1/admin/journal?limit=100").text if lv.get("/api/v1/admin/journal?limit=1").status_code == 200 else "")
+
+
+def test_replacing_and_deleting_keys_and_the_per_room_limit(lv, public_dns):
+    room = room_live(lv)
+    did = dest(lv, room).json()["destinations"][0]["id"]
+    login(lv, "carol")
+    r = lv.patch(f"/api/v1/rooms/{room['id']}/live/destinations/{did}", json={"key": KEY_B, "name": "Новая"})
+    assert r.status_code == 200 and r.json()["destinations"][0]["name"] == "Новая" and KEY_B not in r.text
+
+    async def plain(db):
+        from app.models import LiveDestination
+        row = (await db.execute(select(LiveDestination))).scalars().first()
+        return lv.app_obj.state.settings_svc.box.decrypt(row.key_enc, aad=f"live_destination.{row.id}".encode())
+    assert call(lv, plain) == KEY_B, "ключ заменён"
+    put_settings(lv, "live", max_destinations=1)
+    assert dest(lv, room, name="Вторая").json()["detail"]["code"] == "too_many"
+    login(lv, "carol")
+    assert lv.delete(f"/api/v1/rooms/{room['id']}/live/destinations/{did}").json()["destinations"] == []
+    put_settings(lv, "live", allow_youtube=False)
+    assert dest(lv, room, platform="youtube").json()["detail"]["code"] == "platform_forbidden"
+
+
+def test_destinations_of_another_room_and_other_people_are_not_reachable(lv, public_dns):
+    a, b = room_live(lv), room_live(lv)
+    did = dest(lv, a).json()["destinations"][0]["id"]
+    login(lv, "carol")
+    assert lv.patch(f"/api/v1/rooms/{b['id']}/live/destinations/{did}", json={"name": "чужая"}).status_code == 404, "площадка другой комнаты"
+    assert lv.delete(f"/api/v1/rooms/{b['id']}/live/destinations/{did}").status_code == 404
+    login(lv, "bob")
+    assert lv.get(f"/api/v1/rooms/{a['id']}/live").status_code == 404 and lv.post(f"/api/v1/rooms/{a['id']}/live/destinations/{did}/probe").status_code == 404
+
+
+def test_enabled_destinations_go_into_the_egress_request_and_a_dead_one_does_not_stop_the_rest(lv, public_dns):
+    room = room_live(lv)
+    d1 = dest(lv, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    d2 = dest(lv, room, name="Вторая", key=KEY_B, server_url="rtmp://other.example.org:1935/live").json()["destinations"][1]["id"]
+    dest(lv, room, name="Выключена", key="live_off_key_123").json()
+    login(lv, "carol")
+    third = [x for x in lv.get(f"/api/v1/rooms/{room['id']}/live").json()["destinations"] if x["name"] == "Выключена"][0]["id"]
+    lv.patch(f"/api/v1/rooms/{room['id']}/live/destinations/{third}", json={"enabled": False})
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    assert start(lv, mid).status_code == 200
+    urls = list(lv.fake.started[0].outputs[-1].stream.urls)
+    assert urls == [f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"], "включённые — по порядку, выключенная не передаётся"
+    def mask(k):                                   # так Egress скрывает ключ в адресах результатов
+        return "{" + k[:3] + "..." + k[-3:] + "}"
+    info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    # порядок результатов у Egress произвольный (сортировка по адресу): вторая площадка идёт первой
+    info.stream_results.add(url=f"rtmp://other.example.org:1935/live/{mask(KEY_B)}", status=eg.StreamInfo.Status.FAILED, error=f"Connection refused: could not connect to rtmp://other.example.org:1935/live/{KEY_B} key {KEY_B}")
+    info.stream_results.add(url=f"rtmps://rtmp.example.org/live/{mask(KEY_A)}", status=eg.StreamInfo.Status.ACTIVE)
+    lv.fake.infos["EG_test1"] = info
+    reconcile(lv)
+    login(lv, "carol")
+    st = lv.get(f"/api/v1/meetings/{mid}/live").json()
+    by = {x["name"]: x for x in st["destinations"]}
+    assert by["Первая"]["status"] == "live" and by["Первая"]["last_ok_at"] and by["Вторая"]["status"] == "failed" and by["Выключена"]["status"] == "idle"
+    assert KEY_B not in by["Вторая"]["last_error"] and "***" in by["Вторая"]["last_error"] and KEY_B not in json.dumps(st) and KEY_A not in json.dumps(st), "ключи не попадают в ответ и в ошибки"
+    assert st["live"] is True and st["status"] in ("starting", "live"), "отказ одной площадки не останавливает эфир"
+    assert d1 and d2
+
+
+def test_destination_can_be_switched_on_and_off_during_the_broadcast_without_stopping_it(lv, public_dns):
+    room = room_live(lv)
+    d1 = dest(lv, room, name="Первая").json()["destinations"][0]["id"]
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    login(lv, "carol")
+    r = lv.post(f"/api/v1/meetings/{mid}/live/destinations/{d1}", json={"enabled": False})
+    assert r.status_code == 200 and lv.fake.updates == [("EG_test1", [], [f"{EXAMPLE}/{KEY_A}"])]
+    r = lv.post(f"/api/v1/meetings/{mid}/live/destinations/{d1}", json={"enabled": True})
+    assert r.status_code == 200 and lv.fake.updates[-1] == ("EG_test1", [f"{EXAMPLE}/{KEY_A}"], []) and r.json()["live"] is True
+    assert len(lv.fake.started) == 1 and broadcasts(lv, mid)[0].status in ("starting", "live"), "эфир не перезапускался"
+    lv.fake.fail_update = f"boom {KEY_A}"
+    r = lv.post(f"/api/v1/meetings/{mid}/live/destinations/{d1}", json={"enabled": False})
+    assert r.status_code == 503 and KEY_A not in r.text and broadcasts(lv, mid)[0].status in ("starting", "live"), "сбой Egress не роняет эфир и не раскрывает ключ"
+    login(lv, "bob")
+    assert lv.post(f"/api/v1/meetings/{mid}/live/destinations/{d1}", json={"enabled": False}).status_code in (403, 404)
+
+
+def test_ended_broadcast_marks_running_destinations_finished_and_errors_stay(lv, public_dns):
+    room = room_live(lv)
+    dest(lv, room, name="Первая")
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    info.stream_results.add(url="rtmps://rtmp.example.org/live/{liv...fgh}", status=eg.StreamInfo.Status.ACTIVE)
+    lv.fake.infos["EG_test1"] = info
+    reconcile(lv)
+    lv.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_COMPLETE)
+    reconcile(lv)
+    login(lv, "carol")
+    assert lv.get(f"/api/v1/rooms/{room['id']}/live").json()["destinations"][0]["status"] == "finished"
+
+
+def test_probe_reports_reachability_without_touching_the_key(lv, public_dns, monkeypatch):
+    room = room_live(lv)
+
+    async def refuse(*a, **k):
+        raise ConnectionRefusedError(111, "Connection refused")
+    monkeypatch.setattr("asyncio.open_connection", refuse)
+    login(lv, "carol")
+    r = lv.post(f"/api/v1/rooms/{room['id']}/live/destinations/probe", json={"server_url": EXAMPLE})
+    assert r.status_code == 200 and r.json()["ok"] is False and "не отвечает" in r.json()["message"]
+    r = lv.post(f"/api/v1/rooms/{room['id']}/live/destinations/probe", json={"server_url": "rtmp://127.0.0.1/live"})
+    assert r.json()["ok"] is False and "не разрешён" in r.json()["message"], "проверка не становится способом сканировать внутреннюю сеть"
+
+
+def test_toggled_off_and_on_again_destination_takes_the_active_result_and_ambiguous_masks_are_not_guessed(lv, public_dns):
+    room = room_live(lv)
+    d1 = dest(lv, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    mask = "{" + KEY_A[:3] + "..." + KEY_A[-3:] + "}"
+    info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    info.stream_results.add(url=f"{EXAMPLE}/{mask}", status=eg.StreamInfo.Status.FINISHED)      # прежнее подключение (площадку выключали)
+    info.stream_results.add(url=f"{EXAMPLE}/{mask}", status=eg.StreamInfo.Status.ACTIVE)        # новое
+    lv.fake.infos["EG_test1"] = info
+    reconcile(lv)
+    login(lv, "carol")
+    assert lv.get(f"/api/v1/rooms/{room['id']}/live").json()["destinations"][0]["status"] == "live"
+    # выключенная владельцем площадка: старые результаты не возвращают её в «идёт»/«ошибка»
+    lv.post(f"/api/v1/meetings/{mid}/live/destinations/{d1}", json={"enabled": False})
+    reconcile(lv)
+    login(lv, "carol")
+    assert lv.get(f"/api/v1/rooms/{room['id']}/live").json()["destinations"][0]["status"] == "finished"
+    # две площадки на одном сервере с короткими одинаковыми ключами: маска `{...}` неоднозначна — состояние не угадывается
+    dest(lv, room, name="Вторая", key="ab")
+    dest(lv, room, name="Третья", key="cd")

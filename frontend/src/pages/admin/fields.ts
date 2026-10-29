@@ -389,6 +389,13 @@ export const liveFields: Field[] = [
   { name: "after_end_keep_min", label: "Удалять каталог HLS после конца эфира через", unit: "минут", type: "number", min: 0, max: 1440, example: "30", help: "Запись MP4 остаётся в истории; сегменты HLS после эфира не нужны." },
   { name: "view_link_ttl_s", label: "Срок подписи ссылки плеера", unit: "секунд", type: "number", min: 120, max: 7200, example: "900", help: "Плеер продлевает подпись сам. Отзыв ссылки и смена пароля действуют сразу, независимо от этого срока." },
   { name: "stream_link_days", label: "Срок действия ссылки на поток", unit: "дней", type: "number", min: 1, max: 3650, example: "30", help: "Владелец копирует эту ссылку во внешние плееры; её можно отозвать досрочно." },
+  { name: "max_destinations", label: "Внешних площадок на комнату", type: "number", min: 0, max: 20, example: "5", help: "Каждая площадка — отдельный исходящий поток ≈ 3 Мбит/с (720p) с этого сервера. 0 — внешние площадки запрещены." },
+  { name: "allow_private_destinations", label: "Разрешить серверы RTMP во внутренней сети", type: "bool", help: "По умолчанию принимаются только адреса в интернете: так сервер не обращается к внутренним службам организации по просьбе владельца комнаты. Включите, если вещаете на свой медиасервер внутри сети. Служебные адреса (loopback, link-local, метаданные облака) запрещены всегда." },
+  { name: "allow_rutube", label: "Разрешить площадку RUTUBE", type: "bool" },
+  { name: "allow_vk", label: "Разрешить площадку VK Видео", type: "bool" },
+  { name: "allow_youtube", label: "Разрешить площадку YouTube", type: "bool" },
+  { name: "allow_twitch", label: "Разрешить площадку Twitch", type: "bool" },
+  { name: "allow_custom", label: "Разрешить произвольный RTMP/RTMPS-сервер", type: "bool" },
   { name: "direct_viewers_warn", label: "Предупреждать о нагрузке при зрителях", type: "number", min: 10, max: 100000, example: "150", help: "Прямая раздача с этого сервера рассчитана на небольшие аудитории; для больших нужен CDN. Сервер сам предел не вводит — он показывает предупреждение." },
 ]
 

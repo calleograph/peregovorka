@@ -61,12 +61,13 @@ export interface LiveAdminStatus {
 export interface LiveState {
   enabled: boolean; available: boolean; live: boolean; status: "idle" | "starting" | "live" | "ending" | "ended" | "failed"; since: string | null;
   quality: string; record: boolean; own_hls: boolean; viewers: number; error: string | null; hls_ready: boolean; limit: number; can_start: boolean;
-  can_control?: boolean; links?: LiveRoomSettings;
+  can_control?: boolean; links?: LiveRoomSettings; destinations?: LiveDestination[];
 }
 export interface LiveRoomSettings {
   enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
+  destinations: LiveDestination[]; platforms: { id: string; name: string }[]; max_destinations: number; allow_private_destinations: boolean;
 }
 export interface LivePatchBody {
   live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
@@ -75,6 +76,11 @@ export interface LivePatchBody {
 export interface LiveViewerInfo {
   title: string; starts_at: string | null; status: "waiting" | "starting" | "live" | "ended"; password_required: boolean; own_hls: boolean;
   ended_at: string | null; quality: string; available: boolean; now: string;
+}
+export type LiveDestStatus = "idle" | "connecting" | "live" | "failed" | "finished";
+export interface LiveDestination {
+  id: string; platform: "rutube" | "vk" | "youtube" | "twitch" | "custom"; platform_name: string; name: string; server_url: string; channel: string | null; watch_url: string | null;
+  enabled: boolean; has_key: boolean; status: LiveDestStatus; last_ok_at: string | null; last_error: string | null;
 }
 export interface LiveAccess { path: string; expires_at: number; refresh_in: number; vid: string; pass?: string }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
@@ -952,6 +958,12 @@ export const api = {
   patchLive: (roomId: string, body: LivePatchBody) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live`, body),
   setLivePassword: (roomId: string, password: string | null) => request<LiveRoomSettings>("PUT", `/rooms/${roomId}/live/password`, { password }),
   revokeLive: (roomId: string, which: "view" | "stream" | "all") => request<LiveRoomSettings>("POST", `/rooms/${roomId}/live/links/${which}/revoke`),
+  addLiveDestination: (roomId: string, body: Record<string, unknown>) => request<LiveRoomSettings>("POST", `/rooms/${roomId}/live/destinations`, body),
+  patchLiveDestination: (roomId: string, id: string, body: Record<string, unknown>) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/destinations/${id}`, body),
+  deleteLiveDestination: (roomId: string, id: string) => request<LiveRoomSettings>("DELETE", `/rooms/${roomId}/live/destinations/${id}`),
+  probeLiveServer: (roomId: string, serverUrl: string) => request<{ ok: boolean; message: string }>("POST", `/rooms/${roomId}/live/destinations/probe`, { server_url: serverUrl }),
+  probeLiveDestination: (roomId: string, id: string) => request<{ ok: boolean; message: string }>("POST", `/rooms/${roomId}/live/destinations/${id}/probe`),
+  toggleLiveDestination: (meetingId: string, id: string, enabled: boolean) => request<LiveState>("POST", `/meetings/${meetingId}/live/destinations/${id}`, { enabled }),
   liveState: (meetingId: string) => request<LiveState>("GET", `/meetings/${meetingId}/live`),
   setLive: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/live`, { enabled }),
   /** Страница зрителя: без входа в систему. */

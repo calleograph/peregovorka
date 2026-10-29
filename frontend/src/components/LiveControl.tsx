@@ -3,6 +3,7 @@ import { api, type ApiError, type LiveState } from "../api";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
 import { Modal } from "./Dialogs";
+import { LiveDestToggles } from "./LiveDestinations";
 import "../live.css";
 
 /** Состояние прямого эфира встречи: читается при входе, по событию `live_changed` и раз в 20 с (событие могло потеряться). */
@@ -80,6 +81,7 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings }:
             </div>
             {links.password_enabled && <p className="lv-note">Просмотр защищён паролем зрителя. Ссылка на поток пароль не спрашивает: делитесь ею осторожно, её можно отозвать в настройках комнаты.</p>}
           </div>)}
+        {state.can_control && state.destinations && <LiveDestToggles meetingId={meetingId} items={state.destinations} onChanged={onChanged} />}
         {done && <div className="alert ok" role="status">{done}</div>}
         {links && onSettings && <div className="row"><button className="btn ghost" onClick={onSettings}>Настройки трансляции…</button></div>}
       </div>

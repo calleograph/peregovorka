@@ -819,6 +819,13 @@ class LiveSettings(_Group):
     after_end_keep_min: int = Field(default=30, ge=0, le=1440)    # через сколько минут после конца эфира удаляется весь каталог HLS (запись остаётся в MP4)
     view_link_ttl_s: int = Field(default=900, ge=120, le=7200)    # срок действия подписи, которую получает плеер страницы зрителя; плеер продлевает её сам. Это же — задержка, с которой пароль и отзыв «доходят» до уже смотрящих
     stream_link_days: int = Field(default=30, ge=1, le=3650)      # срок подписи ссылки на поток (владелец копирует её во внешние плееры); отзывается досрочно
+    max_destinations: int = Field(default=5, ge=0, le=20)         # внешних площадок на комнату; 0 — внешние площадки запрещены
+    allow_private_destinations: bool = False                      # разрешить серверы RTMP во внутренней сети (по умолчанию только адреса в интернете: защита от обращений сервера к внутренним службам)
+    allow_rutube: bool = True
+    allow_vk: bool = True
+    allow_youtube: bool = True
+    allow_twitch: bool = True
+    allow_custom: bool = True
     direct_viewers_warn: int = Field(default=150, ge=10, le=100_000)   # при таком числе зрителей с основного сервера администратор видит предупреждение: для больших аудиторий нужна CDN
 
 

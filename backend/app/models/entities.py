@@ -1139,3 +1139,25 @@ class Broadcast(Base):
     error: Mapped[str | None] = mapped_column(String(300))
     peak_viewers: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hls_cleaned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+
+
+class LiveDestination(Base):
+    """Внешняя площадка прямого эфира комнаты (RTMP/RTMPS): адрес сервера и ключ потока. Ключ хранится зашифрованным и наружу не отдаётся."""
+
+    __tablename__ = "live_destinations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    platform: Mapped[str] = mapped_column(String(10), nullable=False)               # rutube | vk | youtube | twitch | custom
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    server_url: Mapped[str] = mapped_column(String(400), nullable=False)             # rtmp(s)://хост[:порт]/приложение — без ключа
+    key_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    channel: Mapped[str | None] = mapped_column(String(160))                         # название канала на площадке (для списка)
+    watch_url: Mapped[str | None] = mapped_column(String(400))                       # ссылка зрителя на самой площадке
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="idle", server_default="idle", nullable=False)   # idle | connecting | live | failed | finished
+    last_ok_at: Mapped[datetime | None] = mapped_column(UTCDateTime)                 # когда площадка последний раз приняла поток
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
