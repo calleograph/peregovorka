@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.50.0",
+ "release": "0.50.1",
  "reviewed_at": "2026-10-29",
  "components": [
   {
@@ -718,7 +718,7 @@
    "group": "Backend",
    "pinned": "2.14.1",
    "tested": "2.14.1",
-   "reviewed_latest": "2.14.1",
+   "reviewed_latest": "2.14.2",
    "source": {
     "type": "pypi",
     "name": "pydantic"
@@ -739,6 +739,13 @@
    "runtime": {
     "service": "backend",
     "python_package": "pydantic"
+   },
+   "deferred": {
+    "version": "2.14.2",
+    "reason": "Патч вышел во время выпуска 0.50.0 (после ревизии компонентов того же дня); выпуск посвящён документации и скриптам эксплуатации, работа backend и ASR с новой версией не проверялась.",
+    "issue": "DEP-17",
+    "recheck": "2026-11-12",
+    "plan": "Обновить закрепление в обоих constraints (backend и ASR) при очередной ревизии и прогнать backend- и ASR-тесты."
    }
   },
   {
