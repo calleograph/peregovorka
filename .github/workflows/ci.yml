@@ -4,9 +4,9 @@ on:
   push:
     branches: [main, "feat/**"]
     tags: ["v*"]
-    paths-ignore: ["desktop/**", ".github/workflows/desktop.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
+    paths-ignore: ["desktop/**", "mobile/**", ".github/workflows/desktop.yml", ".github/workflows/android.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
   pull_request:
-    paths-ignore: ["desktop/**", ".github/workflows/desktop.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
+    paths-ignore: ["desktop/**", "mobile/**", ".github/workflows/desktop.yml", ".github/workflows/android.yml", "docs/DESKTOP*.md", "tests/live/desktop_*.py", ".claude/**"]
 
 jobs:
   deps:

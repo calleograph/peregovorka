@@ -1,0 +1,11 @@
+# LiveKit и WebRTC используют JNI и рефлексию: классы библиотек не переименовываются.
+-keep class io.livekit.** { *; }
+-keep class livekit.** { *; }
+-keep class org.webrtc.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class org.peregovorka.android.** { *** Companion; }
+-keepclasseswithmembers class org.peregovorka.android.** { kotlinx.serialization.KSerializer serializer(...); }
+-dontwarn org.slf4j.**
+-keep class livekit.org.jni_zero.** { *; }
+-keep class livekit.org.webrtc.** { *; }
+-dontwarn livekit.org.jni_zero.JniZeroJni
