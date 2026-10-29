@@ -76,7 +76,7 @@ class JoinFlowTest {
                 assertNotNull("раунд $round: список переговорных не появился", device().waitFor(By.text("Закрытая")))
                 val room = if (round % 2 == 0) 0 else 1
                 device().findObjects(By.text("Войти"))[room].click()
-                if (room == 1) device().waitFor(By.clazz("android.widget.EditText"))!!.text = "пароль"
+                if (room == 1) typeIntoFirstField("пароль")
                 device().waitFor(By.text("Подключиться"))!!.click()
                 acceptPermissionDialogs(3_000)
                 assertNotNull("раунд $round: экран конференции не появился", device().waitFor(callScreen, 20_000))

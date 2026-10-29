@@ -141,3 +141,11 @@ fun acceptPermissionDialogs(maxMs: Long = 12_000, allowAll: Boolean = true): Int
 }
 
 fun logRequests(tag: String, f: FakePeregovorka) = android.util.Log.i("PGTEST", "$tag: ${f.requests.joinToString(" | ")}")
+
+/** Ввод текста в поле с повтором: Compose перерисовывает лист входа, и найденный объект может устареть между поиском и вводом. */
+fun typeIntoFirstField(text: String) {
+    repeat(4) {
+        try { device().waitFor(By.clazz("android.widget.EditText"))!!.text = text; return } catch (_: androidx.test.uiautomator.StaleObjectException) { Thread.sleep(300) }
+    }
+    error("не удалось ввести текст в поле")
+}
