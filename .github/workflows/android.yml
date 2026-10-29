@@ -108,6 +108,7 @@ jobs:
           working-directory: mobile/android
           script: |
             adb shell settings put secure show_ime_with_hard_keyboard 1
+            adb logcat -G 32M
             adb logcat -c
             ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.livekit_url=ws://10.0.2.2:7880 || echo failed > instrumented-failed.txt
             adb logcat -d -v time > logcat.txt

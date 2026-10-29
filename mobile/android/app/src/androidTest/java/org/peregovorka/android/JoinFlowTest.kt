@@ -106,9 +106,11 @@ class JoinFlowTest {
             if (Regex("foregroundServiceType=0x[0-9a-f]+").containsMatchIn(services))        // на Android 10 тип службы в выводе не показывается
                 assertTrue("тип службы переднего плана — не микрофон:\n$services", Regex("foregroundServiceType=0x0*([0-9a-f]*)").findAll(services).any { (it.groupValues[1].toIntOrNull(16) ?: 0) and 0x80 != 0 })
             device().executeShellCommand("monkey -p $PKG -c android.intent.category.LAUNCHER 1")
-            assertNotNull("после возврата конференция не показана", device().waitFor(By.text("Тестовая организация"), 15_000))
+            // после возврата конференция показана; если связь за время фона кратко пропала — SDK переподключается сам («Связь потеряна…» → снова «Подключено»), но не завершается
+            assertNotNull("после возврата конференция не показана", device().waitFor(By.text(Pattern.compile("Тестовая организация|Связь потеряна.*")), 15_000))
+            assertNotNull("соединение не восстановилось после фона за 40 с", device().waitFor(By.text("Тестовая организация"), 40_000))
             assertStaysForeground(sc, 3_000, "после возврата из фона")
-            assertFalse("соединение потеряно после сворачивания", device().hasObject(By.text("Вы вышли из конференции")))
+            assertFalse("конференция завершилась после сворачивания", device().hasObject(By.text("Вы вышли из конференции")))
         }
     }
 
