@@ -123,6 +123,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectTab(t: Tab) = _s.update { it.copy(tab = t, webPath = null) }
+    fun openWeb(path: String) = _s.update { it.copy(webPath = path) }
+    fun closeWeb() = _s.update { it.copy(webPath = null) }
 
     // ── серверы ──────────────────────────────────────────────────────────────────────────
     /** false — идёт конференция: переключение её прервёт, интерфейс сначала спрашивает подтверждение. */

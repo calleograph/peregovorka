@@ -154,3 +154,9 @@
   .rm .pill, .rm-cap { display: none; }
 }
 @supports not (backdrop-filter: blur(1px)) { .rail, .rc, .rm { background: var(--surface); } }
+
+/* ---------------------------------------------------------------- внутри мобильного приложения: разделы и заголовки показывает приложение (иначе две панели навигации и чужой заголовок над чатом) */
+.in-app .rail, .in-app .has-rail .topbar { display: none; }
+.in-app .shell.has-rail { padding-bottom: 0; }
+.in-app .has-rail main { padding: 8px 16px 24px; }
+.in-app .shell-col { min-height: 0; }

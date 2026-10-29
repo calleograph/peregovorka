@@ -298,6 +298,7 @@ body.cal-fit .app-foot { display: none; }
 @media (max-width: 760px) {
   body.cal-fit .shell.has-rail { padding-bottom: 0; }
   body.cal-fit .shell-col { height: calc(100dvh - 68px); }
+  .in-app body.cal-fit .shell-col { height: 100dvh; }                 /* в приложении нижней панели сайта нет */
   body.cal-fit .has-rail main, body.cal-fit main { padding: 2px 8px 6px; }
   body.cal-fit .has-rail .topbar { padding: 8px 10px 0; }
 }

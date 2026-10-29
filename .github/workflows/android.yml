@@ -69,9 +69,16 @@ jobs:
           retention-days: 3
 
   emulator:
-    # Настоящий Android (эмулятор с KVM): Keystore, холодный запуск интерфейса. Звонок с камерой и микрофоном на реальном устройстве здесь не проверяется.
+    # Настоящий Android (эмулятор с KVM) на трёх версиях: Android 10 (окно сжимается по adjustResize), 14 и 16 (сквозной режим, клавиатура приходит как отступы).
+    # Проверяются: Keystore, холодный запуск, экранная клавиатура на экранах приложения и в WebView, вход в конференцию (системные запросы разрешений, приложение остаётся
+    # на переднем плане) и — к настоящему LiveKit (версия закреплена в deployment/compat.env) — подключение, служба переднего плана и возврат из фона.
+    # Реальная камера, микрофон, Bluetooth и устройства производителей здесь не проверяются.
     runs-on: ubuntu-24.04
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 34, 36]
     defaults: { run: { working-directory: mobile/android } }
     steps:
       - uses: actions/checkout@v7
@@ -80,18 +87,44 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: LiveKit (сервер разработки, версия из deployment/compat.env)
+        working-directory: .
+        run: |
+          tag="$(sed -n 's/^TESTED_LIVEKIT_SERVER=//p' deployment/compat.env)"
+          curl -fsSL "https://github.com/livekit/livekit/releases/download/${tag}/livekit_${tag#v}_linux_amd64.tar.gz" | tar xz livekit-server
+          nohup ./livekit-server --dev --bind 0.0.0.0 --node-ip 10.0.2.2 > livekit.log 2>&1 &
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7880 >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:7880 && echo " LiveKit ${tag} запущен"
       - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v6
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
           profile: pixel_6
           disable-animations: true
           working-directory: mobile/android
-          script: ./gradlew --no-daemon :app:connectedDebugAndroidTest
+          script: |
+            adb shell settings put secure show_ime_with_hard_keyboard 1
+            adb logcat -c
+            ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.livekit_url=ws://10.0.2.2:7880 || echo failed > instrumented-failed.txt
+            adb logcat -d -v time > logcat.txt
+            adb shell dumpsys activity services org.peregovorka.android > services.txt || true
+            test ! -f instrumented-failed.txt
+      - name: Отчёты и журнал устройства
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: emulator-api${{ matrix.api }}
+          path: |
+            mobile/android/logcat.txt
+            mobile/android/services.txt
+            mobile/android/app/build/reports/androidTests
+            mobile/android/app/build/outputs/androidTest-results
+            livekit.log
+          retention-days: 14
 
   release:
     if: startsWith(github.ref, 'refs/tags/android-v')

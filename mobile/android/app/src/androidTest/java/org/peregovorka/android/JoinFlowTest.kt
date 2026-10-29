@@ -1,0 +1,112 @@
+package org.peregovorka.android
+
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.uiautomator.By
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.FixMethodOrder
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.runners.MethodSorters
+import java.util.regex.Pattern
+
+/**
+ * Вход в конференцию на настоящем Android: приложение всё время остаётся на переднем плане (пакет на экране — наш, Activity в состоянии RESUMED),
+ * системные запросы разрешений проходят штатно. Порядок важен: сначала запросы разрешений (чистая установка), затем вход с уже выданными.
+ * Если задан аргумент livekit_url, подключение идёт к настоящему серверу LiveKit; иначе адрес недоступен и вход заканчивается понятной ошибкой.
+ */
+@RunWith(AndroidJUnit4::class)
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
+class JoinFlowTest {
+    private lateinit var fake: FakePeregovorka
+
+    @Before fun up() { fake = FakePeregovorka() }
+    @After fun down() { logRequests("запросы", fake); fake.close() }
+
+    /** Следит за передним планом заданное время; любой выход на домашний экран или в другое приложение — провал с описанием момента. */
+    private fun assertStaysForeground(sc: ActivityScenario<MainActivity>, ms: Long, what: String) {
+        val end = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < end) {
+            val pkg = device().currentPackageName
+            assertEquals("$what: на экране не наше приложение ($pkg) — приложение свернулось", PKG, pkg)
+            assertEquals("$what: Activity не на переднем плане", Lifecycle.State.RESUMED, sc.state)
+            Thread.sleep(250)
+        }
+    }
+
+    private fun joinFirstRoom(sc: ActivityScenario<MainActivity>) {
+        device().waitFor(By.text("Основная"))
+        device().findObjects(By.text("Войти"))[0].click()
+        device().waitFor(By.text("Подключиться"))!!.click()
+    }
+
+    private val callScreen = By.text(Pattern.compile("Подключение…|Вы вышли из конференции|Тестовая организация|Связь потеряна.*"))
+
+    @Test fun t1_joinWithPermissionDialogsKeepsAppInForeground() {
+        resetApp(fake)
+        launchApp().use { sc ->
+            joinFirstRoom(sc)
+            val granted = acceptPermissionDialogs()
+            android.util.Log.i("PGTEST", "принято системных запросов разрешений: $granted")
+            assertNotNull("после запросов разрешений экран конференции не появился (пакет: ${device().currentPackageName})", device().waitFor(callScreen, 20_000))
+            assertStaysForeground(sc, 8_000, "вход после запросов разрешений")
+            assertTrue("конференция не показана", device().hasObject(By.text("Основная")))
+        }
+    }
+
+    @Test fun t2_joinWithGrantedPermissionsKeepsAppInForeground() {
+        resetApp(fake)
+        launchApp().use { sc ->
+            // выход из прошлой конференции (если экран «Вы вышли» остался) — состояние процесса общее для тестов
+            device().findObject(By.text("Закрыть"))?.click()
+            joinFirstRoom(sc)
+            assertNotNull("экран конференции не появился (пакет: ${device().currentPackageName})", device().waitFor(callScreen, 20_000))
+            assertStaysForeground(sc, 8_000, "вход с выданными разрешениями")
+        }
+    }
+
+    @Test fun t3_repeatedJoinsToDifferentRoomsDoNotMinimizeTheApp() {
+        resetApp(fake)
+        launchApp().use { sc ->
+            repeat(3) { round ->
+                device().findObject(By.text("Закрыть"))?.click()
+                device().waitFor(By.text("Основная"))
+                val room = if (round % 2 == 0) 0 else 1
+                device().findObjects(By.text("Войти"))[room].click()
+                if (room == 1) device().waitFor(By.clazz("android.widget.EditText"))!!.text = "пароль"
+                device().waitFor(By.text("Подключиться"))!!.click()
+                acceptPermissionDialogs(3_000)
+                assertNotNull("раунд $round: экран конференции не появился", device().waitFor(callScreen, 20_000))
+                assertStaysForeground(sc, 4_000, "раунд $round")
+                device().findObject(By.desc("Выйти из конференции"))?.click()
+                device().findObject(By.text("Выйти"))?.click()                       // подтверждение выхода
+            }
+        }
+    }
+
+    @Test fun t4_realLivekit_connectionSurvivesBackgroundAndReturn() {
+        org.junit.Assume.assumeTrue("не задан livekit_url — проверка с настоящим LiveKit пропущена", fake.realLivekit != null)
+        resetApp(fake)
+        launchApp().use { sc ->
+            device().findObject(By.text("Закрыть"))?.click()
+            joinFirstRoom(sc)
+            acceptPermissionDialogs(4_000)
+            // подключено: под названием комнаты — название сервера, а не «Подключение…»
+            assertNotNull("подключение к LiveKit не установилось за 40 с", device().waitFor(By.text("Тестовая организация"), 40_000))
+            assertStaysForeground(sc, 6_000, "после подключения к LiveKit")
+            // сворачивание: служба переднего плана с микрофоном продолжает работать, соединение остаётся
+            device().pressHome()
+            Thread.sleep(3_000)
+            val services = device().executeShellCommand("dumpsys activity services $PKG")
+            assertTrue("служба конференции не работает в фоне:\n$services", services.contains("CallService") && services.contains("isForeground=true"))
+            assertTrue("тип службы переднего плана — не микрофон:\n$services", services.contains("foregroundServiceType=0x80") || services.contains("types=0x00000080") || services.contains("microphone"))
+            device().executeShellCommand("monkey -p $PKG -c android.intent.category.LAUNCHER 1")
+            assertNotNull("после возврата конференция не показана", device().waitFor(By.text("Тестовая организация"), 15_000))
+            assertStaysForeground(sc, 3_000, "после возврата из фона")
+            assertFalse("соединение потеряно после сворачивания", device().hasObject(By.text("Вы вышли из конференции")))
+        }
+    }
+}

@@ -13,6 +13,8 @@ import "./motion.css";
 import { installCrystalsHotkey } from "./crystalsHotkey";
 
 installCrystalsHotkey();
+// Страница внутри мобильного приложения (WebView): оно само показывает разделы и заголовки, поэтому собственная навигация сайта скрывается (см. glass.css, `.in-app`)
+if (/\bPeregovorkaApp\//.test(navigator.userAgent)) document.documentElement.classList.add("in-app");
 void loadSite();       // оформление установки: применяется к странице без пересборки (при недоступности сервера остаётся стандартное)
 
 createRoot(document.getElementById("root")!).render(

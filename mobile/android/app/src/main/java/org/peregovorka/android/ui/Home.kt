@@ -139,7 +139,7 @@ private fun ToggleRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
 /** Профиль и серверы: текущая учётная запись, список организаций (переключение, переименование, удаление), выход. */
 @Composable
 fun ProfileContent(
-    me: MeDto?, servers: List<Server>, current: Server?, version: String,
+    me: MeDto?, servers: List<Server>, current: Server?, version: String, onOpenWeb: (String) -> Unit,
     onSwitch: (Server) -> Unit, onRename: (Server, String) -> Unit, onRemove: (Server) -> Unit, onAdd: () -> Unit, onLogout: () -> Unit, modifier: Modifier = Modifier,
 ) {
     var renaming by remember { mutableStateOf<Server?>(null) }
@@ -151,6 +151,12 @@ fun ProfileContent(
                     Text(me?.user?.displayName.orEmpty().ifBlank { "Профиль" }, style = MaterialTheme.typography.titleLarge)
                     Text(current?.title.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(10.dp))
+                    // Разделы сайта, для которых нет мобильного экрана; собственная навигация сайта внутри приложения скрыта
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { onOpenWeb("/profile") }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Личный кабинет") }
+                        if (me?.user?.isAdmin == true) OutlinedButton(onClick = { onOpenWeb("/admin") }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Администрирование") }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = onLogout, modifier = Modifier.heightIn(min = 44.dp)) { Text("Выйти из аккаунта") }
                 }
             }

@@ -27,6 +27,7 @@ import SetupWizard from "./components/SetupWizard";
 import MeetingPage from "./pages/MeetingPage";
 import RoomsPage from "./pages/RoomsPage";
 import { ChatHost, ChatNavButton } from "./chat/ChatNav";
+import ChatsPage from "./pages/ChatsPage";
 import { chats } from "./chat/chatStore";
 import { onDesktopCommand } from "./desktop";
 import { watchMeetings } from "./desktopMeetings";
@@ -182,6 +183,7 @@ function StaffApp() {
           {AudienceDemo && <Route path="/__dev/audience" element={<Suspense fallback={null}><AudienceDemo /></Suspense>} />}
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
           <Route path="/calendar" element={<Suspense fallback={null}><CalendarPage /></Suspense>} />
+          <Route path="/chats" element={<ChatsPage />} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />

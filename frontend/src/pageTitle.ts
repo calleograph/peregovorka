@@ -11,6 +11,7 @@ export function pageTitle(pathname: string, signedIn = true, brand: string = BRA
   else if (!signedIn) t = "Вход";
   else if (p === "/") t = "Переговорки";
   else if (p.startsWith("/rooms/")) t = "Комната";
+  else if (p === "/chats") t = "Чаты";
   else if (p === "/history") t = "История встреч";
   else if (p.startsWith("/history/")) t = "Встреча";
   else if (p === "/profile") t = "Личный кабинет";

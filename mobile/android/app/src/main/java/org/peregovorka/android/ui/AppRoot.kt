@@ -8,7 +8,9 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -85,7 +87,10 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
             Step.Welcome -> WelcomeScreen(onAdd = vm::startAdd)
             Step.AddServer -> AddServerScreen(s.adding, s.error, s.added, canCancel = s.servers.isNotEmpty(), onCheck = vm::checkServer, onContinue = vm::continueToLogin, onCancel = vm::cancelAdd)
             Step.Login -> s.server?.let { sv -> LoginScreen(sv, store.cookieName(sv.id), onCookie = { vm.adoptCookie(it) }, onBack = { if (s.servers.size > 1) vm.selectTab(Tab.Profile).also { vm.startAdd() } else vm.startAdd() }) }
-            Step.Main -> MainScaffold(s, vm, store, onJoinRoom = { r -> vm.clearJoinError(); target = JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed) },
+            Step.Main -> MainScaffold(s, vm, store, onConference = { path ->
+                val ref = roomRefOf(path)
+                if (ref != null) pendingRef = ref else s.server?.let { sv -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sv.url + path))) }
+            }, onJoinRoom = { r -> vm.clearJoinError(); target = JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed) },
                 onJoinUpcoming = { u -> vm.clearJoinError(); target = JoinTarget(u.id, u.name, u.hasPassword, true) },
                 onLink = { linkDialog = true }, onSwitch = { sv -> if (vm.canSwitchWithoutAsking()) vm.switchTo(sv) else switchTo = sv })
         }
@@ -122,10 +127,10 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun MainScaffold(
-    s: UiState, vm: AppViewModel, store: Store, onJoinRoom: (RoomDto) -> Unit, onJoinUpcoming: (UpcomingItem) -> Unit, onLink: () -> Unit, onSwitch: (Server) -> Unit,
+    s: UiState, vm: AppViewModel, store: Store, onConference: (String) -> Unit, onJoinRoom: (RoomDto) -> Unit, onJoinUpcoming: (UpcomingItem) -> Unit, onLink: () -> Unit, onSwitch: (Server) -> Unit,
 ) {
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     val server = s.server ?: return
@@ -133,6 +138,19 @@ private fun MainScaffold(
         Triple(Tab.Home, "Главная", Icons.Filled.Home), Triple(Tab.Calendar, "Календарь", Icons.Filled.CalendarMonth), Triple(Tab.Chats, "Чаты", Icons.Filled.Chat),
         Triple(Tab.History, "История", Icons.Filled.History), Triple(Tab.Profile, "Профиль", Icons.Filled.Person),
     )
+    // Экранная клавиатура: нижняя панель на это время скрывается, а содержимое сжимается до свободной области (imePadding) — поле ввода остаётся над клавиатурой.
+    val keyboardOpen = WindowInsets.isImeVisible
+    s.webPath?.let { path ->
+        BackHandler { vm.closeWeb() }
+        Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                IconButton(onClick = vm::closeWeb) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
+                Text(if (path == "/admin") "Администрирование" else "Личный кабинет", style = MaterialTheme.typography.titleLarge)
+            }
+            SectionWebView(server, store, path, Modifier.weight(1f), onConference)
+        }
+        return
+    }
     Row(Modifier.fillMaxSize()) {
         if (wide) NavigationRail {
             items.forEach { (t, label, icon) -> NavigationRailItem(selected = s.tab == t, onClick = { vm.selectTab(t) }, icon = { Icon(icon, null) }, label = { Text(label) }) }
@@ -146,18 +164,19 @@ private fun MainScaffold(
                 )
             },
             bottomBar = {
-                if (!wide) NavigationBar {
+                if (!wide && !keyboardOpen) NavigationBar {
                     items.forEach { (t, label, icon) -> NavigationBarItem(selected = s.tab == t, onClick = { vm.selectTab(t) }, icon = { Icon(icon, null) }, label = { Text(label, maxLines = 1) }, alwaysShowLabel = true) }
                 }
             },
         ) { pad ->
-            val m = Modifier.padding(pad)
+            // consumeWindowInsets: отступы панелей уже учтены, иначе над клавиатурой остаётся лишний зазор высотой в системную панель
+            val m = Modifier.padding(pad).consumeWindowInsets(pad).imePadding()
             when (s.tab) {
                 Tab.Home -> HomeContent(s.rooms, s.upcoming, s.loading, s.error, vm::refresh, onJoinRoom, onJoinUpcoming, m)
-                Tab.Calendar -> SectionWebView(server, store, "/calendar", m)
-                Tab.Chats -> SectionWebView(server, store, "/", m)
-                Tab.History -> SectionWebView(server, store, "/history", m)
-                Tab.Profile -> ProfileContent(s.me, s.servers, server, BuildConfig.VERSION_NAME, onSwitch, vm::rename, vm::remove, vm::startAdd, vm::logout, m)
+                Tab.Calendar -> SectionWebView(server, store, "/calendar", m, onConference)
+                Tab.Chats -> SectionWebView(server, store, "/chats", m, onConference)
+                Tab.History -> SectionWebView(server, store, "/history", m, onConference)
+                Tab.Profile -> ProfileContent(s.me, s.servers, server, BuildConfig.VERSION_NAME, vm::openWeb, onSwitch, vm::rename, vm::remove, vm::startAdd, vm::logout, m)
             }
         }
     }

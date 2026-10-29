@@ -22,9 +22,20 @@ import kotlinx.coroutines.delay
 import org.peregovorka.android.data.Server
 import org.peregovorka.android.data.Store
 
+/** Путь страницы сайта, которая сама по себе открывает конференцию: в приложении её ведёт нативный экран (звук, служба переднего плана), а не WebView. */
+private val ROOM_PATH = Regex("^/rooms/([A-Za-z0-9._~-]{1,120})$")
+private val EXTERNAL_CONFERENCE_PATH = Regex("^/(m|p|guest)/[A-Za-z0-9_-]{4,200}$")
+
+fun roomRefOf(path: String): String? = ROOM_PATH.find(path.trimEnd('/'))?.groupValues?.get(1)
+fun isConferencePath(path: String): Boolean = roomRefOf(path) != null || EXTERNAL_CONFERENCE_PATH.matches(path.trimEnd('/'))
+
 @SuppressLint("SetJavaScriptEnabled")
-private fun secureWebView(ctx: android.content.Context, origin: String, onExternal: (Uri) -> Unit): WebView = WebView(ctx).apply {
+private fun secureWebView(
+    ctx: android.content.Context, origin: String, onExternal: (Uri) -> Unit, onConference: (String) -> Unit = {},
+): WebView = WebView(ctx).apply {
     settings.javaScriptEnabled = true          // сайт Peregovorka — одностраничное приложение
+    // Метка для сайта: внутри приложения он скрывает собственную навигацию (её показывает приложение) — см. `.in-app` в glass.css
+    settings.userAgentString = settings.userAgentString + " PeregovorkaApp/" + org.peregovorka.android.BuildConfig.VERSION_NAME
     settings.domStorageEnabled = true
     settings.allowFileAccess = false
     settings.allowContentAccess = false
@@ -32,12 +43,21 @@ private fun secureWebView(ctx: android.content.Context, origin: String, onExtern
     settings.setSupportMultipleWindows(false)
     CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
     webViewClient = object : WebViewClient() {
+        // Переходы внутри одностраничного сайта (pushState) не вызывают shouldOverrideUrlLoading: страницу конференции перехватываем по смене адреса и возвращаем WebView назад.
+        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+            val u = url?.let(Uri::parse) ?: return
+            if ("${u.scheme}://${u.authority}" != origin || !isConferencePath(u.path.orEmpty())) return
+            view.post { if (view.canGoBack()) view.goBack() }
+            onConference(u.path.orEmpty())
+        }
+
         // Переходы только внутри своего сервера; остальное — во внешний браузер (безопасное открытие внешних ссылок).
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val u = request.url
             val same = "${u.scheme}://${u.authority}" == origin
-            if (!same) onExternal(u)
-            return !same
+            if (!same) { onExternal(u); return true }
+            if (isConferencePath(u.path.orEmpty())) { onConference(u.path.orEmpty()); return true }
+            return false
         }
 
         // Процесс отрисовки может быть убит системой при нехватке памяти: без этого обработчика падает всё приложение, в том числе идущая конференция.
@@ -71,7 +91,7 @@ fun LoginScreen(server: Server, cookieName: String, onCookie: suspend (String) -
         }
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { c -> secureWebView(c, server.url) { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }.also { w -> web = w; w.loadUrl(server.url + "/") } },
+            factory = { c -> secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }).also { w -> web = w; w.loadUrl(server.url + "/") } },
             onRelease = { it.destroy() },
         )
     }
@@ -79,7 +99,7 @@ fun LoginScreen(server: Server, cookieName: String, onCookie: suspend (String) -
 
 /** Раздел сайта (календарь, чаты, история) внутри приложения, с сессией выбранного сервера. */
 @Composable
-fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifier = Modifier) {
+fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifier = Modifier, onConference: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     var web by remember { mutableStateOf<WebView?>(null) }
     BackHandler(enabled = web?.canGoBack() == true) { web?.goBack() }
@@ -90,7 +110,7 @@ fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifie
             cm.removeAllCookies(null)
             store.cookie(server.id)?.let { cm.setCookie(server.url, "${store.cookieName(server.id)}=$it; Path=/; Secure; HttpOnly; SameSite=Lax") }
             cm.flush()
-            secureWebView(c, server.url) { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }.also { w -> web = w; w.loadUrl(server.url + path) }
+            secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }, onConference).also { w -> web = w; w.tag = path; w.loadUrl(server.url + path) }
         },
         update = { w -> if (w.tag != path) { w.tag = path; if (w.url == null || !w.url!!.endsWith(path)) w.loadUrl(server.url + path) } },
         onRelease = { it.destroy() },
