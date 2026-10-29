@@ -12,12 +12,17 @@ BUILD_SERVICES=(livekit backend asr web)
 SELECTED_BUILD_MODE=""
 
 # --------------------------------------------------------------- классификация ошибок
-# stdin: лог сборки → stdout: network | project | infra | unknown
+# stdin: лог сборки → stdout: privileges | network | project | infra | unknown
+#  privileges — BuildKit отказал в привилегии, запрошенной сборкой (сеть хоста: «additional privileges requested … --allow=network.host»);
 #  network — временная сетевая ошибка registry/CDN/зеркала пакетов (повторяется, не ошибка проекта и не Docker);
 #  project — ошибка Dockerfile/исходников (упал RUN, COPY, синтаксис);
 #  infra   — сбой подсистемы Docker/containerd/диска (экспорт образа, snapshot, mount, место).
 classify_build_error() {
   local t; t="$(cat)"
+  # Отказ в разрешении — не сетевой сбой и не ошибка проекта: повторять ту же сборку бессмысленно, нужен другой способ сборки (select_host_build_mode).
+  if grep -qiE 'additional privileges requested|--allow=network\.host|requested privilege.*not granted|entitlement.*(not allowed|denied)' <<<"$t"; then
+    echo privileges; return
+  fi
   # Сетевые сбои менеджеров пакетов внутри RUN (npm/pip/apt/git) BuildKit дополняет строкой «did not complete successfully» — поэтому сеть проверяется первой.
   if grep -qiE 'failed to copy: read tcp|tls handshake timeout|i/o timeout|connection timed out|temporary failure in name resolution|read timed out|readtimeouterror|connection reset by peer|unexpected eof|net/http: request canceled|dial tcp.*(timeout|refused)|toomanyrequests|received unexpected http status: 50[234]|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ESOCKETTIMEDOUT)\b|socket hang up|npm (err!|error) network|httpsconnectionpool|connecttimeouterror|newconnectionerror|proxyerror|temporary failure resolving|could not resolve host|failed to connect to .* port|rpc failed|gnutls_handshake|early eof' <<<"$t"; then
     echo network; return
@@ -76,6 +81,58 @@ docker_build_probe() { # docker_build_probe buildkit|legacy
   docker image rm -f "$tag" >/dev/null 2>&1 || true
   PROBE_TEXT="$(cat "$PROBE_LOG" 2>/dev/null)"; rm -rf "$dir"
   return "$rc"
+}
+
+# --------------------------------------------------------------------------- сборка в сети хоста
+# `network: host` у шагов RUN (BUILD_NETWORK=host) нужна, только если источник доступен из сети хоста, а из моста Docker — нет. BuildKit при этом требует отдельного
+# разрешения «network.host» (с плагином buildx и отдельным builder'ом сборка падает: «additional privileges requested: pass --allow=network.host»), а классический builder
+# (DOCKER_BUILDKIT=0) его не требует. Поэтому перед сборкой в сети хоста способ проверяется на крошечном образе ТЕМ ЖЕ путём (docker compose build), что и настоящая сборка.
+# Результат: HOST_BUILD_MODE = buildkit | legacy | none; HOST_BUILD_WHY — причина (для сообщения). Настройки Docker, builder'ы и сеть сервера не меняются.
+HOST_BUILD_MODE=""
+HOST_BUILD_WHY=""
+
+_hostprobe_compose() { # _hostprobe_compose buildkit|legacy ФАЙЛ_COMPOSE ПРОЕКТ → лог в stdout, код возврата сборки
+  if [ "$1" = legacy ]; then
+    COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 timeout 180 docker compose -p "$3" -f "$2" build 2>&1
+  else
+    COMPOSE_BAKE=false DOCKER_BUILDKIT=1 timeout 180 docker compose -p "$3" -f "$2" build 2>&1
+  fi
+}
+
+probe_host_build() { # probe_host_build buildkit|legacy → 0/1; текст — в PROBE_TEXT
+  local dir proj tag rc=0
+  dir="$(mktemp -d)"; proj="${COMPOSE_PROJECT_NAME:-peregovorka}-hostprobe"; tag="$proj:$$"
+  printf 'FROM scratch\nCOPY probe.txt /probe.txt\n' > "$dir/Dockerfile"; echo ok > "$dir/probe.txt"
+  printf 'services:\n  probe:\n    image: %s\n    build:\n      context: .\n      network: host\n' "$tag" > "$dir/compose.yml"
+  PROBE_TEXT="$(_hostprobe_compose "$1" "$dir/compose.yml" "$proj")" || rc=$?
+  docker image rm -f "$tag" >/dev/null 2>&1 || true
+  rm -rf "$dir"
+  return "$rc"
+}
+
+# select_host_build_mode — выбирает, чем собирать в сети хоста; запоминает на время запуска. Код 0 — можно (HOST_BUILD_MODE=buildkit|legacy), 1 — нельзя (none).
+select_host_build_mode() {
+  [ -n "$HOST_BUILD_MODE" ] && { [ "$HOST_BUILD_MODE" != none ]; return; }
+  if [ "${DRY_RUN:-0}" = 1 ]; then HOST_BUILD_MODE=""; return 0; fi        # пробный прогон ничего не собирает: способ выберет настоящая сборка
+  local lasttext=""
+  if [ "${SELECTED_BUILD_MODE:-buildkit}" != legacy ]; then
+    if probe_host_build buildkit; then HOST_BUILD_MODE=buildkit; ok "Сборка в сети хоста: BuildKit разрешает network.host — пробная сборка прошла"; return 0; fi
+    lasttext="$PROBE_TEXT"
+    if [ "$(printf '%s' "$lasttext" | classify_build_error)" = privileges ]; then
+      warn "FALLBACK: BuildKit не разрешает сборку в сети хоста (запрошено разрешение network.host, в этом Docker оно не выдано) — для шагов в сети хоста использую классический builder (DOCKER_BUILDKIT=0)"
+    else
+      warn "Пробная сборка в сети хоста через BuildKit не удалась: $(printf '%s' "$lasttext" | tail -2 | tr '\n' ' ') — пробую классический builder"
+    fi
+  fi
+  if probe_host_build legacy; then HOST_BUILD_MODE=legacy; ok "Сборка в сети хоста: классический builder — пробная сборка прошла"; return 0; fi
+  [ -n "$lasttext" ] || lasttext="$PROBE_TEXT"
+  HOST_BUILD_MODE=none
+  HOST_BUILD_WHY="BuildKit не выдаёт разрешение network.host ($(printf '%s' "$lasttext" | grep -iE 'privileges|allow=|entitlement' | head -1 | cut -c1-160)), а классический builder недоступен ($(printf '%s' "$PROBE_TEXT" | tail -1 | cut -c1-160))"
+  return 1
+}
+
+host_build_advice() { # что может сделать администратор; сам проект Docker не перенастраивает
+  echo "Сборка в сети хоста сейчас невозможна. Варианты (на усмотрение администратора, установщик Docker и builder'ы не меняет): чтобы сборка шла в сети хоста, разрешите её builder'у — для отдельного builder'а buildx: docker buildx create --use --buildkitd-flags '--allow-insecure-entitlement network.host'; либо BUILD_MODE=legacy (классический builder, пока его поддерживает Docker); либо устраните причину недоступности источника из моста Docker (DNS/MTU/прокси — scripts/lib/netcheck.sh покажет этап)."
 }
 
 # Выбор builder'а. Результат в SELECTED_BUILD_MODE. Явно логирует fallback.
@@ -200,6 +257,7 @@ _compose_build_one() { # _compose_build_one svc mode log
 
 # build_images [svc…] — собирает только то, что нужно. Возврат 0/1; сообщения: stage=build service=… subsystem=…
 # Предел: попыток на компонент — BUILD_ATTEMPTS (3), суммарное время сборки — BUILD_BUDGET_S (5400 с): повторов без конца нет.
+_build_log_note() { printf '%s\n' "$2" >> "$1" 2>/dev/null; return 0; }
 _build_status() { declare -F upd_state_set >/dev/null && upd_state_set "build_$1" "$2" 2>/dev/null; return 0; }
 build_images() {
   local want=("$@") s kind log mode deadline
@@ -214,8 +272,21 @@ build_images() {
     info "stage=build service=$s builder=$mode → $(svc_image "$s")"
     local attempt=1 built=0 n="${BUILD_ATTEMPTS:-3}" t0; t0=$(date +%s)
     while :; do
-      if _compose_build_one "$s" "$mode" "$log"; then built=1; break; fi
+      local bmode="$mode"
+      if [ "$BUILD_NETWORK" = host ]; then
+        # Сборка в сети хоста: способ проверен заранее (BuildKit требует разрешения network.host). Нет ни того ни другого — остановка с конкретной причиной,
+        # а не загадочный отказ BuildKit посреди сборки.
+        if select_host_build_mode; then [ "$mode" = buildkit ] && [ -n "$HOST_BUILD_MODE" ] && bmode="$HOST_BUILD_MODE"
+        else kind="privileges"; _build_log_note "$log" "host-network: $HOST_BUILD_WHY"; break; fi
+      fi
+      if _compose_build_one "$s" "$bmode" "$log"; then built=1; break; fi
       kind="$(classify_build_error < "$log")"
+      if [ "$kind" = privileges ] && [ "$BUILD_NETWORK" = host ] && [ "$bmode" = buildkit ]; then
+        # проба прошла, а сборка компонента всё же получила отказ: дальше этот запуск собирает шаги в сети хоста классическим builder'ом
+        warn "FALLBACK: stage=build service=$s: BuildKit отказал в network.host — повтор этого компонента классическим builder'ом (сеть хоста)"
+        if probe_host_build legacy; then HOST_BUILD_MODE=legacy; continue; fi
+        HOST_BUILD_MODE=none; HOST_BUILD_WHY="BuildKit отказал в network.host, классический builder недоступен ($(printf '%s' "$PROBE_TEXT" | tail -1 | cut -c1-160))"; continue
+      fi
       if [ "$kind" = "network" ] && [ "$attempt" -lt "$n" ] && [ "$(date +%s)" -lt "$deadline" ]; then
         # Повторная проверка источников компонента: доступны только из сети хоста — сборка переводится туда (системные настройки не меняются);
         # недоступны совсем — повторы бесполезны (остановка с диагнозом); доступны — сбой был временным, повтор.
@@ -248,6 +319,7 @@ build_images() {
     _build_status "$s" "ОШИБКА ($kind) после $attempt попыт.; лог $log${NET_DIAG:+; источник: $NET_DIAG}"
     BUILD_FAILED_SVC="$s"; BUILD_FAILED_KIND="$kind"
     case "$kind" in
+      privileges) fail "FAIL stage=build service=$s subsystem=build-network-host (сборка в сети хоста запрещена настройками BuildKit, НЕ ошибка проекта): ${HOST_BUILD_WHY:-BuildKit запросил разрешение network.host}. $(host_build_advice) Лог: $log" ;;
       network) fail "FAIL stage=build service=$s subsystem=registry-network (сеть/registry/зеркала пакетов недоступны после $attempt попыт., НЕ ошибка проекта)${NET_DIAG:+: $NET_DIAG}. Лог: $log" ;;
       infra)   fail "FAIL stage=build service=$s subsystem=docker-build (инфраструктура Docker/containerd, НЕ ошибка проекта). Лог: $log"; report_stale_mounts warn ;;
       project) fail "FAIL stage=build service=$s subsystem=dockerfile/project (ошибка сборки проекта). Лог: $log" ;;

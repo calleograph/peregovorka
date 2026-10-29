@@ -85,7 +85,7 @@ _nc_field() { printf '%s' "$1" | python3 -c "import json,sys; d=json.loads(sys.s
 # (OLD) — иначе сборка возьмёт слои из кэша Docker, и недоступность — предупреждение.
 netcheck_build_sources() {
   local c="$1"; shift
-  local svcs=("$@") s img line label spec out url res stage detail okhost changed
+  local svcs=("$@") s img line label spec out url res stage detail okhost changed again rtry hostwhy
   [ ${#svcs[@]} -gt 0 ] || svcs=(web backend asr)
   NETCHECK_STATUS=ok; NETCHECK_LINES=(); NETCHECK_BLOCKING=(); NETCHECK_COMMIT="$c"
   command -v docker >/dev/null 2>&1 || { NETCHECK_LINES+=("пропущено: Docker недоступен"); return 0; }
@@ -111,17 +111,33 @@ netcheck_build_sources() {
         ok) NETCHECK_LINES+=("OK   $s/$label: ${url%%\?*} — $detail") ;;
         slow) NETCHECK_LINES+=("WARN $s/$label: ${url%%\?*} — $detail"); [ "$NETCHECK_STATUS" = ok ] && NETCHECK_STATUS=degraded ;;
         *)
-          okhost=""
+          # Единичный тайм-аут или обрыв — не повод переводить всю сборку в сеть хоста: сначала повторные проверки моста с паузой (NETCHECK_BRIDGE_RETRIES, по умолчанию 2).
+          # Сеть хоста выбирается, только если мост не отдал данные ни разу за все проверки.
+          again=""; rtry=0
+          while [ "$rtry" -lt "${NETCHECK_BRIDGE_RETRIES:-2}" ]; do
+            rtry=$((rtry + 1)); sleep "${NETCHECK_RETRY_PAUSE:-5}"
+            out="$(_nc_run "$img" default "$spec" | tail -1)"
+            case "$(_nc_field "$out" result)" in ok|slow) again="$out"; break ;; esac
+          done
+          if [ -n "$again" ]; then
+            NETCHECK_LINES+=("WARN $s/$label: ${url%%\?*} — первая проверка не прошла ($stage: $detail), повторная №$rtry прошла: $(_nc_field "$again" detail). Это временный сбой, сборка идёт в обычной сети Docker")
+            [ "$NETCHECK_STATUS" = ok ] && NETCHECK_STATUS=degraded
+            continue
+          fi
+          okhost=""; hostwhy=""
           out="$(_nc_run "$img" host "$spec" | tail -1)"
           [ "$(_nc_field "$out" result)" = ok ] && okhost=1
+          if [ -n "$okhost" ] && declare -F select_host_build_mode >/dev/null && ! select_host_build_mode; then
+            okhost=""; hostwhy="; из сети хоста доступно, но собрать в сети хоста нельзя: $HOST_BUILD_WHY"
+          fi
           if [ -n "$okhost" ]; then
-            NETCHECK_LINES+=("WARN $s/$label: из сети сборки (мост Docker) — $stage: $detail; из сети хоста — доступно. Сборка пойдёт в сети хоста (BUILD_NETWORK=host)")
+            NETCHECK_LINES+=("WARN $s/$label: из сети сборки (мост Docker) — $stage: $detail (не прошли и $rtry повторные проверки); из сети хоста — доступно. Сборка пойдёт в сети хоста (BUILD_NETWORK=host)")
             export BUILD_NETWORK=host; [ "$NETCHECK_STATUS" = ok ] && NETCHECK_STATUS=degraded
           elif [ "$changed" -eq 0 ]; then
-            NETCHECK_LINES+=("WARN $s/$label: ${url%%\?*} недоступен ($stage: $detail), но зависимости компонента не менялись — сборка возьмёт их из кэша Docker")
+            NETCHECK_LINES+=("WARN $s/$label: ${url%%\?*} недоступен ($stage: $detail$hostwhy), но зависимости компонента не менялись — сборка возьмёт их из кэша Docker")
             [ "$NETCHECK_STATUS" = ok ] && NETCHECK_STATUS=degraded
           else
-            NETCHECK_LINES+=("FAIL $s/$label: ${url%%\?*} — этап «$(_nc_stage_ru "$stage")»: $detail")
+            NETCHECK_LINES+=("FAIL $s/$label: ${url%%\?*} — этап «$(_nc_stage_ru "$stage")»: $detail$hostwhy")
             NETCHECK_STATUS=fail; NETCHECK_BLOCKING+=("$s")
           fi ;;
       esac

@@ -23,8 +23,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW_FILE = ROOT / "scripts" / "private-data.allow"
-SKIP_SUFFIX = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".pdf", ".zip", ".gz", ".onnx", ".gguf", ".wav", ".mp3", ".lock"}
-SKIP_NAMES = {"package-lock.json", "icons.ts", "private-data.allow", "test_private_data_check.py"}      # последний содержит заведомо «плохие» примеры для проверки самого сканера      # icons.ts — сгенерированные пути SVG-значков (числа вида 3.5.7.7 похожи на IP-адреса)
+SKIP_SUFFIX = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".pdf", ".zip", ".gz", ".onnx", ".gguf", ".wav", ".mp3", ".lock", ".kt"}      # .kt — код приложения Android: «Dispatchers.IO», «Tab.Home», имена пакетов похожи на домены; адреса и настройки лежат в манифесте, gradle и ресурсах (они проверяются)
+SKIP_NAMES = {"package-lock.json", "icons.ts", "private-data.allow", "test_private_data_check.py"}      # последний содержит заведомо «плохие» примеры для проверки самого сканера
+      # icons.ts — сгенерированные пути SVG-значков (числа вида 3.5.7.7 похожи на IP-адреса)
 SELF = "scripts/check_private_data.py"
 
 TLDS = "com|org|net|ru|su|io|ai|dev|app|cloud|local|lan|corp|internal|intranet|home|test|invalid|example"

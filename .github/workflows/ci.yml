@@ -84,6 +84,8 @@ jobs:
           done
           exit $rc
       - run: bash tests/scripts/run.sh
+      - name: Сборка в сети хоста на настоящем Docker (BUILD_NETWORK=host)
+        run: bash tests/scripts/host_build_real.sh
       - run: sudo apt-get install -y shellcheck && shellcheck -S warning scripts/*.sh scripts/lib/*.sh || true
       - name: compose config
         run: |

@@ -134,3 +134,8 @@ ip:^2\.5\.29\.37$   # OID расширения «Extended Key Usage» (X.509), �
 # сторонние навыки .claude/skills (без изменений, .claude/skills/README.md): ссылки авторов, лицензия, примеры адресов
 jeffallan.github.io
 apache.org
+# Android-приложение (mobile/android): репозиторий зависимости LiveKit (audioswitch), разрешён для одной группы
+jitpack.io
+schemas.android.com
+services.gradle.org
+ip:^10\.0\.2\.2$   # адрес компьютера-хоста внутри эмулятора Android
