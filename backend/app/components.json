@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.51.0",
- "reviewed_at": "2026-10-29",
+ "release": "0.52.0",
+ "reviewed_at": "2026-10-30",
  "components": [
   {
    "key": "livekit_server",
@@ -1693,7 +1693,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-10-29",
+  "checked_at": "2026-10-30",
   "source": "osv.dev",
   "advisories": {
    "hydra-core==1.3.7": [
