@@ -538,6 +538,8 @@ export interface RoomAdmin {
   slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
 }
 export interface Grant { user_id: string; display_name: string; sam_account_name: string; granted_by: string | null; created_at: string }
+/** Сбои микрофона по виду клиента (браузер или приложение) за период: из журнала событий. */
+export interface MicByClientRow { client: string; joins: number; users: number; problems_per_100_joins: number | null; [event: string]: string | number | null }
 export interface ClientEventRow { ts: number; event: string; user: string; meeting_id: string | null; reason: string | null; detail: string | null }
 export interface ClientMetricRow { ts: number; user: string; [k: string]: unknown }
 export interface DiagnosticsReport {
@@ -1253,6 +1255,7 @@ export const api = {
     retryExports: () => request<{ exported: number; still_failed: number }>("POST", "/admin/recordings/retry-exports"),
     runRetention: () => request<Record<string, number>>("POST", "/admin/retention/run"),
     meetingDiagnostics: (meetingId: string) => request<{ meeting: { id: string; room: string; started_at: string; ended_at: string | null; end_reason: string | null }; events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[]; retention_note: string }>("GET", `/admin/meetings/${meetingId}/diagnostics`),
+    micByClient: (days = 30) => request<{ days: number; events: string[]; rows: MicByClientRow[] }>("GET", `/admin/client-diagnostics/microphone?days=${days}`),
     clientDiagnostics: () => request<{ events: ClientEventRow[]; metrics: ClientMetricRow[]; lifecycle: ClientEventRow[] }>("GET", "/admin/client-diagnostics"),
     diagnosticsReport: () => request<DiagnosticsReport>("GET", "/admin/diagnostics/report"),
     asrModels: () => request<AsrModels>("GET", "/admin/asr/models"),

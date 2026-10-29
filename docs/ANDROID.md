@@ -60,6 +60,29 @@
 
 В CI (`.github/workflows/android.yml`) ключ берётся из секретов репозитория `ANDROID_KEYSTORE_B64` (base64 файла `.jks`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Выпуск — тег `android-vX.Y.Z`.
 
+### Постоянный ключ подписи
+
+Ключ должен быть **одним на всё время жизни приложения**: Android ставит обновление поверх, только если подпись совпадает; сменить ключ потом без переустановки у всех пользователей нельзя. Выпуски до 0.1.1 включительно подписаны временным ключом сборки — первый выпуск с постоянным ключом пользователи ставят после удаления прежней версии (один раз).
+
+1. Ключ создаёт владелец (или по его поручению разработчик) **вне каталога репозитория**, с правами 600: `keytool -genkeypair -v -storetype PKCS12 -keystore peregovorka-release.jks -alias peregovorka -keyalg RSA -keysize 4096 -validity 10950` (30 лет; Google Play требует срок не ранее 2033 года).
+2. Резервная копия файла `.jks` и паролей — в сейфе паролей организации и на отдельном носителе. Потеря ключа = невозможность выпускать обновления этого приложения.
+3. Секреты для CI задаёт владелец репозитория (Settings → Secrets and variables → Actions или `gh secret set`):
+   ```bash
+   base64 -w0 peregovorka-release.jks | gh secret set ANDROID_KEYSTORE_B64
+   gh secret set ANDROID_KEYSTORE_PASSWORD     # ввести пароль хранилища
+   gh secret set ANDROID_KEY_ALIAS --body peregovorka
+   gh secret set ANDROID_KEY_PASSWORD          # ввести пароль ключа
+   ```
+4. Проверка: в журнале задачи `build` workflow Android строка `apksigner verify --print-certs` показывает сертификат `CN=Peregovorka`, а файл выпуска называется `Peregovorka-X.Y.Z-android.apk` (без `debugkey`).
+5. Google Play: при включённом Play App Signing этот ключ — ключ загрузки (upload key), а установочные файлы для пользователей подписывает Google. Тогда APK с GitHub и из Google Play имеют **разные подписи** и не обновляют друг друга — выберите один канал распространения для сотрудников.
+
+### Выпуск
+
+1. `mobile/android/VERSION` (из него сборка берёт `versionName` и `versionCode`); раздел версии в `mobile/android/CHANGELOG.md`.
+2. Блок `<!-- android-release:start -->` в `README.md` и `ANDROID_VERSION` в `frontend/src/androidDist.ts` — новая версия (тест `androidDist.test.ts` сверяет оба с `VERSION`).
+3. Тег `android-vX.Y.Z` → workflow собирает, проверяет на эмуляторах и публикует выпуск с APK и `SHA256SUMS.txt`.
+4. Выпуск сервера с новой ссылкой — **после** публикации APK: шаг Release `scripts/check_download_links.py` не опубликует сервер, если выпуск Android или его APK отсутствует.
+
 ## Устройство
 
 Kotlin, Jetpack Compose, LiveKit Android SDK (официальная библиотека LiveKit), OkHttp. Протокол с сервером — тот же REST API, что у веб-клиента и клиента для Windows (`/api/v1/desktop/info`, `/trust`, `/resume` для сведений о сервере и доверенного устройства). Сервер не менялся ради приложения.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import uuid
 from typing import Any
@@ -323,6 +324,51 @@ async def client_diagnostics(request: Request, su: SessionUser = Depends(require
     mt = [_json.loads(x) for x in await r.lrange("clientdiag:metrics", 0, 99)]
     lc = [_json.loads(x) for x in await r.lrange("clientdiag:lifecycle", 0, 199)]
     return {"events": ev, "metrics": mt, "lifecycle": lc}
+
+
+# События микрофона, которые сравниваются по клиентам (браузер или приложение): микрофон занят, не открылся, пропал во время встречи, вернулся сам,
+# не вернулся, «тишина» от системы. Знаменатель — попытки входа (join_attempt). Так различие «Edge против приложения для Windows» видно по реальной
+# работе пользователей, без ручной сравнительной проверки на одном компьютере.
+MIC_EVENTS = ("mic_busy", "mic_failed", "mic_permission_denied", "mic_lost", "mic_recovered", "mic_recovery_failed", "mic_silent", "join_without_mic")
+
+
+def client_family(client: str | None) -> str:
+    """«Edge 148 · Windows 10/11» → «Edge · Windows 10/11»: номер версии браузера не дробит строки, версия приложения Windows сохраняется."""
+    if not client:
+        return "неизвестно"
+    parts = [p.strip() for p in client.split("·")]
+    br = parts[0]
+    if not br.startswith("Peregovorka"):
+        br = re.sub(r"\s+\d+(?:\.\d+)*$", "", br)
+    return " · ".join([br, *parts[1:]])
+
+
+@router.get("/client-diagnostics/microphone")
+async def microphone_by_client(days: int = Query(30, ge=1, le=365), su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Сбои микрофона по видам клиентов за `days` дней из журнала событий (хранится по настройке «Хранение журнала», по умолчанию 30 дней)."""
+    from datetime import timedelta
+
+    from ..models import EventLog
+    from ..models.base import utcnow
+
+    since = utcnow() - timedelta(days=days)
+    q = (select(EventLog.client, EventLog.event, func.count(), func.count(func.distinct(EventLog.user_name)))
+         .where(EventLog.at >= since, EventLog.event.in_(("join_attempt", *MIC_EVENTS))).group_by(EventLog.client, EventLog.event))
+    rows: dict[str, dict[str, Any]] = {}
+    for client, event, n, users in (await db.execute(q)).all():
+        r = rows.setdefault(client_family(client), {"client": client_family(client), "joins": 0, "users": 0, **{e: 0 for e in MIC_EVENTS}})
+        if event == "join_attempt":
+            r["joins"] += n
+            r["users"] = max(r["users"], users)
+        else:
+            r[event] += n
+    out = []
+    for r in rows.values():
+        problems = r["mic_busy"] + r["mic_failed"] + r["mic_lost"] + r["mic_silent"]
+        r["problems_per_100_joins"] = round(100 * problems / r["joins"], 1) if r["joins"] else None
+        out.append(r)
+    out.sort(key=lambda r: -r["joins"])
+    return {"days": days, "events": list(MIC_EVENTS), "rows": out}
 
 
 @router.get("/meetings/{meeting_id}/diagnostics")

@@ -68,6 +68,11 @@ class Client:
         await self.ws.send(json.dumps({"id": i, "method": m, "params": p}))
         while True:
             r = json.loads(await self.ws.recv())
+            # страница встречи спрашивает «Покинуть сайт?» (beforeunload, только после настоящего ввода): без ответа Page.navigate ждёт вечно — сценарий уходит со страницы намеренно
+            if r.get("method") == "Page.javascriptDialogOpening" and r.get("params", {}).get("type") == "beforeunload":
+                self.n += 1
+                await self.ws.send(json.dumps({"id": self.n, "method": "Page.handleJavaScriptDialog", "params": {"accept": True}}))
+                continue
             if r.get("id") == i:
                 return r.get("result", {})
 

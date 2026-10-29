@@ -191,7 +191,9 @@ async def diag(request: Request):
         await asyncio.to_thread(app.state.directory.check_service_account)
         out["ldap"] = {"ok": True}
     except Exception as exc:  # noqa: BLE001
-        out["ldap"] = {"ok": False, "error": getattr(exc, "code", type(exc).__name__)}
+        code = getattr(exc, "code", type(exc).__name__)
+        # каталог ещё не подключён (установка без LDAP, вход локальным администратором) — не сбой: так же считают админка и diagnostics.py, smoke-test ждёт этот вид
+        out["ldap"] = {"ok": True, "configured": False} if code == "not_configured" else {"ok": False, "error": code}
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
             out["livekit"] = {"ok": (await c.get(s.livekit_http_url + "/")).status_code == 200}

@@ -279,6 +279,8 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .login-foot a, .app-foot button { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
 .login-foot a:hover, .app-foot button:hover { color: var(--text); }
 .app-foot { text-align: left; padding: 0; margin-top: 8px; border-top: 1px solid var(--line); }
+.app-foot-in > span { display: inline-flex; flex-wrap: wrap; align-items: baseline; row-gap: 4px; }   /* перенос — между ссылками, а не внутри «Приложение для … X.Y.Z» */
+.app-foot-in a, .app-foot-in button { white-space: nowrap; }
 .app-foot-in { max-width: 1900px; margin-inline: auto; padding: 12px 20px calc(12px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; }
 @media (min-width: 1025px) { .app-foot-in { max-width: 1480px; } }
 @media (max-width: 700px) { .app-foot-in { padding-inline: 12px; } }

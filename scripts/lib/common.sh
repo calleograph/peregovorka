@@ -44,8 +44,27 @@ load_env() {
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
     if [[ "$val" == \"*\" && "$val" == *\" && ${#val} -ge 2 ]]; then val="${val:1:${#val}-2}"
     elif [[ "$val" == \'*\' && "$val" == *\' && ${#val} -ge 2 ]]; then val="${val:1:${#val}-2}"; fi
-    if [ -z "${!key+x}" ]; then export "$key=$val"; fi
+    if [ -z "${!key+x}" ]; then
+      export "$key=$val"
+      if [ "$key" = IMAGE_TAG ]; then IMAGE_TAG_FROM_FILE="$val"; fi
+    fi
   done < "$file"
+}
+
+# Тег образов приложения для запуска без сборки (ctl.sh start, restore.sh, sip.sh, video.sh). install/update/rebuild/rollback задают IMAGE_TAG сами,
+# а в .env обычно остаётся значение из образца (dev): docker compose up искал бы несуществующий образ «<проект>-backend:dev» (найдено на установке
+# 2026-10-29: restore.sh останавливал сервисы и не мог запустить их снова). Если тег пришёл из .env и вызывающий его не менял — берётся тег образа,
+# с которым создан контейнер backend этого проекта; нет контейнера — образ по commit кода; иначе значение .env остаётся.
+resolve_image_tag() {
+  [ -n "${IMAGE_TAG_FROM_FILE+x}" ] && [ "${IMAGE_TAG:-}" = "$IMAGE_TAG_FROM_FILE" ] || return 0
+  unset IMAGE_TAG_FROM_FILE
+  local id img c
+  id="$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --filter "label=com.docker.compose.service=backend" 2>/dev/null | head -1)"
+  [ -n "$id" ] && img="$(docker inspect -f '{{.Config.Image}}' "$id" 2>/dev/null)"
+  if [ -n "${img:-}" ] && [ "${img##*:}" != "$img" ] && docker image inspect "$img" >/dev/null 2>&1; then export IMAGE_TAG="${img##*:}"; return 0; fi
+  c="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  if [ -n "$c" ] && docker image inspect "${COMPOSE_PROJECT_NAME}-backend:$c" >/dev/null 2>&1; then export IMAGE_TAG="$c"; fi
+  return 0
 }
 
 # «Стерильное» окружение для жизненного цикла (install/update/updater/rebuild/ctl): параметры проекта берутся ТОЛЬКО из .env.
@@ -98,6 +117,7 @@ validate_project_name() {
 
 # Массив аргументов compose для текущего экземпляра.
 compose_args() {
+  resolve_image_tag
   COMPOSE_ARGS=(compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$REPO_ROOT/deployment"
                 --env-file "$ENV_FILE" -f "$COMPOSE_FILE_MAIN")
   if [ "${ASR_DEVICE:-cpu}" = "cuda" ]; then COMPOSE_ARGS+=(-f "$COMPOSE_FILE_GPU"); fi

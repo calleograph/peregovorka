@@ -4,6 +4,7 @@ import { Modal } from "./Dialogs";
 import HelpDialog from "./HelpDialog";
 import { useSite } from "../site";
 import { desktop } from "../desktop";
+import { ANDROID_RELEASE_URL, ANDROID_VERSION } from "../androidDist";
 import { DESKTOP_SETUP_URL, DESKTOP_VERSION } from "../desktopDist";
 import { PROJECT_URL } from "../projectUrl";
 
@@ -67,7 +68,7 @@ export function AppFooter({ info }: { info: BuildInfo | null }) {
             {site.footer_text && <><span className="sep" aria-hidden>·</span><span>{site.footer_text}</span></>}
             {site.org.url && <><span className="sep" aria-hidden>·</span><a href={site.org.url} target="_blank" rel="noopener noreferrer">{site.org.url.replace(/^https?:\/\//, "")}</a></>}
           </span>
-          <span><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Peregovorka (open source)</a>{!desktop && <><span className="sep" aria-hidden>·</span><a href={DESKTOP_SETUP_URL} rel="noopener noreferrer" title={`Скачать установщик Peregovorka для Windows ${DESKTOP_VERSION}`}>Приложение для Windows {DESKTOP_VERSION}</a></>}<span className="sep" aria-hidden>·</span><a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer">Что нового</a></span>
+          <span><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Peregovorka (open source)</a>{!desktop && <><span className="sep" aria-hidden>·</span><a href={DESKTOP_SETUP_URL} rel="noopener noreferrer" title={`Скачать установщик Peregovorka для Windows ${DESKTOP_VERSION}`}>Приложение для Windows {DESKTOP_VERSION}</a></>}<span className="sep" aria-hidden>·</span><a href={ANDROID_RELEASE_URL} target="_blank" rel="noopener noreferrer" title={`Страница выпуска Peregovorka для Android ${ANDROID_VERSION}: файл APK и контрольные суммы`}>Приложение для Android {ANDROID_VERSION}</a><span className="sep" aria-hidden>·</span><a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer">Что нового</a></span>
         </div>
       </footer>
       {open && <AboutDialog info={info} onClose={() => setOpen(false)} />}

@@ -37,3 +37,6 @@ metrics-*.csv
 # живой smoke-test: данные и снимки стенда
 tests/live/data/
 tests/live/out/
+
+# материалы для публикации приложений (снимки, видео): только локально, в Git не попадают
+/publication-assets/

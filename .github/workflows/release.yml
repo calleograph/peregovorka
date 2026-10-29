@@ -35,6 +35,11 @@ jobs:
         run: |
           test "${GITHUB_REF_NAME}" = "v$(tr -d '[:space:]' < VERSION)"
           ./scripts/release.sh check
+      - name: Ссылки загрузки клиентов в подвале сайта ведут на опубликованные файлы
+        # подвал ссылается на выпуски desktop-v* и android-v* из frontend/src/*Dist.ts: без них ссылка выглядела бы рабочей, а вела в пустоту
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_download_links.py --repo "$GITHUB_REPOSITORY"
       - name: Описание релиза из CHANGELOG
         run: ./scripts/release.sh notes > release-notes.md && test -s release-notes.md
       - name: Создать или обновить релиз

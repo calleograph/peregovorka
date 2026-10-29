@@ -84,3 +84,33 @@ async def test_concurrent_dictations_are_limited():
     assert res[0][1][0][1]["type"] == "error" and res[0][1][0][1]["code"] == "busy"
     assert list(dm.active) == ["a1"]
     await dm.stop_all()
+
+
+async def test_control_command_after_read_failure_is_not_lost_and_old_commands_are_skipped():
+    """Сбой чтения Redis (TimeoutError) и пауза после него не теряют команду, пришедшую в эту паузу; команды до запуска не повторяются."""
+    r = fakeredis.FakeAsyncRedis(decode_responses=True)
+    await r.xadd(CONTROL, control_message("old01", 60))           # до запуска — не выполнять
+    real, calls = r.xread, {"n": 0}
+
+    async def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await r.xadd(CONTROL, control_message("s2new", 60))   # команда пришла, пока чтение падало
+            raise TimeoutError("network:TimeoutError")
+        return await real(*a, **kw)
+
+    r.xread = flaky
+    queue = InferenceQueue(FakeProvider(), max_concurrent=1, queue_size=16, language="ru")
+    queue.start()
+    dm = DictationManager(r, queue, EnergyVad, CFG, queue_size=16)
+    task = asyncio.create_task(dm.run())
+    try:
+        for _ in range(60):
+            if "s2new" in dm.active:
+                break
+            await asyncio.sleep(0.05)
+        assert "s2new" in dm.active, "команда, пришедшая во время сбоя чтения, потеряна"
+        assert "old01" not in dm.active, "команда до запуска не должна выполняться"
+    finally:
+        task.cancel()
+        await queue.stop()

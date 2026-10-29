@@ -6,7 +6,9 @@
 # --with-env         добавить копию .env (СОДЕРЖИТ СЕКРЕТЫ, включая APP_MASTER_KEY;
 #                    храните архив с ограниченными правами) — без APP_MASTER_KEY
 #                    зашифрованные настройки после восстановления нечитаемы.
-# --with-recordings  добавить tar каталога записей и экспортов.
+# --with-recordings  добавить tar файлов встреч из DATA_ROOT: записи, выгрузки, вложения чата, аватарки, оформление, сертификаты CA
+#                    (файлы во внешнем SMB-хранилище сюда не входят — их копирует владелец хранилища).
+# Дамп проверяется чтением (pg_restore --list); рядом пишется контрольная сумма <файл>.sha256 (копируется и в BACKUP_COPY_DIR).
 # --keep N           оставить N последних дампов этого проекта (по умолчанию 14).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -38,11 +40,18 @@ if ! dc exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$O
 fi
 [ -s "$OUT.part" ] || { rm -f "$OUT.part"; die "Дамп пустой"; }
 mv "$OUT.part" "$OUT"
-ok "Дамп БД: $OUT ($(du -h "$OUT" | cut -f1))"
+# проверка читаемости: pg_restore читает оглавление всего архива; повреждённый или обрезанный дамп здесь не пройдёт
+if ! dc exec -T postgres pg_restore --list < "$OUT" > /dev/null 2>&1; then
+  mv -f "$OUT" "$OUT.bad"; die "Дамп не читается pg_restore — копия повреждена и отложена как $OUT.bad (места на диске достаточно? см. журнал postgres)"
+fi
+( cd "$DEST" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256" ) 2>/dev/null || warn "Контрольная сумма не записана (нет sha256sum)"
+ok "Дамп БД: $OUT ($(du -h "$OUT" | cut -f1)), проверен pg_restore --list"
 
 # Необязательная копия на другой локальный путь (обычно — примонтированный сетевой ресурс). Сбой копирования не отменяет резервную копию.
 if [ -n "${BACKUP_COPY_DIR:-}" ]; then
-  if mkdir -p "$BACKUP_COPY_DIR" 2>/dev/null && cp -f "$OUT" "$BACKUP_COPY_DIR/" 2>/dev/null; then ok "Копия дампа: $BACKUP_COPY_DIR/$(basename "$OUT")"
+  if mkdir -p "$BACKUP_COPY_DIR" 2>/dev/null && cp -f "$OUT" "$BACKUP_COPY_DIR/" 2>/dev/null; then
+    [ -f "$OUT.sha256" ] && cp -f "$OUT.sha256" "$BACKUP_COPY_DIR/" 2>/dev/null
+    ok "Копия дампа: $BACKUP_COPY_DIR/$(basename "$OUT")"
   else warn "Не удалось скопировать дамп в BACKUP_COPY_DIR=$BACKUP_COPY_DIR (смонтирован ли ресурс? права?). Локальная копия сохранена: $OUT"; fi
 fi
 
@@ -51,11 +60,14 @@ if [ "$WITH_ENV" -eq 1 ]; then
   warn "Копия .env содержит секреты: $DEST/${COMPOSE_PROJECT_NAME}-env-${TS}${LABEL}.env"
 fi
 if [ "$WITH_REC" -eq 1 ]; then
-  tar -C "$DATA_ROOT" -czf "$DEST/${COMPOSE_PROJECT_NAME}-files-${TS}${LABEL}.tar.gz" recordings exports
-  ok "Файлы: $DEST/${COMPOSE_PROJECT_NAME}-files-${TS}${LABEL}.tar.gz"
+  FILES=(); for d in recordings exports chat-files avatars branding ca; do [ -d "$DATA_ROOT/$d" ] && FILES+=("$d"); done
+  if [ "${#FILES[@]}" -gt 0 ]; then
+    tar -C "$DATA_ROOT" -czf "$DEST/${COMPOSE_PROJECT_NAME}-files-${TS}${LABEL}.tar.gz" "${FILES[@]}"
+    ok "Файлы (${FILES[*]}): $DEST/${COMPOSE_PROJECT_NAME}-files-${TS}${LABEL}.tar.gz"
+  else warn "В $DATA_ROOT нет каталогов файлов встреч — архив файлов не создан"; fi
 fi
 
 # Ротация: только файлы ЭТОГО проекта по шаблону имени.
 mapfile -t OLD < <(ls -1t "$DEST"/"${COMPOSE_PROJECT_NAME}"-db-*.dump 2>/dev/null | tail -n +$((KEEP+1)))
-for f in "${OLD[@]:-}"; do [ -n "$f" ] && { rm -f -- "$f"; info "удалён старый дамп: $f"; }; done
+for f in "${OLD[@]:-}"; do [ -n "$f" ] && { rm -f -- "$f" "$f.sha256"; info "удалён старый дамп: $f"; }; done
 ok "Резервное копирование завершено."

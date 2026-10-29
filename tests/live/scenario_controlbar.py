@@ -101,14 +101,25 @@ async def main():
         await R.shot("bar-admin-narrow")
         await R.send("Emulation.setDeviceMetricsOverride", width=1366, height=768, deviceScaleFactor=1, mobile=False)
 
-        # подвал страницы переговорок
+        # подвал страницы переговорок: название и версия слева; справа проект и ссылки на приложения для Windows и Android
         await A.goto("/", 2.5)
-        foot = await A.js("""(()=>{const f=document.querySelector('.app-foot');if(!f)return null;const x=f.getBoundingClientRect();const m=document.querySelector('main').getBoundingClientRect();
-          const first=f.querySelector('.app-foot-in > span').getBoundingClientRect();const last=f.querySelector('.app-foot-in > a').getBoundingClientRect();
-          return {text:f.innerText,firstLeft:Math.round(first.left),mainLeft:Math.round(m.left),lastRight:Math.round(last.right),w:window.innerWidth,bottomGap:Math.round(window.innerHeight-x.bottom)}})()""")
-        S.check("подвал: слева название, версия и ссылка на проект", bool(foot) and "Peregovorka" in foot["text"] and "Проект на GitHub" in foot["text"] and foot["firstLeft"] <= foot["mainLeft"] + 24, str(foot))
-        S.check("подвал: ссылка «Что нового» справа, подпись проекта не прижата к правому краю", foot["lastRight"] > foot["firstLeft"] + 300, str(foot))
+        FOOT = """(()=>{const f=document.querySelector('.app-foot');if(!f)return null;const sp=f.querySelectorAll('.app-foot-in > span');const m=document.querySelector('main').getBoundingClientRect();
+          const a=[...f.querySelectorAll('a')].map(x=>({t:x.textContent.trim(),h:x.getAttribute('href')}));
+          return {text:f.innerText,firstLeft:Math.round(sp[0].getBoundingClientRect().left),mainLeft:Math.round(m.left),lastRight:Math.round(sp[sp.length-1].getBoundingClientRect().right),links:a,
+                  scroll:document.documentElement.scrollWidth>window.innerWidth+1}})()"""
+        foot = await A.js(FOOT)
+        S.check("подвал: слева название и версия, справа «Peregovorka (open source)» и «Что нового»", bool(foot) and "Peregovorka (open source)" in foot["text"] and "Что нового" in foot["text"] and foot["firstLeft"] <= foot["mainLeft"] + 24, str(foot)[:300])
+        win = [x for x in (foot or {}).get("links", []) if x["t"].startswith("Приложение для Windows")]
+        andr = [x for x in (foot or {}).get("links", []) if x["t"].startswith("Приложение для Android")]
+        S.check("подвал: ссылка на установщик Windows с версией (файл .exe выпуска desktop-v…)", len(win) == 1 and "/releases/download/desktop-v" in win[0]["h"] and win[0]["h"].endswith(".exe"), str(win))
+        S.check("подвал: рядом ссылка на приложение для Android — страница выпуска android-v… с версией", len(andr) == 1 and "/releases/tag/android-v" in andr[0]["h"] and andr[0]["t"].split()[-1] in andr[0]["h"], str(andr))
         await A.shot("rooms-footer")
+        await A.send("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=2, mobile=True); await asyncio.sleep(1.2)
+        await A.js("window.scrollTo(0, document.body.scrollHeight)"); await asyncio.sleep(0.5)
+        fm = await A.js(FOOT)
+        S.check("подвал на 390 px: обе ссылки на месте, горизонтальной прокрутки нет", bool(fm) and not fm["scroll"] and sum(x["t"].startswith("Приложение для") for x in fm["links"]) == 2, str(fm)[:200] if fm else "нет подвала")
+        await A.shot("rooms-footer-390")
+        await A.send("Emulation.setDeviceMetricsOverride", width=1366, height=768, deviceScaleFactor=1, mobile=False)
         print("ошибки консоли:", (await A.state())["errs"][:2], (await R.state())["errs"][:2])
     finally:
         await A.close(); await R.close()

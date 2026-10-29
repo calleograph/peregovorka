@@ -30,6 +30,30 @@ done
 for kept in 'LIVEKIT_TOKEN_TTL_SECONDS=300' 'LIVEKIT_NODE_IP=10.0.0.5' 'sdk=js' 'ROOM_PASSWORD_MAX_FAILURES=5' 'http://backend:8000/hook' '"user": "bob"'; do
   t "маска не трогает «$kept»" bash -c 'printf "%s" "$1" | grep -qF -- "$2"' _ "$M" "$kept"
 done
+# настоящий вид `docker compose config` 0.49.x: имя ключа LiveKit в блоке keys, пароль Redis отдельным элементом команды и в REDISCLI_AUTH
+M2="$(cat <<'CFG' | mask_stream
+        keys:
+          lkA1b2C3d4e5f6: sec_ret_value_1234567890
+        webhook:
+          api_key: lkA1b2C3d4e5f6
+    command:
+      - redis-server
+      - --requirepass
+      - Redis_Pw_Abcdefgh12345
+      - --appendonly
+      - "yes"
+    environment:
+      REDISCLI_AUTH: Redis_Pw_Abcdefgh12345
+    healthcheck:
+      test: redis-cli --pass Redis_Pw_Abcdefgh12345 ping
+CFG
+)"
+for leaked in 'lkA1b2C3d4e5f6' 'sec_ret_value' 'Redis_Pw_Abcdefgh12345'; do
+  t "маска compose config скрывает «$leaked» (иначе diag.sh отказывается создавать пакет)" bash -c '! printf "%s" "$1" | grep -qF -- "$2"' _ "$M2" "$leaked"
+done
+for kept in '- --appendonly' '- "yes"' '- redis-server' 'webhook:'; do
+  t "маска compose config не трогает «$kept»" bash -c 'printf "%s" "$1" | grep -qF -- "$2"' _ "$M2" "$kept"
+done
 printf 'A_PASSWORD=hunter22\nLIVEKIT_API_KEY=abcdef12\nX_PORT=8000\nSHORT_TOKEN=abc\nLIVEKIT_TOKEN_TTL_SECONDS=300\n' > "$TMP/sec.env"
 t "env_secret_values: только секреты длиннее 5 символов" eq "$(env_secret_values "$TMP/sec.env" | sort | tr '\n' ' ')" "abcdef12 hunter22 "
 

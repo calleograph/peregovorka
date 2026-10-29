@@ -8,7 +8,7 @@
 ## 1. Общая доска (draw.io)
 
 **Редактор** — [draw.io](https://github.com/jgraph/drawio) (jgraph/drawio, Apache-2.0), версия закреплена тегом (`ARG DRAWIO_VERSION` в `frontend/Dockerfile`,
-сейчас `v32.3.0`). При сборке образа `web` он клонируется с GitHub (с повторами при сбоях сети), `frontend/drawio/prune.sh` оставляет только нужное редактору
+сейчас `v32.5.5`, закреплено в `frontend/Dockerfile`). При сборке образа `web` он клонируется с GitHub (с повторами при сбоях сети), `frontend/drawio/prune.sh` оставляет только нужное редактору
 (≈ 49 МБ вместо 111 МБ: без облачных интеграций, шаблонов, MathJax, service worker, серверных частей; интерфейс — английский и русский) и кладёт в
 `/usr/share/nginx/html/drawio/`. Файл `LICENSE` лицензии Apache-2.0 сохраняется рядом. Во время работы редактор **ничего не запрашивает в интернете**
 (`offline=1`, `connect-src 'self'`).
@@ -98,5 +98,5 @@ nginx); проверка оборудования на подставных ус
 ## Разработка
 
 `npm run dev` проксирует `/api` на backend (`DEV_BACKEND_URL`), а `/drawio` — на любой статический сервер с каталогом draw.io (`DEV_DRAWIO_URL`, по умолчанию `http://127.0.0.1:8771`).
-Каталог получается так: `git clone --depth 1 --branch v32.3.0 https://github.com/jgraph/drawio.git d && sh frontend/drawio/prune.sh d out`, затем отдать `out` как `/drawio/`
+Каталог получается так: `git clone --depth 1 --branch v32.5.5 https://github.com/jgraph/drawio.git d && sh frontend/drawio/prune.sh d out`, затем отдать `out` как `/drawio/`
 (для проверки заголовков — с тем же CSP, что в `frontend/nginx.conf`). Тесты синхронизации доски (`src/board/whiteboardSync.test.ts`) идут без браузера: сервер и редактор в них подставные.

@@ -20,6 +20,7 @@ mkbk() { # окружение для backup.sh с подставным docker; $
 case "$*" in
   *"ps -q postgres"*) echo abc123 ;;
   *pg_dump*) echo "PGDMP-подставной-дамп" ;;
+  *"pg_restore --list"*) [ -n "${FAKE_BAD_DUMP:-}" ] && exit 1; cat >/dev/null ;;
 esac
 exit 0
 FAKE
@@ -34,6 +35,12 @@ t "backup.sh с UNC-путём в BACKUP_DIR отказывает и НИЧЕГ�
 mkbk "$TMP/bk/data/backups"
 OUTB="$(runbk)"; RCB=$?
 t "backup.sh с нормальным путём: дамп создан" bash -c '[ "$1" -eq 0 ] && ls "$2"/data/backups/pg-bk-db-*.dump >/dev/null' _ "$RCB" "$TMP/bk"
+t "backup.sh: рядом с дампом контрольная сумма, она сходится" bash -c 'cd "$1"/data/backups && f=$(ls pg-bk-db-*.dump | head -1) && [ -f "$f.sha256" ] && sha256sum -c "$f.sha256" >/dev/null' _ "$TMP/bk"
+mkdir -p "$TMP/bk/data/recordings" "$TMP/bk/data/chat-files" "$TMP/bk/data/avatars"; echo r > "$TMP/bk/data/recordings/a.ogg"; echo c > "$TMP/bk/data/chat-files/b.pdf"
+OUTB="$( cd "$TMP/bk/cwd" && env PATH="$TMP/bk/bin:$PATH" bash "$ROOT/scripts/backup.sh" --env "$TMP/bk/env" --with-recordings 2>&1 )"; RCB=$?
+t "backup.sh --with-recordings: в архиве записи и вложения чата, отсутствующие каталоги не мешают" bash -c '[ "$1" -eq 0 ] && a=$(ls "$2"/data/backups/pg-bk-files-*.tar.gz | head -1) && tar -tzf "$a" | grep -q "^recordings/a.ogg" && tar -tzf "$a" | grep -q "^chat-files/b.pdf"' _ "$RCB" "$TMP/bk"
+OUTB="$( cd "$TMP/bk/cwd" && env FAKE_BAD_DUMP=1 PATH="$TMP/bk/bin:$PATH" bash "$ROOT/scripts/backup.sh" --env "$TMP/bk/env" 2>&1 )"; RCB=$?
+t "backup.sh: нечитаемый дамп — ошибка, файл отложен как .bad и не считается копией" bash -c '[ "$1" -ne 0 ] && ls "$2"/data/backups/pg-bk-db-*.dump.bad >/dev/null && printf "%s" "$3" | grep -q "повреждена"' _ "$RCB" "$TMP/bk" "$OUTB"
 mkbk "$TMP/bk/data/backups" "BACKUP_COPY_DIR=$TMP/bk/share
 "
 OUTB="$(runbk)"; RCB=$?
@@ -126,3 +133,25 @@ t "TLS: нет связи с этого сервера → WARNING" bash -c 'r="
 t "scripts/rebuild.sh существует, исполняем и использует тот же путь сборки, что update.sh (build_images: BuildKit → legacy, APP_GIT_COMMIT)" bash -c '[ -x "$1/scripts/rebuild.sh" ] && grep -q "build_images" "$1/scripts/rebuild.sh" && grep -q "host_version_info" "$1/scripts/rebuild.sh"' _ "$ROOT"
 t "документация: обычный «docker compose build» не рекомендуется, указан rebuild.sh" bash -c 'grep -q "rebuild.sh" "$1/docs/INSTALL_AND_UPDATE.md" && grep -qi "docker compose build" "$1/docs/INSTALL_AND_UPDATE.md" && grep -q "rebuild.sh" "$1/DEPLOYMENT.md"' _ "$ROOT"
 t "веб-обновление использует update.sh (а не собственную сборку)" bash -c 'grep -q "scripts/update.sh" "$1/scripts/updater.sh" && ! grep -nE "docker compose.*build|dc build|build_images" "$1/scripts/updater.sh" | grep -v "^[0-9]*:[[:space:]]*#"' _ "$ROOT"
+
+t "check_download_links: выпуск и файл проверяются, сбой сети повторяется, недоступность GitHub не выдаётся за «всё хорошо»" python3 -I "$ROOT/tests/scripts/check_download_links_test.py"
+
+# ---- тег образов для запуска без сборки: в .env «dev» из образца, контейнер backend создан из «<проект>-backend:<commit>»
+mkdir -p "$TMP/tag/bin"
+cat > "$TMP/tag/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  *"ps -aq"*"service=backend"*) echo cid123 ;;
+  "inspect -f {{.Config.Image}} cid123") echo "pgt-backend:abc123def456" ;;
+  "image inspect pgt-backend:abc123def456") exit 0 ;;
+  "image inspect "*) exit 1 ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/tag/bin/docker"
+printf 'COMPOSE_PROJECT_NAME=pgt\nIMAGE_TAG=dev\n' > "$TMP/tag/env"
+tagof() { env -i PATH="$TMP/tag/bin:$PATH" HOME="$HOME" ${1:+IMAGE_TAG=$1} bash -c 'source "$1"; ENV_FILE="$2"; load_env "$ENV_FILE"; [ -n "${3:-}" ] && export IMAGE_TAG="$3"; resolve_image_tag; printf %s "$IMAGE_TAG"' _ "$ROOT/scripts/lib/common.sh" "$TMP/tag/env" "${2:-}"; }
+t "тег образов: «dev» из .env заменяется тегом образа работающего контейнера backend" eq "$(tagof)" "abc123def456"
+t "тег образов: явно заданный вызывающим (install/update) не подменяется" eq "$(tagof cafe00000001)" "cafe00000001"
+t "тег образов: изменённый после load_env (update.sh) не подменяется" eq "$(tagof '' beef00000002)" "beef00000002"
+t "load_env с set -e: последняя строка .env не IMAGE_TAG — функция не завершает скрипт" bash -c 'set -e; source "$1"; printf "IMAGE_TAG=dev\nX_LAST=1\n" > "$2"; load_env "$2"; echo ok' _ "$ROOT/scripts/lib/common.sh" "$TMP/tag/env2"

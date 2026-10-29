@@ -62,8 +62,8 @@ def main() -> int:
             errs.append(f"{name}: нет блока «Что дальше»")
         if name == "Home" and f"{version}" not in text:
             warns.append(f"Home: версия сервера {version} не найдена на странице")
-        if re.search(r"```(?:bash|powershell|sh)", text) and "не запуска" not in text and "не запускал" not in text:
-            errs.append(f"{name}: есть команды, но нет пометки «не запускалась» (команды, которые не выполнялись, помечаются)")
+        if re.search(r"```(?:bash|powershell|sh)", text) and "не запуска" not in text and "не запускал" not in text and "✔" not in text:
+            errs.append(f"{name}: есть команды, но нет пометки «не запускалась» или «✔» (выполнено на стенде) — каждая команда помечается")
         # --- безопасность
         for rx in SECRETS:
             if rx.search(text):

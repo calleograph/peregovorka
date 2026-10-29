@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type ClientEventRow, type ClientMetricRow } from "../../api";
+import { api, type ApiError, type ClientEventRow, type ClientMetricRow, type MicByClientRow } from "../../api";
 
 const EVENT_LABEL: Record<string, string> = {
   join_ok: "Вход выполнен", join_failed: "Вход не удался", disconnected: "Отключение от LiveKit", reconnecting: "Переподключение", reconnected: "Соединение восстановлено",
@@ -8,7 +8,30 @@ const EVENT_LABEL: Record<string, string> = {
   screen_share_ended_by_browser: "Показ остановлен кнопкой браузера", screen_track_published: "Трек экрана опубликован", screen_track_unpublished: "Трек экрана снят", screen_track_ended: "Трек экрана завершён",
   device_error: "Ошибка устройства", mic_failed: "Микрофон: ошибка", camera_failed: "Камера: ошибка", publish_failed: "Публикация не удалась", autoplay_blocked: "Звук заблокирован браузером",
   backend_ws_connected: "Канал событий подключён", backend_ws_reconnecting: "Канал событий: переподключение",
+  mic_busy: "Микрофон занят", mic_lost: "Микрофон пропал во время встречи", mic_recovered: "Микрофон вернулся сам", mic_recovery_failed: "Микрофон не вернулся",
+  mic_silent: "Звук с микрофона не поступает", mic_permission_denied: "Микрофон: доступ запрещён", join_without_mic: "Вход без микрофона",
 };
+const MIC_COLS: [string, string][] = [["mic_busy", "занят"], ["mic_failed", "не открылся"], ["mic_lost", "пропал"], ["mic_recovered", "вернулся сам"], ["mic_recovery_failed", "не вернулся"], ["mic_silent", "тишина"]];
+
+/** Сбои микрофона по видам клиентов (Edge, Chrome, приложение для Windows) за 30 дней: сравнение по реальной работе пользователей. */
+function MicByClient() {
+  const [rows, setRows] = useState<MicByClientRow[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { api.admin.micByClient(30).then((d) => setRows(d.rows), (e) => setErr((e as ApiError).message)); }, []);
+  return (
+    <>
+      <h3>Микрофон по клиентам, 30 дней</h3>
+      <p className="muted small">Сколько входов во встречи и сколько сбоев микрофона было у каждого вида клиента — из журнала событий, без ручных проверок. Если при тех же пользователях у приложения для Windows сбоев на 100 входов заметно больше, чем у Edge, разница подтверждена; данные хранятся столько, сколько журнал событий.</p>
+      {err && <div className="alert error">{err}</div>}
+      <div style={{ overflowX: "auto" }}>
+        <table className="table compact"><thead><tr><th>Клиент</th><th>Входов</th><th>Пользователей</th>{MIC_COLS.map(([, l]) => <th key={l}>{l}</th>)}<th>Сбоев на 100 входов</th></tr></thead><tbody>
+          {rows && rows.length === 0 && <tr><td colSpan={MIC_COLS.length + 4} className="muted">За 30 дней входов не было.</td></tr>}
+          {(rows ?? []).map((r) => <tr key={r.client}><td>{r.client}</td><td>{r.joins}</td><td>{r.users}</td>{MIC_COLS.map(([k]) => <td key={k}>{String(r[k] ?? 0)}</td>)}<td>{r.problems_per_100_joins ?? "—"}</td></tr>)}
+        </tbody></table>
+      </div>
+    </>
+  );
+}
 
 const t = (ts: number) => new Date(ts * 1000).toLocaleTimeString("ru-RU");
 const n = (v: unknown, unit = "") => (typeof v === "number" ? `${Math.round(v * 10) / 10}${unit}` : "—");
@@ -28,6 +51,7 @@ export default function ClientDiagAdmin({ meetingId }: { meetingId?: string } = 
       {meetingId && <p className="muted small">{note || "Данные браузеров участников этой встречи."}{events.length + metrics.length + lifecycle.length === 0 ? " Сведений об этой встрече нет: участники ещё не присылали данные, либо они уже удалены по сроку хранения." : ""}</p>}
       <p className="muted">События и замеры качества из браузеров участников (последние 200, хранятся сутки). Содержимого разговоров и секретов здесь нет. Помогает отличить проблемы сети и браузера от проблем сервера: например, причины остановки показа экрана, потери пакетов и FPS.</p>
       {err && <div className="alert error">{err}</div>}
+      {!meetingId && <MicByClient />}
       <h3>События</h3>
       <table className="table compact"><thead><tr><th>Время</th><th>Пользователь</th><th>Событие</th><th>Причина</th><th>Подробности</th></tr></thead><tbody>
         {events.length === 0 && <tr><td colSpan={5} className="muted">Событий пока нет.</td></tr>}

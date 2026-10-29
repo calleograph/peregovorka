@@ -28,7 +28,7 @@ declare -A PREREQ_PKG=(
   [wc]=coreutils [ls]=coreutils [seq]=coreutils [tac]=coreutils [tee]=coreutils [date]=coreutils [sleep]=coreutils [basename]=coreutils [dirname]=coreutils [readlink]=coreutils
   [base64]=coreutils [sha256sum]=coreutils [nproc]=coreutils [id]=coreutils [uname]=coreutils [env]=coreutils [timeout]=coreutils [install]=coreutils [od]=coreutils [readlink]=coreutils
   # система
-  [flock]=util-linux [findmnt]=util-linux [mountpoint]=util-linux
+  [flock]=util-linux [findmnt]=util-linux [mountpoint]=util-linux [swapon]=util-linux [dmesg]=util-linux [getent]=libc-bin
   [free]=procps [ps]=procps [pgrep]=procps [sysctl]=procps
   [dpkg]=dpkg [hostname]=hostname [python3]=python3
   # приложения

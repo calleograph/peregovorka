@@ -96,10 +96,14 @@ class DictationManager:
         return self._seg_cfg() if callable(self._seg_cfg) else self._seg_cfg
 
     async def run(self) -> None:
-        last = "$"                                                   # старые команды не повторяем: прерванные перезапуском диктовки backend завершит по таймауту
+        # старые команды не повторяем (прерванные перезапуском диктовки backend завершит по таймауту), но позицию запоминаем явно, а не «$» в каждом
+        # чтении: иначе команда, пришедшая между двумя чтениями (или в паузу после сбоя), терялась. Как в manager.py.
+        tail = await self._r.xrevrange(CONTROL, count=1)
+        last = tail[0][0] if tail else "0-0"
         while True:
             try:
-                res = await self._r.xread({CONTROL: last}, block=5000, count=20)
+                # 3 с, а не 5: redis-py 8 обрывает блокирующее чтение по своему 5-секундному пределу (TimeoutError в журнале каждые 6 с)
+                res = await self._r.xread({CONTROL: last}, block=3000, count=20)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001

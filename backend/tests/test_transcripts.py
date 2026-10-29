@@ -254,3 +254,21 @@ def test_version_endpoint_exposes_build_metadata(tmp_path, directory):
     s = make_settings(tmp_path, app_version="0.1.0", app_git_commit="1d620bd", app_built_at="2026-10-06T10:00:00Z")
     with running_app(s, directory) as c:
         assert c.get("/api/v1/version").json() == {"version": "0.1.0", "commit": "1d620bd", "built_at": "2026-10-06T10:00:00Z"}
+
+
+def test_internal_diag_ldap_not_configured_is_not_a_failure(client, monkeypatch):
+    """Установка без LDAP (вход локальным администратором): smoke-test и diag.sh не должны считать это сбоем каталога."""
+    from app.auth.directory import DirectoryError
+
+    def raise_(code):
+        def f():
+            raise DirectoryError(code, "тест")
+        return f
+
+    d = client.app.state.directory
+    monkeypatch.setattr(d, "check_service_account", raise_("not_configured"))
+    body = client.get("/internal/v1/diag", headers={"Authorization": "Bearer internal-test-token"}).json()
+    assert body["ldap"] == {"ok": True, "configured": False}
+    monkeypatch.setattr(d, "check_service_account", raise_("tls_error"))
+    body = client.get("/internal/v1/diag", headers={"Authorization": "Bearer internal-test-token"}).json()
+    assert body["ldap"] == {"ok": False, "error": "tls_error"}
