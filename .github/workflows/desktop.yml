@@ -443,7 +443,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: { name: peregovorka-windows, path: out }
       - name: Выпуск GitHub (не «последний» — последним остаётся выпуск сервера)
         env:
