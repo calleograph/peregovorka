@@ -93,8 +93,11 @@ comp_apply() {
 
 # ---- состояние для веб-интерфейса: components.json
 _cjesc() { printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-_comp_container() { # → "состояние|health|перезапусков" или "absent"
-  local cid; cid="$(dc ps -aq "$1" 2>/dev/null | head -1)"
+# Контейнеры проекта — ОДНИМ вызовом docker ps по метке compose-проекта (проверка идёт при каждом опросе помощника и не должна его задерживать)
+_COMP_PS=""
+_comp_ps() { _COMP_PS="$(timeout 8 docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-}" --format '{{.Label "com.docker.compose.service"}} {{.ID}}' 2>/dev/null)"; }
+_comp_container() { # → "состояние|health|перезапусков|время запуска" или "absent"
+  local cid; cid="$(awk -v s="$1" '$1 == s {print $2; exit}' <<<"$_COMP_PS")"
   [ -n "$cid" ] || { echo absent; return; }
   docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}|{{.State.StartedAt}}' "$cid" 2>/dev/null || echo absent
 }
@@ -114,6 +117,7 @@ comp_state_json() {
   printf '{"ts":%s,"docker":%s,"free_gb":%s,"env":{"video_enabled":%s,"sip_enabled":%s,"livekit_redis":%s},' "$(date +%s)" "$docker_ok" "${free:-null}" \
     "$(video_enabled && echo true || echo false)" "$(sip_enabled && echo true || echo false)" "$([ -n "${LIVEKIT_REDIS_LINE:-}" ] && echo true || echo false)"
   if [ "$docker_ok" = true ]; then
+    _comp_ps
     printf '"images":{"egress":%s,"sip":%s},"containers":{"livekit":%s,"livekit-egress":%s,"livekit-sip":%s,"web":%s,"backend":%s}}\n' \
       "$(_comp_img "$(video_image)")" "$(_comp_img "$(sip_image)")" "$(_comp_obj livekit)" "$(_comp_obj livekit-egress)" "$(_comp_obj livekit-sip)" "$(_comp_obj web)" "$(_comp_obj backend)"
   else

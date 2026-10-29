@@ -5,7 +5,7 @@ const HOVER = typeof window !== "undefined" && typeof window.matchMedia === "fun
 /**
  * Значок ⓘ рядом с коротким названием параметра: подробное пояснение — во всплывающей подсказке, а не постоянным текстом на странице.
  * Компьютер — по наведению и по нажатию; телефон — по нажатию (наведения там нет). Закрывается повторным нажатием, Esc, нажатием вне подсказки.
- * Внутри `<label>` кнопка не переключает поле: нажатие на интерактивный элемент метки не передаётся связанному полю, а событие ещё и гасится.
+ * Внутри `<label>` значок не переключает поле (событие гасится) и не отнимает у поля подпись: это не <button>, а элемент с ролью кнопки.
  * `doc` — ссылка «Подробнее» на статью вики.
  */
 export default function InfoTip({ children, doc, label = "Пояснение" }: { children: ReactNode; doc?: string; label?: string }) {
@@ -23,12 +23,15 @@ export default function InfoTip({ children, doc, label = "Пояснение" }:
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc, true); };
   }, [open]);
   useEffect(() => () => window.clearTimeout(leave.current), []);
+  const toggle = () => { const next = !(open && pinned); setPinned(next); setOpen(next); };
   return (
     <span className="infotip" ref={box}
           onMouseEnter={HOVER ? () => { window.clearTimeout(leave.current); setOpen(true); } : undefined}
           onMouseLeave={HOVER ? () => { if (!pinned) leave.current = window.setTimeout(() => setOpen(false), 150); } : undefined}>
-      <button type="button" className="infotip-btn" aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); const next = !(open && pinned); setPinned(next); setOpen(next); }}>ⓘ</button>
+      {/* не <button>: внутри <label> кнопка стала бы связанным с меткой элементом и поле ввода потеряло бы подпись */}
+      <span role="button" tabIndex={0} className="infotip-btn" aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggle(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(); } }}>ⓘ</span>
       {open && (
         <span className="infotip-pop" role="tooltip" id={id}>
           {children}
