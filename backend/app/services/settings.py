@@ -826,7 +826,27 @@ class LiveSettings(_Group):
     allow_youtube: bool = True
     allow_twitch: bool = True
     allow_custom: bool = True
+    max_cpu_load: int = Field(default=85, ge=10, le=100)          # нагрузка Egress (по его health-порту), при которой новые эфиры не начинаются: обычные конференции важнее
+    egress_health_url: str = Field(default="http://livekit-egress:8082/", max_length=300)     # адрес health-порта Egress внутри сети проекта (нагрузка процессора); пусто — не проверять
+    cdn_enabled: bool = False                                     # раздавать HLS через CDN: плеер берёт поток прямо с CDN, а не с этого сервера
+    cdn_base_url: str = Field(default="", max_length=300)         # публичный адрес доставки CDN, https://cdn.example.org (CDN забирает файлы с этого сервера по тем же путям /hls/…)
     direct_viewers_warn: int = Field(default=150, ge=10, le=100_000)   # при таком числе зрителей с основного сервера администратор видит предупреждение: для больших аудиторий нужна CDN
+
+    @field_validator("cdn_base_url")
+    @classmethod
+    def _cdn_base(cls, v: str) -> str:
+        v = (v or "").strip().rstrip("/")
+        if v and not re.match(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$", v):
+            raise ValueError("Адрес CDN: https://домен (без пути, параметров и пробелов)")
+        return v
+
+    @field_validator("egress_health_url")
+    @classmethod
+    def _health(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.match(r"^https?://[A-Za-z0-9.-]+(:\d{1,5})?(/\S*)?$", v):
+            raise ValueError("Адрес health-порта Egress: http://хост:порт/")
+        return v
 
 
 class NetTrustSettings(_Group):

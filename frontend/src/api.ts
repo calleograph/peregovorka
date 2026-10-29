@@ -55,6 +55,7 @@ export interface Room {
 export interface LiveAdminStatus {
   enabled: boolean; service_installed: boolean; livekit_ok: boolean; livekit_error: string | null; running: number; max_concurrent: number; viewers: number;
   active: { room: string; status: string; since: string; quality: string; viewers: number; hls: boolean; hls_ready: boolean; by: string | null }[];
+  egress_cpu_load: number | null; max_cpu_load: number; destinations: Record<string, number>; recordings_running: number; cdn: { enabled: boolean; base_url: string };
   hls_bytes: number; free_bytes: number | null; secret_ok: boolean; failed: { room: string; error: string | null; at: string }[]; warnings: string[]; now: string;
 }
 /** Трансляции. Состояние эфира комнаты: видно всем участникам; ссылки и площадки получают только те, кто может управлять. */
@@ -66,11 +67,12 @@ export interface LiveState {
 export interface LiveRoomSettings {
   enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
+  cdn: boolean; cdn_available: boolean;
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
   destinations: LiveDestination[]; platforms: { id: string; name: string }[]; max_destinations: number; allow_private_destinations: boolean;
 }
 export interface LivePatchBody {
-  live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
+  live_cdn?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
   live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
 }
 export interface LiveViewerInfo {
@@ -82,7 +84,7 @@ export interface LiveDestination {
   id: string; platform: "rutube" | "vk" | "youtube" | "twitch" | "custom"; platform_name: string; name: string; server_url: string; channel: string | null; watch_url: string | null;
   enabled: boolean; has_key: boolean; status: LiveDestStatus; last_ok_at: string | null; last_error: string | null;
 }
-export interface LiveAccess { path: string; expires_at: number; refresh_in: number; vid: string; pass?: string }
+export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
@@ -950,6 +952,7 @@ export const api = {
   },
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
+  adminLiveCdnCheck: () => request<{ ok: boolean; message: string; ms?: number }>("POST", "/admin/live/cdn/check"),
   adminLiveStatus: () => request<LiveAdminStatus>("GET", "/admin/live/status"),
   adminVideoStatus: () => request<VideoStatus>("GET", "/admin/video/status"),
   videoState: (meetingId: string) => request<VideoState>("GET", `/meetings/${meetingId}/video-recording`),

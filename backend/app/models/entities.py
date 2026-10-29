@@ -150,6 +150,7 @@ class Room(Base):
     live_view_access: Mapped[str | None] = mapped_column(String(40), unique=True)    # идентификатор доступа к HLS для страницы зрителя (имя ссылки в /live/acc); смена — мгновенный отзыв
     live_stream_access: Mapped[str | None] = mapped_column(String(40), unique=True)  # то же для ссылки на поток (отдельно, отзывается независимо)
     live_password_hash: Mapped[str | None] = mapped_column(String(255))         # пароль зрителя (argon2id); не совпадает с паролем выступающего (rooms.password_hash)
+    live_cdn: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)       # раздавать этот эфир через CDN (если администратор включил CDN)
     live_password_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)

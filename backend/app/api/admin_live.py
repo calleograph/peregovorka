@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, get_db, require_admin
-from ..models import Broadcast, Room
+from ..models import Broadcast, LiveDestination, Recording, Room
 from ..services.live import LIVE_ACTIVE
 
 router = APIRouter(prefix="/admin/live", tags=["admin"])
@@ -57,6 +57,10 @@ async def live_status(request: Request, su: SessionUser = Depends(require_admin)
         active.append({"room": name, "status": b.status, "since": b.started_at, "quality": b.quality, "viewers": v, "hls": bool(b.hls_dir), "hls_ready": live.hls_ready(b), "by": b.started_by})
     failed = (await db.execute(select(Broadcast, Room.name).join(Room, Room.id == Broadcast.room_id).where(Broadcast.status == "failed").order_by(Broadcast.started_at.desc()).limit(5))).all()
     secret_ok = (base / "nginx" / "secret.conf").is_file()
+    load = await st.video.api.cpu_load(cfg.egress_health_url) if cfg.egress_health_url else None
+    dest_rows = (await db.execute(select(LiveDestination.status, func.count()).group_by(LiveDestination.status))).all()
+    dests = {k: int(v) for k, v in dest_rows}
+    rec_rows = (await db.execute(select(Recording.room_id, Recording.status).where(Recording.kind == "mix_video", Recording.status.in_(("processing", "finishing"))))).all()
     installed = str(st.settings.video_enabled).strip().lower() in ("yes", "true", "1", "on")
     hls_bytes = _dir_size(base / "b") if (base / "b").is_dir() else 0
     warnings = [w for w in (
@@ -64,8 +68,43 @@ async def live_status(request: Request, su: SessionUser = Depends(require_admin)
         "Нет связи с сервером звонков: трансляции недоступны." if not livekit_ok else None,
         f"Свободного места на томе трансляций меньше {cfg.min_free_gb} ГБ: новые эфиры не начнутся." if free is not None and free < cfg.min_free_gb * 1024**3 else None,
         "Секрет подписи HLS не записан на том трансляций (нет файла nginx/secret.conf): зрители не смогут открыть поток. Проверьте права каталога данных и перезапустите web." if cfg.enabled and not secret_ok else None,
+        f"Нагрузка Egress {load}% — не меньше предела {cfg.max_cpu_load}%: новые эфиры не начнутся." if load is not None and load >= cfg.max_cpu_load else None,
+        "Health-порт Egress не отвечает (проверьте «Адрес health-порта Egress» и контейнер livekit-egress): нагрузка не контролируется." if cfg.enabled and cfg.egress_health_url and load is None else None,
+        f"Площадок с ошибкой: {dests.get('failed', 0)} (подробности — в настройках комнат)." if dests.get("failed") and active else None,
         f"Зрителей сейчас {total_viewers}: с основного сервера раздаётся по потоку каждому. Для больших аудиторий подключите CDN." if total_viewers >= cfg.direct_viewers_warn else None,
     ) if w]
     return {"enabled": bool(cfg.enabled), "service_installed": installed, "livekit_ok": livekit_ok, "livekit_error": livekit_error, "running": len(active), "max_concurrent": cfg.max_concurrent,
-            "viewers": total_viewers, "active": active, "hls_bytes": hls_bytes, "free_bytes": free, "secret_ok": secret_ok,
+            "viewers": total_viewers, "active": active, "egress_cpu_load": load, "max_cpu_load": cfg.max_cpu_load, "destinations": dests, "recordings_running": len(rec_rows),
+            "cdn": {"enabled": bool(cfg.cdn_enabled), "base_url": cfg.cdn_base_url}, "hls_bytes": hls_bytes, "free_bytes": free, "secret_ok": secret_ok,
             "failed": [{"room": n, "error": b.error, "at": b.ended_at or b.started_at} for b, n in failed], "warnings": warnings, "now": datetime.now(timezone.utc)}
+
+
+@router.post("/cdn/check")
+async def cdn_check(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """«Проверить CDN»: https-адрес доставки разрешается в публичные адреса (внутренние не допускаются: сервер не должен ходить по внутренней сети по чужому адресу), затем запрашивается
+    `/hls/healthz` — его CDN должен переслать с источника. Редиректы не выполняются."""
+    import time  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
+    from ..services.live_destinations import DestinationError, check_host_allowed  # noqa: PLC0415
+
+    cfg = await request.app.state.settings_svc.get(db, "live")
+    base = cfg.cdn_base_url
+    if not base:
+        return {"ok": False, "message": "Сначала задайте и сохраните «Адрес доставки CDN»."}
+    host = base.split("://", 1)[1].split(":")[0].split("/")[0]
+    try:
+        await check_host_allowed(host, allow_private=False)
+    except DestinationError as exc:
+        return {"ok": False, "message": exc.message}
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), follow_redirects=False) as c:
+            r = await c.get(f"{base}/hls/healthz")
+    except httpx.HTTPError as exc:
+        return {"ok": False, "message": f"CDN не отвечает: {type(exc).__name__}."}
+    ms = int((time.monotonic() - t0) * 1000)
+    if r.status_code != 200 or r.text.strip() != "ok":
+        return {"ok": False, "ms": ms, "message": f"CDN ответил {r.status_code}, а не «ok» от источника: проверьте, что он пересылает /hls/ на ваш сервер без изменений."}
+    return {"ok": True, "ms": ms, "cache": r.headers.get("age") or r.headers.get("x-cache") or "", "message": f"CDN отвечает и пересылает запросы на источник ({ms} мс)."}

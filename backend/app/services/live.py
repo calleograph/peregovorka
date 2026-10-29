@@ -233,7 +233,7 @@ class LiveBroadcaster:
         out = {"enabled": bool(cfg.enabled and room.live_enabled), "available": bool(cfg.enabled), "live": live, "status": b.status if b else "idle",
                "since": b.started_at if live and b else None, "quality": room.live_quality, "record": room.live_record, "own_hls": room.live_own_hls,
                "viewers": await self.viewers(room.id) if live else 0, "error": b.error if b else None, "broadcast_id": str(b.id) if b else None,
-               "hls_ready": self.hls_ready(b), "limit": int(cfg.max_concurrent), "can_start": bool(cfg.enabled and room.live_enabled and not live)}
+               "hls_ready": self.hls_ready(b), "limit": int(cfg.max_concurrent), "cdn": bool(cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn), "can_start": bool(cfg.enabled and room.live_enabled and not live)}
         if self.destinations is not None:
             out["destinations"] = await self.destinations.live_state(db, room, b)
         return out
@@ -257,6 +257,10 @@ class LiveBroadcaster:
         if busy >= cfg.max_concurrent:
             raise LiveError("live_busy", f"Сейчас идёт максимально допустимое число эфиров ({cfg.max_concurrent}). Обычные конференции от этого не страдают; "
                                          "повторите позже или обратитесь к администратору.")
+        load = await self.api.cpu_load(cfg.egress_health_url) if hasattr(self.api, "cpu_load") else None
+        if load is not None and load >= cfg.max_cpu_load:
+            raise LiveError("server_busy", f"Сервер трансляций сейчас загружен ({load}% процессора при пределе {cfg.max_cpu_load}%): эфир не начат, чтобы не ухудшить обычные конференции. Повторите позже "
+                                          "или обратитесь к администратору.")
         base = self.live_dir()
         free = None
         try:

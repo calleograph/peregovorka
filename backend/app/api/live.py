@@ -88,6 +88,7 @@ class LivePatch(BaseModel):
     live_quality: str | None = Field(default=None, pattern="^(720p|1080p)$")
     live_record: bool | None = None
     live_own_hls: bool | None = None
+    live_cdn: bool | None = None
     live_title: str | None = Field(default=None, max_length=200)
     live_starts_at: datetime | None = None
     live_password_enabled: bool | None = None
@@ -99,13 +100,16 @@ async def _out(request: Request, db: AsyncSession, room: Room, su: SessionUser) 
     cfg = await svc.get(db, "live")
     secret = hls_secret(request.app.state.settings)
     stream = None
+    cdn = bool(cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn)
     if room.live_stream_access and room.live_enabled:
         stream, _ = hls_path(secret, room.live_stream_access, cfg.stream_link_days * 86400, bucket_s=86400)
+        if cdn:
+            stream = cfg.cdn_base_url + stream            # внешним плеерам — адрес на CDN; страница зрителя тоже берёт поток с CDN
     return {"enabled": room.live_enabled, "start": room.live_start, "quality": room.live_quality, "record": room.live_record, "own_hls": room.live_own_hls,
             "title": room.live_title or "", "starts_at": _utc(room.live_starts_at), "password_enabled": room.live_password_enabled, "has_password": bool(room.live_password_hash),
             "speaker_password_set": bool(room.password_hash), "view_path": f"/live/{room.live_token}" if room.live_token else None, "stream_path": stream,
             "state": await live.state(db, room), "global": {"enabled": bool(cfg.enabled), "direct_viewers_warn": int(cfg.direct_viewers_warn), "max_concurrent": int(cfg.max_concurrent)},
-            "is_broadcast_room": room.room_type == "broadcast",
+            "is_broadcast_room": room.room_type == "broadcast", "cdn": room.live_cdn, "cdn_available": bool(cfg.cdn_enabled and cfg.cdn_base_url),
             "destinations": [dests.public(r) for r in await dests.rows(db, room)],
             "platforms": [{"id": k, "name": v} for k, v in PLATFORMS.items() if getattr(cfg, f"allow_{k}", True)], "max_destinations": int(cfg.max_destinations),
             "allow_private_destinations": bool(cfg.allow_private_destinations)}
@@ -129,6 +133,8 @@ async def patch_live(room_id: uuid.UUID, body: LivePatch, request: Request, su: 
     state = await live.state(db, room)
     if state["live"] and ({"live_quality", "live_record", "live_own_hls"} & fields.keys()):
         raise HTTPException(status_code=409, detail={"code": "live_running", "message": "Качество, запись и собственный просмотр меняются до начала эфира: остановите эфир."})
+    if fields.get("live_cdn") and not (await request.app.state.settings_svc.get(db, "live")).cdn_enabled:
+        raise HTTPException(status_code=409, detail={"code": "cdn_off", "message": "CDN не подключён администратором сервера (Администрирование → Трансляции)."})
     if fields.get("live_password_enabled") and not room.live_password_hash:
         raise HTTPException(status_code=422, detail={"code": "no_password", "message": "Сначала задайте пароль зрителя."})
     if fields.get("live_enabled") and room.e2ee_mode != "off":
@@ -288,7 +294,8 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     cfg = await request.app.state.settings_svc.get(db, "live")
     ttl = max(int(cfg.view_link_ttl_s), 4 * 3600) if body.long else int(cfg.view_link_ttl_s)
     path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=1800 if body.long else 300)
-    out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16]}
+    out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16],
+           "base": cfg.cdn_base_url if (cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn) else ""}       # CDN: плеер берёт поток прямо с него, а не с этого сервера
     if new_pass:
         out["pass"] = new_pass
     return out

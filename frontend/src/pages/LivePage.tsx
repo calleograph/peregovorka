@@ -71,7 +71,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (!alive || !a) return;
         prefix.current = a.path.replace(/[^/]+$/, "");
         const el = video.current;
-        if (el && native()) { const was = !el.paused; el.src = a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
+        if (el && native()) { const was = !el.paused; el.src = (a.base ?? "") + a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
       }).finally(() => { if (alive) timer = window.setTimeout(tick, Math.max(60, access.refresh_in) * 1000); });
     }, Math.max(60, access.refresh_in) * 1000);
     return () => { alive = false; window.clearTimeout(timer); };
@@ -89,7 +89,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     const el = video.current;
     if (!el) return;
     let cancelled = false;
-    const url = access.path;
+    const url = (access.base ?? "") + access.path;
     el.muted = false;
     el.dataset.engine = native() ? "native" : "hlsjs";           // для проверок: какой механизм воспроизведения выбран
     const start = () => el.play().catch(() => { el.muted = true; setMuted(true); setNeedSound(true); return el.play().catch(() => undefined); });
@@ -99,7 +99,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       el.addEventListener("error", () => {
         fails.current += 1;
         if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Обновите страницу или попробуйте позже."); return; }
-        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
+        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = (a.base ?? "") + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
       });
     } else {
       void import("hls.js").then(({ default: Hls }) => {

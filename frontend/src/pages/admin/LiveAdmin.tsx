@@ -7,6 +7,9 @@ import SettingsForm, { type Field } from "./SettingsForm";
 export default function LiveAdmin({ fields }: { fields: Field[] }) {
   const [st, setSt] = useState<LiveAdminStatus | null>(null);
   const [err, setErr] = useState("");
+  const [cdnMsg, setCdnMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [cdnBusy, setCdnBusy] = useState(false);
+  const checkCdn = async () => { setCdnBusy(true); setCdnMsg(null); try { const r = await api.adminLiveCdnCheck(); setCdnMsg({ ok: r.ok, text: r.message }); } catch (e) { setCdnMsg({ ok: false, text: (e as Error).message }); } finally { setCdnBusy(false); } };
   const load = useCallback(() => { api.adminLiveStatus().then((s) => { setSt(s); setErr(""); }).catch((e) => setErr((e as Error).message || "Не удалось получить состояние")); }, []);
   useEffect(() => { load(); const t = window.setInterval(load, 10000); return () => window.clearInterval(t); }, [load]);
   return (
@@ -18,7 +21,7 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
         {st && (
           <>
             <p className="small" style={{ margin: "8px 0 0" }}>
-              Идёт эфиров: <b>{st.running}</b> из {st.max_concurrent} · зрителей сейчас: <b>{st.viewers}</b> · сегментов HLS на диске: <b>{bytes(st.hls_bytes)}</b> · свободно на томе: <b>{st.free_bytes == null ? "нет данных" : bytes(st.free_bytes)}</b>
+              Идёт эфиров: <b>{st.running}</b> из {st.max_concurrent} · зрителей сейчас: <b>{st.viewers}</b> · нагрузка Egress: <b>{st.egress_cpu_load == null ? "нет данных" : `${st.egress_cpu_load}%`}</b> (предел {st.max_cpu_load}%) · площадок: идёт <b>{st.destinations.live ?? 0}</b>, с ошибкой <b>{st.destinations.failed ?? 0}</b> · записей MP4 идёт: <b>{st.recordings_running}</b> · сегментов HLS на диске: <b>{bytes(st.hls_bytes)}</b> · свободно на томе: <b>{st.free_bytes == null ? "нет данных" : bytes(st.free_bytes)}</b>
             </p>
             {st.warnings.map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}
             {st.active.length > 0 && (
@@ -31,6 +34,12 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
           </>
         )}
         <p className="muted small" style={{ marginBottom: 0 }}>Эфир ведёт тот же контейнер Egress, что и видеозапись (<code>sudo scripts/video.sh enable</code>); нагрузку процессора и сети показывает <code>docker stats</code>. Новый эфир не стартует при нехватке места или превышении предела, а идущие конференции от этого не страдают.</p>
+      </div>
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="row"><b>CDN</b><span className={`badge ${st?.cdn.enabled ? "ok" : ""}`}>{st ? (st.cdn.enabled ? "подключён" : "не подключён") : "…"}</span><div className="spacer" />
+          <button className="btn mini" onClick={() => void checkCdn()} disabled={cdnBusy || !st?.cdn.base_url}>{cdnBusy ? "Проверка…" : "Проверить CDN"}</button></div>
+        {cdnMsg && <div className={`alert ${cdnMsg.ok ? "ok" : "warn"} small`} role="status">{cdnMsg.text}</div>}
+        <p className="muted small" style={{ marginBottom: 0 }}>CDN должен забирать файлы с этого сервера по тем же путям (<code>/hls/…</code>) и отдавать их зрителям, кэшируя сегменты (<code>.ts</code>) и почти не кэшируя плейлист (1 секунда): так задают заголовки источника. Укажите «Адрес доставки CDN», включите «Раздавать HLS через CDN», сохраните, затем «Проверить CDN»; в комнате включите «Раздавать через CDN». Подпись в пути одинакова у всех зрителей в окне 5 минут: CDN не плодит копии.</p>
       </div>
       <SettingsForm key="live" group="live" title="Трансляции" fields={fields}
         intro="Зрители смотрят HLS, который nginx раздаёт напрямую с этого сервера (подходит для небольших аудиторий), без подключения к LiveKit. Включается по комнатам: тип «Трансляционная» или «Настройки комнаты → Трансляция»." />

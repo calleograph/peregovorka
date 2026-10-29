@@ -30,6 +30,10 @@ class LiveFake(FakeEgress):
         super().__init__()
         self.updates: list[tuple[str, list[str], list[str]]] = []
         self.fail_update = ""
+        self.load: int | None = None             # нагрузка Egress по его health-порту
+
+    async def cpu_load(self, health_url):
+        return self.load if health_url else None
 
     async def update_stream(self, egress_id, *, add=None, remove=None):
         if self.fail_update:
@@ -710,3 +714,75 @@ def test_toggled_off_and_on_again_destination_takes_the_active_result_and_ambigu
     # две площадки на одном сервере с короткими одинаковыми ключами: маска `{...}` неоднозначна — состояние не угадывается
     dest(lv, room, name="Вторая", key="ab")
     dest(lv, room, name="Третья", key="cd")
+
+
+# --------------------------------------------------------------------------------------------- защита ресурсов, CDN, мониторинг
+def test_new_broadcast_is_refused_when_egress_is_loaded_but_a_running_one_is_not_touched(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    lv.fake.load = 92
+    r = start(lv, mid)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "server_busy" and "92%" in r.json()["detail"]["message"] and lv.fake.started == []
+    lv.fake.load = 40
+    assert start(lv, mid).status_code == 200
+    lv.fake.load = 99
+    assert start(lv, mid).status_code == 200 and len(lv.fake.started) == 1, "идущий эфир при высокой нагрузке не прерывается"
+    put_settings(lv, "live", max_cpu_load=100, egress_health_url="")
+    assert put_settings(lv, "live")["egress_health_url"] == ""
+
+
+def test_cdn_settings_are_validated_and_the_player_gets_the_cdn_base_only_when_everything_is_on(lv):
+    login(lv, "root")
+    for bad in ("http://cdn.example.org", "https://cdn.example.org/path", "https://cdn example.org", "ftp://x"):
+        assert lv.put("/api/v1/admin/settings/live", json={"cdn_base_url": bad}).status_code == 422, bad
+    room = room_live(lv)
+    token = get_room(lv, room["id"]).live_token
+    assert patch(lv, room, live_cdn=True).json()["detail"]["code"] == "cdn_off", "владелец не может включить CDN, пока его нет у администратора"
+    assert access(lv, token).json()["base"] == ""
+    put_settings(lv, "live", cdn_enabled=True, cdn_base_url="https://cdn.example.org/")
+    assert patch(lv, room, live_cdn=True).json()["cdn"] is True
+    a = access(lv, token).json()
+    assert a["base"] == "https://cdn.example.org" and a["path"].startswith("/hls/")
+    out = patch(lv, room, live_title="x").json()
+    assert out["stream_path"].startswith("https://cdn.example.org/hls/"), "ссылка на поток для внешних плееров — тоже на CDN"
+    patch(lv, room, live_cdn=False)
+    assert access(lv, token).json()["base"] == "" and patch(lv, room, live_title="y").json()["stream_path"].startswith("/hls/")
+
+
+def test_cdn_check_reaches_only_public_hosts_and_needs_the_origin_health_answer(lv, public_dns, monkeypatch):
+    import httpx
+
+    login(lv, "root")
+    assert lv.post("/api/v1/admin/live/cdn/check").json()["ok"] is False, "адрес не задан"
+    put_settings(lv, "live", cdn_enabled=True, cdn_base_url="https://cdn.example.org")
+    seen = []
+
+    async def fake_get(self, url, *a, **k):
+        seen.append(url)
+        return httpx.Response(200, text="ok\n", headers={"age": "3"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    r = lv.post("/api/v1/admin/live/cdn/check").json()
+    assert r["ok"] is True and seen == ["https://cdn.example.org/hls/healthz"]
+
+    async def wrong(self, url, *a, **k):
+        return httpx.Response(200, text="<html>CDN default page</html>", request=httpx.Request("GET", url))
+    monkeypatch.setattr(httpx.AsyncClient, "get", wrong)
+    assert lv.post("/api/v1/admin/live/cdn/check").json()["ok"] is False, "CDN отвечает своей страницей, а не источником"
+    put_settings(lv, "live", cdn_base_url="https://10.1.2.3")
+    r = lv.post("/api/v1/admin/live/cdn/check").json()
+    assert r["ok"] is False and "внутренн" in r["message"], "проверка CDN не ходит по внутренней сети"
+    login(lv, "bob")
+    assert lv.post("/api/v1/admin/live/cdn/check").status_code in (401, 403)
+
+
+def test_admin_status_shows_load_destinations_and_warns_about_a_busy_egress(lv, public_dns):
+    room = room_live(lv)
+    dest(lv, room)
+    lv.fake.load = 90
+    login(lv, "root")
+    st = lv.get("/api/v1/admin/live/status").json()
+    assert st["egress_cpu_load"] == 90 and st["max_cpu_load"] == 85 and any("90%" in w for w in st["warnings"])
+    assert st["destinations"] == {"idle": 1} and st["cdn"] == {"enabled": False, "base_url": ""} and st["recordings_running"] == 0
+    lv.fake.load = None
+    st = lv.get("/api/v1/admin/live/status").json()
+    assert st["egress_cpu_load"] is None

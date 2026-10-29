@@ -115,6 +115,8 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
               <option value="720p">720p — экономичное (≈ 0,6 ГБ/час записи)</option>
               <option value="1080p">1080p — для презентаций с мелким текстом (≈ 0,8 ГБ/час записи, больше нагрузка)</option>
             </select><span className="help">Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</span></label>
+          <label className="check"><input type="checkbox" checked={cfg.cdn} disabled={busy || !cfg.cdn_available} onChange={(e) => void patch({ live_cdn: e.target.checked }, e.target.checked ? "Эфир этой комнаты раздаётся через CDN" : "Раздача через CDN выключена")} />
+            <span className="check-body">Раздавать через CDN<span className="help">{cfg.cdn_available ? "Плеер зрителя и ссылка на поток берут видео прямо с CDN администратора, а не с этого сервера — так можно показывать эфир сотням и тысячам зрителей." : "CDN не подключён администратором сервера (Администрирование → Трансляции). Без CDN каждый зритель получает отдельный поток с основного сервера."}</span></span></label>
           <label className="check"><input type="checkbox" checked={cfg.own_hls} disabled={busy || live} onChange={(e) => void patch({ live_own_hls: e.target.checked }, "Сохранено")} />
             <span className="check-body">Собственный просмотр в Peregovorka (страница зрителя и ссылка на поток)<span className="help">Выключите, если эфир нужен только внешним площадкам: сервер не будет хранить и раздавать сегменты.</span></span></label>
         </details>
