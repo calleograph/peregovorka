@@ -3,7 +3,7 @@ import type { DiagResult } from "../../api";
 
 const STAGE_TITLE: Record<string, string> = {
   config: "Настройка", livekit: "LiveKit", service: "Служба SIP", listen: "Порт службы SIP", pbx: "Ответ АТС", dns: "DNS", tcp: "TCP-соединение", connect: "Подключение", tls: "Защита (TLS)", certificate: "Сертификат", bind: "Вход сервисной записи",
-  base_dn: "Чтение Base DN", auth: "Вход", sender_rejected: "Адрес отправителя", recipient_rejected: "Адрес получателя", data: "Отправка", smtp: "Ответ сервера",
+  base_dn: "Чтение Base DN", auth: "Вход", auth_methods: "Способы входа", sender_rejected: "Адрес отправителя", recipient_rejected: "Адрес получателя", data: "Отправка", smtp: "Ответ сервера",
 };
 
 /** Результат пошаговой проверки подключения (LDAPS, SMTP): каждый этап — отдельной строкой с понятной причиной. */

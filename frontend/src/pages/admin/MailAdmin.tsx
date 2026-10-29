@@ -4,7 +4,7 @@ import { SecretInput, StageList, fmtDate, secretToSend } from "./common";
 import { useFocusOnMount } from "../../useInitialFocus";
 
 interface Form {
-  id?: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login"; username: string; secret: string; secret_set: boolean;
+  id?: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login" | "ntlm"; username: string; secret: string; secret_set: boolean;
   from_address: string; from_name: string; timeout_s: number; verify_cert: boolean;
 }
 const PORTS = { none: 25, starttls: 587, ssl: 465 } as const;
@@ -32,9 +32,9 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
   const body = (f: Form) => ({
-    name: f.name.trim(), host: f.host.trim(), port: f.port, security: f.security, auth_type: f.auth_type, username: f.auth_type === "login" ? f.username.trim() : "",
+    name: f.name.trim(), host: f.host.trim(), port: f.port, security: f.security, auth_type: f.auth_type, username: f.auth_type !== "none" ? f.username.trim() : "",
     from_address: f.from_address.trim(), from_name: f.from_name.trim(), timeout_s: f.timeout_s, verify_cert: f.verify_cert,
-    ...(f.auth_type === "login" && secretToSend(f.secret) !== undefined ? { secret: secretToSend(f.secret) } : {}),
+    ...(f.auth_type !== "none" && secretToSend(f.secret) !== undefined ? { secret: secretToSend(f.secret) } : {}),
   });
 
   const check = async (id: string) => {
@@ -93,11 +93,18 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
           <fieldset className="group"><legend>Аутентификация</legend>
             <label>Способ
               <select value={form.auth_type} onChange={(e) => set("auth_type", e.target.value as Form["auth_type"])}>
-                <option value="none">Без аутентификации (relay по адресу сервера)</option><option value="login">Логин и пароль</option>
+                <option value="none">Без аутентификации (relay по адресу сервера)</option><option value="login">Логин и пароль</option><option value="ntlm">Windows NTLM (Microsoft Exchange)</option>
               </select></label>
-            {form.auth_type === "login" && (
+            {form.auth_type === "ntlm" && (
+              <div className="alert info small">
+                Для Microsoft Exchange, который объявляет только <code>AUTH NTLM</code>. Используется только NTLMv2, устаревший NTLMv1 не применяется. Работает по защищённому соединению:
+                выберите STARTTLS или SSL/TLS. Если после STARTTLS сервер предлагает и «Логин и пароль», проще использовать его — «Проверить соединение» покажет, какие способы входа объявлены.
+              </div>
+            )}
+            {form.auth_type !== "none" && (
               <div className="cols">
-                <label>Логин<input value={form.username} onChange={(e) => set("username", e.target.value)} placeholder="svc-mail@example.local" autoComplete="off" spellCheck={false} /></label>
+                <label>{form.auth_type === "ntlm" ? "Учётная запись" : "Логин"}<input value={form.username} onChange={(e) => set("username", e.target.value)} placeholder={form.auth_type === "ntlm" ? "ДОМЕН\\svc-mail или svc-mail@example.local" : "svc-mail@example.local"} autoComplete="off" spellCheck={false} />
+                  {form.auth_type === "ntlm" && <span className="help">Домен и логин — в виде <code>ДОМЕН\логин</code> или <code>логин@домен</code>.</span>}</label>
                 <SecretInput label="Пароль" isSet={form.secret_set} value={form.secret} onChange={(v) => set("secret", v)} help="Хранится в зашифрованном виде и после сохранения не показывается." />
               </div>
             )}
@@ -121,7 +128,7 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
           <div key={p.id} className="card conn-card">
             <div className="row"><h3 style={{ margin: 0 }}>{p.name}</h3>{p.is_active ? <span className="badge ok">активный</span> : <span className="badge">резервный</span>}
               {!p.verify_cert && <span className="badge warn">сертификат не проверяется</span>}</div>
-            <div className="muted small"><code>{p.host}:{p.port}</code> · {p.security === "ssl" ? "SSL/TLS" : p.security === "starttls" ? "STARTTLS" : "без шифрования"} · {p.auth_type === "login" ? <>вход <code>{p.username}</code>, пароль {p.secret_set ? "задан" : "не задан"}</> : "без аутентификации"} · от <code>{p.from_name ? `${p.from_name} <${p.from_address}>` : p.from_address}</code></div>
+            <div className="muted small"><code>{p.host}:{p.port}</code> · {p.security === "ssl" ? "SSL/TLS" : p.security === "starttls" ? "STARTTLS" : "без шифрования"} · {p.auth_type !== "none" ? <>{p.auth_type === "ntlm" ? "Windows NTLM" : "вход"} <code>{p.username}</code>, пароль {p.secret_set ? "задан" : "не задан"}</> : "без аутентификации"} · от <code>{p.from_name ? `${p.from_name} <${p.from_address}>` : p.from_address}</code></div>
             <div className="row form-actions">
               <button className="btn primary" disabled={d === "run"} onClick={() => void check(p.id)}>{d === "run" ? "Проверка…" : "Проверить соединение"}</button>
               <button className="btn" onClick={() => { setForm(toForm(p)); setError(""); setNote(""); }}>Изменить</button>

@@ -482,7 +482,7 @@ export interface SetupSummary { ok: number; warn: number; fail: number; todo: nu
 /** Чек-лист: steps — что настроено; checks — результат последней проверки состояния (пусто, пока проверку не запускали); summary — итог по обоим спискам. */
 export interface SetupStatus { completed: boolean; skipped: string[]; steps: SetupStep[]; show: boolean; checks: SetupCheck[]; last_check_at: string | null; summary: SetupSummary }
 export interface MailProfile {
-  id: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login"; username: string; secret_set: boolean;
+  id: string; name: string; host: string; port: number; security: "none" | "starttls" | "ssl"; auth_type: "none" | "login" | "ntlm"; username: string; secret_set: boolean;
   from_address: string; from_name: string; timeout_s: number; verify_cert: boolean; is_active: boolean;
 }
 export interface MailMessageRow {

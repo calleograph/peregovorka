@@ -1,13 +1,17 @@
 """Исходящая почта: профили SMTP, отправка и пошаговая диагностика.
 
 Минимальный современный набор для SMTP-relay (Exchange и обычные серверы): адрес и порт, защита None / STARTTLS / SSL-TLS, аутентификация
-(нет / логин и пароль), адрес и имя отправителя, таймаут. Пароль хранится зашифрованно (как остальные служебные пароли) и обратно не отдаётся.
+(нет / логин и пароль / Windows NTLM для Microsoft Exchange), адрес и имя отправителя, таймаут. Пароль хранится зашифрованно (как остальные служебные пароли) и обратно не отдаётся.
 Проверка сертификата сервера почты — по системным CA и по набору CA из раздела «Сертификаты (CA)»; отключить её можно только явной настройкой профиля.
+
+NTLM (SMTP AUTH NTLM): только NTLMv2 и только по защищённому каналу (STARTTLS или SSL/TLS); реализация — pyspnego (чистый Python, уже в проекте для EWS),
+готовое сообщение проверяется до отправки: NTLMv1 не отправляется никогда, даже если окружение понизило уровень совместимости. Данные обмена в журнал не пишутся.
 
 Ошибки классифицируются по этапам: dns → connect → tls/certificate → auth → sender/recipient → data. Текст ошибки не содержит секретов.
 """
 from __future__ import annotations
 
+import base64
 import email.utils
 import logging
 import re
@@ -26,10 +30,13 @@ from .ca_bundle import CaBundleService
 from .settings import SettingsError, SettingsService
 
 log = logging.getLogger("app.mail")
+logging.getLogger("spnego").setLevel(logging.WARNING)   # библиотека пишет в DEBUG содержимое NTLM-сообщений; здесь и в logging_setup.configure_logging это закрыто
 
 _HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,63}$|^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}$")
 SECURITY = ("none", "starttls", "ssl")
+AUTH_TYPES = ("none", "login", "ntlm")
+LOGIN_MECHANISMS = ("CRAM-MD5", "PLAIN", "LOGIN")       # то, что умеет smtplib.login()
 DEFAULT_PORTS = {"none": 25, "starttls": 587, "ssl": 465}
 
 
@@ -126,6 +133,11 @@ def classify(exc: Exception, cfg: SmtpConfig) -> MailError:
         return MailError("smtp", _with_reply("сервер вернул ошибку.", exc.smtp_code, exc.smtp_error, cfg), exc.smtp_code < 500)
     if isinstance(exc, (smtplib.SMTPServerDisconnected, ConnectionError)):
         return MailError("connect", "сервер закрыл соединение. Проверьте режим защиты (SSL/TLS и STARTTLS путают чаще всего) и порт.", True)
+    if isinstance(exc, smtplib.SMTPException):
+        # SMTPException — подкласс OSError: без этой ветки «No suitable authentication method found» превращалась в «нет соединения с сервером»
+        if "authentication" in str(exc).lower() or "auth" in str(exc).lower().split():
+            return MailError("auth", "сервер не предлагает ни одного способа входа, который поддерживает выбранная аутентификация. Откройте проверку соединения: там перечислены способы, объявленные сервером.")
+        return MailError("smtp", f"ошибка SMTP ({type(exc).__name__}).", True)
     if isinstance(exc, (TimeoutError, socket.timeout)):
         return MailError("connect", f"сервер {cfg.host}:{cfg.port} не ответил за {cfg.timeout} с. Проверьте порт и межсетевой экран.", True)
     if isinstance(exc, OSError):
@@ -144,6 +156,94 @@ def _context(cfg: SmtpConfig) -> ssl.SSLContext:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def auth_methods(server) -> list[str] | None:
+    """Способы входа, объявленные сервером в последнем EHLO (верхний регистр); [] — AUTH не объявлен; None — узнать нельзя (подмена в тестах)."""
+    feats = getattr(server, "esmtp_features", None)
+    if not isinstance(feats, dict):
+        return None
+    return [m.upper() for m in str(feats.get("auth", "")).split()]
+
+
+def _methods_text(methods: list[str] | None) -> str:
+    return "не объявлены" if not methods else ", ".join(methods)
+
+
+def _auth_hint(cfg: SmtpConfig, offered: list[str], starttls_offered: bool) -> str:
+    """Что делать, если сервер не предлагает нужного способа входа."""
+    parts = []
+    if "NTLM" in offered and cfg.auth_type != "ntlm":
+        parts.append("Для Microsoft Exchange выберите способ «Windows NTLM (Microsoft Exchange)».")
+    if cfg.security == "none" and starttls_offered:
+        parts.append("Включите защиту STARTTLS: многие серверы (в том числе Exchange) предлагают логин и пароль только после перехода на TLS.")
+    elif not offered:
+        parts.append("Проверьте, что на этом порту и в этом режиме защиты на сервере включена аутентификация (для Exchange — соответствующий коннектор приёма).")
+    return " ".join(parts)
+
+
+def _require_login_mechanism(server, cfg: SmtpConfig) -> None:
+    offered = auth_methods(server)
+    if offered is None or any(m in offered for m in LOGIN_MECHANISMS):
+        return
+    hint = _auth_hint(cfg, offered, "starttls" in (getattr(server, "esmtp_features", None) or {}))
+    raise MailError("auth", f"способы входа, объявленные сервером: {_methods_text(offered)}; «Логин и пароль» работает с PLAIN, LOGIN и CRAM-MD5. {hint}".strip())
+
+
+def ntlm_message_type(token: bytes) -> int | None:
+    return int.from_bytes(token[8:12], "little") if len(token) >= 12 and token[:8] == b"NTLMSSP\x00" else None
+
+
+def ntlm_is_v2_authenticate(token: bytes) -> bool:
+    """True, если сообщение Authenticate (Type 3) содержит ответ NTLMv2: NT-ответ длиннее 24 байт и начинается блоком версии 0x0101 после NTProofStr (16 байт).
+    NTLMv1 — это ровно 24 байта; такое сообщение не отправляется никогда (понижение уровня совместимости, LM_COMPAT_LEVEL < 3, подмена сервера и т. п.)."""
+    if ntlm_message_type(token) != 3 or len(token) < 28:
+        return False
+    nt_len = int.from_bytes(token[20:22], "little")
+    nt_off = int.from_bytes(token[24:28], "little")
+    blob = token[nt_off:nt_off + nt_len] if nt_off + nt_len <= len(token) else b""
+    return nt_len > 24 and len(blob) == nt_len and blob[16:18] == b"\x01\x01"
+
+
+def _ntlm_login(server, cfg: SmtpConfig) -> None:
+    """SMTP AUTH NTLM: AUTH NTLM → 334 → Type 1 → 334 Type 2 → Type 3 → 235. Только NTLMv2; данные обмена не логируются и в текст ошибок не попадают."""
+    offered = auth_methods(server)
+    if offered is not None and "NTLM" not in offered:
+        hint = _auth_hint(cfg, offered, False)
+        raise MailError("auth", f"сервер не предлагает NTLM; способы входа, объявленные сервером: {_methods_text(offered)}. {hint}".strip())
+    if not cfg.username or not cfg.password:
+        raise MailError("auth", "для NTLM укажите имя пользователя (ДОМЕН\\логин или логин@домен) и пароль.")
+    try:
+        import spnego  # noqa: PLC0415 — pyspnego входит в проект (EWS, SMB)
+        ctx = spnego.client(cfg.username, cfg.password, hostname=cfg.host, service="SMTP", protocol="ntlm", options=spnego.NegotiateOptions.use_ntlm)
+        type1 = ctx.step()
+    except Exception as exc:  # noqa: BLE001
+        raise MailError("auth", f"не удалось начать NTLM-обмен ({type(exc).__name__}). Проверьте имя пользователя: ДОМЕН\\логин или логин@домен.") from None
+
+    def expect(step: str, got: tuple[int, bytes], codes: tuple[int, ...]) -> bytes:
+        code, resp = got
+        if code in codes:
+            return resp
+        if code in (535, 530, 534, 454) or (code == 501 and step == "Authenticate"):
+            raise MailError("auth", _with_reply("сервер отклонил учётные данные NTLM. Проверьте имя пользователя (ДОМЕН\\логин или логин@домен), пароль и права учётной записи на отправку.", code, resp, cfg))
+        raise MailError("auth", _with_reply(f"сервер не принял шаг NTLM «{step}».", code, resp, cfg), code < 500)
+
+    expect("AUTH NTLM", server.docmd("AUTH", "NTLM"), (334,))
+    resp = expect("Negotiate", server.docmd(base64.b64encode(type1 or b"").decode("ascii")), (334,))
+    try:
+        challenge = base64.b64decode(resp.strip(), validate=True)
+    except ValueError:
+        raise MailError("auth", "сервер прислал некорректный ответ NTLM.") from None
+    if ntlm_message_type(challenge) != 2:
+        raise MailError("auth", "сервер прислал ответ, который не является NTLM-вызовом (Type 2).")
+    try:
+        type3 = ctx.step(challenge)
+    except Exception as exc:  # noqa: BLE001
+        raise MailError("auth", f"не удалось выполнить NTLM-обмен ({type(exc).__name__}).") from None
+    if not type3 or not ntlm_is_v2_authenticate(type3):
+        raise MailError("auth", "NTLM-ответ не является NTLMv2 (сервер или настройки окружения требуют устаревший NTLMv1). NTLMv1 небезопасен и не используется; "
+                                "включите NTLMv2 на стороне сервера почты.")
+    expect("Authenticate", server.docmd(base64.b64encode(type3).decode("ascii")), (235,))
 
 
 def _open(cfg: SmtpConfig, steps: list[dict] | None = None) -> smtplib.SMTP:
@@ -165,13 +265,22 @@ def _open(cfg: SmtpConfig, steps: list[dict] | None = None) -> smtplib.SMTP:
         if cfg.security == "ssl":
             mark("tls", True, "SSL/TLS: сертификат сервера проверен." if cfg.verify_cert else "SSL/TLS: проверка сертификата отключена в настройках профиля.")
         server.ehlo()
+        before = auth_methods(server)
         if cfg.security == "starttls":
             server.starttls(context=ctx)
             server.ehlo()
             mark("tls", True, "STARTTLS: сертификат сервера проверен." if cfg.verify_cert else "STARTTLS: проверка сертификата отключена в настройках профиля.")
+        after = auth_methods(server)
+        if cfg.auth_type != "none" and after is not None:
+            # способы входа сервер нередко объявляет по-разному до и после перехода на TLS — показываем оба списка
+            mark("auth_methods", True, f"Способы входа, объявленные сервером: {_methods_text(after)}" + (f" (до STARTTLS: {_methods_text(before)})" if cfg.security == "starttls" else "."))
         if cfg.auth_type == "login":
+            _require_login_mechanism(server, cfg)
             server.login(cfg.username, cfg.password)
             mark("auth", True, "Вход выполнен.")
+        elif cfg.auth_type == "ntlm":
+            _ntlm_login(server, cfg)
+            mark("auth", True, "Вход выполнен (Windows NTLMv2).")
         else:
             mark("auth", None, "Без аутентификации (relay по адресу).")  # type: ignore[arg-type]
         return server
@@ -282,8 +391,8 @@ class MailService:
             out["port"] = port
         if not partial or "auth_type" in data:
             at = str(g("auth_type", "none"))
-            if at not in ("none", "login"):
-                raise SettingsError("Аутентификация: none или login")
+            if at not in AUTH_TYPES:
+                raise SettingsError("Аутентификация: none, login или ntlm")
             out["auth_type"] = at
         if not partial or "username" in data:
             out["username"] = str(g("username", "") or "").strip()[:320]
@@ -308,8 +417,11 @@ class MailService:
         if not partial or "verify_cert" in data:
             out["verify_cert"] = bool(g("verify_cert", True))
         at_final = out.get("auth_type", g("auth_type", "none"))
-        if at_final == "login" and not out.get("username", g("username", "")):
+        if at_final in ("login", "ntlm") and not out.get("username", g("username", "")):
             raise SettingsError("Для входа по логину укажите имя пользователя")
+        if at_final == "ntlm" and out.get("security", g("security", "starttls")) == "none":
+            # NTLM без шифрования канала открывает обмен для перехвата и ретрансляции: разрешается только по STARTTLS или SSL/TLS
+            raise SettingsError("Windows NTLM допускается только при защите STARTTLS или SSL/TLS: выберите защиту соединения")
         return out
 
     def _public(self, r: MailProfile) -> dict:
@@ -336,13 +448,13 @@ class MailService:
 
     async def create(self, db: AsyncSession, data: dict, secret: str) -> dict:
         clean = self._clean(data, current=None, partial=False)
-        if clean["auth_type"] == "login" and not secret:
+        if clean["auth_type"] in ("login", "ntlm") and not secret:
             raise SettingsError("Для входа по логину укажите пароль")
         if (await db.execute(select(MailProfile.id).where(MailProfile.name == clean["name"]))).first():
             raise SettingsError("Профиль с таким названием уже есть")
         pid = uuid.uuid4()
         first = await self.active(db) is None
-        r = MailProfile(id=pid, secret_enc=self._encrypt(pid, secret) if clean["auth_type"] == "login" else "", is_active=first, **clean)
+        r = MailProfile(id=pid, secret_enc=self._encrypt(pid, secret) if clean["auth_type"] in ("login", "ntlm") else "", is_active=first, **clean)
         db.add(r)
         await db.flush()
         return self._public(r)

@@ -70,7 +70,8 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
-    for noisy in ("uvicorn.access", "ldap3"):
+    # spnego на уровне DEBUG пишет содержимое сообщений NTLM («NTLM step input/output»): ответ NTLMv2 годится для офлайн-подбора пароля, в журнал он не попадает ни при каком уровне
+    for noisy in ("uvicorn.access", "ldap3", "spnego"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").handlers.clear()
     logging.getLogger("uvicorn").handlers.clear()
