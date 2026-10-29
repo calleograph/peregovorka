@@ -288,6 +288,20 @@ class SmbStorage:
         return _Kw(smbclient, {**self._kw, "username": self._user or None, "password": self._password or None} if self._kw else {})
 
     @staticmethod
+    def _replace(smb, src: str, dst: str) -> None:
+        """Переименовать src в dst с заменой. Часть серверов (Samba с некоторыми модулями VFS, Windows при атрибутах или открытом файле) отклоняет замену
+        существующего файла (STATUS_ACCESS_DENIED), хотя удалить его разрешает: тогда прежний dst удаляется и src переименовывается. src к этому моменту
+        записан полностью, а вызывающий удаляет свой исходник только после сверки копии — данные не теряются (так видна ошибка при переносе записей обратно
+        на хранилище, где ещё лежит прежняя копия)."""
+        try:
+            smb.replace(src, dst)
+        except Exception:
+            if not smb.path.exists(dst):
+                raise
+            smb.remove(dst)
+            smb.rename(src, dst)
+
+    @staticmethod
     def _mkdirs(smb, path: str) -> None:
         """Создать каталог со всеми родителями. Сначала обычным способом; если сервер на «нет родителя» отвечает нестандартным кодом (так делают не все серверы),
         создаём по одному уровню от корня ресурса."""
@@ -373,7 +387,7 @@ class SmbStorage:
                     if not chunk:
                         break
                     dst.write(chunk)
-            smb.replace(tmp, path)                       # атомарная подмена: готовый файл не пропадает, даже если на месте уже лежит старый
+            self._replace(smb, tmp, path)                 # подмена: готовый файл не пропадает, даже если на месте уже лежит старый
         except Exception as exc:  # noqa: BLE001
             try:
                 if smb.path.exists(tmp):
@@ -416,7 +430,7 @@ class SmbStorage:
     def rename(self, src: str, dst: str) -> None:
         smb = self._session()
         try:
-            smb.replace(self._unc(src), self._unc(dst))
+            self._replace(smb, self._unc(src), self._unc(dst))
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: не удалось переименовать файл ({type(exc).__name__})") from None
 

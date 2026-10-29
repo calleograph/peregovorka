@@ -71,7 +71,7 @@ export function ConfirmOp({ pending, onCancel, onRun }: { pending: Pending; onCa
 }
 
 /** Карточка компонента: состояние, действия, ход и итог последнего действия. */
-export function ComponentCard({ name, ctl }: { name: ServerComponent["id"]; ctl: ReturnType<typeof useComponents> }) {
+export function ComponentCard({ name, ctl, onRefresh }: { name: ServerComponent["id"]; ctl: ReturnType<typeof useComponents>; /** обновить и сведения раздела */ onRefresh?: () => void }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const c = ctl.info?.items.find((x) => x.id === name);
   const h = ctl.info?.helper;
@@ -86,9 +86,9 @@ export function ComponentCard({ name, ctl }: { name: ServerComponent["id"]; ctl:
         <span className={`badge ${cls}`}>{label}</span>
         <div className="spacer" />
         {c.ops.map((o) => <button key={o.id} type="button" className={`btn mini ${o.primary ? "primary" : o.danger ? "danger" : ""}`} disabled={!canAct} onClick={() => setPending({ component: c.id, op: o })}>{o.label}</button>)}
-        <button type="button" className="btn mini ghost" onClick={() => void ctl.refresh()} disabled={!h?.available || h.busy} title="Опросить службы на сервере">Обновить</button>
+        <button type="button" className="btn mini ghost" onClick={() => { onRefresh?.(); if (h?.available && !h.busy) void ctl.refresh(); else void ctl.load(); }} title="Опросить службы на сервере и обновить проверки">Обновить</button>
       </div>
-      <span className="small">{c.message}</span>
+      {(c.state !== "ok" || c.message !== "Работает.") && <span className="small">{c.message}</span>}
       {h && !h.available && <div className="alert warn small" role="alert">Действия недоступны: {h.message} <a href={`${WIKI}Решение-проблем-обновления`} target="_blank" rel="noopener noreferrer">Как исправить</a></div>}
       {h?.available && !h.privileged && <div className="alert warn small" role="alert">{h.message}</div>}
       {h?.busy && !last?.running && <span className="muted small">Помощник занят другим действием — кнопки станут доступны после его завершения.</span>}

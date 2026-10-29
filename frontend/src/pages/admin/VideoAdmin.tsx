@@ -16,7 +16,7 @@ export default function VideoAdmin({ fields }: { fields: Field[] }) {
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <ComponentCard name="video" ctl={ctl} />
+        <ComponentCard name="video" ctl={ctl} onRefresh={load} />
         {err && <div className="alert warn small" role="alert">{err}</div>}
         {st?.checks && <ChecksList checks={st.checks} ctl={ctl} onRepair={async (id) => { await api.admin.repairFix(id); }} />}
         {st && (
@@ -24,7 +24,6 @@ export default function VideoAdmin({ fields }: { fields: Field[] }) {
             Идёт записей: <b>{st.running}</b> из {st.max_concurrent} · готовых: <b>{st.files.ready}</b> · с ошибкой: <b>{st.files.failed}</b> · занято: <b>{bytes(st.files.bytes)}</b>
             {st.quota_gb ? ` из ${st.quota_gb} ГБ` : ""}
             <InfoTip doc={`${WIKI}Как-записать-видео-встречи`}>Один MP4 со всей встречей: изображение и звук всех участников, показ экрана — на основном месте. Режим выбирается в настройках каждой комнаты (вкладка «Встреча и запись»). Служба записи общая с трансляциями.</InfoTip>
-            <button className="btn mini ghost" style={{ marginLeft: 8 }} onClick={load}>Обновить</button>
           </p>
         )}
         {st?.warnings.filter((w) => !st.checks?.some((c) => w.startsWith(c.title))).map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}

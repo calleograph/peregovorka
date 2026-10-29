@@ -18,7 +18,7 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <ComponentCard name="video" ctl={ctl} />
+        <ComponentCard name="video" ctl={ctl} onRefresh={load} />
         {err && <div className="alert warn small" role="alert">{err}</div>}
         {st && (
           <>
@@ -26,8 +26,7 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
             <p className="small" style={{ margin: "8px 0 0" }}>
               Идёт эфиров: <b>{st.running}</b> из {st.max_concurrent} · зрителей сейчас: <b>{st.viewers}</b> · нагрузка Egress: <b>{st.egress_cpu_load == null ? "нет данных" : `${st.egress_cpu_load}%`}</b> (предел {st.max_cpu_load}%) · площадок: идёт <b>{st.destinations.live ?? 0}</b>, с ошибкой <b>{st.destinations.failed ?? 0}</b> · записей MP4 идёт: <b>{st.recordings_running}</b> · сегментов HLS на диске: <b>{bytes(st.hls_bytes)}</b> · свободно на томе: <b>{st.free_bytes == null ? "нет данных" : bytes(st.free_bytes)}</b>
               <InfoTip doc={`${WIKI}Массовые-трансляции`}>Эфир ведёт та же служба Egress, что и видеозапись. Новый эфир не начинается при нехватке места или превышении предела, а идущие конференции от этого не страдают.</InfoTip>
-              <button className="btn mini ghost" style={{ marginLeft: 8 }} onClick={load}>Обновить</button>
-            </p>
+              </p>
             {st.warnings.filter((w) => !st.checks?.some((c) => w.startsWith(c.title))).map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}
             {st.active.length > 0 && (
               <table className="table small" style={{ marginTop: 8 }}>

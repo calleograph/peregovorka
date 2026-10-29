@@ -234,11 +234,12 @@ do_component() { # do_component ID — одно действие с компон
   printf '=== %s: запущено %s (запросил: %s) ===\n' "$(comp_text "$id")" "$(date '+%Y-%m-%d %H:%M:%S')" "${BY:-?}" >> "$LOG"
   ( fresh_env; DRY_RUN=0; comp_apply "$id" 2>&1 ) | strip_ansi | mask_stream | pump_log
   rc="${PIPESTATUS[0]}"
+  do_components        # сначала фактическое состояние (быстро): интерфейс видит его одновременно с итогом действия, а не через полминуты
   FINISHED="$(date +%s)"; EXIT_CODE="$rc"; STATE="idle"; STEP_NO=2
   if [ "$rc" -eq 0 ]; then RESULT="ok"; else RESULT="failed"; fi
   printf '=== Завершено %s: %s ===\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$([ "$rc" -eq 0 ] && echo 'успешно' || echo 'не удалось')" >> "$LOG"
   write_status
-  do_scan || true      # состояние компонентов и список проблем — по факту после действия
+  do_scan || true      # список проблем «Исправить автоматически» — по факту после действия
   return "$rc"
 }
 
