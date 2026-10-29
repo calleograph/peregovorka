@@ -27,6 +27,7 @@ class FakePeregovorka {
     val args = InstrumentationRegistry.getArguments()
     val realLivekit: String? = args.getString("livekit_url")
     @Volatile var livekitUrl = realLivekit ?: "ws://127.0.0.1:1"
+    @Volatile var serverVersion = "0.49.6"          // с этой версии у сайта есть раздел /chats и режим «внутри приложения»
 
     private fun b64(b: ByteArray) = android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
     private fun livekitToken(): String {
@@ -54,7 +55,7 @@ class FakePeregovorka {
                 val path = request.path.orEmpty().substringBefore('?')
                 requests += "${request.method} $path ua=${request.getHeader("User-Agent")?.substringAfter("PeregovorkaApp/", "-")?.take(10)}"
                 return when {
-                    path == "/api/v1/desktop/info" -> json("""{"product":"peregovorka","api":1,"server_version":"0.49.5","name":"Тестовая организация","cookie":"vm_session","trust_days":30,"features":[]}""")
+                    path == "/api/v1/desktop/info" -> json("""{"product":"peregovorka","api":1,"server_version":"$serverVersion","name":"Тестовая организация","cookie":"vm_session","trust_days":30,"features":[]}""")
                     path == "/api/v1/auth/me" -> json("""{"user":{"id":"u1","display_name":"Тест Тестов","is_admin":false},"csrf_token":"csrf1"}""")
                     path == "/api/v1/rooms" -> json("""[{"id":"r1","slug":"main","name":"Основная","has_password":false,"camera_allowed":true},
                         {"id":"r2","slug":"secret","name":"Закрытая","has_password":true,"camera_allowed":true}]""")

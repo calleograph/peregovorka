@@ -82,4 +82,16 @@ class KeyboardTest {
             assertNotNull("после закрытия клавиатуры панель разделов не вернулась", device().waitFor(By.text("Календарь"), 5_000))
         }
     }
+
+    @Test fun chatsTabOnOlderServerFallsBackToSiteRoot() {
+        fake.serverVersion = "0.49.5"                 // сервер без раздела /chats: приложение не должно открывать несуществующую страницу
+        resetApp(fake)
+        launchApp().use {
+            device().waitFor(By.text("Закрытая"))
+            device().waitFor(By.text("Чаты"))!!.click()
+            assertNotNull("страница не загрузилась; запросы: ${fake.requests}", device().waitFor(By.clazz("android.widget.EditText"), 20_000))
+            assertFalse("на старом сервере запрошен /chats: ${fake.requests}", fake.requests.any { it.startsWith("GET /chats") })
+            assertTrue("сайт не получил главную страницу: ${fake.requests}", fake.requests.any { it.startsWith("GET / ua=") })
+        }
+    }
 }
