@@ -54,6 +54,7 @@ data class CallUi(
  * Звук в фоне держит [CallService] (служба переднего плана с типом microphone); камера при сворачивании выключается — система всё равно не даёт к ней доступ.
  */
 class CallManager(private val app: Application) {
+    private companion object { const val RELEASE_DELAY_MS = 1500L }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _ui = MutableStateFlow(CallUi())
     val ui: StateFlow<CallUi> = _ui
@@ -155,9 +156,18 @@ class CallManager(private val app: Application) {
     private fun finish(reason: String?) {
         if (_ui.value.phase == Phase.Idle) return
         jobs.forEach { it.cancel() }; jobs.clear()
-        room?.disconnect(); room?.release(); room = null
+        val r = room; room = null
         CallService.stop(app)
         _ui.update { it.copy(phase = Phase.Ended, endReason = reason, tiles = emptyList()) }
+        if (r != null) scope.launch(NonCancellable) {
+            // Освобождение WebRTC сразу после disconnect() иногда завершает процесс нативным сбоем (SIGSEGV в потоке AudioDeviceBuffer, пойман на эмуляторе при частых входах и выходах):
+            // захват звука и видео ещё работает, а к трекам ещё подключены отрисовщики. Поэтому сначала останавливаем захват, отключаемся и освобождаем ресурсы с паузой,
+            // когда интерфейс уже отпустил треки (список участников пуст).
+            runCatching { r.localParticipant.setMicrophoneEnabled(false); r.localParticipant.setCameraEnabled(false) }
+            runCatching { r.disconnect() }
+            delay(RELEASE_DELAY_MS)
+            runCatching { r.release() }
+        }
     }
 
     /** Экран закрыт после завершения: возвращаемся в исходное состояние. */

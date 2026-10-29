@@ -170,4 +170,22 @@ class JoinFlowTest {
             assertTrue("после «Остаться» конференция пропала", device().hasObject(By.text("Основная")))
         }
     }
+
+    @Test fun t6_realLivekit_repeatedJoinAndLeaveDoesNotCrashTheProcess() {
+        org.junit.Assume.assumeTrue("не задан livekit_url", fake.realLivekit != null)
+        resetApp(fake)
+        launchApp().use { sc ->
+            repeat(5) { round ->
+                device().findObject(By.text("Закрыть"))?.click()
+                joinWithSwitches(camera = round % 2 == 1, allow = true)
+                assertNotNull("раунд $round: подключение не установилось", device().waitFor(By.text("Тестовая организация"), 40_000))
+                assertStaysForeground(sc, 2_500, "раунд $round")
+                device().findObject(By.desc("Выйти из конференции"))?.click()
+                device().waitFor(By.text("Выйти"), 5_000)?.click()
+                assertNotNull("раунд $round: нет экрана «Вы вышли»", device().waitFor(By.text("Вы вышли из конференции"), 15_000))
+            }
+            Thread.sleep(6_000)                                        // нативный сбой при освобождении приходил через несколько секунд
+            assertEquals("процесс приложения не должен был завершиться", PKG, device().currentPackageName)
+        }
+    }
 }
