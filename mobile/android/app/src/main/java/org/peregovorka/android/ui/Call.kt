@@ -41,13 +41,14 @@ private enum class Sheet { Chat, People, More }
 /** Экран конференции: тёмный фон, сетка участников (или демонстрация экрана на всю область), ряд кнопок управления внизу — без прокрутки. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CallScreen(calls: CallManager, onMinimize: () -> Unit, onClose: () -> Unit) {
+fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     val s by calls.ui.collectAsStateWithLifecycle()
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
     val view = LocalView.current
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
-    BackHandler { if (sheet != null) sheet = null else onMinimize() }     // «Назад» сворачивает приложение, конференция продолжается; выйти — красной кнопкой
+    // «Назад» закрывает открытую панель, а затем спрашивает, выйти ли из конференции. Само приложение «Назад» в фон не отправляет: свернуть — жестом «Домой», звук продолжает служба.
+    BackHandler { if (sheet != null) { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null } else confirmLeave = true }
     LaunchedEffect(s.phase) { while (s.phase == Phase.Connected || s.phase == Phase.Reconnecting) { calls.refreshChat(); delay(if (s.chatOpen) 3000 else 10_000) } }
 
     if (s.phase == Phase.Ended) {

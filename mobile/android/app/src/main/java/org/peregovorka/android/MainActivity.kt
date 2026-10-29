@@ -2,6 +2,7 @@ package org.peregovorka.android
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             PeregovorkaTheme {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    AppRoot(vm, app.calls, app.store, link, onLinkHandled = { link = null }, onMinimize = { moveTaskToBack(true) })
+                    AppRoot(vm, app.calls, app.store, link, onLinkHandled = { link = null })
                 }
             }
         }
@@ -39,6 +40,12 @@ class MainActivity : ComponentActivity() {
     }
 
     // Камера в фоне недоступна системе: выключаем при сворачивании и возвращаем при возврате. Звук продолжает служба CallService.
-    override fun onStop() { super.onStop(); (application as App).calls.onBackground() }
-    override fun onStart() { super.onStart(); (application as App).calls.onForeground() }
+    override fun onStop() { super.onStop(); lifecycleNote("onStop"); (application as App).calls.onBackground() }
+    override fun onStart() { super.onStart(); lifecycleNote("onStart"); (application as App).calls.onForeground() }
+    override fun onDestroy() { lifecycleNote("onDestroy"); super.onDestroy() }
+
+    /** Жизненный цикл в журнале устройства (тег PGLIFE, без личных данных): по нему видно, почему приложение ушло с переднего плана — завершение, смена конфигурации или обычное сворачивание. */
+    private fun lifecycleNote(event: String) {
+        Log.i("PGLIFE", "$event finishing=$isFinishing configChange=$isChangingConfigurations call=${(application as App).calls.ui.value.phase}")
+    }
 }

@@ -29,13 +29,13 @@ private data class JoinTarget(val roomId: String, val name: String, val hasPassw
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: String?, onLinkHandled: () -> Unit, onMinimize: () -> Unit) {
+fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: String?, onLinkHandled: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     val call by calls.ui.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
 
     if (call.phase != Phase.Idle) {
-        CallScreen(calls, onMinimize = onMinimize, onClose = calls::dismissEnded)
+        CallScreen(calls, onClose = calls::dismissEnded)
         return
     }
 

@@ -95,7 +95,15 @@ fun resetApp(server: FakePeregovorka? = null) {
 
 fun launchApp(): ActivityScenario<MainActivity> = ActivityScenario.launch(Intent(appContext(), MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
-fun UiDevice.waitFor(selector: BySelector, ms: Long = 15_000): UiObject2? = wait(Until.findObject(selector), ms)
+fun UiDevice.waitFor(selector: BySelector, ms: Long = 15_000): UiObject2? {
+    val found = wait(Until.findObject(selector), ms)
+    if (found == null) {        // что реально на экране — в журнал устройства (иначе по «не найдено» причину не понять)
+        val out = java.io.ByteArrayOutputStream()
+        runCatching { dumpWindowHierarchy(out) }
+        android.util.Log.w("PGTEST", "не найдено $selector; пакет на экране: $currentPackageName; иерархия: ${out.toString().replace(Regex("\\s+"), " ").take(3500)}")
+    }
+    return found
+}
 
 /** Высота экранной клавиатуры по данным окна приложения (0 — клавиатуры нет). */
 fun imeHeight(scenario: ActivityScenario<MainActivity>): Int {
@@ -116,11 +124,12 @@ fun waitForKeyboardTop(scenario: ActivityScenario<MainActivity>, ms: Long = 10_0
 }
 
 /** Нажимает «разрешить» во всех системных запросах разрешений, пока они появляются (микрофон, камера, уведомления, Bluetooth — набор зависит от версии Android). */
-fun acceptPermissionDialogs(maxMs: Long = 12_000): Int {
+fun acceptPermissionDialogs(maxMs: Long = 12_000, allowAll: Boolean = true): Int {
     val d = device()
     var clicked = 0
     val end = System.currentTimeMillis() + maxMs
-    val allow = By.res(java.util.regex.Pattern.compile("com\\.android\\.permissioncontroller:id/permission_allow(_foreground_only)?_button|com\\.android\\.packageinstaller:id/permission_allow_button"))
+    val allow = if (allowAll) By.res(java.util.regex.Pattern.compile("com\\.android\\.permissioncontroller:id/permission_allow(_foreground_only)?_button|com\\.android\\.packageinstaller:id/permission_allow_button"))
+    else By.res(java.util.regex.Pattern.compile("com\\.android\\.permissioncontroller:id/permission_deny(_and_dont_ask_again)?_button"))
     while (System.currentTimeMillis() < end) {
         val b = d.wait(Until.findObject(allow), 2_500)
         if (b == null) { if (clicked > 0) return clicked else continue }

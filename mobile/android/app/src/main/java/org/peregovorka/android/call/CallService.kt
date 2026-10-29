@@ -30,14 +30,16 @@ class CallService : Service() {
         val calls = App.instance.calls
         when (intent?.action) {
             ACTION_LEAVE -> { calls.leave(); stopSelf(); return START_NOT_STICKY }
-            ACTION_MIC -> calls.toggleMic()
+            ACTION_MIC -> { calls.toggleMic(); return START_NOT_STICKY }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
         }
-        if (!calls.active) { stopSelf(); return START_NOT_STICKY }
-        val n = notification(intent?.getStringExtra(EXTRA_ROOM) ?: calls.ui.value.roomName, intent?.getStringExtra(EXTRA_SERVER) ?: calls.ui.value.serverTitle)
+        // Запуск через startForegroundService обязывает перевести службу на передний план немедленно — даже если конференция уже закончилась (мгновенный отказ
+        // подключения): иначе Android завершает приложение («did not then call Service.startForeground()»). Лишнюю службу останавливаем уже после этого.
         // Тип microphone допустим, только если микрофон разрешён (Android 14 иначе завершает приложение); слушатель без микрофона получает тип «воспроизведение».
+        val n = notification(intent?.getStringExtra(EXTRA_ROOM) ?: calls.ui.value.roomName, intent?.getStringExtra(EXTRA_SERVER) ?: calls.ui.value.serverTitle)
         val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         ServiceCompat.startForeground(this, ID, n, if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        if (!calls.active) { stopSelf(); return START_NOT_STICKY }
         if (wake == null) {
             wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "peregovorka:call").apply { setReferenceCounted(false); acquire(MAX_CALL_MS) }
         }
@@ -72,6 +74,7 @@ class CallService : Service() {
 
         fun start(ctx: Context, room: String, server: String) =
             ContextCompat.startForegroundService(ctx, Intent(ctx, CallService::class.java).putExtra(EXTRA_ROOM, room).putExtra(EXTRA_SERVER, server))
-        fun stop(ctx: Context) { ctx.startService(Intent(ctx, CallService::class.java).setAction(ACTION_STOP)) }
+        /** stopService, а не startService: запуск службы из фона запрещён (Android 8+), и обрыв связи в свёрнутом приложении ронял бы процесс. */
+        fun stop(ctx: Context) { ctx.stopService(Intent(ctx, CallService::class.java)) }
     }
 }

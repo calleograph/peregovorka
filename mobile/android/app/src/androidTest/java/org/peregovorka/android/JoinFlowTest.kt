@@ -73,7 +73,7 @@ class JoinFlowTest {
         launchApp().use { sc ->
             repeat(3) { round ->
                 device().findObject(By.text("Закрыть"))?.click()
-                device().waitFor(By.text("Основная"))
+                assertNotNull("раунд $round: список переговорных не появился", device().waitFor(By.text("Закрытая")))
                 val room = if (round % 2 == 0) 0 else 1
                 device().findObjects(By.text("Войти"))[room].click()
                 if (room == 1) device().waitFor(By.clazz("android.widget.EditText"))!!.text = "пароль"
@@ -82,7 +82,8 @@ class JoinFlowTest {
                 assertNotNull("раунд $round: экран конференции не появился", device().waitFor(callScreen, 20_000))
                 assertStaysForeground(sc, 4_000, "раунд $round")
                 device().findObject(By.desc("Выйти из конференции"))?.click()
-                device().findObject(By.text("Выйти"))?.click()                       // подтверждение выхода
+                device().waitFor(By.text("Выйти"), 5_000)?.click()                       // подтверждение выхода
+                assertNotNull("раунд $round: после выхода нет экрана «Вы вышли»", device().waitFor(By.text("Вы вышли из конференции"), 15_000))
             }
         }
     }
@@ -102,11 +103,69 @@ class JoinFlowTest {
             Thread.sleep(3_000)
             val services = device().executeShellCommand("dumpsys activity services $PKG")
             assertTrue("служба конференции не работает в фоне:\n$services", services.contains("CallService") && services.contains("isForeground=true"))
-            assertTrue("тип службы переднего плана — не микрофон:\n$services", services.contains("foregroundServiceType=0x80") || services.contains("types=0x00000080") || services.contains("microphone"))
+            if (Regex("foregroundServiceType=0x[0-9a-f]+").containsMatchIn(services))        // на Android 10 тип службы в выводе не показывается
+                assertTrue("тип службы переднего плана — не микрофон:\n$services", Regex("foregroundServiceType=0x0*([0-9a-f]*)").findAll(services).any { (it.groupValues[1].toIntOrNull(16) ?: 0) and 0x80 != 0 })
             device().executeShellCommand("monkey -p $PKG -c android.intent.category.LAUNCHER 1")
             assertNotNull("после возврата конференция не показана", device().waitFor(By.text("Тестовая организация"), 15_000))
             assertStaysForeground(sc, 3_000, "после возврата из фона")
             assertFalse("соединение потеряно после сворачивания", device().hasObject(By.text("Вы вышли из конференции")))
+        }
+    }
+
+    private fun joinWithSwitches(camera: Boolean, allow: Boolean) {
+        device().waitFor(By.text("Основная"))
+        device().findObjects(By.text("Войти"))[0].click()
+        device().waitFor(By.text("Подключиться"))
+        if (camera) device().findObjects(By.checkable(true)).getOrNull(1)?.click()           // второй переключатель листа входа — «Камера включена»
+        device().waitFor(By.text("Подключиться"))!!.click()
+        acceptPermissionDialogs(10_000, allow)
+    }
+
+    @Test fun t5_cameraAndMicrophoneOn_realLivekit_staysInForeground() {
+        org.junit.Assume.assumeTrue("не задан livekit_url", fake.realLivekit != null)
+        resetApp(fake)
+        launchApp().use { sc ->
+            device().findObject(By.text("Закрыть"))?.click()
+            joinWithSwitches(camera = true, allow = true)
+            assertNotNull("подключение с камерой не установилось за 40 с", device().waitFor(By.text("Тестовая организация"), 40_000))
+            assertStaysForeground(sc, 8_000, "вход с включённой камерой")
+            android.util.Log.i("PGTEST", "камера включена в конференции: ${device().hasObject(By.desc("Выключить камеру"))}")
+            device().findObject(By.desc("Выключить микрофон"))?.click()                          // переключение микрофона и камеры
+            device().findObject(By.desc("Включить микрофон")) ?: fail("микрофон не переключился")
+            assertStaysForeground(sc, 2_000, "переключение микрофона")
+        }
+    }
+
+    @Test fun t0_deniedPermissions_joinAsListenerWithoutLeavingTheApp() {
+        resetApp(fake)
+        // свежие разрешения нужны отозванными: отзыв из самого теста убил бы процесс, поэтому проверяем только при их отсутствии
+        val granted = appContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        org.junit.Assume.assumeFalse("разрешения уже выданы предыдущими тестами", granted)
+        launchApp().use { sc ->
+            joinWithSwitches(camera = true, allow = false)
+            assertNotNull("после отказа в разрешениях экран конференции не появился", device().waitFor(callScreen, 20_000))
+            assertStaysForeground(sc, 6_000, "вход с отказом в разрешениях")
+        }
+    }
+
+    @Test fun t7_rotationAndBackButtonDoNotMinimizeTheApp() {
+        resetApp(fake)
+        launchApp().use { sc ->
+            device().findObject(By.text("Закрыть"))?.click()
+            joinFirstRoom(sc)
+            acceptPermissionDialogs(4_000)
+            assertNotNull("экран конференции не появился", device().waitFor(callScreen, 20_000))
+            try {
+                device().setOrientationLeft(); Thread.sleep(2_000)
+                assertStaysForeground(sc, 2_500, "поворот экрана")
+                assertTrue("после поворота конференция пропала", device().hasObject(By.text("Основная")))
+                device().setOrientationNatural(); Thread.sleep(1_500)
+            } finally { device().unfreezeRotation() }
+            device().pressBack()                                                                   // «Назад» — вопрос о выходе, а не сворачивание
+            assertNotNull("«Назад» не показал вопрос о выходе", device().waitFor(By.text("Выйти из конференции?"), 5_000))
+            assertStaysForeground(sc, 1_500, "системная кнопка «Назад»")
+            device().findObject(By.text("Остаться"))?.click()
+            assertTrue("после «Остаться» конференция пропала", device().hasObject(By.text("Основная")))
         }
     }
 }
