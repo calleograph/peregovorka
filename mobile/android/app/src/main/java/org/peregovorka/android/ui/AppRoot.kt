@@ -24,6 +24,8 @@ import org.peregovorka.android.BuildConfig
 import org.peregovorka.android.call.CallManager
 import org.peregovorka.android.call.Phase
 import org.peregovorka.android.data.*
+import org.peregovorka.android.net.SERVER_WITH_APP_PAGES
+import org.peregovorka.android.net.versionAtLeast
 
 private data class JoinTarget(val roomId: String, val name: String, val hasPassword: Boolean, val cameraAllowed: Boolean)
 
@@ -174,7 +176,8 @@ private fun MainScaffold(
             when (s.tab) {
                 Tab.Home -> HomeContent(s.rooms, s.upcoming, s.loading, s.error, vm::refresh, onJoinRoom, onJoinUpcoming, m)
                 Tab.Calendar -> SectionWebView(server, store, "/calendar", m, onConference)
-                Tab.Chats -> SectionWebView(server, store, "/chats", m, onConference)
+                // на серверах старше 0.49.6 раздела /chats нет (откроется главная сайта со своей навигацией) — работает, но без аккуратного вида
+                Tab.Chats -> SectionWebView(server, store, if (versionAtLeast(s.serverVersion, SERVER_WITH_APP_PAGES)) "/chats" else "/", m, onConference)
                 Tab.History -> SectionWebView(server, store, "/history", m, onConference)
                 Tab.Profile -> ProfileContent(s.me, s.servers, server, BuildConfig.VERSION_NAME, vm::openWeb, onSwitch, vm::rename, vm::remove, vm::startAdd, vm::logout, m)
             }

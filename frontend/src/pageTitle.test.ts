@@ -5,6 +5,7 @@ describe("заголовок вкладки", () => {
   it("у каждой страницы свой заголовок с названием продукта", () => {
     expect(pageTitle("/")).toBe("Переговорки · Peregovorka");
     expect(pageTitle("/rooms/abc")).toBe("Комната · Peregovorka");
+    expect(pageTitle("/chats")).toBe("Чаты · Peregovorka");
     expect(pageTitle("/history/")).toBe("История встреч · Peregovorka");
     expect(pageTitle("/history/5")).toBe("Встреча · Peregovorka");
     expect(pageTitle("/admin")).toBe("Администрирование · Peregovorka");

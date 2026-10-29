@@ -130,8 +130,10 @@ class JoinFlowTest {
             assertNotNull("подключение с камерой не установилось за 40 с", device().waitFor(By.text("Тестовая организация"), 40_000))
             assertStaysForeground(sc, 8_000, "вход с включённой камерой")
             android.util.Log.i("PGTEST", "камера включена в конференции: ${device().hasObject(By.desc("Выключить камеру"))}")
-            device().findObject(By.desc("Выключить микрофон"))?.click()                          // переключение микрофона и камеры
-            device().findObject(By.desc("Включить микрофон")) ?: fail("микрофон не переключился")
+            val micOn = device().hasObject(By.desc("Выключить микрофон"))
+            android.util.Log.i("PGTEST", "микрофон включён в конференции: $micOn")
+            device().findObject(By.desc(if (micOn) "Выключить микрофон" else "Включить микрофон"))!!.click()          // переключение микрофона
+            assertNotNull("микрофон не переключился", device().waitFor(By.desc(if (micOn) "Включить микрофон" else "Выключить микрофон"), 8_000))
             assertStaysForeground(sc, 2_000, "переключение микрофона")
         }
     }

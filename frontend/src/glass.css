@@ -160,3 +160,4 @@
 .in-app .shell.has-rail { padding-bottom: 0; }
 .in-app .has-rail main { padding: 8px 16px 24px; }
 .in-app .shell-col { min-height: 0; }
+.in-app .app-foot { display: none; }

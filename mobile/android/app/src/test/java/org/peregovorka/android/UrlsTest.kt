@@ -3,6 +3,9 @@ package org.peregovorka.android
 import org.peregovorka.android.net.LinkTarget
 import org.peregovorka.android.net.normalizeServerUrl
 import org.peregovorka.android.net.parseMeetingLink
+import org.peregovorka.android.net.versionAtLeast
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -40,5 +43,13 @@ class UrlsTest {
         assertNull(parseMeetingLink("peregovorka://run?url=https%3A%2F%2Fa.example.org%2F"))
         assertNull(parseMeetingLink("http://a.example.org/rooms/x"))
         assertNull(parseMeetingLink(null))
+    }
+
+    @Test fun `версия сервера сравнивается по числам, а не по строкам`() {
+        assertTrue(versionAtLeast("0.49.6", "0.49.6")); assertTrue(versionAtLeast("0.50.0", "0.49.6")); assertTrue(versionAtLeast("1.0.0", "0.49.6"))
+        assertTrue(versionAtLeast("0.49.10", "0.49.6"))
+        assertFalse(versionAtLeast("0.49.5", "0.49.6")); assertFalse(versionAtLeast("0.9.99", "0.49.6"))
+        assertFalse(versionAtLeast("", "0.49.6")); assertFalse(versionAtLeast("dev", "0.49.6")); assertFalse(versionAtLeast("0.49", "0.49.6"))
+        assertTrue(versionAtLeast("v0.49.7-rc1", "0.49.6"))
     }
 }

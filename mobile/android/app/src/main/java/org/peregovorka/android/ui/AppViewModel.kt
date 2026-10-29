@@ -29,6 +29,7 @@ data class UiState(
     val adding: Boolean = false,
     val joining: Boolean = false,
     val joinError: String? = null,
+    val serverVersion: String = "",         // версия сервера (из /desktop/info): от неё зависит, есть ли у сайта страница /chats
     val webPath: String? = null,            // раздел сайта, который нужно открыть во вкладке (ссылка из письма)
 )
 
@@ -61,6 +62,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val me = a.me()
                 _s.update { it.copy(step = Step.Main, me = me) }
+                runCatching { a.info() }.onSuccess { i -> _s.update { it.copy(serverVersion = i.serverVersion) } }
                 refresh()
             } catch (_: SessionExpired) {
                 _s.update { it.copy(step = Step.Login) }
@@ -101,6 +103,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!a.adoptCookie(cookie)) return false
         a.enableTrust()
         _s.update { it.copy(step = Step.Main, me = runCatching { a.me() }.getOrNull()) }
+        runCatching { a.info() }.onSuccess { i -> _s.update { it.copy(serverVersion = i.serverVersion) } }
         refresh()
         return true
     }

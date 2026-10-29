@@ -43,3 +43,16 @@ fun parseMeetingLink(raw: String?, allowLocalHttp: Boolean = false): LinkTarget?
     val path = (t.rawPath ?: "").trimEnd('/').ifEmpty { "/" }
     return if (ROUTES.any { it.matches(path) }) LinkTarget(origin, path) else null
 }
+
+
+/** Сравнение версий вида 0.49.6 (без суффиксов); нераспознанное считается «старым». */
+fun versionAtLeast(actual: String, required: String): Boolean {
+    fun parts(v: String) = v.trim().removePrefix("v").split('.', '-', '+').take(3).map { it.takeWhile(Char::isDigit).toIntOrNull() ?: return@map -1 }
+    val a = parts(actual); val r = parts(required)
+    if (a.size < 3 || a.any { it < 0 }) return false
+    for (i in 0 until 3) { if (a[i] != r[i]) return a[i] > r[i] }
+    return true
+}
+
+/** С этой версии сервера у сайта есть раздел `/chats` и скрытие собственной навигации внутри приложения (метка PeregovorkaApp в User-Agent). */
+const val SERVER_WITH_APP_PAGES = "0.49.6"
