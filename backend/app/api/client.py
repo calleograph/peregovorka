@@ -31,6 +31,8 @@ EVENTS = {
     "audio_output_error", "page_hidden_long", "ice_stats", "muted_by_moderator", "livekit_connection", "board_ready", "board_history_ready", "camera_preview",
     # микрофон посреди встречи (frontend/src/micGuard.ts) и откат шумоподавления
     "mic_lost", "mic_recovered", "mic_recovery_failed", "mic_silent", "noise_suppression_fallback",
+    # повтор открытия микрофона после временного отказа (frontend/src/micCapture.ts)
+    "mic_retry_recovered", "mic_retry_failed",
 }
 # категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
 META: dict[str, tuple[str, str]] = {
@@ -47,7 +49,7 @@ META: dict[str, tuple[str, str]] = {
     "screen_share_started": ("client", "info"), "screen_eco_measured": ("client", "info"), "screen_share_stopped": ("client", "info"), "screen_share_failed": ("client", "warn"),
     "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
     "mic_lost": ("device", "warn"), "mic_recovered": ("device", "info"), "mic_recovery_failed": ("device", "warn"), "mic_silent": ("device", "warn"),
-    "noise_suppression_fallback": ("device", "warn"),
+    "noise_suppression_fallback": ("device", "warn"), "mic_retry_recovered": ("device", "info"), "mic_retry_failed": ("device", "warn"),
     "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"), "board_ready": ("client", "info"), "camera_preview": ("device", "info"), "board_history_ready": ("client", "info"),
 }
 LIFECYCLE = {"room_lifecycle", "screen_lifecycle"}

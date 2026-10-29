@@ -120,14 +120,22 @@ t "diagnose_service: PermissionError на /models → DIAG_FIX=models и ком�
 t "diagnose_service: DIAG_FIX выставляется для прав на модель" bash -c 'source "$1/scripts/lib/common.sh"; dc() { echo "PermissionError: [Errno 13] Permission denied: /models/gigaam/catalog.json"; }; diagnose_service asr >/dev/null 2>&1; [ "$DIAG_FIX" = models ]' _ "$ROOT"
 t "diagnose_service: нет файла модели → подсказка про models.sh --from-dir" bash -c 'source "$1/scripts/lib/common.sh"; dc() { echo "FileNotFoundError: /models/gigaam/v3_e2e_rnnt.ckpt"; }; diagnose_service asr 2>&1 | grep -q -- "--from-dir"' _ "$ROOT"
 
-# ---- вики: проверка исходников (scripts/check_wiki.py) ловит битые ссылки, пустую шапку и посторонние адреса
-W="$TMP/wikitest"; mkdir -p "$W/scripts" "$W/wiki"; cp "$ROOT/scripts/check_wiki.py" "$W/scripts/"; cp "$ROOT/VERSION" "$W/"
-printf '# Home\n\n> Относится к версии 0.0.1 · проверено 2026-01-01 · уровень проверки: 1\n\n[[Другая|Другая]]\n' > "$W/wiki/Home.md"
-printf '# Другая\n\n> Относится к версии %s · проверено 2026-01-01 · уровень проверки: 1\n\n%s\n\n## Что дальше\n\n- [[Home]]\n' "$(cat "$ROOT/VERSION")" "$(printf 'а%.0s' $(seq 1 700))" > "$W/wiki/Другая.md"
-printf '[[Home]]\n- [[Другая]]\n' > "$W/wiki/_Sidebar.md"; printf 'v%s\n' "$(cat "$ROOT/VERSION")" > "$W/wiki/_Footer.md"
+# ---- вики: проверка исходников (scripts/check_wiki.py) ловит битые ссылки, служебные пометки, ссылки [[…]] и посторонние адреса
+W="$TMP/wikitest"; mkdir -p "$W/scripts" "$W/wiki/_meta"; cp "$ROOT/scripts/check_wiki.py" "$W/scripts/"; cp "$ROOT/VERSION" "$W/"
+printf '# Home\n\n%s\n\n[Другая](Другая)\n' "$(cat "$ROOT/VERSION")" > "$W/wiki/Home.md"
+printf '# Другая\n\n%s\n\n## Что дальше\n\n- [Home](Home)\n' "$(printf 'а%.0s' $(seq 1 700))" > "$W/wiki/Другая.md"
+printf '[Home](Home)\n- [Другая](Другая)\n' > "$W/wiki/_Sidebar.md"; printf 'v%s\n' "$(cat "$ROOT/VERSION")" > "$W/wiki/_Footer.md"
+printf '| Home | 1 |\n| Другая | 1 |\n' > "$W/wiki/_meta/Проверка-страниц.md"
 t "check_wiki: корректные страницы проходят" python3 "$W/scripts/check_wiki.py"
-printf '\n[[Нет такой]] и 10.1.2.3\n' >> "$W/wiki/Другая.md"
+cp "$W/wiki/Другая.md" "$W/good.md"
+printf '\n[Нет такой](Нет-такой) и 10.1.2.3\n' >> "$W/wiki/Другая.md"
 t "check_wiki: битая ссылка и чужой адрес отвергаются" bash -c '! python3 "$1/scripts/check_wiki.py"' _ "$W"
+for bad in '> Относится к версии 0.1.0 · проверено 2026-01-01 · уровень проверки: 1' '| a | [[Home|Home]] |' 'см. [[Home' 'проверено на стенде'; do
+  cp "$W/good.md" "$W/wiki/Другая.md"; printf '\n%s\n' "$bad" >> "$W/wiki/Другая.md"
+  t "check_wiki: отвергается «$bad»" bash -c '! python3 "$1/scripts/check_wiki.py" >/dev/null' _ "$W"
+done
+cp "$W/good.md" "$W/wiki/Другая.md"; printf '| Home | 1 |\n' > "$W/wiki/_meta/Проверка-страниц.md"
+t "check_wiki: страница без строки в _meta отвергается" bash -c '! python3 "$1/scripts/check_wiki.py" >/dev/null' _ "$W"
 
 # ---- scripts/ports.sh: перечень портов из .env без Docker; другой порт в .env — другой перечень; неверные аргументы и отсутствие файла — код 2
 printf 'APP_PUBLIC_URL=https://meet.example.org\nLIVEKIT_NODE_IP=203.0.113.9\nLIVEKIT_TCP_PORT=7881\nLIVEKIT_UDP_PORT=50000\nINSTALL_PROFILE=standalone\n' > "$TMP/ports.env"

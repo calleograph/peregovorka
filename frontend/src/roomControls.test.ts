@@ -36,13 +36,20 @@ describe("настройки микрофона", () => {
 });
 
 describe("ошибки устройств и подключения", () => {
-  it("занятый микрофон распознаётся и объясняется (в т. ч. монопольный режим Windows)", () => {
-    const e = Object.assign(new Error("Could not start audio source"), { name: "NotReadableError" });
-    expect(isDeviceBusyError(e)).toBe(true);
-    const m = describeMediaError(e, "mic", { secureContext: true });
+  it("занятость микрофона определяется по тексту Chromium «Device in use», а «Could not start audio source» — отдельная причина", () => {
+    const busy = Object.assign(new Error("Device in use"), { name: "NotReadableError" });
+    expect(isDeviceBusyError(busy)).toBe(true);
+    const m = describeMediaError(busy, "mic", { secureContext: true });
     expect(m.message).toMatch(/занят/);
     expect(m.message).toMatch(/монопольн/);
-    expect(m.message).toMatch(/без микрофона/);
+    const start = Object.assign(new Error("Could not start audio source"), { name: "NotReadableError" });
+    expect(isDeviceBusyError(start)).toBe(false);
+    const s2 = describeMediaError(start, "mic", { secureContext: true });
+    expect(s2.message).toMatch(/не запустился/);
+    expect(s2.message).toMatch(/защитная программа/);
+    expect(s2.message).not.toMatch(/занят другой/);
+    const sys = Object.assign(new Error("Permission denied by system"), { name: "NotAllowedError" });
+    expect(describeMediaError(sys, "mic", { secureContext: true }).message).toMatch(/конфиденциальности Windows/);
     expect(isDeviceBusyError(new Error("x"))).toBe(false);
   });
   it("«could not establish pc connection» — это ICE, а не общая ошибка действия", () => {

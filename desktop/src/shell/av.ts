@@ -5,7 +5,7 @@ import { deviceKind, diagnoseMic, diffDevices, EXCLUSIVE_STEPS, findByLabel, kin
 import { call, h, icon } from "./ui";
 
 type Kind = DevInfo["kind"];
-type Os = { platform: string; mic: string; camera: string };
+type Os = { platform: string; mic: string; camera: string; security?: string[] };
 const NOISE_LABEL: [NoiseMode, string][] = [["off", "Выключено"], ["standard", "Стандартное"], ["enhanced", "Усиленное"]];
 const NOISE_HINT: Record<NoiseMode, string> = {
   off: "Звук без обработки — для студийного микрофона.",
@@ -141,7 +141,7 @@ export function avPanel(host: AvHost): AvPanel {
       micBtn.disabled = false;
       micState.textContent = "Микрофон не открылся";
       await refresh(false);
-      show(diagnoseMic({ platform: os.platform, error: { name: (e as DOMException)?.name, message: (e as Error)?.message }, osAccess: os.mic, micCount: devices.filter((d) => d.kind === "audioinput").length, selectedMissing: lastSelectedMissing }));
+      show(diagnoseMic({ platform: os.platform, error: { name: (e as DOMException)?.name, message: (e as Error)?.message }, osAccess: os.mic, securityProducts: os.security, micCount: devices.filter((d) => d.kind === "audioinput").length, selectedMissing: lastSelectedMissing }));
       return;
     }
     micBtn.disabled = false;

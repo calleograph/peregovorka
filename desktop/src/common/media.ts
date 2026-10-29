@@ -87,10 +87,12 @@ export interface MicProblemInput {
   osAccess: string;
   micCount: number;                       // сколько микрофонов видит Windows
   selectedMissing: boolean;               // выбранного микрофона больше нет в списке
+  /** Защитные программы из Центра безопасности Windows (названия), если известны. */
+  securityProducts?: string[];
 }
 export type MicAction = "open_mic_settings" | "open_sound_settings" | "open_privacy_mic" | "retry";
 export interface MicProblem {
-  cause: "none" | "os_privacy" | "denied" | "no_device" | "selected_missing" | "busy" | "constraints" | "unknown";
+  cause: "none" | "os_privacy" | "denied" | "security_product" | "no_device" | "selected_missing" | "removed" | "busy" | "start_failed" | "constraints" | "unknown";
   /** certain — причина установлена по признаку системы; possible — самый вероятный вариант из нескольких, а не доказанный факт. */
   confidence: "certain" | "possible";
   title: string;
@@ -127,6 +129,11 @@ export function diagnoseMic(i: MicProblemInput): MicProblem {
         steps: ["Откройте «Параметры конфиденциальности микрофона» (кнопка ниже).", "Включите «Доступ к микрофону» и «Разрешить классическим приложениям доступ к микрофону».", "Если переключатели недоступны, параметр задаёт администратор организации."],
         actions: acts("open_privacy_mic", "retry"), reboot: false };
     }
+    if (/by system|system permissions/i.test(i.error.message ?? "")) {
+      return { cause: "security_product", confidence: "possible", title: "Доступ к микрофону запрещён на уровне системы",
+        text: `Windows вернула отказ в доступе к устройству (E_ACCESSDENIED), хотя параметры конфиденциальности разрешают доступ. Так бывает, когда доступ блокирует защитная программа${kasperskyIn(i) ? " — в системе работает " + kasperskyIn(i) : ""} или политика организации.`,
+        steps: securitySteps(i), actions: acts("open_privacy_mic", "retry"), reboot: false };
+    }
     return { cause: "denied", confidence: "possible", title: "Доступ к микрофону не выдан",
       text: "Приложению отказано в доступе к микрофону. Системные параметры конфиденциальности при этом не запрещают доступ, поэтому причина — запрос был отклонён самим приложением или политикой.",
       steps: ["Повторите попытку: запрос не должен повторяться, если он не показывается.", "Проверьте параметры конфиденциальности микрофона в Windows.", "Если проблема остаётся, сохраните отчёт («Диагностика») и передайте администратору."],
@@ -148,14 +155,79 @@ export function diagnoseMic(i: MicProblemInput): MicProblem {
     return { cause: "constraints", confidence: "possible", title: "Микрофон не поддерживает выбранные параметры",
       text: "Устройство найдено, но не приняло заданные параметры обработки звука.", steps: ["Выберите другой микрофон или «По умолчанию в Windows»."], actions: acts("retry"), reboot: false };
   }
+  const msg = i.error.message ?? "";
+  if ((name === "NotReadableError" || name === "TrackStartError") && /was removed/i.test(msg)) {
+    return { cause: "removed", confidence: "certain", title: "Микрофон отключён",
+      text: "Windows сообщила, что устройство удалено или стало недействительным (отключили гарнитуру, перезапустился драйвер).",
+      steps: ["Подключите микрофон и нажмите «Повторить» или выберите другой микрофон."], actions: acts("open_mic_settings", "retry"), reboot: false };
+  }
+  // Chromium 152+: «Device in use» — только AUDCLNT_E_DEVICE_IN_USE; любой другой отказ запуска — «Could not start audio source» (не занятость)
+  if ((name === "NotReadableError" || name === "TrackStartError") && msg && !/in use/i.test(msg)) {
+    return { cause: "start_failed", confidence: "possible", title: "Захват звука не запустился",
+      text: `Устройство найдено, но запустить захват не удалось. Это не сообщение о занятости микрофона. Частые причины: защитная программа не разрешает приложению получать звук${kasperskyIn(i) ? " (в системе работает " + kasperskyIn(i) + ")" : ""}, сбой драйвера, неподдерживаемый формат. Если в Edge этот микрофон работает, наиболее вероятна защитная программа: браузер Microsoft она считает доверенным, а это приложение — нет.`,
+      steps: [...securitySteps(i), "Сохраните отчёт во вкладке «Диагностика»: в нём код ошибки Windows (раздел audio) — по нему видно, на каком шаге отказ."],
+      actions: acts("open_mic_settings", "open_privacy_mic", "retry"), reboot: false };
+  }
   if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
-    return { cause: "busy", confidence: "possible", title: "Микрофон не удалось открыть",
+    return { cause: "busy", confidence: "possible", title: /in use/i.test(msg) ? "Микрофон занят" : "Микрофон не удалось открыть",
       text: "Устройство найдено, но открыть его не получилось. Чаще всего его занимает другая программа, в том числе в «монопольном режиме», но возможны и сбой драйвера, и аппаратное отключение микрофона (например, кнопкой на корпусе). По одной ошибке точную причину установить нельзя.",
       steps: ["Закройте программы, которые могут использовать микрофон: другие конференции, запись звука, голосовые мессенджеры.", "Проверьте, не выключен ли микрофон кнопкой на гарнитуре или клавишей ноутбука.", ...EXCLUSIVE_STEPS],
       actions: acts("open_mic_settings", "open_privacy_mic", "retry"), reboot: true };
   }
   return { cause: "unknown", confidence: "possible", title: "Микрофон не открылся", text: `Причина неизвестна (${name || "ошибка"}). Повторите попытку и проверьте микрофон в настройках Windows.`,
     steps: ["Повторите попытку.", "Выберите другое устройство.", "Сохраните отчёт во вкладке «Диагностика» и передайте его администратору."], actions: acts("open_mic_settings", "retry"), reboot: false };
+}
+
+const kasperskyIn = (i: MicProblemInput) => (i.securityProducts ?? []).find((p) => /kaspersky/i.test(p)) ?? "";
+
+/** Шаги при подозрении на защитную программу. Kaspersky Endpoint Security: компонент «Предотвращение вторжений» выдаёт звук с микрофона
+ *  только программам из доверенных групп (в KES 12 по умолчанию — только «Доверенные»); неподписанное приложение туда может не попасть. */
+function securitySteps(i: MicProblemInput): string[] {
+  const k = kasperskyIn(i);
+  if (k) return [
+    `${k}: администратор защиты разрешает приложению доступ к микрофону — в политике «Предотвращение вторжений» найдите программу Peregovorka (Peregovorka.exe) и разрешите ей доступ к звукозаписывающим устройствам либо поместите её в группу «Доверенные» (надёжнее — по сертификату подписи организации).`,
+    "После изменения правил полностью закройте приложение (значок в области уведомлений → «Выход») и откройте снова.",
+  ];
+  return [
+    "Проверьте журнал защитной программы (антивируса) на компьютере: не заблокирован ли доступ приложения Peregovorka к микрофону; при необходимости добавьте его в доверенные.",
+    "Проверьте тот же микрофон в Edge: если там работает, причина — в правилах для этого приложения, а не в устройстве.",
+  ];
+}
+
+// ------------------------------------------------------------------------------------------ журнал звука Chromium (WASAPI)
+/** Коды HRESULT, которые Chromium пишет в журнал при открытии микрофона (`IAudioClient::Initialize=[HRESULT: 0x…, …]`), и их смысл. */
+export const WASAPI_CODES: Record<string, { name: string; meaning: string }> = {
+  "8889000A": { name: "AUDCLNT_E_DEVICE_IN_USE", meaning: "устройство занято: другая программа держит его в монопольном режиме или предыдущий поток ещё не освобождён" },
+  "80070005": { name: "E_ACCESSDENIED", meaning: "доступ запрещён: конфиденциальность Windows, политика или защитная программа" },
+  "88890004": { name: "AUDCLNT_E_DEVICE_INVALIDATED", meaning: "устройство отключено или стало недействительным" },
+  "80070651": { name: "ERROR_DEVICE_REMOVED", meaning: "устройство удалено" },
+  "80070490": { name: "ERROR_NOT_FOUND", meaning: "устройство не найдено" },
+  "88890008": { name: "AUDCLNT_E_UNSUPPORTED_FORMAT", meaning: "драйвер не принял формат звука" },
+  "8889000E": { name: "AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED", meaning: "монопольный режим запрещён" },
+  "88890012": { name: "AUDCLNT_E_EXCLUSIVE_MODE_ONLY", meaning: "устройство работает только в монопольном режиме" },
+  "8889000F": { name: "AUDCLNT_E_ENDPOINT_CREATE_FAILED", meaning: "не удалось создать точку подключения устройства (драйвер)" },
+  "88890010": { name: "AUDCLNT_E_SERVICE_NOT_RUNNING", meaning: "служба Windows Audio не запущена" },
+  "88890017": { name: "AUDCLNT_E_CPUUSAGE_EXCEEDED", meaning: "звуковой движок Windows перегружен" },
+  "88890026": { name: "AUDCLNT_E_RESOURCES_INVALIDATED", meaning: "ресурсы устройства сброшены системой" },
+  "8007000E": { name: "E_OUTOFMEMORY", meaning: "нехватка памяти" },
+};
+
+export interface WasapiFinding { code: string; name: string; meaning: string; count: number; last: string }
+
+/** Ошибки WASAPI из журнала Chromium: какие коды и сколько раз. Строки без «HRESULT: 0x…» не учитываются; неизвестный код показывается как есть. */
+export function wasapiFindings(lines: string[]): WasapiFinding[] {
+  const by = new Map<string, WasapiFinding>();
+  for (const line of lines) {
+    if (!/WAIS|AudioInput|IAudioClient/i.test(line)) continue;
+    const m = /HRESULT:\s*0x([0-9A-Fa-f]{8})/.exec(line);
+    if (!m) continue;
+    const code = m[1].toUpperCase();
+    const known = WASAPI_CODES[code] ?? { name: `HRESULT 0x${code}`, meaning: "другая ошибка Windows" };
+    const f = by.get(code) ?? { code, ...known, count: 0, last: "" };
+    f.count++; f.last = line.slice(0, 300);
+    by.set(code, f);
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count);
 }
 
 // ------------------------------------------------------------------------------------------ системные настройки Windows

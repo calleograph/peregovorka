@@ -164,19 +164,28 @@ async function av() {
     check("шумоподавление запоминается", (await s.js("window.pg.call('shell:state').then((x) => x.settings.media.noise)")) === "standard");
     check("состояние разрешений Windows для оболочки доступно (shell:av:state)", (await s.js("window.pg.call('shell:av:state').then((x) => typeof x.platform === 'string')")) === true);
     // отказ микрофона: понятная причина, а не общее «ошибка»
-    await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Could not start audio source'), { name: 'NotReadableError' }))");
+    // Chromium 152+: «Device in use» — AUDCLNT_E_DEVICE_IN_USE (занятость, в том числе монопольный режим)
+    await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Device in use'), { name: 'NotReadableError' }))");
     await s.click("Проверить микрофон");
-    check("отказ микрофона: заголовок и шаги, без утверждения «монопольный режим точно»", await s.until("[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('Микрофон не удалось открыть'))", 10), (await s.text()).slice(0, 400));
+    check("отказ микрофона «Device in use»: заголовок «занят», без утверждения «монопольный режим точно»", await s.until("[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('Микрофон занят'))", 10), (await s.text()).slice(0, 400));
     const t = await s.text();
     check("отказ микрофона: сказано, что это наиболее вероятное объяснение", t.includes("наиболее вероятное объяснение"));
     check("отказ микрофона: рекомендация о перезагрузке с оговоркой", t.includes("рекомендуется перезагрузить компьютер") && t.includes("Часто достаточно"));
     check("отказ микрофона: кнопка «Повторить»", t.includes("Повторить"));
     if (process.platform === "win32") check("Windows: кнопка «Открыть настройки микрофона Windows»", t.includes("Открыть настройки микрофона Windows"));
     await s.shot(join(OUT, "33-av-problem.png"));
+    // «Could not start audio source» — любой другой отказ (драйвер, защитная программа): не выдаётся за занятость
+    await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Could not start audio source'), { name: 'NotReadableError' }))");
+    await s.click("Проверить микрофон");
+    check("отказ «Could not start audio source»: «захват не запустился», про защитную программу, не «занят»", await s.until("[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('Захват звука не запустился') && a.innerText.includes('защитн') && !a.innerText.includes('Микрофон занят'))", 10), (await s.text()).slice(0, 300));
+    await s.shot(join(OUT, "34-av-start-failed.png"));
     // системные настройки: неизвестный вид отклоняется, вне Windows — честный отказ
     const bad = await s.js("window.pg.call('shell:sound:open', { kind: 'cmd /c calc' })");
     check("открытие системных настроек: неизвестный вид отклонён", bad?.ok === false, JSON.stringify(bad));
     check("переход на другую вкладку освобождает устройства", (await s.js("document.querySelector('#tab-general').click(); 1")) === 1);
+    let alog = ""; try { alog = readFileSync(join(profile, "logs", "chromium-audio.log"), "utf8"); } catch { /* нет файла */ }
+    if (process.env.PG_SHOW_AUDIO_LOG) console.log(alog.split("\n").filter((l) => /WAIS|AudioInput|getUserMedia|audio capture|MSM::/i.test(l)).slice(0, 6).join("\n"));
+    check("журнал звука Chromium ведётся (logs/chromium-audio.log, строки MediaStreamManager)", /media_stream_manager/.test(alog), `${alog.length} байт; строк для отчёта: ${alog.split("\n").filter((l) => /WAIS|AudioInput|getUserMedia|audio capture|MSM::/i.test(l)).length}; пример: ${(alog.split("\n").find((l) => /media_stream_manager/.test(l)) ?? "").slice(0, 160)}`);
     const errs = s.errors().filter((e) => !/getUserMedia|NotReadableError/.test(e));
     check("консоль оболочки без ошибок", errs.length === 0, errs.join(" | "));
     const logErr = mainLogErrors();

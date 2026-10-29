@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Проверка исходников вики (каталог wiki/): ссылки между страницами, шапка «Относится к версии …», блок «Что дальше», версия в шапке и в подвале,
-частные данные и секреты, типичные опечатки. Запуск: python3 scripts/check_wiki.py [--strict]. Код 1 — найдены ошибки (предупреждения не считаются, пока нет --strict)."""
+"""Проверка исходников вики (каталог wiki/): ссылки между страницами, отсутствие служебных пометок на страницах для читателя, сведения о проверке
+каждой страницы в wiki/_meta/Проверка-страниц.md, блок «Что дальше», версия в подвале, частные данные и секреты. Запуск: python3 scripts/check_wiki.py [--strict]. Код 1 — найдены ошибки (предупреждения не считаются, пока нет --strict)."""
 from __future__ import annotations
 
 import re
@@ -11,9 +11,18 @@ ROOT = Path(__file__).resolve().parent.parent
 WIKI = ROOT / "wiki"
 SERVICE = {"_Sidebar", "_Footer"}
 NO_NEXT = SERVICE | {"Home"}          # у них нет блока «Что дальше»
+ABOUT_MARKS = {"Сопровождение-вики"}  # страница для сопровождающих описывает сами служебные пометки
 LINK = re.compile(r"\[\[([^\]]+)\]\]")
 MD_LINK = re.compile(r"(?<!\!)\[[^\]]+\]\(([^)\s]+)\)")
-HEADER = re.compile(r"^> Относится к (?:версии|приложению)[^\n]*проверено \d{4}-\d{2}-\d{2}[^\n]*уровень проверки", re.M)
+META = WIKI / "_meta" / "Проверка-страниц.md"
+# служебные пометки живут в META, а не на страницах: читатель видит обычный текст
+SERVICE_MARKS = [(re.compile(p, re.I | re.M), msg) for p, msg in (
+    (r"^> Относится к", "шапка «Относится к …» (перенесите в _meta/Проверка-страниц.md)"),
+    (r"уровень проверки|уровн[ея] [0-4]\b|\bУ[0-4]\b", "уровень проверки"),
+    (r"✔|не запускал(?:ась|ись)\b", "отметка о запуске команды"),
+    (r"\bстенд", "слово «стенд» (пишите «тестовый экземпляр» или объясните ограничение словами)"),
+    (r"\bисточник: код|\(уровень", "служебная ссылка на источник"),
+)]
 SECRETS = [re.compile(p, re.I) for p in (r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"pgk_[A-Za-z0-9]{8}_[A-Za-z0-9]{20,}", r"password\s*[:=]\s*(?!YOUR|CHANGE|ПАРОЛЬ|\*)[^\s`]{6,}")]
 DOMAIN = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:ru|su|рф|local|corp|lan|internal)\b", re.I)
 ALLOWED_DOMAINS = re.compile(r"(?:example\.(?:org|com|test|local)|corp\.example\.org|meet\.example\.org|opensmodel\.sberdevices\.ru|sberdevices\.ru|huggingface\.co|rutube\.ru|vk\.ru|vkvideo\.ru|twitch\.tv|google\.com|youtube\.com)$", re.I)
@@ -32,17 +41,15 @@ def main() -> int:
     ps = pages()
     version = (ROOT / "VERSION").read_text(encoding="utf8").strip()
     inbound: dict[str, int] = {n: 0 for n in ps}
+    meta = META.read_text(encoding="utf8") if META.exists() else ""
     for name, path in ps.items():
         text = path.read_text(encoding="utf8")
         plain = re.sub(r"`[^`\n]*`", "", re.sub(r"```.*?```", "", text, flags=re.S))      # ссылки в примерах кода не проверяются
         # --- ссылки
         for m in LINK.finditer(plain):
-            target = m.group(1).split("|")[-1].strip().replace(" ", "-")
-            target = target.split("#")[0]
-            if target not in ps:
-                errs.append(f"{name}: ссылка на несуществующую страницу «{m.group(1)}»")
-            else:
-                inbound[target] += 1
+            errs.append(f"{name}: ссылка «[[{m.group(1)}]]» — пишите [текст](Страница): «|» внутри таблицы ломает её")
+        if re.search(r"\[\[(?![^\n]*\]\])", plain):
+            errs.append(f"{name}: незакрытая ссылка «[[…» показывается читателю как текст")
         for m in MD_LINK.finditer(plain):
             url = m.group(1)
             if url.startswith(("http://", "https://", "#", "mailto:")):
@@ -51,19 +58,22 @@ def main() -> int:
                 errs.append(f"{name}: ссылка с расширением .md ({url}) откроется как файл, а не как страница")
             elif url.split("#")[0] not in ps and not url.startswith("images/"):
                 errs.append(f"{name}: относительная ссылка на неизвестную страницу ({url})")
+            elif url.split("#")[0] in ps:
+                inbound[url.split("#")[0]] += 1
         if name in SERVICE:
             continue
         # --- шапка и структура
-        if not HEADER.search(text):
-            errs.append(f"{name}: нет строки «> Относится к версии …, проверено ГГГГ-ММ-ДД, уровень проверки …»")
+        for rx, msg in SERVICE_MARKS:
+            if name not in ABOUT_MARKS and rx.search(plain):
+                errs.append(f"{name}: служебная пометка на странице для читателя — {msg}")
+        if f"| {name} |" not in meta:
+            errs.append(f"{name}: нет строки в _meta/Проверка-страниц.md (версия, дата, уровень проверки)")
         if not text.startswith("# "):
             errs.append(f"{name}: первая строка должна быть заголовком «# …»")
         if name not in NO_NEXT and "## Что дальше" not in text:
             errs.append(f"{name}: нет блока «Что дальше»")
         if name == "Home" and f"{version}" not in text:
             warns.append(f"Home: версия сервера {version} не найдена на странице")
-        if re.search(r"```(?:bash|powershell|sh)", text) and "не запуска" not in text and "не запускал" not in text and "✔" not in text:
-            errs.append(f"{name}: есть команды, но нет пометки «не запускалась» или «✔» (выполнено на стенде) — каждая команда помечается")
         # --- безопасность
         for rx in SECRETS:
             if rx.search(text):
@@ -79,10 +89,6 @@ def main() -> int:
                 warns.append(f"{name}: {msg}")
         if len(text) < 600:
             warns.append(f"{name}: очень короткая страница ({len(text)} знаков)")
-        # --- версия в шапке
-        m = re.search(r"версии (?:сервера )?(\d+\.\d+\.\d+)", text.split("\n", 4)[2] if len(text.split("\n")) > 3 else "")
-        if m and m.group(1) != version:
-            warns.append(f"{name}: версия в шапке {m.group(1)}, текущая {version} (проверьте страницу и обновите шапку)")
     footer = (WIKI / "_Footer.md").read_text(encoding="utf8") if (WIKI / "_Footer.md").exists() else ""
     if version not in footer:
         warns.append(f"_Footer: версия {version} не указана")

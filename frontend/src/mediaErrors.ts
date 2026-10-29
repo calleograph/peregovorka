@@ -1,4 +1,5 @@
 /** Понятные причины ошибок устройств, демонстрации экрана и подключения вместо общего «Не удалось переключить устройство». */
+import { micErrorKind } from "./micCapture";
 
 export type MediaAction = "mic" | "camera" | "screen" | "device" | "connect" | "playback";
 
@@ -19,11 +20,17 @@ function lower(e: unknown): string {
   return String((e as { message?: unknown })?.message ?? e ?? "").toLowerCase();
 }
 
-/** Устройство занято другой программой (в т. ч. в «монопольном» режиме Windows) или недоступно для запуска. */
+/** Windows сообщила, что устройство занято (AUDCLNT_E_DEVICE_IN_USE: «Device in use»). «Could not start audio source» — другой отказ, не занятость. */
 export function isDeviceBusyError(e: unknown): boolean {
-  const name = String((e as { name?: unknown })?.name ?? "");
-  return name === "NotReadableError" || name === "TrackStartError" || /could not start (audio|video) source|device in use|in use by another/i.test(lower(e));
+  return micErrorKind(e) === "in_use";
 }
+
+const MIC_TEXT: Partial<Record<ReturnType<typeof micErrorKind>, string>> = {
+  in_use: "Windows сообщает, что микрофон занят: его использует другая программа (в том числе в «монопольном режиме»). Закройте другие конференции и программы записи звука или выберите другой микрофон в «Устройствах».",
+  start_failed: "Микрофон не запустился. Частые причины: защитная программа (антивирус, например Kaspersky Endpoint Security) не разрешает приложению получать звук, сбой драйвера или неподдерживаемый формат. Если в Edge этот микрофон работает, а здесь нет — проверьте разрешения защитной программы для приложения.",
+  removed: "Микрофон отключён или был удалён из системы. Подключите его или выберите другой в «Устройствах».",
+  system_denied: "Доступ к микрофону запрещён системой: в параметрах конфиденциальности Windows (Микрофон → доступ для классических приложений) или защитной программой.",
+};
 
 /** Не удалось установить медиасоединение (ICE/PeerConnection): сеть, закрытые порты, VPN/прокси, антивирус. */
 export function isIceError(e: unknown): boolean {
@@ -82,6 +89,7 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
         return { reason: name, benign: msg.includes("cancel") || msg.includes("dismiss") || msg.includes("denied by user") ? true : false,
           message: "Доступ к экрану не получен: выбор окна/экрана отменён либо запрещён браузером или системой. Нажмите «Показать экран» ещё раз и подтвердите выбор; если окно выбора не появляется — проверьте разрешения сайта и системные настройки записи экрана." };
       }
+      if (action === "mic" && micErrorKind(e) === "system_denied") return { reason: "SystemPermissionDenied", message: MIC_TEXT.system_denied! };
       return { reason: name, message: `Нет разрешения на доступ к ${DEVICE_WORD[action]}. Разрешите его в настройках сайта (значок замка рядом с адресом) и повторите.` };
     case "NotFoundError":
     case "DevicesNotFoundError":
@@ -92,7 +100,7 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
         ? "Система не позволила захватить экран (источник занят другой программой или запрещён ОС; на macOS разрешите браузеру «Запись экрана»)."
         : action === "camera"
           ? "Камера занята другой программой или недоступна. Закройте программы, которые её используют (другие конференции, видеозапись), и повторите."
-          : "Микрофон занят другой программой или недоступен. Закройте программы, которые его используют (другие конференции, запись звука), или выберите другое устройство в списке «Устройства». В Windows микрофон может быть захвачен в «монопольном режиме»: Параметры звука → Устройство ввода → Свойства → Дополнительно → снимите «Разрешить приложениям использовать устройство в монопольном режиме». После изменения этих параметров рекомендуется перезагрузить компьютер, чтобы изменения корректно применились и оборудование повторно инициализировалось (часто достаточно закрыть программу, занимавшую микрофон, и повторить попытку). Вы можете остаться в комнате без микрофона и включить его позже." };
+          : action === "mic" || action === "device" ? (MIC_TEXT[micErrorKind(e)] ?? MIC_TEXT.start_failed!) : (MIC_TEXT.start_failed!) };
     case "OverconstrainedError":
     case "ConstraintNotSatisfiedError":
       return { reason: name, message: "Выбранное устройство не поддерживает нужные параметры. Выберите другое устройство в списке «Устройства»." };

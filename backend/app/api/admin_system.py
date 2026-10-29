@@ -329,7 +329,8 @@ async def client_diagnostics(request: Request, su: SessionUser = Depends(require
 # События микрофона, которые сравниваются по клиентам (браузер или приложение): микрофон занят, не открылся, пропал во время встречи, вернулся сам,
 # не вернулся, «тишина» от системы. Знаменатель — попытки входа (join_attempt). Так различие «Edge против приложения для Windows» видно по реальной
 # работе пользователей, без ручной сравнительной проверки на одном компьютере.
-MIC_EVENTS = ("mic_busy", "mic_failed", "mic_permission_denied", "mic_lost", "mic_recovered", "mic_recovery_failed", "mic_silent", "join_without_mic")
+MIC_EVENTS = ("mic_busy", "mic_failed", "mic_permission_denied", "mic_lost", "mic_recovered", "mic_recovery_failed", "mic_silent", "join_without_mic",
+              "mic_retry_recovered", "mic_retry_failed")
 
 
 def client_family(client: str | None) -> str:

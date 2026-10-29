@@ -1,8 +1,8 @@
 # Как настроить reverse proxy и HTTPS
 
-> Относится к версии 0.39.4 · проверено 2026-10-25 · уровень проверки: 1–2 (шаблоны nginx, shell-тесты); настройка за внешним прокси проверена на подставных проверках, настоящий внешний прокси — частично (см. `PROJECT.md`) · тип страницы: практическое руководство
+*Для кого: администратор сети.*
 
-Результат: приложение открывается по HTTPS на вашем имени, звонки подключаются, WebSocket проходит. Для кого: администратор сети. Все порты — [[Справочник: порты и сеть|Справочник-порты-и-сеть]].
+**Что получится:** приложение открывается по HTTPS на вашем имени, звонки подключаются, WebSocket проходит. Все порты — [Справочник: порты и сеть](Справочник-порты-и-сеть).
 
 ## Что нужно заранее
 
@@ -21,7 +21,7 @@
 Свой сертификат на nginx установщика (`standalone`): задайте `NGINX_TLS_CERT` и `NGINX_TLS_KEY` в `.env` и выполните:
 
 ```bash
-sudo scripts/install.sh --profile standalone --from nginx     # не запускалась
+sudo scripts/install.sh --profile standalone --from nginx
 ```
 
 ## Требования к любому reverse proxy
@@ -41,10 +41,10 @@ sudo scripts/install.sh --profile standalone --from nginx     # не запус�
 ## Проверить WebSocket
 
 ```bash
-scripts/smoke-test.sh      # не запускалась; строки «LiveKit WebSocket /rtc»: код 101 — норма
+scripts/smoke-test.sh
 
 curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
-     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://meet.example.org/livekit/rtc?access_token=ТОКЕН'    # не запускалась
+     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://meet.example.org/livekit/rtc?access_token=ТОКЕН'
 ```
 
 Ожидаемый результат: `HTTP/1.1 101` (без токена — `401`). Маршрут `/rtc/v1` без параметров отвечает `400 join_request is required`: это норма; `404` — признак устаревшего LiveKit.
@@ -56,7 +56,7 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-We
 1. Найдите отклонённый адрес:
 
    ```bash
-   ./scripts/logs.sh backend --tail 500 | grep "Origin отклонён"     # не запускалась
+   ./scripts/logs.sh backend --tail 500 | grep "Origin отклонён"
    ```
 
 2. В `.env` задайте основной адрес и, при необходимости, дополнительные:
@@ -76,7 +76,7 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-We
 
 HSTS в приложении и шаблонах **не включён намеренно**: если после включения сертификат окажется недействительным, пользователи не смогут обойти предупреждение. Включайте на узле, который завершает TLS и которым вы управляете, и только после проверки цепочки:
 
-1. Проверьте цепочку: `openssl s_client -connect meet.example.org:443 -servername meet.example.org </dev/null | openssl x509 -noout -dates -issuer` (не запускалась).
+1. Проверьте цепочку: `openssl s_client -connect meet.example.org:443 -servername meet.example.org </dev/null | openssl x509 -noout -dates -issuer` ().
 2. Добавьте `add_header Strict-Transport-Security "max-age=300" always;` в блок `server` с `ssl`; повторите директиву в каждом `location`, где задаёте свои заголовки.
 3. Повышайте срок поэтапно: 300 секунд → сутки → неделя → 15 552 000 (6 месяцев). `includeSubDomains` нужен, только если все поддомены отдают HTTPS. `preload` не используйте.
 4. Откат: значение `max-age=0` на срок прежнего значения.
@@ -103,6 +103,6 @@ HSTS в приложении и шаблонах **не включён наме�
 
 ## Что дальше
 
-- [[Справочник: порты и сеть|Справочник-порты-и-сеть]]
-- [[Диагностика]]
-- [[Безопасность и приватность|Безопасность-и-приватность]]
+- [Справочник: порты и сеть](Справочник-порты-и-сеть)
+- [Диагностика](Диагностика)
+- [Безопасность и приватность](Безопасность-и-приватность)

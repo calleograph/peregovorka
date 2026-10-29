@@ -23,6 +23,7 @@ import { applyAutostart, AppTray } from "./tray";
 import { TrustStore } from "./trust";
 import { Updater } from "./updater";
 import { MainWindow, themeBg } from "./window";
+import { audioDiag, securityProducts, setupNativeAudioLog } from "./audiolog";
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_KIND__: string;
@@ -34,6 +35,8 @@ const flag = (f: string) => argv.includes(f);
 if (dev && process.env.PEREGOVORKA_USER_DATA) app.setPath("userData", process.env.PEREGOVORKA_USER_DATA);       // испытания: свой каталог данных
 app.setAppUserModelId("org.peregovorka.desktop");                   // совпадает с appId установщика: иначе Windows не показывает уведомления приложения
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+
+setupNativeAudioLog(app);            // до готовности приложения: журнал звука Chromium с кодами WASAPI (разбор отказов микрофона, см. audiolog.ts)
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -261,12 +264,12 @@ async function boot(): Promise<void> {
     if (now && !updater.canRestart()) return { ok: false, reason: "Установка будет доступна после завершения встречи." };
     return { ok: updater.install(now) };
   });
-  handle("shell:diag", "main", (_e, a) => collect(ctx, orgs, updater.state, devicesFrom(a.devices), startupMs));
+  handle("shell:diag", "main", async (_e, a) => ({ ...collect(ctx, orgs, updater.state, devicesFrom(a.devices), startupMs), audio: await audioDiag(app) }));
   handle("shell:diag:export", "main", async (_e, a) => {
     const r = await dialog.showSaveDialog(main.win, { title: "Сохранить отчёт", defaultPath: join(app.getPath("documents"), `Peregovorka-диагностика-${new Date().toISOString().slice(0, 10)}.json`),
       filters: [{ name: "Отчёт", extensions: ["json"] }] });
     if (r.canceled || !r.filePath) return false;
-    writeFileSync(r.filePath, JSON.stringify(collect(ctx, orgs, updater.state, devicesFrom(a.devices), startupMs), null, 1), "utf8");
+    writeFileSync(r.filePath, JSON.stringify({ ...collect(ctx, orgs, updater.state, devicesFrom(a.devices), startupMs), audio: await audioDiag(app) }, null, 1), "utf8");
     shell.showItemInFolder(r.filePath);
     return true;
   });
@@ -284,7 +287,8 @@ async function boot(): Promise<void> {
     execFile(c.exe, c.args, { windowsHide: false }, (err) => { if (err && c.fallback) { log.warn("sound.open_fallback", { kind, error: String(err.message).slice(0, 120) }); openSettingsUri(c.fallback); } });
     return { ok: true };
   }
-  handle("shell:av:state", "main", () => ({ platform: process.platform, mic: access("microphone"), camera: access("camera") }));
+  let secProducts: Promise<string[]> | null = null;                 // Центр безопасности Windows: один запрос за запуск (PowerShell, только чтение)
+  handle("shell:av:state", "main", async () => ({ platform: process.platform, mic: access("microphone"), camera: access("camera"), security: await (secProducts ??= securityProducts()) }));
   handle("shell:sound:open", "main", (_e, a) => openSound(str(a.kind, 20)));
   handle("shell:external", "main", (_e, a) => { const u = str(a.url, 2000); if (externalAllowed(u)) void shell.openExternal(u); });
   handle("shell:badge", "main", (_e, a) => {
@@ -478,7 +482,7 @@ async function boot(): Promise<void> {
       let sh = await shellHealth();
       for (let i = 0; i < 120 && (startupMs === null || !sh.ok); i++) { await new Promise((res) => setTimeout(res, 500)); sh = await shellHealth(); }
       await new Promise((res) => setTimeout(res, 5000));
-      try { writeFileSync(diag.slice(14), JSON.stringify({ ...collect(ctx, orgs, updater.state, null, startupMs), shell: await shellHealth() }, null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
+      try { writeFileSync(diag.slice(14), JSON.stringify({ ...collect(ctx, orgs, updater.state, null, startupMs), audio: await audioDiag(app), shell: await shellHealth() }, null, 1), "utf8"); } catch (e) { log.error("diag.cli_failed", { error: String(e) }); }
       ctx.quitting = true;
       app.quit();
     })();
