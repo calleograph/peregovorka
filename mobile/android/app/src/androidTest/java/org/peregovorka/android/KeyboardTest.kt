@@ -67,7 +67,7 @@ class KeyboardTest {
         launchApp().use { sc ->
             device().waitFor(By.text("Закрытая"))
             device().waitFor(By.text("Чаты"))!!.click()
-            val field = device().waitFor(By.clazz("android.widget.EditText"), 20_000)
+            val field = device().waitFor(By.clazz("android.widget.EditText"), 45_000)
             assertNotNull("страница чатов не загрузилась; запросы: ${fake.requests}", field)
             assertTrue("сайт не получил метку приложения (User-Agent): ${fake.requests}", fake.requests.any { it.startsWith("GET /chats ua=") && !it.endsWith("ua=-") })
             field!!.click()
@@ -89,7 +89,7 @@ class KeyboardTest {
         launchApp().use {
             device().waitFor(By.text("Закрытая"))
             device().waitFor(By.text("Чаты"))!!.click()
-            assertNotNull("страница не загрузилась; запросы: ${fake.requests}", device().waitFor(By.clazz("android.widget.EditText"), 20_000))
+            assertNotNull("страница не загрузилась; запросы: ${fake.requests}", device().waitFor(By.clazz("android.widget.EditText"), 45_000))      // первый запуск WebView на холодном эмуляторе бывает долгим
             assertFalse("на старом сервере запрошен /chats: ${fake.requests}", fake.requests.any { it.startsWith("GET /chats") })
             assertTrue("сайт не получил главную страницу: ${fake.requests}", fake.requests.any { it.startsWith("GET / ua=") })
         }

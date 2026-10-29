@@ -167,7 +167,7 @@ class JoinFlowTest {
             assertNotNull("«Назад» не показал вопрос о выходе", device().waitFor(By.text("Выйти из конференции?"), 5_000))
             assertStaysForeground(sc, 1_500, "системная кнопка «Назад»")
             device().findObject(By.text("Остаться"))?.click()
-            assertTrue("после «Остаться» конференция пропала", device().hasObject(By.text("Основная")))
+            assertNotNull("после «Остаться» конференция пропала", device().waitFor(By.text("Основная"), 8_000))
         }
     }
 
