@@ -19,3 +19,5 @@ description: Быстрый цикл разработки приложения P
 * «Пустое окно / not found» — сначала `Peregovorka.exe --debug-log` и `--diagnostics=<файл>` (раздел `shell`), журнал `%APPDATA%\Peregovorka\logs\main.log` (`shell.not_found`, `preload.error`, `shell.console`).
 * Новая команда оболочки (`call("shell:…")`) — добавить в `src/preload/shell.ts` и обработчик в `main.ts` (тест это проверяет).
 * Полный контур (EXE/MSI, установка, обновление, агент подписи) на ветке — ручным запуском workflow `desktop.yml` (`workflow_dispatch`).
+* Ловушка: `npm run release`/`npm run preview` под Linux без `DISPLAY` → «окно app://shell/index.html не появилось за 60 с» (Electron без экрана выходит с кодом 1) → запускать с `DISPLAY=<экран Xvfb>`.
+* Ловушка: шаг CI «EXE: обновление из приложения» на теге `desktop-v*` пропускается (нет ключа обновлений) — зелёный выпуск не доказывает обновление из приложения; смотреть прогон `main`/`workflow_dispatch`.
