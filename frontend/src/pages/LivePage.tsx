@@ -10,7 +10,7 @@ import "../live.css";
  * сегментов только подписанную часть пути, не перезапуская воспроизведение.
  */
 const SEEN_KEY = (t: string) => `pg:live:${t}`;
-const HLS_PREFIX = /\/hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;
+const HLS_PREFIX = /^(?:https?:\/\/[^/]+)?\/hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;       // адрес с узлом (CDN) или без него
 
 /** Нативный HLS — в Safari и на iPhone/iPad (там он надёжнее и экономит заряд; на iOS все браузеры — WebKit). Остальным (в том числе новому Chrome, который тоже отвечает «maybe») — hls.js:
  *  одинаковое поведение, продление подписи без перезапуска. Нативный путь остаётся запасным, если у браузера нет MediaSource. */
@@ -51,6 +51,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const prefix = useRef<string>(access.path.replace(/[^/]+$/, ""));
+  const baseRef = useRef<string>(access.base ?? "");                 // CDN; при его недоступности плеер сам переходит на сервер-источник (пусто)
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(false);
   const [vol, setVol] = useState(1);
@@ -71,7 +72,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (!alive || !a) return;
         prefix.current = a.path.replace(/[^/]+$/, "");
         const el = video.current;
-        if (el && native()) { const was = !el.paused; el.src = (a.base ?? "") + a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
+        if (el && native()) { const was = !el.paused; el.src = baseRef.current + a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
       }).finally(() => { if (alive) timer = window.setTimeout(tick, Math.max(60, access.refresh_in) * 1000); });
     }, Math.max(60, access.refresh_in) * 1000);
     return () => { alive = false; window.clearTimeout(timer); };
@@ -89,7 +90,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     const el = video.current;
     if (!el) return;
     let cancelled = false;
-    const url = (access.base ?? "") + access.path;
+    const url = baseRef.current + access.path;
     el.muted = false;
     el.dataset.engine = native() ? "native" : "hlsjs";           // для проверок: какой механизм воспроизведения выбран
     const start = () => el.play().catch(() => { el.muted = true; setMuted(true); setNeedSound(true); return el.play().catch(() => undefined); });
@@ -98,8 +99,9 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       el.addEventListener("loadedmetadata", () => void start(), { once: true });
       el.addEventListener("error", () => {
         fails.current += 1;
+        if (baseRef.current && fails.current >= 2) { baseRef.current = ""; fails.current = 0; el.src = access.path; void start(); return; }         // CDN недоступна: источник
         if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Обновите страницу или попробуйте позже."); return; }
-        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = (a.base ?? "") + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
+        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = baseRef.current + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
       });
     } else {
       void import("hls.js").then(({ default: Hls }) => {
@@ -108,7 +110,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         const hls = new Hls({
           enableWorker: false, lowLatencyMode: false, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 7, maxBufferLength: 20, backBufferLength: 20,
           manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 4000 } } },
-          xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, prefix.current), true); },
+          xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, baseRef.current + prefix.current), true); },
         });
         hlsRef.current = hls as never;
         hls.loadSource(url);
@@ -119,6 +121,13 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
           const code = (d as { response?: { code?: number } }).response?.code;
           if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
             // повторы с нарастающей паузой и пределом: сломанный адрес не должен превращаться в шквал запросов к приложению
+            if (baseRef.current && (!code || code >= 500) && fails.current >= 1) {
+              // CDN недоступна (нет ответа или 5xx): те же подписанные адреса берём прямо с сервера-источника, зритель этого почти не заметит
+              baseRef.current = "";
+              fails.current = 0;
+              hls.loadSource(access.path);
+              return;
+            }
             fails.current += 1;
             if (fails.current > 6) { setFatal("Не удаётся получить поток эфира. Обновите страницу или попробуйте позже."); return; }
             const wait = Math.min(15_000, 1000 * 2 ** (fails.current - 1));
@@ -189,6 +198,9 @@ export default function LivePage() {
   const [busy, setBusy] = useState(false);
   const [skew, setSkew] = useState(0);
   const [, tick] = useState(0);
+  const [replayUrl, setReplayUrl] = useState("");
+  const [askReplayPw, setAskReplayPw] = useState(false);
+  const [replayErr, setReplayErr] = useState("");
   const pass = useRef<string>("");
   const infoRef = useRef<LiveViewerInfo | null>(null);
 
@@ -244,6 +256,19 @@ export default function LivePage() {
     return a;
   }, [getAccess, load]);
 
+  const openReplay = async (password?: string) => {
+    setBusy(true); setReplayErr("");
+    try {
+      const r = await api.liveReplay(token, password ? { password } : pass.current ? { pass: pass.current } : {});
+      if (r.pass) { pass.current = r.pass; try { sessionStorage.setItem(SEEN_KEY(token), r.pass); } catch { /* пропуск не запомнится */ } }
+      setAskReplayPw(false); setReplayUrl(r.url);
+    } catch (e) {
+      const x = e as ApiError;
+      if (x.code === "password_required") setAskReplayPw(true);
+      else setReplayErr(x.status === 429 ? "Слишком много попыток. Повторите позже." : x.code === "password_invalid" ? "Неверный пароль." : x.message || "Запись недоступна.");
+    } finally { setBusy(false); }
+  };
+
   if (err) return <section className="live-wrap"><div className="live-msg card"><Icon name="info" size={28} /><h1>{err}</h1><p className="muted">Попросите у организатора актуальную ссылку.</p></div></section>;
   if (!info) return <section className="live-wrap"><div className="muted">Загрузка…</div></section>;
 
@@ -278,8 +303,13 @@ export default function LivePage() {
           {info.password_required && !pass.current && <p className="muted">Пароль потребуется, когда эфир начнётся.</p>}
           <p className="muted">Страница обновится сама, как только эфир начнётся.</p>
         </div>)}
-      {info.status === "ended" && (
-        <div className="live-stage live-msg"><Icon name="check" size={30} /><h2>Эфир завершён</h2><p className="muted">Спасибо, что были с нами.{info.ended_at ? ` Закончился ${when(info.ended_at)}.` : ""}</p></div>)}
+      {info.status === "ended" && !replayUrl && (
+        <div className="live-stage live-msg"><Icon name="check" size={30} /><h2>Эфир завершён</h2><p className="muted">Спасибо, что были с нами.{info.ended_at ? ` Закончился ${when(info.ended_at)}.` : ""}</p>
+          {info.replay && !askReplayPw && <button className="btn primary" onClick={() => void openReplay()} disabled={busy}><Icon name="play" size={18} /> Смотреть запись</button>}
+          {askReplayPw && <PasswordForm onSubmit={(pw) => void openReplay(pw)} busy={busy} error={replayErr} />}
+          {!askReplayPw && replayErr && <div className="alert error" role="alert">{replayErr}</div>}</div>)}
+      {info.status === "ended" && replayUrl && (
+        <div className="live-stage"><video src={replayUrl} controls autoPlay playsInline aria-label="Запись эфира" /></div>)}
     </section>
   );
 }

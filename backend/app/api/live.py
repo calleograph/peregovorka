@@ -89,6 +89,7 @@ class LivePatch(BaseModel):
     live_record: bool | None = None
     live_own_hls: bool | None = None
     live_cdn: bool | None = None
+    live_replay: bool | None = None
     live_title: str | None = Field(default=None, max_length=200)
     live_starts_at: datetime | None = None
     live_password_enabled: bool | None = None
@@ -109,7 +110,7 @@ async def _out(request: Request, db: AsyncSession, room: Room, su: SessionUser) 
             "title": room.live_title or "", "starts_at": _utc(room.live_starts_at), "password_enabled": room.live_password_enabled, "has_password": bool(room.live_password_hash),
             "speaker_password_set": bool(room.password_hash), "view_path": f"/live/{room.live_token}" if room.live_token else None, "stream_path": stream,
             "state": await live.state(db, room), "global": {"enabled": bool(cfg.enabled), "direct_viewers_warn": int(cfg.direct_viewers_warn), "max_concurrent": int(cfg.max_concurrent)},
-            "is_broadcast_room": room.room_type == "broadcast", "cdn": room.live_cdn, "cdn_available": bool(cfg.cdn_enabled and cfg.cdn_base_url),
+            "is_broadcast_room": room.room_type == "broadcast", "cdn": room.live_cdn, "replay": room.live_replay, "cdn_available": bool(cfg.cdn_enabled and cfg.cdn_base_url),
             "destinations": [dests.public(r) for r in await dests.rows(db, room)],
             "platforms": [{"id": k, "name": v} for k, v in PLATFORMS.items() if getattr(cfg, f"allow_{k}", True)], "max_destinations": int(cfg.max_destinations),
             "allow_private_destinations": bool(cfg.allow_private_destinations)}
@@ -257,7 +258,8 @@ async def viewer_info(token: str, request: Request, db: AsyncSession = Depends(g
     cfg = await request.app.state.settings_svc.get(db, "live")
     return {"title": room.live_title or room.name, "starts_at": _utc(room.live_starts_at), "status": status, "password_required": bool(room.live_password_enabled and room.live_password_hash),
             "own_hls": room.live_own_hls, "ended_at": _utc(b.ended_at) if b is not None and status == "ended" else None, "quality": room.live_quality,
-            "available": bool(cfg.enabled), "now": datetime.now(timezone.utc).isoformat()}
+            "available": bool(cfg.enabled), "now": datetime.now(timezone.utc).isoformat(),
+            "replay": bool(room.live_replay and status == "ended" and await _replay_recording(db, room) is not None)}
 
 
 class AccessIn(BaseModel):
@@ -267,6 +269,24 @@ class AccessIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+async def _gate(request: Request, db: AsyncSession, room: Room, body: "AccessIn") -> str | None:
+    """Пароль зрителя (если включён): пароль или «пропуск», выданный после пароля. Возвращает новый пропуск (только после ввода пароля) или None."""
+    settings, ip = request.app.state.settings, client_ip(request)
+    secret = hls_secret(settings)
+    if not (room.live_password_enabled and room.live_password_hash) or _pass_ok(secret, room, body.pass_):
+        return None
+    await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW, hit=False)
+    if not body.password:
+        raise HTTPException(status_code=403, detail={"code": "password_required", "message": "Эта трансляция защищена паролем."})
+    if not verify_room_password(room.live_password_hash, body.password):
+        await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW)
+        await audit_now(request.app, actor_user_id=None, actor_name="зритель", action="live.view_denied", target_type="room", target_id=str(room.id), ip=ip,
+                        result="denied", actor_type="guest", details={"code": "password_invalid"})
+        request.app.state.journal.emit("room", "live_view_denied", level="warn", user="viewer", room=room.name, ip=ip, message="Неверный пароль зрителя трансляции", data={"code": "password_invalid"})
+        raise HTTPException(status_code=403, detail={"code": "password_invalid", "message": "Неверный пароль."})
+    return _pass_make(secret, room)
+
+
 @public_router.post("/{token}/access")
 async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncSession = Depends(get_db)):
     """Подписанная ссылка на плейлист. Пароль включён — нужен пароль (первый раз) или пропуск, выданный после пароля (продление без повторного ввода)."""
@@ -274,21 +294,8 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
     await _throttle(request, "live:access", 120, 600)
     room = await _room_by_token(db, token)
-    settings, ip = request.app.state.settings, client_ip(request)
-    secret = hls_secret(settings)
-    new_pass = None
-    if room.live_password_enabled and room.live_password_hash:
-        if not _pass_ok(secret, room, body.pass_):
-            await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW, hit=False)
-            if not body.password:
-                raise HTTPException(status_code=403, detail={"code": "password_required", "message": "Эта трансляция защищена паролем."})
-            if not verify_room_password(room.live_password_hash, body.password):
-                await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW)
-                await audit_now(request.app, actor_user_id=None, actor_name="зритель", action="live.view_denied", target_type="room", target_id=str(room.id), ip=ip,
-                                result="denied", actor_type="guest", details={"code": "password_invalid"})
-                request.app.state.journal.emit("room", "live_view_denied", level="warn", user="viewer", room=room.name, ip=ip, message="Неверный пароль зрителя трансляции", data={"code": "password_invalid"})
-                raise HTTPException(status_code=403, detail={"code": "password_invalid", "message": "Неверный пароль."})
-            new_pass = _pass_make(secret, room)
+    secret = hls_secret(request.app.state.settings)
+    new_pass = await _gate(request, db, room, body)
     if not room.live_own_hls or not room.live_view_access:
         raise HTTPException(status_code=409, detail={"code": "no_hls", "message": "Эфир идёт только на внешних площадках."})
     cfg = await request.app.state.settings_svc.get(db, "live")
@@ -299,6 +306,77 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     if new_pass:
         out["pass"] = new_pass
     return out
+
+
+# ------------------------------------------------------------------------------------------------ запись эфира (если владелец разрешил)
+async def _replay_recording(db: AsyncSession, room: Room):
+    """MP4 последнего завершённого эфира комнаты (готовый файл); None — записи нет или она ещё не готова."""
+    from ..models import Recording  # noqa: PLC0415
+
+    b = (await db.execute(select(Broadcast).where(Broadcast.room_id == room.id, Broadcast.status == "ended").order_by(Broadcast.started_at.desc()).limit(1))).scalars().first()
+    if b is None or not b.egress_id:
+        return None
+    rec = (await db.execute(select(Recording).where(Recording.egress_id == b.egress_id, Recording.kind == "mix_video"))).scalars().first()
+    return rec if rec is not None and rec.status == "ready" and rec.file_state != "missing" else None
+
+
+def _replay_sig(secret: str, room: Room, rec_id: uuid.UUID, exp: int) -> str:
+    return _b64(hmac.new(secret.encode(), f"live-replay:{room.id.hex}:{rec_id.hex}:{exp}:{room.live_view_access}".encode(), hashlib.sha256).digest()[:18])
+
+
+@public_router.post("/{token}/replay")
+async def viewer_replay(token: str, body: AccessIn, request: Request, db: AsyncSession = Depends(get_db)):
+    """Ссылка на запись последнего эфира. Только если владелец разрешил показ записи; пароль зрителя действует так же, как на просмотр эфира."""
+    if not _origin_ok(request):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    await _throttle(request, "live:replay", 60, 600)
+    room = await _room_by_token(db, token)
+    if not room.live_replay:
+        raise HTTPException(status_code=404, detail={"code": "no_replay", "message": "Запись для зрителей не включена."})
+    new_pass = await _gate(request, db, room, body)
+    rec = await _replay_recording(db, room)
+    if rec is None or not room.live_view_access:
+        raise HTTPException(status_code=404, detail={"code": "no_replay", "message": "Запись пока не готова или недоступна."})
+    exp = int(time.time()) + 3600
+    out = {"url": f"/api/v1/live/{token}/replay.mp4?r={rec.id.hex}&e={exp}&s={_replay_sig(hls_secret(request.app.state.settings), room, rec.id, exp)}", "duration_s": rec.duration_s, "expires_at": exp}
+    if new_pass:
+        out["pass"] = new_pass
+    return out
+
+
+@public_router.get("/{token}/replay.mp4")
+async def viewer_replay_file(token: str, request: Request, r: str, e: int, s: str, db: AsyncSession = Depends(get_db)):
+    """Файл записи с поддержкой Range. Доступ — только по подписанной ссылке, привязанной к текущему идентификатору доступа комнаты (отзыв ссылки и смена пароля её обесценивают)."""
+    from fastapi.responses import StreamingResponse  # noqa: PLC0415
+    from starlette.concurrency import iterate_in_threadpool  # noqa: PLC0415
+
+    from .media import parse_range  # noqa: PLC0415
+    from ..services.storage import StorageError, StorageNotFound  # noqa: PLC0415
+
+    room = await _room_by_token(db, token)
+    try:
+        rid = uuid.UUID(r)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Не найдено") from None
+    if not room.live_replay or e < time.time() or not hmac.compare_digest(s, _replay_sig(hls_secret(request.app.state.settings), room, rid, e)):
+        raise HTTPException(status_code=403, detail={"code": "bad_link", "message": "Ссылка на запись недействительна или устарела."})
+    rec = await _replay_recording(db, room)
+    if rec is None or rec.id != rid:
+        raise HTTPException(status_code=404, detail={"code": "no_replay", "message": "Запись недоступна."})
+    try:
+        size, reader = await request.app.state.protocols.media_source(db, rec)
+    except StorageNotFound:
+        raise HTTPException(status_code=410, detail={"code": "file_missing", "message": "Файл записи не найден."}) from None
+    except StorageError:
+        raise HTTPException(status_code=503, detail={"code": "storage_unavailable", "message": "Хранилище записей сейчас недоступно."}) from None
+    rng = parse_range(request.headers.get("range"), size)
+    if rng == "bad":
+        return StreamingResponse(iter(()), status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start, end = rng if rng else (0, size - 1)
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1), "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"}
+    if rng:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(iterate_in_threadpool(reader(start, end)), status_code=206 if rng else 200, media_type=rec.mime or "video/mp4", headers=headers)
 
 
 @public_router.post("/{token}/ping")

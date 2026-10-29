@@ -786,3 +786,104 @@ def test_admin_status_shows_load_destinations_and_warns_about_a_busy_egress(lv, 
     lv.fake.load = None
     st = lv.get("/api/v1/admin/live/status").json()
     assert st["egress_cpu_load"] is None
+
+
+# --------------------------------------------------------------------------------------------- запись эфира для зрителей
+def _ended_broadcast_with_recording(lv, room, mid, payload=b"0123456789" * 100):
+    """Эфир, записанный и завершённый: MP4 лежит в каталоге записей и готов."""
+    start(lv, mid)
+    info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_COMPLETE)
+    lv.fake.infos["EG_test1"] = info
+
+    async def prep(db):
+        rec = (await db.execute(select(Recording).where(Recording.egress_id == "EG_test1"))).scalars().first()
+        path = Path_(lv.app_obj.state.settings.recordings_path) / rec.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        rec.status, rec.size_bytes, rec.duration_s = "ready", len(payload), 60
+        await db.commit()
+        return rec.id
+    return call(lv, prep)
+
+
+from pathlib import Path as Path_  # noqa: E402
+
+
+def test_replay_is_off_by_default_and_the_owner_can_allow_it_for_viewers(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    token = get_room(lv, room["id"]).live_token
+    _ended_broadcast_with_recording(lv, room, mid)
+    reconcile(lv)
+    assert viewer(lv, token).json()["replay"] is False
+    lv.cookies.clear()
+    assert lv.post(f"/api/v1/live/{token}/replay", json={}).status_code == 404, "по умолчанию запись зрителям не показывается"
+    assert patch(lv, room, live_replay=True).json()["replay"] is True
+    assert viewer(lv, token).json()["replay"] is True and viewer(lv, token).json()["status"] == "ended"
+
+
+def test_replay_link_streams_with_ranges_and_dies_with_the_access_id_and_wrong_signatures(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    token = get_room(lv, room["id"]).live_token
+    payload = bytes(range(256)) * 20
+    _ended_broadcast_with_recording(lv, room, mid, payload)
+    reconcile(lv)
+    patch(lv, room, live_replay=True)
+    lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
+    j = lv.post(f"/api/v1/live/{token}/replay", json={}).json()
+    r = lv.get(j["url"])
+    assert r.status_code == 200 and r.content == payload and r.headers["accept-ranges"] == "bytes" and "no-store" in r.headers["cache-control"]
+    r = lv.get(j["url"], headers={"Range": "bytes=10-19"})
+    assert r.status_code == 206 and r.content == payload[10:20] and r.headers["content-range"] == f"bytes 10-19/{len(payload)}"
+    assert lv.get(j["url"][:-4] + "AAAA").status_code == 403, "подпись подделана"
+    assert lv.get(j["url"].replace("&e=", "&e=1")).status_code == 403, "срок/подпись изменены"
+    # отзыв ссылки зрителя и смена пароля обесценивают выданную ссылку на запись
+    login(lv, "carol")
+    lv.post(f"/api/v1/rooms/{room['id']}/live/links/view/revoke")
+    lv.cookies.clear()
+    assert lv.get(j["url"]).status_code == 404, "ссылка зрителя отозвана — старый адрес записи больше не открывается"
+
+
+def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    login(lv, "carol")
+    lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"})
+    patch(lv, room, live_replay=True)
+    token = get_room(lv, room["id"]).live_token
+    lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
+    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required", "без пароля наличие записи не раскрывается"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"}).json()["detail"]["code"] == "no_replay", "готовой записи ещё нет"
+    _ended_broadcast_with_recording(lv, room, mid)
+    reconcile(lv)
+    lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
+    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "не тот"}).json()["detail"]["code"] == "password_invalid"
+    ok = lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"})
+    assert ok.status_code == 200 and ok.json()["pass"] and ok.json()["url"].startswith(f"/api/v1/live/{token}/replay.mp4?")
+
+
+def test_file_check_does_not_declare_a_recording_in_progress_lost_and_finalizing_clears_a_stale_flag(lv):
+    """Файл видеозаписи появляется на диске по ходу записи: сверка хранилища не должна пометить неготовую запись «потерянной» (так и случилось на настоящем Egress)."""
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    rid = call(lv, lambda db: db.execute(select(Recording.id).where(Recording.egress_id == "EG_test1"))).scalar_one()
+    lv.portal.call(lambda: lv.app_obj.state.reconciler.run("manual", "тест", force=True))
+
+    async def state(db):
+        r = await db.get(Recording, rid)
+        await db.refresh(r)
+        return r.status, r.file_state
+    assert call(lv, state) == ("processing", "ok"), "идущая запись не «потеряна»"
+
+    async def stale(db):                                 # прежнее ошибочное состояние (до исправления) — должно сняться при завершении
+        r = await db.get(Recording, rid)
+        r.file_state = "missing"
+        await db.commit()
+    call(lv, stale)
+    ev = finish_event("EG_test1", duration_s=60)
+    call(lv, lambda db: lv.app_obj.state.video.on_egress_event(db, ev))
+    st = call(lv, state)
+    assert st[0] in ("ready", "failed") and (st[0] == "failed" or st[1] == "ok")

@@ -67,18 +67,19 @@ export interface LiveState {
 export interface LiveRoomSettings {
   enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
-  cdn: boolean; cdn_available: boolean;
+  cdn: boolean; cdn_available: boolean; replay: boolean;
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
   destinations: LiveDestination[]; platforms: { id: string; name: string }[]; max_destinations: number; allow_private_destinations: boolean;
 }
 export interface LivePatchBody {
-  live_cdn?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
+  live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
   live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
 }
 export interface LiveViewerInfo {
   title: string; starts_at: string | null; status: "waiting" | "starting" | "live" | "ended"; password_required: boolean; own_hls: boolean;
-  ended_at: string | null; quality: string; available: boolean; now: string;
+  ended_at: string | null; quality: string; available: boolean; now: string; replay?: boolean;
 }
+export interface LiveReplay { url: string; duration_s: number | null; expires_at: number; pass?: string }
 export type LiveDestStatus = "idle" | "connecting" | "live" | "failed" | "finished";
 export interface LiveDestination {
   id: string; platform: "rutube" | "vk" | "youtube" | "twitch" | "custom"; platform_name: string; name: string; server_url: string; channel: string | null; watch_url: string | null;
@@ -972,6 +973,7 @@ export const api = {
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
   liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
+  liveReplay: (token: string, body: { password?: string; pass?: string }) => request<LiveReplay>("POST", `/live/${encodeURIComponent(token)}/replay`, body),
   livePing: (token: string, vid: string) => request<{ viewers: number }>("POST", `/live/${encodeURIComponent(token)}/ping`, { vid }),
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */

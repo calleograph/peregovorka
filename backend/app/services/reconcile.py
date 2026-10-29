@@ -121,7 +121,9 @@ class Reconciler:
     # --------------------------------------------------------------------------------- сбор
     async def _collect(self, db: AsyncSession, meeting_ids: list[uuid.UUID]) -> list[Obj]:
         out: list[Obj] = []
-        recs = (await db.execute(select(Recording).where(Recording.meeting_id.in_(meeting_ids)))).scalars().all()
+        # записи, которые ещё пишутся или собираются (processing/finishing), и неудавшиеся не сверяются: файл видеозаписи появляется на диске по ходу записи и закрывается в конце,
+        # а «не найден» у неготовой записи — не потеря, а незавершённость (иначе длинная видеозапись помечалась «потерянной» и после завершения оставалась недоступной)
+        recs = (await db.execute(select(Recording).where(Recording.meeting_id.in_(meeting_ids), Recording.status == "ready"))).scalars().all()
         for r in recs:
             d, n = split_key(r.path)
             local = os.path.isfile(os.path.join(self._rec_path, r.path))

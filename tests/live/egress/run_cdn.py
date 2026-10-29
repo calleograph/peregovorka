@@ -100,6 +100,15 @@ async def main():
         uniq = len({r[3].strip().split("?")[0] for r in segs})
         print(f"   запросов сегментов: {len(segs)} (разных {uniq}); из них MISS {miss}, HIT {hit}; запросов плейлиста: {len(pl)}", flush=True)
         check("сегменты кэшируются: каждый уникальный сегмент дошёл до источника не более одного раза (≈ 3 зрителя → 1 запрос к источнику)", len(segs) >= 2 * uniq and miss <= uniq + 2 and hit >= miss, f"segs={len(segs)} uniq={uniq} miss={miss} hit={hit}")
+        # ------------------------------------------------------------------ CDN упала посреди эфира: плеер переходит на источник
+        t1 = await V[0].js("document.querySelector('.live-stage video').currentTime")
+        subprocess.run(["docker", "stop", "pgtest-cdn"], capture_output=True)
+        print("   CDN остановлена посреди эфира…", flush=True)
+        ok = await V[0].wait_for(f"document.querySelector('.live-stage video').currentTime > {t1} + 10", 120)
+        origin_hits = await V[0].js("performance.getEntriesByType('resource').filter(e=>e.name.includes('/hls/')&&!e.name.startsWith('https://cdn.localhost')).length")
+        check("недоступность CDN: зритель продолжает смотреть, плеер перешёл на сервер-источник", bool(ok) and origin_hits > 0, f"t1={t1} origin_hits={origin_hits}")
+        subprocess.run(["docker", "start", "pgtest-cdn"], capture_output=True)
+        await asyncio.sleep(4)
         # ------------------------------------------------------------------ отзыв ссылки: плейлист закрывается быстро, закэшированные сегменты — по сроку кэша CDN
         old = (await V[0].js(f"fetch('/api/v1/live/{token}/access',{{method:'POST',headers:{{'content-type':'application/json'}},body:'{{}}'}}).then(r=>r.json())"))
         pl_url = CDN + old["path"]

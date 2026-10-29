@@ -103,6 +103,8 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
               <option value="manual">Вручную: руководитель нажимает «Начать эфир»</option>
               <option value="auto">Автоматически: эфир начинается, когда подключился первый выступающий</option>
             </select></label>
+          <label className="check"><input type="checkbox" checked={cfg.replay} disabled={busy || !cfg.record} onChange={(e) => void patch({ live_replay: e.target.checked }, e.target.checked ? "После эфира зрители смогут посмотреть запись" : "Запись зрителям не показывается")} />
+            <span className="check-body">Разрешить зрителям смотреть запись после эфира<span className="help">На странице «Эфир завершён» появится кнопка «Смотреть запись» (последний эфир комнаты). Действует тот же пароль зрителя; ссылка на запись отзывается вместе со ссылкой зрителя. Файл отдаёт сервер приложения, поэтому для больших аудиторий лучше выложить запись на площадку. Нужна включённая запись эфира.</span></span></label>
           <label className="check"><input type="checkbox" checked={cfg.record} disabled={busy || live} onChange={(e) => void patch({ live_record: e.target.checked }, "Сохранено")} />
             <span className="check-body">Сохранять запись эфира в историю (MP4)<span className="help">Запись идёт тем же процессом, что и эфир: лишней нагрузки нет. Файл появится в «Истории» после завершения.</span></span></label>
         </fieldset>

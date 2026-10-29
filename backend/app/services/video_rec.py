@@ -323,6 +323,7 @@ class VideoRecorder:
             rec.error = ("Служба записи перестала отвечать во время записи" if lost else "Запись оборвана") + ": файл не читается" + (" (индекс MP4 не записан)" if unreadable else "") + ". Файл оставлен на диске для ручного разбора."
         else:
             rec.status, rec.error = "ready", (info.error[:290] if info is not None and info.error else None)
+            rec.file_state = "ok"                          # файл закрыт и прочитан: прежняя отметка «не найден» (если сверка заглянула по ходу записи) снимается
             if info is not None and info.status == eg.EgressStatus.EGRESS_LIMIT_REACHED:
                 rec.error = "Достигнут предел длительности записи: файл закрыт, дальше запись продолжится новым фрагментом."
         await db.commit()
