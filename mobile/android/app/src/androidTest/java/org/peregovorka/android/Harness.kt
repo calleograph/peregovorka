@@ -53,6 +53,7 @@ class FakePeregovorka {
         web.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty().substringBefore('?')
+                if (path == "/api/v1/client/events") android.util.Log.i("PGTEST", "событие клиента: ${request.body.clone().readUtf8().take(300)}")
                 requests += "${request.method} $path ua=${request.getHeader("User-Agent")?.substringAfter("PeregovorkaApp/", "-")?.take(10)}"
                 return when {
                     path == "/api/v1/desktop/info" -> json("""{"product":"peregovorka","api":1,"server_version":"$serverVersion","name":"Тестовая организация","cookie":"vm_session","trust_days":30,"features":[]}""")

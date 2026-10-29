@@ -100,6 +100,8 @@ class CallManager(private val app: Application) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // причина — в журнал устройства (тег PGCALL); токен доступа из текста вырезается
+                android.util.Log.w("PGCALL", "connect_failed ${e.javaClass.name}: ${e.message?.replace(Regex("access_token=[^&\\s\"]+"), "access_token=<скрыто>")?.take(300)}")
                 api.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName)
                 finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
             }
