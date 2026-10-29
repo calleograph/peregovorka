@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
+import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, TrackEvent, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
 import { LiveDialog, useLive } from "../components/LiveControl";
 import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room, type VideoState } from "../api";
@@ -23,6 +23,7 @@ import TranscriptPanel from "../components/TranscriptPanel";
 import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
 import { buildRoomOptions } from "../roomOptions";
 import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../micPrefs";
+import { MicGuard, type MicGuardState } from "../micGuard";
 import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
 import { QualityManager, type QualityState } from "../quality/manager";
@@ -336,6 +337,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const r = roomRef.current;
     roomRef.current = null;
     qualityRef.current?.stop(); qualityRef.current = null; setQuality(null);
+    micGuardRef.current?.stop();
     e2eeWorkerRef.current?.terminate(); e2eeWorkerRef.current = null; setE2eeActive(false);
     const prep = prepMicRef.current;
     prepMicRef.current = null;
@@ -428,6 +430,64 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }, []);
 
   const noiseRestoreRef = useRef<() => void>(() => undefined);
+  // Потеря микрофона посреди встречи (устройство отключили, его занял другой звонок): LiveKit пробует один раз и молча выключает микрофон — здесь повторные попытки и понятное сообщение
+  const SILENT_MIC_TEXT = "Звук с микрофона не поступает. Проверьте кнопку выключения на гарнитуре или клавише ноутбука и уровень входа в Windows; закройте программы, которые могли занять микрофон.";
+  const micGuardUi = useRef<(s: MicGuardState) => void>(() => undefined);
+  micGuardUi.current = (st) => {
+    if (st.phase === "lost") {
+      setNotice({ kind: "warn", text: `Микрофон перестал работать: устройство отключено или занято другой программой. Включаем снова — попытка ${st.attempt} из ${st.max}…` });
+      if (st.attempt === 1) reportEvent("mic_lost", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: st.reason });
+    } else if (st.phase === "recovered") {
+      setNotice({ kind: "ok", text: "Микрофон снова работает." }); setErr("mic", undefined); setMicFail(null); refresh(); noiseRestoreRef.current();
+      reportEvent("mic_recovered", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name, reason: String(st.attempts) });
+    } else if (st.phase === "failed") {
+      const info = fail("mic", "mic", "mic_recovery_failed", st.error);
+      setNotice(null); setMicFail(isDeviceBusyError(st.error) ? "busy" : "other");
+      setErr("mic", `${info.message} Вы остаётесь в комнате без микрофона — включить его можно кнопкой «Повторить» или «Микрофон».`);
+    } else if (st.phase === "silent") {
+      setNotice({ kind: "warn", text: SILENT_MIC_TEXT });
+      reportEvent("mic_silent", { meetingId: meetingRef.current ?? undefined, room: infoRef.current?.room.name });
+    } else {
+      setNotice((n) => (n?.text === SILENT_MIC_TEXT ? null : n));
+    }
+  };
+  const micGuardRef = useRef<MicGuard | null>(null);
+  if (!micGuardRef.current) micGuardRef.current = new MicGuard({
+    wanted: () => micWantedRef.current && !leavingRef.current && !endedRef.current,
+    onState: (st) => micGuardUi.current(st),
+    reopen: async () => {
+      const lp = roomRef.current?.localParticipant;
+      if (!lp) throw new Error("room_closed");
+      const pub = lp.getTrackPublication(Track.Source.Microphone);
+      if (pub?.audioTrack && !pub.isMuted && pub.audioTrack.mediaStreamTrack.readyState === "live") return;           // LiveKit уже справился сам
+      try { await lp.setMicrophoneEnabled(true, captureOptions(loadMicPrefs())); }
+      catch (e) {
+        const gone = (e as Error)?.name === "NotFoundError" || (e as Error)?.name === "OverconstrainedError";           // выбранного устройства больше нет — берём устройство Windows по умолчанию
+        if (!gone || !pub?.audioTrack) throw e;
+        await pub.audioTrack.setDeviceId("default");
+        await lp.setMicrophoneEnabled(true, captureOptions(loadMicPrefs()));
+      }
+    },
+  });
+  /** Следим за дорожкой микрофона: завершение (устройство пропало) и «mute» от системы (звук не поступает). Обработчики устойчивы по ссылке — повторный вызов их не дублирует. */
+  const micWatch = useRef((() => {
+    const seen = new WeakSet<MediaStreamTrack>();
+    const h = {
+      ended: () => micGuardRef.current?.lost("track_ended"),
+      restarted: (t: LocalAudioTrack) => h.watch(t),
+      watch: (t: LocalAudioTrack) => {
+        t.off(TrackEvent.Ended, h.ended); t.on(TrackEvent.Ended, h.ended);
+        t.off(TrackEvent.Restarted, h.restarted); t.on(TrackEvent.Restarted, h.restarted);
+        const ms = t.mediaStreamTrack;
+        if (!seen.has(ms)) {
+          seen.add(ms);
+          ms.addEventListener("mute", () => micGuardRef.current?.silent(true));
+          ms.addEventListener("unmute", () => micGuardRef.current?.silent(false));
+        }
+      },
+    };
+    return h;
+  })());
   const enableMic = useCallback(async () => {
     const lp = roomRef.current?.localParticipant;
     if (!lp) return;
@@ -455,6 +515,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       }
       tl.mark("micPublished");
       micWantedRef.current = true;
+      micGuardRef.current?.stop();
       setErr("mic", undefined);
       setMicFail(null);
       refresh();
@@ -509,7 +570,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       .on(RoomEvent.TrackPublished, refresh).on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, (pub) => {
         refresh();
-        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); void qualityRef.current?.onCameraPublished(); noiseRestoreRef.current(); }
+        if (pub.source === Track.Source.Microphone) { tl.mark("micPublished"); dlog("микрофон опубликован"); if (pub.audioTrack) micWatch.current.watch(pub.audioTrack as LocalAudioTrack); void qualityRef.current?.onCameraPublished(); noiseRestoreRef.current(); }
         if (pub.source === Track.Source.Camera) void qualityRef.current?.onCameraPublished();
         if (pub.source === Track.Source.ScreenShare) {
           screenIntendedRef.current = true;
@@ -560,6 +621,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       })
       .on(RoomEvent.ParticipantPermissionsChanged, (_prev, p) => { if (p?.isLocal) setPubAllowed(!!p.permissions?.canPublish); })
       .on(RoomEvent.MediaDevicesError, (e) => { fail("device", "device", "device_error", e); })
+      .on(RoomEvent.MediaDevicesChanged, () => micGuardRef.current?.retryNow())
       .on(RoomEvent.SignalConnected, () => { signalReachedRef.current = true; tl.mark("signalConnected"); setStage("media"); phase("SIGNALING_CONNECTED"); })
       .on(RoomEvent.ConnectionQualityChanged, () => refresh())            // оценку канала каждого участника рассылает сервер LiveKit — опроса нет
       .on(RoomEvent.ConnectionStateChanged, (s) => { setState(s); refresh(); })
@@ -827,6 +889,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       if (what === "mic") {
         await lp.setMicrophoneEnabled(!lp.isMicrophoneEnabled);
         micWantedRef.current = lp.isMicrophoneEnabled;
+        micGuardRef.current?.stop();                                    // ручное включение/выключение главнее автоматического восстановления
         // один микрофон на человека: включили здесь — другие ваши устройства в этой встрече выключат свои (событие через сервер, без опроса)
         if (lp.isMicrophoneEnabled && [...(roomRef.current?.remoteParticipants.values() ?? [])].some((p) => sameUser(p.identity, lp.identity) && p.isMicrophoneEnabled))
           void api.micOwner(join.meeting_id, lp.identity).catch(() => undefined);
@@ -1297,7 +1360,6 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <RoomIcon name={room.name} icon={room.icon} size={28} className="room-head-icon" />
           <h1>{room.name}</h1>
           {room.lifetime === "temporary" && <span className="badge" title="Комната существует, пока идёт встреча, и закрывается сама через несколько минут после выхода всех. Материалы остаются в «Истории»">Временная переговорка</span>}
-          {!connOk && <span className="badge warn" role="status">{connLabel}</span>}
           <ProtectionBadge input={{ https: window.location.protocol === "https:", storage: !!room.encrypt_storage, e2ee: e2eeActive, e2eeRecorder: join.e2ee?.mode === "trusted" }} e2eeExpected={!!join.e2ee} />
           {quality && connOk && <SignalBars signal={signalOf(quality.level, quality.conn)} title={qualityTitle(quality)} />}
           {guest && <span className="badge guest" title="Вы вошли по гостевой ссылке: функции управления встречей недоступны">Гость: {guest.info.display_name}</span>}
@@ -1340,13 +1402,22 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             {!rejoin && !ended && <button className="btn mini" onClick={() => { setErr("general", undefined); scheduleRejoin(0); }}>Войти снова</button>}
           </div>
         )}
-        {rejoin && <div className="alert" role="status">Связь потеряна. Восстанавливаем подключение (попытка {rejoin.attempt} из {MAX_REJOIN}). Комната и встреча сохранены.</div>}
         {audioBlocked && !ended && (
           <div className="alert" role="status">Браузер заблокировал звук собеседников. <button className="btn mini primary" onClick={enableAudio}>Включить звук</button>
             {ctlErr.audio && <span className="small"> {ctlErr.audio}</span>}</div>
         )}
 
-        {stage !== "ready" && !ended && <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done} />}
+        {!connOk && !ended && (
+          <ConnectProgress stage={stage} elapsedMs={tl.stageMs(stage)} done={done}
+                           note={rejoin ? `Связь потеряна, восстанавливаем (попытка ${rejoin.attempt} из ${MAX_REJOIN}). Комната и встреча сохранены.` : connectTry ? `Соединение не установилось с первого раза — повторная попытка ${connectTry.attempt} из ${connectTry.max}…` : undefined}
+                           lost={stage !== "ready" ? undefined : {
+                             label: connLabel,
+                             text: rejoin ? `Связь потеряна. Восстанавливаем подключение (попытка ${rejoin.attempt} из ${MAX_REJOIN}). Комната и встреча сохранены.`
+                               : state === ConnectionState.Reconnecting ? "Соединение нестабильно. Восстанавливаем его автоматически, встреча продолжается."
+                               : "Соединение с комнатой потеряно.",
+                           }}
+                           onRetry={stage === "ready" && !rejoin && state !== ConnectionState.Reconnecting ? () => { setErr("general", undefined); scheduleRejoin(0); } : undefined} />
+        )}
 
         {/* Сцена: высота постоянна, всё всплывающее (руки, уведомления, баннер общей сцены) — поверх неё, поэтому панель управления не прыгает */}
         <StageView items={st.items} choice={stageChoice} rest={stageRest} mobile={mobile} dense={focus} render={renderItem} badges={badges} label="Сцена встречи"
@@ -1395,7 +1466,6 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                      <div className="st-toasts">
                        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
                        {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
-                       {connectTry && stage !== "ready" && <div className="alert" role="status">Соединение не установилось с первого раза — повторная попытка {connectTry.attempt} из {connectTry.max}…</div>}
                      </div>
                    </>} />
         {menu.node}
@@ -1433,7 +1503,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <Ctl onClose={() => undefined}>
             <RoundButton icon="layout" label="Вид" tone={st.personal.layout !== "auto" || st.personal.pins.length ? "on" : "neutral"} disabled={ended}
                          title="Вид сцены: авто, сетка, сцена, рядом; сбросить закрепления. Меняет раскладку только у вас"
-                         onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, layoutItems()); }} />
+                         onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, layoutItems(), { above: true, anchor: e.currentTarget }); }} />
           </Ctl>
           <Ctl onClose={() => undefined}>
             <RoundButton icon="hand" label={myHand ? "Опустить руку" : "Поднять руку"} short="Рука" tone={myHand ? "on" : "neutral"} pressed={myHand} disabled={ended}
@@ -1451,7 +1521,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           <Ctl error={ctlErr.rec ?? ctlErr.vid ?? ctlErr.tr} onClose={() => { setErr("rec"); setErr("vid"); setErr("tr"); }}>
             <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live} disabled={ended}
                          title="Шумоподавление, устройства, запись, транскрибация и другие действия"
-                         onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, moreItems()); }} />
+                         onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, moreItems(), { above: true, anchor: e.currentTarget }); }} />
           </Ctl>
          </div>
          <div className="rbar-end">{/* завершающие действия — отдельная подгруппа; подтверждение — окном, а не вставкой в панель, чтобы раскладка не прыгала */}

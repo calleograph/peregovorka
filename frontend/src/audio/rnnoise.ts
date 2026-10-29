@@ -54,7 +54,10 @@ export class RnnoiseProcessor implements TrackProcessor<Track.Kind.Audio, AudioP
       import("@sapphi-red/web-noise-suppressor/rnnoise.wasm?url"),
       import("@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url"),
     ]);
-    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" });
+    // Звук из этого контекста никуда не воспроизводится (выход идёт в MediaStreamDestination), поэтому устройство вывода ему не нужно: без sinkId "none" Chromium открывает
+    // поток вывода на устройство Windows по умолчанию — лишний захват устройства (Bluetooth-гарнитура, занятый другой программой выход могут остановить обработку микрофона).
+    // Браузеры без поддержки поля его игнорируют — поведение прежнее.
+    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "interactive", sinkId: { type: "none" } } as AudioContextOptions);
     try {
       const wasmBinary = await loadRnnoise({ url: wasm.default, simdUrl: simd.default });
       await ctx.audioWorklet.addModule(worklet.default);

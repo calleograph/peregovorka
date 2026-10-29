@@ -174,7 +174,22 @@ main { max-width: 1900px; }
 .ctl-err .x { margin-left: auto; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; }
 
 /* этапы входа */
-.progress { max-width: 560px; margin: 8px 0; }
+/* Индикатор подключения: плавающий (fixed), над панелью управления слева — не сдвигает раскладку и не закрывает кнопки; показывается, только если подключение занимает заметное время */
+.conn-chip { position: fixed; left: 16px; bottom: calc(var(--rbar-h, 0px) + 14px); z-index: 65; max-width: calc(100vw - 32px); animation: conn-in .18s ease .35s both; }
+.conn-pill { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 5px 12px 5px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; line-height: 1.3; cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+.conn-pill:hover { border-color: var(--accent); }
+.conn-pill.slow, .conn-pill.lost { border-color: var(--warn, #d9a21b); }
+.conn-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conn-dots { display: inline-flex; gap: 3px; flex: none; }
+.conn-dots i { width: 14px; height: 4px; border-radius: 2px; background: var(--line-strong); }
+.conn-dots i.done { background: var(--ok); }
+.conn-dots i.active { background: var(--accent); animation: rec-blink 1s ease-in-out infinite; }
+.conn-dots i.warn { background: var(--warn, #d9a21b); animation: rec-blink 1.4s ease-in-out infinite; }
+.conn-pop { position: absolute; left: 0; bottom: calc(100% + 8px); width: min(380px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 12px 36px rgba(0, 0, 0, .3); }
+.conn-pop p { margin: 0 0 6px; } .conn-pop .steps { margin: 2px 0; }
+.conn-slow { color: var(--warn-text, var(--text)); margin-top: 6px; }
+@keyframes conn-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .conn-chip { animation: none; } .conn-dots i.active, .conn-dots i.warn { animation: none; } }
 .steps { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
 .step { display: grid; grid-template-columns: 22px 1fr auto; align-items: baseline; gap: 8px; color: var(--muted); }
 .step .mark { text-align: center; font-weight: 700; }
@@ -922,3 +937,9 @@ details.group { margin: 8px 0; }
   .sg-kv { grid-template-columns: minmax(0, 1fr); gap: 0; } .sg-kv dd { margin-bottom: 8px; }
   .sg-code pre.cmd { padding-right: 12px; padding-top: 36px; }
 }
+
+.mic-probe { margin-top: 8px; font-size: 12.5px; }
+.mic-probe > summary { cursor: pointer; color: var(--muted); }
+.mic-probe > button { margin-top: 6px; }
+.mic-probe .probe-out { display: grid; gap: 6px; justify-items: start; max-width: 100%; }
+.mic-probe .probe-out ul { margin: 0; padding-left: 18px; }

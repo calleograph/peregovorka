@@ -5,6 +5,7 @@ import { levelFromTimeDomain, toneWav, type PreJoin } from "../prejoin";
 import { copyText } from "../util";
 import { reportEvent } from "../diagnostics";
 import { deniedText, HINT_DELAY_MS, planFor, type HintPlan } from "../permissionHint";
+import MicProbe from "./MicProbe";
 import { loadDesktopMedia, openWindowsSound, pickByLabel } from "../desktopMedia";
 import { desktop } from "../desktop";
 
@@ -295,6 +296,7 @@ export default function PreJoinCheck({ cameraAllowed, onChange, previewHost }: {
         </div>
         {micErr && <div className="alert error small" role="alert">{micErr} Войти можно и без микрофона.
           {desktop?.openSoundSettings && <div className="pc-btns" style={{ marginTop: 6 }}><button type="button" className="btn mini" onClick={() => void openWindowsSound("mic-classic")}>Открыть настройки микрофона Windows</button></div>}</div>}
+        <MicProbe />
       </div>
 
       {cameraAllowed && (

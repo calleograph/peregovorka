@@ -1,8 +1,9 @@
-/** Положение контекстного меню у курсора так, чтобы оно не выходило за края экрана (чистая функция — проверяется тестами). */
-export function placeMenu(x: number, y: number, w: number, h: number, vw: number, vh: number, pad = 8): { left: number; top: number } {
-  let left = x, top = y;
+/** Положение контекстного меню у курсора так, чтобы оно не выходило за края экрана (чистая функция — проверяется тестами).
+ *  `above`: меню над кнопкой — y это верхняя кромка кнопки, нижняя кромка меню стоит на месте при любой высоте. */
+export function placeMenu(x: number, y: number, w: number, h: number, vw: number, vh: number, pad = 8, above = false): { left: number; top: number } {
+  let left = x, top = above ? y - h : y;
   if (left + w + pad > vw) left = Math.max(pad, x - w);            // не помещается справа — раскрываем влево от курсора
-  if (top + h + pad > vh) top = Math.max(pad, vh - h - pad);         // не помещается снизу — поднимаем
+  if (top + h + pad > vh) top = vh - h - pad;                        // не помещается снизу — поднимаем
   return { left: Math.max(pad, left), top: Math.max(pad, top) };
 }
 

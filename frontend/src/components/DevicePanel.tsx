@@ -4,6 +4,7 @@ import { reportEvent } from "../diagnostics";
 import { describeMediaError } from "../mediaErrors";
 import type { MicPrefs } from "../micPrefs";
 import { NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
+import MicProbe from "./MicProbe";
 
 type Kind = "audioinput" | "audiooutput" | "videoinput";
 const LABELS: Record<Kind, string> = { audioinput: "Микрофон", audiooutput: "Динамики", videoinput: "Камера" };
@@ -71,6 +72,7 @@ export default function DevicePanel({ room, prefs, onPrefs, inline = false }: { 
             <span className="check-body">Освобождать микрофон, когда он выключен<span className="help">Выключенный микрофон полностью отпускается, и им могут пользоваться другие программы. Включение чуть медленнее; на Bluetooth-гарнитурах звук может на мгновение переключаться. Применяется при следующем входе в комнату.</span></span></label>
         </fieldset>
       )}
+      {prefs && <MicProbe />}
     </Wrap>
   );
 }

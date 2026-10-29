@@ -152,7 +152,7 @@ export function avPanel(host: AvHost): AvPanel {
     track.onended = () => { stopMic(); micState.textContent = "Микрофон отключился во время проверки"; void refresh(true); };
     track.onmute = () => { micState.textContent = "Микрофон выключен в системе (кнопкой на корпусе, клавишей ноутбука или в параметрах Windows)"; };
     track.onunmute = () => { heardAt = performance.now(); };
-    ctx = new AudioContext();
+    ctx = new AudioContext({ sinkId: { type: "none" } } as AudioContextOptions);   // шкала уровня ничего не воспроизводит: устройство вывода не открываем
     const src = ctx.createMediaStreamSource(micStream);
     const an = ctx.createAnalyser();
     an.fftSize = 1024;

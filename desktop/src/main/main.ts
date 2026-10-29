@@ -88,6 +88,9 @@ async function boot(): Promise<void> {
     (perm === "media" || perm === "speaker-selection") && !!wc && !!main?.win && !main.win.isDestroyed() && wc.id === main.win.webContents.id && url.startsWith("app://shell/");
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb(shellMedia(wc, perm, d.requestingUrl)));
   session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => shellMedia(wc, perm, origin.endsWith("/") ? origin : `${origin}/`));
+  // Служебные процессы Chromium (в том числе «Audio Service»: захват микрофона и воспроизведение): если процесс упал, захват звука прерывается и страница видит «микрофон пропал».
+  // Без записи об этом причину не восстановить, поэтому каждый сбой — в журнал (виден во вкладке «Диагностика»).
+  app.on("child-process-gone", (_e, d) => log.error("child.gone", { type: d.type, name: (d.name ?? d.serviceName ?? "").slice(0, 60), reason: d.reason, exitCode: d.exitCode }));
   app.on("web-contents-created", (_e, wc) => {
     wc.on("will-attach-webview", (e) => e.preventDefault());
     wc.on("preload-error", (_ev, path, err) => log.error("preload.error", { preload: path.split(/[\\/]/).pop(), error: String(err?.stack ?? err).slice(0, 600) }));

@@ -445,16 +445,17 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 
 
 /* ---------- контекстное меню ---------- */
-.ctx-menu { position: fixed; z-index: 1500; min-width: 210px; max-width: 320px; padding: 5px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-strong);
-  box-shadow: var(--shadow-pop); animation: toastIn .14s var(--ease) both; }
-.ctx-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.ctx-menu { position: fixed; z-index: 1500; min-width: 200px; max-width: 300px; padding: 4px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop); animation: ctxIn .12s ease-out both; }          /* только прозрачность: transform исказил бы замер размера при расчёте положения */
+@keyframes ctxIn { from { opacity: 0; } to { opacity: 1; } }
+.ctx-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 13px; line-height: 1.3; text-align: left; cursor: pointer; }
 .ctx-item:hover:not(:disabled), .ctx-item:focus-visible { background: var(--accent-soft); outline: none; }
 .ctx-item:disabled { opacity: .5; cursor: default; }
 .ctx-item.danger { color: var(--danger-text); }
 .ctx-item.danger:hover:not(:disabled), .ctx-item.danger:focus-visible { background: var(--danger-bg); }
 .ctx-ico { display: inline-flex; width: 16px; flex: none; color: var(--muted); }
 .ctx-item.danger .ctx-ico { color: inherit; }
-.ctx-sep { height: 1px; margin: 5px 4px; background: var(--line); }
+.ctx-sep { height: 1px; margin: 3px 4px; background: var(--line); }
 .ctx-confirm { padding: 8px 10px; } .ctx-confirm p { margin: 0 0 8px; font-size: 13.5px; }
 
 /* ---------- просмотрщик изображений ---------- */
@@ -962,10 +963,11 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .ctx-row { position: relative; }
 .ctx-arrow { margin-left: auto; padding-left: 12px; color: var(--muted); }
 .ctx-text { flex: 1 1 auto; min-width: 0; }
-.ctx-sub { position: absolute; left: calc(100% + 4px); top: -6px; min-width: 190px; padding: 5px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,.18)); z-index: 1; }
+.ctx-sub { position: absolute; left: calc(100% + 4px); top: -5px; min-width: 180px; max-width: 280px; padding: 4px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,.18)); z-index: 1; }
 .ctx-sub.inline { position: static; min-width: 0; margin: 2px 0 4px 12px; padding: 2px; border-radius: 8px; box-shadow: none; border-color: var(--line); }
 .ctx-menu.flip .ctx-sub:not(.inline) { left: auto; right: calc(100% + 4px); }
-@media (max-width: 600px) { .ctx-menu { max-height: calc(100vh - 16px); overflow-y: auto; } }
+.ctx-menu.scroll { overflow-y: auto; overscroll-behavior: contain; }
+@media (pointer: coarse) { .ctx-item { min-height: 40px; padding: 8px 10px; } }
 .oc h2 { margin: 26px 0 8px; font-size: 20px; }
 .oc a.btn { text-decoration: none; }
 .oc code { word-break: break-all; }
