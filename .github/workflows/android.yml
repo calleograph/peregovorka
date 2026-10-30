@@ -137,7 +137,7 @@ jobs:
             adb logcat -G 32M
             adb logcat -c
             bash ./update-over-test.sh
-            ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.livekit_url=ws://10.0.2.2:7880 || echo failed > instrumented-failed.txt
+            bash ./run-instrumented.sh || echo failed > instrumented-failed.txt
             adb logcat -d -v time > logcat.txt
             adb shell dumpsys activity services org.peregovorka.android > services.txt || true
             test ! -f instrumented-failed.txt
@@ -151,6 +151,7 @@ jobs:
             mobile/android/services.txt
             mobile/android/app/build/reports/androidTests
             mobile/android/app/build/outputs/androidTest-results
+            mobile/android/app/build/join-attempts
             livekit.log
           retention-days: 14
 
