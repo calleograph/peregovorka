@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import io.livekit.android.compose.ui.ScaleType
 import io.livekit.android.compose.ui.VideoTrackView
 import io.livekit.android.room.Room
+import org.peregovorka.android.BuildConfig
 import kotlinx.coroutines.launch
 import org.peregovorka.android.call.CallManager
 import org.peregovorka.android.call.CallUi
@@ -160,6 +161,7 @@ fun ZoomSurface(
             }
             .pointerInput(key) {
                 detectTransformGestures { centroid, pan, factor, _ ->
+                    if (BuildConfig.DEBUG) android.util.Log.d("PGZOOM", "factor=%.4f pan=%.1f,%.1f centroid=%.0f,%.0f scale=%.3f".format(factor, pan.x, pan.y, centroid.x, centroid.y, zoom.scale))
                     zoom = ZoomMath.transform(zoom, centroid.x, centroid.y, factor, pan.x, pan.y, container, contentNow())
                 }
             }
