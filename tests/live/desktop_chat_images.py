@@ -126,6 +126,34 @@ async def main():
             # Chromium при вставке перекодирует картинку из буфера, поэтому сравниваются не байты исходника, а размер на сервере и у скачавшего
             check("размер на сервере совпал с тем, что скачал получатель", len(data) == a["size"] and a["kind"] == "image" and a["mime"] == "image/png", f"{len(data)} vs {a['size']}")
 
+        # --- 1б. сеть пропала во время загрузки: причина и «Повторить», затем успешная повторная загрузка (раньше отправитель видел только локальный предпросмотр)
+        before = len(mine)
+        png_c = png(200, 120, color=(30, 160, 60))
+        await app.m(f"""const E = process.mainModule.require('electron'); const buf = Buffer.from('{base64.b64encode(png_c).decode()}', 'base64');
+          await E.clipboard.write([new E.ClipboardItem({{ 'image/png': new Blob([buf], {{ type: 'image/png' }}) }})]); return 1;""")
+        await pa.send("Network.enable")
+        await pa.send("Network.emulateNetworkConditions", offline=True, latency=0, downloadThroughput=-1, uploadThroughput=-1)
+        await pa.js("document.querySelector('.chat textarea').focus()")
+        await app.m("pg.orgs.list[0].view.webContents.paste(); return 1;")
+        failed = await pa.wait("!!document.querySelector('.chat-pending .err') && [...document.querySelectorAll('.chat-pending button')].some(b => b.textContent.includes('Повторить'))", 20)
+        err_text = await pa.js("document.querySelector('.chat-pending')?.innerText")
+        check("без сети отправитель видит причину и «Повторить», а не «загружено»", failed and "✓ загружено" not in (err_text or ""), err_text)
+        send_disabled = await pa.js("(() => { const b = [...document.querySelectorAll('.chat button')].find(b => /Отправить/.test(b.getAttribute('aria-label') || b.title || b.textContent)); return b ? b.disabled : null; })()")
+        print("кнопка «Отправить» отключена при ошибке:", send_disabled)
+        await pa.send("Network.emulateNetworkConditions", offline=False, latency=0, downloadThroughput=-1, uploadThroughput=-1)
+        await pa.js("[...document.querySelectorAll('.chat-pending button')].find(b => b.textContent.includes('Повторить')).click()")
+        okk = await pa.wait("document.querySelector('.chat-pending')?.innerText.includes('✓ загружено')", 20)
+        check("после «Повторить» загрузка подтверждена сервером", okk, await pa.js("document.querySelector('.chat-pending')?.innerText"))
+        await pa.js("[...document.querySelectorAll('.chat button')].find(b => /Отправить/.test(b.getAttribute('aria-label') || b.title || b.textContent))?.click()")
+        await asyncio.sleep(3)
+        s, body, _ = gcall("GET", f"/meetings/{mid}/chat", gtok)
+        msgs = json.loads(body); msgs = msgs.get("messages", msgs) if isinstance(msgs, dict) else msgs
+        mine2 = [a for m in msgs if m.get("author_name") != "Гость Тест" for a in (m.get("attachments") or [])]
+        check("гость получил картинку, отправленную после сбоя сети и повтора", len(mine2) == before + 1, f"{before} -> {len(mine2)}")
+        if len(mine2) > before:
+            s, data, _ = gcall("GET", f"/meetings/{mid}/chat/attachments/{mine2[-1]['id']}", gtok)
+            check("повторно загруженный файл скачивается целиком", s == 200 and len(data) == mine2[-1]["size"] and data[:8] == b"\x89PNG\r\n\x1a\n", f"{s} {len(data)}")
+
         # --- 2. веб → Windows: гость отправляет картинку
         png_b = png(color=(40, 40, 200))
         s, body, _ = gcall("POST", f"/meetings/{mid}/chat/attachments?name=guest.png", gtok, raw=png_b, ctype="application/octet-stream")
@@ -136,7 +164,7 @@ async def main():
         await asyncio.sleep(4)
         st2 = await chat_state(pa)
         print("приложение после сообщения гостя:", st2)
-        check("приложение показывает обе картинки", st2["imgs"] >= 2 and st2["broken"] == 0, str(st2))
+        check("приложение показывает все картинки", st2["imgs"] >= 3 and st2["broken"] == 0, str(st2))
         await app.shot_window("chat-images")
         log = app.log()
         print([l for l in log.splitlines() if 'page.attachment' in l][-3:])
