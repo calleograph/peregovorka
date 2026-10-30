@@ -114,6 +114,21 @@ def _op(op: str, *, primary: bool = False, label: str | None = None) -> dict:
     return {"id": op, "label": label or o["label"], "title": o["title"], "consequences": o["consequences"], "interrupts_calls": o["calls"], "danger": bool(o.get("danger")), "primary": primary}
 
 
+_SECRET_RE = None
+
+
+def _failure(err: dict) -> dict:
+    """Причина сбоя установки для кнопки «Подробности»: код, этап, пробованные источники и выдержка вывода. Помощник уже скрыл секреты; здесь — вторая проверка."""
+    import re
+    global _SECRET_RE
+    if _SECRET_RE is None:
+        _SECRET_RE = re.compile(r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?<=[?&;,\s\"])(x-amz-[a-z-]+|signature|sig|token|access_token|password|secret|key-pair-id|policy)=[^&\s\"]+|//[^/@\s]+:[^/@\s]+@)")
+    def clean(v: Any, n: int) -> str:
+        return _SECRET_RE.sub("***", str(v or ""))[:n]
+    return {"code": clean(err.get("code"), 40), "stage": clean(err.get("stage"), 200), "image": clean(err.get("image"), 300), "tried": clean(err.get("tried"), 600),
+            "details": clean(err.get("details"), 3000), "ts": err.get("ts") if isinstance(err.get("ts"), int) else None}
+
+
 def _optional_state(f: dict | None, settings, name: str, container: str, image_key: str, fallback_env: str) -> dict:
     """Общая логика для компонентов, которые включаются и выключаются (video, sip)."""
     if f is None:
@@ -127,14 +142,22 @@ def _optional_state(f: dict | None, settings, name: str, container: str, image_k
     if f.get("docker") is False:
         return {"state": "error", "enabled": True, "message": "Помощник не смог обратиться к Docker на сервере: состояние контейнеров неизвестно.", "ops": []}
     images = f.get("images") or {}
+    err = (f.get("image_errors") or {}).get(image_key)
     if images.get(image_key) is False:
-        return {"state": "error", "enabled": True, "message": "Включена, но образ службы не скачан (нет доступа к Docker Hub или места на диске при прошлой попытке).",
-                "ops": [_op(f"{name}_enable", primary=True, label="Повторить установку")]}
+        if isinstance(err, dict) and err.get("code"):
+            msg = "Установка не завершена: образ службы не скачан. " + str(err.get("summary") or "")
+            return {"state": "error", "enabled": True, "message": msg.strip(), "failure": _failure(err),
+                    "ops": [_op(f"{name}_enable", primary=True, label="Повторить установку"), _op(f"{name}_disable")]}
+        return {"state": "error", "enabled": True, "message": "Установка не завершена: образ службы ещё не скачан. Повторите установку — причина сбоя будет показана, если он повторится.",
+                "ops": [_op(f"{name}_enable", primary=True, label="Продолжить установку"), _op(f"{name}_disable")]}
     if not f["env"].get("livekit_redis"):
         return {"state": "error", "enabled": True, "message": "Включена, но сервер звонков не подключён к общей шине (Redis): служба не получает задания.",
                 "ops": [_op(f"{name}_enable", primary=True, label="Восстановить настройки")]}
     text = _container_text(c)
-    if not c or c.get("state") != "running":
+    if not c or c.get("state") == "absent":
+        # включено в настройках, а службы нет — установка прервалась на середине; повтор безопасен и ничего не затирает
+        return {"state": "error", "enabled": True, "message": "Установка не завершена: служба ещё не создана.", "ops": [_op(f"{name}_enable", primary=True, label="Продолжить установку"), _op(f"{name}_disable")]}
+    if c.get("state") != "running":
         return {"state": "error", "enabled": True, "message": f"Включена, но служба не работает: {text}.", "ops": [_op(f"{name}_restart", primary=True, label="Повторить запуск"),
                 _op(f"{name}_enable", label="Восстановить настройки"), _op(f"{name}_disable")]}
     if c.get("health") == "unhealthy":
@@ -142,7 +165,8 @@ def _optional_state(f: dict | None, settings, name: str, container: str, image_k
     if c.get("health") == "starting":
         return {"state": "starting", "enabled": True, "message": "Служба запускается.", "ops": []}
     restarts = int(c.get("restarts") or 0)
-    return {"state": "ok", "enabled": True, "message": "Работает." + (f" Перезапусков после создания: {restarts}." if restarts else ""), "ops": [_op(f"{name}_restart"), _op(f"{name}_disable")]}
+    note = "Образ получен из резервного источника (зеркала) и проверен по контрольной сумме." if (f.get("image_sources") or {}).get(image_key) == "mirror" else None
+    return {"state": "ok", "enabled": True, "message": "Работает." + (f" Перезапусков после создания: {restarts}." if restarts else ""), "note": note, "ops": [_op(f"{name}_restart"), _op(f"{name}_disable")]}
 
 
 def _core_state(f: dict | None, name: str, op: str) -> dict:

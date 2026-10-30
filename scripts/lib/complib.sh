@@ -108,7 +108,12 @@ _comp_obj() { # _comp_obj СЕРВИС
   [[ "$rc" =~ ^[0-9]+$ ]] || rc=0
   printf '{"state":"%s","health":"%s","restarts":%s,"started_at":"%s"}' "$(_cjesc "$st")" "$(_cjesc "$hl")" "$rc" "$(_cjesc "$at")"
 }
-_comp_img() { docker image inspect "$1" >/dev/null 2>&1 && echo true || echo false; }
+_comp_img() { # _comp_img ССЫЛКА КЛЮЧ ПЕРЕМЕННАЯ — образ есть на сервере под основным именем или под именем выбранного зеркала
+  img_local_ref "$1" "$2" "$3" >/dev/null 2>&1 && echo true || echo false
+}
+_comp_src() { # источник образа: mirror — выбран автоматически (зеркало), primary — основной или заданный вручную
+  img_auto_value "$1" "$2" && echo '"mirror"' || echo '"primary"'
+}
 
 comp_state_json() {
   local docker_ok=false free
@@ -118,8 +123,9 @@ comp_state_json() {
     "$(video_enabled && echo true || echo false)" "$(sip_enabled && echo true || echo false)" "$([ -n "${LIVEKIT_REDIS_LINE:-}" ] && echo true || echo false)"
   if [ "$docker_ok" = true ]; then
     _comp_ps
-    printf '"images":{"egress":%s,"sip":%s},"containers":{"livekit":%s,"livekit-egress":%s,"livekit-sip":%s,"web":%s,"backend":%s}}\n' \
-      "$(_comp_img "$(video_image)")" "$(_comp_img "$(sip_image)")" "$(_comp_obj livekit)" "$(_comp_obj livekit-egress)" "$(_comp_obj livekit-sip)" "$(_comp_obj web)" "$(_comp_obj backend)"
+    printf '"images":{"egress":%s,"sip":%s},"image_errors":{"egress":%s,"sip":%s},"image_sources":{"egress":%s,"sip":%s},"containers":{"livekit":%s,"livekit-egress":%s,"livekit-sip":%s,"web":%s,"backend":%s}}\n' \
+      "$(_comp_img "$(video_image)" egress VIDEO_IMAGE)" "$(_comp_img "$(sip_image)" sip SIP_IMAGE)" "$(img_error_json egress)" "$(img_error_json sip)" \
+      "$(_comp_src egress VIDEO_IMAGE)" "$(_comp_src sip SIP_IMAGE)" "$(_comp_obj livekit)" "$(_comp_obj livekit-egress)" "$(_comp_obj livekit-sip)" "$(_comp_obj web)" "$(_comp_obj backend)"
   else
     printf '"images":null,"containers":null}\n'
   fi

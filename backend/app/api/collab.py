@@ -24,7 +24,7 @@ from ..auth.guests import Actor, require_actor
 from ..models import MEETING_LITE, ChatAttachment, GuestParticipant, Meeting, MeetingChatMessage, MeetingChatReaction, MeetingParticipant, MeetingWhiteboard, User, utcnow
 from ..services.chats import REACTIONS
 from sqlalchemy.exc import IntegrityError
-from ..services import events, roles, whiteboard as wb
+from ..services import events, rec_scene, roles, whiteboard as wb
 from ..services.audit import audit_now, write_audit
 from ..services.livekit import guest_identity, parse_guest_identity, parse_user_identity, user_identity
 from ..services.meetings import JoinError
@@ -523,6 +523,7 @@ async def board_patch(meeting_id: uuid.UUID, request: Request, body: dict[str, A
     await redis.expire(_tail_key(meeting_id), BOARD_TTL)
     await redis.expire(_seq_key(meeting_id), BOARD_TTL)
     await events.publish(redis, meeting_id, event)
+    await rec_scene.mark_board_activity(redis, meeting_id)          # по этой отметке запись видео показывает доску, пока над ней работают
     return {"seq": seq}
 
 

@@ -38,11 +38,10 @@ sip_prepare() { # sip_prepare [soft]
   local soft="${1:-}"
   sip_enabled || return 0
   if [ "${DRY_RUN:-0}" = "1" ]; then info "[dry-run] SIP-телефония включена: образ $(sip_image)"; return 0; fi
-  if command -v docker >/dev/null 2>&1 && ! docker image inspect "$(sip_image)" >/dev/null 2>&1; then
-    info "Загрузка образа LiveKit SIP: $(sip_image)"
-    if ! docker pull "$(sip_image)" >/dev/null 2>&1; then
-      warn "Образ LiveKit SIP ($(sip_image)) не скачан (нет доступа к Docker Hub?). Телефония заработает после его загрузки: повторите обновление при наличии интернета."
-      sip_refresh; [ "$soft" = soft ] && return 0 || return 1
+  if command -v docker >/dev/null 2>&1; then
+    info "Образ LiveKit SIP"
+    if ! img_ensure sip SIP_IMAGE "$SIP_DEFAULT_IMAGE"; then
+      sip_refresh; [ "$soft" = soft ] && { warn "Телефония заработает после загрузки образа: повторите действие в панели («Повторить установку») или обновление."; return 0; } || return 1
     fi
   fi
   sip_refresh

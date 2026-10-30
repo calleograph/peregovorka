@@ -155,10 +155,10 @@ llm_prepare() { # llm_prepare [soft]
       [ "$soft" = soft ] && return 0 || return 1
     fi
   else ok "Локальная LLM на месте: $(llm_file_name) ($(llm_state_text "$st"))."; fi
-  if command -v docker >/dev/null 2>&1 && ! docker image inspect "$(llm_image)" >/dev/null 2>&1; then
-    info "Загрузка образа llama.cpp: $(llm_image)"
-    if ! docker pull "$(llm_image)" >/dev/null 2>&1; then
-      warn "Образ llama.cpp ($(llm_image)) не скачан (нет доступа к ghcr.io?). Локальная LLM будет запущена после его загрузки: повторите установку/обновление при наличии интернета."
+  if command -v docker >/dev/null 2>&1; then
+    info "Образ llama.cpp"
+    if ! img_ensure llm LLM_LOCAL_IMAGE "$LLM_DEFAULT_IMAGE"; then
+      warn "Локальная LLM будет запущена после загрузки образа: повторите установку/обновление при наличии интернета."
       llm_local_refresh; [ "$soft" = soft ] && return 0 || return 1
     fi
   fi

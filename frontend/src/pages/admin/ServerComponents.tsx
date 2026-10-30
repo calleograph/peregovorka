@@ -70,6 +70,26 @@ export function ConfirmOp({ pending, onCancel, onRun }: { pending: Pending; onCa
   );
 }
 
+/** «Подробности» сбоя: этап, пробованные источники и техническая выдержка; секреты уже скрыты на сервере. */
+function FailureDetails({ f }: { f: NonNullable<ServerComponent["failure"]> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="small">
+      <button type="button" className="btn mini ghost" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? "Скрыть подробности" : "Подробности"}</button>
+      {open && (
+        <dl className="kv small" style={{ marginTop: 6 }}>
+          <dt>Причина</dt><dd>{f.code}</dd>
+          <dt>Этап</dt><dd>{f.stage}</dd>
+          {f.image && <><dt>Образ</dt><dd><code>{f.image}</code></dd></>}
+          {f.tried && <><dt>Пробовали</dt><dd>{f.tried}</dd></>}
+          {f.ts && <><dt>Когда</dt><dd>{new Date(f.ts * 1000).toLocaleString("ru-RU")}</dd></>}
+          {f.details && <><dt>Вывод Docker</dt><dd><pre className="comp-log">{f.details}</pre></dd></>}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 /** Карточка компонента: состояние, действия, ход и итог последнего действия. */
 export function ComponentCard({ name, ctl, onRefresh }: { name: ServerComponent["id"]; ctl: ReturnType<typeof useComponents>; /** обновить и сведения раздела */ onRefresh?: () => void }) {
   const [pending, setPending] = useState<Pending | null>(null);
@@ -89,6 +109,8 @@ export function ComponentCard({ name, ctl, onRefresh }: { name: ServerComponent[
         <button type="button" className="btn mini ghost" onClick={() => { onRefresh?.(); if (h?.available && !h.busy) void ctl.refresh(); else void ctl.load(); }} title="Опросить службы на сервере и обновить проверки">Обновить</button>
       </div>
       {(c.state !== "ok" || c.message !== "Работает.") && <span className="small">{c.message}</span>}
+      {c.failure && <FailureDetails f={c.failure} />}
+      {c.note && <span className="muted small">{c.note}</span>}
       {h && !h.available && <div className="alert warn small" role="alert">Действия недоступны: {h.message} <a href={`${WIKI}Решение-проблем-обновления`} target="_blank" rel="noopener noreferrer">Как исправить</a></div>}
       {h?.available && !h.privileged && <div className="alert warn small" role="alert">{h.message}</div>}
       {h?.busy && !last?.running && <span className="muted small">Помощник занят другим действием — кнопки станут доступны после его завершения.</span>}

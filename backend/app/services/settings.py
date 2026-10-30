@@ -803,6 +803,9 @@ class VideoSettings(_Group):
     storage: Literal["audio", "profile", "local"] = "audio"
     profile_id: str = ""
     keep_local_copy: bool = True
+    # Запись общей сцены встречи: показ экрана, доска (правки и «Показать всем») и участники — страницей-рекордером приложения вместо встроенной раскладки Egress.
+    # Выключить, если Egress не видит приложение по внутреннему адресу (RECORDER_BASE_URL) — тогда пишется встроенная раскладка «speaker» без доски.
+    scene_template: bool = True
 
     @field_validator("profile_id")
     @classmethod

@@ -16,7 +16,10 @@ export const DRAWIO_CONFIG = { sidebarWidth: 232, autosaveDelay: 800 };
 
 export interface FrameHandle { post(msg: Record<string, unknown>): void }
 
-const DrawioFrame = forwardRef<FrameHandle, { onMessage: (m: FrameMsg) => void; className?: string; title?: string }>(function DrawioFrame({ onMessage, className, title }, ref) {
+/** Страница-рекордер (запись видео): тот же редактор без панелей и меню — в кадре только схема. */
+export const DRAWIO_SRC_BARE = "/drawio/index.html?embed=1&proto=json&spin=0&noSaveBtn=1&noExitBtn=1&offline=1&lang=ru&ui=min&chrome=0&libraries=0&configure=1";
+
+const DrawioFrame = forwardRef<FrameHandle, { onMessage: (m: FrameMsg) => void; className?: string; title?: string; src?: string }>(function DrawioFrame({ onMessage, className, title, src }, ref) {
   const frame = useRef<HTMLIFrameElement>(null);
   const cb = useRef(onMessage);
   cb.current = onMessage;
@@ -37,7 +40,7 @@ const DrawioFrame = forwardRef<FrameHandle, { onMessage: (m: FrameMsg) => void; 
     return () => window.removeEventListener("message", onMsg);
   }, []);
   return (
-    <iframe ref={frame} src={DRAWIO_SRC} title={title ?? "Схема (draw.io)"} className={className ?? "drawio-frame"} referrerPolicy="no-referrer"
+    <iframe ref={frame} src={src ?? DRAWIO_SRC} title={title ?? "Схема (draw.io)"} className={className ?? "drawio-frame"} referrerPolicy="no-referrer"
             sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals" />
   );
 });

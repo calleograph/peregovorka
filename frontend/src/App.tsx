@@ -35,6 +35,7 @@ import { watchMeetings } from "./desktopMeetings";
 // Тяжёлые части (livekit-client, админка) грузятся только когда нужны.
 import OutlookCenter from "./pages/OutlookCenter";
 const RoomRoute = lazy(() => import("./pages/RoomRoute"));
+const RecorderTemplate = lazy(() => import("./recorder/RecorderTemplate"));
 const LivePage = lazy(() => import("./pages/LivePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
@@ -244,6 +245,7 @@ function Pages() {
   const { pathname } = useLocation();
   const site = useSite();
   useEffect(() => { if (pathname === "/privacy" || pathname.startsWith("/guest/")) document.title = pageTitle(pathname, false, site.name); }, [pathname, site.name]);
+  if (pathname === "/rec/template") return <Suspense fallback={null}><RecorderTemplate /></Suspense>;          // страница для службы записи видео (Egress): без входа, по подписанному токену встречи
   if (pathname.startsWith("/legal/")) return <><Routes><Route path="/legal/:kind" element={<LegalPage />} /></Routes><CookieNotice /></>;       // документы организации открываются без входа
   if (pathname === "/outlook" || pathname === "/outlook/") return <Routes><Route path="*" element={<OutlookCenter />} /></Routes>;          // центр установки надстройки: открывается без входа
   if (pathname.startsWith("/live/")) return <LiveApp />;          // страница зрителя трансляции: открывается без входа

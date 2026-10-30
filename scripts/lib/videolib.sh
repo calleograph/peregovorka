@@ -29,11 +29,10 @@ video_prepare() { # video_prepare [soft]
   local soft="${1:-}"
   video_enabled || return 0
   if [ "${DRY_RUN:-0}" = "1" ]; then info "[dry-run] Видеозапись включена: образ $(video_image)"; return 0; fi
-  if command -v docker >/dev/null 2>&1 && ! docker image inspect "$(video_image)" >/dev/null 2>&1; then
-    info "Загрузка образа LiveKit Egress (≈ 1,3 ГБ): $(video_image)"
-    if ! docker pull "$(video_image)" >/dev/null 2>&1; then
-      warn "Образ LiveKit Egress ($(video_image)) не скачан (нет доступа к Docker Hub или места на диске?). Видеозапись заработает после его загрузки: повторите обновление."
-      video_refresh; [ "$soft" = soft ] && return 0 || return 1
+  if command -v docker >/dev/null 2>&1; then
+    info "Образ LiveKit Egress (≈ 1,3 ГБ)"
+    if ! img_ensure egress VIDEO_IMAGE "$VIDEO_DEFAULT_IMAGE"; then
+      video_refresh; [ "$soft" = soft ] && { warn "Видеозапись заработает после загрузки образа: повторите действие в панели («Повторить установку») или обновление."; return 0; } || return 1
     fi
   fi
   video_refresh

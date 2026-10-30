@@ -1184,3 +1184,8 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 .comp-log { max-height: 180px; overflow: auto; margin: 0; padding: 8px; font-size: 11.5px; background: var(--soft); border-radius: var(--radius-sm); white-space: pre-wrap; }
 .consequences { margin: 6px 0 10px; padding-left: 18px; }
 .consequences li { margin: 3px 0; }
+
+/* список «название — значение» (подробности сбоя установки и т. п.) */
+dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; }
+dl.kv dt { color: var(--muted, #6b7280); }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; }

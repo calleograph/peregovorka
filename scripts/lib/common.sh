@@ -205,6 +205,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"
 # shellcheck source=siplib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/siplib.sh"
+# shellcheck source=imglib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/imglib.sh"
 # shellcheck source=videolib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/videolib.sh"
 # shellcheck source=complib.sh

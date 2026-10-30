@@ -124,6 +124,8 @@ class Settings(BaseSettings):
 
     # --- секреты приложения
     app_master_key: str = ""
+    # Адрес приложения, по которому служба Egress (в той же сети compose) открывает страницу-рекордер общей сцены; снаружи он не нужен
+    recorder_base_url: str = "http://web:8080"
     internal_api_token: str = ""
 
     # --- встречи и хранение

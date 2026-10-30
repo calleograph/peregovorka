@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 
 from ..config import Settings
 from ..models import Meeting, Recording, Room
-from . import events, mixdown
+from . import events, mixdown, rec_scene
 from .livekit import EGRESS_IDENTITY_PREFIX, list_present_identities  # noqa: F401
 from .storage import meeting_relpath
 
@@ -229,7 +229,8 @@ class VideoRecorder:
             quality = meeting.room.video_quality if meeting.room.video_quality in QUALITY else cfg.default_quality
             installed = _sc.enabled_on_server(self._s, _sc.channel_for(self._s), "video")
             try:
-                info = await self.api.start(build_request(meeting.livekit_room, f"{self.out_dir()}/{rel}", quality, template_url=cfg.template_url))
+                tpl = cfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if cfg.scene_template and self._s.recorder_base_url else "")
+                info = await self.api.start(build_request(meeting.livekit_room, f"{self.out_dir()}/{rel}", quality, template_url=tpl))
             except Exception as exc:  # noqa: BLE001 — Egress не установлен/недоступен: пользователю — понятная причина, подробности в журнале
                 log.warning("Не удалось запустить Egress", extra={"meeting_id": str(meeting.id), "error": str(exc)[:300]})
                 hint = "" if installed else " Видеоподсистема на сервере выключена."

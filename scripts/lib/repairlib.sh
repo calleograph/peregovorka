@@ -250,10 +250,7 @@ repair_apply_migrations() {
 repair_apply_llm_model() {
   local st; st="$(llm_model_state)"
   case "$st" in bad_size|bad_hash) llm_model_fetch --force || return 1 ;; *) llm_model_fetch || return 1 ;; esac
-  if ! docker image inspect "$(llm_image)" >/dev/null 2>&1; then
-    info "Загрузка образа llama.cpp: $(llm_image)"
-    docker pull "$(llm_image)" || { fail "Не удалось скачать образ $(llm_image) (нет доступа к ghcr.io?)"; return 1; }
-  fi
+  img_ensure llm LLM_LOCAL_IMAGE "$LLM_DEFAULT_IMAGE" || return 1
   llm_local_refresh
   llm_local_active || { fail "Локальная LLM не может быть запущена (модель или образ не готовы)"; return 1; }
   dc up -d --no-build llm-local || return 1

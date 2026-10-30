@@ -49,7 +49,7 @@ def test_state_follows_the_helper_facts_not_the_stale_env(client):
     assert v["state"] == "off" and [o["id"] for o in v["ops"]] == ["video_enable"] and v["ops"][0]["primary"]
     assert sc.enabled_on_server(s, ch, "video") is False
     facts(d, video=True, image=False)
-    assert sc.describe("video", sc.facts(ch), s)["message"].startswith("Включена, но образ")
+    assert sc.describe("video", sc.facts(ch), s)["message"].startswith("Установка не завершена: образ")
     facts(d, video=True, redis=False)
     assert "общей шине" in sc.describe("video", sc.facts(ch), s)["message"]
     facts(d, video=True, egress="exited")
@@ -101,3 +101,37 @@ def test_video_checks_show_one_cause_when_the_subsystem_is_off(client):
     lby = {c["id"]: c for c in lv["checks"]}
     assert lby["server"]["status"] == "off" and lby["egress"]["status"] == "skipped"
     assert lby["health"]["status"] in ("info", "skipped") and lby["secret"]["status"] in ("ok", "error")
+
+
+def test_failed_image_pull_shows_the_real_reason_not_a_guess_about_disk(client):
+    d, s = chan(client), client.app_obj.state.settings
+    ch = sc.channel_for(s)
+    err = {"ts": 1793349775, "code": "timeout", "summary": "Реестр доступен, но передача слоёв образа оборвалась по таймауту.", "stage": "основной источник",
+           "image": "livekit/egress:v1.15.0@sha256:" + "a" * 64, "tried": "основной (таймаут); mirror.gcr.io (нет образа)",
+           "details": "net/http: timeout awaiting response headers\nhttps://cdn.example/x?X-Amz-Signature=SECRETSIG&a=1\nAuthorization: Bearer abcdefghijklmnop1234"}
+    facts(d, video=True, image=False, image_errors={"egress": err, "sip": None}, free_gb=44)
+    v = sc.describe("video", sc.facts(ch), s)
+    assert v["state"] == "error" and "таймауту" in v["message"] and "диск" not in v["message"].lower()
+    assert v["ops"][0]["id"] == "video_enable" and v["ops"][0]["label"] == "Повторить установку" and v["ops"][0]["primary"]
+    f = v["failure"]
+    assert f["code"] == "timeout" and f["stage"] == "основной источник" and "mirror.gcr.io" in f["tried"]
+    assert "SECRETSIG" not in f["details"] and "abcdefghijklmnop1234" not in f["details"] and "a=1" in f["details"], "секреты скрываются повторно и на стороне backend"
+
+
+def test_enabled_but_service_never_created_is_a_partial_install_with_a_safe_continue(client):
+    d, s = chan(client), client.app_obj.state.settings
+    ch = sc.channel_for(s)
+    facts(d, video=True, egress=None)
+    v = sc.describe("video", sc.facts(ch), s)
+    assert v["state"] == "error" and "не завершена" in v["message"]
+    assert [o["id"] for o in v["ops"]] == ["video_enable", "video_disable"] and v["ops"][0]["primary"] and v["ops"][0]["label"] == "Продолжить установку"
+
+
+def test_image_from_the_mirror_is_reported_as_a_note_on_a_working_service(client):
+    d, s = chan(client), client.app_obj.state.settings
+    ch = sc.channel_for(s)
+    facts(d, video=True, image_sources={"egress": "mirror", "sip": "primary"})
+    v = sc.describe("video", sc.facts(ch), s)
+    assert v["state"] == "ok" and "зеркала" in v["note"]
+    facts(d, video=True, image_sources={"egress": "primary", "sip": "primary"})
+    assert sc.describe("video", sc.facts(ch), s)["note"] is None

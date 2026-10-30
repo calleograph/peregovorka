@@ -62,7 +62,9 @@ export interface LiveAdminStatus {
 }
 /** Действие с дополнительным компонентом сервера (выполняет помощник обновлений на хосте по белому списку). */
 export interface ComponentOp { id: string; label: string; title: string; consequences: string[]; interrupts_calls: boolean; danger: boolean; primary?: boolean }
-export interface ServerComponent { id: "video" | "sip" | "livekit" | "web"; title: string; what: string; doc: string; state: "ok" | "off" | "error" | "starting" | "unknown"; enabled: boolean; message: string; ops: ComponentOp[] }
+export interface ServerComponent { id: "video" | "sip" | "livekit" | "web"; title: string; what: string; doc: string; state: "ok" | "off" | "error" | "starting" | "unknown"; enabled: boolean; message: string; note?: string | null; failure?: ComponentFailure; ops: ComponentOp[] }
+/** Причина сбоя установки (без секретов): код, этап, пробованные источники и выдержка вывода docker. */
+export interface ComponentFailure { code: string; stage: string; image: string; tried: string; details: string; ts: number | null }
 export interface ComponentsInfo {
   helper: { available: boolean; privileged: boolean; state: string; message: string; fix: string | null; busy: boolean; busy_with: string | null;
     last: { op: string; title: string; result: string | null; running: boolean; step_name: string | null; started_at: number | null; finished_at: number | null; exit_code: number | null } | null };
