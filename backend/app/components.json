@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.52.0",
+ "release": "0.52.1",
  "reviewed_at": "2026-10-30",
  "components": [
   {
@@ -487,7 +487,7 @@
    "group": "Распознавание речи и модели",
    "pinned": "server-b11371",
    "tested": "server-b11371",
-   "reviewed_latest": "server-b11977",
+   "reviewed_latest": "server-b12004",
    "source": {
     "type": "docker",
     "registry": "ghcr",
@@ -939,7 +939,7 @@
    "group": "Backend",
    "pinned": "2.8.9",
    "tested": "2.8.9",
-   "reviewed_latest": "2.8.9",
+   "reviewed_latest": "2.9.0",
    "source": {
     "type": "pypi",
     "name": "fpdf2"
