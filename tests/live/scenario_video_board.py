@@ -166,7 +166,7 @@ async def main():
                 media = await api(A, "GET", f"/meetings/{mid}/media"); mixes = [m for m in media["j"]["mixes"] if m.get("has_video")]
                 if mixes[-1].get("phase") == "ready": break
                 await asyncio.sleep(3)
-            left = subprocess.run(f"find '{DATA}/recordings' -name 'video-*.mp4' -newer '{ENVF}' | head -3", shell=True, capture_output=True, text=True).stdout.strip()
+            left = subprocess.run(f"find '{DATA}/recordings' -name 'video-*.mp4' -newermt @{int(t0)} | head -3", shell=True, capture_output=True, text=True).stdout.strip()
             S.check("перенос в SMB-хранилище завершён: этап «готово», локальной копии нет", mixes[-1].get("phase") == "ready" and not left, f"{mixes[-1].get('phase')} {left}")
         # файл скачивается тем же путём, что и пользователем (из локального диска или из SMB-хранилища), и анализируется именно он
         rid = mixes[-1]["id"]; su = f"/api/v1/meetings/{mid}/media/{rid}/stream"
