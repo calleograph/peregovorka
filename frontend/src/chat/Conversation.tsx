@@ -12,6 +12,8 @@ import { insertAt } from "./emoji";
 import { chats, useChats } from "./chatStore";
 import { Dictation, type DictationPhase } from "./dictation";
 import { chatMenu } from "./ChatWindow";
+import { reportEvent } from "../diagnostics";
+import { withRetry } from "../uploadVerify";
 
 const ImageViewer = lazy(() => import("../components/ImageViewer"));
 
@@ -290,16 +292,21 @@ function Spans({ spans }: { spans: Span[] }): ReactNode {
 const thumbs = new Map<string, string>();
 function Thumb({ chatId, f, onOpen }: { chatId: string; f: ChatFileInfo; onOpen: () => void }) {
   const [url, setUrl] = useState(thumbs.get(f.id) ?? "");
-  const [err, setErr] = useState(false);
+  const [err, setErr] = useState("");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (url) return;
     let alive = true;
-    chatApi.fileBlob(chatId, f.id).then((b) => { const u = URL.createObjectURL(b); thumbs.set(f.id, u); if (alive) setUrl(u); }).catch(() => alive && setErr(true));
+    setErr("");
+    withRetry(() => chatApi.fileBlob(chatId, f.id)).then((b) => { const u = URL.createObjectURL(b); thumbs.set(f.id, u); if (alive) setUrl(u); })
+      .catch((e) => { if (!alive) return; const x = e as { status?: number; code?: string; message?: string }; setErr(x.status ? `HTTP ${x.status}` : "нет связи");
+        reportEvent("chat_attachment_failed", { reason: x.status ? `http_${x.status}` : x.code || "error", detail: `корпоративный чат, ${f.size ?? "?"} байт: ${x.message ?? ""}`.slice(0, 200) }); });
     return () => { alive = false; };
-  }, [chatId, f.id, url]);
+  }, [chatId, f.id, url, attempt]);
   return (
-    <button type="button" className="msg-thumb" onClick={onOpen} aria-label={`Открыть изображение ${f.name}`}>
-      {url ? <img src={url} alt={f.name} loading="lazy" /> : <span className="muted small">{err ? "не загрузилось" : "…"}</span>}
+    <button type="button" className="msg-thumb" onClick={err ? () => setAttempt((n) => n + 1) : onOpen} aria-label={err ? `Повторить загрузку: ${f.name}` : `Открыть изображение ${f.name}`}>
+      {url ? <img src={url} alt={f.name} loading="lazy" onError={() => { thumbs.delete(f.id); setUrl(""); setErr("файл повреждён"); }} />
+        : <span className="muted small">{err ? `не загрузилось (${err}) — нажмите, чтобы повторить` : "…"}</span>}
     </button>
   );
 }

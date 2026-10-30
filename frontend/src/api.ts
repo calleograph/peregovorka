@@ -12,6 +12,7 @@ export interface SigningChannel { feed_url: string; pubkeys: string; client_url:
 export interface SigningOverview { agents: SigningAgent[]; certs: SigningCert[]; jobs: SigningJob[]; channel: SigningChannel }
 export interface BuildRequest { cert_id: string; version: string; org_name: string; server_url: string; types: string[]; update_policy: string; autostart: string; allow_add: boolean }
 export interface User { id: string; sam_account_name: string; display_name: string; is_admin: boolean }
+import { readUpload, confirmUpload, withRetry } from "./uploadVerify";
 import { solveCaptcha, type CaptchaChallenge } from "./captcha";
 import { askCaptcha, captchaNote, isImageChallenge, type CaptchaAnswer } from "./captchaPrompt";
 export interface Me { user: User; csrf_token: string; local?: boolean; must_change_password?: boolean; must_enroll_totp?: boolean }
@@ -796,18 +797,24 @@ async function configRequest<T>(path: string, body: BodyInit | undefined, header
   return { data: (asJson ? await res.json() : (await res.blob())) as T, res };
 }
 
-/** Загрузка файла «как есть» (тело запроса — байты). Ошибки сервера (тип, размер, хранилище) приходят понятным текстом. */
-async function uploadBytes<T>(path: string, file: File): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`/api/v1${path}`, { method: "POST", headers: { ...authHeaders("POST"), "Content-Type": "application/octet-stream", Accept: "application/json" }, credentials: "same-origin", body: file });
-  } catch {
-    throw new ApiError(0, "network", "Нет связи с сервером");
-  }
-  const data = await res.json().catch(() => null);
-  if (res.status === 413) throw new ApiError(413, "too_large", typeof data?.detail === "string" ? data.detail : "Файл слишком большой");
-  if (!res.ok) throw errorFrom(res, data);
-  return data as T;
+/** Загрузка файла «как есть» (тело запроса — байты). Ошибки сервера (тип, размер, хранилище) приходят понятным текстом; принятое проверяется (uploadVerify.ts). */
+async function uploadBytes<T extends { size?: number; sha256?: string }>(path: string, file: File): Promise<T> {
+  const up = await readUpload(file);
+  const res = await withRetry(async () => {
+    let r: Response;
+    try {
+      r = await fetch(`/api/v1${path}`, { method: "POST", credentials: "same-origin", body: new Blob([up.bytes], { type: "application/octet-stream" }),
+        headers: { ...authHeaders("POST"), "Content-Type": "application/octet-stream", Accept: "application/json", ...(up.sha256 ? { "X-Content-SHA256": up.sha256 } : {}) } });
+    } catch {
+      throw new ApiError(0, "network", "Нет связи с сервером");
+    }
+    const data = await r.json().catch(() => null);
+    if (r.status === 413) throw new ApiError(413, "too_large", typeof data?.detail === "string" ? data.detail : "Файл слишком большой");
+    if (!r.ok) throw errorFrom(r, data);
+    return data as T;
+  });
+  confirmUpload(res, up);
+  return res;
 }
 
 async function fetchBlob(path: string): Promise<Blob> {

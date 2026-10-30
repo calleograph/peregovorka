@@ -83,11 +83,13 @@ fun appContext(): Context = InstrumentationRegistry.getInstrumentation().targetC
 fun device(): UiDevice = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
 
 /** Чистое состояние приложения; при `server != null` — вход уже выполнен (сессия в защищённом хранилище), как после обычной авторизации. */
-fun resetApp(server: FakePeregovorka? = null) {
+fun resetApp(server: FakePeregovorka? = null, permissionsIntro: Boolean = false) {
     val ctx = appContext()
     // процесс общий для всех тестов: идущую или завершённую конференцию предыдущего теста сбрасываем
     InstrumentationRegistry.getInstrumentation().runOnMainSync { App.instance.calls.leave(); App.instance.calls.dismissEnded() }
     ctx.getSharedPreferences("peregovorka", 0).edit().clear().commit()
+    // пояснение перед общим запросом разрешений показывается на первом запуске; остальным проверкам оно не нужно (его проверяет только сценарий первого запуска)
+    if (!permissionsIntro) ctx.getSharedPreferences("peregovorka", 0).edit().putBoolean("perms.intro_dismissed", true).commit()
     if (server != null) {
         val store = Store(ctx)
         val s = store.add(server.url, "Тестовая организация")

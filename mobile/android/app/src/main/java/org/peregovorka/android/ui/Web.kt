@@ -31,8 +31,9 @@ fun isConferencePath(path: String): Boolean = roomRefOf(path) != null || EXTERNA
 
 @SuppressLint("SetJavaScriptEnabled")
 private fun secureWebView(
-    ctx: android.content.Context, origin: String, onExternal: (Uri) -> Unit, onConference: (String) -> Unit = {},
+    ctx: android.content.Context, origin: String, onExternal: (Uri) -> Unit, onConference: (String) -> Unit = {}, chrome: android.webkit.WebChromeClient? = null,
 ): WebView = WebView(ctx).apply {
+    chrome?.let { webChromeClient = it }
     settings.javaScriptEnabled = true          // сайт Peregovorka — одностраничное приложение
     // Метка для сайта: внутри приложения он скрывает собственную навигацию (её показывает приложение) — см. `.in-app` в glass.css
     settings.userAgentString = settings.userAgentString + " PeregovorkaApp/" + org.peregovorka.android.BuildConfig.VERSION_NAME
@@ -97,11 +98,46 @@ fun LoginScreen(server: Server, cookieName: String, onCookie: suspend (String) -
     }
 }
 
+/**
+ * Окно страницы сайта: выбор файлов для вложений чата (кнопка-скрепка) и микрофон для голосовой диктовки (getUserMedia). Без этого клиента WebView молча отказывает и в том,
+ * и в другом: вложение в чат из приложения нельзя было прикрепить. Микрофон выдаётся странице только своего сервера и только если разрешён приложению (иначе — запрос системы).
+ */
+private class SiteChrome(
+    private val origin: String, private val ctx: android.content.Context,
+    private val pickFiles: (android.webkit.ValueCallback<Array<Uri>>, Array<String>, Boolean) -> Unit,
+    private val askMic: (onAnswer: (Boolean) -> Unit) -> Unit,
+) : android.webkit.WebChromeClient() {
+    override fun onShowFileChooser(view: WebView, cb: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+        pickFiles(cb, params.acceptTypes.filter { it.isNotBlank() }.toTypedArray(), params.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+        return true
+    }
+
+    override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+        val own = "${request.origin.scheme}://${request.origin.authority}" == origin
+        val wantsOnlyMic = request.resources.isNotEmpty() && request.resources.all { it == android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+        if (!own || !wantsOnlyMic) { request.deny(); return }                                     // камера, защищённые носители и чужие адреса — отказ
+        if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) { request.grant(request.resources); return }
+        askMic { ok -> if (ok) request.grant(request.resources) else request.deny() }
+    }
+}
+
 /** Раздел сайта (календарь, чаты, история) внутри приложения, с сессией выбранного сервера. */
 @Composable
 fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifier = Modifier, onConference: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     var web by remember { mutableStateOf<WebView?>(null) }
+    // выбор файла и запрос микрофона: ответ приходит в WebView, который его ждёт (ссылка на ответ живёт, пока WebView жив)
+    var fileCb by remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
+    var micAnswer by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()) { uris ->
+        fileCb?.onReceiveValue(uris.toTypedArray()); fileCb = null
+    }
+    val micPerm = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { ok -> micAnswer?.invoke(ok); micAnswer = null }
+    val chrome = remember(server.url) {
+        SiteChrome(server.url, ctx,
+            pickFiles = { cb, types, _ -> fileCb?.onReceiveValue(null); fileCb = cb; picker.launch(types.singleOrNull() ?: "*/*") },
+            askMic = { answer -> micAnswer?.invoke(false); micAnswer = answer; micPerm.launch(android.Manifest.permission.RECORD_AUDIO) })
+    }
     BackHandler(enabled = web?.canGoBack() == true) { web?.goBack() }
     AndroidView(
         modifier = modifier.fillMaxSize(),
@@ -110,7 +146,7 @@ fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifie
             cm.removeAllCookies(null)
             store.cookie(server.id)?.let { cm.setCookie(server.url, "${store.cookieName(server.id)}=$it; Path=/; Secure; HttpOnly; SameSite=Lax") }
             cm.flush()
-            secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }, onConference).also { w -> web = w; w.tag = path; w.loadUrl(server.url + path) }
+            secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }, onConference, chrome).also { w -> web = w; w.tag = path; w.loadUrl(server.url + path) }
         },
         update = { w -> if (w.tag != path) { w.tag = path; if (w.url == null || !w.url!!.endsWith(path)) w.loadUrl(server.url + path) } },
         onRelease = { it.destroy() },

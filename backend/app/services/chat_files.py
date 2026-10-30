@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import uuid
@@ -103,6 +104,18 @@ def inspect(name: str, data: bytes, cfg: ChatFilesSettings) -> tuple[str, str, s
     return ext, _MIME.get(ext, "application/octet-stream"), "file"
 
 
+def verify_upload(data: bytes, declared_sha256: str | None, declared_length: str | None) -> str:
+    """Подтверждение, что файл дошёл до сервера целиком и без искажений: сравнивается длина (`Content-Length`) и SHA-256, который посчитал отправитель
+    (`X-Content-SHA256`). Возвращает SHA-256 принятых байт — клиент сверяет его со своим и только после этого считает вложение отправленным.
+    Прокси, антивирусы и сетевые фильтры иногда обрезают или подменяют тело запроса, а картинка при этом по первым байтам выглядит исправной."""
+    if declared_length and declared_length.isdigit() and int(declared_length) != len(data):
+        raise AttachmentError(f"Файл дошёл не целиком: получено {len(data)} байт из {declared_length}. Повторите отправку.", 422)
+    digest = hashlib.sha256(data).hexdigest()
+    if declared_sha256 and declared_sha256.strip().lower() != digest:
+        raise AttachmentError("Файл дошёл до сервера изменённым: контрольная сумма не совпала. Повторите отправку; если повторяется — сообщите администратору.", 422)
+    return digest
+
+
 def storage_key(meeting_id: uuid.UUID, attachment_id: uuid.UUID, ext: str) -> str:
     return f"{meeting_id}/{attachment_id}.{ext}"
 
@@ -135,6 +148,10 @@ class ChatFilesService:
         try:
             backend, profile_id = await self._files.chat_backend(db)
             await asyncio.to_thread(backend.write_bytes, key, data)
+            stored = await asyncio.to_thread(backend.size_of, key)
+            if stored != len(data):                                     # записано не всё (диск заполнен, обрыв сети до SMB): вложение не создаём
+                await asyncio.to_thread(backend.delete, key)
+                raise StorageError(f"в хранилище {stored} байт из {len(data)}")
         except StorageError as exc:
             self._fail("chat_file_save_failed", exc, owner, {"name": name, "size": len(data)})
             raise AttachmentError("Не удалось сохранить файл: хранилище вложений недоступно. Сообщите администратору — ошибка записана в журнал.", 503) from None

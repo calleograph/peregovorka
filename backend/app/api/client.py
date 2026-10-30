@@ -33,6 +33,8 @@ EVENTS = {
     "mic_lost", "mic_recovered", "mic_recovery_failed", "mic_silent", "noise_suppression_fallback",
     # повтор открытия микрофона после временного отказа (frontend/src/micCapture.ts)
     "mic_retry_recovered", "mic_retry_failed",
+    # вложения чата: сбой загрузки у отправителя и сбой получения у участника (frontend/src/components/ChatPanel.tsx, chat/Conversation.tsx)
+    "chat_upload_failed", "chat_attachment_failed",
 }
 # категория и уровень записи в журнале; всё, чего нет в таблице, — client/info
 META: dict[str, tuple[str, str]] = {
@@ -50,6 +52,7 @@ META: dict[str, tuple[str, str]] = {
     "screen_share_ended_by_browser": ("client", "warn"), "screen_frozen": ("client", "warn"),
     "mic_lost": ("device", "warn"), "mic_recovered": ("device", "info"), "mic_recovery_failed": ("device", "warn"), "mic_silent": ("device", "warn"),
     "noise_suppression_fallback": ("device", "warn"), "mic_retry_recovered": ("device", "info"), "mic_retry_failed": ("device", "warn"),
+    "chat_upload_failed": ("client", "warn"), "chat_attachment_failed": ("client", "warn"),
     "room_lifecycle": ("client", "debug"), "screen_lifecycle": ("client", "debug"), "board_ready": ("client", "info"), "camera_preview": ("device", "info"), "board_history_ready": ("client", "info"),
 }
 LIFECYCLE = {"room_lifecycle", "screen_lifecycle"}

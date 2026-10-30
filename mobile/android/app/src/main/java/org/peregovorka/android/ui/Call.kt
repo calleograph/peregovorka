@@ -1,6 +1,9 @@
 package org.peregovorka.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +50,34 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     var confirmLeave by remember { mutableStateOf(false) }
     val view = LocalView.current
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
+    // Разрешения во время конференции: нажали «Включить микрофон/камеру» без доступа — система спрашивает, и после ответа устройство включается само;
+    // отказ «больше не спрашивать» — понятное пояснение и переход в настройки, из которых вернувшись приложение включает устройство без перезапуска.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val access = remember(ctx) { SystemPermissions(ctx) }
+    var asking by rememberSaveable { mutableStateOf(false) }               // защита от наложения запросов при повторных нажатиях
+    var askedBefore by rememberSaveable { mutableStateOf(false) }
+    var settingsFor by remember { mutableStateOf<Perm?>(null) }
+    val callPerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        asking = false
+        calls.permissionsChanged(access::granted)
+        val blocked = listOf(Perm.Mic, Perm.Camera).firstOrNull { p -> (if (p == Perm.Mic) calls.ui.value.micWanted else calls.ui.value.camWanted) && !access.granted(p) && !access.canAskAgain(p) }
+        if (blocked != null) settingsFor = blocked
+    }
+    fun ask(p: Perm) {
+        if (asking) return
+        if (access.granted(p)) { if (p == Perm.Mic) calls.toggleMic() else calls.toggleCamera(); return }
+        if (p == Perm.Mic) calls.wantMic() else calls.wantCamera()
+        if (askedBefore && !access.canAskAgain(p)) { settingsFor = p; return }             // система окно больше не покажет — только настройки
+        asking = true; askedBefore = true
+        callPerms.launch(arrayOf(p.manifest))
+    }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { asking = false; calls.permissionsChanged(access::granted) } }
+        lifecycle.addObserver(obs); onDispose { lifecycle.removeObserver(obs) }
+    }
+    val micMissing = s.micWanted && s.canMic && !access.granted(Perm.Mic) && s.phase != Phase.Ended
+    val camMissing = s.camWanted && s.canCamera && !access.granted(Perm.Camera) && s.phase != Phase.Ended
     // «Назад» закрывает открытую панель, а затем спрашивает, выйти ли из конференции. Само приложение «Назад» в фон не отправляет: свернуть — жестом «Домой», звук продолжает служба.
     BackHandler { if (sheet != null) { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null } else confirmLeave = true }
     LaunchedEffect(s.phase) { while (s.phase == Phase.Connected || s.phase == Phase.Reconnecting) { calls.refreshChat(); delay(if (s.chatOpen) 3000 else 10_000) } }
@@ -64,8 +95,9 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().background(CallBg).systemBarsPadding()) {
         CallTopBar(s)
         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)) { Stage(calls, s) }
+        if (micMissing || camMissing) PermissionStrip(if (micMissing) Perm.Mic else Perm.Camera) { ask(if (micMissing) Perm.Mic else Perm.Camera) }
         Controls(
-            s, onMic = calls::toggleMic, onCam = calls::toggleCamera, onHand = calls::toggleHand,
+            s, onMic = { ask(Perm.Mic) }, onCam = { ask(Perm.Camera) }, onHand = calls::toggleHand,
             onChat = { sheet = Sheet.Chat; calls.setChatOpen(true) }, onPeople = { sheet = Sheet.People }, onMore = { sheet = Sheet.More }, onLeave = { confirmLeave = true },
         )
     }
@@ -77,11 +109,28 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
             null -> {}
         }
     }
+    settingsFor?.let { p ->
+        AlertDialog(
+            onDismissRequest = { settingsFor = null }, title = { Text("Нужен доступ: ${p.title.lowercase()}") },
+            text = { Text("Без него нельзя ${if (p == Perm.Mic) "говорить" else "показывать себя"} в конференции — ${p.why}. Android больше не показывает окно запроса: разрешите вручную в настройках приложения, затем вернитесь сюда — ${if (p == Perm.Mic) "микрофон" else "камера"} включится сам.") },
+            confirmButton = { TextButton(onClick = { settingsFor = null; access.openSettings() }) { Text("Открыть настройки") } },
+            dismissButton = { TextButton(onClick = { settingsFor = null }) { Text("Не сейчас") } },
+        )
+    }
     if (confirmLeave) AlertDialog(
         onDismissRequest = { confirmLeave = false }, title = { Text("Выйти из конференции?") },
         confirmButton = { TextButton(onClick = { confirmLeave = false; calls.leave() }) { Text("Выйти", color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Остаться") } },
     )
+}
+
+/** Полоса над кнопками: что не разрешено и как это исправить одним нажатием. */
+@Composable
+private fun PermissionStrip(p: Perm, onAllow: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x33E0B04A)).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("${p.title}: нет доступа — ${if (p == Perm.Mic) "вас не слышно" else "вас не видно"}", color = Color(0xFFE0B04A), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = onAllow, modifier = Modifier.heightIn(min = 44.dp)) { Text("Разрешить") }
+    }
 }
 
 @Composable

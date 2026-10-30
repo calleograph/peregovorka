@@ -20,7 +20,7 @@ from ..models import Chat, ChatFile, ChatMember, ChatMessage, User, utcnow
 from ..services import avatars
 from ..services import chats as cs
 from ..services.audit import audit_now, write_audit
-from ..services.chat_files import INLINE_IMAGES, AttachmentError
+from ..services.chat_files import INLINE_IMAGES, AttachmentError, verify_upload
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -700,10 +700,11 @@ async def upload(chat_id: uuid.UUID, request: Request, name: str = Query("", max
     await db.commit()                                       # не держать транзакцию, пока принимается файл
     data = await _read_limited(request, cfg.max_size_mb * 1024 * 1024)
     try:
+        digest = verify_upload(data, request.headers.get("x-content-sha256"), request.headers.get("content-length"))
         f = await svc.store_for_chat(db, chat.id, uploader_id=su.user_id, raw_name=name, data=data)
     except AttachmentError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
-    return cs.file_out(f)
+    return {**cs.file_out(f), "sha256": digest}
 
 
 async def _file(db: AsyncSession, chat: Chat, me: ChatMember, file_id: uuid.UUID) -> ChatFile:

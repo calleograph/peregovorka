@@ -222,6 +222,9 @@ def test_smb_profile_is_used_through_the_common_interface(client, settings, monk
         def read_bytes(self, rel):
             return written[rel]
 
+        def size_of(self, rel):
+            return len(written[rel])
+
         def delete(self, rel):
             written.pop(rel, None)
 
@@ -282,3 +285,36 @@ def test_materials_are_split_into_profile_subfolders_and_attachments_follow_rete
     login(client, "root")
     assert client.post("/api/v1/admin/retention/run").status_code == 200
     assert not (root / "Chat" / "files" / mid / f"{att['id']}.txt").exists()
+
+
+def test_upload_is_confirmed_by_length_and_checksum_and_a_damaged_body_is_refused(client, settings):
+    """Отправитель получает от сервера SHA-256 принятых байт; искажённое или обрезанное тело не превращается в вложение."""
+    import hashlib
+
+    room = make_room(client)
+    a = _join(client, "alice", room["id"])
+    mid = a["meeting_id"]
+    ok = upload(client, mid, "shot.png", PNG, headers={"X-Content-SHA256": hashlib.sha256(PNG).hexdigest()})
+    assert ok.status_code == 201 and ok.json()["sha256"] == hashlib.sha256(PNG).hexdigest() and ok.json()["size"] == len(PNG)
+    bad = upload(client, mid, "shot2.png", PNG, headers={"X-Content-SHA256": hashlib.sha256(PNG + b"x").hexdigest()})
+    assert bad.status_code == 422 and "контрольная сумма" in bad.json()["detail"]
+    assert upload(client, mid, "shot3.png", PNG).status_code == 201, "без заголовка — как раньше (старые клиенты)"
+    # ни одного лишнего вложения от отказанной загрузки в хранилище не осталось
+    stored = [p for p in (Path(settings.data_dir) / "chat-files").rglob("*") if p.is_file()]
+    assert len(stored) == 2, stored
+
+
+def test_attachment_is_not_created_when_the_storage_keeps_only_part_of_the_file(client, settings, monkeypatch):
+    from app.services import storage as st
+
+    room = make_room(client)
+    a = _join(client, "alice", room["id"])
+    orig = st.LocalStorage.write_bytes
+
+    def short(self, rel, data):
+        return orig(self, rel, data[: len(data) // 2])
+
+    monkeypatch.setattr(st.LocalStorage, "write_bytes", short)
+    r = upload(client, a["meeting_id"], "shot.png", PNG)
+    assert r.status_code == 503 and "хранилище" in r.json()["detail"].lower()
+    assert not [p for p in (Path(settings.data_dir) / "chat-files").rglob("*") if p.is_file()], "обрезанный файл убран"

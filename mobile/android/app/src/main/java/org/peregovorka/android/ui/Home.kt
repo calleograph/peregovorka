@@ -161,6 +161,7 @@ fun ProfileContent(
                 }
             }
         }
+        item { PermissionsCard() }
         item { Text("Серверы", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp)) }
         items(servers, key = { it.id }) { s ->
             Card(Modifier.fillMaxWidth().clickable { onSwitch(s) }, colors = CardDefaults.cardColors(containerColor = if (s.id == current?.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)) {
@@ -194,5 +195,42 @@ fun ProfileContent(
             confirmButton = { TextButton(onClick = { onRemove(s); removing = null }) { Text("Удалить", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Отмена") } },
         )
+    }
+}
+
+/**
+ * Что разрешено приложению. Состояние перечитывается при каждом возврате в приложение: выданное или отозванное в настройках Android видно сразу, перезапуск не нужен.
+ * «Разрешить» показывает системное окно; если Android его уже не показывает (отказ «больше не спрашивать»), ведёт в настройки.
+ */
+@Composable
+private fun PermissionsCard() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val access = remember(ctx) { SystemPermissions(ctx) }
+    var tick by remember { mutableIntStateOf(0) }
+    var asked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(setOf<String>()) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) tick++ }
+        lifecycle.addObserver(obs); onDispose { lifecycle.removeObserver(obs) }
+    }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { _ -> tick++ }
+    val items = remember(tick) { PermissionPlan.forFirstRun(android.os.Build.VERSION.SDK_INT).map { it to access.granted(it) } }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Разрешения", style = MaterialTheme.typography.titleMedium)
+            items.forEach { (p, ok) ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(p.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(if (ok) "разрешено" else p.why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (!ok) TextButton(onClick = {
+                        if (p.manifest in asked && !access.canAskAgain(p)) access.openSettings()
+                        else { asked = asked + p.manifest; launcher.launch(arrayOf(p.manifest)) }
+                    }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Разрешить") }
+                    else Icon(Icons.Filled.Check, "Разрешено", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
     }
 }

@@ -30,7 +30,7 @@ from ..services.livekit import guest_identity, parse_guest_identity, parse_user_
 from ..services.meetings import JoinError
 from ..services.materials import chat_files_map, render_chat
 from ..services.access import can_access_meeting_actor
-from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out
+from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out, verify_upload
 
 router = APIRouter(prefix="/meetings", tags=["collab"])
 
@@ -392,10 +392,11 @@ async def chat_attachment_upload(meeting_id: uuid.UUID, request: Request, name: 
     await _rate(request, "chatfile", actor, meeting_id, FILE_RATE)
     data = await _read_limited(request, cfg.max_size_mb * 1024 * 1024)
     try:
+        digest = verify_upload(data, request.headers.get("x-content-sha256"), request.headers.get("content-length"))
         att = await svc.store(db, meeting, uploader_type="guest" if actor.is_guest else "user", uploader_id=actor.id, raw_name=name, data=data)
     except AttachmentError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
-    return attachment_out(att)
+    return {**attachment_out(att), "sha256": digest}
 
 
 async def _attachment_for_actor(request: Request, db: AsyncSession, meeting_id: uuid.UUID, attachment_id: uuid.UUID, actor: Actor) -> ChatAttachment:

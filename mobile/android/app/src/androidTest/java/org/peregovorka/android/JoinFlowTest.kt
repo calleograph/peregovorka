@@ -4,6 +4,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -37,7 +38,11 @@ class JoinFlowTest {
         }
     }
 
+    /** Пояснение перед общим запросом разрешений (первый запуск после входа, пока что-то не выдано): закрываем, если оно есть, — тесты входа его не проверяют. */
+    private fun dismissPermissionsIntro() { device().wait(Until.findObject(By.text("Позже")), 2_500)?.click() }
+
     private fun joinFirstRoom(sc: ActivityScenario<MainActivity>) {
+        dismissPermissionsIntro()
         device().waitFor(By.text("Основная"))
         device().findObjects(By.text("Войти"))[0].click()
         device().waitFor(By.text("Подключиться"))!!.click()
@@ -45,14 +50,29 @@ class JoinFlowTest {
 
     private val callScreen = By.text(Pattern.compile("Подключение…|Вы вышли из конференции|Тестовая организация|Связь потеряна.*"))
 
-    @Test fun t1_joinWithPermissionDialogsKeepsAppInForeground() {
-        resetApp(fake)
+    /** Системное окно запроса сейчас на экране (кнопка «разрешить» контроллера разрешений). */
+    private fun permissionDialogShown(ms: Long = 8_000) = device().wait(Until.findObject(By.res(Pattern.compile("com\\.android\\.permissioncontroller:id/permission_(allow|deny).*|com\\.android\\.packageinstaller:id/permission_(allow|deny).*"))), ms) != null
+
+    /**
+     * Первый запуск после входа: приложение само предлагает общий запрос («Доступ для конференций»). Пока показано системное окно, Activity пересоздаётся (так ведут себя
+     * часть устройств) — раньше после этого прерванное действие терялось. Затем вход в конференцию не вызывает ни одного запроса и сразу открывает экран конференции.
+     */
+    @Test fun t1_firstRunPermissionsIntro_survivesRecreation_thenJoinAsksNothing() {
+        resetApp(fake, permissionsIntro = true)
         launchApp().use { sc ->
-            joinFirstRoom(sc)
-            val granted = acceptPermissionDialogs()
+            assertNotNull("пояснение «Доступ для конференций» не появилось", device().waitFor(By.text("Доступ для конференций"), 15_000))
+            device().findObject(By.text("Продолжить"))!!.click()
+            assertTrue("системное окно разрешений не появилось", permissionDialogShown())
+            sc.recreate()
+            val granted = acceptPermissionDialogs(15_000)
             android.util.Log.i("PGTEST", "принято системных запросов разрешений: $granted")
-            assertNotNull("после запросов разрешений экран конференции не появился (пакет: ${device().currentPackageName})", device().waitFor(callScreen, 20_000))
-            assertStaysForeground(sc, 8_000, "вход после запросов разрешений")
+            assertNotNull("после запросов разрешений список переговорных не появился (пакет: ${device().currentPackageName})", device().waitFor(By.text("Основная"), 15_000))
+            assertFalse("пояснение показано повторно", device().hasObject(By.text("Доступ для конференций")))
+            device().findObjects(By.text("Войти"))[0].click()
+            device().waitFor(By.text("Подключиться"))!!.click()
+            assertFalse("при выданных разрешениях вход не должен вызывать системных запросов", permissionDialogShown(2_500))
+            assertNotNull("экран конференции не появился (пакет: ${device().currentPackageName})", device().waitFor(callScreen, 20_000))
+            assertStaysForeground(sc, 6_000, "вход после общего запроса")
             assertTrue("конференция не показана", device().hasObject(By.text("Основная")))
         }
     }
@@ -115,6 +135,7 @@ class JoinFlowTest {
     }
 
     private fun joinWithSwitches(camera: Boolean, allow: Boolean) {
+        dismissPermissionsIntro()
         device().waitFor(By.text("Основная"))
         device().findObjects(By.text("Войти"))[0].click()
         device().waitFor(By.text("Подключиться"))
@@ -140,15 +161,28 @@ class JoinFlowTest {
         }
     }
 
-    @Test fun t0_deniedPermissions_joinAsListenerWithoutLeavingTheApp() {
+    /**
+     * Отказ в разрешениях: вход всё равно выполняется слушателем (приложение не сворачивается), а рядом с кнопками сказано, что не разрешено. Системное окно запроса перед
+     * входом переживает пересоздание Activity: прерванный вход продолжается автоматически, без повторного нажатия «Подключиться».
+     */
+    @Test fun t0_deniedPermissions_joinContinuesAfterRecreation_asListener() {
         resetApp(fake)
         // свежие разрешения нужны отозванными: отзыв из самого теста убил бы процесс, поэтому проверяем только при их отсутствии
         val granted = appContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
         org.junit.Assume.assumeFalse("разрешения уже выданы предыдущими тестами", granted)
         launchApp().use { sc ->
-            joinWithSwitches(camera = true, allow = false)
-            assertNotNull("после отказа в разрешениях экран конференции не появился", device().waitFor(callScreen, 20_000))
-            assertStaysForeground(sc, 6_000, "вход с отказом в разрешениях")
+            dismissPermissionsIntro()
+            device().waitFor(By.text("Основная"))
+            device().findObjects(By.text("Войти"))[0].click()
+            device().waitFor(By.text("Подключиться"))
+            device().findObjects(By.checkable(true)).getOrNull(1)?.click()                   // камера включена
+            device().waitFor(By.text("Подключиться"))!!.click()
+            assertTrue("системное окно разрешений не появилось", permissionDialogShown())
+            sc.recreate()                                                                    // Activity пересоздана, пока система спрашивает
+            acceptPermissionDialogs(10_000, allowAll = false)
+            assertNotNull("после отказа и пересоздания экран конференции не появился — прерванный вход потерян", device().waitFor(callScreen, 20_000))
+            assertStaysForeground(sc, 5_000, "вход с отказом в разрешениях")
+            assertNotNull("рядом с кнопками нет пояснения, что не разрешено", device().waitFor(By.textContains("нет доступа"), 10_000))
         }
     }
 

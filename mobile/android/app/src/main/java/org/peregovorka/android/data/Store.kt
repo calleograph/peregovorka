@@ -34,6 +34,15 @@ class Store(ctx: Context, private val box: SecretBox = SecretBox()) : Sessions {
 
     fun current(): Server? = servers().firstOrNull { it.id == currentId }
 
+    /** Общий запрос разрешений (с Bluetooth и уведомлениями) уже показывался: повторно не спрашиваем. */
+    var permissionsAsked: Boolean
+        get() = sp.getBoolean("perms.asked", false)
+        set(v) { sp.edit().putBoolean("perms.asked", v).apply() }
+    /** Человек отказался от пояснения на первом запуске («Позже»): окно больше не показывается, разрешения спросим перед конкретным действием. */
+    var permissionsIntroDismissed: Boolean
+        get() = sp.getBoolean("perms.intro_dismissed", false)
+        set(v) { sp.edit().putBoolean("perms.intro_dismissed", v).apply() }
+
     fun add(url: String, name: String): Server {
         servers().firstOrNull { it.url == url }?.let { currentId = it.id; return it }
         val s = Server(UUID.randomUUID().toString(), url, name)

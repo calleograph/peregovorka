@@ -47,6 +47,9 @@ data class CallUi(
     val e2ee: Boolean = false,
     val welcome: String? = null,
     val startedAt: Long = 0,
+    /** Человек хотел включить микрофон/камеру, но разрешения нет: рядом с кнопкой — пояснение и «Разрешить»; после выдачи (в окне запроса или в настройках) включается само. */
+    val micWanted: Boolean = false,
+    val camWanted: Boolean = false,
 )
 
 /**
@@ -68,7 +71,8 @@ class CallManager(private val app: Application) {
 
     val active: Boolean get() = _ui.value.phase != Phase.Idle && _ui.value.phase != Phase.Ended
 
-    fun start(api: ServerApi, serverTitle: String, join: JoinDto, wantMic: Boolean, wantCamera: Boolean) {
+    /** wantMic/wantCamera — включить сейчас (есть разрешения); intentMic/intentCamera — чего человек хотел: если разрешения не было, устройство включится само после выдачи доступа. */
+    fun start(api: ServerApi, serverTitle: String, join: JoinDto, wantMic: Boolean, wantCamera: Boolean, intentMic: Boolean = wantMic, intentCamera: Boolean = wantCamera) {
         if (active) return
         this.api = api; myIdentity = join.identity
         val sources = join.client.sources
@@ -78,8 +82,11 @@ class CallManager(private val app: Application) {
         _ui.value = CallUi(
             phase = Phase.Connecting, roomName = join.room.name, meetingId = join.meetingId, serverTitle = serverTitle,
             canMic = canMic, canCamera = canCam, e2ee = join.e2ee != null, welcome = join.client.welcome, startedAt = System.currentTimeMillis(),
+            micWanted = intentMic && canMic && !join.client.muteOnJoin, camWanted = intentCamera && canCam,
         )
-        CallService.start(app, join.room.name, serverTitle)
+        // Служба переднего плана нужна, чтобы звук не прерывался в фоне; если система в этот момент её не разрешает (запуск из состояния «не на переднем плане»,
+        // сразу после окна разрешений), конференция всё равно идёт — приложение не должно из-за этого завершаться
+        runCatching { CallService.start(app, join.room.name, serverTitle) }.onFailure { android.util.Log.w("PGCALL", "fgs_start_failed ${it.javaClass.simpleName}: ${it.message?.take(200)}") }
         val r = LiveKit.create(
             app,
             options = RoomOptions(
@@ -145,8 +152,32 @@ class CallManager(private val app: Application) {
         }
     }
 
-    fun toggleMic() { val r = room ?: return; scope.launch { runCatching { r.localParticipant.setMicrophoneEnabled(!r.localParticipant.isMicrophoneEnabled) }; refresh() } }
-    fun toggleCamera() { val r = room ?: return; scope.launch { runCatching { r.localParticipant.setCameraEnabled(!r.localParticipant.isCameraEnabled) }; refresh() } }
+    fun toggleMic() {
+        val r = room ?: return
+        val on = !r.localParticipant.isMicrophoneEnabled
+        _ui.update { it.copy(micWanted = on) }
+        scope.launch { runCatching { r.localParticipant.setMicrophoneEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "mic_toggle_failed ${it.javaClass.simpleName}") }; refresh() }
+    }
+    fun toggleCamera() {
+        val r = room ?: return
+        val on = !r.localParticipant.isCameraEnabled
+        _ui.update { it.copy(camWanted = on) }
+        scope.launch { runCatching { r.localParticipant.setCameraEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "camera_toggle_failed ${it.javaClass.simpleName}") }; refresh() }
+    }
+    /** Человек нажал «включить», а разрешения нет: запоминаем намерение — как только доступ выдан, устройство включится само. */
+    fun wantMic() { _ui.update { it.copy(micWanted = true) } }
+    fun wantCamera() { _ui.update { it.copy(camWanted = true) } }
+
+    /** Разрешения могли измениться (ответ на запрос или возврат из настроек Android): включить то, чего человек хотел и что теперь доступно. Перезапуск приложения не нужен. */
+    fun permissionsChanged(granted: (org.peregovorka.android.ui.Perm) -> Boolean) {
+        val r = room ?: return
+        val s = _ui.value
+        if (s.phase != Phase.Connected && s.phase != Phase.Reconnecting) return
+        if (s.micWanted && s.canMic && granted(org.peregovorka.android.ui.Perm.Mic) && !r.localParticipant.isMicrophoneEnabled)
+            scope.launch { runCatching { r.localParticipant.setMicrophoneEnabled(true) }; refresh() }
+        if (s.camWanted && s.canCamera && granted(org.peregovorka.android.ui.Perm.Camera) && !r.localParticipant.isCameraEnabled && !cameraWasOn)
+            scope.launch { runCatching { r.localParticipant.setCameraEnabled(true) }; refresh() }
+    }
     fun flipCamera() {
         val t = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack ?: return
         t.switchCamera()

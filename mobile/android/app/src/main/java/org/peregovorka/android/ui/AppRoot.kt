@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -27,8 +28,6 @@ import org.peregovorka.android.data.*
 import org.peregovorka.android.net.SERVER_WITH_APP_PAGES
 import org.peregovorka.android.net.versionAtLeast
 
-private data class JoinTarget(val roomId: String, val name: String, val hasPassword: Boolean, val cameraAllowed: Boolean)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: String?, onLinkHandled: () -> Unit) {
@@ -41,31 +40,30 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
         return
     }
 
-    var target by remember { mutableStateOf<JoinTarget?>(null) }
-    var pendingJoin by remember { mutableStateOf<Triple<String?, Boolean, Boolean>?>(null) }
     var pendingRef by remember { mutableStateOf<String?>(null) }
     var linkDialog by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var unknownServer by remember { mutableStateOf<String?>(null) }
     var switchTo by remember { mutableStateOf<Server?>(null) }
+    var intro by rememberSaveable { mutableStateOf(false) }
 
-    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
-        // Решение по каждому разрешению принимает система; без микрофона человек подключается слушателем и может включить его позже.
-        val t = target ?: return@rememberLauncherForActivityResult
-        val (pwd, mic, cam) = pendingJoin ?: return@rememberLauncherForActivityResult
-        val micOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val camOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        vm.join(t.roomId, pwd, mic && micOk, cam && camOk) { ok -> if (ok) { target = null; pendingJoin = null } }
+    val access = remember(ctx) { SystemPermissions(ctx) }
+    // Ответ системы на запрос перед входом: прерванный вход хранится в ViewModel и продолжается здесь автоматически — даже если Activity за это время пересоздавалась.
+    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> vm.permissionsResult(access::granted) }
+    // Общий запрос на первом запуске (после входа): без привязки к конкретной комнате
+    val introPerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> store.permissionsAsked = true }
+    fun startJoin(pwd: String?, mic: Boolean, cam: Boolean) = vm.startJoin(pwd, mic, cam, access::granted) { need -> perms.launch(need.map { it.manifest }.toTypedArray()) }
+
+    // Возврат из системных настроек (или из окна запроса): права могли измениться — прерванный вход продолжается, а вошедший в конференцию получает доступное сразу
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { if (s.permissionsAsking) vm.permissionsResult(access::granted); calls.permissionsChanged(access::granted) } }
+        lifecycle.addObserver(obs); onDispose { lifecycle.removeObserver(obs) }
     }
-    fun startJoin(pwd: String?, mic: Boolean, cam: Boolean) {
-        pendingJoin = Triple(pwd, mic, cam)
-        val need = buildList {
-            if (mic) add(Manifest.permission.RECORD_AUDIO)
-            if (cam) add(Manifest.permission.CAMERA)
-            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-            if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
-        }.filter { ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED }
-        if (need.isEmpty()) perms.launch(emptyArray()) else perms.launch(need.toTypedArray())
+    // Первый запуск после входа: один понятный запрос вместо россыпи окон при первом входе в конференцию
+    LaunchedEffect(s.step) {
+        if (s.step == Step.Main && !store.permissionsAsked && !store.permissionsIntroDismissed &&
+            PermissionPlan.missing(PermissionPlan.forFirstRun(Build.VERSION.SDK_INT), access::granted).isNotEmpty()) intro = true
     }
 
     // ссылка из письма или «Подключиться по ссылке»
@@ -80,7 +78,7 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
     LaunchedEffect(incomingLink) { if (incomingLink != null) { handleLink(incomingLink); onLinkHandled() } }
     LaunchedEffect(pendingRef, s.rooms) {
         val ref = pendingRef ?: return@LaunchedEffect
-        s.rooms.firstOrNull { it.slug == ref || it.id == ref }?.let { r -> target = JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed); pendingRef = null }
+        s.rooms.firstOrNull { it.slug == ref || it.id == ref }?.let { r -> vm.openJoin(JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed)); pendingRef = null }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -92,16 +90,21 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
             Step.Main -> MainScaffold(s, vm, store, onConference = { path ->
                 val ref = roomRefOf(path)
                 if (ref != null) pendingRef = ref else s.server?.let { sv -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sv.url + path))) }
-            }, onJoinRoom = { r -> vm.clearJoinError(); target = JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed) },
-                onJoinUpcoming = { u -> vm.clearJoinError(); target = JoinTarget(u.id, u.name, u.hasPassword, true) },
+            }, onJoinRoom = { r -> vm.openJoin(JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed)) },
+                onJoinUpcoming = { u -> vm.openJoin(JoinTarget(u.id, u.name, u.hasPassword, true)) },
                 onLink = { linkDialog = true }, onSwitch = { sv -> if (vm.canSwitchWithoutAsking()) vm.switchTo(sv) else switchTo = sv })
         }
         toast?.let { t -> Snackbar(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(16.dp).navigationBarsPadding(), action = { TextButton(onClick = { toast = null }) { Text("OK") } }) { Text(t) } }
     }
 
-    target?.let { t ->
-        JoinSheet(t.name, t.hasPassword, t.cameraAllowed, s.joining, s.joinError, onDismiss = { target = null; vm.clearJoinError() }, onJoin = { pwd, mic, cam -> startJoin(pwd, mic, cam) })
+    s.joinTarget?.let { t ->
+        JoinSheet(t.name, t.hasPassword, t.cameraAllowed, s.joining || s.permissionsAsking, s.joinError, onDismiss = { vm.closeJoin() }, onJoin = { pwd, mic, cam -> startJoin(pwd, mic, cam) })
     }
+    if (intro) PermissionsIntro(
+        Build.VERSION.SDK_INT,
+        onAllow = { intro = false; introPerms.launch(PermissionPlan.missing(PermissionPlan.forFirstRun(Build.VERSION.SDK_INT), access::granted).map { it.manifest }.toTypedArray()) },
+        onLater = { intro = false; store.permissionsIntroDismissed = true },
+    )
     if (linkDialog) {
         var text by remember { mutableStateOf("") }
         AlertDialog(

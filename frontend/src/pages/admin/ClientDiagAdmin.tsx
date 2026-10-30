@@ -11,6 +11,7 @@ const EVENT_LABEL: Record<string, string> = {
   backend_ws_connected: "Канал событий подключён", backend_ws_reconnecting: "Канал событий: переподключение",
   mic_busy: "Микрофон занят", mic_lost: "Микрофон пропал во время встречи", mic_recovered: "Микрофон вернулся сам", mic_recovery_failed: "Микрофон не вернулся",
   mic_silent: "Звук с микрофона не поступает", mic_permission_denied: "Микрофон: доступ запрещён", join_without_mic: "Вход без микрофона",
+  chat_upload_failed: "Вложение чата не загрузилось на сервер", chat_attachment_failed: "Вложение чата не открылось у получателя",
 };
 const MIC_COLS: [string, string][] = [["mic_busy", "занят"], ["mic_failed", "не открылся"], ["mic_lost", "пропал"], ["mic_recovered", "вернулся сам"], ["mic_recovery_failed", "не вернулся"], ["mic_silent", "тишина"], ["mic_retry_recovered", "открылся со 2–4 попытки"], ["mic_retry_failed", "повтор не помог"]];
 

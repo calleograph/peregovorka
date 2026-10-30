@@ -2,6 +2,7 @@ package org.peregovorka.android.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,10 +32,15 @@ data class UiState(
     val joinError: String? = null,
     val serverVersion: String = "",         // версия сервера (из /desktop/info): от неё зависит, есть ли у сайта страница /chats
     val webPath: String? = null,            // раздел сайта, который нужно открыть во вкладке (ссылка из письма)
+    val joinTarget: JoinTarget? = null,     // комната, в которую входит человек (лист «Подключиться»); хранится здесь, а не в экране — не теряется при пересоздании Activity
+    val permissionsAsking: Boolean = false, // идёт системный запрос разрешений
 )
 
-class AppViewModel(app: Application) : AndroidViewModel(app) {
+data class JoinTarget(val roomId: String, val name: String, val hasPassword: Boolean, val cameraAllowed: Boolean)
+
+class AppViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
     private val store = (app as App).store
+    private val joinFlow = JoinPermissionFlow(android.os.Build.VERSION.SDK_INT)
     private val calls = (app as App).calls
     private val _s = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _s
@@ -43,7 +49,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val ua = "PeregovorkaAndroid/${BuildConfig.VERSION_NAME} (Android ${android.os.Build.VERSION.RELEASE})"
     fun api(s: Server): ServerApi = apis.getOrPut(s.id) { ServerApi(s, store, ua) }
 
-    init { boot() }
+    init { boot(); restorePendingJoin() }
+
+    // ── вход в конференцию и разрешения ─────────────────────────────────────────────────────
+    // Системное окно разрешений на части устройств пересоздаёт Activity, а иногда и процесс: Compose-переменные экрана при этом пропадали, и после «Разрешить»
+    // вход не продолжался (приходилось перезапускать приложение). Теперь прерванный вход живёт в ViewModel (пересоздание Activity) и в SavedStateHandle (процесс).
+
+    fun openJoin(t: JoinTarget) { clearJoinError(); _s.update { it.copy(joinTarget = t) } }
+    fun closeJoin() { joinFlow.clear(); saved["join"] = null; _s.update { it.copy(joinTarget = null, joinError = null, permissionsAsking = false) } }
+
+    /** Нажато «Подключиться»: если разрешений хватает — входим сразу, иначе просим [launch] показать системный запрос; повторное нажатие во время запроса игнорируется. */
+    fun startJoin(pwd: String?, mic: Boolean, cam: Boolean, perms: (Perm) -> Boolean, launch: (List<Perm>) -> Unit) {
+        val t = _s.value.joinTarget ?: return
+        val req = JoinRequest(t.roomId, t.name, t.hasPassword, t.cameraAllowed, pwd, mic, cam)
+        when (val st = joinFlow.begin(req, store.permissionsAsked, perms)) {
+            JoinStep.Busy -> {}
+            is JoinStep.Ask -> {
+                saved["join"] = encode(req)                              // пароль в сохранённое состояние не попадает
+                if (st.perms.any { it == Perm.Bluetooth || it == Perm.Notifications }) store.permissionsAsked = true
+                _s.update { it.copy(permissionsAsking = true) }
+                launch(st.perms)
+            }
+            is JoinStep.Join -> proceed(st)
+        }
+    }
+
+    /** Система ответила на запрос (или человек вернулся из настроек): вход продолжается с тем, что выдано. */
+    fun permissionsResult(perms: (Perm) -> Boolean) {
+        _s.update { it.copy(permissionsAsking = false) }
+        joinFlow.result(perms)?.let { proceed(it) }
+    }
+
+    private fun proceed(st: JoinStep.Join) {
+        saved["join"] = null
+        join(st.request.roomId, st.request.password, st.mic, st.cam, { ok -> if (ok) { joinFlow.clear(); _s.update { it.copy(joinTarget = null) } } }, st.request.mic, st.request.cam)
+    }
+
+    private fun encode(r: JoinRequest) = listOf(r.roomId, r.name, r.hasPassword, r.cameraAllowed, r.mic, r.cam).joinToString("\u0001")
+
+    /** Процесс был завершён во время запроса: запрос разрешений уже показан системой, ответ придёт новому экземпляру. Пароль не сохранялся — для комнаты с паролем лист входа откроется заново. */
+    private fun restorePendingJoin() {
+        val raw = saved.get<String>("join") ?: return
+        val f = raw.split("\u0001")
+        if (f.size != 6) { saved["join"] = null; return }
+        val t = JoinTarget(f[0], f[1], f[2].toBoolean(), f[3].toBoolean())
+        _s.update { it.copy(joinTarget = t) }
+        if (!t.hasPassword) joinFlow.restore(JoinRequest(t.roomId, t.name, false, t.cameraAllowed, null, f[4].toBoolean(), f[5].toBoolean())) else saved["join"] = null
+    }
 
     private fun boot() {
         val list = store.servers()
@@ -160,14 +212,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ── подключение к комнате ────────────────────────────────────────────────────────────
-    fun join(roomId: String, password: String?, mic: Boolean, camera: Boolean, onResult: (Boolean) -> Unit) {
+    fun join(roomId: String, password: String?, mic: Boolean, camera: Boolean, onResult: (Boolean) -> Unit, intentMic: Boolean = mic, intentCamera: Boolean = camera) {
         val s = _s.value.server ?: return
         val a = api(s)
         _s.update { it.copy(joining = true, joinError = null) }
         viewModelScope.launch {
             try {
                 val j = a.join(roomId, password)
-                calls.start(a, s.title, j, mic, camera)
+                calls.start(a, s.title, j, mic, camera, intentMic, intentCamera)
                 _s.update { it.copy(joining = false) }
                 onResult(true)
             } catch (e: SessionExpired) {

@@ -1,13 +1,15 @@
 import { playChatSound } from "../chatSound";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { autoGrow } from "../autoGrow";
-import { fileTypeLabel, formatSize, pastedName } from "../attachments";
+import { fileTypeLabel, formatSize, pastedFiles, pastedName } from "../attachments";
 import { Icon } from "./Icons";
 import { useContextMenu, type MenuItem } from "./ContextMenu";
 
 // Просмотрщик изображений подгружается при первом открытии картинки: вход в комнату он не замедляет
 const ImageViewer = lazy(() => import("./ImageViewer"));
-import { api, type ApiError, type ChatAttachment, type ChatMessage } from "../api";
+import { api, ApiError, type ChatAttachment, type ChatMessage } from "../api";
+import { reportEvent } from "../diagnostics";
+import { withRetry } from "../uploadVerify";
 import type { LiveBus } from "../liveSocket";
 import { linkify } from "../linkify";
 import { formatTime } from "../transcript";
@@ -39,20 +41,36 @@ async function saveBlob(blob: Blob, name: string): Promise<void> {
   window.setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
+/** Картинка вложения: загружается с заголовками сессии (так она доступна и гостю). Временный сбой (сеть, 502/503/504) повторяется сам; причина отказа видна, есть «Повторить». */
 function ImageAttachment({ meetingId, a, onOpen }: { meetingId: string; a: ChatAttachment; onOpen: () => void }) {
   const [url, setUrl] = useState("");
-  const [failed, setFailed] = useState(!!a.missing);
+  const [fail, setFail] = useState<string | null>(a.missing ? "missing" : null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (a.missing) return;
     let alive = true; let made = "";
-    api.attachmentBlob(meetingId, a.id).then((b) => { if (alive) { made = URL.createObjectURL(b); setUrl(made); } }).catch(() => { if (alive) setFailed(true); });
+    setFail(null);
+    withRetry(() => api.attachmentBlob(meetingId, a.id)).then(async (b) => {
+      if (!alive) return;
+      if (!b.size) throw new ApiError(0, "empty", "сервер вернул пустой файл");
+      made = URL.createObjectURL(b); setUrl(made);
+    }).catch((e) => {
+      if (!alive) return;
+      const err = e as ApiError;
+      setFail(err.status ? `HTTP ${err.status}` : err.message || "нет связи");
+      reportEvent("chat_attachment_failed", { meetingId, reason: err.status ? `http_${err.status}` : err.code || "error", detail: `${a.kind}, ${a.size} байт: ${err.message}`.slice(0, 200) });
+    });
     return () => { alive = false; if (made) URL.revokeObjectURL(made); };
-  }, [meetingId, a.id]);
-  if (failed) return <div className="chat-file broken"><Icon name="file" size={18} /><span className="chat-file-name">{a.name}</span><span className="muted small">{a.missing ? "файл удалён из хранилища" : "не удалось загрузить"}</span></div>;
+  }, [meetingId, a.id, attempt]);
+  if (fail) return (
+    <div className="chat-file broken"><Icon name="file" size={18} /><span className="chat-file-name">{a.name}</span>
+      <span className="muted small">{fail === "missing" ? "файл удалён из хранилища" : `не удалось загрузить (${fail})`}</span>
+      {fail !== "missing" && <button type="button" className="btn mini" onClick={() => setAttempt((n) => n + 1)}>Повторить</button>}</div>);
   return (
     <button type="button" className="chat-image" title={`${a.name} · ${formatSize(a.size)} — открыть в просмотрщике`} aria-label={`Открыть изображение ${a.name}`}
             onClick={() => { if (url) onOpen(); }}>
-      {url ? <img src={url} alt={a.name} loading="lazy" /> : <span className="chat-image-wait muted small">Загрузка…</span>}
+      {url ? <img src={url} alt={a.name} onError={() => { setUrl(""); setFail("файл повреждён"); reportEvent("chat_attachment_failed", { meetingId, reason: "decode", detail: `${a.size} байт` }); }} />
+        : <span className="chat-image-wait muted small">Загрузка…</span>}
     </button>
   );
 }
@@ -240,6 +258,16 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
 
   useEffect(() => () => { for (const p of pendingRef.current) if (p.preview) URL.revokeObjectURL(p.preview); }, []);
 
+  const upload = (key: string, file: File) => {
+    setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "uploading", error: undefined } : p));
+    api.uploadAttachment(meetingId, file)
+      .then((att) => setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "ready", att } : p)))
+      .catch((e) => {
+        const err = e as ApiError;
+        reportEvent("chat_upload_failed", { meetingId, reason: err.status ? `http_${err.status}` : err.code || "error", detail: `${file.type || "?"}, ${file.size} байт: ${err.message}`.slice(0, 200) });
+        setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "error", error: err.message || "Не удалось загрузить файл" } : p));
+      });
+  };
   const addFiles = (files: File[]) => {
     if (!canAttach || readOnly || !files.length) return;
     setError("");
@@ -247,9 +275,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
       const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
       setPending((cur) => [...cur, { key, file, preview, state: "uploading" }]);
-      api.uploadAttachment(meetingId, file)
-        .then((att) => setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "ready", att } : p)))
-        .catch((e) => setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "error", error: (e as ApiError).message || "Не удалось загрузить файл" } : p)));
+      upload(key, file);
     }
   };
   const removePending = (p: Pending) => {
@@ -258,7 +284,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
     if (p.att) void api.discardAttachment(meetingId, p.att.id).catch(() => undefined);
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData?.files ?? []);
+    const files = pastedFiles(e.clipboardData);
     if (!files.length || !canAttach) return;
     e.preventDefault();   // скриншот из буфера — вложение, а не текст
     addFiles(files.map((f, i) => { const name = pastedName(f.name, f.type, new Date(), i, files.length); return name === f.name ? f : new File([f], name, { type: f.type }); }));
@@ -347,8 +373,9 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
                   {p.preview ? <img src={p.preview} alt="" /> : <Icon name="file" size={18} />}
                   <span className="chat-pend-info">
                     <span className="chat-file-name">{p.file.name}</span>
-                    <span className="small muted">{p.state === "uploading" ? "Загрузка…" : p.state === "error" ? <span className="err">{p.error}</span> : formatSize(p.file.size)}</span>
+                    <span className="small muted">{p.state === "uploading" ? "Загрузка на сервер…" : p.state === "error" ? <span className="err">{p.error}</span> : <><span className="ok-text">✓ загружено</span> · {formatSize(p.file.size)}</>}</span>
                   </span>
+                  {p.state === "error" && <button type="button" className="btn mini" onClick={() => upload(p.key, p.file)}>Повторить</button>}
                   <button type="button" className="icon-btn" onClick={() => removePending(p)} title="Убрать вложение" aria-label={`Убрать ${p.file.name}`}><Icon name="close" size={14} /></button>
                 </li>
               ))}

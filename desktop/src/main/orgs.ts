@@ -401,11 +401,25 @@ export class Orgs {
       if (!own(req.securityOrigin) || !req.frame) { cb(null); return; }
       this.host.pickScreen(o, req, cb);
     });
-    // картинки страницы (значки комнат, аватарки) идут на сервер этой организации; сбой попадает в журнал (только путь, без параметров), а страница сама показывает запасной значок
-    const imgs = { urls: [`${o.rec.origin}/api/*`], types: ["image"] as ("image")[] };
-    const imgLog = (status: number | string, url: string) => this.ctx.log.warn("page.image_failed", { org: o.rec.id, status, path: url.split("?")[0].slice(0, 120) });
-    ses.webRequest.onCompleted(imgs, (d) => { if (d.statusCode >= 400) imgLog(d.statusCode, d.url); });
-    ses.webRequest.onErrorOccurred(imgs, (d) => { if (d.error !== "net::ERR_ABORTED") imgLog(d.error, d.url); });
+    // Электрон держит ОДИН обработчик каждого события webRequest на сеанс (следующий заменяет прежний), поэтому всё, что нужно в журнале, разбирается в одном месте.
+    // 1) картинки страницы (значки комнат, аватарки) идут на сервер этой организации; сбой попадает в журнал (только путь, без параметров), а страница сама показывает запасной значок;
+    // 2) вложения чата (загрузка и открытие идут через fetch, а не как картинки): код ответа или сетевая ошибка — чтобы при жалобе «изображение у других не открывается» было видно,
+    //    дошёл ли файл до сервера и что ответил сервер. Тело и заголовки не пишутся.
+    const api = { urls: [`${o.rec.origin}/api/*`] };
+    const isFile = (u: string) => /\/api\/v1\/(meetings\/[^/]+\/chat\/attachments|chats\/[^/]+\/files)/.test(u);
+    const logReq = (d: { method: string; url: string; resourceType?: string }, result: number | string) => {
+      let path = d.url.split("?")[0];
+      try { path = new URL(d.url).pathname; } catch { /* оставляем как есть */ }
+      path = path.slice(0, 120);
+      const bad = typeof result === "string" || result >= 400;
+      if (d.resourceType === "image") { if (bad) this.ctx.log.warn("page.image_failed", { org: o.rec.id, status: result, path }); return; }
+      if (!isFile(d.url)) return;
+      const upload = d.method === "POST";
+      if (!upload && !bad) return;                                                    // успешные открытия не пишем
+      this.ctx.log[bad ? "warn" : "info"]("page.attachment", { org: o.rec.id, op: upload ? "upload" : d.method === "DELETE" ? "discard" : "open", result, path });
+    };
+    ses.webRequest.onCompleted(api, (d) => logReq(d, d.statusCode));
+    ses.webRequest.onErrorOccurred(api, (d) => { if (d.error !== "net::ERR_ABORTED") logReq(d, d.error); });
     ses.on("will-download", (_e, item, wc) => this.host.download(o, item, wc));
     const ua = ses.getUserAgent().replace(/\s(Electron|peregovorka-desktop|Peregovorka)\/[\d.]+/gi, "");
     ses.setUserAgent(`${ua} PeregovorkaDesktop/${this.ctx.version}`);
