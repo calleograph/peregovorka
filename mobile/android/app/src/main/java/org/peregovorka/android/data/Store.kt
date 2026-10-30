@@ -18,6 +18,8 @@ interface Sessions {
     fun cookieName(id: String): String
     fun setCookieName(id: String, v: String)
     fun clearSession(id: String)
+    /** Идентификатор этой установки приложения для сервера (заголовок X-Client-Id): по нему сервер отличает подключение телефона от вкладки браузера под той же учётной записью. Пусто — не передаётся. */
+    fun clientId(): String = ""
 }
 
 /** Список серверов, выбранный сервер и секреты каждого сервера. Секреты разных организаций не пересекаются: ключ записи содержит id сервера, он же входит в AAD шифрования. */
@@ -73,5 +75,7 @@ class Store(ctx: Context, private val box: SecretBox = SecretBox()) : Sessions {
     override fun setCsrf(id: String, v: String?) { sp.edit().apply { if (v == null) remove("csrf.$id") else putString("csrf.$id", v) }.apply() }
 
     /** Выход: сессия и токен доверенного устройства удаляются локально (сервер отзывает токен отдельным запросом). */
+    /** Постоянный случайный идентификатор установки (не связан с человеком и устройством, сбрасывается при удалении приложения): то же приложение после перезапуска получает тот же участник LiveKit, другое устройство — другой. */
+    override fun clientId(): String = sp.getString("client.id", null) ?: ("app-" + UUID.randomUUID().toString().replace("-", "")).also { sp.edit().putString("client.id", it).apply() }
     override fun clearSession(id: String) { setCookie(id, null); setTrust(id, null); setCsrf(id, null) }
 }

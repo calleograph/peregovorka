@@ -24,7 +24,8 @@ android {
         applicationId = "org.peregovorka.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
+        // смещение нужно только проверке «обновление поверх» (update-over-test.sh): предыдущая сборка той же версии с меньшим versionCode
+        versionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2] + ((findProperty("versionCodeOffset") as String?)?.toInt() ?: 0)
         versionName = appVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

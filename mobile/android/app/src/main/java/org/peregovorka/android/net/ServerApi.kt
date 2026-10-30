@@ -53,6 +53,7 @@ class ServerApi(val server: Server, private val store: Sessions, private val use
 
     private fun builder(path: String, auth: Boolean): Request.Builder {
         val b = Request.Builder().url(base + path).header("User-Agent", userAgent).header("Accept", "application/json")
+        store.clientId().takeIf { it.isNotEmpty() }?.let { b.header("X-Client-Id", it) }
         if (auth) {
             store.cookie(server.id)?.let { b.header("Cookie", "$cookieName=$it") }
             store.csrf(server.id)?.let { b.header("X-CSRF-Token", it) }

@@ -28,9 +28,21 @@ def device_label(ua: str | None) -> str:
     return f"{base} ({device_kind(ua)})"
 
 
+LEGACY = "legacy"          # владелец основного подключения — клиент без идентификатора (старые приложения, сторонние API-клиенты)
+
+
 def device_tag(session_id: str, client_id: str | None) -> str:
-    """Метка устройства/вкладки (8 hex) по идентификатору вкладки, который клиент присылает в заголовке X-Client-Id и хранит в sessionStorage: та же вкладка (в том числе после обрыва сети и даже
-    после повторного входа) получает тот же identity, другая вкладка или устройство — другой. Без заголовка (API-клиенты) метки нет: поведение прежнее — один identity на пользователя."""
-    if not client_id or not _CLIENT_ID_RE.match(client_id):
-        return ""
-    return hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:8]
+    """Метка подключения к встрече (8 hex) по идентификатору клиента `X-Client-Id`; пусто — клиент идентификатора не прислал.
+
+    Разделены четыре идентификатора: пользователь (`u-<hex>`), устройство/экземпляр клиента (`X-Client-Id`: вкладка браузера — sessionStorage, приложение для Android и клиент
+    Windows — своё значение), подключение (метка) и участник LiveKit (`u-<hex>` — основное подключение, `u-<hex>~<метка>` — остальные). Та же вкладка/установка после обрыва и
+    повторного входа получает того же участника, другая — другого. См. `session_tag` — запасная метка для клиента без идентификатора."""
+    if client_id and _CLIENT_ID_RE.match(client_id):
+        return hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:8]
+    return ""
+
+
+def session_tag(session_id: str) -> str:
+    """Запасная метка для клиента без идентификатора, когда основное подключение пользователя уже занято другим клиентом: по сеансу входа. Раньше такой клиент (приложение
+    для Android до 0.1.3) получал ТОТ ЖЕ идентификатор участника, что и вкладка браузера, — LiveKit закрывал прежнее подключение (DUPLICATE_IDENTITY)."""
+    return hashlib.sha256(b"session:" + (session_id or "").encode("utf-8")).hexdigest()[:8] if session_id else ""

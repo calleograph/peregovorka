@@ -21,6 +21,8 @@ private class MemSessions : Sessions {
     override fun cookieName(id: String) = m["n$id"] ?: "vm_session"
     override fun setCookieName(id: String, v: String) { m["n$id"] = v }
     override fun clearSession(id: String) { setCookie(id, null); setTrust(id, null); setCsrf(id, null) }
+    var cid = ""
+    override fun clientId() = cid
 }
 
 class ServerApiTest {
@@ -42,6 +44,17 @@ class ServerApiTest {
         val i = api.info()
         assertEquals("Орг", i.name); assertEquals("vm_x", st.cookieName("s1"))
         assertEquals("/api/v1/desktop/info", web.takeRequest().path)
+    }
+
+    @Test fun `каждый запрос несёт идентификатор установки — сервер отличает телефон от вкладки браузера под той же учётной записью`() = runTest {
+        st.cid = "app-0123456789abcdef"
+        web.enqueue(json("""{"product":"peregovorka","api":1,"server_version":"0.49.3","name":"Орг","cookie":"vm_x","trust_days":30,"features":[]}"""))
+        api.info()
+        assertEquals("app-0123456789abcdef", web.takeRequest().getHeader("X-Client-Id"))
+        st.cid = ""
+        web.enqueue(json("""{"product":"peregovorka","api":1,"server_version":"0.49.3","name":"Орг","cookie":"vm_x","trust_days":30,"features":[]}"""))
+        api.info()
+        assertEquals(null, web.takeRequest().getHeader("X-Client-Id"))
     }
 
     @Test fun `info отклоняет чужой сервер и несовместимые уровни протокола`() = runTest {

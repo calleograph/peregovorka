@@ -162,6 +162,7 @@ fun ProfileContent(
             }
         }
         item { PermissionsCard() }
+        item { BuildCard() }
         item { Text("Серверы", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp)) }
         items(servers, key = { it.id }) { s ->
             Card(Modifier.fillMaxWidth().clickable { onSwitch(s) }, colors = CardDefaults.cardColors(containerColor = if (s.id == current?.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)) {
@@ -231,6 +232,38 @@ private fun PermissionsCard() {
                     else Icon(Icons.Filled.Check, "Разрешено", tint = MaterialTheme.colorScheme.primary)
                 }
             }
+        }
+    }
+}
+
+
+/** SHA-256 сертификатов подписи этой сборки (верхний регистр, с двоеточиями); пусто — не удалось получить. */
+private fun signingDigests(ctx: android.content.Context): List<String> = runCatching {
+    val pm = ctx.packageManager
+    val sigs = if (android.os.Build.VERSION.SDK_INT >= 28) pm.getPackageInfo(ctx.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners
+               else @Suppress("DEPRECATION") pm.getPackageInfo(ctx.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures
+    sigs.orEmpty().map { s -> java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString(":") { "%02X".format(it) } }
+}.getOrDefault(emptyList())
+
+/** Отпечаток сертификата постоянного ключа организации (открытая информация; сам ключ в приложении и в репозитории не хранится). */
+private const val PERMANENT_KEY_SHA256 = "30016bba368bf715c6f27a63d0ded900269657387f1ea866c6d4f27121c73d49"
+
+/** Версия и подпись сборки: по ним видно, встанет ли следующая версия поверх этой. Временный ключ у каждой сборки свой — обновление придётся ставить после удаления. */
+@Composable
+private fun BuildCard() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val digests = remember { signingDigests(ctx) }
+    val permanent = digests.any { it.replace(":", "").equals(PERMANENT_KEY_SHA256, ignoreCase = true) }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Сборка и подпись", style = MaterialTheme.typography.titleMedium)
+            Text("Версия ${org.peregovorka.android.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (permanent) "Подпись: постоянный ключ. Следующие версии установятся поверх этой без потери данных."
+                else "Подпись: временный ключ сборки. Следующую версию Android может не поставить поверх этой («пакет обновления некорректен») — тогда сначала удалите это приложение; серверы и вход придётся добавить заново.",
+                style = MaterialTheme.typography.bodySmall, color = if (permanent) MaterialTheme.colorScheme.onSurfaceVariant else androidx.compose.ui.graphics.Color(0xFFB07A00),
+            )
+            digests.firstOrNull()?.let { Text("SHA-256: ${it.take(23)}…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

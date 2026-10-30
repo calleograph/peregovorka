@@ -28,7 +28,7 @@ from . import e2ee as e2ee_svc
 from . import outlook as outlook_svc
 from .access import grant_leases
 from .asr_bridge import AsrBridge
-from ..auth.devices import device_tag
+from ..auth.devices import LEGACY, device_tag, session_tag
 from .livekit import (
     delete_livekit_room,
     enforce_sources,
@@ -168,13 +168,15 @@ class MeetingService:
                 self.on_started(meeting.id)
             self._notify("meeting.started", meeting)
         # Устройство/вкладка: первое подключение пользователя к встрече — основной identity, остальные — `u-<hex>~<метка>`; та же вкладка после обрыва получает тот же identity.
-        tag = device_tag(su.session_id, client_id)
+        # Основное подключение (`u-<hex>`) — у того, кто пришёл первым: клиент с идентификатором (по метке) или без него (LEGACY). Остальные получают свою метку.
         prim_key = f"mprim:{meeting.id}:{su.user_id}"
-        if not tag:
+        tag = device_tag(su.session_id, client_id)
+        mine = tag or LEGACY
+        owner = mine if await self._r.set(prim_key, mine, nx=True, ex=STATE_TTL) else await self._r.get(prim_key)
+        if owner in (mine, None):
             device = ""
         else:
-            owner = tag if await self._r.set(prim_key, tag, nx=True, ex=STATE_TTL) else await self._r.get(prim_key)
-            device = "" if owner in (tag, None) else tag
+            device = tag or session_tag(su.session_id)          # клиент без идентификатора, а основное занято: метка по сеансу, а не общий u-<hex>
         identity = user_identity(su.user_id, device)
         devs = f"mdev:{meeting.id}:{su.user_id}"
         async with self._r.pipeline(transaction=False) as p:          # одно обращение к Redis вместо двух: вход выполняет каждый
@@ -324,14 +326,15 @@ class MeetingService:
     async def leave(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID, *, session_id: str = "", client_id: str = "") -> None:
         """Выход одного устройства: участником во встрече пользователь остаётся, пока подключено хотя бы одно его устройство."""
         if session_id:
-            ident = await self._device_identity(meeting_id, user_id, device_tag(session_id, client_id))
+            ident = await self._device_identity(meeting_id, user_id, device_tag(session_id, client_id), session_id)
             if await self._other_devices(meeting_id, user_id, ident):
                 return
         await self._close_participant(db, meeting_id, user_id)
 
-    async def _device_identity(self, meeting_id: uuid.UUID, user_id: uuid.UUID, tag: str) -> str:
-        owner = await self._r.get(f"mprim:{meeting_id}:{user_id}") if tag else None
-        return user_identity(user_id, "" if owner in (tag, None) else tag)
+    async def _device_identity(self, meeting_id: uuid.UUID, user_id: uuid.UUID, tag: str, session_id: str = "") -> str:
+        mine = tag or LEGACY
+        owner = await self._r.get(f"mprim:{meeting_id}:{user_id}")
+        return user_identity(user_id, "" if owner in (mine, None) else (tag or session_tag(session_id)))
 
     async def _other_devices(self, meeting_id: uuid.UUID, user_id: uuid.UUID, leaving: str) -> bool:
         """Убирает identity уходящего устройства; True — у пользователя во встрече остались другие подключённые устройства."""

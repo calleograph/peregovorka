@@ -79,7 +79,20 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     val micMissing = s.micWanted && s.canMic && !access.granted(Perm.Mic) && s.phase != Phase.Ended
     val camMissing = s.camWanted && s.canCamera && !access.granted(Perm.Camera) && s.phase != Phase.Ended
     // «Назад» закрывает открытую панель, а затем спрашивает, выйти ли из конференции. Само приложение «Назад» в фон не отправляет: свернуть — жестом «Домой», звук продолжает служба.
-    BackHandler { if (sheet != null) { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null } else confirmLeave = true }
+    // Полноэкранный просмотр демонстрации: всё, кроме картинки, скрыто; панель управления появляется по касанию и прячется через несколько секунд бездействия.
+    var fullscreen by rememberSaveable { mutableStateOf(false) }
+    var controlsShown by remember { mutableStateOf(true) }
+    val sharing = s.tiles.any { it.screen != null }
+    LaunchedEffect(sharing) { if (!sharing) fullscreen = false }                         // показ закончился — обычный вид
+    LaunchedEffect(fullscreen, controlsShown, sheet) { if (fullscreen && controlsShown && sheet == null) { delay(3500); controlsShown = false } }
+    LaunchedEffect(fullscreen) { if (fullscreen) controlsShown = false }
+    val window = (ctx as? android.app.Activity)?.window
+    DisposableEffect(fullscreen, window) {
+        val ctl = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        if (fullscreen) { ctl?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE; ctl?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+        onDispose { ctl?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+    }
+    BackHandler { if (sheet != null) { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null } else if (fullscreen) fullscreen = false else confirmLeave = true }
     LaunchedEffect(s.phase) { while (s.phase == Phase.Connected || s.phase == Phase.Reconnecting) { calls.refreshChat(); delay(if (s.chatOpen) 3000 else 10_000) } }
 
     if (s.phase == Phase.Ended) {
@@ -92,14 +105,25 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
         return
     }
 
-    Column(Modifier.fillMaxSize().background(CallBg).systemBarsPadding()) {
-        CallTopBar(s)
-        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)) { Stage(calls, s) }
+    val controls: @Composable () -> Unit = {
         if (micMissing || camMissing) PermissionStrip(if (micMissing) Perm.Mic else Perm.Camera) { ask(if (micMissing) Perm.Mic else Perm.Camera) }
         Controls(
             s, onMic = { ask(Perm.Mic) }, onCam = { ask(Perm.Camera) }, onHand = calls::toggleHand,
             onChat = { sheet = Sheet.Chat; calls.setChatOpen(true) }, onPeople = { sheet = Sheet.People }, onMore = { sheet = Sheet.More }, onLeave = { confirmLeave = true },
         )
+    }
+    if (fullscreen && sharing) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            Stage(calls, s, fullscreen = true, onFullscreen = { fullscreen = it }, onTap = { controlsShown = !controlsShown })
+            if (controlsShown) {
+                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color(0xCC000000)).statusBarsPadding()) { CallTopBar(s) }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0xCC000000)).navigationBarsPadding()) { controls() }
+            }
+        }
+    } else Column(Modifier.fillMaxSize().background(CallBg).systemBarsPadding()) {
+        CallTopBar(s)
+        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)) { Stage(calls, s, fullscreen = false, onFullscreen = { fullscreen = it }) }
+        controls()
     }
     if (sheet != null) ModalBottomSheet(onDismissRequest = { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null }, containerColor = MaterialTheme.colorScheme.surface) {
         when (sheet) {
@@ -151,21 +175,13 @@ private fun CallTopBar(s: CallUi) {
 }
 
 @Composable
-private fun Stage(calls: CallManager, s: CallUi) {
+private fun Stage(calls: CallManager, s: CallUi, fullscreen: Boolean = false, onFullscreen: (Boolean) -> Unit = {}, onTap: () -> Unit = {}) {
     val room = calls.room()
     val sharer = s.tiles.firstOrNull { it.screen != null }
     if (s.tiles.isEmpty() || room == null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }; return }
     if (sharer != null) {
-        // Демонстрация экрана занимает всю доступную площадь; участники — узкой лентой под ней.
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.Black)) {
-                VideoTrackView(videoTrack = sharer.screen!!, passedRoom = room, scaleType = ScaleType.FitInside, modifier = Modifier.fillMaxSize())
-                NameChip(sharer.name + " · экран", sharer.micOn, Modifier.align(Alignment.BottomStart).padding(8.dp))
-            }
-            LazyRow(Modifier.height(96.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(s.tiles, key = { it.key }) { t -> TileView(t, room, Modifier.fillMaxHeight().aspectRatio(0.8f)) }
-            }
-        }
+        // Демонстрация экрана — главное содержимое: на всё свободное место, с приближением жестами и полноэкранным режимом (ScreenStage)
+        ScreenStage(calls, s, room, fullscreen, onFullscreen, onTap)
         return
     }
     val landscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp

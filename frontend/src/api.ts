@@ -667,14 +667,40 @@ export class ApiError extends Error {
   }
 }
 
-/** Идентификатор вкладки/устройства (sessionStorage): по нему сервер отличает подключения одного пользователя к одной встрече. Та же вкладка — тот же участник (в том числе после обрыва сети). */
+/**
+ * Идентификатор вкладки (sessionStorage): по нему сервер отличает подключения одного пользователя к одной встрече. Та же вкладка — тот же участник (в том числе после обрыва сети).
+ * «Дублировать вкладку» и window.open копируют sessionStorage, и две вкладки получали бы один идентификатор — один участник LiveKit, одну из вкладок отключало бы.
+ * Поэтому вкладки обмениваются приветствиями (BroadcastChannel): более поздняя вкладка с занятым идентификатором берёт новый.
+ */
+const CID_KEY = "pg.clientId";
+const newClientId = () => (crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32).padEnd(12, "0");
+const bornAt = Date.now() + Math.random();          // порядок «кто раньше»: дробная часть разводит вкладки, открытые в одну миллисекунду
+/** Новый идентификатор вкладки: после DUPLICATE_IDENTITY (дубликат вкладки, старая копия sessionStorage) вкладка входит снова как отдельное подключение. */
+export function renewClientId(): string {
+  const v = newClientId();
+  try { sessionStorage.setItem(CID_KEY, v); } catch { /* без хранилища идентификатор и так случайный при каждом чтении */ }
+  return v;
+}
 export function clientId(): string {
   try {
-    let v = sessionStorage.getItem("pg.clientId");
-    if (!v) { v = (crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32).padEnd(12, "0"); sessionStorage.setItem("pg.clientId", v); }
+    let v = sessionStorage.getItem(CID_KEY);
+    if (!v) { v = newClientId(); sessionStorage.setItem(CID_KEY, v); }
     return v;
   } catch { return "tab" + Math.random().toString(36).slice(2, 12).padEnd(10, "0"); }
 }
+try {
+  if (typeof BroadcastChannel !== "undefined") {
+    const ch = new BroadcastChannel("pg-client-id");
+    ch.onmessage = (e: MessageEvent) => {
+      const m = e.data as { t?: string; id?: string; born?: number } | null;
+      if (!m || m.id !== clientId() || typeof m.born !== "number" || m.born === bornAt) return;
+      if (m.t === "hello" && m.born > bornAt) ch.postMessage({ t: "taken", id: m.id, born: bornAt });            // пришла более поздняя вкладка с моим идентификатором: сообщаю, что он занят
+      else if (m.t === "taken" && m.born < bornAt) { try { sessionStorage.setItem(CID_KEY, newClientId()); } catch { /* без хранилища идентификатор и так случайный */ } }   // я — копия: беру новый
+    };
+    ch.postMessage({ t: "hello", id: clientId(), born: bornAt });
+    (ch as unknown as { unref?: () => void }).unref?.();          // не держит процесс (тесты в Node); в браузере метода нет
+  }
+} catch { /* старый браузер: прежнее поведение */ }
 
 export interface SessionInfo { id: string; device: string; ip: string; created_at: number | null; last_seen: number | null; current: boolean }
 export interface SessionLimitInfo { free_token: string; limit: number; sessions: SessionInfo[]; message: string }

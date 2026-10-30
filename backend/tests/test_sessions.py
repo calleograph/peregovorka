@@ -166,9 +166,31 @@ def test_two_devices_of_one_user_join_one_meeting_without_kicking_each_other(cli
     as_device(client, pc)
     meeting = client.get(f"{API}/meetings/{mid}", headers={"X-Client-Id": "tab-computer-0001"}).json()
     assert meeting.get("ended_at") is None
-    # без заголовка идентификатора вкладки (API-клиенты) поведение прежнее: один identity на пользователя
-    c1 = join(client, pc, room["id"], "", PC).json()
-    assert identity_device(c1["identity"]) == ""
+    # клиент без идентификатора (приложение Android до 0.1.3, API-клиенты), пока основное подключение занято вкладкой браузера, получает СВОЕГО участника, а не общий u-<hex>
+    # (раньше они совпадали, и LiveKit закрывал вкладку: «уже вошла другая вкладка этого браузера с тем же идентификатором»)
+    c1 = join(client, phone, room["id"], "", PHONE).json()
+    assert c1["identity"] not in (a["identity"], b["identity"]) and identity_device(c1["identity"]), "отдельный участник по сеансу входа"
+    assert join(client, phone, room["id"], "", PHONE).json()["identity"] == c1["identity"], "тот же сеанс после обрыва — тот же участник"
+
+
+def test_legacy_client_first_then_browser_tab_and_two_tabs_do_not_collide(client):
+    room = make_room(client)
+    _, pc = sign_in(client, ua=PC)
+    _, phone = sign_in(client, ua=PHONE)
+    old_app = join(client, phone, room["id"], "", PHONE).json()                       # клиент без идентификатора пришёл первым: основной участник у него
+    tab1 = join(client, pc, room["id"], "tab-computer-0001", PC).json()
+    tab2 = join(client, pc, room["id"], "tab-computer-0002", PC).json()              # вторая вкладка того же браузера и той же сессии
+    ids = {old_app["identity"], tab1["identity"], tab2["identity"]}
+    assert len(ids) == 3, "три независимых подключения одного пользователя"
+    assert identity_device(old_app["identity"]) == "" and all(identity_device(x) for x in (tab1["identity"], tab2["identity"]))
+    new_app = join(client, phone, room["id"], "app-0123456789abcdef", PHONE).json()   # приложение, присылающее свой идентификатор, — ещё один участник
+    assert new_app["identity"] not in ids and join(client, phone, room["id"], "app-0123456789abcdef", PHONE).json()["identity"] == new_app["identity"]
+    # выход одной вкладки не закрывает остальные подключения
+    as_device(client, pc)
+    csrf = client.get(f"{API}/auth/me").json()["csrf_token"]
+    mid = old_app["meeting_id"]
+    assert client.post(f"{API}/meetings/{mid}/leave", headers={"X-CSRF-Token": csrf, "X-Client-Id": "tab-computer-0002"}).status_code == 204
+    assert client.get(f"{API}/meetings/{mid}", headers={"X-Client-Id": "tab-computer-0001"}).json().get("ended_at") is None
 
 
 def test_identity_helpers_roundtrip_and_reject_garbage():

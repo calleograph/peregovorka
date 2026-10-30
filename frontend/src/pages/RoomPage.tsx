@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, TrackEvent, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
 import { LiveDialog, useLive } from "../components/LiveControl";
-import { api, ApiError, leaveOnUnload, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room, type VideoState } from "../api";
+import { api, ApiError, leaveOnUnload, renewClientId, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room, type VideoState } from "../api";
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
 import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
@@ -142,6 +142,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [handSound, setHandSound] = useState(handSoundEnabled);
   const [pubAllowed, setPubAllowed] = useState(true);      // у звонка есть право публикации (у зрителя презентации — нет; слово расширяет его на сервере, уже после подключения)
   const floorRevokedAt = useRef(0);        // когда у нас забрали слово: короткое отключение сервером звонков после этого — штатное, комната входит заново зрителем
+  const dupRejoinAt = useRef(0);           // когда в последний раз перезашли после DUPLICATE_IDENTITY (повторно за 30 с — показываем сообщение, а не крутим цикл)
   const [floorIds, setFloorIds] = useState<Set<string>>(() => new Set());   // кому сейчас дано слово
   const [leaderIds, setLeaderIds] = useState<Set<string>>(() => new Set());
   const [canBoard, setCanBoard] = useState(true);
@@ -641,7 +642,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         if (roomRef.current !== room || !connectedOnce) return; // старая комната после повторного входа / подключение ещё не состоялось
         if (screenIntendedRef.current) stopScreenBookkeeping("connection_lost");
         if (leavingRef.current || endedRef.current || reason === DisconnectReason.CLIENT_INITIATED) return;
-        if (reason === DisconnectReason.DUPLICATE_IDENTITY) { setErr("general", describeMediaError(new Error("DUPLICATE_IDENTITY"), "connect").message); return; }
+        if (reason === DisconnectReason.DUPLICATE_IDENTITY) {
+          // Два подключения с одним идентификатором вкладки (дубликат вкладки, старый клиент): берём новый идентификатор и входим снова отдельным подключением — один раз; второй раз за полминуты — сообщение
+          renewClientId();
+          if (Date.now() - dupRejoinAt.current > 30000) { dupRejoinAt.current = Date.now(); scheduleRejoin(0); return; }
+          setErr("general", describeMediaError(new Error("DUPLICATE_IDENTITY"), "connect").message); return;
+        }
         if (reason === DisconnectReason.PARTICIPANT_REMOVED && Date.now() - floorRevokedAt.current < 30000) { scheduleRejoin(0); return; }       // слово забрали, а мы не успели снять дорожки: заходим зрителем
         if (reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED) {
           setErr("general", "Вас отключили от комнаты: встреча закрыта или вас удалил руководитель.");

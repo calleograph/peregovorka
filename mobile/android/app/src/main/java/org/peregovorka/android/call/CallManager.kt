@@ -25,6 +25,8 @@ enum class Phase { Idle, Connecting, Connected, Reconnecting, Ended }
 data class Tile(
     val key: String, val name: String, val isLocal: Boolean,
     val camera: VideoTrack?, val screen: VideoTrack?, val micOn: Boolean, val speaking: Boolean, val hand: Boolean,
+    /** Размер картинки демонстрации у источника (пиксели) — по нему считается вписывание и предел приближения; null — ещё не известен. */
+    val screenW: Int = 0, val screenH: Int = 0,
 )
 
 data class CallUi(
@@ -138,7 +140,7 @@ class CallManager(private val app: Application) {
             return Tile(
                 key = id.ifEmpty { p.sid.value }, name = p.name?.takeIf { it.isNotBlank() } ?: id, isLocal = local,
                 camera = camTrack, screen = scr?.track as? VideoTrack, micOn = p.isMicrophoneEnabled, speaking = p.isSpeaking,
-                hand = hands.any { it.identity == id },
+                hand = hands.any { it.identity == id }, screenW = scr?.dimensions?.width ?: 0, screenH = scr?.dimensions?.height ?: 0,
             )
         }
         val list = listOf(tile(r.localParticipant, true)) + r.remoteParticipants.values.map { tile(it, false) }
@@ -150,6 +152,20 @@ class CallManager(private val app: Application) {
                 audioDevice = (r.audioHandler as? AudioSwitchHandler)?.selectedAudioDevice?.name.orEmpty(),
             )
         }
+    }
+
+    /**
+     * Качество чужой демонстрации экрана. По умолчанию сервер выбирает слой по размеру окна (адаптивный поток); при увеличении жестами окно не меняется, и без этого
+     * приближенный текст был бы размытым. [w]×[h] > 0 — запросить слой не меньше этого разрешения (переподключения и разрыва звука нет: меняется только выбор слоя);
+     * 0×0 — вернуть выбор по размеру окна ([windowW]×[windowH] в пикселях).
+     */
+    fun setScreenResolution(identity: String, w: Int, h: Int, windowW: Int = 0, windowH: Int = 0) {
+        val p = room?.remoteParticipants?.values?.firstOrNull { it.identity?.value == identity } ?: return
+        val pub = p.getTrackPublication(Track.Source.SCREEN_SHARE) as? io.livekit.android.room.track.RemoteTrackPublication ?: return
+        runCatching {
+            if (w > 0 && h > 0) { pub.setVideoQuality(io.livekit.android.room.track.VideoQuality.HIGH); pub.setVideoDimensions(Track.Dimensions(w, h)) }
+            else if (windowW > 0 && windowH > 0) pub.setVideoDimensions(Track.Dimensions(windowW, windowH))
+        }.onFailure { android.util.Log.w("PGCALL", "screen_quality_failed ${it.javaClass.simpleName}") }
     }
 
     fun toggleMic() {

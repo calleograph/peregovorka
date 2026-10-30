@@ -51,6 +51,31 @@ jobs:
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk | head -3
           "$BT/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | grep -E "^package|uses-permission" | head -20
+      - name: Совместимость обновления с предыдущим выпуском (пакет, versionCode, подпись)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 ../../scripts/android_release_check.py app/build/outputs/apk/release/app-release.apk --expect-key $([ "$SIGNED" = release ] && echo release || echo debug) | tee update-check.txt
+          mkdir -p prev; cur="${GITHUB_REF_NAME:-}"
+          # предыдущий выпуск — самый свежий android-v* (кроме текущего тега)
+          prevtag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName --jq '.[].tagName' | grep '^android-v' | grep -vx "$cur" | sort -V | tail -1)
+          code=0
+          if [ -n "$prevtag" ] && gh release download "$prevtag" --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir prev; then
+            prevapk=$(ls prev/*.apk | head -1)
+            python3 ../../scripts/android_release_check.py app/build/outputs/apk/release/app-release.apk --previous "$prevapk" | tee -a update-check.txt; code=${PIPESTATUS[0]}
+            echo "Сравнение с $prevtag ($(basename "$prevapk")), код $code" | tee -a update-check.txt
+          else echo "Предыдущий выпуск не найден: сравнение пропущено" | tee -a update-check.txt; fi
+          { echo "### Обновление поверх предыдущего выпуска"; echo '```'; cat update-check.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # заметка для страницы выпуска: если ставить поверх нельзя — сказать об этом прямо
+          if [ "$code" = 3 ]; then
+            if [ "$SIGNED" = release ] && ! ls prev/*debugkey* >/dev/null 2>&1; then echo "::error::Сертификат подписи изменился относительно прошлого выпуска с постоянным ключом — обновление поверх не получится. Проверьте секреты подписи."; exit 1; fi
+            echo "::warning::Обновление поверх предыдущего выпуска невозможно (другой сертификат подписи): пользователям нужно удалить прежнюю версию."
+            printf '%s\n' "> **Установка поверх прежней версии невозможна.** Этот APK подписан другим ключом, чем предыдущий выпуск (${prevtag}): Android ответит «пакет обновления некорректен». Удалите прежнюю версию и установите эту (сохранённые серверы и вход придётся добавить заново). Начиная с выпуска с постоянным ключом обновления ставятся поверх." > update-note.md
+          elif [ "$code" = 1 ]; then
+            # на ветках версия совпадает с последним выпуском — это не ошибка; перед публикацией (тег) нарушение останавливает выпуск
+            case "$GITHUB_REF" in refs/tags/android-v*) echo "::error::Нарушены правила обновления: пакет или versionCode."; exit 1 ;; *) echo "::notice::versionCode не новее последнего выпуска (ветка, не публикация)." ;; esac
+          fi
       - name: Именование и контрольные суммы
         run: |
           V=$(cat VERSION); mkdir -p out
@@ -58,6 +83,7 @@ jobs:
           if [ "$SIGNED" != release ]; then mv "out/Peregovorka-$V-android.apk" "out/Peregovorka-$V-android-debugkey.apk"; fi
           [ -f app/build/outputs/bundle/release/app-release.aab ] && cp app/build/outputs/bundle/release/app-release.aab "out/Peregovorka-$V-android.aab" || true
           (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          [ -f update-note.md ] && cp update-note.md out/UPDATE_NOTE.md || true          # заметка попадает на страницу выпуска (её убирает шаг «Выпуск»), в контрольных суммах её нет
       - uses: actions/upload-artifact@v7
         with: { name: android-build, path: mobile/android/out/*, retention-days: 30 }
       - uses: actions/upload-artifact@v7
@@ -110,6 +136,7 @@ jobs:
             adb shell settings put secure show_ime_with_hard_keyboard 1
             adb logcat -G 32M
             adb logcat -c
+            ./update-over-test.sh
             ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.livekit_url=ws://10.0.2.2:7880 || echo failed > instrumented-failed.txt
             adb logcat -d -v time > logcat.txt
             adb shell dumpsys activity services org.peregovorka.android > services.txt || true
@@ -142,6 +169,7 @@ jobs:
           v="${GITHUB_REF_NAME#android-v}"
           pre=""; ls out | grep -q debugkey && pre="--prerelease"
           awk -v v="$v" '/^## /{p=($0 ~ "^## \\[?"v)} p' mobile/android/CHANGELOG.md > notes.md
+          [ -f out/UPDATE_NOTE.md ] && { cat out/UPDATE_NOTE.md; echo; cat notes.md; } > notes2.md && mv notes2.md notes.md; rm -f out/UPDATE_NOTE.md
           [ -s notes.md ] || echo "Peregovorka для Android $v" > notes.md
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then gh release upload "$GITHUB_REF_NAME" out/* --clobber
           else gh release create "$GITHUB_REF_NAME" out/* --title "Peregovorka для Android $v" --notes-file notes.md --latest=false $pre --verify-tag; fi
