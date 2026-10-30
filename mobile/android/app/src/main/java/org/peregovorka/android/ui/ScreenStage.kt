@@ -133,14 +133,13 @@ fun ZoomSurface(
     val scope = rememberCoroutineScope()
     var zoom by remember(key) { mutableStateOf(ZoomState()) }
     var container by remember { mutableStateOf(Size2(0f, 0f)) }
-    val content0 = ZoomMath.fitted(container, source)
-    val zoomNow by rememberUpdatedState(zoom)
-    val containerNow by rememberUpdatedState(container)
-    val contentNow by rememberUpdatedState(content0)
+    // В обработчиках жестов состояние читается напрямую (а не через rememberUpdatedState): несколько событий касания могут прийти до следующей перекомпоновки,
+    // и устаревшее значение «съедало» бы накопленное приближение (каждое событие считалось бы от старого масштаба).
+    fun contentNow() = ZoomMath.fitted(container, source)
     val changed by rememberUpdatedState(onZoomChanged)
 
     fun animateTo(target: ZoomState) {
-        val from = zoomNow
+        val from = zoom
         scope.launch {
             animate(0f, 1f, animationSpec = tween(220)) { v, _ ->
                 zoom = ZoomState(from.scale + (target.scale - from.scale) * v, from.offsetX + (target.offsetX - from.offsetX) * v, from.offsetY + (target.offsetY - from.offsetY) * v)
@@ -154,19 +153,19 @@ fun ZoomSurface(
         modifier.clip(RoundedCornerShape(if (fullscreen) 0.dp else 12.dp)).background(Color.Black).clipToBounds()
             .onSizeChanged { sz ->
                 val nc = Size2(sz.width.toFloat(), sz.height.toFloat())
-                val old = containerNow; val oldContent = contentNow
+                val old = container; val oldContent = contentNow()
                 container = nc
                 // поворот телефона, переход в полноэкранный режим: сохраняем рассматриваемую область, если возможно, иначе — целиком
-                if (old.w > 0f && zoomNow.zoomed) zoom = ZoomMath.resize(zoomNow, old, oldContent, nc, ZoomMath.fitted(nc, source))
+                if (old.w > 0f && zoom.zoomed) zoom = ZoomMath.resize(zoom, old, oldContent, nc, ZoomMath.fitted(nc, source))
             }
             .pointerInput(key) {
                 detectTransformGestures { centroid, pan, factor, _ ->
-                    zoom = ZoomMath.transform(zoomNow, centroid.x, centroid.y, factor, pan.x, pan.y, containerNow, contentNow)
+                    zoom = ZoomMath.transform(zoom, centroid.x, centroid.y, factor, pan.x, pan.y, container, contentNow())
                 }
             }
             .pointerInput(key) {
                 detectTapGestures(
-                    onDoubleTap = { p -> animateTo(ZoomMath.doubleTap(zoomNow, p.x, p.y, containerNow, contentNow)) },
+                    onDoubleTap = { p -> animateTo(ZoomMath.doubleTap(zoom, p.x, p.y, container, contentNow())) },
                     onTap = { onTap() },
                 )
             }
