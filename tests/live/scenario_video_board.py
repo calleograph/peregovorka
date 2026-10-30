@@ -19,6 +19,8 @@ OUT = os.path.join(S.OUT, "video-board"); os.makedirs(OUT, exist_ok=True)
 env = dict(l.split("=", 1) for l in open(ENVF).read().splitlines() if "=" in l and not l.startswith("#"))
 KEY, SECRET = env["LIVEKIT_API_KEY"].strip().strip('"'), env["LIVEKIT_API_SECRET"].strip().strip('"')
 
+STORAGE = os.environ.get("PG_STORAGE", "local")          # local — диск сервера; profile — файловое хранилище PG_PROFILE_ID (SMB), локальная копия не оставляется
+STORAGE_BODY = {"storage": "local"} if STORAGE == "local" else {"storage": "profile", "profile_id": os.environ["PG_PROFILE_ID"], "keep_local_copy": False}
 GREEN, ORANGE, FLASH = (30, 170, 70), (235, 125, 20), (230, 30, 200)
 FLASH_AT = 85.0          # кадр камеры на 0,6 с меняет цвет и одновременно звучит сигнал: по ним проверяется синхронность звука и видео записи
 T = {"conf1": 6, "board_on": 12, "edits": [14, 18, 22, 26], "conf2": 62, "stage_on": 70, "stage_off": 80, "screen_on": 92, "screen_off": 106, "stop": 114}
@@ -93,7 +95,7 @@ async def main():
         await A.start()
         # у администратора нет устройств: кадр и звук конференции дают только боты, поэтому «говорящий» в записи определён однозначно
         await A.send("Page.addScriptToEvaluateOnNewDocument", source="navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('нет устройств', 'NotFoundError')); navigator.mediaDevices.enumerateDevices = async () => [];")
-        r = await api(A, "PUT", "/admin/settings/video", {"enabled": True, "min_free_gb": 1, "max_concurrent": 2, "storage": "local", "scene_template": True})
+        r = await api(A, "PUT", "/admin/settings/video", {"enabled": True, "min_free_gb": 1, "max_concurrent": 2, **STORAGE_BODY, "scene_template": True})
         S.check("видеозапись включена, запись общей сцены включена", r["s"] == 200 and r["j"].get("scene_template") is True, str(r)[:160])
         rooms = await api(A, "GET", "/admin/rooms"); room = next(x for x in rooms["j"] if x["slug"] == ROOM)
         r = await api(A, "PATCH", f"/rooms/{room['id']}/manage", {"video_mode": "manual", "video_quality": "720p"})
@@ -159,9 +161,19 @@ async def main():
                 break
             await asyncio.sleep(3)
         S.check("запись перешла в «готово»", bool(mixes) and mixes[-1]["status"] == "ready", str(mixes)[-300:])
-        files = subprocess.run(f"find '{DATA}/recordings' -name 'video-*.mp4' -newer '{ENVF}' -printf '%T@ %p\\n' | sort -n | tail -1", shell=True, capture_output=True, text=True).stdout.split(" ", 1)
-        mp4 = files[1].strip() if len(files) > 1 else None
-        S.check("MP4 найден на диске", bool(mp4), str(mp4))
+        if STORAGE == "profile":
+            for _ in range(60):
+                media = await api(A, "GET", f"/meetings/{mid}/media"); mixes = [m for m in media["j"]["mixes"] if m.get("has_video")]
+                if mixes[-1].get("phase") == "ready": break
+                await asyncio.sleep(3)
+            left = subprocess.run(f"find '{DATA}/recordings' -name 'video-*.mp4' -newer '{ENVF}' | head -3", shell=True, capture_output=True, text=True).stdout.strip()
+            S.check("перенос в SMB-хранилище завершён: этап «готово», локальной копии нет", mixes[-1].get("phase") == "ready" and not left, f"{mixes[-1].get('phase')} {left}")
+        # файл скачивается тем же путём, что и пользователем (из локального диска или из SMB-хранилища), и анализируется именно он
+        rid = mixes[-1]["id"]; su = f"/api/v1/meetings/{mid}/media/{rid}/stream"
+        b64 = await A.js("""(async()=>{const r=await fetch('"""+su+"""?download=1'); const b=new Uint8Array(await r.arrayBuffer()); let s=''; for(let i=0;i<b.length;i+=32768) s+=String.fromCharCode.apply(null,b.subarray(i,i+32768)); return btoa(s)})()""")
+        import base64, tempfile
+        mp4 = os.path.join(OUT, "recording.mp4"); open(mp4, "wb").write(base64.b64decode(b64))
+        S.check("запись скачана через приложение", os.path.getsize(mp4) > 100_000, f"{os.path.getsize(mp4)} байт; хранилище: {STORAGE}")
         pr = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", mp4], capture_output=True, text=True).stdout)
         vs = next(s for s in pr["streams"] if s["codec_type"] == "video"); au = next(s for s in pr["streams"] if s["codec_type"] == "audio")
         S.check("видео H.264 (High), 1280×720; звук AAC", vs["codec_name"] == "h264" and vs["width"] == 1280 and au["codec_name"] == "aac", f'{vs["codec_name"]} {vs.get("profile")} {vs["width"]}x{vs["height"]} {au["codec_name"]}')
@@ -194,11 +206,18 @@ async def main():
             if len(rgb) == 3 and kind(rgb) == "board": first_board = (T["edits"][0] - 2 + k) - T["edits"][0]; break
         S.check("доска появилась в кадре не позже чем через 5 с после первой правки", first_board is not None and first_board <= 5, f"{first_board}")
         # HTTP: заголовки, Range, скачивание; воспроизведение настоящим <video>: метаданные, перемотка
-        rid = mixes[-1]["id"]; su = f"/api/v1/meetings/{mid}/media/{rid}/stream"
         h = await A.js("""(async()=>{const o={}; for (const [k,r] of [['full',null],['head','bytes=0-99'],['tail','bytes=-100'],['bad','bytes=999999999-']]) { const x=await fetch('"""+su+"""',{headers:r?{Range:r}:{}}); const b=await x.arrayBuffer(); o[k]={s:x.status,l:b.byteLength,cr:x.headers.get('content-range'),ar:x.headers.get('accept-ranges'),ct:x.headers.get('content-type'),cd:x.headers.get('content-disposition')}} const d=await fetch('"""+su+"""?download=1'); o.dl={s:d.status,cd:d.headers.get('content-disposition')}; return o})()""")
         S.check("HTTP: полный ответ 200, Accept-Ranges: bytes, Content-Type: video/mp4", h["full"]["s"] == 200 and h["full"]["ar"] == "bytes" and h["full"]["ct"].startswith("video/mp4"), str(h["full"]))
         S.check("HTTP: Range → 206, Content-Range и длина совпадают; «последние N байт» работает", h["head"]["s"] == 206 and h["head"]["l"] == 100 and h["head"]["cr"].startswith("bytes 0-99/") and h["tail"]["s"] == 206 and h["tail"]["l"] == 100, str((h["head"], h["tail"])))
         S.check("HTTP: Range за пределами файла → 416; скачивание — attachment", h["bad"]["s"] == 416 and h["dl"]["s"] == 200 and "attachment" in (h["dl"]["cd"] or ""), str((h["bad"], h["dl"])))
+        if os.environ.get("PG_RESTART") == "1":
+            subprocess.run(["docker", "restart", os.environ.get("PG_BACKEND", "pgdoc-backend-1")], capture_output=True)
+            for _ in range(60):
+                await asyncio.sleep(3)
+                if subprocess.run(["docker", "inspect", "-f", "{{.State.Health.Status}}", os.environ.get("PG_BACKEND", "pgdoc-backend-1")], capture_output=True, text=True).stdout.strip() == "healthy": break
+            h2 = await api(A, "GET", f"/meetings/{mid}/media")
+            r2 = await A.js("""(async()=>{const x=await fetch('"""+su+"""',{headers:{Range:'bytes=0-99'}}); return {s:x.status,l:(await x.arrayBuffer()).byteLength}})()""")
+            S.check("после перезапуска сервера запись в списке и отдаётся с Range (206)", h2["s"] == 200 and any(m["id"] == rid and m["phase"] in ("ready", "saving") for m in h2["j"]["mixes"]) and r2["s"] == 206 and r2["l"] == 100, str((r2, [m["phase"] for m in h2["j"]["mixes"]])))
         pv = await A.js("""(async()=>{const v=document.createElement('video'); v.muted=true; v.preload='auto'; v.src='"""+su+"""'; document.body.appendChild(v);
           await new Promise((res,rej)=>{v.onloadedmetadata=res; v.onerror=()=>rej(v.error&&v.error.code); setTimeout(()=>rej('timeout'),20000)});
           const o={w:v.videoWidth,h:v.videoHeight,d:v.duration}; v.currentTime=Math.min(60,v.duration-5); await new Promise((res)=>{v.onseeked=res; setTimeout(res,15000)}); o.at=v.currentTime; o.ready=v.readyState; v.remove(); return o})().catch(e=>({err:String(e)}))""")
