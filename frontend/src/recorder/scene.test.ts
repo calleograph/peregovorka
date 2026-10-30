@@ -31,7 +31,7 @@ describe("общая сцена видеозаписи", () => {
     expect(pickScene({ ...base, stage: [{ type: "screen", identity: "gone" }], screens: [] }).reason).toBe("conference");
   });
   it("не больше четырёх крупных элементов", () => {
-    const st = (["a", "b", "c"] as const).map((id) => ({ type: "camera" as const, identity: id })).concat([{ type: "camera", identity: "d" }, { type: "camera", identity: "e" }]);
+    const st = ["a", "b", "c", "d", "e"].map((id) => ({ type: "camera" as const, identity: id }));
     expect(pickScene({ ...base, cameras: ["a", "b", "c", "d", "e"], stage: st }).main).toHaveLength(4);
   });
   it("в комнате никого нет — пустая сцена", () => {
