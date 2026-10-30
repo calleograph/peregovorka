@@ -48,6 +48,9 @@ class JoinFlowTest {
         device().waitFor(By.text("Подключиться"))!!.click()
     }
 
+    /** `ActivityScenario.recreate()` ждёт RESUMED, а под системным окном Activity на паузе, поэтому пересоздаём её напрямую (так её и пересоздаёт система). */
+    private fun recreateWhileCovered(sc: ActivityScenario<MainActivity>) { sc.onActivity { it.recreate() }; Thread.sleep(1_500) }
+
     private val callScreen = By.text(Pattern.compile("Подключение…|Вы вышли из конференции|Тестовая организация|Связь потеряна.*"))
 
     /** Системное окно запроса сейчас на экране (кнопка «разрешить» контроллера разрешений). */
@@ -63,7 +66,7 @@ class JoinFlowTest {
             assertNotNull("пояснение «Доступ для конференций» не появилось", device().waitFor(By.text("Доступ для конференций"), 15_000))
             device().findObject(By.text("Продолжить"))!!.click()
             assertTrue("системное окно разрешений не появилось", permissionDialogShown())
-            sc.recreate()
+            recreateWhileCovered(sc)
             val granted = acceptPermissionDialogs(15_000)
             android.util.Log.i("PGTEST", "принято системных запросов разрешений: $granted")
             assertNotNull("после запросов разрешений список переговорных не появился (пакет: ${device().currentPackageName})", device().waitFor(By.text("Основная"), 15_000))
@@ -178,7 +181,7 @@ class JoinFlowTest {
             device().findObjects(By.checkable(true)).getOrNull(1)?.click()                   // камера включена
             device().waitFor(By.text("Подключиться"))!!.click()
             assertTrue("системное окно разрешений не появилось", permissionDialogShown())
-            sc.recreate()                                                                    // Activity пересоздана, пока система спрашивает
+            recreateWhileCovered(sc)                                                         // Activity пересоздана, пока система спрашивает
             acceptPermissionDialogs(10_000, allowAll = false)
             assertNotNull("после отказа и пересоздания экран конференции не появился — прерванный вход потерян", device().waitFor(callScreen, 20_000))
             assertStaysForeground(sc, 5_000, "вход с отказом в разрешениях")
