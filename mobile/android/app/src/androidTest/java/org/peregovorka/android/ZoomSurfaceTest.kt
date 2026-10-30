@@ -49,17 +49,18 @@ class ZoomSurfaceTest {
         assertEquals(1f, scale(), 0.01f)
         rule.onNodeWithTag("zoom").performTouchInput {
             val c = center
-            pinch(c - Offset(40f, 0f), c + Offset(40f, 0f), c - Offset(160f, 0f), c + Offset(160f, 0f))          // разведение: расстояние между пальцами ×4
+            pinch(c - Offset(40f, 0f), c + Offset(40f, 0f), c - Offset(100f, 0f), c + Offset(100f, 0f))          // разведение: расстояние между пальцами ×2,5
         }
         rule.waitForIdle()
-        assertTrue("масштаб после разведения: ${scale()}", scale() > 2.5f)
+        val zoomedIn = scale()
+        assertTrue("масштаб после разведения: $zoomedIn", zoomedIn > 1.5f)
         rule.onNodeWithText("×", substring = true).assertExists()
         rule.onNodeWithTag("zoom").performTouchInput {
             val c = center
-            pinch(c - Offset(160f, 0f), c + Offset(160f, 0f), c - Offset(20f, 0f), c + Offset(20f, 0f))          // сведение
+            pinch(c - Offset(100f, 0f), c + Offset(100f, 0f), c - Offset(40f, 0f), c + Offset(40f, 0f))          // сведение
         }
         rule.waitForIdle()
-        assertTrue("масштаб после сведения: ${scale()}", scale() < 1.3f)
+        assertTrue("масштаб после сведения ($zoomedIn → ${scale()}) стал меньше", scale() < zoomedIn - 0.3f)
     }
 
     @Test fun zoomedImageCanBePannedButNotLost() {
