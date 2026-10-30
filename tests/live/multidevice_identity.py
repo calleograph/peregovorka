@@ -41,7 +41,9 @@ class Api:
         c, b = self.call("POST", "/auth/login", {"login": "admin", "password": PASSWORD}); assert c == 200, (c, b); self.csrf = b.get("csrf_token", "")
 
     def join(self):
-        c, b = self.call("POST", f"/rooms/{ROOM}/join", {}); assert c == 200, (c, b); return b
+        c, rooms = self.call("GET", "/admin/rooms"); assert c == 200, (c, rooms)
+        rid = next(r["id"] for r in rooms if r["slug"] == ROOM)
+        c, b = self.call("POST", f"/rooms/{rid}/join", {}); assert c == 200, (c, b); return b
 
 
 async def participants(name):
@@ -81,15 +83,14 @@ async def tone(src):
         await src.capture_frame(rtc.AudioFrame(pcm, 48000, 1, 480))
 
 
-async def second_tab(A, port):
-    """Дубликат вкладки: window.open копирует sessionStorage (и идентификатор вкладки), вкладка живёт в том же браузере (общий BroadcastChannel)."""
-    before = {t["id"] for t in json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json")) if t["type"] == "page"}
-    await A.js("window.open(location.href, '_blank'); 1")
-    await asyncio.sleep(2)
-    tabs = [t for t in json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json")) if t["type"] == "page" and t["id"] not in before]
+async def second_tab(A, port, cid):
+    """Дубликат вкладки: новая вкладка того же браузера (общий BroadcastChannel) с копией sessionStorage — как после «Дублировать вкладку»: тот же идентификатор вкладки."""
+    info = json.load(urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
     B = S.Client("tab2", "admin", PASSWORD, port); B.n = 0
-    B.ws = await websockets.connect(tabs[0]["webSocketDebuggerUrl"], max_size=80_000_000, ping_interval=None, close_timeout=2)
+    B.ws = await websockets.connect(info["webSocketDebuggerUrl"], max_size=80_000_000, ping_interval=None, close_timeout=2)
     for m in ("Page.enable", "Runtime.enable", "Network.enable"): await B.send(m)
+    await B.send("Emulation.setDeviceMetricsOverride", width=1366, height=768, deviceScaleFactor=1, mobile=False)
+    await B.send("Page.addScriptToEvaluateOnNewDocument", source=f"sessionStorage.setItem('pg.clientId','{cid}');" + NODEVICES)
     return B
 
 
@@ -102,20 +103,22 @@ async def main():
         await A.goto(f"/rooms/{ROOM}", 2.0)
         S.check("вкладка A вошла в комнату", await A.join(navigate=False))
         await asyncio.sleep(3)
-        async with lkapi.LiveKitAPI(LK_WS.replace("ws://", "http://"), KEY, SECRET) as lk:
-            rooms = (await lk.room.list_rooms(lkapi.ListRoomsRequest())).rooms
-        lkroom = next(r.name for r in rooms if r.num_participants > 0)
+        lkroom = None
+        for _ in range(30):                                 # браузер подключается к LiveKit не мгновенно
+            async with lkapi.LiveKitAPI(LK_WS.replace("ws://", "http://"), KEY, SECRET) as lk:
+                for r in (await lk.room.list_rooms(lkapi.ListRoomsRequest())).rooms:
+                    if mine(await participants(r.name)): lkroom = r.name
+            if lkroom: break
+            await asyncio.sleep(1)
+        assert lkroom, "вкладка не подключилась к LiveKit"
         ids_a = mine(await participants(lkroom)); S.check("в комнате один участник пользователя (вкладка A)", len(ids_a) == 1, str(ids_a))
         cid_a = await A.js("sessionStorage.getItem('pg.clientId')")
 
         # дубликат вкладки с тем же sessionStorage
-        B = await second_tab(A, 9651)
-        await B.js(f"sessionStorage.setItem('pg.clientId','{cid_a}')") if False else None       # window.open уже скопировал идентификатор; BroadcastChannel заменит его в более поздней вкладке
-        await asyncio.sleep(1.5)
+        B = await second_tab(A, 9651, cid_a)
+        await B.send("Page.navigate", url=f"{URL}/rooms/{ROOM}"); await asyncio.sleep(4)
         cid_b = await B.js("sessionStorage.getItem('pg.clientId')")
         S.check("дубликат вкладки получил другой идентификатор (занятый идентификатор не используется дважды)", cid_b and cid_b != cid_a, f"{cid_a[:6]}… / {str(cid_b)[:6]}…")
-        await B.send("Page.navigate", url=f"{URL}/rooms/{ROOM}"); await asyncio.sleep(2)
-        await B.send("Page.addScriptToEvaluateOnNewDocument", source=NODEVICES)
         S.check("вторая вкладка вошла в ту же комнату", await B.join(navigate=False))
         await asyncio.sleep(3)
         ids = mine(await participants(lkroom)); S.check("два участника: обе вкладки подключены, ни одна не закрыта", len(ids) == 2, str(ids))
@@ -129,8 +132,8 @@ async def main():
         await asyncio.sleep(5)
         ps = await participants(lkroom); ids = mine(ps)
         S.check("четыре независимых подключения одного пользователя", len(ids) == 4, str(ids))
-        tr = {i: sorted(str(t.source) for t in ps[i].tracks) for i in ids}
-        S.check("демонстрация экрана с одного подключения и голос с другого существуют независимо", any("SCREEN_SHARE" in "".join(v) for v in tr.values()) and any("MICROPHONE" in "".join(v) for v in tr.values()), str(tr))
+        tr = {i[-8:]: sorted(int(t.source) for t in ps[i].tracks) for i in ids}          # источники LiveKit: 2 — микрофон, 3 — показ экрана
+        S.check("демонстрация экрана с одного подключения и голос с другого существуют независимо", [v for v in tr.values() if v == [3]] and [v for v in tr.values() if v == [2]], str(tr))
         txtA = await A.js("document.body.innerText"); txtB = await B.js("document.body.innerText")
         S.check("на страницах нет ложного сообщения о повторном входе", "уже вошла другая вкладка" not in txtA + txtB and "Нет соединения" not in txtA, "")
         await asyncio.sleep(8)
@@ -155,15 +158,18 @@ async def main():
 
         # устаревшая вкладка с занятым идентификатором: старый клиент без BroadcastChannel — автоматический перезаход
         cidB = await B.js("sessionStorage.getItem('pg.clientId')")
-        C = S.Client("tabC", "admin", PASSWORD, 9652)
-        await C.start(); await C.send("Page.addScriptToEvaluateOnNewDocument", source=NODEVICES)
-        await C.js(f"sessionStorage.setItem('pg.clientId','{cidB}')")
-        await C.goto(f"/rooms/{ROOM}", 2.0); await C.js(f"sessionStorage.setItem('pg.clientId','{cidB}')")
+        before = set(mine(await participants(lkroom)))
+        C = await second_tab(A, 9651, cidB)          # вторая вкладка с идентификатором вкладки B БЕЗ защиты BroadcastChannel (как старая сборка клиента): LiveKit закроет прежнюю вкладку
+        await C.send("Page.addScriptToEvaluateOnNewDocument", source="delete window.BroadcastChannel;")
+        await C.send("Page.navigate", url=f"{URL}/rooms/{ROOM}"); await asyncio.sleep(3)
         await C.join(navigate=False)
-        await asyncio.sleep(12)
-        ids = mine(await participants(lkroom)); txtB = await B.js("document.body.innerText")
-        S.check("тот же идентификатор у двух браузеров: вытесненная вкладка сама входит снова отдельным подключением", len(ids) >= 4 and "Это подключение закрыто" not in txtB, f"{len(ids)} {ids}")
-        await C.close()
+        ok = False
+        for _ in range(30):
+            await asyncio.sleep(2)
+            ids = mine(await participants(lkroom))
+            if len(ids) >= 4: ok = True; break
+        txtB = await B.js("document.body.innerText")
+        S.check("тот же идентификатор у двух вкладок: вытесненная сама входит снова отдельным подключением (вкладок снова две, плюс приложение и вкладка A)", ok and "Это подключение закрыто" not in txtB, f"{len(ids)} {[i[-8:] for i in ids]}")
     finally:
         for r in apps:
             try: await r.disconnect()
