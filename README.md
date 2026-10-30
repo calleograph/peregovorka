@@ -95,9 +95,9 @@ sudo ./install.sh
 ## Приложение для Android
 
 <!-- android-release:start -->
-**Версия 0.1.2 (предварительная)** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/android-v0.1.2) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.2/SHA256SUMS.txt)
+**Версия 0.1.3 (предварительная)** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/android-v0.1.3) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.3/SHA256SUMS.txt)
 
-- **[Peregovorka-0.1.2-android-debugkey.apk](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.2/Peregovorka-0.1.2-android-debugkey.apk)** — установка вручную (Android 8.0 и новее; для аккуратного вида разделов нужен сервер 0.49.6 или новее)
+- **[Peregovorka-0.1.3-android-debugkey.apk](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.3/Peregovorka-0.1.3-android-debugkey.apk)** — установка вручную (Android 8.0 и новее; для аккуратного вида разделов нужен сервер 0.49.6 или новее)
 
 Приложение подключается к серверу вашей организации (адрес сообщает администратор), вход выполняет сам сервер. APK подписан временным ключом сборки: следующую версию придётся ставить после удаления этой; выпуск с постоянным ключом организации — [docs/ANDROID.md](docs/ANDROID.md). Проверено на эмуляторах Android 10, 14 и 16 в CI (клавиатура, вход в конференцию с настоящим LiveKit, фон и возврат) и автотестами клиента; **звонок с камерой и микрофоном на настоящем телефоне и работа с живым сервером ещё не проверены**. Версии для iPhone и iPad нет.
 <!-- android-release:end -->
