@@ -49,7 +49,7 @@ class ZoomSurfaceTest {
         assertEquals(1f, scale(), 0.01f)
         rule.onNodeWithTag("zoom").performTouchInput {
             val c = center
-            pinch(c - Offset(40f, 0f), c + Offset(40f, 0f), c - Offset(100f, 0f), c + Offset(100f, 0f))          // разведение: расстояние между пальцами ×2,5
+            pinch(c - Offset(40f, 0f), c - Offset(100f, 0f), c + Offset(40f, 0f), c + Offset(100f, 0f))          // разведение: pinch(начало и конец пути первого пальца, затем второго); расстояние между пальцами ×2,5
         }
         rule.waitForIdle()
         val zoomedIn = scale()
@@ -57,7 +57,7 @@ class ZoomSurfaceTest {
         rule.onNodeWithText("×", substring = true).assertExists()
         rule.onNodeWithTag("zoom").performTouchInput {
             val c = center
-            pinch(c - Offset(100f, 0f), c + Offset(100f, 0f), c - Offset(40f, 0f), c + Offset(40f, 0f))          // сведение
+            pinch(c - Offset(100f, 0f), c - Offset(40f, 0f), c + Offset(100f, 0f), c + Offset(40f, 0f))          // сведение
         }
         rule.waitForIdle()
         assertTrue("масштаб после сведения ($zoomedIn → ${scale()}) стал меньше", scale() < zoomedIn - 0.3f)
@@ -65,7 +65,7 @@ class ZoomSurfaceTest {
 
     @Test fun zoomedImageCanBePannedButNotLost() {
         show()
-        rule.onNodeWithTag("zoom").performTouchInput { val c = center; pinch(c - Offset(30f, 0f), c + Offset(30f, 0f), c - Offset(150f, 0f), c + Offset(150f, 0f)) }
+        rule.onNodeWithTag("zoom").performTouchInput { val c = center; pinch(c - Offset(30f, 0f), c - Offset(150f, 0f), c + Offset(30f, 0f), c + Offset(150f, 0f)) }
         rule.waitForIdle()
         val before = state()
         rule.onNodeWithTag("zoom").performTouchInput { swipe(center, center + Offset(-120f, 0f), 200) }
@@ -90,7 +90,7 @@ class ZoomSurfaceTest {
 
     @Test fun resetButtonReturnsTheWholePicture() {
         show()
-        rule.onNodeWithTag("zoom").performTouchInput { val c = center; pinch(c - Offset(30f, 0f), c + Offset(30f, 0f), c - Offset(150f, 0f), c + Offset(150f, 0f)) }
+        rule.onNodeWithTag("zoom").performTouchInput { val c = center; pinch(c - Offset(30f, 0f), c - Offset(150f, 0f), c + Offset(30f, 0f), c + Offset(150f, 0f)) }
         rule.waitForIdle()
         rule.onNodeWithContentDescription("Показать целиком").performClick()
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(400)
