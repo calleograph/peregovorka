@@ -51,7 +51,7 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
     // Ответ системы на запрос перед входом: прерванный вход хранится в ViewModel и продолжается здесь автоматически — даже если Activity за это время пересоздавалась.
     val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> vm.permissionsResult(access::granted) }
     // Общий запрос на первом запуске (после входа): без привязки к конкретной комнате
-    val introPerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> store.permissionsAsked = true }
+    val introPerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> store.permissionsAsked = true; intro = false }
     fun startJoin(pwd: String?, mic: Boolean, cam: Boolean) = vm.startJoin(pwd, mic, cam, access::granted) { need -> perms.launch(need.map { it.manifest }.toTypedArray()) }
 
     // Возврат из системных настроек (или из окна запроса): права могли измениться — прерванный вход продолжается, а вошедший в конференцию получает доступное сразу
@@ -102,7 +102,7 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
     }
     if (intro) PermissionsIntro(
         Build.VERSION.SDK_INT,
-        onAllow = { intro = false; introPerms.launch(PermissionPlan.missing(PermissionPlan.forFirstRun(Build.VERSION.SDK_INT), access::granted).map { it.manifest }.toTypedArray()) },
+        onAllow = { intro = false; store.permissionsAsked = true /* до запуска: при пересоздании Activity пояснение не должно появиться снова */; introPerms.launch(PermissionPlan.missing(PermissionPlan.forFirstRun(Build.VERSION.SDK_INT), access::granted).map { it.manifest }.toTypedArray()) },
         onLater = { intro = false; store.permissionsIntroDismissed = true },
     )
     if (linkDialog) {

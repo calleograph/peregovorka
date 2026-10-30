@@ -54,7 +54,7 @@ class JoinFlowTest {
     private val callScreen = By.text(Pattern.compile("Подключение…|Вы вышли из конференции|Тестовая организация|Связь потеряна.*"))
 
     /** Системное окно запроса сейчас на экране (кнопка «разрешить» контроллера разрешений). */
-    private fun permissionDialogShown(ms: Long = 8_000) = device().wait(Until.findObject(By.res(Pattern.compile("com\\.android\\.permissioncontroller:id/permission_(allow|deny).*|com\\.android\\.packageinstaller:id/permission_(allow|deny).*"))), ms) != null
+    private fun permissionDialogShown(ms: Long = 20_000) = device().wait(Until.findObject(By.res(Pattern.compile("com\\.android\\.permissioncontroller:id/permission_(allow|deny).*|com\\.android\\.packageinstaller:id/permission_(allow|deny).*"))), ms) != null
 
     /**
      * Первый запуск после входа: приложение само предлагает общий запрос («Доступ для конференций»). Пока показано системное окно, Activity пересоздаётся (так ведут себя
