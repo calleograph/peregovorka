@@ -138,6 +138,47 @@ def readable_duration(path: Path) -> int | None:
     return int(float(h) * 3600 + float(mi) * 60 + float(sec))
 
 
+def moov_first(path: Path) -> bool | None:
+    """Индекс MP4 (moov) стоит перед данными (mdat): такой файл начинает играть сразу и перематывается без скачивания хвоста. None — формат не распознан."""
+    try:
+        with open(path, "rb") as f:
+            pos, size = 0, path.stat().st_size
+            while pos + 8 <= size:
+                f.seek(pos); head = f.read(16)
+                n, kind = int.from_bytes(head[:4], "big"), head[4:8]
+                if kind == b"moov": return True
+                if kind == b"mdat": return False
+                if n == 1: n = int.from_bytes(head[8:16], "big")
+                if n < 8: return None
+                pos += n
+    except OSError:
+        return None
+    return None
+
+
+def faststart(path: Path) -> bool:
+    """Переносит индекс в начало файла без перекодирования (ffmpeg -c copy -movflags +faststart) во временный файл и атомарно заменяет исходный, только если длительность совпала.
+    Любой сбой оставляет исходный файл нетронутым: запись не теряется из-за косметики. True — файл заменён."""
+    ff = mixdown.ffmpeg_path()
+    if ff is None or moov_first(path) is not False:
+        return False
+    tmp = path.with_name(path.name + ".fast.tmp")
+    try:
+        r = subprocess.run([ff, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", str(path), "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)],   # noqa: S603
+                           capture_output=True, timeout=600, check=False)
+        if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size < path.stat().st_size * 0.9:
+            return False
+        a, b = readable_duration(path), readable_duration(tmp)
+        if a is None or b is None or abs(a - b) > 1 or moov_first(tmp) is not True:
+            return False
+        os.replace(tmp, path)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _ns_to_s(v: int) -> int:
     return int(v / 1_000_000_000) if v else 0
 
@@ -330,6 +371,8 @@ class VideoRecorder:
             rec.status = "failed"
             rec.error = ("Служба записи перестала отвечать во время записи" if lost else "Запись оборвана") + ": файл не читается" + (" (индекс MP4 не записан)" if unreadable else "") + ". Файл оставлен на диске для ручного разбора."
         else:
+            if await asyncio.to_thread(faststart, path):
+                rec.size_bytes = size = path.stat().st_size          # файл пересобран без перекодирования (индекс в начале): размер изменился на байты
             rec.status, rec.error = "ready", (info.error[:290] if info is not None and info.error else None)
             rec.file_state = "ok"                          # файл закрыт и прочитан: прежняя отметка «не найден» (если сверка заглянула по ходу записи) снимается
             if info is not None and info.status == eg.EgressStatus.EGRESS_LIMIT_REACHED:

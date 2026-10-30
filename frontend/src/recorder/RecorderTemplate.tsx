@@ -13,7 +13,7 @@ import "./recorder.css";
  */
 interface SceneState { ended: boolean; stage: { items: StageItem[]; at: number | null }; board: { active: boolean; seq: number; xml: string | null; patches: Array<{ seq: number; patch: unknown; checksum: string | null; from?: string; by?: string }> } }
 
-const POLL_MS = 700;
+const POLL_MS = 500;
 
 function name(p: Participant): string { return p.name || p.identity; }
 

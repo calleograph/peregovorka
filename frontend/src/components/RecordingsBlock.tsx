@@ -7,6 +7,16 @@ import { useLocation } from "react-router-dom";
 import { parseMoment } from "../player/playerMath";
 import { openPlayer } from "../player/store";
 
+const ready = (m: MediaItem) => `${fmtTime(m.duration_s ?? 0)} · ${bytes(m.size_bytes)} · ${m.has_video ? "MP4" : "M4A"}${m.started_at ? ` · с ${fmt(m.started_at)}` : ""}`;
+/** Этап общей записи: пока файл не готов, показываем, что именно происходит, а не «ошибку»; «Смотреть» доступна, когда файл можно открыть. */
+const PHASE_TEXT: Record<string, (m: MediaItem) => string> = {
+  recording: () => "идёт запись встречи…",
+  finalizing: (m) => (m.has_video ? "запись завершена, файл закрывается — обычно до минуты…" : "формируется…"),
+  saving: (m) => `${ready(m)} · переносится в хранилище (смотреть можно сейчас)`,
+  failed: (m) => `не удалось сформировать: ${m.error ?? "ошибка"}`,
+  missing: () => "файл удалён из хранилища",
+  ready,
+};
 const TITLE: Record<string, string> = { mix_video: "Видеозапись встречи", mix_audio: "Аудиозапись встречи", participant: "Запись участника" };
 
 /** Блок «Записи» на странице завершённой встречи: общая запись (основной материал) и, для администратора, файлы участников. «Смотреть» и «Слушать» открывают плеер поверх страницы. */
@@ -17,7 +27,7 @@ export default function RecordingsBlock({ meetingId }: { meetingId: string }) {
   const load = useCallback(() => api.meetingMedia(meetingId).then((d) => { setData(d); setErr(""); }).catch((e) => setErr((e as ApiError).message)), [meetingId]);
   useEffect(() => { void load(); }, [load]);
   // пока общая запись формируется в фоне — обновляем список
-  const processing = !!data?.mixes.some((m) => m.status === "processing");
+  const processing = !!data?.mixes.some((m) => m.status === "processing" || m.phase === "saving");
   useEffect(() => { if (!processing) return; const t = window.setInterval(() => void load(), 8000); return () => window.clearInterval(t); }, [processing, load]);
 
   // ссылка на момент записи (?rec=…&t=…): открывается только если запись входит в список доступных этому пользователю
@@ -43,8 +53,8 @@ export default function RecordingsBlock({ meetingId }: { meetingId: string }) {
           <div className="rec-info">
             <b>{title}</b>
             <span className="muted small">
-              {m.status === "processing" ? (m.has_video ? "идёт запись или обработка файла…" : "формируется…") : m.status === "failed" ? `не удалось сформировать: ${m.error ?? "ошибка"}` : m.file_state === "missing" ? "файл удалён из хранилища"
-                : `${fmtTime(m.duration_s ?? 0)} · ${bytes(m.size_bytes)} · ${m.has_video ? "MP4" : "M4A"}${m.started_at ? ` · с ${fmt(m.started_at)}` : ""}`}
+              {PHASE_TEXT[m.phase ?? ""]?.(m) ?? (m.status === "processing" ? (m.has_video ? "идёт запись или обработка файла…" : "формируется…") : m.status === "failed" ? `не удалось сформировать: ${m.error ?? "ошибка"}` : m.file_state === "missing" ? "файл удалён из хранилища"
+                : `${fmtTime(m.duration_s ?? 0)} · ${bytes(m.size_bytes)} · ${m.has_video ? "MP4" : "M4A"}${m.started_at ? ` · с ${fmt(m.started_at)}` : ""}`)}
             </span>
           </div>
           <button type="button" className="btn primary" disabled={m.status !== "ready" || m.file_state === "missing"} onClick={() => open(m, title)}>

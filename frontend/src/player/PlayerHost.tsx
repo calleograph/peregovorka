@@ -106,14 +106,23 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
   useEffect(() => { if (item.seekTick && item.startAt != null) seek(item.startAt); }, [item.seekTick]);      // eslint-disable-line react-hooks/exhaustive-deps
   const toggleFull = () => { if (!item.hasVideo) return; if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); else void stage.current?.requestFullscreen?.().catch(() => undefined); };
 
+  const retries = useRef(0);
   const onError = async () => {
-    setLoading(false);
+    const code = media.current?.error?.code;          // 2 — сеть, 3 — не удалось декодировать, 4 — формат не поддерживается
     try {          // браузер не сообщает причину — спрашиваем сервер тем же запросом и переводим ответ в понятный текст
       const r = await fetch(src, { headers: { Range: "bytes=0-0" }, credentials: "same-origin" });
-      if (r.ok) { setErr("Не удалось воспроизвести запись: формат не поддерживается этим браузером."); return; }
+      if (r.ok) {
+        // Сервер файл отдаёт, а браузер споткнулся: частая причина — первый запрос пришёл, пока файл ещё закрывался или переносился (тогда сервер отвечал «ещё формируется»).
+        // Сообщение о формате показывается только после повторных попыток: временное отсутствие готового файла ошибкой формата не считается.
+        if (retries.current < 3) { retries.current += 1; setLoading(true); window.setTimeout(() => media.current?.load(), 1200 * retries.current); return; }
+        setLoading(false);
+        setErr(code === 4 ? "Браузер не поддерживает формат этой записи. Скачайте файл и откройте его в проигрывателе." : "Запись не удалось воспроизвести: файл повреждён или не читается браузером. Попробуйте скачать его.");
+        return;
+      }
+      setLoading(false);
       const d = await r.json().catch(() => null);
       setErr(mediaErrorText(r.status, typeof d?.detail === "object" ? d.detail?.message : d?.detail));
-    } catch { setErr(mediaErrorText(0)); }
+    } catch { setLoading(false); setErr(mediaErrorText(0)); }
   };
 
   // --- клавиатура: только когда фокус в окне плеера (в остальном интерфейсе пробел и стрелки принадлежат странице); Esc закрывает, только если фокус в плеере
@@ -180,7 +189,7 @@ function PlayerWindow({ item, mode, focusTick }: { item: PlayerItem; mode: "full
   const common = {
     ref: media as never, src, preload: "metadata" as const, onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onError, playsInline: true,
     onTimeUpdate: () => { if (!playing) setCur(media.current?.currentTime ?? 0); },
-    onLoadedMetadata: () => { setLoading(false); const m = media.current; if (m) { m.volume = prefs.volume; m.muted = prefs.muted; m.playbackRate = prefs.speed; if (Number.isFinite(m.duration)) setDur(m.duration); if (item.startAt) { m.currentTime = item.startAt; setCur(item.startAt); } } },
+    onLoadedMetadata: () => { retries.current = 0; setLoading(false); const m = media.current; if (m) { m.volume = prefs.volume; m.muted = prefs.muted; m.playbackRate = prefs.speed; if (Number.isFinite(m.duration)) setDur(m.duration); if (item.startAt) { m.currentTime = item.startAt; setCur(item.startAt); } } },
     onDurationChange: () => { const d = media.current?.duration; if (d && Number.isFinite(d)) setDur(d); },
     onWaiting: () => setLoading(true), onCanPlay: () => setLoading(false), onEnded: () => setPlaying(false),
   };

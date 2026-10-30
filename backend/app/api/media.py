@@ -51,9 +51,23 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None | str:
     return start, min(end, size - 1)
 
 
+def phase_of(r: Recording) -> str:
+    """Этап жизни общей записи для интерфейса: recording — идёт запись; finalizing — запись остановлена, файл закрывается; saving — файл готов и играет,
+    но ещё переносится во внешнее хранилище (воспроизведение возможно); ready — готово; failed — не удалось; missing — файл удалён из хранилища."""
+    if r.status == "failed":
+        return "failed"
+    if r.file_state == "missing":
+        return "missing"
+    if r.status == "finishing":
+        return "finalizing"
+    if r.status == "processing":
+        return "recording" if r.kind == "mix_video" else "finalizing"
+    return "saving" if r.export_status == "pending" else "ready"
+
+
 def _item(r: Recording, can_download: bool) -> dict:
-    return {"id": str(r.id), "kind": r.kind, "mime": r.mime, "status": "processing" if r.status == "finishing" else r.status, "error": r.error, "size_bytes": r.size_bytes, "duration_s": r.duration_s, "has_video": r.has_video,
-            "started_at": r.started_at, "created_at": r.created_at, "file_state": r.file_state, "can_download": can_download}
+    return {"id": str(r.id), "kind": r.kind, "mime": r.mime, "status": "processing" if r.status == "finishing" else r.status, "phase": phase_of(r), "error": r.error, "size_bytes": r.size_bytes,
+            "duration_s": r.duration_s, "has_video": r.has_video, "started_at": r.started_at, "created_at": r.created_at, "file_state": r.file_state, "can_download": can_download}
 
 
 @router.get("/{meeting_id}/media")

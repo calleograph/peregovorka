@@ -241,7 +241,7 @@ export interface RecordingRow {
 }
 /** Запись из блока «Записи»: общая (mix_audio / mix_video) или файл участника (только администратору). */
 export interface MediaItem {
-  id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; error: string | null; size_bytes: number; duration_s: number | null;
+  id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; phase?: "recording" | "finalizing" | "saving" | "ready" | "failed" | "missing"; error: string | null; size_bytes: number; duration_s: number | null;
   has_video: boolean; started_at: string | null; created_at: string; file_state?: "ok" | "missing"; can_download: boolean; name?: string; identity?: string | null;
 }
 export interface ConfigInfo {
