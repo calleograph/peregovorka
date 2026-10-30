@@ -71,11 +71,11 @@ export function ConfirmOp({ pending, onCancel, onRun }: { pending: Pending; onCa
 }
 
 /** «Подробности» сбоя: этап, пробованные источники и техническая выдержка; секреты уже скрыты на сервере. */
-function FailureDetails({ f }: { f: NonNullable<ServerComponent["failure"]> }) {
+function FailureDetails({ f, doc }: { f: NonNullable<ServerComponent["failure"]>; doc: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="small">
-      <button type="button" className="btn mini ghost" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? "Скрыть подробности" : "Подробности"}</button>
+      <button type="button" className="btn mini ghost" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? "Скрыть подробности" : "Подробности"}</button> <a href={doc} target="_blank" rel="noopener noreferrer">Как решить</a>
       {open && (
         <dl className="kv small" style={{ marginTop: 6 }}>
           <dt>Причина</dt><dd>{f.code}</dd>
@@ -109,7 +109,7 @@ export function ComponentCard({ name, ctl, onRefresh }: { name: ServerComponent[
         <button type="button" className="btn mini ghost" onClick={() => { onRefresh?.(); if (h?.available && !h.busy) void ctl.refresh(); else void ctl.load(); }} title="Опросить службы на сервере и обновить проверки">Обновить</button>
       </div>
       {(c.state !== "ok" || c.message !== "Работает.") && <span className="small">{c.message}</span>}
-      {c.failure && <FailureDetails f={c.failure} />}
+      {c.failure && <FailureDetails f={c.failure} doc={c.doc} />}
       {c.note && <span className="muted small">{c.note}</span>}
       {h && !h.available && <div className="alert warn small" role="alert">Действия недоступны: {h.message} <a href={`${WIKI}Решение-проблем-обновления`} target="_blank" rel="noopener noreferrer">Как исправить</a></div>}
       {h?.available && !h.privileged && <div className="alert warn small" role="alert">{h.message}</div>}

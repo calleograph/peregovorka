@@ -39,7 +39,8 @@ async def bot(room_name, identity, name, color, screen=False, beeps=(), start=0.
     room = rtc.Room()
     await room.connect(LK_WS, token(identity, name, room_name))
     vsrc = rtc.VideoSource(640, 360); vt = rtc.LocalVideoTrack.create_video_track(identity, vsrc)
-    asrc = rtc.AudioSource(48000, 1); at = rtc.LocalAudioTrack.create_audio_track(identity + "-a", asrc)
+    # короткая очередь: звук уходит почти сразу после генерации (иначе метка отстаёт на размер очереди)
+    asrc = rtc.AudioSource(48000, 1, queue_size_ms=100); at = rtc.LocalAudioTrack.create_audio_track(identity + "-a", asrc)
     await room.local_participant.publish_track(at, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
     pub = None
     state = {"video": False}
@@ -90,6 +91,8 @@ async def main():
     A = S.Client("admin", "admin", PASSWORD, 9641)
     try:
         await A.start()
+        # у администратора нет устройств: кадр и звук конференции дают только боты, поэтому «говорящий» в записи определён однозначно
+        await A.send("Page.addScriptToEvaluateOnNewDocument", source="navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('нет устройств', 'NotFoundError')); navigator.mediaDevices.enumerateDevices = async () => [];")
         r = await api(A, "PUT", "/admin/settings/video", {"enabled": True, "min_free_gb": 1, "max_concurrent": 2, "storage": "local", "scene_template": True})
         S.check("видеозапись включена, запись общей сцены включена", r["s"] == 200 and r["j"].get("scene_template") is True, str(r)[:160])
         rooms = await api(A, "GET", "/admin/rooms"); room = next(x for x in rooms["j"] if x["slug"] == ROOM)
@@ -166,7 +169,7 @@ async def main():
         S.check("длительность близка к ожидаемой (±12 с)", abs(dur - (T["stop"] + 2)) < 12, f"{dur:.1f} с")
         # moov в начале (быстрый старт) — первые байты содержат ftyp, затем moov до mdat
         head = open(mp4, "rb").read(65536)
-        print("  moov раньше mdat:", head.find(b"moov") != -1 and (head.find(b"mdat") == -1 or head.find(b"moov") < head.find(b"mdat")), flush=True)
+        S.check("MP4: индекс (moov) в начале файла — быстрый старт и перемотка", head.find(b"moov") != -1 and (head.find(b"mdat") == -1 or head.find(b"moov") < head.find(b"mdat")))
         # Egress начинает писать чуть позже команды: сдвиг определяем по первой метке звука (board_on)
         started = (mixes[-1].get("started_at") or "")
         from datetime import datetime
@@ -219,7 +222,7 @@ async def main():
         print(f"  сигнал в звуке: {a_on}, смена цвета в видео: {v_on}", flush=True)
         S.check("сигнал найден и в звуке, и в видео", a_on is not None and v_on is not None, f"{a_on} / {v_on}")
         if a_on is not None and v_on is not None:
-            S.check("звук синхронен видео записи (расхождение ≤ 1 с)", abs(a_on - v_on) <= 1.0, f"{a_on - v_on:+.2f} с")
+            S.check("звук синхронен видео записи (расхождение ≤ 0,7 с)", abs(a_on - v_on) <= 0.7, f"{a_on - v_on:+.2f} с")
     finally:
         await A.close()
 

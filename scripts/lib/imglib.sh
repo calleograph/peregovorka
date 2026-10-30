@@ -75,7 +75,7 @@ img_classify() {
     *"digest mismatch"*|*"content digest"*"does not match"*|*"failed to verify layer"*|*"unexpected digest"*) echo digest ;;
     *"no matching manifest"*|*"does not provide the specified platform"*|*"platform"*"does not match"*) echo arch ;;
     *"no such host"*|*"temporary failure in name resolution"*|*"server misbehaving"*|*"name resolution"*) echo dns ;;
-    *"manifest unknown"*|*"name unknown"*|*"repository does not exist"*|*"not found"*|*"404"*) echo notfound ;;
+    *"manifest unknown"*|*"no such manifest"*|*"name unknown"*|*"repository does not exist"*|*"not found"*|*"404"*) echo notfound ;;
     *unauthorized*|*"authentication required"*|*"access to the resource is denied"*|*"denied:"*|*" 401"*|*" 403"*) echo auth ;;
     *"cannot connect to the docker daemon"*|*"is the docker daemon running"*|*containerd*|*"error during connect"*|*"no such file or directory"*"docker.sock"*) echo daemon ;;
     *timeout*|*"timed out"*|*"deadline exceeded"*|*"awaiting response headers"*|*"context canceled"*) echo timeout ;;

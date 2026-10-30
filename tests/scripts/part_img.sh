@@ -114,6 +114,7 @@ t "img: причина — сертификат" cls 'tls: failed to verify cert
 t "img: причина — лимит" cls 'toomanyrequests: You have reached your pull rate limit' ratelimit
 t "img: причина — авторизация" cls 'Error response from daemon: unauthorized: authentication required' auth
 t "img: причина — нет образа" cls 'Error response from daemon: manifest for livekit/egress:v9 not found: manifest unknown' notfound
+t "img: причина — «no such manifest» у зеркала (docker manifest inspect)" cls 'no such manifest: mirror.gcr.io/livekit/egress@sha256:aaa' notfound
 t "img: причина — диск" cls 'failed to register layer: write /x: no space left on device' disk
 t "img: причина — контрольная сумма" cls 'failed to verify layer: digest mismatch: expected sha256:aaa got sha256:bbb' digest
 t "img: причина — служба Docker" cls 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' daemon
