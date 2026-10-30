@@ -136,7 +136,7 @@ jobs:
             adb shell settings put secure show_ime_with_hard_keyboard 1
             adb logcat -G 32M
             adb logcat -c
-            ./update-over-test.sh
+            bash ./update-over-test.sh
             ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.livekit_url=ws://10.0.2.2:7880 || echo failed > instrumented-failed.txt
             adb logcat -d -v time > logcat.txt
             adb shell dumpsys activity services org.peregovorka.android > services.txt || true
