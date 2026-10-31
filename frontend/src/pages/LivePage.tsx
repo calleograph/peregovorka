@@ -27,6 +27,7 @@ const clock = (ms: number) => {
   const two = (n: number) => String(n).padStart(2, "0");
   return d > 0 ? `${d} д ${two(h)}:${two(m)}:${two(ss)}` : `${two(h)}:${two(m)}:${two(ss)}`;
 };
+const until = (iso: string) => new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });      // «до 2 ноября в 21:24» — без дня недели в им. падеже
 const when = (iso: string) => new Date(iso).toLocaleString("ru-RU", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
 /** Сообщение «пароль»: компактная форма с автофокусом. */
@@ -315,11 +316,11 @@ export default function LivePage() {
           <p className="muted">Страница обновится сама, как только эфир начнётся.</p>
         </div>)}
       {info.status === "ended" && !replayUrl && (
-        <div className="live-stage live-msg"><Icon name="check" size={30} /><h2>Эфир завершён</h2><p className="muted">Спасибо, что были с нами.{info.ended_at ? ` Закончился ${when(info.ended_at)}.` : ""}</p>
+        <div className="live-stage live-msg"><Icon name="check" size={30} /><h2>Эфир завершён</h2><p className="muted">Спасибо, что были с нами.{info.ended_at ? ` Окончание: ${when(info.ended_at)}.` : ""}</p>
           {(info.replay_state === "preparing" || info.replay_state === "slow") && <p className="live-note" role="status"><span className="live-spin small" aria-hidden />{REPLAY_NOTE[info.replay_state]}</p>}
           {info.replay_state && info.replay_state !== "ready" && info.replay_state !== "preparing" && info.replay_state !== "slow" && info.replay_state !== "off" && REPLAY_NOTE[info.replay_state] &&
             <p className="live-note">{REPLAY_NOTE[info.replay_state]}</p>}
-          {info.replay && info.access_until && <p className="muted small">Запись доступна по этой ссылке до {when(info.access_until)}.</p>}
+          {info.replay && info.access_until && <p className="muted small">Запись доступна по этой ссылке до {until(info.access_until)}.</p>}
           {info.replay && !askReplayPw && <button className="btn primary" onClick={() => void openReplay()} disabled={busy}><Icon name="play" size={18} /> Смотреть запись</button>}
           {askReplayPw && <PasswordForm onSubmit={(pw) => void openReplay(pw)} busy={busy} error={replayErr} />}
           {!askReplayPw && replayErr && <div className="alert error" role="alert">{replayErr}</div>}</div>)}
@@ -328,7 +329,7 @@ export default function LivePage() {
           <div className="live-stage"><video src={replayUrl} controls autoPlay playsInline aria-label="Запись эфира" /></div>
           {(downloadUrl || info.access_until) && (
             <div className="live-foot row">
-              {info.access_until && <span className="muted small">Доступна до {when(info.access_until)}</span>}
+              {info.access_until && <span className="muted small">Доступна до {until(info.access_until)}</span>}
               <div className="spacer" />
               {downloadUrl && <a className="btn" href={downloadUrl} download><Icon name="download" size={16} /> Скачать запись</a>}
             </div>)}

@@ -1200,6 +1200,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 
 /* сроки хранения в редакторе комнаты: «общий срок / свой» и дни в одну строку */
 .ret-grid { display: grid; gap: 8px; margin-bottom: 8px; }
-.ret-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 260px) 90px auto; gap: 8px; align-items: center; }
+.ret-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 300px) 90px auto; gap: 8px; align-items: center; }
+.ret-row select { width: 100%; min-width: 0; }
 .ret-row input { width: 90px; }
-@media (max-width: 560px) { .ret-row { grid-template-columns: 1fr 1fr; } .ret-row .field-title { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .ret-row { grid-template-columns: minmax(0, 1fr) 76px auto; } .ret-row input { width: 76px; } .ret-row .field-title, .ret-row select:last-child { grid-column: 1 / -1; } }
