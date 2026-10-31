@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, type AclEntry, type AnonymizeMode, type ApiError, type ApiProfile, type HistoryAccess, type LlmChoice, type MailDeliverySpec, type RoomAdmin, type RoomManage, type RoomSip, type RoomType } from "../api";
+import { api, type AclEntry, type AnonymizeMode, type ApiError, type HistoryAccess, type LlmChoice, type MailDeliverySpec, type RoomAdmin, type RoomManage, type RoomSip, type RoomType } from "../api";
 import { copyText } from "../util";
 import AclPicker from "./AclPicker";
 import LiveSettings from "./LiveSettings";
@@ -38,7 +38,7 @@ export interface RoomForm {
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
   // только администратор сервера
-  slug: string; is_enabled: boolean; history_access: HistoryAccess; text_retention_days: string; audio_retention_days: string; video_retention_days: string; retention_custom: Record<RetKind, boolean>; anonymize_mode: AnonymizeMode; anonymizer_profile_id: string;
+  slug: string; is_enabled: boolean; history_access: HistoryAccess; text_retention_days: string; audio_retention_days: string; video_retention_days: string; retention_custom: Record<RetKind, boolean>; anonymize_mode: AnonymizeMode; anonymize_profile: string;
 }
 
 export const newRoomForm = (): RoomForm => ({
@@ -46,7 +46,7 @@ export const newRoomForm = (): RoomForm => ({
   room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p",
   camera_allowed: true, screen_share_allowed: true, board_access: "auto", guest_access_enabled: false, acl: [], moderators: [], mail_delivery: emptySpec(),
   protocol_instructions: "", llm: emptyChoice(), llm_summary: emptyChoice(), sip: emptySip(), auto_map_mode: "inherit",
-  slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", video_retention_days: "", retention_custom: { text: false, audio: false, video: false }, anonymize_mode: "inherit", anonymizer_profile_id: "",
+  slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", video_retention_days: "", retention_custom: { text: false, audio: false, video: false }, anonymize_mode: "off", anonymize_profile: "",
 });
 
 export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
@@ -61,7 +61,7 @@ export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
   text_retention_days: (a?.text_retention_days ?? r.retention?.text_days)?.toString() ?? "", audio_retention_days: (a?.audio_retention_days ?? r.retention?.audio_days)?.toString() ?? "",
   video_retention_days: (a?.video_retention_days ?? r.retention?.video_days)?.toString() ?? "",
   retention_custom: { text: !!(a?.text_retention_custom ?? r.retention?.custom?.text), audio: !!(a?.audio_retention_custom ?? r.retention?.custom?.audio), video: !!(a?.video_retention_custom ?? r.retention?.custom?.video) },
-  anonymize_mode: (a?.anonymize_mode ?? r.retention?.anonymize_mode ?? "inherit") as AnonymizeMode, anonymizer_profile_id: a?.anonymizer_profile_id ?? r.retention?.anonymizer_profile_id ?? "",
+  anonymize_mode: ((r.retention?.anonymize_mode ?? a?.anonymize_mode) === "on" ? "on" : "off") as AnonymizeMode, anonymize_profile: r.retention?.anonymize_profile ?? a?.anonymize_profile ?? "",
 });
 
 /** Настройки, которые сохраняет руководитель комнаты (и администратор) — запрос /rooms/{id}/manage. */
@@ -72,6 +72,7 @@ export function managePayload(f: RoomForm): Record<string, unknown> {
     video_mode: f.video_mode, video_quality: f.video_quality, encrypt_storage: f.encrypt_storage, e2ee_mode: f.e2ee_mode, camera_allowed: f.camera_allowed, screen_share_allowed: f.screen_share_allowed,
     board_allowed: f.board_access !== "private" && f.board_access !== "leaders", board_access: f.board_access, guest_access_enabled: f.guest_access_enabled, acl: f.acl, moderators: f.moderators,
     mail_delivery: f.mail_delivery, protocol_instructions: f.protocol_instructions.trim() || null, llm: f.llm, llm_summary: f.llm_summary, sip: f.sip, auto_map_mode: f.auto_map_mode,
+    anonymize_mode: f.anonymize_mode, anonymize_profile: f.anonymize_profile,
     ...(f.clearPassword ? { password: "" } : f.password ? { password: f.password } : {}),
   };
 }
@@ -82,7 +83,6 @@ export function adminPayload(f: RoomForm): Record<string, unknown> {
     slug: f.slug.trim().toLowerCase(), is_enabled: f.is_enabled, history_access: f.history_access,
     // срок: свой у комнаты (значение; пусто — бессрочно) или общий срок сервера
     ...Object.fromEntries((["text", "audio", "video"] as const).flatMap((k) => [[`${k}_retention_custom`, f.retention_custom[k]], ...(f.retention_custom[k] ? [[`${k}_retention_days`, numOrNull(f[`${k}_retention_days`])]] : [])])),
-    anonymize_mode: f.anonymize_mode, anonymizer_profile_id: f.anonymizer_profile_id || null,
   };
 }
 
@@ -105,7 +105,6 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [anonProfiles, setAnonProfiles] = useState<ApiProfile[]>([]);
   const [pendingIcon, setPendingIcon] = useState<PendingIcon>(null);
   const isNew = !roomId;
   const admin = adminProp ?? (isNew || !!room?.can_edit_system_fields);       // администратор сервера — по правам из ответа сервера
@@ -117,7 +116,6 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
     else api.admin.roomTemplate().then((t) => { if (alive) { setTpl(t); setForm(newRoomForm()); } }).catch((e) => { if (alive) setError((e as ApiError).message); });
     return () => { alive = false; };
   }, [roomId]);  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (admin) void api.admin.profiles("anonymizer").then(setAnonProfiles).catch(() => undefined); }, [admin]);
 
   const set = <K extends keyof RoomForm>(k: K, v: RoomForm[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
   const opts = room ?? tpl;
@@ -322,7 +320,7 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
 
       {tab === "autosend" && (
         <div role="tabpanel">
-          <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} localModel={form.llm.mode === "local" || (form.llm.mode === "inherit" && opts?.llm_options?.system.provider === "local")} />
+          <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} />
           <p className="muted small">Значения действуют для каждой встречи комнаты; для конкретной встречи руководитель меняет их кнопкой «Эта встреча»<InfoTip>Сохраняются кнопкой «Сохранить» и записываются в журнал аудита (кто и что изменил).</InfoTip></p>
         </div>
       )}
@@ -334,20 +332,24 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
           {room?.llm_effective && form.llm.mode !== room.llm?.mode && <p className="muted small">Сейчас сохранено: {choiceLabel(room.llm ?? emptyChoice(), room.llm_options)}.</p>}
           <h3 style={{ margin: "14px 0 6px" }} className="field-title">Модель для резюме<InfoTip>Протокол и краткое резюме — разные задачи: у каждой своя модель и своё наследование «система → комната → встреча».</InfoTip></h3>
           <LlmChoiceEditor scope="room" purpose="summary" value={form.llm_summary} onChange={(c) => set("llm_summary", c)} options={opts?.llm_options} effective={opts?.llm_summary_effective} />
-          {admin && (
-            <fieldset className="group"><legend>Обезличивание</legend>
-              <div className="cols">
-                <F title="Перед отправкой во внешнюю модель" tip="Выключение не мешает протоколам: в модель уходит исходная стенограмма (с именами и данными участников). Выключайте, если модель внутренняя или данные не конфиденциальны.">
-                  <select value={form.anonymize_mode} onChange={(e) => set("anonymize_mode", e.target.value as AnonymizeMode)}>
-                    <option value="inherit">Как в общих настройках</option><option value="on">Всегда (сервис недоступен — протокол не создаётся)</option><option value="off">Не обезличивать</option>
-                  </select></F>
-                <F title="Сервис обезличивания" tip="Профили — в разделе «Обезличивание».">
-                  <select value={form.anonymizer_profile_id} onChange={(e) => set("anonymizer_profile_id", e.target.value)} disabled={form.anonymize_mode === "off"}>
-                    <option value="">По умолчанию (общий)</option>{anonProfiles.filter((p) => !p.virtual).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select></F>
-              </div>
-            </fieldset>
-          )}
+          {room?.retention?.privacy && (() => {
+            const pv = room.retention.privacy;
+            return (
+              <fieldset className="group"><legend>Обезличивание перед языковой моделью</legend>
+                <label className="check"><input type="checkbox" checked={pv.required || form.anonymize_mode === "on"} disabled={pv.required || (!pv.enabled && form.anonymize_mode !== "on")}
+                  onChange={(e) => set("anonymize_mode", e.target.checked ? "on" : "off")} />
+                  <span className="check-body">Обезличивать материалы встреч этой комнаты<InfoTip>Перед отправкой в языковую модель имена участников заменяются (например, «Иван И.»), а серверы, адреса,
+                    контакты, суммы, номера договоров и реквизиты — метками. Работает на этом сервере, текст никуда не отправляется. Пароли, токены и ключи скрываются всегда, даже если обезличивание выключено.</InfoTip></span></label>
+                {pv.required && <p className="muted small">Обезличивание обязательно для всех комнат — так решил администратор сервера.</p>}
+                {!pv.enabled && !pv.required && <p className="muted small">Администратор сервера не разрешил обезличивание в комнатах.</p>}
+                {(pv.required || form.anonymize_mode === "on") && (
+                  <F title="Профиль" tip="Базовый — имя и инициал («Иван И.»), города и общеизвестные названия остаются. Строгий — «Участник 1», «Организация 2», места тоже заменяются. Настраиваемый — правила администратора.">
+                    <select value={form.anonymize_profile} onChange={(e) => set("anonymize_profile", e.target.value)} aria-label="Профиль обезличивания">
+                      <option value="">Как на сервере ({pv.titles[pv.default] ?? pv.default})</option>
+                      {pv.allowed.map((p) => <option key={p} value={p}>{pv.titles[p] ?? p}</option>)}
+                    </select></F>)}
+              </fieldset>);
+          })()}
         </div>
       )}
 

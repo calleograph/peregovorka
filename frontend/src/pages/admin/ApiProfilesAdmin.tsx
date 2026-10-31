@@ -8,17 +8,13 @@ import type { Field } from "./SettingsForm";
 import { useFocusOnMount } from "../../useInitialFocus";
 import InfoTip from "../../components/InfoTip";
 
-const SECRET: Record<ProfileKind, string> = { llm: "api_key", anonymizer: "token" };
+const SECRET: Record<ProfileKind, string> = { llm: "api_key" };
 const DEFAULTS: Record<ProfileKind, SettingsValues> = {
   llm: { type: "openai_compatible", base_url: "", model: "", routing_provider: "", max_tokens_summary: null, max_tokens_protocol: null, context_window: 0, temperature: 0,
     timeout: 180, send_temperature: true, supports_system: true, supports_streaming: false, supports_json: true, use_corporate_ca: true, allow_http: false },
-  anonymizer: { profile: "docclean", base_url: "", docclean_mode: "ai_ready", docclean_groups: "", connect_timeout: 5, timeout: 60, max_chunk_chars: 20000, use_corporate_ca: true,
-    allow_http: false, endpoint: "/anonymize", request_field: "text", response_field: "anonymized_text", status_field: "", status_ok_value: "", auth_type: "bearer",
-    auth_header_name: "X-API-Key", auth_username: "", extra_body: "" },
 };
 const WORDS: Record<ProfileKind, { one: string; many: string; where: string }> = {
   llm: { one: "языковой модели", many: "Внешние API", where: "протоколов, резюме и карт" },
-  anonymizer: { one: "сервиса обезличивания", many: "Несколько API обезличивания", where: "обезличивания текста" },
 };
 
 interface Edit { id?: string; name: string; values: SettingsValues; secrets: Record<string, string>; secretSet: boolean }

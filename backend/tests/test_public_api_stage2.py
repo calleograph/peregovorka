@@ -495,7 +495,7 @@ def gen_client(c, scopes):
 
 
 def configure_llm(c):
-    put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
+    put_settings(c, "anonymizer", required=True)
     put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
     c.cookies.clear()
     c.headers.pop("X-CSRF-Token", None)

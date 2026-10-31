@@ -60,7 +60,7 @@ async def collect_outbound(settings_svc: Any, db: AsyncSession) -> tuple[list[di
             hp = _hostport(outlook.ews_url, 443)
             if hp:
                 out.append({"what": "Exchange (EWS)", "host": hp[0], "port": hp[1], "proto": "TCP", "why": "сверка календаря Outlook"})
-        for kind, title in (("llm", "Языковая модель"), ("anonymizer", "Обезличивание")):
+        for kind, title in (("llm", "Языковая модель"),):
             for r in (await db.execute(select(ApiProfile).where(ApiProfile.kind == kind))).scalars():
                 hp = _hostport(str((r.config or {}).get("base_url") or ""), 443)
                 if hp:

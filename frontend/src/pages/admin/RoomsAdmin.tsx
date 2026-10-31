@@ -69,7 +69,7 @@ export default function RoomsAdmin() {
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>
               <td className="small">{[r.room_type === "presentation" && "презентация", r.room_type === "broadcast" && "трансляция", r.has_password && "пароль", r.auto_record ? "автозапись" : r.record_audio && "запись по кнопке", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
-                r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
+                r.anonymize_mode === "on" && "обезличивание", r.llm_profile_id && "своя модель"].filter(Boolean).join(", ")}</td>
               <td className="actions"><button className="btn ghost" onClick={() => open(r.id)}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>
           ))}

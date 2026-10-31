@@ -11,7 +11,7 @@ Peregovorka собрана из чужих компонентов (LiveKit, PyTo
 | Диапазоны допустимых версий Python | `requirements.txt` | разработчик |
 | npm-зависимости | `frontend/package.json` + `package-lock.json` | `npm install`/`npm update` |
 | Базовые образы (Python, Node, nginx, Alpine, PostgreSQL, Redis) | тег **и digest** в `ARG …_IMAGE` Dockerfile и в `deployment/compose.yml` | `scripts/deps.py pin-images` + `apply` |
-| LiveKit Server, SIP-служба, llama.cpp | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
+| LiveKit Server, SIP-служба | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
 | PyTorch, torchaudio, GigaAM | `TORCH_VERSION`/`TORCHAUDIO_VERSION` в `asr-service/Dockerfile`, `GIGAAM_GIT_COMMIT` в `.env.example` | `scripts/deps.py apply` |
 | draw.io | `ARG DRAWIO_VERSION` в `frontend/Dockerfile` | `scripts/deps.py apply` |
 | Приложение для Windows (Electron, electron-builder, esbuild, WiX) | точные версии в `desktop/package.json` + `desktop/package-lock.json`, WiX — в `.github/workflows/desktop.yml` | разработчик при выпуске клиента (`desktop-vX.Y.Z`): `npm outdated` в `desktop/`, Electron — последний патч поддерживаемой ветки (исправления безопасности Chromium), запись в `desktop/CHANGELOG.md`. В манифест сервера (`components.json`) не входит: это отдельный продукт со своей версией |
@@ -70,12 +70,11 @@ python3 scripts/deps.py report          # «Было → Стало» для о�
 
 * `.github/dependabot.yml` — еженедельные PR для pip (backend, ASR), npm, Docker (все Dockerfile), GitHub Actions.
 * `.github/workflows/deps-watch.yml` — по понедельникам и вручную: `deps.py check`; при появлении версий без решения или уязвимостей создаётся (обновляется) задача «Ревизия зависимостей» с таблицей: компонент, было, стало, ссылка на changelog, сведения об уязвимостях.
-* Что Dependabot не видит (LiveKit-образы по `.env`, llama.cpp, draw.io, GigaAM, torch, digest) — контролирует `deps.py`.
+* Что Dependabot не видит (LiveKit-образы по `.env`, draw.io, GigaAM, torch, digest) — контролирует `deps.py`.
 
 ## Отложенные обновления
 
-### DEP-1 — llama.cpp: server-b11371 → новее
-Образ локальной LLM (Qwen3 1.7B Q4_K_M). Новый образ не проверен с моделью на CPU: ответы протоколов и скорость на целевом железе не измерялись. План: поднять образ с моделью (1,2 ГБ), прогнать структурированное извлечение на эталонной стенограмме, сравнить время и результат с b11371; при совпадении — включить. Повторная проверка — в ближайшем релизе.
+*DEP-1 (llama.cpp) закрыта в 0.56.0: встроенная локальная модель и её образ удалены из продукта.*
 
 ### DEP-2 — Python 3.12 → 3.15 (образы backend и ASR)
 Для torch 2.14.1 в PyPI есть колёса только до cp314 — на Python 3.15 ASR не соберётся. Образы остаются на 3.12 (поддержка до 2028), переход на 3.13/3.14 обсуждается отдельно. План: после выхода колёс torch для 3.15 проверить сборку ASR и backend, обновить `PYTHON_IMAGE`, `freeze`, CI.
@@ -109,8 +108,7 @@ Node 26 по графику проекта Node.js переходит в LTS о�
 ### DEP-11 — React Router 7.18.4 → 7.18.5
 Вышла за день до ревизии 0.42.0 (2026-10-27), патч без новых возможностей. Выпуск 0.42.0 меняет защитный слой запросов и разделы администрирования безопасности, маршрутизацию клиента не трогает; обновление отложено до следующей ревизии, когда можно прочитать список изменений и прогнать vitest и живые сценарии интерфейса. Повторная проверка — 2026-11-10.
 
-### DEP-12 — llama.cpp server-b11371 → server-b12004
-Новая сборка сервера локальной модели. Стенд разработчика — без AVX (≈0,9 токена/с), поэтому поведение новой сборки на рабочем железе проверить нельзя, а выпуск 0.46.0 локальную LLM не меняет. Отложено; повторная проверка — 2026-11-15: поднять сборку и прогнать сценарии из docs/LOCAL_LLM.md (протокол, карта, резюме на коротком корпусе).
+*DEP-12 (llama.cpp) закрыта в 0.56.0: образ llama.cpp больше не используется.*
 
 ### DEP-13 — tzdata 2026.5 → 2026.6
 Только данные часовых поясов; изменений для используемых организациями поясов не подтверждено, выпуск 0.46.0 работу со временем не меняет. Отложено до очередной пересборки образов (повторная проверка — 2026-11-15) с проверкой отображения времени встреч.

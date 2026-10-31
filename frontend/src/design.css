@@ -1204,3 +1204,11 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .ret-row select { width: 100%; min-width: 0; }
 .ret-row input { width: 90px; }
 @media (max-width: 560px) { .ret-row { grid-template-columns: minmax(0, 1fr) 76px auto; } .ret-row input { width: 76px; } .ret-row .field-title, .ret-row select:last-child { grid-column: 1 / -1; } }
+
+/* обезличивание: лаборатория — исходный и обработанный текст рядом */
+.pv-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pv-text { white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: inherit; font-size: 13px; line-height: 1.5; }
+.pv-mark { background: color-mix(in srgb, var(--warn-text, #b45309) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.pv-mark.pv-secret { background: color-mix(in srgb, #dc2626 30%, transparent); }
+.pv-mark.pv-person { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+@media (max-width: 860px) { .pv-diff { grid-template-columns: 1fr; } }

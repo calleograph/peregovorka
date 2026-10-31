@@ -21,21 +21,11 @@ router = APIRouter(prefix="/meetings/{meeting_id}/map", tags=["maps"])
 async def _plan(request: Request, db: AsyncSession, meeting, once: str | None = None) -> dict:
     """Какая модель будет строить карту и готова ли она (`once` — выбранная на один раз)."""
     ps = request.app.state.protocols
-    ch = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map", once=parse_once(once))
-    eff, is_local = ps.local_llm.effective(ch.settings)
-    lm = ps.local_llm.limits(ch.settings)
+    ch = await resolve_llm(ps.profiles, ps.llm, db, meeting.room, meeting, "map", once=parse_once(once))
+    eff = ps.llm.effective(ch.settings)
     ready, reason = bool(eff.enabled) and ch.available, ch.reason
-    if ready and lm is not None:
-        if not ps.local_llm.model_enabled(lm):
-            ready, reason = False, f"Локальная модель {lm.title} не включена на сервере"
-        else:
-            import asyncio  # noqa: PLC0415
-
-            fs = await asyncio.to_thread(ps.local_llm.file_state, lm)
-            if fs["state"] != "ok":
-                ready, reason = False, "Локальная языковая модель не загружена или повреждена"
     return {"ready": ready, "reason": None if ready else (reason or "Языковая модель для карты разговора не настроена"),
-            "model": (lm.title if lm else eff.model) if eff.enabled else None, "profile": ch.name, "local": is_local, "source": ch.source}
+            "model": eff.model if eff.enabled else None, "profile": ch.name, "source": ch.source}
 
 
 # Что из сведений о формировании отдаётся всем, кто видит карту: состояние и предупреждения о неполноте. Остальное (токены, повторы, ответы модели по фрагментам) — только администратору.
@@ -66,7 +56,7 @@ async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     st["can_generate"] = can_edit_protocol(meeting, su)
     if st["can_generate"] and roles.can_manage_room(meeting.room, su):
         ps = request.app.state.protocols
-        st["llm_choices"] = await once_options(ps.profiles, ps.local_llm, db)      # модели для выбора при (пере)формировании: только уже настроенные и разрешённые
+        st["llm_choices"] = await once_options(ps.profiles, db)      # модели для выбора при (пере)формировании: только уже настроенные и разрешённые
     return st
 
 
@@ -87,10 +77,10 @@ async def create_map(meeting_id: uuid.UUID, request: Request, body: dict[str, An
     once = (body or {}).get("llm_once") or None
     if once is not None:
         if not isinstance(once, str) or len(once) > 80:
-            raise HTTPException(status_code=422, detail="llm_once: строка local:<модель> или profile:<профиль>")
+            raise HTTPException(status_code=422, detail="llm_once: строка profile:<подключение>")
         if not roles.can_manage_room(meeting.room, su):
             raise HTTPException(status_code=403, detail="Другую модель выбирают руководители комнаты и администраторы")
-        if once not in {c["key"] for c in await once_options(ps.profiles, ps.local_llm, db)}:
+        if once not in {c["key"] for c in await once_options(ps.profiles, db)}:
             raise HTTPException(status_code=422, detail="Эта модель недоступна: она не настроена или выключена. Выберите другую из списка.")
     try:
         plan = await _plan(request, db, meeting, once)

@@ -18,17 +18,17 @@ describe("время и модель документа", () => {
     expect(spanRu(null)).toBe("");
   });
 
-  it("собирает строку «модель · локальная · начато · готово · длительность»", () => {
+  it("собирает строку «модель · подключение · обезличено · начато · готово · длительность»", () => {
     const line = generationLine({
       ...base,
       timing: { requested_at: "2026-10-09T07:42:13Z", started_at: null, llm_started_at: null, llm_finished_at: null, finished_at: "2026-10-09T07:46:51Z", queue_s: 0, prepare_s: 1, llm_s: 270, total_s: 278 },
-      generation: { model: "qwen3-1.7b-q4_k_m", model_title: "Qwen3 1.7B Q4_K_M", llm_local: true } as never,
+      generation: { model: "gpt-x", model_title: "gpt-x", llm_profile: "Шлюз", anonymized: true } as never,
     });
-    expect(line).toContain("Qwen3 1.7B Q4_K_M · локальная · начато ");
+    expect(line).toContain("gpt-x · «Шлюз» · обезличено · начато ");
     expect(line).toContain("готово ");
     expect(line.endsWith("4 мин 38 с")).toBe(true);
-    const ext = generationLine({ ...base, generation: { model: "gpt-x", model_title: "gpt-x", llm_local: false, llm_profile: "Шлюз" } as never });
-    expect(ext).toContain("внешняя API «Шлюз»");
+    const plain = generationLine({ ...base, generation: { model: "gpt-x", model_title: "gpt-x", anonymized: false } as never });
+    expect(plain).not.toContain("обезличено");
   });
 
   it("обрезанный документ не выглядит готовым", () => {

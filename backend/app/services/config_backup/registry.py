@@ -105,9 +105,9 @@ TABLES: dict[str, TablePolicy] = {
     "rooms": TablePolicy(True, "постоянные переговорки: настройки, роли, запись и транскрибация, инструкции; временные не переносятся; пароль — как хэш", "Переговорки", order=20,
         where="lifetime = 'permanent'", hashes=("password_hash", "live_password_hash"),
         columns=_cols({DATA: ["id", "slug", "name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio", "camera_allowed", "screen_share_allowed",
-                              "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access", "anonymize_mode", "llm_profile_id", "anonymizer_profile_id",
+                              "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access", "anonymize_mode", "llm_profile_id", "anonymize_profile",
                               "mute_on_join", "guest_access_enabled", "guest_token", "room_type", "peer_access", "encrypt_storage", "e2ee_mode", "scheduled_start", "scheduled_end", "join_opens_at", "outlook_key", "recurring", "cancelled_at", "auto_record", "recording_mode", "video_mode", "video_quality", "board_allowed", "board_access", "mail_delivery",
-                              "llm_mode", "llm_local_model", "llm_summary_mode", "llm_summary_profile_id", "llm_summary_local_model", "sip_mode", "sip_profile_id", "sip_extension",
+                              "llm_mode", "llm_summary_mode", "llm_summary_profile_id", "sip_mode", "sip_profile_id", "sip_extension",
                               "sip_allow_inbound", "sip_allow_outbound", "sip_contacts", "welcome_message", "auto_map_mode", "slug_history", "lifetime", "lifecycle",
                               "created_by_name", "created_at", "updated_at", "icon_kind", "icon_key", "mask_profanity", "live_enabled", "live_start", "live_quality", "live_record", "live_own_hls", "live_cdn", "live_replay", "live_title", "live_starts_at", "live_password_enabled", "live_download", "live_link_days",
                               "video_retention_days", "text_retention_custom", "audio_retention_custom", "video_retention_custom"],      # значок из библиотеки переносится; загруженное изображение — файл в каталоге данных, в копию настроек не входит
@@ -172,7 +172,7 @@ GROUPS_POLICY: dict[str, GroupPolicy] = {
     "audio_storage": GroupPolicy(title="Хранилище аудиозаписей", bound={"local_path": BOUND_PATH, "smb_server": BOUND_SMB, "smb_share": BOUND_SMB, "smb_base_path": BOUND_SMB}),
     "chat_files": GroupPolicy(title="Вложения чата"),
     "chats": GroupPolicy(title="Корпоративные чаты"),
-    "anonymizer": GroupPolicy(title="Обезличивание", bound={"base_url": BOUND_URL}),
+    "anonymizer": GroupPolicy(title="Обезличивание"),
     "llm": GroupPolicy(title="Языковая модель", bound={"base_url": BOUND_URL}),
     "protocol": GroupPolicy(title="Протоколы и резюме (инструкции)"),
     "screen": GroupPolicy(title="Показ экрана"),
@@ -216,8 +216,7 @@ ENV: dict[str, str] = {
     "redis_url": "подключение к Redis этой установки", "redis_host": "подключение к Redis этой установки", "redis_port": "подключение к Redis этой установки", "redis_password": "секрет этой установки (не копируется)",
     "livekit_internal_url": "адрес LiveKit этой установки", "livekit_public_url": "адрес LiveKit этой установки", "livekit_api_key": "ключ LiveKit этой установки (не копируется)",
     "livekit_api_secret": "секрет LiveKit этой установки (не копируется)", "livekit_token_ttl_seconds": ENV_REASON_DEFAULT, "livekit_server_version": "определяется установленным LiveKit",
-    "asr_internal_url": "адрес службы распознавания этой установки", "web_internal_url": "адрес службы web этой установки", "recorder_base_url": "адрес приложения для службы записи в сети этой установки", "local_llm_url": "адрес локальной модели этой установки", "local_llm_models_dir": "каталог моделей этой установки",
-    "local_llm_enabled": ENV_REASON_DEFAULT, "local_llm_model_file": ENV_REASON_DEFAULT, "local_llm_model_alias": ENV_REASON_DEFAULT, "local_llm_model_bytes": ENV_REASON_DEFAULT, "local_llm_model_sha256": ENV_REASON_DEFAULT,
+    "asr_internal_url": "адрес службы распознавания этой установки", "web_internal_url": "адрес службы web этой установки", "recorder_base_url": "адрес приложения для службы записи в сети этой установки",
     "sip_enabled": ENV_REASON_DEFAULT, "video_enabled": ENV_REASON_DEFAULT, "sip_signaling_port": "сеть этой установки", "sip_rtp_start": "сеть этой установки", "sip_rtp_end": "сеть этой установки", "sip_media_ip": "сеть этой установки",
     "sip_allowed_cidrs": "сеть этой установки", "sip_health_url": "адрес службы этой установки", "livekit_node_ip": "сеть этой установки", "livekit_rtc_tcp_port": "сеть этой установки", "livekit_rtc_udp_port": "сеть этой установки",
     "ldap_uris": "прежние параметры каталога из .env: при первом запуске автоматически становятся подключением в базе, которое переносится", "ldap_base_dn": "см. ldap_uris",
@@ -230,7 +229,7 @@ ENV: dict[str, str] = {
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
-ENV_OTHER: dict[str, str] = {"LIVE_DIR": "том трансляций внутри backend (HLS и ссылки доступа; по умолчанию каталог данных/live): общий с Egress и nginx web", "LIVE_EGRESS_DIR": "тот же том внутри контейнера Egress (по умолчанию /live)", "VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)"}
+ENV_OTHER: dict[str, str] = {"LIVE_DIR": "том трансляций внутри backend (HLS и ссылки доступа; по умолчанию каталог данных/live): общий с Egress и nginx web", "LIVE_EGRESS_DIR": "тот же том внутри контейнера Egress (по умолчанию /live)", "VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)", "PRIVACY_NLP_DIR": "каталог моделей распознавания имён в образе backend"}
 
 
 def exported_tables() -> list[str]:
@@ -279,7 +278,7 @@ ENV_FILE_PREFIX: dict[str, str] = {
     "IP_": "аварийный выключатель ограничения по подсетям этой установки",
     "COOKIE_": "параметры сессии этой установки", "TRUSTED_": "топология сети этой установки", "ALLOWED_": "адреса внешнего доступа этой установки", "SESSION_": "параметры сессии этой установки", "LOGIN_": "защита входа этой установки",
     "DEFAULT_": "значения по умолчанию установки (сроки хранения задаются в настройках и переносятся)", "MEETING_": "параметры встреч этой установки", "ASR_": "службы распознавания этой установки (выбор модели — в настройках, переносится)",
-    "GIGAAM_": "источник модели распознавания этой установки", "LLM_": "локальная языковая модель этой установки", "SIP_": "сеть SIP этой установки (подключения — в настройках, переносятся)", "VIDEO_": "служба видеозаписи этой установки (режимы и пределы — в настройках, переносятся)", "NGINX_": "веб-сервер этой установки",
+    "GIGAAM_": "источник модели распознавания этой установки", "LLM_": "языковая модель этой установки", "SIP_": "сеть SIP этой установки (подключения — в настройках, переносятся)", "VIDEO_": "служба видеозаписи этой установки (режимы и пределы — в настройках, переносятся)", "NGINX_": "веб-сервер этой установки",
     "HEAVY_": "очередь тяжёлых фоновых задач этого сервера (по умолчанию подходит всем)", "BACKUP_": "каталог резервных копий этого сервера", "MIN_": "пороги проверки ресурсов этого сервера",
 }
 

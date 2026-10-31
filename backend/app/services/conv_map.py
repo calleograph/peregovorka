@@ -352,10 +352,10 @@ def _attach_items(topics: list[dict], st: dict, clock_offset: int, unassigned: d
 
 
 async def analyse(llm: LlmClient, lines: list[MapLine], *, header: list[str], clock_offset: int, model: str, cache: FactsCache | None = None, limit: int = CHUNK_CHARS,
-                  local: bool = True, cap: int | None = None, duration_s: int = 0) -> tuple[list[dict], MapRun, Extraction, dict]:
+                  cap: int | None = None, duration_s: int = 0) -> tuple[list[dict], MapRun, Extraction, dict]:
     """Чистая часть конвейера (без базы): реплики → общий этап извлечения → темы с отрезками + проверенные решения/поручения/вопросы. Проверяется тестами с поддельной моделью."""
     run = MapRun()
-    ext = await extract(llm, header=header, lines=[m.line for m in lines], limit=limit, model=model, cache=cache, local=local, cap=cap)
+    ext = await extract(llm, header=header, lines=[m.line for m in lines], limit=limit, model=model, cache=cache, cap=cap)
     if ext.res.ok_fragments == 0:
         raise MapError("Модель не вернула разбираемый ответ ни для одного фрагмента стенограммы")
     found = topics_from_items(ext.items, lines, clock_offset, run)
@@ -588,7 +588,7 @@ class MapService:
 
     @staticmethod
     def _base_meta(requested: str | None, started: datetime, info: dict) -> dict:
-        m = {k: info[k] for k in ("model", "model_title", "llm_local", "llm_profile") if k in info}
+        m = {k: info[k] for k in ("model", "model_title", "llm_profile") if k in info}
         return {**m, "requested_at": requested, "started_at": started.isoformat(), "finished_at": utcnow().isoformat(),
                 "duration_s": round((datetime.now(timezone.utc) - started).total_seconds(), 1)}
 
@@ -602,17 +602,16 @@ class MapService:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
             raise MapError("Встреча не найдена")
-        choice = await resolve_llm(ps.profiles, ps.local_llm, db, meeting.room, meeting, "map", once=parse_once(once))
+        choice = await resolve_llm(ps.profiles, ps.llm, db, meeting.room, meeting, "map", once=parse_once(once))
         if not choice.available:
             raise LlmError("unavailable", choice.reason or "")
-        eff, is_local = ps.local_llm.effective(choice.settings)
-        lm = ps.local_llm.limits(choice.settings)
-        info.update(model=eff.model, model_title=lm.title if lm else choice.name, llm_local=is_local, llm_profile=choice.name)
-        # Внешняя модель + включённое обезличивание: имена в тексте заменяются, а карта строится по именам участников — пока не поддерживаем (fail closed).
-        mode = meeting.room.anonymize_mode if meeting.room.anonymize_mode in ("inherit", "on", "off") else "inherit"
-        an = None if mode == "off" else await ps.profiles.resolve(db, "anonymizer", meeting.room)
-        if mode == "on" or (mode == "inherit" and not is_local and an is not None and bool(an.settings.enabled)):
-            raise MapError("Для этой комнаты включено обезличивание, а карта разговора пока строится только без него (локальной моделью или внешней при выключенном обезличивании).")
+        eff = ps.llm.effective(choice.settings)
+        info.update(model=eff.model, model_title=choice.name, llm_profile=choice.name)
+        # Включено обезличивание: карта строится по именам участников и репликам — пока не поддерживается (fail closed: в модель ничего не уходит).
+        from ..privacy.policy import room_privacy  # noqa: PLC0415
+
+        if room_privacy(await ps._svc.get(db, "anonymizer"), meeting.room)[0]:
+            raise MapError("Для этой комнаты включено обезличивание, а карта разговора пока строится только без него. Протокол и резюме формируются с обезличиванием.")
         rows = (await db.execute(select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id)
                                  .order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
         tz = await ps._tz(db)
@@ -627,26 +626,26 @@ class MapService:
         names = await ps.participant_names(db, meeting)
         header, _ = parse_transcript(render_transcript(meeting.room.name, meeting.started_at, meeting.ended_at, names, [], tz))
         pr_cfg = await ps._svc.get(db, "protocol")
-        limit = min(pr_cfg.max_input_chars, lm.max_input_chars) if lm else pr_cfg.max_input_chars       # type: ignore[attr-defined]
+        limit = pr_cfg.max_input_chars       # type: ignore[attr-defined]
         out_cap, _note = eff.output_limit("map")
         from .protocols import external_fragment_chars  # noqa: PLC0415
 
-        frag_limit = limit if is_local else external_fragment_chars(eff.context_window or 0, out_cap, limit)
+        frag_limit = external_fragment_chars(eff.context_window or 0, out_cap, limit)
         cache = FactsCache(await load_facts(db, meeting_id, eff.model))
-        llm = ps.local_llm.client(choice.settings, ca_file=ps._ca(), transport=ps._transports.get("llm"), purpose="map")
+        llm = ps.llm.client(choice.settings, ca_file=ps._ca(), transport=ps._transports.get("llm"), purpose="map")
         _ = meeting.room, meeting.started_at                         # подгрузить связанное до закрытия сессии
         await release(db)
-        return {"meeting": meeting, "choice": choice, "eff": eff, "is_local": is_local, "lines": lines, "tz": tz, "clock_offset": clock_offset, "llm": llm, "header": header,
-                "limit": frag_limit, "cache": cache, "cap": out_cap if not is_local else None}
+        return {"meeting": meeting, "choice": choice, "eff": eff, "lines": lines, "tz": tz, "clock_offset": clock_offset, "llm": llm, "header": header,
+                "limit": frag_limit, "cache": cache, "cap": out_cap}
 
     async def _compute(self, prep: dict, info: dict) -> tuple[dict, dict]:
         """Обращение к модели и сборка карты — без базы данных."""
-        meeting, choice, eff, is_local, lines, tz, clock_offset, llm = (prep[k] for k in ("meeting", "choice", "eff", "is_local", "lines", "tz", "clock_offset", "llm"))
+        meeting, choice, eff, lines, tz, clock_offset, llm = (prep[k] for k in ("meeting", "choice", "eff", "lines", "tz", "clock_offset", "llm"))
         cache: FactsCache = prep["cache"]
         t0 = datetime.now(timezone.utc)
         duration = max(max((m.end_rel for m in lines), default=0), int((meeting.ended_at - meeting.started_at).total_seconds()) if meeting.ended_at else 0)
         try:
-            groups, run, ext, structured = await analyse(llm, lines, header=prep["header"], clock_offset=clock_offset, model=eff.model, cache=cache, limit=prep["limit"], local=is_local,
+            groups, run, ext, structured = await analyse(llm, lines, header=prep["header"], clock_offset=clock_offset, model=eff.model, cache=cache, limit=prep["limit"],
                                                          cap=prep["cap"], duration_s=duration)
         finally:
             info["llm_s"] = round((datetime.now(timezone.utc) - t0).total_seconds(), 1)
@@ -654,7 +653,7 @@ class MapService:
         diag = diagnostics(ext, cache, llm=llm)
         st = llm.stats
         res = ext.res
-        meta = {"model": eff.model, "model_title": info["model_title"], "llm_profile": choice.name, "llm_source": choice.source, "llm_local": is_local,
+        meta = {"model": eff.model, "model_title": info["model_title"], "llm_profile": choice.name, "llm_source": choice.source,
                 "chunks": ext.frags, "llm_calls": res.calls, "retries": diag["retries"]["length"] + diag["retries"]["format"], "failed_chunks": res.failed,
                 "length_hits": st["length"], "finish": dict(st["finish"]), "max_tokens": st["max_tokens"] or None, "limit_requested": choice.limit_requested,
                 "limit_applied": st["max_tokens"] or None, "limit_note": limit_report(choice, eff, "map", st), "input_chars": sum(len(m.line.render()) + 1 for m in lines),

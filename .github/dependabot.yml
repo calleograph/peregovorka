@@ -1,5 +1,5 @@
 # Еженедельные PR на обновление зависимостей (docs/DEPENDENCIES.md). PR — это предложение: релиз включает версию только после проверки совместимости
-# (scripts/deps.py review → решение «включить» или «отложить с причиной, задачей и датой»). Что Dependabot не видит (образы LiveKit/llama.cpp по .env, draw.io, GigaAM,
+# (scripts/deps.py review → решение «включить» или «отложить с причиной, задачей и датой»). Что Dependabot не видит (образы LiveKit по .env, draw.io, GigaAM,
 # torch, digest-ы) — отслеживает .github/workflows/deps-watch.yml.
 version: 2
 updates:

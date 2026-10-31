@@ -64,14 +64,9 @@ async def run_checks(app, db) -> list[dict[str, Any]]:
             tr = getattr(st, "test_transports", {}) or {}
             ca = st.settings.ldap_ca_file or None
             res = await st.profiles.get_settings(db, p.kind, str(p.id))
-            if p.kind == "anonymizer":
-                from ...integrations.anonymizer import AnonymizerClient  # noqa: PLC0415
-
-                ok, msg, _ = await AnonymizerClient(res.settings, ca_file=ca, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
-            else:
-                ok, msg, _ = await st.local_llm.client(res.settings, ca_file=ca, transport=tr.get("llm")).test()  # type: ignore[arg-type]
+            ok, msg, _ = await st.llm.client(res.settings, ca_file=ca, transport=tr.get("llm")).test()  # type: ignore[arg-type]
             return ok, msg or ("API отвечает" if ok else "нет ответа")
-        out.append(await _one(f"Внешний API ({'обезличивание' if p.kind == 'anonymizer' else 'языковая модель'})", p.name, api))
+        out.append(await _one("Подключение к языковой модели", p.name, api))
     # --- SIP: идентификаторы транков старого LiveKit не переносятся
     for s in (await db.execute(select(SipProfile))).scalars().all():
         out.append({"component": "SIP-телефония", "item": s.name, "status": "needs_attention", "message": "подключение перенесено выключенным и не используется. Когда старый сервер больше не нужен для телефонии: проверьте параметры, включите подключение и выполните синхронизацию в разделе «SIP-телефония»"})

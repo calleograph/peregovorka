@@ -1,4 +1,4 @@
-"""Обезличивание (fail closed), LLM, хранилище, записи — без сети: httpx.MockTransport и временные каталоги."""
+"""LLM (в том числе обязательная защита секретов), хранилище, записи — без сети: httpx.MockTransport и временные каталоги."""
 from __future__ import annotations
 
 import json
@@ -8,89 +8,10 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from app.integrations.anonymizer import AnonymizerClient, AnonymizerError, split_into_chunks
 from app.integrations.llm import LlmClient, LlmError
 from app.services.recordings import BYTES_PER_SEC, finalize_pcm_files
-from app.services.settings import AnonymizerSettings, LlmSettings
+from app.services.settings import LlmSettings
 from app.services.storage import LocalStorage, SmbStorage, StorageError, meeting_relpath, safe_component
-
-
-def docclean(handler) -> AnonymizerClient:
-    cfg = AnonymizerSettings(enabled=True, base_url="https://anon.test", token="tok", max_chunk_chars=500)
-    return AnonymizerClient(cfg, transport=httpx.MockTransport(handler))
-
-
-def ok_reply(req: httpx.Request, *, clean=True, transform=lambda t: t):
-    body = json.loads(req.content)
-    return httpx.Response(200, json={"ok": True, "text": transform(body["text"]), "report": {"total_replaced": 2},
-                                     "verification": {"clean": clean, "leaked_values_count": 0 if clean else 3}})
-
-
-async def test_docclean_success_sends_bearer_and_mode():
-    seen = {}
-
-    def handler(req):
-        seen["auth"], seen["url"], seen["body"] = req.headers.get("authorization"), str(req.url), json.loads(req.content)
-        return ok_reply(req, transform=lambda t: t.replace("Иван", "[ФИО_1]"))
-
-    res = await docclean(handler).anonymize("Иван сказал привет")
-    assert res.text == "[ФИО_1] сказал привет" and res.replaced == 2
-    assert seen["auth"] == "Bearer tok" and "action=api_text" in seen["url"] and seen["body"]["mode"] == "ai_ready"
-
-
-@pytest.mark.parametrize("case,code", [
-    (lambda req: ok_reply(req, clean=False), "not_clean"),
-    (lambda req: httpx.Response(500, text="boom"), "http_500"),
-    (lambda req: httpx.Response(200, text="<html>stub</html>"), "invalid_json"),
-    (lambda req: httpx.Response(200, json={"ok": True, "verification": {"clean": True}}), "missing_field"),
-    (lambda req: httpx.Response(200, json={"ok": False}), "status_not_ok"),
-    (lambda req: httpx.Response(401, json={"ok": False, "code": "UNAUTHORIZED"}), "api_unauthorized"),
-    (lambda req: ok_reply(req, transform=lambda t: ""), "empty_result"),
-])
-async def test_anonymizer_fails_closed(case, code):
-    with pytest.raises(AnonymizerError) as e:
-        await docclean(case).anonymize("Секретный текст")
-    assert e.value.code == code
-
-
-async def test_anonymizer_not_configured_and_network_errors_fail_closed():
-    with pytest.raises(AnonymizerError) as e:
-        await AnonymizerClient(AnonymizerSettings()).anonymize("текст")
-    assert e.value.code == "not_configured"
-
-    def boom(req):
-        raise httpx.ConnectError("down")
-
-    with pytest.raises(AnonymizerError) as e2:
-        await docclean(boom).anonymize("текст")
-    assert e2.value.code.startswith("transport_")
-
-
-async def test_long_text_is_chunked_by_lines_and_reassembled():
-    calls = []
-
-    def handler(req):
-        calls.append(len(json.loads(req.content)["text"]))
-        return ok_reply(req)
-
-    text = "\n".join(f"[10:00:{i:02d}] Участник: реплика номер {i} " + "слово " * 10 for i in range(40))
-    res = await docclean(handler).anonymize(text)
-    assert res.text == text and len(calls) > 1 and max(calls) <= 500 and res.chunks == len(calls)
-    assert "".join(split_into_chunks(text, 500)) == text
-
-
-async def test_generic_profile_uses_configured_fields():
-    cfg = AnonymizerSettings(enabled=True, profile="generic", base_url="https://g.test", endpoint="/clean", request_field="in.text",
-                             response_field="out.value", status_field="ok", status_ok_value="true", auth_type="header",
-                             auth_header_name="X-Key", token="k")
-
-    def handler(req):
-        body = json.loads(req.content)
-        assert req.headers["x-key"] == "k" and body["in"]["text"] == "привет"
-        return httpx.Response(200, json={"ok": True, "out": {"value": "[X]"}})
-
-    res = await AnonymizerClient(cfg, transport=httpx.MockTransport(handler)).anonymize("привет")
-    assert res.text == "[X]"
 
 
 async def test_llm_openai_compatible_and_anthropic_formats():
@@ -111,6 +32,25 @@ async def test_llm_openai_compatible_and_anthropic_formats():
 
     cfg2 = LlmSettings(enabled=True, type="anthropic", model="claude", api_key="K")
     assert (await LlmClient(cfg2, transport=httpx.MockTransport(anthropic)).complete("sys", "u")).text == "Ответ"
+
+
+async def test_secrets_never_reach_the_model_whatever_the_caller_sends():
+    """Единственная точка отправки в модель сама маскирует пароли, токены и ключи — даже если вызывающий код не обезличивал текст."""
+    seen = {}
+
+    def handler(req):
+        seen["body"] = req.content.decode()
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    cfg = LlmSettings(enabled=True, type="openai_compatible", base_url="https://llm.test/v1", model="m", api_key="K")
+    client = LlmClient(cfg, transport=httpx.MockTransport(handler))
+    await client.complete("Системный промпт, token: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+                          "Иванов сказал: пароль от стенда Qw3rty!2026xZ, строка postgresql://app:Pa55word@db.example.org/prod")
+    body = seen["body"]
+    for leaked in ("ghp_abcdefghijklmnopqrstuvwxyz0123456789", "Qw3rty!2026xZ", "Pa55word"):
+        assert leaked not in body, leaked
+    assert "Иванов" in body, "персональные данные — по настройке комнаты; без неё имя остаётся"
+    assert client.stats["secrets_masked"] == 3
 
 
 @pytest.mark.parametrize("status,code", [(401, "unauthorized"), (429, "rate_limited"), (400, "bad_request"), (500, "http_500")])

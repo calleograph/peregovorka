@@ -1,8 +1,8 @@
 """Несколько API для языковой модели и обезличивания: профили, выбор «по умолчанию» и своя привязка у комнаты.
 
-Профиль «main» — виртуальный: это прежние общие настройки групп `llm` / `anonymizer` (после обновления всё работает как раньше).
+Профиль «main» — виртуальный: это прежние общие настройки группы `llm` (после обновления всё работает как раньше).
 Остальные профили — строки `api_profiles` (секрет зашифрован). По умолчанию используется профиль с `is_default`, а если такого нет — «main».
-Комната может выбрать конкретный профиль (`llm_profile_id`, `anonymizer_profile_id`); удалённый профиль = «по умолчанию».
+Комната может выбрать конкретный профиль (`llm_profile_id`); удалённый профиль = «по умолчанию». Обезличивание — встроенное (app/privacy), профилей API у него нет.
 """
 from __future__ import annotations
 
@@ -15,19 +15,19 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import ApiProfile, Room, utcnow
-from .settings import AnonymizerSettings, LlmSettings, SettingsError, SettingsService, _first_error, merge_secret_headers
+from .settings import LlmSettings, SettingsError, SettingsService, _first_error, merge_secret_headers
 
-Kind = Literal["llm", "anonymizer"]
+Kind = Literal["llm"]
 MAIN = "main"
 MAIN_NAME = "Прежнее подключение"
-_MODELS = {"llm": LlmSettings, "anonymizer": AnonymizerSettings}
-_SECRET = {"llm": "api_key", "anonymizer": "token"}
-_GROUP = {"llm": "llm", "anonymizer": "anonymizer"}
+_MODELS = {"llm": LlmSettings}
+_SECRET = {"llm": "api_key"}
+_GROUP = {"llm": "llm"}
 
 
 @dataclass
 class Resolved:
-    settings: LlmSettings | AnonymizerSettings
+    settings: LlmSettings
     profile_id: str
     name: str
 
@@ -39,7 +39,7 @@ class ProfileService:
     # ------------------------------------------------------------------ вспомогательное
     def _check_kind(self, kind: str) -> Kind:
         if kind not in _MODELS:
-            raise SettingsError("Тип профиля: llm или anonymizer")
+            raise SettingsError("Тип профиля: llm")
         return kind  # type: ignore[return-value]
 
     def _aad(self, pid: uuid.UUID | str) -> bytes:
@@ -156,7 +156,7 @@ class ProfileService:
         kind = self._check_kind(kind)
         wanted = None
         if room is not None:
-            wanted = room.llm_profile_id if kind == "llm" else room.anonymizer_profile_id
+            wanted = room.llm_profile_id
         if wanted:
             try:
                 return await self.get_settings(db, kind, wanted)
@@ -222,7 +222,6 @@ class ProfileService:
     async def delete(self, db: AsyncSession, profile_id: str) -> None:
         row = await self._row(db, profile_id)
         await db.execute(update(Room).where(Room.llm_profile_id == row.id).values(llm_profile_id=None))
-        await db.execute(update(Room).where(Room.anonymizer_profile_id == row.id).values(anonymizer_profile_id=None))
         await db.delete(row)
         await db.commit()
 

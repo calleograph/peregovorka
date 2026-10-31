@@ -140,7 +140,7 @@ stage_preflight() {
 }
 
 stage_dirs() {
-  for d in postgres redis models/gigaam models/llm recordings live exports backups state updater ca chat-files avatars branding; do
+  for d in postgres redis models/gigaam recordings live exports backups state updater ca chat-files avatars branding; do
     if [ -d "$DATA_ROOT/$d" ]; then info "есть: $DATA_ROOT/$d"; else run mkdir -p "$DATA_ROOT/$d"; fi
   done
   [ "$DRY_RUN" = "1" ] || chmod 750 "$DATA_ROOT" 2>/dev/null || true
@@ -169,19 +169,7 @@ stage_kernel() {
     || warn "Параметры ядра не применены (контейнер/виртуальная среда без права менять sysctl?). Установка продолжается; звук при высокой нагрузке может страдать."
 }
 
-# Локальная LLM (Qwen3 1.7B): мягко — без интернета установка продолжается, но об этом сказано явно
-stage_llm() {
-  if [ "$SKIP_MODELS" -eq 1 ]; then warn "Локальная LLM не загружается (--skip-models): позже scripts/models.sh --llm-only или кнопка в админке (Языковая модель)."; return 0; fi
-  llm_prepare soft
-  llm_local_refresh
-  if llm_local_enabled && [ "$DRY_RUN" != "1" ]; then
-    if llm_local_active; then ok "Локальная LLM готова к запуску (контейнер llm-local)."
-    else warn "Локальная LLM НЕ ЗАГРУЖЕНА — остальная Peregovorka устанавливается и будет работать; протоколы и резюме пока возможны только через внешнюю LLM."; fi
-  fi
-}
-
 stage_models() {
-  stage_llm
   local ckpt="$DATA_ROOT/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" args=(--env "$ENV_FILE")
   if [ "$SKIP_MODELS" -eq 1 ] || [ "$DRY_RUN" = "1" ]; then
     if asr_model_ready; then ok "Модель ASR на месте: $ckpt"; else warn "Модель ASR не подготовлена ($ckpt): подготовьте scripts/models.sh — без неё ASR-сервис не станет ready."; fi

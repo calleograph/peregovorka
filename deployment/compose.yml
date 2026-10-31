@@ -202,7 +202,6 @@ services:
       LIVE_DIR: /data/live
       LIVE_EGRESS_DIR: /live
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
-      # локальная LLM (контейнер llm-local, профиль llm): внутренний адрес и каталог модели (только чтение — статус, размер, контрольная сумма)
       SIP_ENABLED: ${SIP_ENABLED:-no}
       VIDEO_ENABLED: ${VIDEO_ENABLED:-no}
       SIP_SIGNALING_PORT: ${SIP_SIGNALING_PORT:-5060}
@@ -210,16 +209,8 @@ services:
       SIP_RTP_END: ${SIP_RTP_END:-20100}
       SIP_MEDIA_IP: ${SIP_MEDIA_IP:-}
       SIP_ALLOWED_CIDRS: ${SIP_ALLOWED_CIDRS:-}
-      LOCAL_LLM_URL: http://llm-local:8080
-      LOCAL_LLM_MODELS_DIR: /models/llm
-      LOCAL_LLM_ENABLED: ${LLM_LOCAL_ENABLED:-yes}
-      LOCAL_LLM_MODEL_FILE: ${LLM_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}
-      LOCAL_LLM_MODEL_ALIAS: ${LLM_MODEL_ALIAS:-qwen3-1.7b-q4_k_m}
-      LOCAL_LLM_MODEL_BYTES: ${LLM_MODEL_BYTES:-1282439584}
-      LOCAL_LLM_MODEL_SHA256: ${LLM_MODEL_SHA256:-72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb}
     networks:
       - default
-      - llm_internal
     volumes:
       # прежний CA-файл (если задан); пусто — /dev/null: CA загружаются в веб-интерфейсе и лежат в /data/ca
       - ${LDAP_CA_FILE:-/dev/null}:/run/secrets/ldap-ca.pem:ro
@@ -233,7 +224,6 @@ services:
       - ${DATA_ROOT}/live:/data/live            # HLS прямых эфиров (общий с Egress и nginx web)
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления
       - ${DATA_ROOT}/updater:/data/updater
-      - ${DATA_ROOT}/models/llm:/models/llm:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/db', timeout=4).status == 200 else 1)"]
       interval: 15s
@@ -375,42 +365,6 @@ services:
     shm_size: "1gb"             # Chrome без достаточной общей памяти падает на тяжёлых страницах
     logging: *default-logging
 
-  # Локальная LLM (Qwen3 1.7B Q4_K_M): llama.cpp, CPU. OpenAI-совместимый API (/v1/chat/completions) доступен только backend через
-  # внутреннюю сеть `llm_internal` (internal: true — у контейнера нет выхода наружу и нет публикуемых портов). Запускается только когда модель на месте
-  # и проверена (scripts запускают compose с --profile llm); без модели система работает без него. Модель хранится вне образа: ${DATA_ROOT}/models/llm.
-  llm-local:
-    profiles: ["llm"]
-    image: ${LLM_LOCAL_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b11371@sha256:460ff87b6dfd6b9e8ee0f4018540e007eb333a574994033b70dd6be46069de01}
-    restart: unless-stopped
-    command:
-      - "-m"
-      - "/models/${LLM_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
-      - "--alias"
-      - "${LLM_MODEL_ALIAS:-qwen3-1.7b-q4_k_m}"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8080"
-      - "-c"
-      - "${LLM_LOCAL_CTX:-8192}"
-      - "-t"
-      - "${LLM_LOCAL_THREADS:-4}"
-      - "--parallel"
-      - "1"
-      - "--jinja"
-      # Без кэша промптов в памяти: по умолчанию llama-server держит до 8 ГиБ состояний прошлых запросов, и контейнер с лимитом памяти
-      # после нескольких протоколов подряд убивается OOM (замерено: RSS 1,6 → 5 ГБ). Протоколы — всегда новые длинные запросы, кэш им не помогает.
-      - "--cache-ram"
-      - "0"
-    volumes:
-      - ${DATA_ROOT}/models/llm:/models:ro
-    networks:
-      - llm_internal
-    mem_limit: ${LLM_LOCAL_MEM:-3500m}
-    cpu_shares: 256       # вес при конкуренции за процессор (не лимит): протоколы и резюме уступают звонку и распознаванию, а без конкуренции идут на полной скорости
-    stop_grace_period: 10s
-    logging: *default-logging
-
   web:
     build:
       context: ../frontend
@@ -440,6 +394,3 @@ services:
 
 networks:
   default: {}
-  # internal: true — контейнеры этой сети не имеют маршрута наружу: локальная LLM физически не может отправить данные за пределы сервера
-  llm_internal:
-    internal: true

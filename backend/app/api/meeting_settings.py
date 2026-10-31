@@ -38,14 +38,14 @@ def _safe_spec(raw: dict | None) -> dict:
 
 async def _out(request: Request, db: AsyncSession, meeting: Meeting) -> dict:
     st = request.app.state
-    choice = await resolve_llm(st.protocols.profiles, st.local_llm, db, meeting.room, meeting)
-    choice_s = await resolve_llm(st.protocols.profiles, st.local_llm, db, meeting.room, meeting, "summary")
+    choice = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, meeting.room, meeting)
+    choice_s = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, meeting.room, meeting, "summary")
     return {
         "ended": meeting.ended_at is not None,
         "delivery": {"effective": view_spec(_safe_spec(effective_delivery(meeting))), "room": view_spec(_safe_spec(meeting.room.mail_delivery)), "override": meeting.delivery_override is not None},
         "llm": {"effective": describe(choice), "room": room_choice(meeting.room), "override": meeting.llm_override},
         "llm_summary": {"effective": describe(choice_s), "room": room_choice(meeting.room, "summary"), "override": meeting.llm_summary_override},
-        "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db),
+        "llm_options": await llm_options(st.protocols.profiles, db),
     }
 
 

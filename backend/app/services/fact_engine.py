@@ -32,7 +32,6 @@ from .topic_categories import CATEGORIES, CAT_IDS
 log = logging.getLogger("app.fact_engine")
 
 SCHEMA_VERSION = 3            # меняется вместе со схемой/промптом: старые сохранённые ответы перестают подходить
-LOCAL_OUT_CAP = 2200          # потолок ответа на фрагмент для локальной модели: выше худшего случая по схеме, контекст 8192 это допускает
 MAX_SPLIT_DEPTH = 2           # деление пополам / досчёт хвоста — не более двух уровней подряд
 MIN_TAIL_LINES = 3            # хвост короче не стоит отдельного обращения
 MIN_SPLIT_LINES = 4
@@ -216,7 +215,6 @@ class _Ctx:
     model: str
     cap: int
     budget: Budget | None
-    local: bool
     covered: set = field(default_factory=set)         # idx реплик, по которым получен проверенный ответ
     uncovered: list = field(default_factory=list)     # непокрытые участки: [{"from": ts, "to": ts, "lines": n, "why": …}]
     total_lines: int = 0
@@ -338,7 +336,7 @@ def new_stats() -> dict:
 
 
 async def extract(llm: LlmClient, *, header: list[str], lines: list[Line], limit: int, model: str, cache: FactsCache | None = None, budget: Budget | None = None,
-                  local: bool = True, cap: int | None = None) -> Extraction:
+                  cap: int | None = None) -> Extraction:
     """Общий этап: реплики → проверенные пункты (темы, решения, поручения, вопросы). Используется протоколом, резюме и картой разговора."""
     from .extraction import chunk_lines  # noqa: PLC0415
 
@@ -348,7 +346,7 @@ async def extract(llm: LlmClient, *, header: list[str], lines: list[Line], limit
     frags = chunk_lines(lines, limit)
     res.parts = len(frags)
     stats = new_stats()
-    cx = _Ctx(llm, system_for(people), people, ids, res, stats, meeting_date(header), cache or FactsCache(), model, cap or (LOCAL_OUT_CAP if local else 4000), budget, local,
+    cx = _Ctx(llm, system_for(people), people, ids, res, stats, meeting_date(header), cache or FactsCache(), model, cap or 4000, budget,
               total_lines=len(lines))
     items: list[Item] = []
     started = budget.elapsed() if budget else 0.0
@@ -401,14 +399,14 @@ def coverage_warnings(ext: Extraction) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------------- конвейер документа
-async def run_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, budget: Budget | None, attendees: dict | None, local: bool,
+async def run_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, budget: Budget | None, attendees: dict | None,
                        cache: FactsCache | None = None, model: str = "", cap: int | None = None) -> Result:
     """Протокол или резюме: общий этап извлечения + сборка документа кодом + короткий итоговый абзац (если хватает времени)."""
     header, lines = parse_transcript(text)
     if not lines:
         return Result()
     cache = cache or FactsCache()
-    ext = await extract(llm, header=header, lines=lines, limit=limit, model=model, cache=cache, budget=budget, local=local, cap=cap)
+    ext = await extract(llm, header=header, lines=lines, limit=limit, model=model, cache=cache, budget=budget, cap=cap)
     res = ext.res
     if ext.skipped:
         progress = {"done": ext.frags - ext.skipped, "total": ext.frags}
@@ -421,7 +419,7 @@ async def run_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str
         budget.progress.update(stage="assemble", done=ext.frags - ext.skipped)
     t0 = time.monotonic()
     out = await _assemble(llm, res, kind=kind, instruction=instruction, header=header, people=ext.people, items=ext.items, stats=ext.stats, n_frags=ext.frags,
-                          attendees=attendees, budget=budget, local=local)
+                          attendees=attendees, budget=budget)
     out.warnings = [w for w in out.warnings if not w.startswith("Не удалось выполнить ")] + coverage_warnings(ext)
     out.structured["coverage_lines"] = {"lines": len(lines), "covered": ext.covered_lines, "uncovered": ext.uncovered}
     if ext.uncovered:

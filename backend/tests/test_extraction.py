@@ -54,7 +54,7 @@ def llm_for(handler):
         return handler(body, len(seen))
 
     c = LlmSettings(enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", max_tokens=1200, allow_http=True)
-    return LlmClient(c, transport=httpx.MockTransport(h), local=True), seen
+    return LlmClient(c, transport=httpx.MockTransport(h)), seen
 
 
 def reply(obj, finish="stop"):
@@ -458,3 +458,14 @@ def test_recap_names_are_matched_within_the_sentence_and_deadline_words_do_not_a
     assert t.assignee == "" and t.assignee_guess == "Галина Белова"
     assert verify_real("увеличить память до шестнадцати гигабайт", "Виктор Орлов").assignee == "Виктор Орлов"
     assert verify_real("отдать исправление прав", "Борис Мельник").assignee == "Борис Мельник"
+
+
+def test_salvage_keeps_what_was_finished_before_the_cut():
+    cut = ('{"topics":[{"title":"Перенос релиза","summary":"s","ts":"10:00:05"}],"items":[{"status":"decision","text":"Принято первое","ts":"10:00:20"},'
+           '{"status":"decision","text":"Принято втор')
+    d = ex.salvage_json(cut)
+    assert d["topics"][0]["title"] == "Перенос релиза" and d["items"] == [{"status": "decision", "text": "Принято первое", "ts": "10:00:20"}]
+    assert ex.salvage_json('{"topics":[{"title":"Об') is None, "ничего не закончилось — спасать нечего"
+    assert ex.salvage_json("текст без json") is None and ex.salvage_json("[1,2") is None
+    tricky = '{"topics":[{"title":"скобки } и ] внутри \\" строки","ts":"10:00:05"},{"title":"обор'
+    assert ex.salvage_json(tricky) == {"topics": [{"title": 'скобки } и ] внутри " строки', "ts": "10:00:05"}]}, "скобки и кавычки внутри строк не ломают разбор"

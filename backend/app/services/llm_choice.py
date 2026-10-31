@@ -2,16 +2,14 @@
 
 Варианты на уровне комнаты и встречи:
   * inherit — использовать системную модель по умолчанию;
-  * local   — конкретная локальная модель (Qwen3 1.7B), если она загружена;
-  * profile — конкретный внешний профиль LLM (Администрирование → Языковая модель → профили API);
+  * profile — конкретное подключение к модели по API (Администрирование → Языковая модель → подключения);
   * off     — языковая модель для этой комнаты/встречи отключена.
 
-Если выбранное недоступно (профиль удалён или выключен, локальная модель не загружена), комната не ломается: действует политика `llm.on_missing` —
+Если выбранное недоступно (подключение удалено или выключено), комната не ломается: действует политика `llm.on_missing` —
 «system» (по умолчанию) возвращает системную модель с пометкой, «unavailable» оставляет состояние «модель недоступна» с понятной причиной.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -19,15 +17,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Meeting, Room
 from .api_profiles import ProfileService, Resolved
-from .local_llm import LOCAL_MODELS, VISIBLE_MODELS, LocalLlm
+from .llm_gateway import LlmGateway
 from .settings import TASK_LIMIT_DEFAULTS, LlmSettings, SettingsError
 
-MODES = ("inherit", "local", "profile", "off")
+MODES = ("inherit", "profile", "off")
+
+
+def _mode(raw: str | None) -> str:
+    """Режим выбора модели; прежний «local» (встроенная Qwen, удалена в 0.56.0) — как «системная по умолчанию»."""
+    return raw if raw in MODES else "inherit"
 
 
 @dataclass
 class LlmChoice:
-    settings: LlmSettings       # настройки для LocalLlm.effective()/client()
+    settings: LlmSettings       # настройки для LlmGateway.effective()/client()
     name: str                   # как показывать пользователю
     source: str                 # system | room | meeting
     available: bool             # False — «модель недоступна» (есть причина в reason)
@@ -40,14 +43,13 @@ class LlmChoice:
 def room_choice(room: Room, purpose: str = "protocol") -> dict:
     """Выбор комнаты (для протокола или для резюме) в виде словаря; комнаты старых версий (внешний профиль без режима) считаются выбравшими профиль."""
     if purpose == "map":
-        return {"mode": "inherit", "profile_id": None, "local_model": None}     # для карты разговора модель задаётся только в системных настройках (этап 1)
+        return {"mode": "inherit", "profile_id": None}     # для карты разговора модель задаётся только в системных настройках (этап 1)
     if purpose == "summary":
-        sm = room.llm_summary_mode if room.llm_summary_mode in MODES else "inherit"
-        return {"mode": sm, "profile_id": str(room.llm_summary_profile_id) if room.llm_summary_profile_id else None, "local_model": room.llm_summary_local_model}
-    mode = room.llm_mode if room.llm_mode in MODES else "inherit"
+        return {"mode": _mode(room.llm_summary_mode), "profile_id": str(room.llm_summary_profile_id) if room.llm_summary_profile_id else None}
+    mode = _mode(room.llm_mode)
     if mode == "inherit" and room.llm_profile_id:
         mode = "profile"
-    return {"mode": mode, "profile_id": str(room.llm_profile_id) if room.llm_profile_id else None, "local_model": room.llm_local_model}
+    return {"mode": mode, "profile_id": str(room.llm_profile_id) if room.llm_profile_id else None}
 
 
 def clean_choice(raw: dict | None) -> dict | None:
@@ -56,8 +58,8 @@ def clean_choice(raw: dict | None) -> dict | None:
         return None
     mode = str(raw.get("mode") or "inherit")
     if mode not in MODES:
-        raise ValueError("Режим модели: inherit | local | profile | off")
-    out: dict = {"mode": mode, "profile_id": None, "local_model": None}
+        raise ValueError("Режим модели: inherit | profile | off")
+    out: dict = {"mode": mode, "profile_id": None}
     if mode == "profile":
         pid = str(raw.get("profile_id") or "")
         if pid != "main":
@@ -66,16 +68,11 @@ def clean_choice(raw: dict | None) -> dict | None:
             except ValueError:
                 raise ValueError("Выберите профиль внешней языковой модели") from None
         out["profile_id"] = pid
-    if mode == "local":
-        lm = str(raw.get("local_model") or "")
-        if lm not in LOCAL_MODELS:
-            raise ValueError("Выберите локальную модель из списка")
-        out["local_model"] = lm
     return out
 
 
 def task_mode(cfg: LlmSettings, purpose: str) -> tuple[str, str | None]:
-    """(режим, профиль) системного назначения задачи: local | external | off и идентификатор внешнего подключения ("main" или id профиля; None — по умолчанию)."""
+    """(режим, профиль) системного назначения задачи: external | off и идентификатор подключения ("main" или id профиля; None — по умолчанию)."""
     if purpose == "protocol":
         return cfg.effective_provider, cfg.protocol_profile or None
     sp = getattr(cfg, f"{purpose}_provider", "same")
@@ -85,16 +82,14 @@ def task_mode(cfg: LlmSettings, purpose: str) -> tuple[str, str | None]:
 
 
 async def system_llm(profiles: ProfileService, db: AsyncSession, purpose: str = "protocol"):
-    """Системная модель задачи («Назначения» в разделе LLM): режим (локальная / внешняя / отключена) и, для внешней, конкретное подключение.
-    Первичен РЕЖИМ задачи; профиль, отмеченный «по умолчанию», применяется только если у задачи подключение не выбрано явно, и никогда не перебивает локальную модель или «Отключено».
+    """Системная модель задачи («Назначения» в разделе LLM): режим (подключение / отключена) и конкретное подключение.
+    Первичен РЕЖИМ задачи; профиль, отмеченный «по умолчанию», применяется только если у задачи подключение не выбрано явно, и никогда не перебивает «Отключено».
     Для резюме и карты разговора режим `same` = как у протокола."""
     main = await profiles.get_settings(db, "llm", None)
     cfg = main.settings
     mode, pid = task_mode(cfg, purpose)                       # type: ignore[arg-type]
     if mode == "off":
         return Resolved(cfg.model_copy(update={"provider": "off", "enabled": False}), main.profile_id, "Отключено")      # type: ignore[union-attr]
-    if mode == "local":
-        return Resolved(cfg.model_copy(update={"provider": "local", "enabled": True}), main.profile_id, main.name)       # type: ignore[union-attr]
     ext = None
     if pid:
         try:
@@ -116,7 +111,7 @@ async def apply_task_limit(profiles: ProfileService, db: AsyncSession, ch: "LlmC
     main = await profiles.get_settings(db, "llm", None)
     cap = getattr(main.settings, f"limit_{purpose}", None) or TASK_LIMIT_DEFAULTS[purpose]
     ch.limit_requested = cap
-    if not ch.available or ch.settings.effective_provider == "local":      # локальной модели пользовательские потолки не нужны: границы задаёт она сама
+    if not ch.available:
         return ch
     field = f"max_tokens_{purpose}"
     cur = getattr(ch.settings, field, None)
@@ -133,12 +128,9 @@ def limit_report(ch: "LlmChoice", eff: LlmSettings, purpose: str, stats: dict) -
     parts: list[str] = []
     if ch.limit_note:
         parts.append(ch.limit_note)
-    if eff.effective_provider != "local":
-        note = eff.output_limit(purpose)[1]
-        if note:
-            parts.append(note)
-    elif ch.limit_requested and stats.get("max_tokens") and stats["max_tokens"] < ch.limit_requested:
-        parts.append(f"локальная модель {eff.model} принимает не более {stats['max_tokens']} токенов ответа (общая настройка — {ch.limit_requested}): предел задаёт сама модель и её окно контекста")
+    note = eff.output_limit(purpose)[1]
+    if note:
+        parts.append(note)
     for c in stats.get("clamps") or []:
         why = {"provider": "предел назвал провайдер", "rejected": "провайдер отклонил запрошенную длину и не назвал предел — взята ближайшая ступень", "context": "остальное окно контекста занято стенограммой"}.get(c.get("reason"), "")
         parts.append(f"модель {c.get('model') or ''}: запрошено {c['requested']} токенов ответа — применено {c['applied']} ({why})".replace("модель  ", "модель "))
@@ -150,26 +142,24 @@ def limit_report(ch: "LlmChoice", eff: LlmSettings, purpose: str, stats: dict) -
 
 
 def parse_once(key: str | None) -> dict | None:
-    """Разовый выбор модели для одного формирования документа: «local:<id модели>» или «profile:<id профиля|main>»; пусто — не задан."""
+    """Разовый выбор модели для одного формирования документа: «profile:<id профиля|main>»; пусто — не задан."""
     key = (key or "").strip()
     if not key:
         return None
     kind, _, ref = key.partition(":")
-    if kind == "local":
-        return clean_choice({"mode": "local", "local_model": ref})
     if kind == "profile":
         return clean_choice({"mode": "profile", "profile_id": ref})
-    raise ValueError("Модель для разового формирования: local:<модель> или profile:<профиль>")
+    raise ValueError("Модель для разового формирования: profile:<подключение>")
 
 
-async def resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
+async def resolve_llm(profiles: ProfileService, gateway: LlmGateway, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
                       once: dict | None = None) -> LlmChoice:
     """Модель для задачи (протокол / резюме / карта): разовый выбор → встреча → комната → системное назначение; затем применяется потолок ответа по задаче."""
-    ch = await _resolve_llm(profiles, local, db, room, meeting, purpose, once)
+    ch = await _resolve_llm(profiles, gateway, db, room, meeting, purpose, once)
     return await apply_task_limit(profiles, db, ch, purpose)
 
 
-async def _resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
+async def _resolve_llm(profiles: ProfileService, gateway: LlmGateway, db: AsyncSession, room: Room, meeting: Meeting | None = None, purpose: str = "protocol",
                        once: dict | None = None) -> LlmChoice:
     """Модель для протокола (purpose="protocol") или краткого резюме (purpose="summary"): система → комната → встреча, для каждой задачи своя цепочка."""
     system = await system_llm(profiles, db, purpose)
@@ -180,13 +170,12 @@ async def _resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessi
     override = ov or None
     choice = once or override or room_choice(room, purpose)           # разовый выбор при формировании — сильнее встречи, комнаты и системы
     source = "once" if once else ("meeting" if override else ("room" if choice["mode"] != "inherit" else "system"))
-    mode = choice["mode"]
-    policy = getattr(sys_cfg, "on_missing", "system")
+    mode = _mode(choice["mode"])
+    policy = getattr((await profiles.get_settings(db, "llm", None)).settings, "on_missing", "system")      # общая настройка, а не подключения по умолчанию
 
     def system_choice(note: str | None = None) -> LlmChoice:
-        eff, is_local = local.effective(sys_cfg)
-        ok = bool(eff.enabled)
-        name = local.model(getattr(eff, "local_model", None)).title if (ok and is_local) else system.name     # «Qwen3 1.7B…», а не «Основной»
+        ok = bool(gateway.effective(sys_cfg).enabled)
+        name = system.name
         return LlmChoice(sys_cfg, name, "system", ok, None if ok else "Языковая модель по умолчанию отключена или не настроена", note)
 
     if mode == "inherit":
@@ -197,22 +186,13 @@ async def _resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessi
 
     problem: str | None = None
     picked: LlmChoice | None = None
-    if mode == "local":
-        m = local.model(choice.get("local_model"))
-        fs = await asyncio.to_thread(local.file_state, m)
-        if not local.model_enabled(m):
-            problem = f"Локальная модель {m.title} не включена на сервере"
-        elif fs["state"] == "ok":
-            picked = LlmChoice(sys_cfg.model_copy(update={"provider": "local", "enabled": True, "local_model": choice.get("local_model") or m.id}), m.title, source, True)
-        else:
-            problem = f"Локальная модель {m.title} не загружена или повреждена"
-    elif mode == "profile" and not choice.get("profile_id"):
+    if mode == "profile" and not choice.get("profile_id"):
         problem = "Выбранный профиль языковой модели удалён"      # ссылка очищается при удалении профиля
     elif mode == "profile":
         try:
             res = await profiles.get_settings(db, "llm", str(choice.get("profile_id")))
             cfg: LlmSettings = res.settings   # type: ignore[assignment]
-            if local.effective(cfg)[0].enabled:
+            if gateway.effective(cfg).enabled:
                 picked = LlmChoice(cfg, res.name, source, True)
             else:
                 problem = f"Профиль «{res.name}» отключён"
@@ -227,20 +207,16 @@ async def _resolve_llm(profiles: ProfileService, local: LocalLlm, db: AsyncSessi
     return fallback
 
 
-async def once_options(profiles: ProfileService, local: LocalLlm, db: AsyncSession) -> list[dict]:
-    """Модели, из которых можно выбрать для одного формирования документа (в окне «Сформировать»): установленные локальные и включённые внешние профили."""
+async def once_options(profiles: ProfileService, db: AsyncSession) -> list[dict]:
+    """Модели, из которых можно выбрать для одного формирования документа (в окне «Сформировать»): включённые подключения."""
     out: list[dict] = []
-    for mid, m in VISIBLE_MODELS.items():
-        fs = await asyncio.to_thread(local.file_state, local.model(mid))
-        if fs["state"] == "ok" and local.model_enabled(local.model(mid)):
-            out.append({"key": f"local:{mid}", "label": f"{m.title} (локальная, данные остаются на сервере)", "local": True})
     for p in await profiles.list(db, "llm"):
         cfg = p["config"]
         if p["virtual"] and cfg.get("provider") != "external" and not cfg.get("api_key_set") and not p.get("secret_set"):
             continue
         if not cfg.get("model") or cfg.get("enabled") is False:
             continue
-        out.append({"key": f"profile:{p['id']}", "label": f"{p['name']} — {cfg.get('model')} (внешняя API)", "local": False})
+        out.append({"key": f"profile:{p['id']}", "label": f"{p['name']} — {cfg.get('model')}"})
     return out
 
 
@@ -248,21 +224,17 @@ def describe(ch: LlmChoice) -> dict:
     return {"name": ch.name, "source": ch.source, "available": ch.available, "reason": ch.reason, "note": ch.note}
 
 
-async def llm_options(profiles: ProfileService, local: LocalLlm, db: AsyncSession) -> dict:
-    """Что можно выбрать в настройках комнаты/встречи: системная модель по умолчанию, установленные локальные модели, внешние профили. Секретов нет."""
+async def llm_options(profiles: ProfileService, db: AsyncSession) -> dict:
+    """Что можно выбрать в настройках комнаты/встречи: системная модель по умолчанию и подключения. Секретов нет."""
     system = await system_llm(profiles, db)
-    eff, is_local = local.effective(system.settings)    # type: ignore[arg-type]
+    eff = LlmGateway.effective(system.settings)    # type: ignore[arg-type]
     ssys = await system_llm(profiles, db, "summary")
-    seff, s_local = local.effective(ssys.settings)      # type: ignore[arg-type]
-    policy = getattr(system.settings, "on_missing", "system")
-    locals_: list[dict] = []
-    for mid, m in VISIBLE_MODELS.items():
-        fs = await asyncio.to_thread(local.file_state, local.model(mid))
-        locals_.append({"id": mid, "title": m.title, "light": m.light, "installed": fs["state"] == "ok" and local.model_enabled(local.model(mid))})
+    seff = LlmGateway.effective(ssys.settings)      # type: ignore[arg-type]
+    policy = getattr((await profiles.get_settings(db, "llm", None)).settings, "on_missing", "system")
     ext = []
     for p in await profiles.list(db, "llm"):
         cfg = p["config"]
         ext.append({"id": p["id"], "name": p["name"], "model": cfg.get("model") or "", "provider": cfg.get("provider"), "is_default": p["is_default"]})
-    return {"system": {"name": system.name, "provider": "local" if is_local else ("off" if not eff.enabled else "external"), "model": eff.model if eff.enabled else None},
-            "system_summary": {"name": ssys.name, "provider": "local" if s_local else ("off" if not seff.enabled else "external"), "model": seff.model if seff.enabled else None},
-            "local": locals_, "profiles": ext, "on_missing": policy}
+    return {"system": {"name": system.name, "provider": "off" if not eff.enabled else "external", "model": eff.model if eff.enabled else None},
+            "system_summary": {"name": ssys.name, "provider": "off" if not seff.enabled else "external", "model": seff.model if seff.enabled else None},
+            "profiles": ext, "on_missing": policy}

@@ -224,7 +224,7 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
     s = make_settings(tmp_path)
     with running_app(s, directory, transports={"anonymizer": httpx.MockTransport(anon_ok), "llm": httpx.MockTransport(llm)}) as c:
         put_settings(c, "storage", enabled=True, local_path=str(tmp_path / "out"))
-        put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
+        put_settings(c, "anonymizer", required=True)
         put_settings(c, "llm", enabled=True, type="openai_compatible", base_url="https://llm.test/v1", model="m", api_key="k")
         put_settings(c, "protocol", instructions="ГЛОБАЛЬНАЯ ИНСТРУКЦИЯ")
         room, a = _two_person_meeting(c, protocol_instructions="ИНСТРУКЦИЯ КОМНАТЫ")
@@ -248,27 +248,31 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
         assert c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols/{pid}").status_code == 404
 
 
-def test_summary_fails_closed_when_anonymizer_rejects(tmp_path, directory):
-    llm_calls = []
+def test_summary_fails_closed_when_anonymization_cannot_run(tmp_path, directory, monkeypatch):
+    """Обезличивание включено, а встроенная подсистема не может работать (модели распознавания недоступны): документ не создаётся, в модель ничего не уходит."""
+    from app.privacy import names as nm
 
-    def dirty(req):
-        return httpx.Response(200, json={"ok": True, "text": "x", "verification": {"clean": False, "leaked_values_count": 2}})
+    llm_calls = []
 
     def llm(req):
         llm_calls.append(1)
         return httpx.Response(200, json={"choices": [{"message": {"content": "не должно вызываться"}}]})
 
-    with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(dirty), "llm": httpx.MockTransport(llm)}) as c:
-        put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
+    def broken():
+        raise nm.NlpUnavailable("модели распознавания имён недоступны (FileNotFoundError): /nowhere")
+
+    with running_app(make_settings(tmp_path), directory, transports={"llm": httpx.MockTransport(llm)}) as c:
+        put_settings(c, "anonymizer", required=True)
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
         _room, a = _two_person_meeting(c)
         login(c, "alice")
         c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
         _drain(c)
+        monkeypatch.setattr(nm, "models", broken)
         pid = c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"}).json()["protocol_id"]
         _drain(c)
         got = c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols/{pid}").json()
-        assert got["status"] == "failed" and "verification.clean" in got["error"]
+        assert got["status"] == "failed" and "Обезличивание не выполнено" in got["error"] and "не отправлялся" in got["error"]
         assert llm_calls == [], "при отказе обезличивания данные в LLM не отправляются"
 
 
@@ -280,7 +284,7 @@ def test_summary_requires_configured_services_and_auto_generate(tmp_path, direct
         login(c, "alice")
         c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
         assert c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "protocol"}).status_code == 409  # не настроено
-        put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
+        put_settings(c, "anonymizer", required=True)
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
         put_settings(c, "protocol", auto_generate=True)
         room = make_room(c, name="Авто")

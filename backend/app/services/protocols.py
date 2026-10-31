@@ -1,10 +1,9 @@
 """Протоколы встреч: стенограмма, выгрузка в хранилище, краткий протокол через LLM.
 
-Порядок: стенограмма → (обезличивание, если оно включено для этой комнаты) → LLM.
-Обезличивание ВЫКЛЮЧЕНО в общих настройках или в комнате (`anonymize_mode=off`) — текст уходит в LLM как есть, это не ошибка и ничему не мешает;
-факт отражается в метаданных протокола (`anonymized=false`) и в журнале. Если оно ВКЛЮЧЕНО (`inherit` + включено глобально, либо `on`), то работает
-fail closed: не настроено/недоступно/не подтвердило verification.clean — в LLM ничего не уходит, протокол получает статус failed с понятной причиной.
-API (LLM и обезличивания) выбирается по профилю комнаты или общему профилю по умолчанию (services/api_profiles.py).
+Порядок: материалы встречи → обезличивание (если включено для комнаты или обязательно у администратора) → языковая модель по API.
+Обезличивание выполняет встроенная подсистема (app/privacy) на этом сервере; замены согласованы в пределах встречи и нигде не сохраняются.
+Выключено — текст уходит в модель без замены имён (это отражается в метаданных `anonymized=false`); пароли, токены и ключи маскируются
+всегда (LlmClient.complete). Включено — fail closed: сбой обработки или проверки — в модель ничего не уходит, документ получает понятную причину.
 """
 from __future__ import annotations
 
@@ -25,14 +24,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from . import profanity
 from ..config import Settings
-from ..integrations.anonymizer import Anonymized, AnonymizerClient, AnonymizerError
 from ..integrations.llm import LlmClient, LlmError, discover_window
 from . import llm_stats
 from .llm_choice import limit_report, parse_once, resolve_llm
-from .extraction import local_pipeline, structured_pipeline
+from .extraction import structured_pipeline
 from .fact_engine import FactsCache, load_facts
 from .job_budget import MAX_S, Budget, JobTimeout
-from .local_llm import LocalLlm, LocalModel
+from .llm_gateway import LlmGateway
+from ..privacy.engine import Anonymizer, PrivacyError
+from ..privacy.names import NlpUnavailable
+from ..privacy.policy import PROFILE_TITLES, build_policy, room_privacy
 from ..db import release
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
@@ -85,21 +86,6 @@ NOTES_ANON_HINT = " Метки вроде [ФИО_1] сохраняй как е�
 NOTES_MAX_EXTERNAL = 8000   # потолок конспекта фрагмента у внешней модели: ≈ 1/12 знаков фрагмента
 NOTES_MAX_TOKENS = 600     # хороший список короткий; если модель вместо списка начинает переписывать текст, это видно по обрезке и не тратит минуты на CPU
 
-# Короткие промпты для облегчённой локальной модели: подробный шаблон (нумерованная структура, таблицы) она возвращает пустым каркасом без содержания.
-LOCAL_PROTOCOL_PROMPT = ("Ты — секретарь совещания. По стенограмме составь протокол на русском языке. Используй только то, что сказано в стенограмме, ничего не выдумывай. "
-                         "Если сведений нет, пиши «не указано». Разделы: Обсуждение (по темам), Решения, Задачи (кто, что, срок), Открытые вопросы.")
-LOCAL_SUMMARY_PROMPT = ("Ты — секретарь совещания. Кратко (не более 8 строк) изложи по стенограмме: о чём говорили, какие решения приняты, кто что делает и к какому сроку. "
-                        "Только то, что сказано в стенограмме, ничего не выдумывай; если сведений нет — не пиши об этом.")
-LOCAL_SOURCES_HINT = " Кроме стенограммы могут быть чат и схема доски: URL, IP-адреса и имена серверов из чата переноси дословно."
-# Единая встроенная инструкция локальной модели: короткая и однозначная. Пользовательские, комнатные и шаблонные инструкции к ней не применяются
-# (они сохраняются и продолжают действовать для внешних моделей). Режим документа — протокол или резюме — задаёт приложение.
-LOCAL_BUILTIN_INSTRUCTION = ("Подготовь краткий, структурированный документ по материалам встречи. Используй только факты из источников, ничего не придумывай. "
-                             "Выдели основные темы, принятые решения, поручения, ответственных, сроки и нерешённые вопросы. Не повторяй одинаковые сведения. "
-                             "Пиши кратко и понятно, используй Markdown. Задачи представь таблицей: «Задача | Ответственный | Срок». "
-                             "Если ответственный или срок не назван, укажи «Не назначен» или «Не указан». Не пропускай существенные решения и поручения. "
-                             "Не показывай внутренние рассуждения.")
-TRUNCATED_LOCAL = ("Локальная модель не смогла полностью обработать стенограмму: ответ оборвался по лимиту длины{where}. "
-                   "Результат может быть неполным — проверьте его или сформируйте документ более сильной (внешней) моделью.")
 TRUNCATED_NOTES = ("Конспект фрагмента оборван по лимиту длины{where}: часть решений и сроков может отсутствовать в документе. "
                    "Укажите окно контекста модели в настройках подключения (тогда встреча идёт одним запросом) или выберите модель с большим допустимым ответом.")
 TRUNCATED_EXTERNAL = ("Ответ языковой модели оборван по лимиту длины{where}: результат неполный. "
@@ -181,19 +167,13 @@ def external_fragment_chars(context_window: int, out_cap: int, limit: int) -> in
     return min(limit, EXTERNAL_FRAGMENT_CHARS)
 
 
-def local_system(kind: str, instruction: str, has_sources: bool) -> tuple[str, str | None]:
-    """Системный промпт облегчённой локальной модели: базовый + встроенная инструкция. Пользовательский текст (`instruction`) не применяется вообще."""
-    base = (LOCAL_SUMMARY_PROMPT if kind == "summary" else LOCAL_PROTOCOL_PROMPT) + "\n" + LOCAL_BUILTIN_INSTRUCTION
-    return base + (LOCAL_SOURCES_HINT if has_sources else ""), None
-
-
-async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, local: LocalModel | None, anonymized: bool,
+async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, anonymized: bool,
                            has_sources: bool = False, mixed: bool = False, structured: bool = True, external_structured: bool = False, attendees: dict | None = None,
                            budget: Budget | None = None, cache: FactsCache | None = None, model: str = "", external_limit: int | None = None, out_cap: int | None = None) -> PipelineResult:
     """Текст → (при необходимости заметки по фрагментам) → документ. Каждый ответ проверяется на обрезку по лимиту длины: молча такой результат не проходит."""
     res = PipelineResult()
-    if local is None and external_structured and structured:
-        # Структурный режим внешней модели: тот же конвейер, что у локальной (JSON по схеме → проверка и сборка документа кодом); не получилось — обычный режим ниже
+    if external_structured and structured:
+        # Структурный режим: JSON по схеме → проверка и сборка документа кодом; не получилось — обычный режим ниже
         sr = await structured_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=external_limit or min(limit, EXTERNAL_FRAGMENT_CHARS), attendees=attendees,
                                        cache=cache, model=model, cap=out_cap)
         if sr is not None and sr.ok_fragments:
@@ -204,27 +184,10 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
             res.facts, res.diag = sr.facts, sr.diag
             return res
         res.warnings.append("Структурный режим не сработал (модель не вернула разбираемый JSON) — использован обычный режим.")
-    if local is not None:
-        # Облегчённая локальная модель: фрагмент → JSON → проверка и слияние кодом → детерминированный протокол (extraction.py). Прежний текстовый путь — запасной.
-        budget = budget or Budget()
-        sr = await local_pipeline(llm, kind=kind, instruction=LOCAL_BUILTIN_INSTRUCTION, text=text, limit=limit, budget=budget, attendees=attendees, cache=cache, model=model) if structured else None
-        if sr is not None and sr.ok_fragments:
-            res.text, res.calls, res.parts = sr.text, sr.calls, sr.parts
-            res.prompt_tokens, res.completion_tokens, res.structured = sr.prompt_tokens, sr.completion_tokens, sr.structured
-            res.truncated = sr.truncated
-            res.warnings += sr.warnings
-            res.facts, res.diag = sr.facts, sr.diag
-            if sr.truncated and kind == "summary":
-                res.warnings.append(TRUNCATED_LOCAL.format(where=" (резюме)"))
-            return res
-        if sr is not None:
-            res.warnings.append("Структурное извлечение не удалось (модель не вернула разбираемый JSON ни для одного фрагмента) — использован упрощённый текстовый режим.")
-        system, _ = local_system(kind, instruction, has_sources)
-    else:
-        form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
-                if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
-        system = system_prompt(anonymized, has_sources) + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
-    msg = TRUNCATED_LOCAL if local is not None else TRUNCATED_EXTERNAL
+    form = ("Оформи ответ в Markdown: заголовки, списки, при необходимости таблица «Поручения» (ответственный, поручение, срок)."
+            if kind == "protocol" else "Оформи ответ коротким Markdown-текстом.")
+    system = system_prompt(anonymized, has_sources) + "\n\nИнструкция пользователя:\n" + instruction + "\n\n" + form
+    msg = TRUNCATED_EXTERNAL
 
     def account(r, where: str = "") -> None:
         res.calls += 1
@@ -232,7 +195,7 @@ async def run_llm_pipeline(llm: LlmClient, *, kind: str, instruction: str, text:
         res.completion_tokens += r.completion_tokens or 0
         if r.truncated:
             res.truncated = True
-            res.warnings.append((TRUNCATED_NOTES if where.startswith(" (часть") and local is None else msg).format(where=where))
+            res.warnings.append((TRUNCATED_NOTES if where.startswith(" (часть") else msg).format(where=where))
 
     parts = split_for_llm(text, limit)
     res.parts = len(parts)
@@ -261,7 +224,7 @@ class ProtocolService:
         self._svc = svc
         self._transports = transports or {}
         self.profiles = ProfileService(svc)
-        self.local_llm = LocalLlm(settings, transport=self._transports.get("local_llm"))   # встроенная локальная модель (Qwen3 1.7B)
+        self.llm = LlmGateway(settings, transport=self._transports.get("llm"))             # подключения к языковым моделям по API
         self.files = FileStore(svc, settings.data_dir)
         self.chat_files = None  # services.chat_files.ChatFilesService; задаётся при запуске приложения
         self.manifests = None  # services.manifest.ManifestService: паспорт встречи (manifest.json) рядом с материалами; задаётся при запуске приложения
@@ -881,8 +844,6 @@ class ProtocolService:
                 meta.update(self._timing_meta(info, datetime.now(timezone.utc)))
                 if once:
                     meta["llm_once"] = once
-                if meta.get("instruction_builtin"):
-                    rec.instruction = LOCAL_BUILTIN_INSTRUCTION           # в документе записана инструкция, по которой он реально сформирован
                 rec.content, rec.status, rec.error, rec.meta = text, "ready", None, meta
                 await db.commit()
                 self._emit("llm", "protocol_ready", rec, started, data={k: meta.get(k) for k in (
@@ -905,12 +866,12 @@ class ProtocolService:
                 rec.meta = self._failure_meta(info, once, "cancelled")
                 await db.commit()
                 self._emit("llm", "protocol_cancelled", rec, started, level="info", message=rec.error, data={"code": "cancelled"})
-            except (AnonymizerError, LlmError) as exc:
+            except (PrivacyError, LlmError) as exc:
                 rec.status, rec.error = "failed", exc.describe()
                 rec.meta = self._failure_meta(info, once, exc.code)
                 log.warning("Протокол не создан", extra={"protocol": str(protocol_id), "code": exc.code})
                 await db.commit()
-                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": exc.code, "stage": "anonymizer" if isinstance(exc, AnonymizerError) else "llm"})
+                self._emit("llm", "protocol_failed", rec, started, level="error", message=rec.error, data={"code": exc.code, "stage": "anonymizer" if isinstance(exc, PrivacyError) else "llm"})
             except SettingsError as exc:
                 rec.status, rec.error = "failed", str(exc)[:480]
                 rec.meta = self._failure_meta(info, once, "settings")
@@ -1009,13 +970,35 @@ class ProtocolService:
 
     def _failure_meta(self, info: dict, once: str | None, code: str) -> dict:
         """Метаданные неудачной попытки: модель и время — чтобы ошибки учитывались в статистике моделей."""
-        m = {k: info[k] for k in ("model", "model_title", "llm_local", "llm_type", "llm_profile", "llm_source", "api_type") if k in info}
+        m = {k: info[k] for k in ("model", "model_title", "llm_type", "llm_profile", "llm_source", "api_type") if k in info}
         m.update(self._timing_meta(info, datetime.now(timezone.utc)), failed=True, error_code=code)
         if "llm_started" in info and not info.get("llm_finished"):
             m["llm_s"] = round((datetime.now(timezone.utc) - info["llm_started"]).total_seconds(), 1)
         if once:
             m["llm_once"] = once
         return m
+
+    @staticmethod
+    async def _anonymize(cfg, profile: str, text: str, att: dict) -> tuple[str, dict, dict]:
+        """Материалы и список участников → обезличенные (одна сессия замен на встречу: участник везде обозначен одинаково, в том числе в разделе
+        «Присутствовали»). Таблица замен живёт только здесь и нигде не сохраняется. Сбой — PrivacyError: в модель ничего не уходит."""
+        people = [p.get("name") or "" for p in att.get("people", [])] + [g.get("name") or "" for g in att.get("guests", [])]
+
+        def work():
+            anon = Anonymizer(build_policy(cfg, profile), [p for p in people if p])
+            res = anon.process(text)
+            alias = lambda v: anon.process(v).text if v else v          # noqa: E731 — те же замены, что в тексте
+            safe = {"people": [{"name": alias(p.get("name") or ""), "title": p.get("title") or "", "department": alias(p.get("department") or ""),
+                                "email": "", "phone": ""} for p in att.get("people", [])],
+                    "guests": [{"name": alias(g.get("name") or ""), "status": g.get("status") or ""} for g in att.get("guests", [])]}
+            return res, safe
+
+        try:
+            res, safe = await asyncio.to_thread(work)
+        except NlpUnavailable as exc:
+            raise PrivacyError("nlp_unavailable", "Обезличивание не выполнено: " + str(exc) + ". Документ не сформирован, текст в модель не отправлялся.") from None
+        log.info("Материалы обезличены", extra={"replaced": len(res.replacements), "categories": res.stats()})      # только числа: без значений и таблицы замен
+        return res.text, safe, {"replaced": len(res.replacements), "categories": res.stats(), "warnings": res.warnings}
 
     async def plan(self, db: AsyncSession, meeting: Meeting, kind: str = "protocol", once: str | None = None) -> dict:
         """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
@@ -1025,47 +1008,31 @@ class ProtocolService:
             once_choice = parse_once(once)
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
-        llm = await resolve_llm(self.profiles, self.local_llm, db, room, meeting, purpose, once=once_choice)    # разово → встреча → комната → система
+        llm = await resolve_llm(self.profiles, self.llm, db, room, meeting, purpose, once=once_choice)    # разово → встреча → комната → система
         llm.settings = await discover_window(llm.settings, ca_file=self._ca(), transport=self._transports.get("llm"))       # type: ignore[arg-type]
-        eff, is_local = self.local_llm.effective(llm.settings)
-        mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
-        an = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
-        # Локальная модель данные наружу не отправляет — обезличивание по умолчанию не нужно (только если включено явно для комнаты)
-        anonymize = mode == "on" or (mode == "inherit" and not is_local and an is not None and bool(an.settings.enabled))
+        eff = self.llm.effective(llm.settings)
+        an_cfg = await self._svc.get(db, "anonymizer")
+        anonymize, profile = room_privacy(an_cfg, room)
+        from ..privacy import fetch_models  # noqa: PLC0415
+        from ..privacy.names import NLP_DIR  # noqa: PLC0415
+
+        nlp_ok = (not anonymize) or await asyncio.to_thread(fetch_models.ready, NLP_DIR)
         out = {"llm_ready": bool(eff.enabled) and llm.available, "llm_profile": llm.name, "llm_source": llm.source, "llm_note": llm.note, "llm_reason": llm.reason,
-               "anonymize": anonymize,
-               "anonymizer_profile": an.name if (anonymize and an) else None,
-               "anonymizer_ready": (not anonymize) or bool(an and an.settings.enabled),
-               "llm_local": is_local, "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None, "once": bool(once_choice),
-               "llm_api_type": eff.type if not is_local else "local"}
+               "anonymize": anonymize, "anonymizer_profile": PROFILE_TITLES.get(profile) if anonymize else None, "anonymizer_ready": nlp_ok,
+               "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None, "once": bool(once_choice), "llm_api_type": eff.type}
+        if not nlp_ok:
+            out["warnings"].append("Обезличивание включено, но модели распознавания имён не установлены на сервере: документ не будет сформирован. "
+                                   "Администратору: «Обезличивание → Общие» показывает причину.")
         tokens, tnote = eff.output_limit(purpose)
-        out["max_output_tokens"], out["max_output_note"] = (None, "подбирается автоматически") if is_local else (tokens, tnote)
-        out["builtin_instruction"] = is_local
+        out["max_output_tokens"], out["max_output_note"] = tokens, tnote
         out["job_limit_s"] = int((await self._svc.get(db, "protocol")).job_limit_s)         # type: ignore[attr-defined]
-        lm = self.local_llm.limits(llm.settings)
-        if lm is not None and llm.available:
-            fs = await asyncio.to_thread(self.local_llm.file_state, lm)
-            if not self.local_llm.model_enabled(lm):
-                out["llm_ready"] = False
-                out["warnings"].append(f"Локальная модель {lm.title} не включена на сервере. Администратор включает её в разделе «Языковая модель (LLM)».")
-            elif fs["state"] != "ok":
-                out["llm_ready"] = False
-                out["warnings"].append("Локальная языковая модель не загружена или повреждена. Администратор может скачать её в разделе «Языковая модель (LLM)».")
-            else:
-                chars = len(await self.transcript_text(db, meeting, await self._tz(db)))
-                out["input_chars"] = chars
-                if lm.light and chars > lm.warn_input_chars:
-                    out["warnings"].append(f"Стенограмма длинная ({chars:,} знаков)".replace(",", " ") + f". Локальная модель {lm.title} — облегчённая: на длинных встречах качество может быть "
-                                           "ниже, чем у более крупных моделей. Результат стоит проверить; для важных встреч лучше использовать внешнюю модель.")
-        if out["llm_ready"] and out["input_chars"] is None:
+        if out["llm_ready"]:
             out["input_chars"] = len(await self.transcript_text(db, meeting, await self._tz(db)))
-        if out["llm_ready"] and out["input_chars"] is not None:
             pr = await self._svc.get(db, "protocol")
-            limit = min(pr.max_input_chars, lm.max_input_chars) if lm else pr.max_input_chars   # type: ignore[attr-defined]
-            if not is_local and eff.context_window > 16000:
+            limit = pr.max_input_chars   # type: ignore[attr-defined]
+            if eff.context_window > 16000:
                 limit = max(limit, min(1_000_000, int((eff.context_window - 8192 - 2500) * 2.0)))        # как при формировании: встреча, помещающаяся в окно, идёт одним запросом
-            out["forecast"] = llm_stats.forecast(await llm_stats.recent_runs(db, 600), kind=purpose, model=eff.model, local=is_local,
-                                                 profile="" if is_local else llm.name, chars=out["input_chars"], limit=limit)
+            out["forecast"] = llm_stats.forecast(await llm_stats.recent_runs(db, 600), kind=purpose, model=eff.model, profile=llm.name, chars=out["input_chars"], limit=limit)
         return out
 
     def _emit(self, category: str, event: str, rec: Protocol, started: datetime, *, level: str = "info", message: str | None = None,
@@ -1088,7 +1055,7 @@ class ProtocolService:
             once_choice = parse_once(once)
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
-        llm_res = await resolve_llm(self.profiles, self.local_llm, db, room, meeting, purpose, once=once_choice)   # системная → комната → встреча; для резюме своя цепочка
+        llm_res = await resolve_llm(self.profiles, self.llm, db, room, meeting, purpose, once=once_choice)   # системная → комната → встреча; для резюме своя цепочка
         if not llm_res.available:
             raise LlmError("unavailable", llm_res.reason or "")
         llm_cfg = llm_res.settings
@@ -1096,13 +1063,8 @@ class ProtocolService:
         if found.context_window != llm_cfg.context_window:
             llm_cfg = found
             llm_res.limit_note = "; ".join(x for x in (llm_res.limit_note, f"окно контекста {found.context_window} токенов определено автоматически по списку моделей провайдера") if x)
-        eff_cfg, is_local = self.local_llm.effective(llm_cfg)
-        lm = self.local_llm.limits(llm_cfg)
-        if is_local:                                     # локальная модель: только встроенная инструкция; пользовательские остаются для внешних моделей
-            instruction = LOCAL_BUILTIN_INSTRUCTION
-            info["instruction_builtin"] = True
-        info.update(model=eff_cfg.model, model_title=lm.title if lm else llm_res.name, llm_local=is_local, llm_type="local" if is_local else eff_cfg.type,
-                    api_type="local" if is_local else eff_cfg.type, llm_profile=llm_res.name, llm_source=llm_res.source)
+        eff_cfg = self.llm.effective(llm_cfg)
+        info.update(model=eff_cfg.model, model_title=llm_res.name, llm_type=eff_cfg.type, api_type=eff_cfg.type, llm_profile=llm_res.name, llm_source=llm_res.source)
         pr_cfg = await self._svc.get(db, "protocol")
         tz = await self._tz(db)
         transcript = await self.transcript_text(db, meeting, tz, flat=True)
@@ -1114,33 +1076,29 @@ class ProtocolService:
 
         att = await load_attendees(db, meeting)          # единый источник для всех видов документа: снимок данных участников на момент встречи
 
-        # 1. Обезличивание — по настройке комнаты/общим настройкам. Включено → сбой = отказ (fail closed); выключено → текст идёт как есть.
-        mode = room.anonymize_mode if room.anonymize_mode in ("inherit", "on", "off") else "inherit"
-        an_res = None if mode == "off" else await self.profiles.resolve(db, "anonymizer", room)
-        # локальная модель не отправляет данные наружу: «наследуемое» обезличивание для неё не применяется (явное «включено» для комнаты — остаётся)
-        do_anonymize = mode == "on" or (mode == "inherit" and not is_local and an_res is not None and bool(an_res.settings.enabled))
-        await release(db)                                  # дальше — сетевые обращения (обезличивание, модель): транзакция PostgreSQL не должна жить во время них
+        # 1. Обезличивание — по настройке комнаты (обязательное у администратора сильнее). Включено → сбой = отказ (fail closed): в модель ничего не уходит.
+        an_cfg = await self._svc.get(db, "anonymizer")
+        do_anonymize, an_profile = room_privacy(an_cfg, room)
+        await release(db)                                  # дальше — тяжёлая обработка и сетевые обращения: транзакция PostgreSQL не должна жить во время них
+        stats: dict = {}
         if do_anonymize:
-            anon = AnonymizerClient(an_res.settings, ca_file=self._ca(), transport=self._transports.get("anonymizer"))  # type: ignore[arg-type, union-attr]
-            clean = await anon.anonymize(text, "protocol")
+            text, att, stats = await self._anonymize(an_cfg, an_profile, text, att)
         else:
-            clean = Anonymized(text, 0, None, 0)
-            log.info("Обезличивание выключено — текст передаётся в LLM как есть", extra={"meeting_id": str(meeting_id), "room_mode": mode})
+            log.info("Обезличивание выключено для комнаты — имена передаются в модель без замены (пароли и ключи маскируются всегда)",
+                     extra={"meeting_id": str(meeting_id)})
 
         # 2. LLM получает только обезличенный текст. Инструкция — ровно та, что подтвердил пользователь.
-        llm = self.local_llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"), purpose=purpose)  # type: ignore[arg-type]
+        llm = self.llm.client(llm_cfg, ca_file=self._ca(), transport=self._transports.get("llm"), purpose=purpose)  # type: ignore[arg-type]
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
-        limit = min(pr_cfg.max_input_chars, lm.max_input_chars) if lm else pr_cfg.max_input_chars   # type: ignore[attr-defined]
-        warnings: list[str] = []
-        if lm is not None and lm.light and len(clean.text) > lm.warn_input_chars:
-            warnings.append(f"Длинная стенограмма обработана облегчённой локальной моделью {lm.title}: качество может быть ниже, чем у более крупных моделей — проверьте результат.")
+        limit = pr_cfg.max_input_chars   # type: ignore[attr-defined]
+        warnings: list[str] = list(stats.get("warnings") or [])
         # Ответы модели по фрагментам, уже полученные для этой встречи другим документом (карта, протокол, резюме) той же моделью: повторять запрос к модели незачем.
         # Читается только сохранённое при формировании; пока запрос к модели не совпал побайтно, кэш не используется.
         cache = FactsCache(await load_facts(db, meeting_id, eff_cfg.model))
         start_local = meeting.started_at.astimezone(tz)
         time_base = {"offset_s": start_local.hour * 3600 + start_local.minute * 60 + start_local.second}
         out_cap, _ = eff_cfg.output_limit(purpose)
-        if not is_local and eff_cfg.context_window > 16000:
+        if eff_cfg.context_window > 16000:
             # Окно контекста известно: встреча, которая в него помещается (с запасом ≈ 8 тыс. токенов под документ), идёт ОДНИМ запросом, а не заметками по частям — это быстрее и без потерь.
             # Русский текст — ≈ 2 знака на токен (берём с запасом). Заданный администратором предел «Максимум знаков стенограммы» в этом случае только расширяется, а не сужается.
             limit = max(limit, min(1_000_000, int((eff_cfg.context_window - 8192 - 2500) * 2.0)))
@@ -1148,7 +1106,7 @@ class ProtocolService:
         await release(db)
         info["llm_started"] = datetime.now(timezone.utc)
         try:
-            pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=clean.text, limit=limit, local=lm, anonymized=do_anonymize,
+            pipe = await run_llm_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, anonymized=do_anonymize,
                                           has_sources=bool(materials.chat_messages or materials.whiteboard_shapes), mixed=text is not transcript,
                                           external_structured=getattr(pr_cfg, "external_mode", "free") == "structured", attendees=att, budget=budget,
                                           cache=cache, model=eff_cfg.model, external_limit=ext_limit, out_cap=out_cap)
@@ -1161,16 +1119,17 @@ class ProtocolService:
             from .doc_render import inject_attendees  # noqa: PLC0415
 
             out = inject_attendees(out, att)
-        meta = {"model": eff_cfg.model, "llm_type": "local" if is_local else eff_cfg.type, "llm_local": is_local, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
+        meta = {"model": eff_cfg.model, "llm_type": eff_cfg.type, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
                 "llm_calls": pipe.calls, "parts": pipe.parts, "structured": pipe.structured or None,
-                "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens, "anonymized_chunks": clean.chunks,
-                "anonymized_replaced": clean.replaced, "anonymized": do_anonymize, "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
-                "anonymizer_profile": an_res.name if (do_anonymize and an_res) else None, "generated_at": utcnow().isoformat(),
+                "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens,
+                "anonymized_replaced": stats.get("replaced"), "anonymized_categories": stats.get("categories") or None, "anonymized": do_anonymize,
+                "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
+                "anonymizer_profile": PROFILE_TITLES.get(an_profile) if do_anonymize else None, "generated_at": utcnow().isoformat(),
                 "sources": materials.meta(), "time_base": time_base, "facts": pipe.facts or None, "diag": {**pipe.diag, "cache_hits": cache.hits} if pipe.diag else None}
         st = llm.stats
         sstats = (pipe.structured or {}).get("stats") or {}
-        meta.update(instruction_builtin=True if info.get("instruction_builtin") else None, coverage=(pipe.structured or {}).get("coverage"),
-                    model_title=info["model_title"], api_type=info["api_type"], input_chars=len(clean.text), output_chars=len(out), chunks=pipe.parts,
+        meta.update(coverage=(pipe.structured or {}).get("coverage"),
+                    model_title=info["model_title"], api_type=info["api_type"], input_chars=len(text), output_chars=len(out), chunks=pipe.parts,
                     retries=int(sstats.get("length_retries", 0)) + int(sstats.get("json_retries", 0)) + int(st.get("empty_retries", 0)),
                     llm_calls=max(pipe.calls, st["calls"]), length_hits=st["length"], finish=dict(st["finish"]),
                     max_tokens=st["max_tokens"] or None, limit_requested=llm_res.limit_requested, limit_applied=st["max_tokens"] or None,

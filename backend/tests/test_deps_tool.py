@@ -30,7 +30,7 @@ def test_repository_manifest_is_consistent_with_project_files():
 def test_manifest_covers_the_whole_stack():
     keys = {c["key"] for c in deps.load()["components"]}
     must = {"livekit_server", "livekit_sip", "livekit_client_js", "livekit_python_sdk", "livekit_api_python", "rnnoise_wasm", "transcribe_cpp", "torch", "torchaudio", "gigaam", "silero_vad",
-            "llama_cpp", "python_backend", "fastapi", "sqlalchemy", "pydantic", "react", "vite", "node", "nginx", "postgres", "redis", "alpine", "drawio", "officejs", "cryptography", "ldap3",
+            "python_backend", "fastapi", "sqlalchemy", "pydantic", "react", "vite", "node", "nginx", "postgres", "redis", "alpine", "drawio", "officejs", "cryptography", "ldap3",
             "pillow", "redis_py", "uvicorn", "httpx"}
     assert must <= keys, must - keys
 

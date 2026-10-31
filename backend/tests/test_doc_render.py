@@ -102,12 +102,12 @@ def test_html_is_self_contained_escaped_and_marks_sections():
 # ------------------------------------------------------------------------------------------------ структурный режим внешней модели
 def test_external_model_in_structured_mode_gets_the_same_document_and_falls_back_when_it_cannot():
     llm, seen = llm_for(good)
-    res = asyncio.run(run_llm_pipeline(llm, kind="protocol", instruction="x", text=TEXT, limit=100000, local=None, anonymized=False, external_structured=True))
+    res = asyncio.run(run_llm_pipeline(llm, kind="protocol", instruction="x", text=TEXT, limit=100000, anonymized=False, external_structured=True))
     assert "## Краткие итоги" in res.text and "| № | Задача | Ответственный | Срок | Где в записи |" in res.text and res.structured["document"]["decisions"]
     assert len(seen) == 2 and "response_format" in seen[0] and "response_format" not in seen[1], "один запрос на фрагмент (темы, решения, поручения, вопросы вместе) + один на итог; раньше было 5"
     # модель не отдаёт разбираемый JSON → обычный режим с предупреждением
     llm2, seen2 = llm_for(lambda b, n: reply("**Протокол**\n\n* пункт") if "response_format" not in b else reply("не JSON"))
-    res2 = asyncio.run(run_llm_pipeline(llm2, kind="protocol", instruction="x", text=TEXT, limit=100000, local=None, anonymized=False, external_structured=True))
+    res2 = asyncio.run(run_llm_pipeline(llm2, kind="protocol", instruction="x", text=TEXT, limit=100000, anonymized=False, external_structured=True))
     assert "**Протокол**" in res2.text and any("Структурный режим не сработал" in w for w in res2.warnings)
 
 

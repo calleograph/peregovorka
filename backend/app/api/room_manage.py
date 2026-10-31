@@ -86,7 +86,7 @@ class RoomManageOut(BaseModel):
     # Материалы и хранение (только чтение для руководителя — сроки и обезличивание задаёт администратор)
     retention: dict | None = None
     # Языковая модель комнаты: системная по умолчанию → комната → встреча
-    llm: dict | None = None                # {mode, profile_id, local_model}
+    llm: dict | None = None                # {mode, profile_id}
     llm_effective: dict | None = None      # какая модель будет использована сейчас и почему
     llm_summary: dict | None = None        # то же для краткого резюме (отдельная цепочка: система → комната → встреча)
     llm_summary_effective: dict | None = None
@@ -126,6 +126,8 @@ class RoomManagePatch(BaseModel):
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     llm: dict | None = None
     llm_summary: dict | None = None
+    anonymize_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")        # обезличивание материалов перед языковой моделью: on | off (inherit — прежнее, как off)
+    anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")   # пусто — профиль сервера по умолчанию
     sip: dict | None = None
 
 
@@ -157,10 +159,10 @@ async def template_extra(request: Request, db: AsyncSession) -> dict:
     """Сведения для формы НОВОЙ комнаты (администратор): те же списки выбора, что и при изменении, — модели, телефония, видеозапись, наследуемые значения."""
     st = request.app.state
     room = Room(name="", slug="", llm_mode="inherit", llm_summary_mode="inherit")
-    ch = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None)
-    chs = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None, "summary")
+    ch = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, room, None)
+    chs = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, room, None, "summary")
     return {"video_enabled": bool((await st.settings_svc.get(db, "video")).enabled), "llm_effective": describe(ch), "llm_summary_effective": describe(chs),
-            "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip_options": await sip_options(request, db)}
+            "llm_options": await llm_options(st.protocols.profiles, db), "sip_options": await sip_options(request, db)}
 
 
 async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request | None = None) -> RoomManageOut:
@@ -168,17 +170,23 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
     extra: dict = {}
     if request is not None:
         st = request.app.state
-        ch = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None)
-        chs = await resolve_llm(st.protocols.profiles, st.local_llm, db, room, None, "summary")
+        ch = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, room, None)
+        chs = await resolve_llm(st.protocols.profiles, st.protocols.llm, db, room, None, "summary")
         sip, sip_opts = await _sip_block(request, db, room)
         video_enabled = bool((await st.settings_svc.get(db, "video")).enabled)
-        extra = {"video_enabled": video_enabled, "llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
+        extra = {"video_enabled": video_enabled, "llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, db), "sip": sip, "sip_options": sip_opts}
     if request is not None:
         general = await request.app.state.settings_svc.get(db, "general")
     else:
         from ..services.settings import GeneralSettings  # noqa: PLC0415
         general = GeneralSettings()
     eff = retention_policy.effective(room, general)
+    an_cfg = await request.app.state.settings_svc.get(db, "anonymizer") if request is not None else None
+    from ..privacy.policy import PROFILE_TITLES, room_privacy  # noqa: PLC0415
+
+    privacy = None if an_cfg is None else {"enabled": an_cfg.enabled, "required": an_cfg.required, "allowed": list(an_cfg.allowed_profiles),
+                                           "default": an_cfg.default_profile, "titles": PROFILE_TITLES, "effective": room_privacy(an_cfg, room)[0],
+                                           "effective_profile": room_privacy(an_cfg, room)[1]}
     return RoomManageOut(
         icon=icon_out(room),
         protocol_instructions=room.protocol_instructions,
@@ -186,8 +194,8 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         retention={"text_days": eff["text"], "audio_days": eff["audio"], "video_days": eff["video"], "custom": eff["custom"],
                    "own": {"text": room.text_retention_days, "audio": room.audio_retention_days, "video": room.video_retention_days},
                    "server": {"text": general.default_text_retention_days, "audio": general.default_audio_retention_days, "video": general.default_video_retention_days},
-                   "history_access": room.history_access, "anonymize_mode": room.anonymize_mode,
-                   **({"anonymizer_profile_id": str(room.anonymizer_profile_id) if room.anonymizer_profile_id else None} if su.is_admin else {})},
+                   "history_access": room.history_access, "anonymize_mode": room.anonymize_mode, "anonymize_profile": room.anonymize_profile or "",
+                   "privacy": privacy},
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
@@ -336,14 +344,32 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             raise HTTPException(status_code=422, detail=str(exc)) from None
         assert ch is not None
         pre = "llm_summary" if purpose == "summary" else "llm"
-        cur = (getattr(room, f"{pre}_mode"), getattr(room, f"{pre}_profile_id") and str(getattr(room, f"{pre}_profile_id")), getattr(room, f"{pre}_local_model"))
-        if cur != (ch["mode"], ch["profile_id"], ch["local_model"]):
+        cur = (getattr(room, f"{pre}_mode"), getattr(room, f"{pre}_profile_id") and str(getattr(room, f"{pre}_profile_id")))
+        if cur != (ch["mode"], ch["profile_id"]):
             setattr(room, f"{pre}_mode", ch["mode"])
             setattr(room, f"{pre}_profile_id", uuid.UUID(ch["profile_id"]) if ch["profile_id"] and ch["profile_id"] != "main" else None)
             if ch["profile_id"] == "main":
                 setattr(room, f"{pre}_mode", "inherit")        # «основной» профиль — это и есть системная настройка
-            setattr(room, f"{pre}_local_model", ch["local_model"])
             changed[key] = ch
+    if fields.get("anonymize_mode") is not None or fields.get("anonymize_profile") is not None:
+        cfg = await request.app.state.settings_svc.get(db, "anonymizer")
+        mode = fields.get("anonymize_mode")
+        if mode is not None:
+            mode = "off" if mode == "inherit" else mode
+            if mode == "on" and not cfg.enabled and not cfg.required:
+                raise HTTPException(status_code=422, detail="Обезличивание выключено администратором сервера (Администрирование → Обезличивание)")
+            if mode == "off" and cfg.required:
+                raise HTTPException(status_code=422, detail="Обезличивание обязательно для всех комнат по решению администратора — выключить его в комнате нельзя")
+            if mode != room.anonymize_mode:
+                room.anonymize_mode = mode
+                changed["anonymize_mode"] = mode
+        prof = fields.get("anonymize_profile")
+        if prof is not None:
+            if prof and prof not in cfg.allowed_profiles:
+                raise HTTPException(status_code=422, detail="Этот профиль обезличивания не разрешён администратором")
+            if prof != (room.anonymize_profile or ""):
+                room.anonymize_profile = prof
+                changed["anonymize_profile"] = prof or "профиль сервера"
     if "sip" in fields and fields["sip"] is not None:
         await _apply_sip(request, db, room, fields["sip"], changed)
     if body.moderators is not None:

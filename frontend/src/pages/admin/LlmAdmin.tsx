@@ -4,16 +4,15 @@ import { Modal } from "../../components/Dialogs";
 import { fmtDate } from "./common";
 import { spanRu } from "../../util";
 import ApiProfilesAdmin from "./ApiProfilesAdmin";
-import LocalLlmPanel from "./LocalLlmPanel";
 import SettingsForm from "./SettingsForm";
 import { llmApiFields, llmTaskFields, structuredFields } from "./fields";
 import InfoTip from "../../components/InfoTip";
 
-const TABS = [["assign", "Назначения"], ["local", "Локальные модели"], ["external", "Внешние API"], ["gen", "Параметры генерации"], ["stats", "Статистика"], ["diag", "Диагностика"]] as const;
+const TABS = [["assign", "Назначения"], ["external", "Подключения"], ["gen", "Параметры генерации"], ["stats", "Статистика"], ["diag", "Диагностика"]] as const;
 type Tab = (typeof TABS)[number][0];
 const TASKS = [["protocol", "Протокол"], ["summary", "Резюме"], ["map", "Карта разговора"]] as const;
 type TaskKey = (typeof TASKS)[number][0];
-const API_TYPE: Record<string, string> = { local: "локальная", openai: "OpenAI", anthropic: "Anthropic", openai_compatible: "OpenAI-совместимый", custom: "свой OpenAI-подобный" };
+const API_TYPE: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", openai_compatible: "OpenAI-совместимый", custom: "свой OpenAI-подобный" };
 
 /**
  * Администрирование → Языковая модель (LLM): вкладки вместо одной длинной страницы. Главная — «Назначения»: какая модель для какой задачи.
@@ -29,7 +28,6 @@ export default function LlmAdmin() {
         {TABS.map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => pick(k)}>{label}</button>)}
       </div>
       {tab === "assign" && <Assignments onGo={pick} />}
-      {tab === "local" && <LocalLlmPanel />}
       {tab === "external" && <ApiProfilesAdmin key="llm-profiles" kind="llm" fields={llmApiFields} />}
       {tab === "gen" && <Generation />}
       {tab === "stats" && <Stats />}
@@ -72,8 +70,8 @@ function Assignments({ onGo }: { onGo: (t: Tab) => void }) {
                   return (
                     <tr key={k}>
                       <th style={{ textAlign: "left" }}>{label}{t?.same_as_protocol && k !== "protocol" && <div className="muted small">как протокол</div>}</th>
-                      <td>{m.enabled ? <><b>{m.name}</b>{m.model && !m.local ? <div className="muted small">{m.model}</div> : null}</> : <span className="muted">—</span>}</td>
-                      <td>{m.enabled ? (m.local ? "Локальная" : `Внешняя · ${API_TYPE[m.api_type ?? ""] ?? m.api_type}`) : "—"}</td>
+                      <td>{m.enabled ? <><b>{m.name}</b>{m.model ? <div className="muted small">{m.model}</div> : null}</> : <span className="muted">—</span>}</td>
+                      <td>{m.enabled ? (API_TYPE[m.api_type ?? ""] ?? m.api_type) : "—"}</td>
                       <td>{stateBadge(m)}{src && <div className="muted small">Система{own ? ` · в ${own} перегов. своя` : ""}</div>}</td>
                       <td><button className="btn mini" onClick={() => setEdit(k)}>Изменить</button></td>
                     </tr>);
@@ -108,14 +106,14 @@ function FallbackPolicy({ value, onSaved }: { value: "system" | "unavailable"; o
 
 function AssignDialog({ task, ch, onClose, onSaved }: { task: TaskKey; ch: LlmChoices; onClose: () => void; onSaved: () => void }) {
   const cur = ch.tasks[task];
-  const initial = cur.same_as_protocol && task !== "protocol" ? "same" : cur.mode === "local" ? "local" : cur.mode === "off" ? "off" : `ext:${cur.profile_id ?? ""}`;
+  const initial = cur.same_as_protocol && task !== "protocol" ? "same" : cur.mode === "off" ? "off" : `ext:${cur.profile_id ?? ""}`;
   const [pick, setPick] = useState(initial);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const label = TASKS.find(([k]) => k === task)![1];
   const save = async () => {
     setBusy(true); setErr("");
-    const mode = pick === "same" ? "same" : pick === "local" ? "local" : pick === "off" ? "off" : "external";
+    const mode = pick === "same" ? "same" : pick === "off" ? "off" : "external";
     const pid = pick.startsWith("ext:") ? pick.slice(4) || null : null;
     const patch: Record<string, unknown> = task === "protocol" ? { provider: mode, protocol_profile: pid } : { [`${task}_provider`]: mode, [`${task}_profile`]: pid };
     try { await api.admin.saveSettings("llm", patch as never); onSaved(); } catch (x) { setErr((x as ApiError).message); setBusy(false); }
@@ -127,9 +125,8 @@ function AssignDialog({ task, ch, onClose, onSaved }: { task: TaskKey; ch: LlmCh
     <Modal title={`Модель для задачи: ${label}`} onClose={onClose}>
       <div className="stack">
         {task !== "protocol" && opt("same", "Как для протокола")}
-        {ch.local.map((m) => opt("local", `${m.title} — локальная`, m.installed ? "Данные остаются на сервере" : "Файл модели не загружен — загрузите на вкладке «Локальные модели»", !m.installed))}
         {ch.external.map((p) => opt(`ext:${p.id}`, p.name, `${p.model || "модель не указана"}${p.host ? ` · ${p.host}` : ""}`))}
-        {ch.external.length === 0 && <div className="muted small">Внешних API пока нет — добавьте подключение на вкладке «Внешние API».</div>}
+        {ch.external.length === 0 && <div className="muted small">Подключений пока нет — добавьте их на вкладке «Подключения».</div>}
         {opt("off", "Не использовать (задача отключена)")}
         {err && <div className="alert error" role="alert">{err}</div>}
         <div className="row"><button className="btn primary" disabled={busy} onClick={() => void save()}>Сохранить</button><button className="btn ghost" onClick={onClose}>Отмена</button></div>
@@ -181,7 +178,7 @@ function Stats() {
       <div className="row small" style={{ flexWrap: "wrap", gap: 10 }}>
         <label>Период<select value={f.days} onChange={(e) => setF({ ...f, days: Number(e.target.value) })}><option value={0}>всё время</option><option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>90 дней</option></select></label>
         <label>Задача<select value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}><option value="">все</option><option value="protocol">протокол</option><option value="summary">резюме</option><option value="map">карта разговора</option></select></label>
-        <label>Модель<select value={f.where} onChange={(e) => setF({ ...f, where: e.target.value })}><option value="">любая</option><option value="local">локальная</option><option value="external">внешняя</option></select></label>
+        <label>Модель<select value={f.where} onChange={(e) => setF({ ...f, where: e.target.value })}><option value="">любая</option><option value="external">подключения</option></select></label>
         <label className="check"><input type="checkbox" checked={f.archived} onChange={(e) => setF({ ...f, archived: e.target.checked })} /> Показывать устаревшие</label>
       </div>
       {err && <div className="alert error">{err}</div>}
@@ -194,7 +191,7 @@ function Stats() {
             <tbody>
               {rows.map((m) => (
                 <tr key={`${m.model}|${m.local}|${m.profile}|${m.kind}`} className={m.archived ? "muted" : ""}>
-                  <td><b>{m.title}</b> <span className="badge">{m.local ? "локальная" : "внешняя"}</span>{m.archived && <span className="badge warn"> архивная модель</span>}</td>
+                  <td><b>{m.title}</b>{m.local && <span className="badge"> встроенная (удалена)</span>}{m.archived && <span className="badge warn"> архивная модель</span>}</td>
                   <td>{KIND[m.kind] ?? m.kind}</td><td>{m.documents}</td><td>{m.failed ? <span className="field-err">{m.failed}</span> : 0}</td>
                   <td>{m.truncated || m.length_hits ? <span className="field-err">{m.truncated} (обрывов {m.length_hits})</span> : 0}</td><td>{m.retries}</td>
                   <td>{m.avg_s !== null ? `${spanRu(m.avg_s)} / ${spanRu(m.median_s)}` : "—"}</td>
@@ -219,7 +216,7 @@ function Diagnostics() {
   const [err, setErr] = useState("");
   useEffect(() => { void api.admin.llmChoices().then(setCh).catch(() => undefined); }, []);
   const targets = useMemo(() => [
-    ...TASKS.map(([k, l]) => [`task:${k}`, `Назначение: ${l}`] as const), ["local", "Локальная модель"] as const, ...(ch?.external ?? []).map((p) => [`profile:${p.id}`, `Подключение: ${p.name}`] as const),
+    ...TASKS.map(([k, l]) => [`task:${k}`, `Назначение: ${l}`] as const), ...(ch?.external ?? []).map((p) => [`profile:${p.id}`, `Подключение: ${p.name}`] as const),
   ], [ch]);
   const run = async () => { setBusy(true); setErr(""); setRes(null); try { setRes(await api.admin.llmDiagnose(target)); } catch (x) { setErr((x as ApiError).message); } setBusy(false); };
   return (
@@ -233,7 +230,7 @@ function Diagnostics() {
       {res && (
         <div className="stack">
           <table className="table compact"><tbody>
-            <tr><td>Будет вызван</td><td><b>{res.config.model || "—"}</b> · {res.config.provider === "local" ? "локальная" : res.config.provider === "external" ? `внешняя (${API_TYPE[res.config.type] ?? res.config.type})` : "отключена"}</td></tr>
+            <tr><td>Будет вызван</td><td><b>{res.config.model || "—"}</b> · {res.config.provider === "external" ? `внешняя (${API_TYPE[res.config.type] ?? res.config.type})` : "отключена"}</td></tr>
             <tr><td>Адрес</td><td>{res.config.host || "—"}</td></tr>
             <tr><td>Предел ответа / контекст</td><td>{res.config.max_output_tokens} токенов · {res.config.context_window ? `${res.config.context_window} токенов` : "контекст модели не указан"}</td></tr>
             <tr><td>Температура</td><td>{String(res.config.temperature)}</td></tr>

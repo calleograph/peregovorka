@@ -153,13 +153,7 @@ async def check_llm(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
     cfg = await app.state.settings_svc.get(db, "llm")
     if not getattr(cfg, "enabled", False):
         return [item("llm", "Языковая модель (протоколы и резюме)", TODO, "Языковая модель не настроена: протоколы и резюме недоступны", "llm")]
-    if getattr(cfg, "effective_provider", "") == "local":
-        st = await app.state.local_llm.status(cfg)
-        if st.get("ready"):
-            return [item("llm", "Языковая модель (протоколы и резюме)", OK, "Локальная модель загружена и отвечает", "llm")]
-        why = st["runtime"]["detail"] if st["file"]["state"] == "ok" else "файл модели не загружен или повреждён"
-        return [item("llm", "Языковая модель (протоколы и резюме)", WARN, f"Локальная модель не готова: {why}", "llm")]
-    return [item("llm", "Языковая модель (протоколы и резюме)", OK, "Внешняя модель подключена (доступность по сети не проверяется)", "llm")]
+    return [item("llm", "Языковая модель (протоколы и резюме)", OK, "Подключение к модели настроено (доступность по сети не проверяется)", "llm")]
 
 
 async def check_disk(app, db: AsyncSession, ctx: Ctx) -> list[dict]:

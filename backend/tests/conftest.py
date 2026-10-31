@@ -6,7 +6,18 @@ import uuid
 from dataclasses import dataclass, field
 
 import pytest
-from fakeredis import FakeAsyncRedis
+
+# Модели распознавания имён для обезличивания (app/privacy): кэш вне репозитория; при первом запуске — загрузка колеса natasha с PyPI с проверкой сумм
+# (в CI — шаг перед тестами; PRIVACY_NLP_WHEEL — локальное колесо вместо загрузки).
+os.environ.setdefault("PRIVACY_NLP_DIR", os.path.join(os.path.expanduser("~"), ".cache", "peregovorka-nlp"))
+from pathlib import Path as _Path  # noqa: E402
+
+from app.privacy import fetch_models as _fm  # noqa: E402
+
+if not _fm.ready(_Path(os.environ["PRIVACY_NLP_DIR"])):
+    _fm.fetch(_Path(os.environ["PRIVACY_NLP_DIR"]), _Path(os.environ["PRIVACY_NLP_WHEEL"]) if os.environ.get("PRIVACY_NLP_WHEEL") else None)
+
+from fakeredis import FakeAsyncRedis  # noqa: E402
 from fastapi.testclient import TestClient
 
 from app.auth.directory import DirectoryError, DirectoryIdentity

@@ -1,6 +1,6 @@
-"""Структурное извлечение протокола для небольшой локальной модели (Qwen3 1.7B).
+"""Структурное извлечение протокола (режим «структурный» в настройках протокола): одинаковый проверенный документ у любой модели.
 
-Принцип: маленькая модель не собирает протокол и не «угадывает итог» по заметкам — она отвечает на несколько простых вопросов по небольшому фрагменту, а всё остальное
+Принцип: модель не собирает протокол и не «угадывает итог» по заметкам — она отвечает на несколько простых вопросов по небольшому фрагменту, а всё остальное
 (проверка, объединение, дедупликация, сортировка, оформление) делает код:
 
   стенограмма → фрагменты (~6 000 знаков)
@@ -11,7 +11,7 @@
   → слияние и удаление повторов кодом (разные ответственные никогда не склеиваются) → детерминированный Markdown с источником у каждого пункта.
 
 LLM нужна только для краткого резюме — и то по уже проверенным пунктам. Все проходы по одному фрагменту начинаются с одинакового системного промпта и текста фрагмента (отличается
-только задание в конце), поэтому llama.cpp переиспользует уже обработанный текст, и каждый следующий проход стоит почти одну генерацию.
+только задание в конце), поэтому серверы с кэшем префикса переиспользуют уже обработанный текст.
 Оборвавшийся по лимиту длины или не разобравшийся ответ не принимается: проход повторяется по половинам фрагмента.
 """
 from __future__ import annotations
@@ -35,8 +35,6 @@ SECTION_MARK = {"СТЕНОГРАММА": "", "ЧАТ ВСТРЕЧИ": "чат",
 
 NONE_ID = "none"
 NOT_SET = "не указан"
-LOCAL_MAX_DEPTH = 1               # локальный проход: не более одного повтора по половинам (две попытки на фрагмент)
-SUMMARY_TOKENS_LOCAL = 220       # итоговый абзац локальной модели короткий: каждый токен на CPU — секунды
 MAX_SPLIT_DEPTH = 2              # оборвавшийся/битый проход делится пополам не более двух раз подряд
 MIN_SPLIT_LINES = 4
 SUMMARY_MAX = 220                # предельная длина описания темы в схеме ответа (fact_engine.combined_schema)
@@ -724,7 +722,7 @@ def _parse(text: str) -> dict | None:
 
 
 async def _assemble(llm: LlmClient, res: Result, *, kind: str, instruction: str, header: list[str], people: list[Person], items: list[Item], stats: dict,
-                    n_frags: int, attendees: dict | None, budget: Budget | None = None, local: bool = False) -> Result:
+                    n_frags: int, attendees: dict | None, budget: Budget | None = None) -> Result:
     """Проверенные пункты → слияние → документ. Общая часть внешнего структурного режима и локального конвейера."""
     if res.ok_fragments == 0:
         return res
@@ -750,7 +748,7 @@ async def _assemble(llm: LlmClient, res: Result, *, kind: str, instruction: str,
     facts = facts_text(merged)
     wish = ""
     ins = (instruction or "").strip()
-    if kind == "summary" and ins and len(ins) <= 400 and not local:
+    if kind == "summary" and ins and len(ins) <= 400:
         wish = f"\nПожелания пользователя: {ins}"
     summary = ""
     summary_ok = False
@@ -758,7 +756,7 @@ async def _assemble(llm: LlmClient, res: Result, *, kind: str, instruction: str,
         if budget is not None and budget.soft_left() < SUMMARY_MIN_S:
             raise LlmError("budget")                 # времени до цели мало: итоговый абзац собирает код из проверенных пунктов
         r = await llm.complete((SUMMARY_SYSTEM if kind == "summary" else SUMMARY_SYSTEM.replace("не более 8 строк", "не более 5 предложений")) + wish,
-                               "Проверенные пункты встречи:\n\n" + facts, max_tokens=SUMMARY_TOKENS_LOCAL if local else None)
+                               "Проверенные пункты встречи:\n\n" + facts)
         res.calls += 1
         res.prompt_tokens += r.prompt_tokens or 0
         res.completion_tokens += r.completion_tokens or 0
@@ -785,14 +783,8 @@ async def structured_pipeline(llm: LlmClient, *, kind: str, instruction: str, te
     """Внешняя модель в структурном режиме: один общий проход на фрагмент (темы, решения, поручения, вопросы), проверка и сборка документа кодом."""
     from .fact_engine import run_pipeline  # noqa: PLC0415
 
-    return await run_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, budget=None, attendees=attendees, local=False, **kw)
+    return await run_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, budget=None, attendees=attendees, **kw)
 
-
-async def local_pipeline(llm: LlmClient, *, kind: str, instruction: str, text: str, limit: int, budget: Budget, attendees: dict | None = None, **kw) -> Result:
-    """Локальная модель: тот же общий проход, но с учётом времени задания (цель и жёсткий предел): не успели — протокол не выдаётся за полный (`JobTimeout`), резюме получает отметку неполноты."""
-    from .fact_engine import run_pipeline  # noqa: PLC0415
-
-    return await run_pipeline(llm, kind=kind, instruction=instruction, text=text, limit=limit, budget=budget, attendees=attendees, local=True, **kw)
 
 
 def salvage_json(text: str) -> dict | None:

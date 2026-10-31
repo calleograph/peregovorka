@@ -83,14 +83,6 @@ class Settings(BaseSettings):
     livekit_server_version: str = ""
     web_internal_url: str = "http://web:8080"  # контейнер web: версии frontend из собранного приложения («Версии компонентов»)
     asr_internal_url: str = "http://asr:8090"  # управление моделями ASR (статус, тест, сравнение) — только внутри сети проекта
-    # --- локальная языковая модель (контейнер llm-local, llama.cpp; compose передаёт значения из .env). Модель хранится вне образа.
-    local_llm_url: str = "http://llm-local:8080"
-    local_llm_models_dir: str = "/models/llm"
-    local_llm_enabled: str = "yes"
-    local_llm_model_file: str = "Qwen3-1.7B-Q4_K_M.gguf"
-    local_llm_model_alias: str = "qwen3-1.7b-q4_k_m"
-    local_llm_model_bytes: int = 1_282_439_584
-    local_llm_model_sha256: str = "72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb"
     # --- SIP-телефония (контейнер livekit-sip, профиль compose `sip`; по умолчанию выключена и порты не открыты)
     sip_enabled: str = "no"
     video_enabled: str = "no"          # служба записи (контейнер livekit-egress) включена на сервере (.env); фактическое состояние — components.json помощника (services/server_components.py)

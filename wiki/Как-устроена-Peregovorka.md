@@ -29,7 +29,6 @@ flowchart LR
 | `livekit` | LiveKit Server (закреплённая версия) | звук, видео, показ экрана |
 | `asr` | GigaAM v3 e2e RNNT, Silero VAD, PyTorch | распознавание речи каждого участника |
 | `postgres`, `redis` | PostgreSQL 16, Redis 7 | данные; очереди, сессии, события |
-| `llm-local` | llama.cpp, Qwen3 1.7B | встроенная языковая модель, сеть без выхода наружу |
 | `livekit-sip` | LiveKit SIP | телефония (профиль `sip`, по умолчанию выключен) |
 | хост | `scripts/updater.sh` (systemd от root) | обновление из браузера; контейнеры доступа к Docker не получают |
 

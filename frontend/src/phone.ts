@@ -25,13 +25,12 @@ export function numberAllowed(prefixes: string[], number: string): boolean {
   return list.length === 0 || list.some((p) => number.startsWith(p.replace(/\*+$/, "")));
 }
 
-export const emptyChoice = (): LlmChoice => ({ mode: "inherit", profile_id: null, local_model: null });
+export const emptyChoice = (): LlmChoice => ({ mode: "inherit", profile_id: null });
 
 /** Подпись выбора модели для списка/кнопки. */
 export function choiceLabel(c: LlmChoice, o: LlmOptions | null | undefined): string {
   if (c.mode === "off") return "Отключена";
-  if (c.mode === "local") return o?.local.find((m) => m.id === c.local_model)?.title ?? "Локальная модель";
-  if (c.mode === "profile") return o?.profiles.find((p) => p.id === c.profile_id)?.name ?? "Внешний профиль";
+  if (c.mode === "profile") return o?.profiles.find((p) => p.id === c.profile_id)?.name ?? "Подключение";
   return o ? `Как системная (${o.system.provider === "off" ? "отключена" : o.system.model ?? o.system.name})` : "Как системная";
 }
 

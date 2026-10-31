@@ -83,55 +83,85 @@ def test_anonymizer_off_does_not_block_protocols(tmp_path, directory):
         assert c.get(f"/api/v1/meetings/{mid}/protocols/{got['id']}").json()["status"] == "ready"
 
 
+RU_TEXT = ("Иванов Иван Петрович предложил перенести базу с сервера db01.corp.local на новый кластер. Петровой Марии поручено согласовать бюджет 2 млн руб. "
+           "Пароль администратора стенда: Qw3rty!2026xZ.")
+
+
+def _meeting_with_text(c, text=RU_TEXT, **room_over):
+    from .test_access_and_protocols import _feed_and_consume, _segment, _join  # noqa: PLC0415
+
+    room = make_room(c, **room_over)
+    a = _join(c, "alice", room["id"])
+    _feed_and_consume(c, [_segment(a["meeting_id"], a["identity"], text)])
+    end_by_alice(c, a["meeting_id"])
+    return room, a["meeting_id"]
+
+
+def _sent(calls) -> str:
+    return json.dumps(calls["llm"][-1], ensure_ascii=False)
+
+
 def test_room_can_turn_anonymization_off_and_on(tmp_path, directory):
     calls, gen, _ = _app(tmp_path, directory)
     with gen as c:
-        put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
-        room, mid = meeting_with_two(c, anonymize_mode="off")
-        assert room["anonymize_mode"] == "off"
-        end_by_alice(c, mid)
+        room, mid = _meeting_with_text(c)
+        assert room["anonymize_mode"] == "off", "по умолчанию обезличивание в комнате выключено"
         got = _make_protocol(c, mid)
-        assert got["status"] == "ready" and calls["anon"] == []
-        # включено «всегда» в другой комнате: обезличивание вызывается
-        _r2, mid2 = meeting_with_two(c, anonymize_mode="on")
-        end_by_alice(c, mid2)
-        assert _make_protocol(c, mid2)["status"] == "ready" and calls["anon"], "обезличиватель вызывался"
-        # и «наследовать» при включённом глобально — тоже вызывается
-        calls["anon"].clear()
-        _r3, mid3 = meeting_with_two(c)
-        end_by_alice(c, mid3)
-        assert _make_protocol(c, mid3)["status"] == "ready" and calls["anon"]
+        assert got["status"] == "ready" and got["generation"]["anonymized"] is False
+        sent = _sent(calls)
+        assert "Иванов Иван Петрович" in sent and "db01.corp.local" in sent, "выключено — текст идёт без замены имён"
+        assert "Qw3rty!2026xZ" not in sent, "пароль не уходит в модель никогда"
+        # руководитель включает обезличивание в своей комнате
+        login(c, "root")
+        r = c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"anonymize_mode": "on", "anonymize_profile": "strict"})
+        assert r.status_code == 200 and r.json()["retention"]["anonymize_mode"] == "on", r.text
+        got = _make_protocol(c, mid)
+        sent = _sent(calls)
+        assert got["status"] == "ready" and got["generation"]["anonymized"] is True and got["generation"]["anonymizer_profile"] == "Строгий" and got["generation"]["anonymized_replaced"] >= 3
+        for leaked in ("Иванов", "Петров", "db01.corp.local", "2 млн", "Qw3rty!2026xZ"):
+            assert leaked not in sent, leaked
+        assert "Лицо" in sent or "Участник" in sent
+        login(c, "root")
+        audit = json.dumps(c.get("/api/v1/admin/audit?limit=50").json(), ensure_ascii=False)
+        assert "anonymize_mode" in audit, "смена режима — в журнале аудита"
 
 
-def test_room_requiring_anonymization_fails_closed_when_it_is_not_configured(tmp_path, directory):
+def test_required_anonymization_cannot_be_switched_off_by_a_room(tmp_path, directory):
     calls, gen, _ = _app(tmp_path, directory)
     with gen as c:
         put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
-        _room, mid = meeting_with_two(c, anonymize_mode="on")
-        end_by_alice(c, mid)
-        login(c, "alice")
-        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol"})
-        assert r.status_code == 409 and "обезличивание" in r.json()["detail"].lower()
-        assert calls["llm"] == []
-
-
-def test_failing_anonymizer_still_blocks_when_it_is_enabled(tmp_path, directory):
-    calls = {"llm": 0}
-
-    def llm(req):
-        calls["llm"] += 1
-        return LLM_OK(req)
-
-    gen = running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(lambda r: httpx.Response(500, text="x")),
-                                                                     "llm": httpx.MockTransport(llm)})
-    with gen as c:
-        put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
-        put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
-        _room, mid = meeting_with_two(c)
-        end_by_alice(c, mid)
+        put_settings(c, "anonymizer", required=True)
+        room, mid = _meeting_with_text(c)
+        login(c, "root")
+        r = c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"anonymize_mode": "off"})
+        assert r.status_code == 422 and "обязательно" in r.json()["detail"]
         got = _make_protocol(c, mid)
-        assert got["status"] == "failed" and calls["llm"] == 0, "включённое обезличивание — fail closed"
+        assert got["status"] == "ready" and "Иванов" not in _sent(calls), "обязательное обезличивание сильнее выбора комнаты"
+        put_settings(c, "anonymizer", required=False, enabled=False)
+        login(c, "root")
+        r = c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"anonymize_mode": "on"})
+        assert r.status_code == 422, "администратор запретил обезличивание в комнатах — включить нельзя"
+        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"anonymize_profile": "custom"}).status_code == 200
+        put_settings(c, "anonymizer", enabled=True, allowed_profiles=["basic"], default_profile="basic")
+        login(c, "root")
+        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"anonymize_profile": "strict"}).status_code == 422
+
+
+def test_failing_anonymizer_still_blocks_when_it_is_enabled(tmp_path, directory, monkeypatch):
+    from app.privacy import engine
+
+    calls, gen, _ = _app(tmp_path, directory)
+    with gen as c:
+        put_settings(c, "anonymizer", required=True)
+        put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
+        _room, mid = _meeting_with_text(c)
+
+        def broken(self, text):
+            raise engine.PrivacyError("verification_failed", "После обезличивания в тексте остался секрет: отправка остановлена.")
+        monkeypatch.setattr(engine.Anonymizer, "process", broken)
+        got = _make_protocol(c, mid)
+        assert got["status"] == "failed" and calls["llm"] == [] and "остался секрет" in got["error"], "включённое обезличивание — fail closed"
 
 
 # ===================================================================================== API-профили
@@ -180,17 +210,16 @@ def test_profile_validation_and_secret_update(tmp_path, directory):
         bad = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "x", "config": {"type": "openai_compatible", "model": "m"}})
         assert bad.status_code == 422                                          # нет base_url
         assert c.post("/api/v1/admin/api-profiles", json={"kind": "other", "name": "x"}).status_code == 422
-        ok = c.post("/api/v1/admin/api-profiles", json={"kind": "anonymizer", "name": "DocClean 2", "secret": "tok",
-                                                        "config": {"profile": "docclean", "base_url": "https://anon2.test"}})
+        assert c.post("/api/v1/admin/api-profiles", json={"kind": "anonymizer", "name": "DocClean", "secret": "tok", "config": {}}).status_code == 422, \
+            "внешних сервисов обезличивания больше нет: обезличивание встроенное"
+        ok = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "Внутренняя модель", "secret": "tok",
+                                                        "config": {"type": "openai_compatible", "base_url": "https://llm.intra.test/v1", "model": "m"}})
         assert ok.status_code == 201 and ok.json()["secret_set"] is True and "tok" not in ok.text
         pid = ok.json()["id"]
-        assert c.post("/api/v1/admin/api-profiles", json={"kind": "anonymizer", "name": "DocClean 2", "config": {"base_url": "https://z.test"}}).status_code == 422
         r = c.patch(f"/api/v1/admin/api-profiles/{pid}", json={"secret": ""})
         assert r.status_code == 200 and r.json()["secret_set"] is False
-        r = c.patch(f"/api/v1/admin/api-profiles/{pid}", json={"name": "DocClean резерв", "config": {"timeout": 30}})
-        assert r.json()["name"] == "DocClean резерв" and r.json()["config"]["timeout"] == 30
-        t = c.post(f"/api/v1/admin/api-profiles/{pid}/test", params={"kind": "anonymizer"})
-        assert t.status_code == 200 and "ok" in t.json()
+        r = c.patch(f"/api/v1/admin/api-profiles/{pid}", json={"name": "Внутренняя (резерв)", "config": {"timeout": 30}})
+        assert r.json()["name"] == "Внутренняя (резерв)" and r.json()["config"]["timeout"] == 30
         login(c, "alice")
         assert c.get("/api/v1/admin/api-profiles", params={"kind": "llm"}).status_code == 403
 

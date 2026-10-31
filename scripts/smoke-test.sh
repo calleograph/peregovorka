@@ -80,21 +80,6 @@ print(urllib.request.urlopen(r,timeout=120).read().decode())" 2>/dev/null || tru
   else rec "ASR" FAIL "модель загружена, но тестовый инференс не выполнен"; fi
 else rec "ASR" WARNING "модель не загружена/не готова (HTTP $acode): звонки работают, транскрибации нет"; fi
 
-log "-- локальная LLM --"
-if ! llm_local_enabled; then rec "Локальная LLM" SKIP "отключена (LLM_LOCAL_ENABLED=no)"
-elif [ "$(llm_model_state)" != ok ]; then rec "Локальная LLM" WARNING "$(llm_state_text "$(llm_model_state)") — Администрирование → Языковая модель (LLM) → «Скачать модель»; остальная система работает"
-elif [ -z "$(dc ps -q llm-local 2>/dev/null | head -1)" ]; then rec "Локальная LLM" WARNING "модель на месте, но контейнер llm-local не запущен (образ $(llm_image) не скачан?) — повторите scripts/update.sh при наличии интернета"
-else
-  LT="$(bexec "
-import json,urllib.request
-b=json.dumps({'model':'x','max_tokens':12,'temperature':0,'messages':[{'role':'user','content':'Ответь одним словом: готово /no_think'}]}).encode()
-r=urllib.request.Request('http://llm-local:8080/v1/chat/completions',data=b,headers={'Content-Type':'application/json'})
-d=json.load(urllib.request.urlopen(r,timeout=90))
-print('OK' if d['choices'][0]['message'] is not None else 'EMPTY')" || true)"
-  if printf '%s' "$LT" | grep -q '^OK'; then rec "Локальная LLM" OK "Qwen3 1.7B отвечает на тестовый запрос (runtime llama.cpp, CPU, внутренняя сеть без выхода наружу)"
-  else rec "Локальная LLM" WARNING "контейнер запущен, но тестовый запрос не выполнен (модель ещё загружается или сбой — scripts/logs.sh llm-local)"; fi
-fi
-
 log "-- SIP-телефония --"
 if ! sip_enabled; then rec "SIP-телефония" SKIP "не включена (необязательно): sudo scripts/sip.sh enable или Администрирование → SIP-телефония"
 elif [ -z "$(dc ps -q livekit-sip 2>/dev/null | head -1)" ]; then rec "SIP-телефония" WARNING "включена, но контейнер livekit-sip не запущен (образ $(sip_image) не скачан?)"

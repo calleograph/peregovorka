@@ -117,7 +117,7 @@ def llm_app(tmp_path, directory, seen):
 
 
 def configure(c):
-    put_settings(c, "anonymizer", enabled=True, base_url="https://anon.test", token="t")
+    put_settings(c, "anonymizer", required=True)
     put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
 
 
@@ -336,11 +336,25 @@ def test_protocol_generation_holds_no_database_connection_while_anonymizer_and_m
         held.append(("llm", await held_connections(ref["app"].state.engine)))
         return LLM_OK(req)
 
-    async def anon(req: httpx.Request) -> httpx.Response:
-        held.append(("anonymizer", await held_connections(ref["app"].state.engine)))
-        return anon_ok(req)
+    from app.services import protocols as pmod
 
-    with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon), "llm": httpx.MockTransport(llm)}) as c:
+    real = pmod.Anonymizer.process
+
+    def process(self, text):                       # обезличивание (в потоке) — тоже без занятого соединения: минимум за ≈ 1 с, как в held_connections
+        import time  # noqa: PLC0415
+
+        pool = ref["app"].state.engine.sync_engine.pool
+        n = pool.checkedout()
+        for _ in range(20):
+            if n == 0:
+                break
+            time.sleep(0.05)
+            n = min(n, pool.checkedout())
+        held.append(("anonymizer", n))
+        return real(self, text)
+
+    pmod.Anonymizer.process = process
+    with running_app(make_settings(tmp_path), directory, transports={"llm": httpx.MockTransport(llm)}) as c:
         ref["app"] = c.app_obj
         configure(c)
         _room, mid = meeting_with_two(c)
@@ -350,5 +364,6 @@ def test_protocol_generation_holds_no_database_connection_while_anonymizer_and_m
         assert r.status_code == 202
         _drain(c)
         assert c.get(f"/api/v1/meetings/{mid}/protocols/{r.json()['protocol_id']}").json()["status"] == "ready"
+        pmod.Anonymizer.process = real
         assert {k for k, _ in held} == {"anonymizer", "llm"}, held
-        assert all(n == 0 for _, n in held), f"соединений занято во время сетевых обращений: {held}"
+        assert all(n == 0 for _, n in held), f"соединений занято во время обезличивания и обращений к модели: {held}"

@@ -39,16 +39,7 @@ section() { printf '== %s ==\n' "$1"; }
 dc ps 2>&1 | mask_stream > "$B/containers.txt"
 dc config 2>&1 | mask_stream > "$B/compose.config.masked.yml"
 mask_stream < "$ENV_FILE" > "$B/env.masked"
-for s in postgres redis livekit backend asr web llm-local livekit-sip; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
-{
-  section "локальная LLM"
-  echo "включена: ${LLM_LOCAL_ENABLED:-yes}"; echo "файл: $(llm_file_name)"
-  st="$(llm_model_state)"; echo "состояние файла: $st ($(llm_state_text "$st"))"
-  [ -f "$(llm_path)" ] && echo "размер: $(stat -c '%s' "$(llm_path)" 2>/dev/null) байт (ожидается $(llm_expected_bytes))"
-  echo "образ runtime: $(llm_image) ($(docker image inspect "$(llm_image)" >/dev/null 2>&1 && echo есть || echo нет))"
-  echo "контейнер: $(dc ps llm-local 2>/dev/null | tail -n +2 | head -1)"
-  echo "сеть llm_internal internal: $(docker network inspect "${COMPOSE_PROJECT_NAME}_llm_internal" -f '{{.Internal}}' 2>/dev/null || echo н/д)"
-} 2>&1 | mask_stream > "$B/local-llm.txt"
+for s in postgres redis livekit backend asr web livekit-sip; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
 {
   section "SIP-телефония"
   echo "включена: ${SIP_ENABLED:-no}"; echo "signalling: $(sip_port)/udp+tcp"; echo "RTP: $(sip_rtp)/udp"; echo "адрес привязки: ${SIP_BIND_ADDR:-0.0.0.0}"
@@ -144,7 +135,7 @@ containers.txt     docker compose ps
 resources.txt      память, swap, OOM, диск и inode, размеры каталогов данных, docker stats, перезапуски контейнеров
 network.txt        ответ API локально и через публичный адрес, DNS, цепочка TLS публичного адреса
 updates.txt        история развёртываний, последнее обновление, отчёт помощника обновлений
-host.txt           ядро, нагрузка, порты проекта; local-llm.txt, sip.txt — дополнительные компоненты
+host.txt           ядро, нагрузка, порты проекта; sip.txt — дополнительные компоненты
 backend-diag.json  глубокая проверка backend (LiveKit /rtc/v1, RTC, LDAP, БД, Redis, ASR); asr-readyz.json — готовность ASR
 compose.config.masked.yml, env.masked — конфигурация с замаскированными секретами
 logs/*.log         последние строки журналов сервисов (маскированы)

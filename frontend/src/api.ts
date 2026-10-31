@@ -171,7 +171,7 @@ export interface Timing {
   queue_s: number | null; prepare_s: number | null; llm_s: number | null; total_s: number | null;
 }
 export interface Generation {
-  model: string | null; model_title: string | null; llm_local: boolean | null; api_type: string | null; llm_profile: string | null; llm_source: string | null;
+  model: string | null; model_title: string | null; api_type: string | null; anonymized?: boolean | null; anonymizer_profile?: string | null; anonymized_replaced?: number | null; anonymized_categories?: Record<string, number> | null; llm_profile: string | null; llm_source: string | null;
   llm_once: string | null; chunks: number | null; llm_calls: number | null; retries: number | null; length_hits: number | null; finish: Record<string, number> | null;
   max_tokens: number | null; limit_note: string | null; input_chars: number | null; output_chars: number | null; prompt_tokens: number | null;
   completion_tokens: number | null; structured: boolean | null; failed: boolean | null; error_code: string | null;
@@ -198,7 +198,7 @@ export interface ProtocolItem {
   live?: JobLive | null;
   /** Остановка по времени: сколько фрагментов обработано. Резюме с неполным охватом: сколько стенограммы учтено. */
   progress?: { done: number; total: number } | null; coverage?: { done: number; total: number; percent: number } | null; limit_s?: number | null;
-  run_started_at?: string | null; instruction_builtin?: boolean;
+  run_started_at?: string | null;
 }
 export interface JobLive { elapsed_s: number; limit_s: number; target_s: number; stage?: "prepare" | "analysis" | "assemble"; done?: number; total?: number }
 export interface ProtocolTemplate { id: string; name: string; kind: "any" | ProtocolKind; instruction: string; scope: "global" | "user"; can_edit: boolean }
@@ -318,12 +318,12 @@ export type HistoryAccess = "admin" | "participants";
 /** inherit — как в общих настройках; on — всегда обезличивать; off — не обезличивать (текст идёт в LLM как есть). */
 export type AnonymizeMode = "inherit" | "on" | "off";
 export interface Forecast { low_s: number; high_s: number; text: string; basis: "history" | "estimate"; samples: number; chunks: number; note: string }
-export interface LlmChoiceOnce { key: string; label: string; local: boolean }
+export interface LlmChoiceOnce { key: string; label: string }
 export interface ProtocolPlan {
   llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean;
-  forecast?: Forecast; max_output_tokens?: number | null; max_output_note?: string; builtin_instruction?: boolean; job_limit_s?: number; llm_api_type?: string; llm_source?: string; once?: boolean;
-  /** Локальная встроенная модель: данные не покидают сервер. warnings — например, длинная стенограмма для облегчённой модели. */
-  llm_local?: boolean; llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
+  forecast?: Forecast; max_output_tokens?: number | null; max_output_note?: string; job_limit_s?: number; llm_api_type?: string; llm_source?: string; once?: boolean;
+  /** anonymize — материалы будут обезличены (профиль anonymizer_profile); пароли и ключи скрываются всегда. warnings — что помешает формированию. */
+  llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
 }
 
 export interface JournalRow {
@@ -376,21 +376,33 @@ export interface RoomManage {
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
   protocol_instructions?: string | null;
-  /** Сроки хранения и обезличивание задаёт администратор: руководителю показываются только для сведения. */
+  /** Сроки хранения задаёт администратор (руководителю — для сведения); обезличивание руководитель включает сам в пределах, заданных администратором. */
   retention?: { text_days: number | null; audio_days: number | null; video_days?: number | null; custom?: Record<"text" | "audio" | "video", boolean>;
-    server?: Record<"text" | "audio" | "video", number | null>; history_access: string; anonymize_mode: string; anonymizer_profile_id?: string | null } | null;
+    server?: Record<"text" | "audio" | "video", number | null>; history_access: string; anonymize_mode: string; anonymize_profile?: string;
+    privacy?: { enabled: boolean; required: boolean; allowed: PrivacyProfile[]; default: PrivacyProfile; titles: Record<string, string>; effective: boolean; effective_profile: PrivacyProfile } | null } | null;
   llm?: LlmChoice | null; llm_effective?: LlmEffective | null; llm_options?: LlmOptions | null;
   /** Модель для краткого резюме — отдельная цепочка «система → комната → встреча». */
   llm_summary?: LlmChoice | null; llm_summary_effective?: LlmEffective | null;
   sip?: RoomSip | null; sip_options?: SipOptions | null;
 }
-/** Выбор языковой модели: inherit — системная по умолчанию; local — локальная модель; profile — внешний профиль; off — отключена. */
-export interface LlmChoice { mode: "inherit" | "local" | "profile" | "off"; profile_id: string | null; local_model: string | null }
+/** Выбор языковой модели: inherit — системная по умолчанию; profile — подключение по API; off — отключена. */
+export interface LlmChoice { mode: "inherit" | "profile" | "off"; profile_id: string | null }
+export type PrivacyProfile = "basic" | "strict" | "custom";
+export type PrivacyAction = "keep" | "mask" | "pseudonym";
+export interface PrivacyCatalog {
+  categories: { id: string; title: string; mandatory: boolean }[]; actions: PrivacyAction[]; profile_titles: Record<PrivacyProfile, string>;
+  profiles: Record<"basic" | "strict", { title: string; person_format: "short" | "role"; org_scope: "legal" | "all"; actions: Record<string, PrivacyAction> }>;
+  rules: { id: string; category: string; title: string }[]; secret_rules: string[]; formats: string[]; nlp: { ready: boolean; engine: string; note: string | null };
+}
+export interface PrivacyReplacement { start: number; end: number; category: string; rule: string; original: string; replacement: string }
+export interface PrivacyLabResult {
+  source: string; text: string; ms: number; profile: PrivacyProfile; stats: Record<string, number>; warnings: string[]; replacements: PrivacyReplacement[];
+  info: { format?: string; pages?: number; note?: string };
+}
 export interface LlmEffective { name: string; source: "system" | "room" | "meeting"; available: boolean; reason: string | null; note: string | null }
 export interface LlmOptions {
-  system: { name: string; provider: "local" | "external" | "off"; model: string | null };
-  system_summary?: { name: string; provider: "local" | "external" | "off"; model: string | null };
-  local: { id: string; title: string; light: boolean; installed: boolean }[];
+  system: { name: string; provider: "external" | "off"; model: string | null };
+  system_summary?: { name: string; provider: "external" | "off"; model: string | null };
   profiles: { id: string; name: string; model: string; is_default: boolean }[];
   on_missing: "system" | "unavailable";
 }
@@ -421,7 +433,7 @@ export interface SipStatus {
   trunks: { profiles: number; enabled: number; synced: number; in_livekit?: number; missing?: string[] };
   last_check: { profile: string; result: { ok: boolean; message?: string }; at: string | null } | null; active_trunk: string | null; codecs_supported: string[];
 }
-export type ProfileKind = "llm" | "anonymizer";
+export type ProfileKind = "llm";
 export interface LdapProfile {
   id: string; name: string; enabled: boolean; host: string; port: number; protocol: "ldaps" | "starttls"; base_dn: string; upn_suffix: string; netbios_domain: string;
   timeout_s: number; bind_dn: string; secret_set: boolean; login_attribute: string; display_name_attribute: string; email_attribute: string;
@@ -568,7 +580,7 @@ export interface RoomAdmin {
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
   /** Только в списке комнат: люди в идущей встрече и технические подключения (null — LiveKit не ответил). */
   active_people?: number; active_connections?: number | null;
-  anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
+  anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymize_profile?: string;
   mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
   room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; board_allowed: boolean; board_access?: string;
@@ -624,13 +636,6 @@ export interface UpdateOutcome {
 export type HelperState = "ok" | "manual_process" | "wrong_user" | "unresponsive" | "installed_inactive" | "failed" | "stale_unit" | "not_installed";
 /** Состояние помощника: не просто «есть/нет». fix — точная команда; details — факты проверки на сервере (служба, процесс, пользователь). */
 export interface HelperInfo { state: HelperState; available: boolean; privileged: boolean; uid: number | null; message: string; fix: string | null; details?: Record<string, unknown> | null; heartbeat_age_s?: number | null; problem: null | string }
-export interface LocalLlmStatus {
-  enabled_by_install: boolean; provider: "local" | "external" | "off"; ready: boolean; endpoint: string;
-  model: { id: string; title: string; runtime: string; light: boolean; context_tokens: number; tasks: string[]; note: string; source: string; warn_input_chars: number };
-  file: { file: string; size_bytes: number | null; expected_bytes: number; sha256_state: "ok" | "mismatch" | "unchecked" | "skipped"; state: "ok" | "missing" | "partial" | "bad_size" | "bad_hash" };
-  runtime: { reachable: boolean; ready: boolean; detail: string };
-  catalog: { id: string; title: string; runtime: string; light: boolean; source: string }[];
-}
 export interface RepairItem { id: string; title: string; meaning: string; fix: string; kind: "helper" | "backend" | "manual"; fixable: boolean; command?: string; state?: string }
 export interface RepairsInfo {
   items: RepairItem[]; checked_at: number | null; age_s?: number | null; helper: HelperInfo; busy: boolean;
@@ -813,10 +818,10 @@ function authHeaders(method: string): Record<string, string> {
 }
 
 /** Загрузка картинки PUT-ом (аватарка): тело — сами байты. */
-async function putBlob<T>(path: string, blob: Blob): Promise<T> {
+async function putBlob<T>(path: string, blob: Blob, method: "PUT" | "POST" = "PUT"): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`/api/v1${path}`, { method: "PUT", headers: { ...authHeaders("PUT"), "Content-Type": blob.type || "application/octet-stream", Accept: "application/json" }, credentials: "same-origin", body: blob });
+    res = await fetch(`/api/v1${path}`, { method, headers: { ...authHeaders(method), "Content-Type": blob.type || "application/octet-stream", Accept: "application/json" }, credentials: "same-origin", body: blob });
   } catch {
     throw new ApiError(0, "network", "Нет связи с сервером");
   }
@@ -1174,6 +1179,12 @@ export const api = {
     patchRoom: (id: string, body: Record<string, unknown>) => request<RoomAdmin>("PATCH", `/admin/rooms/${id}`, body),
     deleteRoom: (id: string) => request<void>("DELETE", `/admin/rooms/${id}`),
     settings: (g: SettingsGroup) => request<SettingsValues>("GET", `/admin/settings/${g}`),
+    privacy: {
+      catalog: () => request<PrivacyCatalog>("GET", "/admin/privacy/catalog"),
+      lab: (body: { text: string; profile: PrivacyProfile; participants?: string[]; draft?: Record<string, unknown> }) => request<PrivacyLabResult>("POST", "/admin/privacy/lab", body),
+      labFile: (file: File, profile: PrivacyProfile, participants: string[]) =>
+        putBlob<PrivacyLabResult>(`/admin/privacy/lab/file?name=${encodeURIComponent(file.name)}&profile=${profile}&participants=${encodeURIComponent(participants.join("\n"))}`, file, "POST"),
+    },
     saveSettings: (g: SettingsGroup, body: SettingsValues) => request<SettingsValues>("PUT", `/admin/settings/${g}`, body),
     testSettings: (g: SettingsGroup) => request<TestResult>("POST", `/admin/settings/${g}/test`),
     users: (q = "", offset = 0) => request<AdminUser[]>("GET", `/admin/users?q=${encodeURIComponent(q)}&limit=100&offset=${offset}`),
@@ -1215,7 +1226,6 @@ export const api = {
     testProfile: (kind: ProfileKind, id: string) => request<TestResult>("POST", `/admin/api-profiles/${id}/test?kind=${kind}`),
     ldapProfiles: () => request<{ items: LdapProfile[]; env: { configured: boolean; uris: string[]; base_dn: string }; errors: Record<string, string>; active: boolean; legacy: LegacyLdap; boot_errors: Record<string, string> }>("GET", "/admin/ldap-profiles"),
     ldapLegacyImport: () => request<{ profiles: string[]; ca_added: number; groups_added: number }>("POST", "/admin/ldap-legacy/import"),
-    localLlm: () => request<LocalLlmStatus>("GET", "/admin/llm/local"),
     sipStatus: () => request<SipStatus>("GET", "/admin/sip/status"),
     sipProfiles: () => request<{ items: SipProfile[] }>("GET", "/admin/sip/profiles"),
     createSip: (body: Record<string, unknown>) => request<SipProfile>("POST", "/admin/sip/profiles", body),

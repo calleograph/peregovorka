@@ -205,9 +205,9 @@ class RoomAdminOut(BaseModel):
     video_retention_custom: bool = False
     protocol_instructions: str | None
     history_access: str = "admin"
-    anonymize_mode: str = "inherit"
+    anonymize_mode: str = "off"
     llm_profile_id: uuid.UUID | None = None
-    anonymizer_profile_id: uuid.UUID | None = None
+    anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool = False
     mask_profanity: bool = True
     welcome_message: str | None = None
@@ -251,9 +251,9 @@ class RoomCreateIn(BaseModel):
     video_retention_custom: bool | None = None
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     history_access: str = Field(default="admin", pattern="^(admin|participants)$")
-    anonymize_mode: str = Field(default="inherit", pattern="^(inherit|on|off)$")
+    anonymize_mode: str = Field(default="off", pattern="^(inherit|on|off)$")
     llm_profile_id: uuid.UUID | None = None
-    anonymizer_profile_id: uuid.UUID | None = None
+    anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool = False
     mask_profanity: bool = True
     welcome_message: str | None = Field(default=None, max_length=2000)
@@ -300,7 +300,7 @@ class RoomPatchIn(BaseModel):
     history_access: str | None = Field(default=None, pattern="^(admin|participants)$")
     anonymize_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")
     llm_profile_id: uuid.UUID | None = None
-    anonymizer_profile_id: uuid.UUID | None = None
+    anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool | None = None
     mask_profanity: bool | None = None
     welcome_message: str | None = Field(default=None, max_length=2000)

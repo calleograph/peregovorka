@@ -127,8 +127,6 @@ if [ ! -f "$ENV" ]; then
     set_var ASR_CPU_THREADS "$ASR_T"; set_var ASR_INTEROP_THREADS "$ASR_I"
     info "ASR на общем сервере: ASR_CPU_THREADS=$ASR_T, ASR_INTEROP_THREADS=$ASR_I (по $CPUS vCPU). Уточнить по задержке: scripts/asr-bench.sh"
   fi
-  LLM_T="$(llm_local_threads "$(nproc 2>/dev/null || echo 4)" "$PROFILE")"; set_var LLM_LOCAL_THREADS "$LLM_T"
-  info "Локальная LLM: LLM_LOCAL_THREADS=$LLM_T (по числу vCPU, остаток — звонку и распознаванию; это отправная точка, а не измерение — при необходимости измените в .env)"
   CPUS_N="$(nproc 2>/dev/null || echo 4)"; BW="$(backend_workers "$CPUS_N" "$PROFILE")"; PGMAX="$(pg_max_connections "$BW" "$CPUS_N")"
   set_var BACKEND_WORKERS "$BW"; set_var POSTGRES_MAX_CONNECTIONS "$PGMAX"
   info "Backend: BACKEND_WORKERS=$BW процесс(а), POSTGRES_MAX_CONNECTIONS=$PGMAX (по $CPUS_N vCPU; это отправная точка — нагрузочный замер: docs/DB_AND_SCALING.md)"
@@ -219,10 +217,6 @@ smoke_state() { # smoke_state "Имя проверки" … — итоговый
   done
   printf '%s' "${st:-?}"
 }
-llm_banner_state() { # итог по локальной LLM для финального блока: не загружена — это не ошибка установки
-  local st; st="$(smoke_state "Локальная LLM")"
-  case "$st" in OK) echo OK ;; SKIP) echo "отключена" ;; WARNING) echo "НЕ ЗАГРУЖЕНА / не готова — остальное работает (см. выше; позже: Администрирование → Языковая модель)" ;; *) echo "$st" ;; esac
-}
 if "$REPO_ROOT/scripts/updater.sh" install --env "$ENV" --yes >/dev/null 2>&1; then UPD_NOTE="OK"; else UPD_NOTE="не установлен (ставится позже: sudo ./scripts/updater.sh install --yes)"; fi
 BOOT_OK=1
 log; log "================================================================"
@@ -231,7 +225,6 @@ log "================================================================"
 printf '  %-34s %s\n' "Сервисы (Docker)" "$(smoke_state "Backend" "Frontend")" \
   "База данных" "$(smoke_state "PostgreSQL" "Redis" "Миграции (Alembic)")" \
   "Распознавание речи (ASR)" "$(smoke_state "ASR")" \
-  "Локальная LLM (Qwen3 1.7B)" "$(llm_banner_state)" \
   "Звонки (LiveKit)" "$(smoke_state "LiveKit HTTP" "RTC TCP" "RTC UDP")" \
   "Веб-интерфейс" "$(smoke_state "Frontend" "Тестовая комната")" \
   "Помощник обновлений в браузере" "$UPD_NOTE"

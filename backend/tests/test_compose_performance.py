@@ -30,8 +30,7 @@ def test_livekit_gets_priority_weight_file_limit_and_metrics_without_publishing_
 
 def test_other_services_get_lower_weights_but_no_hard_limits():
     assert re.search(r"^    cpu_shares: 512\b", service("asr"), re.M)
-    assert re.search(r"^    cpu_shares: 256\b", service("llm-local"), re.M)
-    for name in ("asr", "llm-local", "backend", "web", "postgres", "redis"):
+    for name in ("asr", "backend", "web", "postgres", "redis"):
         assert not re.search(r"^    cpus:|^    cpuset:", service(name), re.M), f"{name}: жёсткого лимита процессора нет"
 
 

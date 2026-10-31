@@ -1,7 +1,7 @@
 """Шлюз к LLM (портирован из legacy/php/src/Llm/Gateway: адаптеры OpenAI / Anthropic / OpenAI-compatible).
 
-К LLM попадает ТОЛЬКО уже обезличенный текст: вызывающий код (services/protocols.py) обязан получить его
-от AnonymizerClient; сам шлюз текст не проверяет. Ключ API передаётся из зашифрованных настроек и не логируется.
+Единственная точка отправки текста в языковые модели. Перед отправкой здесь ОБЯЗАТЕЛЬНО маскируются пароли, токены и ключи (app/privacy/guard.py);
+персональные данные обезличивает вызывающий конвейер (services/protocols.py) по настройке комнаты. Ключ API берётся из зашифрованных настроек и не логируется.
 """
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 
 import httpx
+
+from ..privacy.guard import mask_secrets
 
 from ..services.settings import LlmSettings
 
@@ -226,21 +228,19 @@ class LlmResult:
 
 
 class LlmClient:
-    def __init__(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None, local: bool = False,
-                 purpose: str = "protocol"):
+    def __init__(self, cfg: LlmSettings, *, ca_file: str | None = None, transport: httpx.AsyncBaseTransport | None = None, purpose: str = "protocol"):
         self._c = cfg
         self.purpose = purpose      # summary | protocol — от задачи зависит максимальная длина ответа
         # счётчики за время жизни клиента (один документ): вызовы, обрывы по длине, причины остановки, время ответов — для журнала и статистики моделей
         self.stats: dict = {"calls": 0, "length": 0, "finish": {}, "ms": 0, "max_tokens": 0, "requested": 0, "clamps": [], "provider_cap": 0}
-        self.local = local          # встроенная локальная модель (Qwen3): отключаем «размышления» и чистим служебные блоки из ответа
         self._verify: str | bool = ca_file if (cfg.use_corporate_ca and ca_file) else True
         self._transport = transport
         # рассуждения модели отключены (reasoning.effort=none): всегда (off) или после первого обрыва лимита «мыслями» (auto) — дальше действует на все запросы документа
         self._no_reasoning = getattr(cfg, "reasoning", "auto") == "off"
 
     def scaled_cap(self, floor: int, ceil: int, chars: int) -> int:
-        """Потолок ответа, растущий вместе со входом (≈ 1/12 знаков, не меньше floor и не больше ceil); у локальной модели — floor: на процессоре длинный ответ стоит минуты."""
-        return floor if self.local else max(floor, min(ceil, chars // 12))
+        """Потолок ответа, растущий вместе со входом (≈ 1/12 знаков, не меньше floor и не больше ceil)."""
+        return max(floor, min(ceil, chars // 12))
 
     def _base(self) -> str:
         return (self._c.base_url or _DEFAULT_BASE.get(self._c.type, "")).rstrip("/")
@@ -248,13 +248,22 @@ class LlmClient:
     async def complete(self, system: str, user: str, *, max_tokens: int | None = None, json_schema: dict | None = None,
                        temperature: float | None = None, _retried: bool = False) -> LlmResult:
         c = self._c
+        # Обязательная защита: пароли, токены, ключи и строки подключения не уходят в модель ни при каком профиле обезличивания и ни из какой функции.
+        # Это единственная точка отправки текста в языковые модели; сбой проверки — отказ (LlmError), исходный текст не отправляется.
+        try:
+            system, n1 = mask_secrets(system)
+            user, n2 = mask_secrets(user)
+        except Exception as exc:  # noqa: BLE001
+            raise LlmError("privacy_check_failed", f"обязательная проверка на пароли и ключи не выполнена ({type(exc).__name__})") from None
+        if n1 or n2:
+            self.stats["secrets_masked"] = self.stats.get("secrets_masked", 0) + n1 + n2
         temp = c.temperature if temperature is None else temperature
         cap, _note = c.output_limit(self.purpose)
         limit = min(cap, max_tokens) if max_tokens else cap
         requested = limit
         if _retried and max_tokens:
             limit = max_tokens                  # повтор после «пустого» ответа: лимит заведомо выше обычного потолка задачи
-        if c.context_window and not self.local and not _retried:
+        if c.context_window and not _retried:
             # Окно контекста известно: место под ответ не отнимается у стенограммы. Русский текст ≈ 2 знака на токен (берём с запасом), остальное — под ответ.
             room = c.context_window - int((len(system) + len(user)) / 2.0) - 256
             if 1024 <= room < limit:
@@ -263,8 +272,8 @@ class LlmClient:
         if not c.enabled or not c.model:
             raise LlmError("not_configured")
         started = time.monotonic()
-        use_temp = c.send_temperature or self.local
-        sep_system = c.supports_system or self.local
+        use_temp = c.send_temperature
+        sep_system = c.supports_system
         if c.type == "anthropic":
             url = f"{self._base()}/messages"
             headers = {"x-api-key": c.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
@@ -282,21 +291,17 @@ class LlmClient:
                     else [{"role": "user", "content": f"{system}\n\n{user}"}]}
             if use_temp:
                 body["temperature"] = temp
-            if json_schema is not None and (c.supports_json or self.local):
-                # ответ строго по схеме (llama.cpp строит грамматику): вместо «текста, похожего на JSON» приходит разбираемый JSON
+            if json_schema is not None and c.supports_json:
+                # ответ строго по схеме: вместо «текста, похожего на JSON» приходит разбираемый JSON
                 body["response_format"] = {"type": "json_schema", "json_schema": {"name": "extract", "strict": True, "schema": json_schema}}
-            if self.local and sep_system:
-                # Qwen3 по умолчанию «думает» вслух (блок <think>) — для резюме это лишние минуты на CPU: выключаем и мягкой командой /no_think в запросе
-                body["chat_template_kwargs"] = {"enable_thinking": False}
-                body["messages"][0]["content"] = system + "\n/no_think"
             if c.type == "openai_compatible" and c.routing_provider:
                 body["provider"] = {"only": [c.routing_provider]}
-            if self._no_reasoning and not self.local and c.type in ("openai_compatible", "custom"):
+            if self._no_reasoning and c.type in ("openai_compatible", "custom"):
                 body["reasoning"] = {"effort": "none"}
         extra = c.all_headers()
         if extra:
             headers = {**extra, **headers}          # служебные заголовки провайдера (ключ, content-type) не перекрываются
-        stream = bool(getattr(c, "stream_response", True)) and not self.local
+        stream = bool(getattr(c, "stream_response", True))
         if stream:
             body["stream"] = True
             if c.type != "anthropic":
@@ -426,7 +431,7 @@ class LlmClient:
                    "Увеличьте лимит ответа в настройках подключения, отключите режим рассуждений у модели или выберите другую модель.")
             hard = max(256, c.context_window - 2048) if c.context_window > 4096 else (c.context_window // 2 if c.context_window else MAX_RETRY_TOKENS)
             bigger = min(limit * 2, hard)
-            if not retried and not self._no_reasoning and parsed["reasoning"] and c.type in ("openai_compatible", "custom") and not self.local \
+            if not retried and not self._no_reasoning and parsed["reasoning"] and c.type in ("openai_compatible", "custom") \
                     and getattr(c, "reasoning", "auto") == "auto" and self.stats.get("reasoning") != "rejected":
                 # Лимит целиком ушёл на «мысли» модели: в этом документе рассуждения больше не нужны — отключаем их и повторяем (лимит заодно вдвое больше, на случай если шлюз параметр проигнорирует)
                 self._no_reasoning = True

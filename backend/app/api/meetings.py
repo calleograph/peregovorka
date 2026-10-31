@@ -20,7 +20,6 @@ from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.doc_render import with_incomplete_notice
 from ..services.glass_html import CSP_HEADER
 from ..services.llm_choice import once_options
-from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
 from ..services.meetings import JoinError
 from ..services.livekit import list_present_identities, parse_user_identity
 from ..services.settings import SettingsError
@@ -326,8 +325,8 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
          "location": (p.meta or {}).get("location") if p.file_state != "missing" else None, "file_state": p.file_state,
          "export_files": (p.meta or {}).get("export_files"),
          "timing": {k: (p.meta or {}).get(k) for k in ("requested_at", "started_at", "llm_started_at", "llm_finished_at", "finished_at", "queue_s", "prepare_s", "llm_s", "total_s")},
-         # как создан документ: модель, локальная ли, тип API, сколько частей и повторов, причины остановки; ошибка/обрыв видны в статусе
-         "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "llm_local", "api_type", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
+         # как создан документ: модель, тип API, обезличивание (включено ли, профиль, сколько замен по категориям — без значений), части и повторы, причины остановки
+         "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "api_type", "anonymized", "anonymizer_profile", "anonymized_replaced", "anonymized_categories", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
                                                                "length_hits", "finish", "max_tokens", "limit_requested", "limit_applied", "limit_note", "input_chars", "output_chars", "prompt_tokens",
                                                                "completion_tokens", "structured", "failed", "error_code")}}
     # привязка времён документа к стенограмме: секунды суток начала встречи в часовом поясе, в котором записаны метки [ЧЧ:ММ:СС] (переход от пункта к реплике)
@@ -364,11 +363,10 @@ async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str
         plan = await ps.plan(db, meeting, kind, once=llm if can_override else None)
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    builtin = bool(plan.get("builtin_instruction"))      # локальная модель: показывается встроенная инструкция, пользовательские и комнатные к ней не применяются
-    out = {"kind": kind, "instruction": LOCAL_BUILTIN_INSTRUCTION if builtin else await ps.default_instruction(db, meeting, kind), "builtin": builtin,
+    out = {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "builtin": False,
            "plan": plan, "can_override": can_override}
     if can_override:
-        out["llm_choices"] = await once_options(ps.profiles, ps.local_llm, db)
+        out["llm_choices"] = await once_options(ps.profiles, db)
     return out
 
 
@@ -392,7 +390,7 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
     llm_once = body.get("llm_once") or None
     if llm_once is not None:
         if not isinstance(llm_once, str) or len(llm_once) > 80:
-            raise HTTPException(status_code=422, detail="llm_once: строка local:<модель> или profile:<профиль>")
+            raise HTTPException(status_code=422, detail="llm_once: строка profile:<подключение>")
         if not roles.can_manage_room(meeting.room, su):
             raise HTTPException(status_code=403, detail="Другую модель на один раз выбирают руководители комнаты и администраторы")
     try:

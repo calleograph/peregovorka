@@ -155,67 +155,63 @@ class ChatFilesSettings(_Group):
 
 
 class AnonymizerSettings(_Group):
-    """API обезличивания (как в прежнем проекте): DocClean либо произвольный JSON API. Fail closed."""
+    """Обезличивание материалов встреч перед отправкой в языковую модель — встроенная подсистема на Python (app/privacy), работает на этом сервере,
+    текст никуда не отправляет. Пароли, токены и ключи маскируются ВСЕГДА, независимо от этих настроек (app/privacy/guard.py)."""
 
-    SECRETS: ClassVar[tuple[str, ...]] = ("token",)
-    enabled: bool = False
-    profile: Literal["docclean", "generic"] = "docclean"
-    base_url: str = ""
-    docclean_mode: Literal["ai_ready", "full", "personal_corporate", "personal"] = "ai_ready"
-    docclean_groups: str = ""  # через запятую из: pdn, corporate, secrets, network, other
-    connect_timeout: int = Field(default=5, ge=1, le=60)
-    timeout: int = Field(default=60, ge=1, le=600)
-    max_chunk_chars: int = Field(default=20000, ge=500, le=1_000_000)
-    use_corporate_ca: bool = True
-    allow_http: bool = False
-    token: str = ""
-    # generic
-    endpoint: str = "/anonymize"
-    request_field: str = "text"
-    response_field: str = "anonymized_text"
-    status_field: str = ""
-    status_ok_value: str = ""
-    auth_type: Literal["none", "bearer", "header", "basic"] = "bearer"
-    auth_header_name: str = "X-API-Key"
-    auth_username: str = ""
-    extra_body: str = ""
+    enabled: bool = True                     # руководители комнат могут включить обезличивание в своей комнате
+    required: bool = False                   # обязательно для всех комнат: комната не может его выключить
+    default_profile: Literal["basic", "strict", "custom"] = "basic"
+    allowed_profiles: list[Literal["basic", "strict", "custom"]] = Field(default_factory=lambda: ["basic", "strict", "custom"])
+    # «Настраиваемый» профиль: действие по категории (keep — оставить, mask — метка «[телефон]», pseudonym — согласованное обозначение «[сервер 2]»)
+    custom_actions: dict[str, Literal["keep", "mask", "pseudonym"]] = Field(default_factory=dict)
+    custom_person_format: Literal["short", "role"] = "short"       # «Иван И.» | «Участник 2»
+    custom_org_scope: Literal["legal", "all"] = "legal"             # организации: только с правовой формой и из словаря | все, найденные в тексте
+    terms: list[dict] = Field(default_factory=list)                 # словарь: [{term, category, replacement}] — клиенты, проекты, внутренние системы, свои термины
+    exceptions: list[str] = Field(default_factory=list)             # никогда не заменять (кроме секретов): своя компания, общеизвестные названия
+    internal_domains: list[str] = Field(default_factory=list)       # внутренние домены: адреса и имена серверов в них заменяются (*.local, *.corp — всегда)
+    lab_max_mb: int = Field(default=20, ge=1, le=100)               # лаборатория: наибольший размер загружаемого файла
+    lab_max_chars: int = Field(default=300_000, ge=1000, le=2_000_000)   # лаборатория: наибольший объём текста для одной проверки
 
-    @field_validator("base_url")
+    @field_validator("custom_actions")
     @classmethod
-    def _url(cls, v: str) -> str:
-        v = v.strip()
-        if v and not re.match(r"^https?://[^\s/]+", v):
-            raise ValueError("base_url: http(s)://хост[:порт][/путь]")
-        return v.rstrip("/")
+    def _actions(cls, v: dict) -> dict:
+        from ..privacy.engine import CATEGORIES  # noqa: PLC0415
 
-    @field_validator("docclean_groups")
-    @classmethod
-    def _groups(cls, v: str) -> str:
-        allowed = {"pdn", "corporate", "secrets", "network", "other"}
-        items = [x.strip() for x in v.split(",") if x.strip()]
-        bad = [x for x in items if x not in allowed]
+        bad = [k for k in v if k not in CATEGORIES or k == "secret"]
         if bad:
-            raise ValueError(f"Недопустимые группы: {', '.join(bad)}")
-        return ",".join(items)
-
-    @field_validator("extra_body")
-    @classmethod
-    def _extra(cls, v: str) -> str:
-        if v.strip():
-            try:
-                if not isinstance(json.loads(v), dict):
-                    raise ValueError
-            except ValueError:
-                raise ValueError("extra_body: JSON-объект") from None
+            raise ValueError("Неизвестные категории: " + ", ".join(bad))
         return v
 
+    @field_validator("terms")
+    @classmethod
+    def _terms(cls, v: list) -> list:
+        cats = {"project", "organization", "custom", "host", "person", "location"}
+        out = []
+        for i, t in enumerate(v):
+            if not isinstance(t, dict) or not str(t.get("term") or "").strip():
+                raise ValueError(f"Словарь, строка {i + 1}: нужен термин")
+            term, cat, rep = str(t["term"]).strip(), str(t.get("category") or "custom"), str(t.get("replacement") or "").strip()
+            if cat not in cats or len(term) > 200 or len(rep) > 100:
+                raise ValueError(f"Словарь, строка {i + 1}: категория из {', '.join(sorted(cats))}, термин до 200 знаков, замена до 100")
+            out.append({"term": term, "category": cat, "replacement": rep})
+        if len(out) > 5000:
+            raise ValueError("Словарь: не больше 5000 терминов")
+        return out
+
+    @field_validator("exceptions", "internal_domains")
+    @classmethod
+    def _lines(cls, v: list) -> list:
+        items = [str(x).strip() for x in v if str(x).strip()]
+        if len(items) > 5000 or any(len(x) > 200 for x in items):
+            raise ValueError("Не больше 5000 строк, каждая до 200 знаков")
+        return list(dict.fromkeys(items))
+
     @model_validator(mode="after")
-    def _check(self):
-        if self.enabled:
-            if not self.base_url:
-                raise ValueError("Укажите base_url сервиса обезличивания")
-            if self.base_url.startswith("http://") and not self.allow_http:
-                raise ValueError("Разрешён только https:// (http — лишь при явном «allow_http»)")
+    def _profiles(self):
+        if not self.allowed_profiles:
+            raise ValueError("Разрешите хотя бы один профиль")
+        if self.default_profile not in self.allowed_profiles:
+            raise ValueError("Профиль по умолчанию должен быть среди разрешённых")
         return self
 
 
@@ -257,18 +253,18 @@ def _header_value(value: str) -> str:
 
 
 class LlmSettings(_Group):
-    """Внешняя/внутренняя LLM для краткого протокола. Данные уходят ТОЛЬКО после обезличивания."""
+    """Языковая модель по API (внешняя или развёрнутая внутри организации): адрес, модель, токен. Пароли и ключи в запросы не попадают никогда;
+    персональные данные — по настройке обезличивания комнаты."""
 
     SECRETS: ClassVar[tuple[str, ...]] = ("api_key", "secret_headers")
     enabled: bool = False
-    # Режим: local — встроенная локальная модель (Qwen3 1.7B, данные не покидают сервер); external — внешняя/внутренняя API-модель по полям ниже;
-    # off — выключена. None (настройки до 0.5.0): external, если включена (enabled), иначе off.
-    provider: Literal["local", "external", "off"] | None = None
-    local_model: str = "qwen3-1.7b-q4_k_m"
-    # Модель для КРАТКОГО РЕЗЮМЕ: same — такая же, как для протокола; local — локальная Qwen3; external — внешний API (по умолчанию); off — резюме не формируются.
-    summary_provider: Literal["same", "local", "external", "off"] = "same"
-    # Модель для КАРТЫ РАЗГОВОРА (отдельное назначение): same — как для протокола; local — локальная Qwen3; external — внешний API; off — карты не формируются.
-    map_provider: Literal["same", "local", "external", "off"] = "same"
+    # Режим: external — модель по API (внешний сервис или сервер внутри организации) по полям ниже; off — выключена.
+    # None (настройки до 0.5.0): external, если включена (enabled), иначе off. Прежний «local» (встроенная Qwen, удалена в 0.56.0) переводит миграция 0056.
+    provider: Literal["external", "off"] | None = None
+    # Модель для КРАТКОГО РЕЗЮМЕ: same — такая же, как для протокола; external — своё подключение; off — резюме не формируются.
+    summary_provider: Literal["same", "external", "off"] = "same"
+    # Модель для КАРТЫ РАЗГОВОРА (отдельное назначение): same — как для протокола; external — своё подключение; off — карты не формируются.
+    map_provider: Literal["same", "external", "off"] = "same"
     # Какое ВНЕШНЕЕ подключение использует каждая задача (когда для неё выбран режим «внешняя»): идентификатор профиля из «Внешние API» ("main" — прежние общие настройки).
     # Пусто — профиль по умолчанию (как в прежних версиях); у задач «как протокол» — профиль протокола.
     protocol_profile: str | None = None
@@ -400,8 +396,8 @@ class LlmSettings(_Group):
         if self.provider is None:
             self.provider = "external" if self.enabled else "off"
         self.enabled = self.provider != "off"
-        if self.provider in ("local", "off"):
-            return self                      # внешние поля не обязательны
+        if self.provider == "off":
+            return self                      # поля подключения не обязательны
         if any((self.protocol_profile, self.summary_profile, self.map_profile)) and not self.model:
             return self                      # подключение выбрано в «Назначениях» (отдельный профиль): прежние общие поля подключения заполнять не нужно
         if self.enabled or self.provider == "external":
@@ -441,8 +437,8 @@ class ProtocolSettings(_Group):
     summary_instructions: str = Field(default=DEFAULT_SUMMARY_INSTRUCTION, max_length=20000)
     auto_generate: bool = False
     auto_summary: bool = False
-    # Как внешняя (не локальная) модель формирует протокол и резюме: free — по инструкции пользователя, ответ — Markdown; structured — как локальная: узкие запросы,
-    # JSON по схеме, таблицы и оформление собирает система (один и тот же документ у любой модели). Локальная Qwen3 всегда работает в структурном режиме.
+    # Как модель формирует протокол и резюме: free — по инструкции пользователя, ответ — Markdown; structured — узкие запросы,
+    # JSON по схеме, таблицы и оформление собирает система (один и тот же документ у любой модели).
     external_mode: Literal["free", "structured"] = "free"
     auto_map: bool = False          # формировать «Карту разговора» после каждой встречи (по умолчанию выключено: карта тратит время и процессор); комната может переопределить
     max_input_chars: int = Field(default=60000, ge=2000, le=1_000_000)

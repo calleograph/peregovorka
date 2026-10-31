@@ -90,8 +90,8 @@ t "img: IMAGE_MIRRORS=none отключает зеркала, внутренни
   IMAGE_MIRRORS="reg.example.org/dockerhub mirror.gcr.io"; r="$(img_mirror_refs "'"$PIN"'")"
   [ "$(sed -n 1p <<<"$r")" = "reg.example.org/dockerhub/livekit/egress@'"$DG"'" ] && [ "$(sed -n 2p <<<"$r")" = "'"$MIR"'" ]'
 t "img: зеркало образов ghcr.io задаётся явно (ИСТОЧНИК=ПРЕФИКС) и не подходит образам Docker Hub" imgrun '
-  IMAGE_MIRRORS="ghcr.io=reg.example.org/ghcr"; L="ghcr.io/ggml-org/llama.cpp:server-b1@sha256:'"$(printf 'c%.0s' $(seq 64))"'"
-  [ "$(img_mirror_refs "$L")" = "reg.example.org/ghcr/ggml-org/llama.cpp@sha256:'"$(printf 'c%.0s' $(seq 64))"'" ] && [ -z "$(img_mirror_refs "'"$PIN"'")" ]'
+  IMAGE_MIRRORS="ghcr.io=reg.example.org/ghcr"; L="ghcr.io/example-org/tool:b1@sha256:'"$(printf 'c%.0s' $(seq 64))"'"
+  [ "$(img_mirror_refs "$L")" = "reg.example.org/ghcr/example-org/tool@sha256:'"$(printf 'c%.0s' $(seq 64))"'" ] && [ -z "$(img_mirror_refs "'"$PIN"'")" ]'
 t "img: официальный образ Docker Hub получает library/ в пути зеркала" imgrun 'IMAGE_MIRRORS=mirror.gcr.io; [ "$(img_mirror_refs redis:7@sha256:'"$(printf 'd%.0s' $(seq 64))"')" = "mirror.gcr.io/library/redis@sha256:'"$(printf 'd%.0s' $(seq 64))"'" ]'
 t "img: образ другой архитектуры отклоняется и не принимается как загруженный" imgrun '
   cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; FAKE_IMG_ARCH=arm64; export FAKE_IMG_ARCH
@@ -121,4 +121,4 @@ t "img: причина — служба Docker" cls 'Cannot connect to the Docke
 t "img: причина — другая архитектура" cls 'no matching manifest for linux/arm64/v8 in the manifest list entries' arch
 t "img: неопознанное — unknown, а не выдуманная причина" cls 'something odd happened' unknown
 t "img: redact скрывает Bearer, подписи URL и пароль в адресе" bash -c 'source "$1/scripts/lib/common.sh"; o="$(printf "%s\n" "Authorization: Bearer abcdefghijklmnop" "https://u:p4ss@h.example/x?X-Amz-Signature=ZZZ&a=1" | img_redact)"; ! grep -q "abcdefghijklmnop\|p4ss\|ZZZ" <<<"$o" && grep -q "a=1" <<<"$o"' _ "$ROOT"
-t "img: compose использует VIDEO_IMAGE, SIP_IMAGE и LLM_LOCAL_IMAGE (на это опирается выбор зеркала)" bash -c 'grep -q "VIDEO_IMAGE:-" "$1/deployment/compose.yml" && grep -q "SIP_IMAGE:-" "$1/deployment/compose.yml" && grep -q "LLM_LOCAL_IMAGE:-" "$1/deployment/compose.yml"' _ "$ROOT"
+t "img: compose использует VIDEO_IMAGE и SIP_IMAGE (на это опирается выбор зеркала)" bash -c 'grep -q "VIDEO_IMAGE:-" "$1/deployment/compose.yml" && grep -q "SIP_IMAGE:-" "$1/deployment/compose.yml"' _ "$ROOT"

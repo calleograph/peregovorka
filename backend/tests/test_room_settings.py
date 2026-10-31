@@ -1,23 +1,23 @@
-"""Комната как единица настройки: языковая модель (системная → комната → встреча, запасной вариант), рассылка материалов (архив, настройки встречи)."""
+"""Комната как единица настройки: языковая модель (системная → комната → встреча, запасной вариант), рассылка материалов (архив, настройки встречи).
+Модели — подключения по API: системное («main-model») и отдельное подключение «Сильная внешняя» («big-model»); какой моделью сформирован документ, видно по запросу."""
 from __future__ import annotations
 
 import io
 import json
 import uuid
 import zipfile
-from dataclasses import replace
 
 import httpx
 
-from app.services import local_llm as ll
 from app.services.mail_delivery import MailError  # noqa: F401  (проверка импорта)
 
-from .conftest import OTHER_GROUP, login, make_room, make_settings, put_settings, running_app
+from .conftest import login, make_room, make_settings, put_settings, running_app
 from .test_access_and_protocols import end_by_alice, meeting_with_two
-from .test_admin_features import _drain, anon_ok
-from .test_local_llm import FAKE_MODEL, Runtime, model_env
+from .test_admin_features import _drain
 from .test_mail import LEADERS, add_profile, fake_smtp, messages, run_queue  # noqa: F401
 from .test_transcripts import _join
+
+MAIN = {"provider": "external", "type": "openai_compatible", "base_url": "https://llm-main.test/v1", "model": "main-model", "api_key": "K"}
 
 
 def ext_profile(c, name="Сильная внешняя", model="big-model"):
@@ -27,14 +27,13 @@ def ext_profile(c, name="Сильная внешняя", model="big-model"):
     return r.json()["id"]
 
 
-def app_(tmp_path, directory, rt, ext_seen=None, **over):
-    def external(req: httpx.Request) -> httpx.Response:
-        if ext_seen is not None:
-            ext_seen.append(json.loads(req.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "**Резюме** от внешней модели"}}]})
+def app_(tmp_path, directory, seen=None, **over):
+    def model(req: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(json.loads(req.content)["model"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "**Резюме** от модели"}}]})
 
-    return running_app(make_settings(tmp_path, **model_env(tmp_path), **over), directory,
-                       transports={"local_llm": httpx.MockTransport(rt), "llm": httpx.MockTransport(external), "anonymizer": httpx.MockTransport(anon_ok)})
+    return running_app(make_settings(tmp_path, **over), directory, transports={"llm": httpx.MockTransport(model)})
 
 
 def manage(c, room_id, **body):
@@ -47,127 +46,106 @@ def plan(c, mid):
     return c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction").json()["plan"]
 
 
+def default_ext_profile(c, model="default-ext-model"):
+    """Подключение, отмеченное «по умолчанию»."""
+    login(c, "root")
+    r = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "Внешний по умолчанию", "secret": "SECRET-D", "make_default": True,
+                                                    "config": {"type": "openai_compatible", "base_url": "https://llm-d.test/v1", "model": model}})
+    assert r.status_code == 201 and r.json()["is_default"] is True, r.text
+    return r.json()["id"]
+
+
+def generate(c, mid, kind="summary"):
+    r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": kind, "instruction": "x"})
+    assert r.status_code == 202, r.text
+    _drain(c)
+
+
 # ------------------------------------------------------------------------------------------------ модель комнаты
 def test_room_exposes_llm_options_and_effective_model(tmp_path, directory):
-    with app_(tmp_path, directory, Runtime()) as c:
+    with app_(tmp_path, directory) as c:
         pid = ext_profile(c)
-        put_settings(c, "llm", provider="local")
+        put_settings(c, "llm", **MAIN)
         room = make_room(c, moderators=LEADERS)
         login(c, "carol")                                   # руководитель комнаты
         got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
-        assert got["llm"]["mode"] == "inherit" and got["llm_effective"]["source"] == "system"
+        assert got["llm"] == {"mode": "inherit", "profile_id": None} and got["llm_effective"]["source"] == "system"
         opts = got["llm_options"]
-        assert opts["system"]["provider"] == "local" and [m["id"] for m in opts["local"]] == ["qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True
+        assert opts["system"]["provider"] == "external" and opts["system"]["model"] == "main-model" and "local" not in opts
         assert pid in [p["id"] for p in opts["profiles"]] and "SECRET" not in json.dumps(got)
         assert opts["on_missing"] == "system"
 
 
-def test_room_can_use_local_external_off_or_inherit(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
+def test_room_can_use_a_profile_off_or_inherit_and_the_removed_local_mode_is_refused(tmp_path, directory):
+    seen: list[str] = []
+    with app_(tmp_path, directory, seen) as c:
         pid = ext_profile(c)
         put_settings(c, "llm", provider="off")
         room = make_room(c, moderators=LEADERS)
         login(c, "carol")
-        # системная — «отключена», а комната выбрала локальную модель
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
-        assert out["llm"]["mode"] == "local" and out["llm_effective"]["name"].startswith("Qwen3") and out["llm_effective"]["available"] is True
-        _r, mid = (room, _join(c, "alice", room["id"])["meeting_id"])
+        out = manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})        # системная «отключена», комната выбрала подключение
+        assert out["llm_effective"]["name"] == "Сильная внешняя" and out["llm_effective"]["source"] == "room" and out["llm_effective"]["available"] is True
+        mid = _join(c, "alice", room["id"])["meeting_id"]
         end_by_alice(c, mid)
         login(c, "carol")
         p = plan(c, mid)
-        assert p["llm_ready"] is True and p["llm_local"] is True and p["llm_source"] == "room"
-        # внешний профиль
-        out = manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
-        assert out["llm_effective"]["name"] == "Сильная внешняя" and out["llm_effective"]["source"] == "room"
-        p = plan(c, mid)
-        assert p["llm_ready"] is True and p["llm_local"] is False and p["llm_model"] == "big-model"
-        # отключена
+        assert p["llm_ready"] is True and p["llm_model"] == "big-model" and p["llm_source"] == "room" and "llm_local" not in p
         out = manage(c, room["id"], llm={"mode": "off"})
         assert out["llm_effective"]["available"] is False and "отключена" in out["llm_effective"]["reason"]
         assert plan(c, mid)["llm_ready"] is False
-        # «как системная» — системная отключена
         out = manage(c, room["id"], llm={"mode": "inherit"})
         assert out["llm"]["mode"] == "inherit" and out["llm_effective"]["available"] is False
-        # недопустимое
-        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"llm": {"mode": "cloud"}}).status_code == 422
-        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"llm": {"mode": "profile"}}).status_code == 422
-        assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"llm": {"mode": "local", "local_model": "gpt-9"}}).status_code == 422
+        for bad in ({"mode": "cloud"}, {"mode": "profile"}, {"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"}):
+            assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"llm": bad}).status_code == 422, bad
         login(c, "alice")                                  # обычный участник настройки менять не может
         assert c.patch(f"/api/v1/rooms/{room['id']}/manage", json={"llm": {"mode": "off"}}).status_code in (403, 404)
 
 
 def test_deleted_profile_falls_back_to_system_model_with_a_note_or_becomes_unavailable_by_policy(tmp_path, directory):
-    with app_(tmp_path, directory, Runtime()) as c:
+    seen: list[str] = []
+    with app_(tmp_path, directory, seen) as c:
         pid = ext_profile(c)
-        put_settings(c, "llm", provider="local", on_missing="system")
-        room = make_room(c, moderators=LEADERS)
-        manage_ = lambda **b: manage(c, room["id"], **b)  # noqa: E731
+        default_ext_profile(c)
+        put_settings(c, "llm", on_missing="system", **MAIN)
+        room, mid = meeting_with_two(c, moderators=LEADERS)
         login(c, "carol")
-        manage_(llm={"mode": "profile", "profile_id": pid})
-        mid = _join(c, "alice", room["id"])["meeting_id"]
+        manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
         end_by_alice(c, mid)
         login(c, "root")
         assert c.delete(f"/api/v1/admin/api-profiles/{pid}").status_code in (200, 204)
         login(c, "carol")
-        p = plan(c, mid)                                   # комната не сломалась: используется системная локальная модель с пометкой
-        assert p["llm_ready"] is True and p["llm_local"] is True and "удалён" in p["llm_note"] and p["llm_source"] == "system"
-        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
-        assert got["llm_effective"]["available"] is True and "удалён" in got["llm_effective"]["note"]
-        # политика «недоступна»: понятное состояние вместо молчаливой подмены
+        p = plan(c, mid)                                   # комната не сломалась: системная модель с пометкой (а не «по умолчанию» среди подключений)
+        assert p["llm_ready"] is True and "удалён" in p["llm_note"] and p["llm_source"] == "system"
+        generate(c, mid)
+        assert set(seen) == {"default-ext-model"}, "системная модель задачи (подключение по умолчанию), а не удалённое"
         put_settings(c, "llm", on_missing="unavailable")
         login(c, "carol")
         p = plan(c, mid)
         assert p["llm_ready"] is False and "удалён" in p["llm_reason"]
-        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
-        assert r.status_code == 409
-
-
-def test_local_model_not_downloaded_in_room_uses_policy(tmp_path, directory):
-    rt = Runtime()
-    with app_(tmp_path, directory, rt) as c:
-        put_settings(c, "llm", enabled=True, type="openai_compatible", base_url="https://llm-main.test/v1", model="main-model", api_key="k")
-        room = make_room(c, moderators=LEADERS)
-        login(c, "carol")
-        (tmp_path / "models-llm" / "Qwen3-1.7B-Q4_K_M.gguf").unlink()           # файл пропал после выбора
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"})
-        eff = out["llm_effective"]
-        assert eff["available"] is True and eff["source"] == "system" and "не загружена" in eff["note"]       # запасной вариант — системная внешняя модель
-        login(c, "root")
-        put_settings(c, "llm", on_missing="unavailable")
-        login(c, "carol")
-        eff = c.get(f"/api/v1/rooms/{room['id']}/manage").json()["llm_effective"]
-        assert eff["available"] is False and "не загружена" in eff["reason"]
+        assert c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"}).status_code == 409
 
 
 # ------------------------------------------------------------------------------------------------ модель и рассылка встречи
 def test_meeting_overrides_win_over_room_and_can_be_reset(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
+    seen: list[str] = []
+    with app_(tmp_path, directory, seen) as c:
         pid = ext_profile(c)
-        put_settings(c, "llm", provider="local")
+        put_settings(c, "llm", **MAIN)
         room, mid = meeting_with_two(c, moderators=LEADERS)
         login(c, "alice")
         assert c.get(f"/api/v1/meetings/{mid}/settings").status_code == 404           # участник настройки встречи не видит
         login(c, "carol")
         s = c.get(f"/api/v1/meetings/{mid}/settings").json()
         assert s["llm"]["effective"]["source"] == "system" and s["delivery"]["override"] is False and s["ended"] is False
-        # для этой встречи нужна сильная внешняя модель
         s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "profile", "profile_id": pid}}).json()
         assert s["llm"]["effective"]["name"] == "Сильная внешняя" and s["llm"]["effective"]["source"] == "meeting" and s["llm"]["room"]["mode"] == "inherit"
         end_by_alice(c, mid)
         login(c, "carol")
-        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "x"})      # выбор встречи для протокола; у резюме своя цепочка
-        assert r.status_code == 202
-        _drain(c)
-        assert ext_seen and rt.seen == [], "для этой встречи использована внешняя модель, а не локальная"
-        # сброс: «как в комнате»
+        generate(c, mid, "protocol")
+        assert seen and set(seen) == {"big-model"}, "для этой встречи — выбранное подключение, а не системное"
         s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": None}).json()
         assert s["llm"]["override"] is None and s["llm"]["effective"]["source"] == "system"
         assert c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "magic"}}).status_code == 422
-        # рассылку менять после завершения нельзя
         assert c.put(f"/api/v1/meetings/{mid}/settings", json={"delivery": {"enabled": False, "materials": []}}).status_code == 409
 
 
@@ -222,7 +200,7 @@ def test_materials_tab_data_shows_retention_read_only_and_leader_can_edit_instru
     room = make_room(client, moderators=LEADERS)
     login(client, "carol")
     got = client.get(f"/api/v1/rooms/{room['id']}/manage").json()
-    assert set(got["retention"]) == {"text_days", "audio_days", "video_days", "custom", "own", "server", "history_access", "anonymize_mode"}
+    assert set(got["retention"]) == {"text_days", "audio_days", "video_days", "custom", "own", "server", "history_access", "anonymize_mode", "anonymize_profile", "privacy"}
     out = manage(client, room["id"], protocol_instructions="Только решения и сроки")
     assert out["protocol_instructions"] == "Только решения и сроки"
     r = client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"text_retention_days": 1})          # сроки хранения — только администратор
@@ -230,186 +208,72 @@ def test_materials_tab_data_shows_retention_read_only_and_leader_can_edit_instru
 
 
 # ------------------------------------------------------------------------------------------------ приоритет выбора модели
-def default_ext_profile(c, model="big-model"):
-    """Внешний профиль, отмеченный «по умолчанию среди внешних API»."""
-    login(c, "root")
-    r = c.post("/api/v1/admin/api-profiles", json={"kind": "llm", "name": "Внешний по умолчанию", "secret": "SECRET-D", "make_default": True,
-                                                    "config": {"type": "openai_compatible", "base_url": "https://llm-d.test/v1", "model": model}})
-    assert r.status_code == 201 and r.json()["is_default"] is True, r.text
-    return r.json()["id"]
-
-
-def generate(c, mid, kind="summary"):
-    r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": kind, "instruction": "x"})
-    assert r.status_code == 202, r.text
-    _drain(c)
-
-
-def test_external_default_profile_never_overrides_system_local_mode(tmp_path, directory):
-    """Регрессия: при системном режиме «Локальная» протокол/резюме из «Истории» шли во внешний профиль, отмеченный «по умолчанию»."""
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
-        default_ext_profile(c)
-        put_settings(c, "llm", provider="local")
-        room, mid = meeting_with_two(c, moderators=LEADERS)
-        end_by_alice(c, mid)
-        login(c, "carol")
-        # комната «Системная по умолчанию» — это локальная Qwen
-        got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
-        assert got["llm"]["mode"] == "inherit" and got["llm_effective"]["name"].startswith("Qwen3") and got["llm_options"]["system"]["provider"] == "local"
-        p = plan(c, mid)
-        assert p["llm_local"] is True and p["llm_source"] == "system" and p["llm_ready"] is True
-        # История → сформировать резюме, протокол и повторная генерация
-        for kind in ("summary", "protocol", "summary"):
-            generate(c, mid, kind)
-        assert len(rt.seen) >= 3, "документы должны формироваться локальной моделью"
-        assert ext_seen == [], "внешний профиль по умолчанию не должен использоваться при системном режиме «Локальная»"
-
-
-def test_external_default_profile_is_used_only_when_system_mode_is_external(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
+def test_default_profile_is_used_only_when_the_system_task_has_no_explicit_connection_and_never_turns_off_into_on(tmp_path, directory):
+    seen: list[str] = []
+    with app_(tmp_path, directory, seen) as c:
         default_ext_profile(c, model="default-ext-model")
-        put_settings(c, "llm", provider="external", type="openai_compatible", base_url="https://main.test/v1", model="main-model", api_key="K")
+        put_settings(c, "llm", **MAIN)
         room, mid = meeting_with_two(c, moderators=LEADERS)
         end_by_alice(c, mid)
         login(c, "carol")
         p = plan(c, mid)
-        assert p["llm_local"] is False and p["llm_model"] == "default-ext-model" and p["llm_source"] == "system"
+        assert p["llm_model"] == "default-ext-model" and p["llm_source"] == "system"
         generate(c, mid)
-        assert ext_seen and rt.seen == []
-        # режим «Отключено»: профиль по умолчанию ничего не включает
-        put_settings(c, "llm", provider="off")
+        assert set(seen) == {"default-ext-model"}
+        put_settings(c, "llm", provider="off")                  # режим «Отключено»: подключение по умолчанию ничего не включает
         login(c, "carol")
         assert plan(c, mid)["llm_ready"] is False
 
 
 def test_precedence_meeting_over_room_over_system(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
+    with app_(tmp_path, directory) as c:
         pid = ext_profile(c)
-        default_ext_profile(c, model="default-ext-model")
-        put_settings(c, "llm", provider="local")
+        put_settings(c, "llm", **MAIN)
         room, mid = meeting_with_two(c, moderators=LEADERS)
         login(c, "carol")
         eff = lambda: c.get(f"/api/v1/meetings/{mid}/settings").json()["llm"]["effective"]   # noqa: E731
-        assert eff()["source"] == "system" and eff()["name"].startswith("Qwen3")            # 3. системная
+        assert eff()["source"] == "system"                                                  # 3. системная
         manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
         assert eff()["source"] == "room" and eff()["name"] == "Сильная внешняя"             # 2. комната
-        c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"}})
-        assert eff()["source"] == "meeting" and eff()["name"].startswith("Qwen3")           # 1. встреча
         c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": {"mode": "off"}})
-        assert eff()["source"] == "meeting" and eff()["available"] is False                 # встреча явно «отключена»
+        assert eff()["source"] == "meeting" and eff()["available"] is False                 # 1. встреча явно «отключена»
         c.put(f"/api/v1/meetings/{mid}/settings", json={"llm": None})
         assert eff()["source"] == "room" and eff()["name"] == "Сильная внешняя"
         manage(c, room["id"], llm={"mode": "inherit"})
-        assert eff()["source"] == "system" and eff()["name"].startswith("Qwen3")
-
-
-def test_unavailable_selected_model_falls_back_to_system_model_not_external_default(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
-        pid = ext_profile(c)
-        default_ext_profile(c)
-        put_settings(c, "llm", provider="local")
-        room, mid = meeting_with_two(c, moderators=LEADERS)
-        login(c, "carol")
-        manage(c, room["id"], llm={"mode": "profile", "profile_id": pid})
-        login(c, "root")
-        assert c.delete(f"/api/v1/admin/api-profiles/{pid}").status_code in (200, 204)
-        end_by_alice(c, mid)
-        login(c, "carol")
-        p = plan(c, mid)
-        assert p["llm_local"] is True and "удалён" in (p["llm_note"] or ""), "выбранный профиль удалён → системная (локальная) модель, а не внешний по умолчанию"
-        generate(c, mid)
-        assert rt.seen and ext_seen == []
-        # политика «не формировать»
-        put_settings(c, "llm", on_missing="unavailable")
-        login(c, "carol")
-        p = plan(c, mid)
-        assert p["llm_ready"] is False and "удалён" in (p["llm_reason"] or "")
-
-
-# ------------------------------------------------------------------------------------------------ единственная штатная модель Qwen3 1.7B; 0.6B снята с вооружения
-OLD_06B = "qwen3-0.6b-" + "q4_k_m"          # идентификатор снятой с вооружения модели (записан так, чтобы массовая замена имён его не трогала)
-
-
-def test_only_the_1_7b_model_is_offered_and_old_0_6b_choices_silently_use_it(tmp_path, directory):
-    rt = Runtime(reply="Резюме от 1.7B")
-    with app_(tmp_path, directory, rt) as c:
-        put_settings(c, "llm", provider="local")
-        room, mid = meeting_with_two(c, moderators=LEADERS)
-        login(c, "carol")
-        opts = c.get(f"/api/v1/rooms/{room['id']}/manage").json()["llm_options"]
-        assert [m["id"] for m in opts["local"]] == ["qwen3-1.7b-q4_k_m"] and opts["local"][0]["installed"] is True, "0.6B в выборе нет"
-        # старый выбор (например, сохранённый до этой версии) молча работает на основной модели
-        out = manage(c, room["id"], llm={"mode": "local", "local_model": OLD_06B})
-        assert out["llm_effective"]["name"].startswith("Qwen3 1.7B") and out["llm_effective"]["available"] is True
-        end_by_alice(c, mid)
-        login(c, "carol")
-        generate(c, mid)
-        assert rt.seen and all(b["model"] == "qwen3-1.7b-q4_k_m" for b in rt.seen)
-        st = (login(c, "root"), c.get("/api/v1/admin/llm/local").json())[1]
-        assert [m["id"] for m in st["catalog"]] == ["qwen3-1.7b-q4_k_m"] and st["model"]["id"] == "qwen3-1.7b-q4_k_m"
-
-
-def test_registry_has_one_visible_model_and_the_retired_one_is_hidden():
-    assert ll.DEFAULT_LOCAL_MODEL == "qwen3-1.7b-q4_k_m" and list(ll.VISIBLE_MODELS) == ["qwen3-1.7b-q4_k_m"]
-    m = ll.LOCAL_MODELS["qwen3-1.7b-q4_k_m"]
-    assert m.size_bytes == 1_282_439_584 and len(m.sha256) == 64 and m.file == "Qwen3-1.7B-Q4_K_M.gguf" and m.max_input_chars == 6_000 and not m.hidden
-    assert ll.LOCAL_MODELS[OLD_06B].hidden is True
-    from app.config import Settings
-
-    local = ll.LocalLlm(Settings())
-    assert local.model(OLD_06B).id == "qwen3-1.7b-q4_k_m" and local.model("что-то-старое").id == "qwen3-1.7b-q4_k_m" and local.model(None).id == "qwen3-1.7b-q4_k_m"
+        assert eff()["source"] == "system"
 
 
 # ------------------------------------------------------------------------------------------------ отдельные модели для протокола и для резюме
 def test_summary_and_protocol_have_separate_system_room_and_meeting_chains(tmp_path, directory):
-    ext_seen: list[dict] = []
-    rt = Runtime()
-    with app_(tmp_path, directory, rt, ext_seen) as c:
-        default_ext_profile(c, model="big-model")
-        put_settings(c, "llm", provider="local", summary_provider="external")
+    seen: list[str] = []
+    with app_(tmp_path, directory, seen) as c:
+        pid = ext_profile(c)
+        default_ext_profile(c, model="default-ext-model")
+        put_settings(c, "llm", summary_provider="external", **MAIN)
         room, mid = meeting_with_two(c, moderators=LEADERS)
         login(c, "carol")
         got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
-        assert got["llm_effective"]["name"].startswith("Qwen3 1.7B") and got["llm_summary_effective"]["name"] == "Внешний по умолчанию"
-        assert got["llm_options"]["system"]["provider"] == "local" and got["llm_options"]["system_summary"]["provider"] == "external"
         assert got["llm"]["mode"] == "inherit" and got["llm_summary"]["mode"] == "inherit"
         end_by_alice(c, mid)
         login(c, "carol")
-        generate(c, mid, "summary")
-        assert ext_seen and not rt.seen, "резюме — внешней моделью (системная модель резюме), локальная не вызывалась"
-        ext_seen.clear()
-        generate(c, mid, "protocol")
-        assert rt.seen and not ext_seen, "протокол — локальной (системная модель протокола)"
-        # комната меняет только резюме
-        out = manage(c, room["id"], llm_summary={"mode": "off"})
+        out = manage(c, room["id"], llm_summary={"mode": "off"})                           # комната меняет только резюме
         assert out["llm_summary_effective"]["available"] is False and "отключена" in out["llm_summary_effective"]["reason"]
         assert out["llm_effective"]["available"] is True and out["llm"]["mode"] == "inherit"
         assert c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction?kind=summary").json()["plan"]["llm_ready"] is False
         assert c.get(f"/api/v1/meetings/{mid}/protocols/default-instruction?kind=protocol").json()["plan"]["llm_ready"] is True
-        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"})
-        assert r.status_code == 409, "резюме отключено для комнаты, протокол это не затрагивает"
-        # встреча переопределяет резюме поверх комнаты
-        s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm_summary": {"mode": "local", "local_model": "qwen3-1.7b-q4_k_m"}}).json()
+        assert c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "summary", "instruction": "x"}).status_code == 409
+        s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm_summary": {"mode": "profile", "profile_id": pid}}).json()   # встреча поверх комнаты
         assert s["llm_summary"]["effective"]["source"] == "meeting" and s["llm_summary"]["effective"]["available"] is True and s["llm"]["override"] is None
-        rt.seen.clear()
+        seen.clear()
         generate(c, mid, "summary")
-        assert rt.seen, "для этой встречи резюме пишет локальная модель"
+        assert set(seen) == {"big-model"}, "для этой встречи резюме пишет выбранное подключение"
         s = c.put(f"/api/v1/meetings/{mid}/settings", json={"llm_summary": None}).json()
         assert s["llm_summary"]["override"] is None and s["llm_summary"]["effective"]["source"] == "room"
 
 
 def test_system_summary_mode_off_and_same(tmp_path, directory):
-    rt = Runtime()
-    with app_(tmp_path, directory, rt) as c:
-        put_settings(c, "llm", provider="local", summary_provider="off")
+    with app_(tmp_path, directory) as c:
+        put_settings(c, "llm", summary_provider="off", **MAIN)
         room, mid = meeting_with_two(c, moderators=LEADERS)
         end_by_alice(c, mid)
         login(c, "carol")

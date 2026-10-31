@@ -22,6 +22,11 @@ RUN apt-get -o Acquire::Retries=5 update \
     && apt-get purge -y --auto-remove gcc libkrb5-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Модели распознавания имён для обезличивания (navec + slovnet NER, ~50 МБ): адрес и SHA-256 закреплены в fetch_models.py; отдельный слой — смена кода его не сбрасывает
+COPY app/privacy/fetch_models.py /tmp/fetch_models.py
+RUN python /tmp/fetch_models.py /opt/peregovorka/nlp && rm /tmp/fetch_models.py
+ENV PRIVACY_NLP_DIR=/opt/peregovorka/nlp
+
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app

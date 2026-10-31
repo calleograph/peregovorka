@@ -189,10 +189,10 @@ def build_rows(m: dict, installed: dict[str, str | None], live: dict[str, dict],
         src = (c.get("source") or {}).get("type")
         rt = c.get("runtime")
         pinned = c["pinned"]
-        optional = key in ("livekit_sip", "llama_cpp", "livekit_egress")
+        optional = key in ("livekit_sip", "livekit_egress")
         if src == "none":
             status, note = "manual", c.get("note") or "Версия определяется образом или внешним сервисом; автоматической проверки нет."
-        elif optional and ((key == "livekit_sip" and not sip_enabled) or (key == "livekit_egress" and not video_enabled) or key == "llama_cpp"):
+        elif optional and ((key == "livekit_sip" and not sip_enabled) or (key == "livekit_egress" and not video_enabled)):
             status, note = "off", "Необязательная служба: сейчас не запущена на этом сервере, версия образа закреплена релизом."
         elif rt and not inst:
             status, note = "error", "Не удалось определить версию работающего компонента (служба не запущена или не отвечает)."

@@ -187,7 +187,7 @@ def test_document_records_timing_model_and_generation_details(tmp_path, director
         assert all(t[k] for k in ("requested_at", "started_at", "llm_started_at", "llm_finished_at", "finished_at"))
         assert t["total_s"] >= t["llm_s"] >= 0 and t["queue_s"] >= 0 and t["prepare_s"] is not None
         assert datetime.fromisoformat(t["requested_at"]) <= datetime.fromisoformat(t["finished_at"])
-        assert g["model"] == "m" and g["llm_local"] is False and g["api_type"] == "openai" and g["input_chars"] > 0 and g["output_chars"] > 0 and g["llm_calls"] >= 1
+        assert g["model"] == "m" and not g.get("llm_local") and g["api_type"] == "openai" and g["input_chars"] > 0 and g["output_chars"] > 0 and g["llm_calls"] >= 1
         assert g["llm_source"] == "system" and g["max_tokens"] == 40000, "для резюме действует свой предел длины ответа (по умолчанию 40 000)"
         assert seen[-1]["max_tokens"] == 40000 and seen[-1]["temperature"] == 0.0
         pid2 = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "Подробно"}).json()["protocol_id"]
@@ -317,12 +317,10 @@ def test_dialog_plan_shows_forecast_limit_and_one_time_model_only_to_managers(tm
 
 
 def test_effective_models_panel_shows_what_will_actually_be_called(client):
-    put_settings(client, "llm", provider="local")
-    d = client.get(f"{ADM}/llm/effective").json()
-    assert d["protocol"]["local"] is True and d["protocol"]["enabled"] and "1.7B" in d["protocol"]["name"] and d["protocol"]["max_output_tokens"] == 1500
     put_settings(client, "llm", provider="external", type="openai", model="gpt-x", api_key="k", summary_provider="off", context_window=8192, max_tokens_protocol=9000)
+    assert client.put(f"{ADM}/settings/llm", json={"provider": "local"}).status_code == 422, "режима «встроенная модель» больше нет"
     d = client.get(f"{ADM}/llm/effective").json()
-    assert d["protocol"]["local"] is False and d["protocol"]["model"] == "gpt-x" and d["protocol"]["max_output_tokens"] == 6144 and "окном контекста" in d["protocol"]["max_output_note"]
+    assert "local" not in d["protocol"] and d["protocol"]["model"] == "gpt-x" and d["protocol"]["max_output_tokens"] == 6144 and "окном контекста" in d["protocol"]["max_output_note"]
     assert d["summary"]["enabled"] is False and d["rooms_with_own_model"] == {"protocol": 0, "summary": 0, "map": 0}
 
 

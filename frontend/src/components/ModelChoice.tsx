@@ -1,4 +1,4 @@
-export interface ModelOption { key: string; label: string; local: boolean }
+export interface ModelOption { key: string; label: string }
 
 /** Выбор модели «только для этого формирования» — общий для окна протокола и окна карты разговора. Пустое значение — как настроено (настройки не меняются). */
 export default function ModelChoice({ choices, value, onChange, currentName, once, disabled, what = "формирования" }:

@@ -70,33 +70,6 @@ export const chatFilesFields: Field[] = [
     example: "png, jpg, gif, webp, pdf, txt, docx, xlsx, pptx, zip" },
 ];
 
-export const anonFields: Field[] = [
-  { section: "Сервис обезличивания", name: "enabled", label: "Обезличивание включено", type: "bool",
-    help: "Включено: в языковую модель уходит только обезличенный текст, а если сервис недоступен — протокол не создаётся (данные не отправляются). Выключено: протоколы и резюме создаются как обычно, но текст уходит в модель без обезличивания. Отдельной переговорке можно задать своё (в её настройках)." },
-  { section: "Сервис обезличивания", name: "profile", label: "Тип API", type: "select", options: [["docclean", "DocClean (api_text)"], ["generic", "Произвольный JSON API"]] },
-  { section: "Сервис обезличивания", name: "base_url", label: "Адрес сервиса (Base URL)", type: "text", placeholder: "https://anon.corp.local",
-    help: "Только https (http — лишь при явном разрешении ниже).", example: "https://anon.corp.local:8443" },
-  { section: "Сервис обезличивания", name: "token", label: "Токен / ключ API", type: "secret", help: "Хранится зашифрованно. Пустое поле — оставить прежний." },
-  { section: "Параметры DocClean", name: "docclean_mode", label: "Режим DocClean", type: "select", showIf: (v) => v.profile === "docclean",
-    options: [["ai_ready", "ai_ready — подготовка текста для ИИ (рекомендуется)"], ["full", "full — максимальное обезличивание"], ["personal_corporate", "personal_corporate — персональные и корпоративные данные"], ["personal", "personal — только персональные данные"]] },
-  { section: "Параметры DocClean", name: "docclean_groups", label: "Группы данных для обезличивания", type: "text", showIf: (v) => v.profile === "docclean", placeholder: "pdn, corporate, secrets",
-    help: "Через запятую из: pdn (персональные данные), corporate (корпоративные), secrets (секреты), network (сетевые), other. Пусто — по умолчанию сервиса.", example: "pdn, corporate, secrets" },
-  { section: "Параметры произвольного API", name: "endpoint", label: "Путь метода", type: "text", showIf: (v) => v.profile === "generic", placeholder: "/anonymize", example: "/api/v1/anonymize" },
-  { section: "Параметры произвольного API", name: "request_field", label: "Поле запроса (JSON-путь)", type: "text", showIf: (v) => v.profile === "generic", placeholder: "text", help: "В какое поле тела запроса кладётся текст.", example: "text или payload.text" },
-  { section: "Параметры произвольного API", name: "response_field", label: "Поле ответа (JSON-путь)", type: "text", showIf: (v) => v.profile === "generic", placeholder: "anonymized_text", help: "Откуда брать обезличенный текст в ответе.", example: "anonymized_text или result.text" },
-  { section: "Параметры произвольного API", name: "status_field", label: "Поле статуса (необязательно)", type: "text", showIf: (v) => v.profile === "generic", example: "status" },
-  { section: "Параметры произвольного API", name: "status_ok_value", label: "Значение «успех» поля статуса", type: "text", showIf: (v) => v.profile === "generic", example: "ok" },
-  { section: "Параметры произвольного API", name: "auth_type", label: "Способ авторизации", type: "select", showIf: (v) => v.profile === "generic", options: [["bearer", "Bearer-токен"], ["header", "Свой заголовок"], ["basic", "Basic (логин/пароль)"], ["none", "Без авторизации"]] },
-  { section: "Параметры произвольного API", name: "auth_header_name", label: "Имя заголовка", type: "text", showIf: (v) => v.profile === "generic" && v.auth_type === "header", placeholder: "X-API-Key", example: "X-API-Key" },
-  { section: "Параметры произвольного API", name: "auth_username", label: "Пользователь (для Basic)", type: "text", showIf: (v) => v.profile === "generic" && v.auth_type === "basic" },
-  { section: "Параметры произвольного API", name: "extra_body", label: "Дополнительные поля тела запроса (JSON-объект)", type: "textarea", showIf: (v) => v.profile === "generic", placeholder: '{"mode": "full"}', help: "Необязательно. Должен быть JSON-объектом.", example: '{"language": "ru"}' },
-  { section: "Соединение", name: "connect_timeout", label: "Таймаут соединения", unit: "с", type: "number", min: 1, max: 60, help: "Сколько ждать установки соединения.", example: "5" },
-  { section: "Соединение", name: "timeout", label: "Таймаут ответа", unit: "с", type: "number", min: 1, max: 600, help: "Сколько ждать обработки одного фрагмента.", example: "60" },
-  { section: "Соединение", name: "max_chunk_chars", label: "Размер фрагмента", unit: "символов", type: "number", min: 500, max: 1000000, help: "Длинная стенограмма отправляется на обезличивание частями не больше этого размера.", example: "20000" },
-  { section: "Безопасность соединения", name: "use_corporate_ca", label: "Проверять сертификат по корпоративному удостоверяющему центру (LDAP_CA_FILE)", type: "bool", help: "Включайте, если сервис использует внутренний сертификат." },
-  { section: "Безопасность соединения", name: "allow_http", label: "Разрешить небезопасный http://", type: "bool", help: "Только для изолированных тестов: данные пойдут без шифрования." },
-];
-
 const TYPE_OPTIONS: [string, string][] = [
   ["openai_compatible", "OpenAI-совместимый (шлюзы, локальные серверы: адрес /chat/completions)"],
   ["openai", "OpenAI"],
@@ -104,22 +77,6 @@ const TYPE_OPTIONS: [string, string][] = [
   ["custom", "Свой OpenAI-подобный сервис (любой адрес, свои заголовки и возможности)"],
 ];
 const needsUrl = (v: { type?: unknown }) => v.type === "openai_compatible" || v.type === "custom";
-
-/** Какая модель что делает по умолчанию в системе (протокол, резюме). Подключение к внешним API — отдельно (профили). */
-export const llmModeFields: Field[] = [
-  { section: "Какая модель что делает по умолчанию", name: "provider", label: "Протокол: чем формировать", type: "select",
-    options: [["local", "Локальная: Qwen3 1.7B Q4_K_M (встроенная, данные не покидают сервер)"], ["external", "Внешняя LLM (подключение — «Внешние API» ниже)"], ["off", "Отключено"]],
-    help: "Цепочка: распознавание речи (GigaAM) → стенограмма → языковая модель → протокол или резюме. Локальная модель работает на этом сервере без выхода в интернет и подходит для простых задач: краткое резюме, решения, задачи, ответственные, протокол по проверенным пунктам. Для длинных и сложных встреч надёжнее внешняя модель." },
-  { section: "Какая модель что делает по умолчанию", name: "summary_provider", label: "Резюме: чем формировать", type: "select",
-    options: [["same", "Так же, как протокол"], ["local", "Локальная: Qwen3 1.7B Q4_K_M"], ["external", "Внешняя LLM (подключение — «Внешние API» ниже)"], ["off", "Резюме не формировать"]],
-    help: "Протокол и резюме — разные задачи, поэтому модель выбирается для каждой отдельно. Это значение действует, пока в переговорке, встрече или при формировании документа не выбрано другое." },
-  { section: "Какая модель что делает по умолчанию", name: "map_provider", label: "Карта разговора: чем формировать", type: "select",
-    options: [["same", "Так же, как протокол"], ["local", "Локальная: Qwen3 1.7B Q4_K_M"], ["external", "Внешняя LLM (подключение — «Внешние API» ниже)"], ["off", "Карты не формировать"]],
-    help: "Карта разговора — отдельное назначение: по частям стенограммы выделяются темы, их порядок и длительность. Локальная модель справляется с этим на сервере без видеокарты за несколько минут; другую можно выбрать здесь позже." },
-  { section: "Какая модель что делает по умолчанию", name: "on_missing", label: "Если выбранная для переговорки модель недоступна (удалена, отключена)", type: "select",
-    options: [["system", "Использовать системную модель по умолчанию"], ["unavailable", "Не формировать: показать «модель недоступна»"]],
-    help: "Касается переговорок и встреч, где выбрана конкретная модель. Разовый выбор модели при формировании документа молча не заменяется." },
-];
 
 /** Подключение к одному внешнему API: тип, адрес, ключ, заголовки, возможности, лимиты. Одно и то же для «основного» API и для каждого профиля. */
 export const llmApiFields: Field[] = [

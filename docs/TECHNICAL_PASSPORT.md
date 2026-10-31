@@ -43,7 +43,6 @@
 | `livekit` | медиасервер WebRTC (SFU) | контейнер | образ LiveKit, `deployment/livekit/` |
 | `postgres` | основная база данных | контейнер, не публикуется | образ PostgreSQL 16 |
 | `redis` | сессии, очереди, координация процессов | контейнер, не публикуется | образ Redis 7 |
-| `llm-local` (необязательно, профиль `llm`) | локальная языковая модель (llama.cpp) | контейнер в сети без выхода наружу | образ llama.cpp |
 | `livekit-sip` (необязательно, `sip`) | SIP-шлюз | контейнер | образ livekit/sip |
 | `livekit-egress` (необязательно, `video`) | видеозапись и трансляции | контейнер | образ livekit/egress |
 | Помощник обновлений (необязательно) | выполнение обновления из веб-интерфейса | служба systemd на хосте, root | `scripts/updater.sh` |
@@ -54,7 +53,7 @@
 
 Версии сторонних компонентов выпуска закреплены в `backend/app/components.json` (виден в «Администрирование → Обзор → Версии компонентов»).
 Основные: LiveKit Server v1.13.10 (минимально совместимая v1.13.7), livekit-client 2.23.0, Python 3.12, FastAPI 0.149, SQLAlchemy 2.1,
-PostgreSQL 16, Redis 7, PyTorch 2.14 (CPU), GigaAM (закреплённый коммит), llama.cpp server-b11371, React 19, nginx 1.30, Node.js 24 (сборка).
+PostgreSQL 16, Redis 7, PyTorch 2.14 (CPU), GigaAM (закреплённый коммит), slovnet/navec/pymorphy3 (обезличивание), React 19, nginx 1.30, Node.js 24 (сборка).
 
 ## 3. Архитектура и взаимодействие
 
@@ -62,7 +61,7 @@ PostgreSQL 16, Redis 7, PyTorch 2.14 (CPU), GigaAM (закреплённый к�
 браузер / приложения ──HTTPS 443──► внешний reverse proxy (TLS) ──► [nginx хоста, необязательно] ──► web:8080 ──► backend:8000
          │                                                                                        └── /livekit ──► livekit:7880 (сигнализация WebSocket)
          └──UDP LIVEKIT_UDP_PORT, TCP LIVEKIT_TCP_PORT (напрямую, не через HTTP-прокси)──► livekit (медиа WebRTC)
-backend ──► postgres, redis, livekit API, asr; по настройке: LDAPS, SMTP, SMB, EWS/Graph, LLM, обезличиватель, Bitrix24, webhooks
+backend ──► postgres, redis, livekit API, asr; по настройке: LDAPS, SMTP, SMB, EWS/Graph, LLM, Bitrix24, webhooks
 asr ──► livekit (подписка на звук участников) ──► backend (сегменты стенограммы)
 ```
 
@@ -115,7 +114,7 @@ asr ──► livekit (подписка на звук участников) ─�
 | backend → SMTP | 25/465/587 | почта | по настройке |
 | backend → SMB | 445/tcp | файловое хранилище | по настройке |
 | backend → Exchange / Microsoft 365 | 443/tcp | календари, EWS/Graph | по настройке |
-| backend → внешняя LLM, обезличиватель, Bitrix24, webhooks | 443/tcp | протоколы, профили, события | по настройке |
+| backend → языковая модель по API, Bitrix24, webhooks | 443/tcp | протоколы, профили, события | по настройке |
 | АТС → livekit-sip | `SIP_SIGNALING_PORT` udp/tcp, `SIP_RTP_START`–`SIP_RTP_END`/udp | телефония | при SIP |
 | Egress → площадки трансляций | RTMP/RTMPS (1935/443) | внешние трансляции | при трансляциях |
 | Помощник обновлений → GitHub | 443/tcp (git) | проверка и получение версий | при обновлении из интерфейса |
@@ -161,7 +160,7 @@ asr ──► livekit (подписка на звук участников) ─�
 | Exchange EWS (Basic, NTLM, Kerberos), Microsoft 365 Graph | реализовано | **Т**; настоящий Exchange — **Н** |
 | Надстройка Outlook | реализовано | **Т**, живые сценарии в Chromium; настоящий Outlook — **Н** |
 | SIP (LiveKit SIP) | реализовано | **Т**; настоящая АТС — **Н** |
-| Языковые модели: локальная (llama.cpp), внешние совместимые с OpenAI API, обезличиватель | реализовано | **Т**, **И** с подставной и настоящей моделью на стенде |
+| Языковые модели по API (OpenAI-совместимые, OpenAI, Anthropic); встроенное обезличивание на Python, обязательное удаление секретов | реализовано | **Т**, **И** с подставной и настоящей моделью на стенде |
 | Bitrix24 (профиль сотрудника, только чтение) | реализовано | **Т** на подставном портале |
 | Публичный API v1, webhooks | реализовано | **Т**, живые сценарии |
 | Трансляции: HLS, RTMP/RTMPS (YouTube, VK Видео, RUTUBE, Twitch, произвольный), CDN | реализовано | **Т**, **И** на стенде с настоящим Egress; внешние площадки — **Н** |

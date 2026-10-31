@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..services import asr_state
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..auth.directory import DirectoryError
-from ..integrations.anonymizer import AnonymizerClient
 from ..integrations.llm import LlmClient
 from ..models import Meeting, MeetingGrant, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User
 from ..services import diagnostics, timings
@@ -95,7 +94,7 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action=f"settings.{group}.update",
                       target_type="settings", target_id=group, ip=client_ip(request), details=details)
     await db.commit()
-    if group in ("captcha", "login_protection", "net_trust", "auth_security") and changed:       # значимые изменения правил безопасности — и в журнал безопасности
+    if group in ("captcha", "login_protection", "net_trust", "auth_security", "anonymizer") and changed:       # значимые изменения правил безопасности — и в журнал безопасности
         await request.app.state.secevents.emit("security_settings_changed", ip=client_ip(request), account=su.display_name, result="ok", reason=f"изменены настройки «{group}»: {', '.join(changed)[:200]}",
                                                component="admin")
     return await svc.public(db, group)
@@ -131,13 +130,9 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
         except StorageError as exc:
             msg, ok = str(exc), False
         return {"ok": ok, "message": msg, "ms": int((asyncio.get_running_loop().time() - started) * 1000)}
-    if group == "anonymizer":
-        ok, msg, ms = await AnonymizerClient(cfg, ca_file=app_s.ldap_ca_file or None, transport=tr.get("anonymizer")).test()  # type: ignore[arg-type]
-        return {"ok": ok, "message": msg, "ms": ms}
     if group == "llm":
-        # проверяется именно внешний API (форма «Внешний API»): режим «Локальная» проверяется отдельной кнопкой в карточке встроенной модели
         ext = cfg.model_copy(update={"provider": "external", "enabled": True})   # type: ignore[attr-defined]
-        ok, msg, ms = await request.app.state.local_llm.client(ext, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
+        ok, msg, ms = await request.app.state.llm.client(ext, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
         return {"ok": ok, "message": msg, "ms": ms}
     if group == "bitrix24":
         ok, msg, ms = await request.app.state.enrichment.check()

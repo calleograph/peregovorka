@@ -85,7 +85,7 @@ async def recent_runs(db: AsyncSession, limit: int = 1500) -> list[dict]:
     return out
 
 
-def forecast(runs: list[dict], *, kind: str, model: str, local: bool, profile: str, chars: int, limit: int) -> dict:
+def forecast(runs: list[dict], *, kind: str, model: str, profile: str, chars: int, limit: int, local: bool = False) -> dict:
     """Диапазон времени работы модели: по истории этой же модели и задачи (медиана и разброс на 1 000 знаков), а без неё — по грубой оценке."""
     kchars = max(chars, 1) / 1000
     chunks = max(1, math.ceil(chars / max(limit, 1)))

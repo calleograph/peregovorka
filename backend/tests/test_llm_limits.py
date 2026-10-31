@@ -166,11 +166,6 @@ def test_provider_cutting_the_answer_at_1200_tokens_is_detected_and_not_blamed_o
     assert "на «рассуждения»" not in msg
 
 
-def test_local_model_cap_is_explained_against_the_requested_value():
-    local = ext(provider="local")
-    note = limit_report(LlmChoice(local, "Qwen3", "system", True, limit_requested=60000), local.model_copy(update={"model": "qwen3"}), "protocol", {"max_tokens": 1500})
-    assert "локальная модель" in note and "1500" in note and "60000" in note
-
 
 def test_admin_effective_models_report_the_requested_limit(tmp_path, directory):
     with llm_app(tmp_path, directory, []) as c:

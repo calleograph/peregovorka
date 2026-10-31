@@ -36,7 +36,7 @@ def llm_for(handler):
         return handler(body, len(seen))
 
     c = LlmSettings(enabled=True, provider="external", type="openai_compatible", base_url="http://llm.test/v1", model="m", max_tokens=1200, allow_http=True)
-    return LlmClient(c, transport=httpx.MockTransport(h), local=True), seen
+    return LlmClient(c, transport=httpx.MockTransport(h)), seen
 
 
 def reply(topics, finish="stop", items=(), tasks=(), questions=()):

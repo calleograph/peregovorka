@@ -143,3 +143,5 @@ ip:^10\.0\.2\.2$   # адрес компьютера-хоста внутри э�
 # --- публичные реестры образов Docker и зеркала (используются загрузкой образов, scripts/lib/imglib.sh)
 mirror.gcr.io
 quay.io
+files.pythonhosted.org
+docs.python.org

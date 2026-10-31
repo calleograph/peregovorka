@@ -38,7 +38,7 @@ export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRec
  * «Уведомления и доставка материалов» для руководителя комнаты: что отправлять после встречи и кому. Реквизиты почтового сервера здесь не видны и не меняются —
  * это настройка администратора системы.
  */
-export default function DeliveryEditor({ roomId, spec, onChange, localModel = false }: { roomId?: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void; localModel?: boolean }) {
+export default function DeliveryEditor({ roomId, spec, onChange }: { roomId?: string; spec: MailDeliverySpec; onChange: (s: MailDeliverySpec) => void }) {
   const [emailsText, setEmailsText] = useState(spec.recipients.emails.join("\n"));
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<DirHit[]>([]);
@@ -56,7 +56,6 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
     const materials = MATERIAL_KINDS.map((m) => m.kind).filter((k) => next[k].mode !== "none");
     onChange({ ...spec, per_material: next, materials, enabled: materials.length > 0 });
   };
-  const anyText = MATERIAL_KINDS.some((m) => m.kind !== "map" && m.kind !== "transcript" && pm[m.kind].mode !== "none");
   const [pickFor, setPickFor] = useState("protocol");
   const [lastMode, setLastMode] = useState<Record<string, PerMode>>({});      // вернуть прежних получателей, если выключили и снова включили материал
 
@@ -106,8 +105,6 @@ export default function DeliveryEditor({ roomId, spec, onChange, localModel = fa
           <span className="check-body">Отправлять одним архивом (zip)<InfoTip>{spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : "Все материалы для одних получателей кладутся в один файл."}</InfoTip></span></label>
         <InfoTip>Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа; открыть её сможет только тот, у кого есть доступ).</InfoTip>
       </fieldset>
-      {anyText && localModel && <div className="alert warn" role="status">Протокол этой комнаты формирует встроенная локальная модель. Она небольшая и может ошибаться: документ уйдёт <b>без предварительной проверки человеком</b>. Для важных встреч лучше отправлять вручную после просмотра.</div>}
-
       <fieldset className="group"><legend>Письмо и документы</legend>
         <label><span className="field-title">Шаблон письма<InfoTip>Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</InfoTip></span><select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
             <option value="">По умолчанию{tpls.find((t) => t.is_default) ? ` («${tpls.find((t) => t.is_default)!.name}»)` : ""}</option>

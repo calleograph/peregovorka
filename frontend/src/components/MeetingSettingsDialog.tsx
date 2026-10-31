@@ -19,7 +19,7 @@ export default function MeetingSettingsDialog({ meetingId, roomId, onClose }: { 
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const apply = (s: MeetingSettings) => { setSt(s); setSpec(s.delivery.effective); setChoice(s.llm.override ?? { mode: "inherit", profile_id: null, local_model: null }); setChoiceSummary(s.llm_summary.override ?? { mode: "inherit", profile_id: null, local_model: null }); };
+  const apply = (s: MeetingSettings) => { setSt(s); setSpec(s.delivery.effective); setChoice(s.llm.override ?? { mode: "inherit", profile_id: null }); setChoiceSummary(s.llm_summary.override ?? { mode: "inherit", profile_id: null }); };
   useEffect(() => { void api.manage.meetingSettings(meetingId).then(apply).catch((e) => setErr((e as ApiError).message)); }, [meetingId]);
 
   const save = async (what: "delivery" | "llm", reset = false) => {

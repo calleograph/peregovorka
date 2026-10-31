@@ -23,15 +23,14 @@ describe("телефонные участники", () => {
   });
 });
 
-const opts: LlmOptions = { system: { name: "Основной", provider: "external", model: "gpt-x" }, local: [{ id: "q", title: "Qwen3 1.7B", light: true, installed: true }],
+const opts: LlmOptions = { system: { name: "Основной", provider: "external", model: "gpt-x" },
   profiles: [{ id: "p1", name: "Сильная", model: "big", is_default: false }], on_missing: "system" };
 
 describe("выбор языковой модели", () => {
   it("подписи вариантов", () => {
-    expect(choiceLabel({ mode: "inherit", profile_id: null, local_model: null }, opts)).toBe("Как системная (gpt-x)");
-    expect(choiceLabel({ mode: "local", profile_id: null, local_model: "q" }, opts)).toBe("Qwen3 1.7B");
-    expect(choiceLabel({ mode: "profile", profile_id: "p1", local_model: null }, opts)).toBe("Сильная");
-    expect(choiceLabel({ mode: "off", profile_id: null, local_model: null }, opts)).toBe("Отключена");
+    expect(choiceLabel({ mode: "inherit", profile_id: null }, opts)).toBe("Как системная (gpt-x)");
+    expect(choiceLabel({ mode: "profile", profile_id: "p1" }, opts)).toBe("Сильная");
+    expect(choiceLabel({ mode: "off", profile_id: null }, opts)).toBe("Отключена");
   });
   it("объясняет, какая модель будет использована и почему подменена", () => {
     expect(effectiveText({ name: "Qwen3", source: "room", available: true, reason: null, note: null })?.text).toContain("для этой комнаты");

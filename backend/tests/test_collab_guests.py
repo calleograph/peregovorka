@@ -364,7 +364,7 @@ def test_protocol_gets_chat_and_board_as_separate_sources(tmp_path, directory):
 
     with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon_ok), "llm": httpx.MockTransport(llm)}) as c:
         configure(c)
-        put_settings(c, "anonymizer", enabled=False)
+        put_settings(c, "anonymizer", enabled=False, required=False)
         room = make_room(c)
         a = _join(c, "alice", room["id"])
         mid = a["meeting_id"]

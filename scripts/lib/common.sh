@@ -121,9 +121,6 @@ compose_args() {
   COMPOSE_ARGS=(compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$REPO_ROOT/deployment"
                 --env-file "$ENV_FILE" -f "$COMPOSE_FILE_MAIN")
   if [ "${ASR_DEVICE:-cpu}" = "cuda" ]; then COMPOSE_ARGS+=(-f "$COMPOSE_FILE_GPU"); fi
-  # локальная LLM (контейнер llm-local) — отдельный профиль compose: включается, только если модель на месте, проверена и образ runtime скачан;
-  # без интернета при установке остальные сервисы работают как обычно
-  if declare -F llm_local_active >/dev/null 2>&1 && llm_local_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile llm "${COMPOSE_ARGS[@]:1}"); fi
   # SIP-телефония (контейнер livekit-sip): только если включена (SIP_ENABLED=yes) и образ скачан
   if declare -F sip_active >/dev/null 2>&1 && sip_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile sip "${COMPOSE_ARGS[@]:1}"); fi
   # видеозапись (контейнер livekit-egress): только если включена (VIDEO_ENABLED=yes) и образ скачан
@@ -201,8 +198,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/depslib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/prereqlib.sh"
 # shellcheck source=repairlib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/repairlib.sh"
-# shellcheck source=llmlib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/llmlib.sh"
 # shellcheck source=siplib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/siplib.sh"
 # shellcheck source=imglib.sh
@@ -235,4 +230,25 @@ pg_max_connections() {
   [ "$n" -lt 300 ] && n=300
   [ "$n" -gt 600 ] && n=600
   printf '%s\n' "$n"
+}
+
+# Встроенная локальная модель (Qwen3, llama.cpp) удалена в 0.56.0: контейнер прежней версии и файлы модели (≈1,3 ГБ) больше не нужны.
+# Настройки, выбиравшие её, переводит миграция 0056. Удаляются только известные файлы модели; другие файлы каталога не трогаются.
+legacy_llm_cleanup() {
+  local ids d f n=0
+  ids="$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-}" --filter "label=com.docker.compose.service=llm-local" 2>/dev/null || true)"
+  if [ -n "$ids" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+    # shellcheck disable=SC2086
+    docker rm -f $ids >/dev/null 2>&1 && info "Контейнер прежней встроенной модели (llm-local) удалён"
+  fi
+  d="${DATA_ROOT:-}/models/llm"
+  { [ -n "${DATA_ROOT:-}" ] && [ -d "$d" ]; } || return 0
+  for f in "$d/Qwen3-1.7B-Q4_K_M.gguf" "$d/Qwen3-0.6B-Q4_K_M.gguf" "$d/Qwen3-1.7B-Q4_K_M.gguf.part" "$d/Qwen3-0.6B-Q4_K_M.gguf.part"; do
+    if [ -e "$f" ]; then
+      if [ "${DRY_RUN:-0}" = "1" ]; then info "[dry-run] удалил бы $f"; else rm -f "$f" && n=$((n + 1)); fi
+    fi
+  done
+  rmdir "$d" 2>/dev/null || true
+  if [ "$n" -gt 0 ]; then info "Файлы прежней встроенной модели удалены: $n"; fi
+  return 0
 }

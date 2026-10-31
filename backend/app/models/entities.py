@@ -96,11 +96,11 @@ class Room(Base):
     # Кто видит завершённую встречу после выхода: 'admin' — только администраторы (и участники, пока они на странице встречи);
     # 'participants' — участники встречи; явные разрешения (meeting_grants) действуют всегда.
     history_access: Mapped[str] = mapped_column(String(20), default="admin", server_default="admin", nullable=False)
-    # Обезличивание текста перед LLM для этой комнаты: inherit — как в общих настройках, on — всегда, off — выключено (текст идёт в LLM как есть).
-    anonymize_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
+    # Обезличивание материалов перед языковой моделью (app/privacy): off — выключено (по умолчанию), on — включено. Обязательное у администратора сильнее.
+    anonymize_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off", nullable=False)
+    anonymize_profile: Mapped[str] = mapped_column(String(12), default="", server_default="", nullable=False)     # basic | strict | custom; пусто — профиль сервера
     # Какой API использовать: пусто — общий по умолчанию. Ссылка мягкая (без FK): удалённый профиль = «по умолчанию».
     llm_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    anonymizer_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     # Участники входят с выключенным микрофоном (удобно для больших встреч); текст приветствия показывается при входе.
     mute_on_join: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Гостевой доступ по ссылке (без AD): включается отдельно; ссылку можно отозвать (перевыпустить токен) без удаления комнаты.
@@ -174,14 +174,12 @@ class Room(Base):
     icon_rev: Mapped[str | None] = mapped_column(String(16))
     # доставка материалов встречи по почте (настраивает руководитель): {enabled, materials[], recipients{leaders,participants,users[],emails[]}}
     mail_delivery: Mapped[dict | None] = mapped_column(JSONType)
-    # Языковая модель комнаты: inherit — системная по умолчанию; profile — внешний профиль (llm_profile_id); local — локальная модель (llm_local_model); off — отключена.
+    # Языковая модель комнаты: inherit — системная по умолчанию; profile — подключение (llm_profile_id); off — отключена.
     # Для комнат старых версий: llm_profile_id задан → profile. Выбранный профиль удалён/модель недоступна → политика llm.on_missing (системная или «недоступна»).
     llm_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
-    llm_local_model: Mapped[str | None] = mapped_column(String(80))
     # То же для КРАТКОГО РЕЗЮМЕ (протокол и резюме — разные задачи, модель выбирается отдельно): inherit — системная модель для резюме.
     llm_summary_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
     llm_summary_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    llm_summary_local_model: Mapped[str | None] = mapped_column(String(80))
     # Телефония (SIP через LiveKit SIP): off — отключена; default — профиль по умолчанию; profile — конкретный (sip_profile_id).
     sip_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off", nullable=False)
     sip_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
