@@ -85,4 +85,5 @@ async def main():
     print(f"ИТОГО: {len(S.results) - len(bad)} из {len(S.results)}; не прошли: {[b[0] for b in bad]}")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
