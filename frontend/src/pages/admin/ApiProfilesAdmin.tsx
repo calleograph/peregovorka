@@ -76,7 +76,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
 
   const target = (p: ApiProfile) => {
     const c = p.config as Record<string, unknown>;
-    return kind === "llm" ? `${c.model || "—"} · ${c.base_url || String(c.type)}` : `${c.profile === "generic" ? "произвольный API" : "DocClean"} · ${c.base_url || "—"}`;
+    return `${c.model || "—"} · ${c.base_url || String(c.type)}`;
   };
 
   return (
@@ -136,7 +136,7 @@ export default function ApiProfilesAdmin({ kind, fields }: { kind: ProfileKind; 
         <form ref={focusOnMount} className="form" onSubmit={save}>
           <h3>{edit.id ? "Изменение API" : "Новый API"}</h3>
           <label><span className="field-title">Название<InfoTip>Так профиль называется в списках и в настройках переговорок.</InfoTip></span><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required maxLength={120}
-                                placeholder={kind === "llm" ? "Внутренняя модель" : "DocClean резервный"} />
+                                placeholder="Внутренняя модель" />
             </label>
           <FieldsEditor fields={editFields} values={edit.values} secrets={edit.secrets}
                         onChange={(n, v) => setEdit({ ...edit, values: { ...edit.values, [n]: v } })}

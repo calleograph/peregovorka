@@ -308,7 +308,7 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
                 <tr><td>Кто видит завершённую встречу</td><td>{room?.retention?.history_access === "participants" ? "участники встречи" : "руководители и администраторы"}</td></tr>
               </tbody></table>
             )}
-            <F title="Карта разговора после встречи" tip="Карта строится локальной моделью несколько минут и нагружает сервер, поэтому по умолчанию создаётся вручную — кнопкой в истории встречи.">
+            <F title="Карта разговора после встречи" tip="Карта строится языковой моделью по всей стенограмме и расходует запросы к ней, поэтому по умолчанию создаётся вручную — кнопкой в истории встречи.">
               <select value={form.auto_map_mode} onChange={(e) => set("auto_map_mode", e.target.value as RoomForm["auto_map_mode"])}>
                 <option value="inherit">Как в общих настройках</option><option value="on">Формировать автоматически</option><option value="off">Не формировать автоматически</option>
               </select></F>

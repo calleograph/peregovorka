@@ -68,7 +68,7 @@ def upgrade() -> None:
             if isinstance(v, str):
                 v = _val(v)
             if isinstance(v, dict) and v.get('mode') == 'local':
-                bind.execute(sa.update(meetings).where(meetings.c.id == mid).values({col: None}))
+                bind.execute(sa.update(meetings).where(meetings.c.id == mid).values({col: sa.null()}))
 
 
 def downgrade() -> None:

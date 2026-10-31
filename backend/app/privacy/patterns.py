@@ -54,7 +54,7 @@ INTERNAL_SUFFIXES = ("local", "lan", "corp", "internal", "intra", "intranet", "h
 
 EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}(?![\w-])")
 PHONE = re.compile(r"(?<![\w+])(?:\+7|8|\+\d{1,3})[\s(.-]{0,2}\d{3}[\s).-]{0,2}\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)|(?<![\w/.-])\d{3}-\d{2}-\d{2}(?![\w-])")
-IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?![\d.]|\.\d)")
+IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?!\d|\.\d)")
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}(?:/\d{1,3})?(?![\w:])|(?<![\w:])(?:[0-9a-fA-F]{1,4}:){1,7}:(?:[0-9a-fA-F]{1,4})?(?![\w:])")
 MAC = re.compile(r"(?<![\w:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:-])")
 URL = re.compile(r"\b(?:https?|ftp|smb|ldaps?|ssh|rdp)://[^\s<>\"'«»]+", re.I)
@@ -184,7 +184,7 @@ def find_structured(text: str, *, internal_domains: Iterable[str] = (), public_d
         add(*_v(m), "doc_number", "document_number")
     for m in MONEY.finditer(text):
         e = m.end()
-        if re.match(r"\.\s*[а-яёa-z]", text[e:e + 4]):
+        if re.match(r"\.(?:\s*[а-яёa-z]|[,;:)\]])", text[e:e + 4]):
             e += 1                                       # «1,2 млн руб. подпишем» — точка сокращения входит в сумму, а не остаётся «концом предложения»
         out.append(Found(m.start(), e, "money", "money"))
     for m in LEGAL_ENTITY.finditer(text):

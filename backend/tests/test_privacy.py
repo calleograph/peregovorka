@@ -70,6 +70,8 @@ def test_infrastructure_contacts_and_accounts():
     for leaked in ("db-prod-01", "192.0.2.40", "00:1A:2B", "wiki.corp", "fs01", "CORP\\i.ivanov", "m.petrova", "ivanov@example.org", "345-67-89", "555-12-34"):
         assert leaked not in out, leaked
     assert "[сервер 1]" in out and "[IP 1]" in out and "[учётная запись 1]" in out and "[учётная запись 2]" in out
+    assert run("Адрес сервера 192.0.2.17. Подсеть 192.0.2.0/24, версия 2.14.1.", people=[]) == "Адрес сервера [IP 1]. Подсеть [IP 2], версия 2.14.1.", \
+        "адрес в конце предложения тоже заменяется (найдено живой проверкой)"
 
 
 def test_the_same_server_gets_the_same_label_across_texts_of_one_meeting():
@@ -157,6 +159,7 @@ def test_places_organizations_and_coordinated_names_are_declined_and_numbered_by
     assert "с Иваном И. и Марией П." in run("Обсудим с Ивановым и Петровой.")
     assert run("Проект Альфа переносим.", terms=[Term("Альфа", "project")]) == "Проект 1 переносим."
     assert run("Договор на 1,2 млн руб. подпишем.", people=[]) == "Договор на [сумма] подпишем."
+    assert run("Бюджет — 2,4 млн руб., срок — май. Итого 5 руб. Далее.", people=[]) == "Бюджет — [сумма], срок — май. Итого [сумма]. Далее."
 
 
 def test_custom_replacement_and_exceptions():

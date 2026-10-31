@@ -17,3 +17,4 @@ t "llm: обновление удаляет файлы прежней модел
 mkdir -p "$LL/data/models/llm"; : > "$LL/data/models/llm/my-own-file.bin"
 t "llm: чужие файлы каталога не удаляются" bash -c 'env -i PATH="$2:$PATH" HOME="$3" bash -c "source \"$1/scripts/lib/common.sh\"; load_env \"$4\"; legacy_llm_cleanup" >/dev/null 2>&1
   [ -e "$5/models/llm/my-own-file.bin" ]' _ "$ROOT" "$LL/bin" "$TMP" "$LL/env" "$LL/data"
+t "llm: прежняя модель убирается только после проверенного запуска новой версии" bash -c 'grep -A3 "if \[ \"\$H_ST\" = ok \]; then" "$1/scripts/update.sh" | grep -q legacy_llm_cleanup && [ "$(grep -c legacy_llm_cleanup "$1/scripts/update.sh")" = 1 ]' _ "$ROOT"
