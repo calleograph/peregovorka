@@ -36,7 +36,7 @@ LOG_CHUNK = 64 * 1024
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 # Белый список исправлений («Исправить автоматически»): зеркало REPAIR_IDS в scripts/lib/repairlib.sh. Backend передаёт исполнителю только эти ID.
-REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "deploy_incomplete", "image_commit", "migrations", "reverify", "llm_model", "sip_enable", "sip_disable")
+REPAIR_IDS = ("data_dirs", "nginx_site", "sysctl", "prereq_missing", "deploy_incomplete", "image_commit", "migrations", "reverify", "sip_enable", "sip_disable")
 # Действия с дополнительными компонентами (Видеозапись, Трансляции, SIP): зеркало COMPONENT_OPS в scripts/lib/complib.sh (совпадение проверяется тестом)
 COMPONENT_OPS = ("video_enable", "video_disable", "video_restart", "sip_enable", "sip_disable", "sip_restart", "livekit_restart", "web_restart", "state")
 BUSY_STATES = ("updating", "repairing", "component")

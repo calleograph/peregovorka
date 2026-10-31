@@ -149,6 +149,9 @@ class Anonymizer:
         if policy.use_ner and policy.action("person") != "keep":
             for p in participants:
                 self.roster.add_participant(p)
+        # слова ФИО участников, которых нет в словаре (латиница, редкие фамилии): повторная проверка дозаменяет их, даже если разбор имени их не узнал
+        self._odd_words = {w.lower() for p in participants for w in nm._WORD.findall(p)
+                           if len(w) > 2 and w[:1].isupper() and not nm.morph().word_is_known(w.lower())} if policy.use_ner and policy.action("person") != "keep" else set()
         self._term_lemmas = [(t, tuple(w for _, _, w in _lemmas(t.term, policy.use_ner))) for t in policy.terms if t.term.strip()]
         self._exceptions = [tuple(w for _, _, w in _lemmas(e, policy.use_ner)) for e in policy.exceptions if e.strip()]
 
@@ -236,8 +239,9 @@ class Anonymizer:
         else:
             tail = f"{tail} ({person.number})"
             alias = f"{first}|{tail}"
-        if not first and not tail:
-            first, alias = f"Лицо {person.number}", f"Лицо {person.number}|"
+        if not first:                                     # имени нет («Локальный администратор», одна фамилия): инициал без имени выглядит обрывком
+            word = "Участник" if person.participant else "Лицо"
+            first, alias = f"{word} {person.number}", f"{word} {person.number}|"
         self._aliases[person.number] = alias
         return alias.split("|")[0], alias.split("|")[1]
 
@@ -252,10 +256,9 @@ class Anonymizer:
             word = "Участник" if person.participant else "Лицо"
             return f"{nm.inflect_word(word, parts.case, gram='')} {person.number}"
         first, tail = self._short_alias(person)
-        if first.startswith("Лицо "):
-            return first
-        if not first:
-            return tail
+        if first.startswith(("Лицо ", "Участник ")):
+            word, num = first.split(" ")
+            return f"{nm.inflect_word(word, parts.case, gram='')} {num}"
         return f"{nm.inflect_word(first, parts.case, person.parts.gender)} {tail}".strip()
 
     def process(self, text: str) -> Result:
@@ -307,9 +310,10 @@ class Anonymizer:
         if not self.policy.use_ner or self.policy.action("person") == "keep":
             return
         surnames = {p.parts.surname for p in self.roster.people if p.participant and p.parts.surname and len(p.parts.surname) > 2}
-        if not surnames:
+        if not surnames and not self._odd_words:
             return
-        hits = [(s, e) for s, e, w in _lemmas(res.text, True) if w in surnames or nm.parse_name([res.text[s:e]]).surname in surnames and res.text[s:s + 1].isupper()]
+        hits = [(s, e) for s, e, w in _lemmas(res.text, True)
+                if w in surnames or res.text[s:e].lower() in self._odd_words or nm.parse_name([res.text[s:e]]).surname in surnames and res.text[s:s + 1].isupper()]
         if hits:
             buf, pos = [], 0
             for s, e in hits:

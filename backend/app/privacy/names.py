@@ -175,7 +175,10 @@ class Roster:
     people: list[Person] = field(default_factory=list)
 
     def add_participant(self, display_name: str) -> None:
-        p = parse_name(_WORD.findall(display_name))
+        words = _WORD.findall(display_name)
+        if words and not any(_role(w) for w in words) and all(morph().word_is_known(w.lower()) for w in words):
+            return                                     # «Локальный администратор» — обычные слова, а не ФИО: в список людей не входит (латиница и редкие имена — входят)
+        p = parse_name(words)
         if not (p.first or p.surname):
             return
         for x in self.people:

@@ -162,6 +162,12 @@ def test_places_organizations_and_coordinated_names_are_declined_and_numbered_by
     assert run("Бюджет — 2,4 млн руб., срок — май. Итого 5 руб. Далее.", people=[]) == "Бюджет — [сумма], срок — май. Итого [сумма]. Далее."
 
 
+def test_a_participant_without_a_first_name_gets_a_number_not_a_bare_initial():
+    out = run("Локальный администратор: начинаем. Петров на связи, слово Петрову.", people=["Локальный администратор", "Петров"])
+    assert out == "Локальный администратор: начинаем. Участник 1 на связи, слово Участнику 1.", "служебное имя — не человек; фамилия без имени — номер, а не «П.»"
+    assert "Okafor" not in run("Ngozi Okafor доложила.", people=["Ngozi Okafor"]) and "Хайруллин" not in run("Хайруллина доложила.", people=["Зульфия Хайруллина"])
+
+
 def test_custom_replacement_and_exceptions():
     terms = [Term("Атлант", "custom", "внутренняя CRM")]
     out = run("Перенесли Атлант на новый сервер. Атланта хватит до мая. Иванов Иван доволен.", terms=terms, exceptions=["Иванов Иван"], people=[])

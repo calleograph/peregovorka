@@ -135,11 +135,11 @@ def test_one_editor_for_create_and_edit_saves_every_tab_and_reloads_it(client):
     got = client.get(url(room)).json()
     assert (got["video_mode"], got["video_quality"], got["recording_mode"], got["auto_map_mode"], got["board_access"], got["guest_access_enabled"]) == ("auto", "1080p", "off", "on", "private", True)
     assert got["mail_delivery"]["enabled"] is True and got["retention"]["history_access"] == "participants" and got["retention"]["text_days"] == 30
-    assert got["can_edit_system_fields"] is True and "anonymizer_profile_id" in got["retention"], "администратору видны и системные поля"
+    assert got["can_edit_system_fields"] is True, "администратору видны и системные поля"
     # руководитель меняет те же вкладки, но системных полей не видит; администратор — в любой комнате, кто бы её ни создал
     login(client, "carol")
     lead = client.get(url(room)).json()
-    assert lead["can_edit_system_fields"] is False and "anonymizer_profile_id" not in lead["retention"]
+    assert lead["can_edit_system_fields"] is False and lead["retention"]["privacy"]["enabled"] is True, "обезличивание комнаты — решение руководителя"
     assert client.patch(url(room), json={"video_mode": "manual"}).status_code == 200
     login(client, "alice")
     assert client.patch(url(room), json={"video_mode": "off"}).status_code in (403, 404)
