@@ -1195,7 +1195,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 /* Меню администрирования — своя область прокрутки: колёсико над меню прокручивает меню, над содержимым — содержимое; на краю меню прокрутка
    не переходит на страницу (overscroll-behavior). Высота — до низа окна, поэтому нижние разделы доступны при любом числе пунктов. */
 @media (min-width: 861px) {
-  .admin-nav { max-height: calc(100dvh - 82px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding-right: 2px; }
+  .admin-nav { align-self: start; max-height: calc(100dvh - 122px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding-right: 2px; }   /* start — иначе элемент сетки растянут и sticky не держит меню; 122 — начало меню под заголовком (110) и отступ снизу */
 }
 
 /* сроки хранения в редакторе комнаты: «общий срок / свой» и дни в одну строку */
