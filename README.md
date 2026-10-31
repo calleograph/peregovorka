@@ -84,10 +84,10 @@ sudo ./install.sh
 ## Приложение для Windows
 
 <!-- desktop-release:start -->
-**Версия 1.4.2** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.4.2) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.2/SHA256SUMS.txt)
+**Версия 1.4.3** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.4.3) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/SHA256SUMS.txt)
 
-- **[Peregovorka-Setup-1.4.2.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.2/Peregovorka-Setup-1.4.2.exe)** — установка для себя, без прав администратора
-- **[Peregovorka-1.4.2-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.2/Peregovorka-1.4.2-x64.msi)** — для развёртывания в организации (групповые политики)
+- **[Peregovorka-Setup-1.4.3.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/Peregovorka-Setup-1.4.3.exe)** — установка для себя, без прав администратора
+- **[Peregovorka-1.4.3-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/Peregovorka-1.4.3-x64.msi)** — для развёртывания в организации (групповые политики)
 
 Несколько серверов организаций в одном окне, трей и уведомления Windows, новое оформление «Стекло». Установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае».
 <!-- desktop-release:end -->
