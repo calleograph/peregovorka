@@ -15,8 +15,10 @@ ROOM = os.environ.get("PG_ROOM", "upd-check")
 check = S.check
 
 
-def smb_files(name):
-    return subprocess.run(["docker", "exec", SMB, "sh", "-c", f"find /share -name '{name}' | head"], capture_output=True, text=True).stdout.split()
+def on_smb(path):
+    """Файл записи в папке хранилища на SMB (без корзины самого сервера Samba `.deleted`)."""
+    out = subprocess.run(["docker", "exec", SMB, "find", "/share", "-path", f"*/{path}"], capture_output=True, text=True).stdout.splitlines()
+    return any("/.deleted/" not in f for f in out)
 
 
 async def main():
@@ -44,27 +46,30 @@ async def main():
             if row.endswith("|exported"):
                 rid, path, _ = row.split("|"); break
             await asyncio.sleep(2)
-        name = os.path.basename(path)
-        check(f"MP4 перенесён на SMB ({name})", bool(rid) and bool(smb_files(name)), row)
+        check(f"MP4 перенесён на SMB ({path})", bool(rid) and on_smb(path), row)
         await api(A, "POST", f"/admin/meetings/{mid}/end")
         sql(f"UPDATE recordings SET created_at = now() - interval '40 days' WHERE id = '{rid}'")
         gen = (await api(A, "GET", "/admin/settings/general"))["j"]
         check(f"общий срок видео — {gen.get('default_video_retention_days')} дней, очистка общих сроков начнётся {gen.get('retention_cleanup_from')}",
               gen.get("default_video_retention_days") == 30 and bool(gen.get("retention_cleanup_from")), str(gen)[:200])
         st = (await api(A, "POST", "/admin/retention/run"))["j"]
-        check("запись 40 дней при общем сроке 30, но до даты начала очистки — не удалена", sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "1" and bool(smb_files(name)), str(st))
+        check("запись 40 дней при общем сроке 30, но до даты начала очистки — не удалена", sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "1" and on_smb(path), str(st))
         r = await api(A, "PATCH", f"/admin/rooms/{room['id']}", {"video_retention_custom": True, "video_retention_days": 60})
         st = (await api(A, "POST", "/admin/retention/run"))["j"]
         check("свой срок комнаты 60 дней: запись 40 дней остаётся", r["s"] == 200 and sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "1", str(st))
         await api(A, "PATCH", f"/admin/rooms/{room['id']}", {"video_retention_custom": True, "video_retention_days": 30})
-        subprocess.run(["docker", "pause", SMB], capture_output=True)
+        subprocess.run(["docker", "stop", SMB], capture_output=True)          # сервер SMB выключен: подключение отклоняется (пауза контейнера дала бы зависание до возобновления)
         try:
             st = (await api(A, "POST", "/admin/retention/run"))["j"]
         finally:
-            subprocess.run(["docker", "unpause", SMB], capture_output=True)
+            subprocess.run(["docker", "start", SMB], capture_output=True)
+            for _ in range(30):
+                if "healthy" in subprocess.run(["docker", "ps", "--filter", f"name={SMB}", "--format", "{{.Status}}"], capture_output=True, text=True).stdout and "starting" not in subprocess.run(["docker", "ps", "--filter", f"name={SMB}", "--format", "{{.Status}}"], capture_output=True, text=True).stdout:
+                    break
+                await asyncio.sleep(2)
         check("SMB недоступен: строка записи осталась для повтора (файл не «потерян» на SMB)", sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "1" and (st or {}).get("deferred_external") == 1, str(st))
         st = (await api(A, "POST", "/admin/retention/run"))["j"]
-        check("SMB снова доступен: запись удалена из базы и с SMB", sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "0" and not smb_files(name) and (st or {}).get("video_recordings") == 1, str(st))
+        check("SMB снова доступен: запись удалена из базы и из папки на SMB (корзина самого сервера Samba — его настройка)", sql(f"SELECT count(*) FROM recordings WHERE id = '{rid}'") == "0" and not on_smb(path) and (st or {}).get("video_recordings") == 1, str(st))
         aud = (await api(A, "GET", "/admin/audit?limit=20"))["j"]
         items = aud["items"] if isinstance(aud, dict) else aud
         check("запуск очистки записан в журнал аудита", any(a["action"] == "retention.run" for a in items))

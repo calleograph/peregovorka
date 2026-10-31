@@ -63,13 +63,14 @@ export default function RoomsAdmin() {
               { id: "del", label: "Удалить", icon: "close", danger: true, confirm: `Удалить переговорку «${r.name}»?`, onSelect: () => remove(r) },
             ])}>
               <td><span className="h-room-link"><RoomIcon name={r.name} icon={r.icon} size={26} />{r.name}</span>{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
-              <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча · {peopleText(r)}</span>}
+              <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <><span className="badge rec"> идёт встреча · {peopleText(r)}</span>
+                  <div><button className="btn mini ghost danger" onClick={() => setEnding(r)}>Завершить встречу</button></div></>}
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>
               <td className="small">{[r.room_type === "presentation" && "презентация", r.room_type === "broadcast" && "трансляция", r.has_password && "пароль", r.auto_record ? "автозапись" : r.record_audio && "запись по кнопке", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
                 r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
-              <td className="actions">{r.active_meeting_id && <button className="btn ghost danger" onClick={() => setEnding(r)}>Завершить встречу</button>}<button className="btn ghost" onClick={() => open(r.id)}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
+              <td className="actions"><button className="btn ghost" onClick={() => open(r.id)}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>
           ))}
         </tbody>
