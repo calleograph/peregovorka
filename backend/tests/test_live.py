@@ -954,6 +954,44 @@ def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
     assert lv.post(f"/api/v1/live/{token}/replay", json={"pass": ok.json()["pass"]}).status_code == 200, "пропуск после пароля действует"
 
 
+
+def test_password_of_an_ended_broadcast_can_be_set_changed_and_removed_and_old_passes_and_file_links_die(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    patch(lv, room, live_replay=True, live_download=True)
+    _ended_broadcast_with_recording(lv, room, mid)
+    reconcile(lv)
+    b = only_broadcast(lv, mid)
+    token = b.view_token
+    anon = lambda: (lv.cookies.clear(), lv.headers.pop("X-CSRF-Token", None))  # noqa: E731
+    anon()
+    open_url = lv.post(f"/api/v1/live/{token}/replay", json={}).json()["url"]
+    assert lv.get(open_url, headers={"Range": "bytes=0-9"}).status_code == 206, "без пароля запись открыта"
+    assert bpatch(lv, room, b.id, password="x").status_code == 422, "короткий пароль отклонён"
+    assert bpatch(lv, room, b.id, password="zapis-2026").status_code == 200
+    anon()
+    assert lv.get(open_url, headers={"Range": "bytes=0-9"}).status_code in (403, 404, 410), "адрес файла, выданный до пароля, сразу не действует (и для докачки)"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required"
+    first = lv.post(f"/api/v1/live/{token}/replay", json={"password": "zapis-2026"}).json()
+    assert lv.get(first["download_url"], headers={"Range": "bytes=0-9"}).status_code == 206
+    assert bpatch(lv, room, b.id, password="novyi-2026").status_code == 200
+    anon()
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"pass": first["pass"]}).json()["detail"]["code"] == "password_required", "пропуск по старому паролю обесценен"
+    assert lv.get(first["download_url"]).status_code in (403, 404, 410), "ссылка на скачивание по старому паролю обесценена"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zapis-2026"}).json()["detail"]["code"] == "password_invalid"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "novyi-2026"}).status_code == 200
+    assert bpatch(lv, room, b.id, download=False).status_code == 200
+    anon()
+    r = lv.post(f"/api/v1/live/{token}/replay", json={"password": "novyi-2026"}).json()
+    assert not r.get("download_url") and lv.get(r["url"].replace("d=0", "d=1")).status_code in (403, 404), "скачивание выключено отдельно от просмотра"
+    assert bpatch(lv, room, b.id, password=None).status_code == 200
+    anon()
+    assert lv.post(f"/api/v1/live/{token}/replay", json={}).status_code == 200, "пароль убран"
+    login(lv, "root")
+    audit = json.dumps(lv.get("/api/v1/admin/audit?limit=50").json(), ensure_ascii=False)
+    assert "zapis-2026" not in audit and "novyi-2026" not in audit and '"protection": "пароль задан"' in audit and '"protection": "пароль убран"' in audit, "в журнале — факт смены, не пароль"
+
+
 def test_broadcast_does_not_start_when_its_recording_cannot_be_written(lv, monkeypatch):
     import shutil as sh  # noqa: PLC0415
 

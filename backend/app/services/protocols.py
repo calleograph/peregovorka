@@ -16,7 +16,7 @@ import time
 import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
@@ -44,6 +44,7 @@ from .segments import author_name
 from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
+DELETE_BACKOFF_S = (60, 300, 900, 3600, 6 * 3600)        # пауза перед повтором удаления файла записи (по номеру попытки; дальше — раз в 6 часов)
 log = logging.getLogger("app.protocols")
 
 SHARED_JOBS = ("protocol-", "map-")      # задания, состояние которых видят все процессы (реестр в Redis)
@@ -745,7 +746,7 @@ class ProtocolService:
             if not (await self.export_target(db, area))[0]:
                 continue
             kinds = [Recording.kind == "mix_video"] if area == "video" else [Recording.kind != "mix_video"]
-            recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed")), Recording.file_state != "missing",
+            recs = (await db.execute(select(Recording).where(Recording.export_status.in_(("pending", "failed")), Recording.file_state == "ok",
                                                              Recording.status == "ready", *kinds))).scalars().all()
             for rec in recs:
                 await self.export_recording(db, rec)
@@ -796,24 +797,35 @@ class ProtocolService:
         size = await asyncio.to_thread(storage.size_of, rec.path)
         return size, lambda s, e: storage.read_range(rec.path, s, e)
 
-    async def delete_recording(self, db: AsyncSession, rec: Recording, *, keep_on_external_error: bool = False) -> bool:
-        """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается; при `keep_on_external_error`
-        строка остаётся (False), чтобы очистка по сроку повторила удаление и файл не пережил свой срок во внешнем хранилище."""
-        await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+    async def delete_recording(self, db: AsyncSession, rec: Recording) -> bool:
+        """Удаление записи. Сначала строка помечается «удаляется» (это переживает перезапуск сервера), затем удаляются локальный файл и копия
+        во внешнем хранилище, и проверяется, что копии там больше нет. Строка исчезает только после полного удаления: при сбое хранилища
+        (нет связи, отказ в доступе, нет места для корзины SMB) остаются причина, число попыток и время повтора — повторяет
+        `workers.retention.run_deletions`. True — удалено полностью; повторный вызов для уже удалённого файла безопасен."""
         from ..models import RecordingWaveform  # noqa: PLC0415
 
+        if rec.file_state != "deleting":
+            rec.file_state, rec.delete_error, rec.delete_attempts, rec.delete_next_at = "deleting", None, 0, None
+            await db.commit()
+        try:
+            await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+            if rec.export_status == "exported":
+                storage = await self.storage_for(db, rec)
+                if storage is None:
+                    raise StorageError("внешнее хранилище этой записи не найдено в настройках — файл мог остаться в нём")
+                await asyncio.to_thread(storage.delete, rec.path)
+                if await asyncio.to_thread(storage.exists, rec.path):
+                    raise StorageError("файл остался во внешнем хранилище после удаления")
+        except (StorageError, OSError) as exc:
+            rec.delete_attempts += 1
+            rec.delete_error = (str(exc) or type(exc).__name__)[:300]
+            rec.delete_next_at = utcnow() + timedelta(seconds=DELETE_BACKOFF_S[min(rec.delete_attempts, len(DELETE_BACKOFF_S)) - 1])
+            await db.commit()
+            log.warning("Удаление записи отложено: хранилище недоступно", extra={"recording": str(rec.id), "attempt": rec.delete_attempts, "error": rec.delete_error})
+            return False
         w = await db.get(RecordingWaveform, rec.id)
         if w is not None:
             await db.delete(w)
-        if rec.export_status == "exported":
-            storage = await self.storage_for(db, rec)
-            if storage is not None:
-                try:
-                    await asyncio.to_thread(storage.delete, rec.path)
-                except StorageError as exc:
-                    log.error("Не удалось удалить файл записи во внешнем хранилище", extra={"recording": str(rec.id), "error": str(exc)})
-                    if keep_on_external_error:
-                        return False
         await db.delete(rec)
         return True
 
@@ -1195,4 +1207,4 @@ class ProtocolService:
 
     # ------------------------------------------------------------------------- хранение
     async def purge_recording(self, db: AsyncSession, rec: Recording) -> bool:
-        return await self.delete_recording(db, rec, keep_on_external_error=True)
+        return await self.delete_recording(db, rec)

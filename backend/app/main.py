@@ -64,7 +64,7 @@ from .workers.reaper import run_reaper
 from .workers.autoupdate import run_autoupdate
 from .services.auto_backup import AutoBackup, run_auto_backup
 from .services.autoupdate import AutoUpdater
-from .workers.retention import run_retention
+from .workers.retention import run_deletions, run_retention
 from .workers.segment_consumer import run_consumer
 
 log = logging.getLogger("app")
@@ -371,6 +371,7 @@ def create_app(
             leader.register("auto-update", _task("auto-update", lambda: run_autoupdate(app.state.autoupdate)))
             leader.register("auto-backup", _task("auto-backup", lambda: run_auto_backup(app.state.auto_backup)))
             leader.register("retention", _task("retention", lambda: run_retention(bg_sm, protocols)))
+            leader.register("recording-deletions", _task("recording-deletions", lambda: run_deletions(bg_sm, protocols)))
 
             async def _job_orphans():
                 while True:                                   # процесс-владелец упал: его ключ истёк — документ закрывается как прерванный (раньше — только при перезапуске)

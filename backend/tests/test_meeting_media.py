@@ -2,6 +2,7 @@
 Тесты со сведением звука требуют ffmpeg (в CI он есть; локально — переменная FFMPEG_BIN либо установленный ffmpeg), иначе они пропускаются, а не «проходят»."""
 from __future__ import annotations
 
+import json
 import math
 import struct
 import subprocess
@@ -348,6 +349,134 @@ def test_retention_uses_server_defaults_waits_for_the_start_date_and_keeps_video
         assert after == [k for k in before if k != "mix_video"], "аудио (45 дней при сроке 60) осталось — срок аудио видео не касается и наоборот"
 
 
+class _FakeSmb:
+    """Внешнее хранилище для проверки удаления: можно «уронить» (нет связи) или заставить «молча» не удалить файл."""
+    def __init__(self, files):
+        self.files, self.down, self.stubborn, self.deleted = set(files), False, False, []
+
+    def delete(self, path):
+        if self.down:
+            from app.services.storage import StorageError
+            raise StorageError("SMB: не удалось удалить файл (ConnectionError)")
+        if not self.stubborn:
+            self.files.discard(path)
+            self.deleted.append(path)
+
+    def exists(self, path):
+        if self.down:
+            from app.services.storage import StorageError
+            raise StorageError("SMB: ConnectionError")
+        return path in self.files
+
+
+def _exported(c, mid, path):
+    from app.models import Meeting, Recording
+
+    async def add():
+        async with c.app_obj.state.session_maker() as db:
+            m = await db.get(Meeting, uuid.UUID(mid))
+            row = Recording(meeting_id=m.id, room_id=m.room_id, participant_identity="meeting", path=path, kind="mix_video", status="ready", has_video=True,
+                            export_status="exported")
+            db.add(row)
+            await db.commit()
+            return str(row.id)
+    return c.portal.call(add)
+
+
+def _rec(c, rid):
+    from app.models import Recording
+
+    async def get():
+        async with c.app_obj.state.session_maker() as db:
+            return await db.get(Recording, uuid.UUID(rid))
+    return c.portal.call(get)
+
+
+def _due_now(c):
+    from sqlalchemy import update
+
+    from app.models import Recording, utcnow
+
+    async def go():
+        async with c.app_obj.state.session_maker() as db:
+            await db.execute(update(Recording).where(Recording.file_state == "deleting").values(delete_next_at=utcnow()))
+            await db.commit()
+    c.portal.call(go)
+
+
+def test_deleting_a_recording_survives_an_unavailable_smb_and_finishes_later(tmp_path, directory, monkeypatch):
+    """Администратор удаляет запись, SMB недоступен: строка не исчезает («удаляется», причина, повтор), запись недоступна для просмотра, сверка её не «оживляет»;
+    повтор после возврата SMB удаляет файл и строку; файл, который хранилище «не удалило», не считается удалённым."""
+    from app.workers.retention import run_deletions_once
+
+    s = make_settings(tmp_path)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)
+        protocols = c.app_obj.state.protocols
+        smb = _FakeSmb({"v/a.mp4", "v/b.mp4"})
+
+        async def smb_for(db, rec):
+            return smb
+        monkeypatch.setattr(protocols, "storage_for", smb_for)
+        rid = _exported(c, mid, "v/a.mp4")
+        login(c, "root")
+        smb.down = True
+        r = c.delete(f"/api/v1/meetings/{mid}/recordings/{rid}")
+        assert r.status_code == 202 and r.json()["deferred"] == 1 and "SMB" in r.json()["message"]
+        rec = _rec(c, rid)
+        assert rec.file_state == "deleting" and rec.delete_attempts == 1 and "SMB" in rec.delete_error and rec.delete_next_at is not None
+        media = c.get(f"/api/v1/meetings/{mid}/media").json()
+        assert next(m for m in media["mixes"] if m["id"] == rid)["phase"] == "deleting", "в списке видно «удаляется» с причиной"
+        assert c.get(f"/api/v1/meetings/{mid}/media/{rid}/stream").status_code in (404, 410), "удаляемую запись не выдают"
+        assert c.get(f"/api/v1/meetings/{mid}/recordings/{rid}").status_code in (404, 410)
+        r = c.delete(f"/api/v1/meetings/{mid}")
+        assert r.status_code == 409 and "повторяется автоматически" in r.json()["detail"], "встреча не удаляется, пока файлы записей не удалены"
+        assert c.portal.call(lambda: run_deletions_once(c.app_obj.state.session_maker, protocols)) == {"deleted": 0, "deferred": 0}, "время повтора ещё не подошло"
+        _due_now(c)
+        assert c.portal.call(lambda: run_deletions_once(c.app_obj.state.session_maker, protocols))["deferred"] == 1 and _rec(c, rid).delete_attempts == 3      # 1 — администратор, 2 — попытка удалить встречу, 3 — повтор
+        smb.down, smb.stubborn = False, True
+        _due_now(c)
+        c.portal.call(lambda: run_deletions_once(c.app_obj.state.session_maker, protocols))
+        assert _rec(c, rid).delete_error == "файл остался во внешнем хранилище после удаления", "результат удаления проверяется"
+        smb.stubborn = False
+        _due_now(c)
+        assert c.portal.call(lambda: run_deletions_once(c.app_obj.state.session_maker, protocols))["deleted"] == 1
+        assert _rec(c, rid) is None and "v/a.mp4" not in smb.files
+        rid2 = _exported(c, mid, "v/b.mp4")
+        assert c.delete(f"/api/v1/meetings/{mid}/recordings/{rid2}?forget=1").status_code == 409, "убрать из учёта можно только застрявшую запись"
+        smb.down = True
+        c.delete(f"/api/v1/meetings/{mid}/recordings/{rid2}")
+        assert c.delete(f"/api/v1/meetings/{mid}/recordings/{rid2}?forget=1").status_code == 204 and _rec(c, rid2) is None
+        audit = json.dumps(c.get("/api/v1/admin/audit?limit=20").json(), ensure_ascii=False)
+        assert "recording.forget" in audit and "v/b.mp4" in audit, "в журнале — где файл мог остаться"
+        smb.down = False
+        assert c.delete(f"/api/v1/meetings/{mid}").status_code == 204, "после удаления файлов встреча удаляется"
+
+
+def test_deleting_a_room_removes_recording_files_instead_of_leaving_orphans(tmp_path, directory, monkeypatch):
+    s = make_settings(tmp_path)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)
+        protocols = c.app_obj.state.protocols
+        smb = _FakeSmb({"v/room.mp4"})
+
+        async def smb_for(db, rec):
+            return smb
+        monkeypatch.setattr(protocols, "storage_for", smb_for)
+        _exported(c, mid, "v/room.mp4")
+        room_id = str(_rec(c, _exported(c, mid, "v/x.mp4")).room_id)
+        smb.files.add("v/x.mp4")
+        local = list(Path(s.recordings_path).rglob("*.wav")) + list(Path(s.recordings_path).rglob("*.m4a"))
+        login(c, "root")
+        smb.down = True
+        r = c.delete(f"/api/v1/admin/rooms/{room_id}")
+        assert r.status_code == 409 and "повторяется автоматически" in r.json()["detail"], "SMB недоступен — комната не удаляется, сведения о файлах сохранены"
+        smb.down = False
+        assert c.delete(f"/api/v1/admin/rooms/{room_id}").status_code == 204
+        assert smb.files == set() and sorted(smb.deleted) == ["v/room.mp4", "v/x.mp4"], "файлы во внешнем хранилище удалены вместе с комнатой"
+        assert local and not any(p.exists() for p in local), "локальные файлы записей тоже удалены"
+
+
 def test_retention_keeps_the_row_when_the_external_copy_cannot_be_deleted_and_retries(tmp_path, directory, monkeypatch):
     """SMB недоступен в момент очистки: строка записи остаётся (иначе файл навсегда остался бы во внешнем хранилище), следующая очистка удаляет её вместе с файлом."""
     import datetime as dt
@@ -371,6 +500,9 @@ def test_retention_keeps_the_row_when_the_external_copy_cannot_be_deleted_and_re
                     raise StorageError("SMB недоступен")
                 deleted.append(path)
 
+            def exists(self, path):
+                return False
+
         async def smb_for(db, rec):
             return Smb()
         monkeypatch.setattr(protocols, "storage_for", smb_for)
@@ -392,5 +524,8 @@ def test_retention_keeps_the_row_when_the_external_copy_cannot_be_deleted_and_re
         stats = c.portal.call(lambda: run_retention_once(sm, protocols))
         assert c.portal.call(videos) == ["v/old.mp4"] and stats.get("deferred_external") == 1, "внешний файл не удалён — строка осталась для повтора"
         fail["on"] = False
-        stats = c.portal.call(lambda: run_retention_once(sm, protocols))
-        assert c.portal.call(videos) == [] and deleted == ["v/old.mp4"] and stats.get("video_recordings") == 1
+        assert c.portal.call(lambda: run_retention_once(sm, protocols)).get("video_recordings") is None, "очистка не трогает уже удаляемую запись — её повторяет фоновая задача"
+        from app.workers.retention import run_deletions_once
+        _due_now(c)
+        assert c.portal.call(lambda: run_deletions_once(sm, protocols))["deleted"] == 1
+        assert c.portal.call(videos) == [] and deleted == ["v/old.mp4"]

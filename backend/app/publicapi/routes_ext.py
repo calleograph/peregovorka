@@ -159,7 +159,7 @@ async def download_url(meeting_id: str, recording_id: str, request: Request, p: 
     rec = await db.get(Recording, _pid("recording", recording_id, "Запись"))
     if rec is None or rec.meeting_id != m.id or rec.kind != "participant":      # общая запись в публичный API пока не отдаётся
         raise not_found("Запись")
-    if rec.file_state == "missing":
+    if rec.file_state != "ok":
         raise ApiError(410, "file_missing", "Файл записи удалён из хранилища.")
     cfg = await api_config(request, db)
     s = request.app.state.settings
@@ -195,7 +195,7 @@ async def download(token: str, request: Request, db: AsyncSession = Depends(get_
     if rec is None or rec.kind != "participant" or not p.allows_room(rec.room_id):
         raise not_found("Запись")
     await _rate(request, cfg, p, "download")
-    if rec.file_state == "missing":
+    if rec.file_state != "ok":
         raise ApiError(410, "file_missing", "Файл записи удалён из хранилища.")
     ps = request.app.state.protocols
     try:

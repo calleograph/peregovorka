@@ -5,7 +5,8 @@
  * аудио: файлы записей и строки recordings старше срока (по дате создания записи);
  * срок 0 = удалить после обработки (встреча завершена не менее RETENTION_GRACE назад — успеть выгрузить);
  * пустой срок (NULL) = бессрочно.
-Файлы, уже выгруженные в хранилище (локальный каталог/SMB), приложением не удаляются — это внешнее хранилище.
+Файлы записей удаляются и локально, и во внешнем хранилище (SMB); если хранилище недоступно, запись остаётся в состоянии «удаляется»
+и удаление повторяет `run_deletions` (раз в минуту, с нарастающей паузой для каждой записи).
 """
 from __future__ import annotations
 
@@ -70,7 +71,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                     continue
                 cutoff = now - (RETENTION_GRACE if days == 0 else timedelta(days=days))
                 cond = Recording.kind == "mix_video" if kind == "video" else Recording.kind != "mix_video"
-                recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, cond, Recording.created_at < cutoff))).scalars().all()
+                recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, cond, Recording.created_at < cutoff,
+                                                                 Recording.file_state != "deleting"))).scalars().all()          # уже удаляемые повторяет run_deletions
                 for rec in recs:
                     if rec.meeting_id in mixing:
                         continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
@@ -93,6 +95,39 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
     if any(stats.values()):
         log.info("Очистка по срокам хранения", extra=stats)
     return stats
+
+
+async def run_deletions_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService, limit: int = 50) -> dict[str, int]:
+    """Повтор незавершённых удалений файлов записей, у которых подошло время (после перезапуска сервера — все сразу)."""
+    out = {"deleted": 0, "deferred": 0}
+    async with session_maker() as db:
+        now = utcnow()
+        ids = (await db.execute(select(Recording.id).where(Recording.file_state == "deleting", (Recording.delete_next_at.is_(None)) | (Recording.delete_next_at <= now))
+                                .order_by(Recording.delete_next_at).limit(limit))).scalars().all()
+        for rid in ids:
+            rec = await db.get(Recording, rid)
+            if rec is None or rec.file_state != "deleting":
+                continue                              # удалена параллельно (вручную или другим экземпляром) — ничего не делаем
+            if await protocols.delete_recording(db, rec):
+                await db.commit()
+                out["deleted"] += 1
+            else:
+                out["deferred"] += 1
+    if any(out.values()):
+        log.info("Повтор удаления записей", extra=out)
+    return out
+
+
+async def run_deletions(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService, interval: float = 60.0) -> None:
+    await asyncio.sleep(20)
+    while True:
+        try:
+            await run_deletions_once(session_maker, protocols)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка повтора удаления записей")
+        await asyncio.sleep(interval)
 
 
 async def run_retention(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService, interval: float = 3600.0) -> None:

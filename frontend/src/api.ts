@@ -252,11 +252,12 @@ export type AuditFilter = { q?: string; actor?: string; action?: string; result?
 export interface AuditVerify { signed: boolean; checked: number; ok: number; unsigned: number; bad: number[]; gaps: number[][]; intact?: boolean; note: string }
 export interface RecordingRow {
   id: string; meeting_id: string; room: string; identity: string; kind?: string; path: string; size_bytes: number; duration_s: number | null; created_at: string;
-  export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing";
+  export_status?: string; export_location?: string | null; export_error?: string | null; file_state?: "ok" | "missing" | "deleting";
+  delete_error?: string | null; delete_next_at?: string | null;
 }
 /** Запись из блока «Записи»: общая (mix_audio / mix_video) или файл участника (только администратору). */
 export interface MediaItem {
-  id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; phase?: "recording" | "finalizing" | "saving" | "ready" | "failed" | "missing"; error: string | null; size_bytes: number; duration_s: number | null;
+  id: string; kind: "mix_audio" | "mix_video" | "participant"; mime: string | null; status: "ready" | "processing" | "failed"; phase?: "recording" | "finalizing" | "saving" | "ready" | "failed" | "missing" | "deleting"; delete_error?: string | null; delete_next_at?: string | null; error: string | null; size_bytes: number; duration_s: number | null;
   has_video: boolean; started_at: string | null; created_at: string; file_state?: "ok" | "missing"; can_download: boolean; name?: string; identity?: string | null;
 }
 export interface ConfigInfo {
@@ -1046,7 +1047,7 @@ export const api = {
   liveState: (meetingId: string) => request<LiveState>("GET", `/meetings/${meetingId}/live`),
   liveExtend: (meetingId: string) => request<{ ends_at: string }>("POST", `/meetings/${meetingId}/live/extend`),
   setLive: (meetingId: string, enabled: boolean, options?: LiveStartOptions) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/live`, options ? { enabled, options } : { enabled }),
-  patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
+  patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean; password?: string | null }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
   liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
@@ -1130,7 +1131,9 @@ export const api = {
   mediaSubtitles: (meetingId: string, recId: string) => request<SubtitleData>("GET", `/meetings/${meetingId}/media/${recId}/subtitles`),
   meetingMedia: (id: string) => request<MeetingMedia>("GET", `/meetings/${id}/media`),
   recordingUrl: (meetingId: string, recId: string) => `/api/v1/meetings/${meetingId}/recordings/${recId}`,
-  deleteRecordings: (id: string) => request<void>("DELETE", `/meetings/${id}/recordings`),
+  deleteRecordings: (id: string) => request<void | { message: string }>("DELETE", `/meetings/${id}/recordings`),
+  /** Убрать из учёта запись, удаление которой не завершилось (хранилище удалено из настроек или файл убран вручную). */
+  forgetRecording: (meetingId: string, id: string) => request<void>("DELETE", `/meetings/${meetingId}/recordings/${id}?forget=1`),
   deleteMeeting: (id: string) => request<void>("DELETE", `/meetings/${id}`),
 
   // Клиентская диагностика: ошибки и метрики не должны влиять на работу, поэтому тихо игнорируются.

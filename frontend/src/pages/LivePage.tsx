@@ -64,6 +64,11 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const hideT = useRef<number>(0);
   const fails = useRef(0);                       // подряд идущие сбои сети плеера; сбрасывается, когда воспроизведение пошло
   const hlsRef = useRef<{ destroy: () => void; recoverMediaError: () => void; startLoad: () => void; liveSyncPosition?: number | null } | null>(null);
+  const [attempt, setAttempt] = useState(0);     // пересоздание плеера: страж зависания, «Повторить», возврат сети
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" && navigator.onLine === false);
+  const userPaused = useRef(false);
+  const cb = useRef({ renew, onGone });
+  cb.current = { renew, onGone };
 
   // подпись продлевается заранее; адреса сегментов получают свежий префикс без перезапуска плеера
   useEffect(() => {
@@ -101,7 +106,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       el.addEventListener("error", () => {
         fails.current += 1;
         if (baseRef.current && fails.current >= 2) { baseRef.current = ""; fails.current = 0; el.src = access.path; void start(); return; }         // CDN недоступна: источник
-        if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Обновите страницу или попробуйте позже."); return; }
+        if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Нажмите «Повторить» или попробуйте позже."); return; }
         window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = baseRef.current + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
       });
     } else {
@@ -130,10 +135,12 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
               return;
             }
             fails.current += 1;
-            if (fails.current > 6) { setFatal("Не удаётся получить поток эфира. Обновите страницу или попробуйте позже."); return; }
+            if (fails.current > 6) { setFatal("Не удаётся получить поток эфира. Нажмите «Повторить» или попробуйте позже."); return; }
             const wait = Math.min(15_000, 1000 * 2 ** (fails.current - 1));
-            if (code === 404 || code === 403 || code === 410) { window.setTimeout(() => void renew().then((a) => { if (!a) onGone(); else { prefix.current = a.path.replace(/[^/]+$/, ""); hls.startLoad(); } }), wait); }
-            else window.setTimeout(() => hls.startLoad(), wait);
+            // плейлист ещё не загружался (404, пока Egress его не записал; обрыв на первом запросе) — startLoad() его уже не запросит: источник загружается заново
+            const resume = () => (hls.levels?.length ? hls.startLoad() : hls.loadSource(baseRef.current + prefix.current + "index.m3u8"));
+            if (code === 404 || code === 403 || code === 410) { window.setTimeout(() => void renew().then((a) => { if (!a) onGone(); else { prefix.current = a.path.replace(/[^/]+$/, ""); resume(); } }), wait); }
+            else window.setTimeout(resume, wait);
           } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
           else setFatal("Не удалось воспроизвести эфир.");
         });
@@ -141,7 +148,27 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     }
     return () => { cancelled = true; hlsRef.current?.destroy(); hlsRef.current = null; el.removeAttribute("src"); el.load(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access.path.split("/")[2]]);          // источник пересоздаётся только при смене идентификатора доступа, а не при продлении подписи
+  }, [access.path.split("/")[2], attempt]);          // источник пересоздаётся при смене идентификатора доступа (не при продлении подписи) и при переподключении
+
+  // страж: эфир идёт, зритель не ставил паузу, а картинка не двигается 20 с без всякой ошибки (поток «завис») — плеер переподключается сам;
+  // после 5 неудачных переподключений подряд — сообщение с кнопкой «Повторить». Пока сети нет, не переподключаемся: ждём её возврата.
+  useEffect(() => {
+    let last = -1, since = Date.now(), tries = 0;
+    const t = window.setInterval(() => {
+      const el = video.current;
+      if (!el || userPaused.current || document.visibilityState !== "visible" || navigator.onLine === false) { since = Date.now(); return; }
+      if (el.currentTime !== last) { last = el.currentTime; since = Date.now(); if (!el.paused) tries = 0; return; }
+      if (Date.now() - since < 20_000) return;
+      since = Date.now();
+      tries += 1;
+      if (tries > 5) { setFatal("Эфир не воспроизводится: поток не поступает. Проверьте подключение к интернету и нажмите «Повторить»."); return; }
+      void cb.current.renew().then((a) => { if (!a) return cb.current.onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); fails.current = 0; setAttempt((n) => n + 1); });
+    }, 5000);
+    const off = () => setOffline(true);
+    const on = () => { setOffline(false); setFatal(""); fails.current = 0; setAttempt((n) => n + 1); };
+    window.addEventListener("offline", off); window.addEventListener("online", on);
+    return () => { window.clearInterval(t); window.removeEventListener("offline", off); window.removeEventListener("online", on); };
+  }, []);
 
   // отставание от прямого эфира и состояние кнопок
   useEffect(() => {
@@ -160,7 +187,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   }, []);
 
   const poke = () => { setUi(true); window.clearTimeout(hideT.current); hideT.current = window.setTimeout(() => setUi(false), 3500); };
-  const toggle = () => { const el = video.current; if (!el) return; if (el.paused) void el.play(); else el.pause(); poke(); };
+  const toggle = () => { const el = video.current; if (!el) return; if (el.paused) { userPaused.current = false; void el.play(); } else { userPaused.current = true; el.pause(); } poke(); };
   const goLive = () => { const el = video.current; if (!el) return; const end = el.seekable.length ? el.seekable.end(el.seekable.length - 1) : 0; if (end) el.currentTime = end - 1; void el.play(); poke(); };
   const unmute = () => { const el = video.current; if (!el) return; el.muted = false; el.volume = el.volume || 1; setNeedSound(false); void el.play(); };
   const fullscreen = () => {
@@ -171,11 +198,13 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     else if (w?.webkitRequestFullscreen) w.webkitRequestFullscreen();
   };
 
-  if (fatal) return <div className="live-stage live-msg"><Icon name="info" size={26} /><p>{fatal}</p></div>;
+  if (fatal) return <div className="live-stage live-msg"><Icon name="info" size={26} /><p>{fatal}</p>
+    <button className="btn primary" onClick={() => { setFatal(""); fails.current = 0; void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); setAttempt((n) => n + 1); }); }}>Повторить</button></div>;
   return (
     <div className={`live-stage ${ui || paused ? "ui" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
       <video ref={video} playsInline autoPlay aria-label="Прямой эфир" onClick={toggle} />
       {buffering && <div className="live-spin" role="status" aria-label="Загрузка" />}
+      {offline && <p className="live-net" role="status">Нет подключения к сети. Эфир продолжится автоматически, когда связь восстановится.</p>}
       {needSound && <button className="live-sound btn primary" onClick={unmute}><Icon name="volumeOff" size={18} /> Включить звук</button>}
       <div className="live-bar" role="group" aria-label="Управление просмотром">
         <button className="iconbtn" onClick={toggle} aria-label={paused ? "Смотреть" : "Пауза"}><Icon name={paused ? "play" : "pause"} size={22} /></button>

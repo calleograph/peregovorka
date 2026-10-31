@@ -211,6 +211,7 @@ class BroadcastPatch(BaseModel):
     download: bool | None = None
     link_days: int | None = Field(default=None, ge=1, le=365)        # новый срок — от фактического окончания эфира
     revoke: bool | None = None                                        # true — закрыть доступ к записи досрочно; false — открыть снова (в пределах срока)
+    password: str | None = Field(default=None, max_length=128, repr=False)   # пароль этого эфира и его записи: строка — задать/сменить, null или "" — убрать
 
 
 @router.patch("/rooms/{room_id}/live/broadcasts/{bid}")
@@ -233,6 +234,14 @@ async def patch_broadcast(room_id: uuid.UUID, bid: uuid.UUID, body: BroadcastPat
             setattr(b, k, fields[k])
     if fields.get("revoke") is not None:
         b.revoked_at = datetime.now(timezone.utc) if fields["revoke"] else None
+    if "password" in fields:
+        pw = fields.pop("password") or ""
+        if pw and len(pw) < MIN_PASSWORD:
+            raise HTTPException(status_code=422, detail={"code": "weak_password", "message": f"Пароль зрителя — от {MIN_PASSWORD} до 128 знаков."})
+        if pw and room.password_hash and verify_room_password(room.password_hash, pw):
+            raise HTTPException(status_code=422, detail={"code": "same_as_speaker", "message": "Пароль зрителя не должен совпадать с паролем выступающего."})
+        b.password_hash = hash_room_password(pw) if pw else None          # подпись пропусков и адресов файла включает пароль: выданные ранее сразу перестают действовать
+        fields["protection"] = "пароль задан" if pw else "пароль убран"      # в журнал — только факт (ключи со словом password журнал маскирует)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.live_broadcast_access", target_type="room", target_id=str(room.id),
                       details={"broadcast": str(b.id), "room": room.slug, **{k: v for k, v in fields.items()}})
     await db.commit()
@@ -380,7 +389,7 @@ async def _replay_state(db: AsyncSession, b: Broadcast | None) -> tuple[str, "Re
         return "expired", None
     rec = await db.get(Recording, b.recording_id) if b.recording_id else (
         (await db.execute(select(Recording).where(Recording.egress_id == b.egress_id, Recording.kind == "mix_video"))).scalars().first() if b.egress_id else None)
-    if rec is None or rec.file_state == "missing":
+    if rec is None or rec.file_state != "ok":
         return "deleted", None
     if rec.status == "failed":
         return "failed", None

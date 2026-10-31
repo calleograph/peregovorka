@@ -163,6 +163,7 @@ const EXPORT_LABEL: Record<string, string> = { exported: "выгружена", p
 const KIND_LABEL: Record<string, string> = { mix_video: "видеозапись", mix_audio: "общая аудиозапись", participant: "участник" };
 
 export function RecordingsAdmin() {
+  const [forget, setForget] = useState<RecordingRow | null>(null);
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -187,9 +188,18 @@ export function RecordingsAdmin() {
             <td>{bytes(r.size_bytes)}</td>
             <td>{r.export_status === "failed" ? <span className="badge warn" title={r.export_error ?? ""}>{EXPORT_LABEL.failed}</span> : EXPORT_LABEL[r.export_status ?? ""] ?? r.export_status ?? "—"}
               {r.export_error && <div className="small muted">{r.export_error}</div>}</td>
-            <td>{r.file_state === "missing" ? <span className="badge warn" title="Файл удалён из хранилища вне приложения (обнаружено при сверке). Ссылка на скачивание не выдаётся.">файл удалён</span> : <a href={`/api/v1/meetings/${r.meeting_id}/recordings/${r.id}`} download>Скачать</a>}</td></tr>))}</tbody>
+            <td>{r.file_state === "deleting" ? <><span className="badge warn" title={r.delete_error ?? ""}>удаляется</span>
+                <div className="small muted">{r.delete_error}{r.delete_next_at ? ` · повтор в ${new Date(r.delete_next_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""}</div>
+                <button className="btn mini ghost" onClick={() => setForget(r)}>Убрать из учёта</button></>
+              : r.file_state === "missing" ? <span className="badge warn" title="Файл удалён из хранилища вне приложения (обнаружено при сверке). Ссылка на скачивание не выдаётся.">файл удалён</span> : <a href={`/api/v1/meetings/${r.meeting_id}/recordings/${r.id}`} download>Скачать</a>}</td></tr>))}</tbody>
       </table></div>
       <ListFooter loading={list.loading} done={list.done} error={list.error} sentinel={list.sentinel} count={list.items.length} empty="Записей пока нет." />
+      {forget && (
+        <ConfirmDialog title="Убрать запись из учёта?" confirmLabel="Убрать из учёта" onClose={() => setForget(null)}
+          body={<p>Удаление файла «{forget.path.split("/").pop()}» не завершилось: {forget.delete_error ?? "хранилище недоступно"}. Обычно повтор проходит сам, когда хранилище снова доступно.
+            Убирайте из учёта, только если хранилища больше нет или файл удалён вручную: запись исчезнет из списка, а место, где файл мог остаться, будет записано в журнал аудита.</p>}
+          onConfirm={async () => { await api.forgetRecording(forget.meeting_id, forget.id); list.reload(); }} />
+      )}
     </section>
   );
 }

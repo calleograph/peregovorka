@@ -489,8 +489,12 @@ class Recording(Base):
     # в каком хранилище лежит выгруженный файл: audio — хранилище аудиозаписей, video — видеозаписей (раздел «Видеозапись»); у записей до 0.52.0 — audio
     export_area: Mapped[str | None] = mapped_column(String(10))
     # ok — файл есть (по последней сверке); missing — удалён из хранилища/с диска вне приложения: ссылка не отдаётся
-    file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)
+    file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)   # ok | missing | deleting (удаление не завершено)
     file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # удаление файла (локально и во внешнем хранилище): строка живёт, пока файл не удалён везде — недоступное хранилище не теряет сведения о файле
+    delete_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    delete_error: Mapped[str | None] = mapped_column(String(300))
+    delete_next_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
     # participant — файл одного участника (для транскрибации и разбора); mix_audio / mix_video — общая запись ВСЕЙ встречи (основной материал для просмотра в браузере)
     kind: Mapped[str] = mapped_column(String(12), default="participant", server_default="participant", nullable=False)

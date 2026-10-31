@@ -42,7 +42,7 @@ def mark_missing_sync(obj) -> None:
 
 async def mark_missing(db: AsyncSession, obj, journal=None, what: str = "файл") -> None:
     """Точечно: при обращении к файлу выяснилось, что его нет — состояние обновляется сразу (без ожидания плановой сверки)."""
-    if getattr(obj, "file_state", "ok") != "missing":
+    if getattr(obj, "file_state", "ok") not in ("missing", "deleting"):          # удаляемая запись остаётся «удаляется» до конца удаления
         mark_missing_sync(obj)
         await db.commit()
         if journal is not None:
@@ -323,6 +323,8 @@ class Reconciler:
                             rep.missing_sample.append({"kind": o.label, "name": o.name, "dir": o.dir})
                 continue
             was = getattr(row, "file_state", "ok")
+            if was == "deleting":
+                continue                              # идёт удаление (повторы — run_deletions): сверка не возвращает запись в «ok» и не считает её пропавшей
             if present:
                 if was == "missing":
                     rep.restored += 1

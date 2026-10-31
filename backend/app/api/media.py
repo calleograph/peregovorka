@@ -53,10 +53,12 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None | str:
 
 def phase_of(r: Recording) -> str:
     """Этап жизни общей записи для интерфейса: recording — идёт запись; finalizing — запись остановлена, файл закрывается; saving — файл готов и играет,
-    но ещё переносится во внешнее хранилище (воспроизведение возможно); ready — готово; failed — не удалось; missing — файл удалён из хранилища."""
+    но ещё переносится во внешнее хранилище (воспроизведение возможно); ready — готово; failed — не удалось; missing — файл удалён из хранилища; deleting — удаляется (повтор при недоступном хранилище)."""
     if r.status == "failed":
         return "failed"
-    if r.file_state == "missing":
+    if r.file_state == "deleting":
+        return "deleting"                 # удаление не завершено (хранилище недоступно) — повторяется само
+    if r.file_state != "ok":
         return "missing"
     if r.status == "finishing":
         return "finalizing"
@@ -67,7 +69,8 @@ def phase_of(r: Recording) -> str:
 
 def _item(r: Recording, can_download: bool) -> dict:
     return {"id": str(r.id), "kind": r.kind, "mime": r.mime, "status": "processing" if r.status == "finishing" else r.status, "phase": phase_of(r), "error": r.error, "size_bytes": r.size_bytes,
-            "duration_s": r.duration_s, "has_video": r.has_video, "started_at": r.started_at, "created_at": r.created_at, "file_state": r.file_state, "can_download": can_download}
+            "duration_s": r.duration_s, "has_video": r.has_video, "started_at": r.started_at, "created_at": r.created_at, "file_state": r.file_state, "can_download": can_download,
+            "delete_error": r.delete_error, "delete_next_at": r.delete_next_at, "delete_attempts": r.delete_attempts}
 
 
 @router.get("/{meeting_id}/media")
@@ -100,7 +103,7 @@ async def waveform(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Requ
     """Волновая форма записи: массив пиков (base64, 1 байт на `bucket_ms` мс). Если ещё не построена (старая запись) — запускается построение в фоне и возвращается
     `{"status": "processing"}` (код 202): плеер пока показывает обычную шкалу и спрашивает снова."""
     _, rec = await _load(request, db, meeting_id, recording_id, su)
-    if rec.status != "ready" or rec.file_state == "missing":
+    if rec.status != "ready" or rec.file_state != "ok":
         raise HTTPException(status_code=409, detail="Запись недоступна")
     svc = request.app.state.waveforms
     w = await svc.get(db, rec.id)
@@ -148,7 +151,7 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
         raise HTTPException(status_code=409, detail={"code": "processing", "message": "Запись ещё формируется. Обновите страницу через несколько минут."})
     if rec.status == "failed":
         raise HTTPException(status_code=409, detail={"code": "failed", "message": rec.error or "Запись не удалось сформировать."})
-    if rec.file_state == "missing":
+    if rec.file_state != "ok":
         raise HTTPException(status_code=410, detail={"code": "file_missing", "message": "Файл записи удалён из хранилища (обнаружено при сверке)."})
     try:
         size, reader = await request.app.state.protocols.media_source(db, rec)

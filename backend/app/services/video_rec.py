@@ -374,7 +374,8 @@ class VideoRecorder:
             if await asyncio.to_thread(faststart, path):
                 rec.size_bytes = size = path.stat().st_size          # файл пересобран без перекодирования (индекс в начале): размер изменился на байты
             rec.status, rec.error = "ready", (info.error[:290] if info is not None and info.error else None)
-            rec.file_state = "ok"                          # файл закрыт и прочитан: прежняя отметка «не найден» (если сверка заглянула по ходу записи) снимается
+            if rec.file_state != "deleting":
+                rec.file_state = "ok"                      # файл закрыт и прочитан: прежняя отметка «не найден» (если сверка заглянула по ходу записи) снимается
             if info is not None and info.status == eg.EgressStatus.EGRESS_LIMIT_REACHED:
                 rec.error = "Достигнут предел длительности записи: файл закрыт, дальше запись продолжится новым фрагментом."
         await db.commit()

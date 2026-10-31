@@ -244,7 +244,7 @@ class TransferService:
         rec = await db.get(Recording, item.recording_id)
         if rec is None:
             raise _skip("запись уже удалена")
-        if rec.status != "ready" or rec.file_state == "missing":
+        if rec.status != "ready" or rec.file_state != "ok":
             raise _skip("файл не готов или отсутствует в хранилище")
         meeting = await db.get(Meeting, rec.meeting_id)
         if meeting is None or meeting.ended_at is None:

@@ -274,8 +274,21 @@ async def delete_room(room_id: uuid.UUID, request: Request, su: SessionUser = De
     active = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_(None)))).first()
     if active:
         raise HTTPException(status_code=409, detail="В комнате идёт встреча — сначала завершите её")
+    # файлы встреч комнаты удаляются до строк базы (каскад удалил бы только строки, а файлы остались бы бесхозными локально и на SMB)
+    from ..models import Recording  # noqa: PLC0415
+    from .meetings import delete_recordings_or_defer  # noqa: PLC0415
+
+    mids = list((await db.execute(select(Meeting.id).where(Meeting.room_id == room.id))).scalars())
+    recs = (await db.execute(select(Recording).where(Recording.room_id == room.id))).scalars().all()
+    left = await delete_recordings_or_defer(request, db, recs)
+    if left:
+        await db.commit()
+        raise HTTPException(status_code=409, detail=f"Комната не удалена: {len(left)} файл(ов) записей не удалось удалить из внешнего хранилища ({left[0].delete_error}). "
+                                                    "Удаление файлов повторяется автоматически; удалите комнату снова, когда записи будут удалены.")
+    if mids:
+        await request.app.state.chat_files.delete_for_meetings(db, mids)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.delete", target_type="room",
-                      target_id=str(room.id), ip=client_ip(request), details={"slug": room.slug, "name": room.name})
+                      target_id=str(room.id), ip=client_ip(request), details={"slug": room.slug, "name": room.name, "recordings": len(recs)})
     await db.delete(room)
     await db.commit()
 

@@ -15,6 +15,7 @@ const PHASE_TEXT: Record<string, (m: MediaItem) => string> = {
   saving: (m) => `${ready(m)} · переносится в хранилище (смотреть можно сейчас)`,
   failed: (m) => `не удалось сформировать: ${m.error ?? "ошибка"}`,
   missing: () => "файл удалён из хранилища",
+  deleting: (m) => `удаляется${m.delete_error ? `: ${m.delete_error}` : ""}${m.delete_next_at ? ` · повтор в ${new Date(m.delete_next_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""}`,
   ready,
 };
 const TITLE: Record<string, string> = { mix_video: "Видеозапись встречи", mix_audio: "Аудиозапись встречи", participant: "Запись участника" };

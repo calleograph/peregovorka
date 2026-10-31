@@ -1,3 +1,4 @@
+import { useFocusOnMount } from "../useInitialFocus";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type LiveBroadcast, type LivePatchBody, type LiveRoomSettings } from "../api";
 import { copyText } from "../util";
@@ -145,6 +146,8 @@ const ACCESS: Record<LiveBroadcast["access"], string> = { off: "запись з�
 /** Эфиры комнаты: у каждого своя ссылка, параметры доступа к записи и срок. Организатор и администратор меняют их здесь; запись — в материалах встречи. */
 function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveRoomSettings; busy: boolean; run: (fn: () => Promise<LiveRoomSettings | void>, ok?: string) => Promise<void> }) {
   const [copied, setCopied] = useState("");
+  const focusOnMount = useFocusOnMount();
+  const [pwFor, setPwFor] = useState<{ id: string; value: string } | null>(null);       // ввод пароля у одного эфира
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
   const upd = (b: LiveBroadcast, body: Parameters<typeof api.patchBroadcast>[2], ok: string) => run(() => api.patchBroadcast(roomId, b.id, body), ok);
   return (
@@ -174,6 +177,14 @@ function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveR
                   </select></label>)}
                 {b.replay && b.access !== "revoked" && b.status !== "live" && <button type="button" className="btn mini danger" disabled={busy} onClick={() => void upd(b, { revoke: true }, "Доступ к записи закрыт")}>Закрыть доступ</button>}
                 {b.access === "revoked" && <button type="button" className="btn mini" disabled={busy} onClick={() => void upd(b, { revoke: false }, "Доступ открыт снова")}>Открыть снова</button>}
+                {pwFor?.id !== b.id && <button type="button" className="btn mini ghost" disabled={busy} onClick={() => setPwFor({ id: b.id, value: "" })}>{b.password ? "Сменить пароль" : "Задать пароль"}</button>}
+                {b.password && pwFor?.id !== b.id && <button type="button" className="btn mini ghost" disabled={busy} onClick={() => void upd(b, { password: null }, "Пароль убран")}>Убрать пароль</button>}
+                {pwFor?.id === b.id && (
+                  <form className="row lv-bcast-pw" onSubmit={(e) => { e.preventDefault(); void upd(b, { password: pwFor.value }, b.password ? "Пароль изменён: прежние ссылки на файл и пропуска больше не действуют" : "Пароль задан").then(() => setPwFor(null)); }}>
+                    <input type="password" autoComplete="new-password" minLength={6} maxLength={128} required ref={focusOnMount} value={pwFor.value} onChange={(e) => setPwFor({ id: b.id, value: e.target.value })} aria-label={`Пароль эфира «${b.title || cfg.title || "Эфир"}»`} placeholder="новый пароль" />
+                    <button className="btn mini primary" disabled={busy}>Сохранить</button>
+                    <button type="button" className="btn mini ghost" onClick={() => setPwFor(null)}>Отмена</button>
+                  </form>)}
               </div>
             </li>);
         })}

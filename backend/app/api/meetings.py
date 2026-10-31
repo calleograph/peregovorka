@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import delete, func, literal_column, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -517,7 +517,7 @@ async def download_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, req
     rec = await db.get(Recording, recording_id)
     if rec is None or rec.meeting_id != meeting_id:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    if rec.file_state == "missing":
+    if rec.file_state != "ok":
         raise HTTPException(status_code=410, detail={"code": "file_missing", "message": "Файл записи удалён из хранилища (обнаружено при сверке). Скачать его нельзя."})
     try:
         data = await request.app.state.protocols.read_recording(db, rec)
@@ -533,27 +533,57 @@ async def download_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, req
     return Response(data, media_type=rec.mime or "audio/wav", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+async def delete_recordings_or_defer(request: Request, db: AsyncSession, recs) -> list:
+    """Удаляет файлы записей (локально и во внешнем хранилище). Возвращает записи, удаление которых отложено (хранилище недоступно): они остаются
+    в базе в состоянии «удаляется», повтор — автоматически (workers.retention.run_deletions)."""
+    left = []
+    for r in recs:
+        if not await request.app.state.protocols.delete_recording(db, r):
+            left.append(r)
+    return left
+
+
+def _deferred_response(deleted: int, left: list) -> Response:
+    if not left:
+        return Response(status_code=204)
+    return JSONResponse(status_code=202, content={"deleted": deleted, "deferred": len(left), "error": left[0].delete_error,
+                                                  "message": f"Удалено файлов: {deleted}. Ещё {len(left)} удаляются: внешнее хранилище недоступно ({left[0].delete_error}). "
+                                                             "Удаление повторится автоматически; до этого записи недоступны для просмотра."})
+
+
 @router.delete("/{meeting_id}/recordings", status_code=204)
 async def delete_recordings(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """«Удалить запись»: только аудио встречи; стенограмма и протоколы сохраняются."""
     recs = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id))).scalars().all()
-    for r in recs:
-        await request.app.state.protocols.delete_recording(db, r)
+    left = await delete_recordings_or_defer(request, db, recs)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.delete", target_type="meeting",
-                      target_id=str(meeting_id), ip=client_ip(request), details={"files": len(recs)})
+                      target_id=str(meeting_id), ip=client_ip(request), details={"files": len(recs), "deferred": len(left)})
     await db.commit()
+    return _deferred_response(len(recs) - len(left), left)
 
 
 @router.delete("/{meeting_id}/recordings/{recording_id}", status_code=204)
-async def delete_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin),
+async def delete_recording(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: Request, forget: bool = False, su: SessionUser = Depends(require_admin),
                            db: AsyncSession = Depends(get_db)):
+    """Удалить запись. `forget=1` — только для записи, застрявшей в удалении (хранилище удалено из настроек или файл убран вручную):
+    строка убирается из учёта без удаления файла; в журнал аудита пишется, где файл мог остаться."""
     rec = await db.get(Recording, recording_id)
     if rec is None or rec.meeting_id != meeting_id:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    await request.app.state.protocols.delete_recording(db, rec)
+    if forget:
+        if rec.file_state != "deleting":
+            raise HTTPException(status_code=409, detail="Убрать из учёта можно только запись, удаление которой не завершилось")
+        await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.forget", target_type="recording",
+                          target_id=str(recording_id), ip=client_ip(request),
+                          details={"meeting_id": str(meeting_id), "location": rec.export_location or rec.path, "last_error": rec.delete_error})
+        await db.delete(rec)
+        await db.commit()
+        return Response(status_code=204)
+    left = await delete_recordings_or_defer(request, db, [rec])
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.delete", target_type="recording",
-                      target_id=str(recording_id), ip=client_ip(request), details={"meeting_id": str(meeting_id)})
+                      target_id=str(recording_id), ip=client_ip(request), details={"meeting_id": str(meeting_id), "deferred": len(left)})
     await db.commit()
+    return _deferred_response(1 - len(left), left)
 
 
 @router.delete("/{meeting_id}", status_code=204)
@@ -565,8 +595,10 @@ async def delete_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUse
     if meeting.ended_at is None:
         raise HTTPException(status_code=409, detail="Встреча идёт — сначала завершите её")
     recs = (await db.execute(select(Recording).where(Recording.meeting_id == meeting_id))).scalars().all()
-    for r in recs:
-        await request.app.state.protocols.delete_recording(db, r)
+    left = await delete_recordings_or_defer(request, db, recs)          # сначала файлы: недоступное хранилище останавливает удаление встречи, сведения о файлах не теряются
+    if left:
+        raise HTTPException(status_code=409, detail=f"Встреча не удалена: {len(left)} файл(ов) записей не удалось удалить из внешнего хранилища ({left[0].delete_error}). "
+                                                    "Удаление файлов повторяется автоматически; удалите встречу снова, когда записи исчезнут из списка.")
     await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id))
     await db.execute(delete(Protocol).where(Protocol.meeting_id == meeting_id))
     await db.execute(delete(MeetingGrant).where(MeetingGrant.meeting_id == meeting_id))
