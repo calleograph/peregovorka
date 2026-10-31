@@ -22,6 +22,13 @@ const BOARD_OPTIONS: [string, string][] = [["auto", "Как принято дл�
 const SLUG = /^[a-z0-9][a-z0-9_-]{1,62}$/;
 const emptySip = (): RoomSip => ({ mode: "off", profile_id: null, extension: null, allow_inbound: false, allow_outbound: false, contacts: [] });
 const daysText = (d: number | null | undefined) => (d == null ? "бессрочно" : `${d} дн.`);
+type RetKind = "text" | "audio" | "video";
+/** Сроки хранения материалов: по каждому — общий срок сервера или свой у комнаты (пусто — бессрочно; 0 — удалять сразу после обработки). */
+const RET_KINDS: [RetKind, string, string][] = [
+  ["text", "Текст", "Стенограммы, протоколы, чат и доска. Общий срок сервера — Администрирование → Общие → «Сроки хранения материалов»."],
+  ["audio", "Аудиозаписи", "Файлы участников и общая аудиозапись. Удаляются и локальные файлы, и копии во внешнем хранилище (SMB)."],
+  ["video", "Видеозаписи", "Видеозаписи встреч и записи эфиров. Срок ссылки зрителя на запись эфира — отдельный (вкладка «Трансляция»): истечение ссылки файл не удаляет."],
+];
 const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
 
 export interface RoomForm {
@@ -31,7 +38,7 @@ export interface RoomForm {
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
   // только администратор сервера
-  slug: string; is_enabled: boolean; history_access: HistoryAccess; text_retention_days: string; audio_retention_days: string; anonymize_mode: AnonymizeMode; anonymizer_profile_id: string;
+  slug: string; is_enabled: boolean; history_access: HistoryAccess; text_retention_days: string; audio_retention_days: string; video_retention_days: string; retention_custom: Record<RetKind, boolean>; anonymize_mode: AnonymizeMode; anonymizer_profile_id: string;
 }
 
 export const newRoomForm = (): RoomForm => ({
@@ -39,7 +46,7 @@ export const newRoomForm = (): RoomForm => ({
   room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p",
   camera_allowed: true, screen_share_allowed: true, board_access: "auto", guest_access_enabled: false, acl: [], moderators: [], mail_delivery: emptySpec(),
   protocol_instructions: "", llm: emptyChoice(), llm_summary: emptyChoice(), sip: emptySip(), auto_map_mode: "inherit",
-  slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", anonymize_mode: "inherit", anonymizer_profile_id: "",
+  slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", video_retention_days: "", retention_custom: { text: false, audio: false, video: false }, anonymize_mode: "inherit", anonymizer_profile_id: "",
 });
 
 export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
@@ -52,6 +59,8 @@ export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",
   slug: r.slug, is_enabled: r.is_enabled, history_access: (a?.history_access ?? r.retention?.history_access ?? "admin") as HistoryAccess,
   text_retention_days: (a?.text_retention_days ?? r.retention?.text_days)?.toString() ?? "", audio_retention_days: (a?.audio_retention_days ?? r.retention?.audio_days)?.toString() ?? "",
+  video_retention_days: (a?.video_retention_days ?? r.retention?.video_days)?.toString() ?? "",
+  retention_custom: { text: !!(a?.text_retention_custom ?? r.retention?.custom?.text), audio: !!(a?.audio_retention_custom ?? r.retention?.custom?.audio), video: !!(a?.video_retention_custom ?? r.retention?.custom?.video) },
   anonymize_mode: (a?.anonymize_mode ?? r.retention?.anonymize_mode ?? "inherit") as AnonymizeMode, anonymizer_profile_id: a?.anonymizer_profile_id ?? r.retention?.anonymizer_profile_id ?? "",
 });
 
@@ -70,8 +79,10 @@ export function managePayload(f: RoomForm): Record<string, unknown> {
 /** Системные поля комнаты — только администратор сервера (запрос /admin/rooms). */
 export function adminPayload(f: RoomForm): Record<string, unknown> {
   return {
-    slug: f.slug.trim().toLowerCase(), is_enabled: f.is_enabled, history_access: f.history_access, text_retention_days: numOrNull(f.text_retention_days),
-    audio_retention_days: numOrNull(f.audio_retention_days), anonymize_mode: f.anonymize_mode, anonymizer_profile_id: f.anonymizer_profile_id || null,
+    slug: f.slug.trim().toLowerCase(), is_enabled: f.is_enabled, history_access: f.history_access,
+    // срок: свой у комнаты (значение; пусто — бессрочно) или общий срок сервера
+    ...Object.fromEntries((["text", "audio", "video"] as const).flatMap((k) => [[`${k}_retention_custom`, f.retention_custom[k]], ...(f.retention_custom[k] ? [[`${k}_retention_days`, numOrNull(f[`${k}_retention_days`])]] : [])])),
+    anonymize_mode: f.anonymize_mode, anonymizer_profile_id: f.anonymizer_profile_id || null,
   };
 }
 
@@ -275,14 +286,27 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
         <div role="tabpanel">
           <fieldset className="group"><legend>Хранение</legend>
             {admin ? (
-              <div className="cols">
-                <F title={<>Хранить текст <span className="muted small">(дней)</span></>} tip="Стенограммы и протоколы. Пусто — бессрочно; 0 — не хранить."><input type="number" min={0} value={form.text_retention_days} onChange={(e) => set("text_retention_days", e.target.value)} placeholder="бессрочно" /></F>
-                <F title={<>Хранить аудиозаписи <span className="muted small">(дней)</span></>} tip="Пусто — бессрочно; 0 — удалять сразу после обработки. Срок хранения видеозаписей общий для сервера: Администрирование → Видеозапись."><input type="number" min={0} value={form.audio_retention_days} onChange={(e) => set("audio_retention_days", e.target.value)} placeholder="бессрочно" /></F>
+              <div className="ret-grid">
+                {RET_KINDS.map(([k, label, tip]) => {
+                  const server = room?.retention?.server?.[k];
+                  const custom = form.retention_custom[k];
+                  return (
+                    <div key={k} className="ret-row">
+                      <span className="field-title">{label}<InfoTip>{tip}</InfoTip></span>
+                      <select value={custom ? "own" : "server"} onChange={(e) => set("retention_custom", { ...form.retention_custom, [k]: e.target.value === "own" })} aria-label={`${label}: срок`}>
+                        <option value="server">Общий срок сервера{room?.retention?.server ? ` — ${daysText(server ?? null)}` : ""}</option>
+                        <option value="own">Свой срок комнаты</option>
+                      </select>
+                      {custom && <input type="number" min={0} value={form[`${k}_retention_days`]} onChange={(e) => set(`${k}_retention_days`, e.target.value)} placeholder="бессрочно" aria-label={`${label}: дней`} />}
+                      {custom && <span className="muted small">дней</span>}
+                    </div>);
+                })}
               </div>
             ) : (
               <table className="table compact"><tbody>
                 <tr><td>Текст встреч</td><td>{daysText(room?.retention?.text_days)}</td></tr>
                 <tr><td>Аудиозаписи</td><td>{room?.record_audio || form.auto_record ? daysText(room?.retention?.audio_days) : "запись не ведётся"}</td></tr>
+                <tr><td>Видеозаписи и записи эфиров</td><td>{daysText(room?.retention?.video_days)}</td></tr>
                 <tr><td>Кто видит завершённую встречу</td><td>{room?.retention?.history_access === "participants" ? "участники встречи" : "руководители и администраторы"}</td></tr>
               </tbody></table>
             )}

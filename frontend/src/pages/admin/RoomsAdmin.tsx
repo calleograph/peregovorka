@@ -6,6 +6,12 @@ import { entryLabel } from "../../components/AclPicker";
 import RoomIcon from "../../components/RoomIcon";
 import RoomEditor from "../../components/RoomEditor";
 import { useFocusOnMount } from "../../useInitialFocus";
+import { ConfirmDialog } from "../../components/Dialogs";
+
+const peopleText = (r: RoomAdmin) => {
+  const n = r.active_people ?? 0, c = r.active_connections;
+  return `${n} ${n % 10 === 1 && n % 100 !== 11 ? "участник" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "участника" : "участников"}${c != null && c !== n ? `, подключений: ${c}` : ""}`;
+};
 
 /** «Комнаты и доступ»: список комнат и единый редактор (components/RoomEditor.tsx) — те же вкладки при создании и изменении, что и в настройках комнаты. */
 export default function RoomsAdmin() {
@@ -16,6 +22,7 @@ export default function RoomsAdmin() {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [ending, setEnding] = useState<RoomAdmin | null>(null);
 
   const load = useCallback(() => api.admin.rooms(showClosed).then(setRooms).catch((e) => setError(e.message)), [showClosed]);
   useEffect(() => { void load(); }, [load]);
@@ -52,20 +59,28 @@ export default function RoomsAdmin() {
               { id: "open", label: "Открыть комнату", icon: "arrowR", onSelect: () => window.open(`/rooms/${r.slug}`, "_blank", "noopener") },
               { id: "edit", label: "Настроить", icon: "gear", onSelect: () => open(r.id) },
               { id: "url", label: "Скопировать URL", icon: "copy", onSelect: () => void copyText(`${window.location.origin}/rooms/${r.slug}`) },
+              { id: "end", label: "Завершить встречу для всех", icon: "close", danger: true, hidden: !r.active_meeting_id, onSelect: () => setEnding(r) },
               { id: "del", label: "Удалить", icon: "close", danger: true, confirm: `Удалить переговорку «${r.name}»?`, onSelect: () => remove(r) },
             ])}>
               <td><span className="h-room-link"><RoomIcon name={r.name} icon={r.icon} size={26} />{r.name}</span>{r.lifetime === "temporary" && <span className="badge"> временная</span>}<div className="muted small"><code>{r.slug}</code>{r.created_by_name ? ` · создал(а): ${r.created_by_name}` : ""}</div></td>
-              <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча</span>}
+              <td>{r.lifecycle === "closed" ? <span className="badge">закрыта {r.closed_at ? new Date(r.closed_at).toLocaleString("ru-RU") : ""}</span> : r.lifecycle === "grace_period" ? <span className="badge warn">ждёт возврата</span> : r.is_enabled ? "включена" : <span className="badge warn">отключена</span>}{r.active_meeting_id && <span className="badge rec"> идёт встреча · {peopleText(r)}</span>}
                 <div className="muted small">история: {r.history_access === "participants" ? "участникам" : "админам"}</div></td>
               <td className="small">{r.acl.length ? `${r.acl.length} запис.` : "только админы"}</td>
               <td className="small">{r.moderators?.length ? r.moderators.map(entryLabel).join(", ") : <span className="muted">—</span>}</td>
               <td className="small">{[r.room_type === "presentation" && "презентация", r.room_type === "broadcast" && "трансляция", r.has_password && "пароль", r.auto_record ? "автозапись" : r.record_audio && "запись по кнопке", r.camera_allowed && "камера", r.screen_share_allowed && "экран", r.mute_on_join && "вход без звука", r.guest_access_enabled && "гости",
                 r.anonymize_mode === "off" && "без обезличивания", r.anonymize_mode === "on" && "обезличивание всегда", (r.llm_profile_id || r.anonymizer_profile_id) && "свой API"].filter(Boolean).join(", ")}</td>
-              <td className="actions"><button className="btn ghost" onClick={() => open(r.id)}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
+              <td className="actions">{r.active_meeting_id && <button className="btn ghost danger" onClick={() => setEnding(r)}>Завершить встречу</button>}<button className="btn ghost" onClick={() => open(r.id)}>Изменить</button><button className="btn ghost danger" onClick={() => remove(r)}>Удалить</button></td>
             </tr>
           ))}
         </tbody>
       </table></div>
+      {ending?.active_meeting_id && (
+        <ConfirmDialog title={`Завершить встречу в «${ending.name}» для всех?`} confirmLabel="Завершить встречу для всех" onClose={() => setEnding(null)}
+          body={<><p>Сейчас во встрече: {peopleText(ending)}.</p>
+            <p>Все участники будут отключены, идущие запись и трансляция — завершены; записи, стенограмма и протокол сохранятся. Комната останется доступной для следующих встреч
+              {ending.lifetime === "temporary" ? " (временная комната закроется, как после обычного завершения)" : ""}. Действие записывается в журнал аудита.</p></>}
+          onConfirm={async () => { await api.admin.endMeeting(ending.active_meeting_id!); setNote(`Встреча в «${ending.name}» завершена.`); await load(); }} />
+      )}
     </section>
   );
 }

@@ -485,8 +485,11 @@ class AsrModelSettings(_Group):
 class GeneralSettings(_Group):
     timezone: str = "UTC"  # для имён папок протоколов и подписей времени
     post_meeting_access_minutes: int = Field(default=120, ge=1, le=1440)  # сколько участник, оставшийся на странице завершённой встречи, сохраняет доступ
-    default_text_retention_days: int | None = Field(default=None, ge=0, le=36500)
-    default_audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    # Общие сроки хранения материалов встреч (комнаты наследуют их, если у комнаты не задан свой срок). None — бессрочно; 0 — удалять сразу после обработки.
+    default_text_retention_days: int | None = Field(default=None, ge=0, le=36500)      # стенограммы, протоколы, чат, доска
+    default_audio_retention_days: int | None = Field(default=60, ge=0, le=36500)
+    default_video_retention_days: int | None = Field(default=30, ge=0, le=36500)       # видеозаписи, в том числе записи эфиров
+    retention_cleanup_from: str = Field(default="", max_length=40)                     # ISO-время: до него общие (унаследованные) сроки ничего не удаляют — запас после смены политики
     # Временные переговорки: пользователь создаёт комнату на одну встречу; закрывается сама, материалы остаются в истории.
     temp_rooms_enabled: bool = True
     temp_room_max_per_user: int = Field(default=2, ge=1, le=50)           # активных временных комнат у одного пользователя
@@ -495,6 +498,9 @@ class GeneralSettings(_Group):
     temp_room_idle_minutes: int = Field(default=30, ge=5, le=1440)       # комната, в которую так никто и не вошёл
     temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
     temp_room_allow_guest_link: bool = False
+    # Забытая встреча: человек остался в комнате один и ничего не делает — страница предупреждает и через 2 минуты выходит (дальше сервер завершает опустевшую
+    # встречу как обычно, записи закрываются штатно). standard — один ≥ 15 мин и без действий ≥ 10 мин; careful — 30 и 30; off — не предупреждать.
+    idle_end_mode: str = Field(default="standard", pattern="^(standard|careful|off)$")
     # Временные равноправные комнаты (создаются по ссылке /p/<код> или кнопкой; без обязательного ведущего). По умолчанию выключены.
     encrypt_new_rooms: bool = False                                       # новые комнаты создаются с шифрованием хранимых чата и стенограмм
     peer_rooms_enabled: bool = False
@@ -848,6 +854,7 @@ class LiveSettings(_Group):
     cdn_enabled: bool = False                                     # раздавать HLS через CDN: плеер берёт поток прямо с CDN, а не с этого сервера
     cdn_base_url: str = Field(default="", max_length=300)         # публичный адрес доставки CDN, https://cdn.example.org (CDN забирает файлы с этого сервера по тем же путям /hls/…)
     direct_viewers_warn: int = Field(default=150, ge=10, le=100_000)   # при таком числе зрителей с основного сервера администратор видит предупреждение: для больших аудиторий нужна CDN
+    replay_days_max: int = Field(default=30, ge=1, le=365)        # предел, который владелец комнаты может задать сроку ссылки зрителя на запись эфира (по умолчанию в комнате — 5 дней)
 
     @field_validator("cdn_base_url")
     @classmethod

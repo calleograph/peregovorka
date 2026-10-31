@@ -22,6 +22,7 @@ from ..services.glass_html import CSP_HEADER
 from ..services.llm_choice import once_options
 from ..services.protocols import LOCAL_BUILTIN_INSTRUCTION
 from ..services.meetings import JoinError
+from ..services.livekit import list_present_identities, parse_user_identity
 from ..services.settings import SettingsError
 from ..services.segments import segment_to_dict
 from ..services.reconcile import mark_missing
@@ -158,6 +159,26 @@ async def end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
     if ended:
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.end",
                           target_type="meeting", target_id=str(meeting_id), details={"room": meeting.room.slug})
+        await db.commit()
+
+
+@router.post("/{meeting_id}/idle-end", status_code=204)
+async def idle_end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Забытая встреча: участник остался один и нажал «Завершить сейчас» или не ответил на предупреждение (правило — на странице комнаты). Права руководителя не нужны:
+    сервер сам проверяет, что других людей в комнате нет (несколько устройств самого участника и служебные подключения не считаются) и что не идёт эфир."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    present = await list_present_identities(request.app.state.settings, meeting.livekit_room)
+    if present is None:
+        raise HTTPException(status_code=409, detail="Сервер конференций не ответил — встреча продолжается.")
+    if any(parse_user_identity(i) != su.user_id for i in present):
+        raise HTTPException(status_code=409, detail="В комнате есть другие участники — встреча продолжается.")
+    live = getattr(request.app.state, "live", None)
+    b = await live.current(db, meeting.room_id) if live is not None else None
+    if b is not None and b.status in ("starting", "live"):
+        raise HTTPException(status_code=409, detail="Идёт эфир — он завершается по своим правилам.")
+    if await request.app.state.meetings.end(db, meeting, "idle", kick=True):
+        await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.idle_end", target_type="meeting", target_id=str(meeting_id),
+                          details={"room": meeting.room.slug})
         await db.commit()
 
 

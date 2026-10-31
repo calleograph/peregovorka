@@ -6,7 +6,7 @@ const room = (over: Partial<RoomManage> = {}): RoomManage => ({
   id: "r1", slug: "it-1", name: "ИТ-1", description: null, is_enabled: true, max_participants: 20, has_password: true, camera_allowed: true, screen_share_allowed: false,
   board_allowed: false, board_access: "auto", room_type: "presentation", auto_record: true, record_audio: false, transcription_enabled: true, mute_on_join: false, welcome_message: null,
   guest_access_enabled: false, guest_token: null, acl: [], moderators: [], active_meeting_id: null, can_edit_system_fields: true, video_mode: "auto", video_quality: "1080p",
-  retention: { text_days: 365, audio_days: null, history_access: "participants", anonymize_mode: "off", anonymizer_profile_id: "p-1" }, ...over,
+  retention: { text_days: 365, audio_days: 60, video_days: 30, custom: { text: true, audio: false, video: false }, history_access: "participants", anonymize_mode: "off", anonymizer_profile_id: "p-1" }, ...over,
 });
 
 describe("единый редактор комнаты", () => {
@@ -16,7 +16,8 @@ describe("единый редактор комнаты", () => {
     expect(m).toMatchObject({ room_type: "presentation", video_mode: "auto", video_quality: "1080p", screen_share_allowed: false, auto_record: true, record_audio: true });
     expect(f.board_access).toBe("leaders");                                // старая «доска выключена» = только руководители
     expect(m).not.toHaveProperty("password");                              // пустой пароль — не менять
-    expect(adminPayload(f)).toEqual({ slug: "it-1", is_enabled: true, history_access: "participants", text_retention_days: 365, audio_retention_days: null, anonymize_mode: "off", anonymizer_profile_id: "p-1" });
+    // свой срок комнаты уходит с числом; общий срок сервера — только флаг, без числа (комната следует за сервером)
+    expect(adminPayload(f)).toEqual({ slug: "it-1", is_enabled: true, history_access: "participants", text_retention_custom: true, text_retention_days: 365, audio_retention_custom: false, video_retention_custom: false, anonymize_mode: "off", anonymizer_profile_id: "p-1" });
   });
   it("пароль: новый задаётся, «убрать» очищает", () => {
     expect(managePayload({ ...newRoomForm(), name: "A", password: "secret1" }).password).toBe("secret1");

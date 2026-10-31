@@ -189,6 +189,16 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   );
 }
 
+/** Что сказать зрителю о записи завершённого эфира (состояние даёт сервер: срок, закрытие доступа, подготовка и удаление проверяются там). */
+const REPLAY_NOTE: Record<string, string> = {
+  preparing: "Запись готовится — обычно несколько минут. Страница обновится сама.",
+  slow: "Запись готовится дольше обычного. Откройте ссылку позже.",
+  expired: "Срок просмотра записи по этой ссылке завершён.",
+  revoked: "Организатор закрыл доступ к записи.",
+  deleted: "Запись удалена и больше недоступна.",
+  failed: "Запись этого эфира не удалось сохранить.",
+};
+
 export default function LivePage() {
   const { token = "" } = useParams();
   const [info, setInfo] = useState<LiveViewerInfo | null>(null);
@@ -199,6 +209,7 @@ export default function LivePage() {
   const [skew, setSkew] = useState(0);
   const [, tick] = useState(0);
   const [replayUrl, setReplayUrl] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
   const [askReplayPw, setAskReplayPw] = useState(false);
   const [replayErr, setReplayErr] = useState("");
   const pass = useRef<string>("");
@@ -261,7 +272,7 @@ export default function LivePage() {
     try {
       const r = await api.liveReplay(token, password ? { password } : pass.current ? { pass: pass.current } : {});
       if (r.pass) { pass.current = r.pass; try { sessionStorage.setItem(SEEN_KEY(token), r.pass); } catch { /* пропуск не запомнится */ } }
-      setAskReplayPw(false); setReplayUrl(r.url);
+      setAskReplayPw(false); setReplayUrl(r.url); setDownloadUrl(r.download_url ?? "");
     } catch (e) {
       const x = e as ApiError;
       if (x.code === "password_required") setAskReplayPw(true);
@@ -305,11 +316,23 @@ export default function LivePage() {
         </div>)}
       {info.status === "ended" && !replayUrl && (
         <div className="live-stage live-msg"><Icon name="check" size={30} /><h2>Эфир завершён</h2><p className="muted">Спасибо, что были с нами.{info.ended_at ? ` Закончился ${when(info.ended_at)}.` : ""}</p>
+          {(info.replay_state === "preparing" || info.replay_state === "slow") && <p className="live-note" role="status"><span className="live-spin small" aria-hidden />{REPLAY_NOTE[info.replay_state]}</p>}
+          {info.replay_state && info.replay_state !== "ready" && info.replay_state !== "preparing" && info.replay_state !== "slow" && info.replay_state !== "off" && REPLAY_NOTE[info.replay_state] &&
+            <p className="live-note">{REPLAY_NOTE[info.replay_state]}</p>}
+          {info.replay && info.access_until && <p className="muted small">Запись доступна по этой ссылке до {when(info.access_until)}.</p>}
           {info.replay && !askReplayPw && <button className="btn primary" onClick={() => void openReplay()} disabled={busy}><Icon name="play" size={18} /> Смотреть запись</button>}
           {askReplayPw && <PasswordForm onSubmit={(pw) => void openReplay(pw)} busy={busy} error={replayErr} />}
           {!askReplayPw && replayErr && <div className="alert error" role="alert">{replayErr}</div>}</div>)}
       {info.status === "ended" && replayUrl && (
-        <div className="live-stage"><video src={replayUrl} controls autoPlay playsInline aria-label="Запись эфира" /></div>)}
+        <>
+          <div className="live-stage"><video src={replayUrl} controls autoPlay playsInline aria-label="Запись эфира" /></div>
+          {(downloadUrl || info.access_until) && (
+            <div className="live-foot row">
+              {info.access_until && <span className="muted small">Доступна до {when(info.access_until)}</span>}
+              <div className="spacer" />
+              {downloadUrl && <a className="btn" href={downloadUrl} download><Icon name="download" size={16} /> Скачать запись</a>}
+            </div>)}
+        </>)}
     </section>
   );
 }

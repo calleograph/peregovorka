@@ -222,7 +222,7 @@ def test_materials_tab_data_shows_retention_read_only_and_leader_can_edit_instru
     room = make_room(client, moderators=LEADERS)
     login(client, "carol")
     got = client.get(f"/api/v1/rooms/{room['id']}/manage").json()
-    assert set(got["retention"]) == {"text_days", "audio_days", "history_access", "anonymize_mode"}
+    assert set(got["retention"]) == {"text_days", "audio_days", "video_days", "custom", "own", "server", "history_access", "anonymize_mode"}
     out = manage(client, room["id"], protocol_instructions="Только решения и сроки")
     assert out["protocol_instructions"] == "Только решения и сроки"
     r = client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"text_retention_days": 1})          # сроки хранения — только администратор
@@ -419,3 +419,36 @@ def test_system_summary_mode_off_and_same(tmp_path, directory):
         login(c, "carol")
         got = c.get(f"/api/v1/rooms/{room['id']}/manage").json()
         assert got["llm_summary_effective"]["available"] is True and got["llm_summary_effective"]["name"] == got["llm_effective"]["name"]
+
+
+def test_rooms_inherit_server_retention_and_an_explicit_value_overrides_it(client):
+    """Общие сроки: текст бессрочно, аудио 60, видео 30. Новая комната наследует их; явный срок администратора — свой у комнаты; вернуть общий — признаком."""
+    login(client, "root")
+    room = make_room(client)
+    got = client.get(f"/api/v1/rooms/{room['id']}/manage").json()["retention"]
+    assert (got["text_days"], got["audio_days"], got["video_days"]) == (None, 60, 30) and got["custom"] == {"text": False, "audio": False, "video": False}
+    r = client.patch(f"/api/v1/admin/rooms/{room['id']}", json={"video_retention_days": 7}).json()
+    assert r["video_retention_custom"] is True and r["video_retention_days"] == 7
+    got = client.get(f"/api/v1/rooms/{room['id']}/manage").json()["retention"]
+    assert got["video_days"] == 7 and got["custom"]["video"] is True and got["server"]["video"] == 30
+    assert client.put("/api/v1/admin/settings/general", json={"default_audio_retention_days": 90}).status_code == 200
+    assert client.get(f"/api/v1/rooms/{room['id']}/manage").json()["retention"]["audio_days"] == 90, "унаследованный срок следует за общим"
+    client.patch(f"/api/v1/admin/rooms/{room['id']}", json={"video_retention_custom": False})
+    assert client.get(f"/api/v1/rooms/{room['id']}/manage").json()["retention"]["video_days"] == 30, "вернули общий срок"
+
+
+def test_retention_policy_helpers():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace as NS
+
+    from app.services import retention_policy as rp
+    from app.services.settings import GeneralSettings
+
+    g = GeneralSettings()
+    room = NS(text_retention_days=5, audio_retention_days=None, video_retention_days=None, text_retention_custom=True, audio_retention_custom=True, video_retention_custom=False)
+    e = rp.effective(room, g)
+    assert (e["text"], e["audio"], e["video"]) == (5, None, 30), "свой срок (в том числе «бессрочно») главнее общего"
+    later = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    assert rp.inherited_paused(g.model_copy(update={"retention_cleanup_from": later})) is True
+    assert rp.inherited_paused(g.model_copy(update={"retention_cleanup_from": "2000-01-01T00:00:00+00:00"})) is False
+    assert rp.inherited_paused(g) is False and rp.inherited_paused(g.model_copy(update={"retention_cleanup_from": "мусор"})) is False

@@ -99,6 +99,7 @@ class ClientConfig(BaseModel):
     board_access: str = "everyone"  # действующий уровень: everyone | speakers | leaders | private
     recording_allowed: bool = False  # комната допускает запись аудио (кнопка «Начать запись»)
     attachments: bool = True        # вложения в чат включены
+    idle_end: str = "standard"      # забытая встреча с одним человеком: standard | careful | off (GeneralSettings.idle_end_mode)
 
 
 class E2EEOut(BaseModel):
@@ -198,6 +199,10 @@ class RoomAdminOut(BaseModel):
     screen_share_allowed: bool
     text_retention_days: int | None
     audio_retention_days: int | None
+    video_retention_days: int | None = None
+    text_retention_custom: bool = False
+    audio_retention_custom: bool = False
+    video_retention_custom: bool = False
     protocol_instructions: str | None
     history_access: str = "admin"
     anonymize_mode: str = "inherit"
@@ -222,6 +227,8 @@ class RoomAdminOut(BaseModel):
     acl: list[AclEntryOut]
     moderators: list[AclEntryOut] = Field(default_factory=list)
     active_meeting_id: uuid.UUID | None = None
+    active_people: int = 0                     # только в списке комнат: люди в идущей встрече
+    active_connections: int | None = None      # подключения в LiveKit (несколько устройств одного человека — несколько); None — LiveKit не ответил
 
 
 class RoomCreateIn(BaseModel):
@@ -237,6 +244,11 @@ class RoomCreateIn(BaseModel):
     screen_share_allowed: bool = True
     text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    video_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    # своё значение срока у комнаты (true) или общий срок сервера (false); если поле не передано, а срок передан — своё
+    text_retention_custom: bool | None = None
+    audio_retention_custom: bool | None = None
+    video_retention_custom: bool | None = None
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     history_access: str = Field(default="admin", pattern="^(admin|participants)$")
     anonymize_mode: str = Field(default="inherit", pattern="^(inherit|on|off)$")
@@ -279,6 +291,11 @@ class RoomPatchIn(BaseModel):
     screen_share_allowed: bool | None = None
     text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    video_retention_days: int | None = Field(default=None, ge=0, le=36500)
+    # своё значение срока у комнаты (true) или общий срок сервера (false); если поле не передано, а срок передан — своё
+    text_retention_custom: bool | None = None
+    audio_retention_custom: bool | None = None
+    video_retention_custom: bool | None = None
     protocol_instructions: str | None = Field(default=None, max_length=20000)
     history_access: str | None = Field(default=None, pattern="^(admin|participants)$")
     anonymize_mode: str | None = Field(default=None, pattern="^(inherit|on|off)$")

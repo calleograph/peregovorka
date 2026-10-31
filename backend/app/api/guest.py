@@ -114,12 +114,12 @@ async def _e2ee(request: Request, meeting_id):
     return E2EEOut(key=info["key"], mode=info["mode"]) if info else None
 
 
-def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str, display_name: str, asr_ready: bool, e2ee=None) -> GuestJoinOut:
+def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str, display_name: str, asr_ready: bool, e2ee=None, idle_end: str = "standard") -> GuestJoinOut:
     settings = request.app.state.settings
     return GuestJoinOut(
         meeting_id=result.meeting.id, room=room_dto, livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
         token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
-        asr_ready=asr_ready, client=build_client_config(result.room, screen, result, guest=True),
+        asr_ready=asr_ready, client=build_client_config(result.room, screen, result, guest=True, idle_end=idle_end),
         guest_token=guest_token, guest_id=str(result.guest.id), display_name=display_name, e2ee=e2ee)
 
 
@@ -182,7 +182,8 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     screen = await request.app.state.settings_svc.get(db, "screen")
     journal.emit("room", "guest_join", user=f"guest:{name}", room=room.name, meeting_id=str(result.meeting.id), ip=ip, client=client,
                  data={"guest_id": str(result.guest.id)})
-    return _guest_join_out(request, result, await room_out(db, room, result.meeting, 0), screen, guest_token, name, await _asr_ready(request), await _e2ee(request, result.meeting.id))
+    return _guest_join_out(request, result, await room_out(db, room, result.meeting, 0), screen, guest_token, name, await _asr_ready(request), await _e2ee(request, result.meeting.id),
+                           idle_end=(await request.app.state.settings_svc.get(db, "general")).idle_end_mode)
 
 
 def _require_guest(actor: Actor) -> Actor:
@@ -205,7 +206,8 @@ async def rejoin(request: Request, actor: Actor = Depends(require_actor), db: As
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from None
     screen = await request.app.state.settings_svc.get(db, "screen")
     return _guest_join_out(request, result, await room_out(db, room, result.meeting, 0), screen,
-                           request.headers.get(GUEST_HEADER, ""), guest.display_name, await _asr_ready(request), await _e2ee(request, result.meeting.id))
+                           request.headers.get(GUEST_HEADER, ""), guest.display_name, await _asr_ready(request), await _e2ee(request, result.meeting.id),
+                           idle_end=(await request.app.state.settings_svc.get(db, "general")).idle_end_mode)
 
 
 @router.post("/session/leave", status_code=204)

@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..services.live import new_access, new_token
-from ..models import AuditLog, Meeting, Room, RoomAcl, RoomModerator
+from ..models import AuditLog, GuestParticipant, Meeting, MeetingParticipant, Room, RoomAcl, RoomModerator
+from ..services.livekit import list_present_identities
 from ..security.passwords import hash_room_password
 from ..services import audit as audit_svc
 from ..services.room_icons import icon_out
@@ -27,9 +28,21 @@ from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
-              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "protocol_instructions", "history_access",
+              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "video_retention_days",
+              "text_retention_custom", "audio_retention_custom", "video_retention_custom", "protocol_instructions", "history_access",
               "anonymize_mode", "llm_profile_id", "anonymizer_profile_id", "mute_on_join", "mask_profanity", "welcome_message",
               "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access", "encrypt_storage", "e2ee_mode")
+
+
+def _retention_fields(body) -> dict:
+    out = {}
+    for k in ("text", "audio", "video"):
+        given = f"{k}_retention_days" in body.model_fields_set
+        custom = getattr(body, f"{k}_retention_custom")
+        custom = bool(custom) if custom is not None else given
+        out[f"{k}_retention_custom"] = custom
+        out[f"{k}_retention_days"] = getattr(body, f"{k}_retention_days") if custom else None
+    return out
 
 
 @router.get("/rooms/template")
@@ -77,7 +90,8 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
         camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days,
+        text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days, video_retention_days=room.video_retention_days,
+        text_retention_custom=room.text_retention_custom, audio_retention_custom=room.audio_retention_custom, video_retention_custom=room.video_retention_custom,
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymizer_profile_id=room.anonymizer_profile_id,
         mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, welcome_message=room.welcome_message,
@@ -91,13 +105,26 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
 
 
 @router.get("/rooms", response_model=list[RoomAdminOut])
-async def list_rooms(include_closed: bool = False, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def list_rooms(request: Request, include_closed: bool = False, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Список комнат. Закрытые временные (их сотни за год; материалы остаются в «Истории») показываются только по `include_closed`."""
     stmt = select(Room).order_by(Room.name)
     if not include_closed:
         stmt = stmt.where(Room.lifecycle != "closed")
     rooms = (await db.execute(stmt)).scalars().all()
-    return [await _out(db, r) for r in rooms]
+    outs = [await _out(db, r) for r in rooms]
+    for o in outs:
+        if o.active_meeting_id:          # идущих встреч единицы: по одному запросу к LiveKit на каждую
+            o.active_people, o.active_connections = await _presence(request, db, o.active_meeting_id)
+    return outs
+
+
+async def _presence(request: Request, db: AsyncSession, meeting_id: uuid.UUID) -> tuple[int, int | None]:
+    """Люди во встрече (по сверке присутствия: несколько устройств одного человека — один участник) и технические подключения в LiveKit (без Egress и распознавания)."""
+    people = (await db.execute(select(func.count()).select_from(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting_id, MeetingParticipant.left_at.is_(None)))).scalar_one() \
+        + (await db.execute(select(func.count()).select_from(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id, GuestParticipant.left_at.is_(None)))).scalar_one()
+    meeting = await db.get(Meeting, meeting_id)
+    present = await list_present_identities(request.app.state.settings, meeting.livekit_room) if meeting else None
+    return people, (len(present) if present is not None else None)
 
 
 @router.post("/rooms", response_model=RoomAdminOut, status_code=201)
@@ -112,8 +139,8 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         password_hash=hash_room_password(body.password) if body.password else None,
         transcription_enabled=body.transcription_enabled, record_audio=body.record_audio,
         camera_allowed=body.camera_allowed, screen_share_allowed=body.screen_share_allowed,
-        text_retention_days=body.text_retention_days if "text_retention_days" in body.model_fields_set else settings.default_text_retention_days,
-        audio_retention_days=body.audio_retention_days if "audio_retention_days" in body.model_fields_set else settings.default_audio_retention_days,
+        # срок, переданный явно, — свой у комнаты; иначе комната наследует общий срок сервера (Администрирование → Общие → «Сроки хранения»)
+        **_retention_fields(body),
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymizer_profile_id=body.anonymizer_profile_id,
         mute_on_join=body.mute_on_join, mask_profanity=body.mask_profanity, welcome_message=body.welcome_message,
@@ -166,6 +193,11 @@ async def patch_room(room_id: uuid.UUID, body: RoomPatchIn, request: Request, su
         raise HTTPException(status_code=409, detail="Телефонные участники (SIP) не поддерживают сквозное шифрование: отключите телефонию в этой комнате или оставьте E2EE выключенным.")
     if fields.get("encrypt_storage") and not room.encrypt_storage and not await se.ensure_ready(request.app):
         raise HTTPException(status_code=409, detail="Шифрование хранилища недоступно: не задан APP_MASTER_KEY или ключи не загружены.")
+    for k in ("text", "audio", "video"):          # передан срок без признака — значит, администратор задаёт комнате свой срок
+        if f"{k}_retention_days" in fields and f"{k}_retention_custom" not in fields:
+            fields[f"{k}_retention_custom"] = True
+    for k in [k for k, v in fields.items() if k.endswith("_retention_custom") and v is None]:
+        fields.pop(k)
     changed: dict = {}
     new_slug = fields.pop("slug", None)
     if new_slug and new_slug != room.slug:

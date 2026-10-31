@@ -87,6 +87,11 @@ class Room(Base):
     screen_share_allowed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     text_retention_days: Mapped[int | None] = mapped_column(Integer)   # None = бессрочно
     audio_retention_days: Mapped[int | None] = mapped_column(Integer)  # None = бессрочно
+    video_retention_days: Mapped[int | None] = mapped_column(Integer)  # None = бессрочно
+    # Срок своё у комнаты (true) или общий срок сервера (Администрирование → Общие → «Сроки хранения»); значения *_retention_days действуют только при true
+    text_retention_custom: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    audio_retention_custom: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    video_retention_custom: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     protocol_instructions: Mapped[str | None] = mapped_column(Text)
     # Кто видит завершённую встречу после выхода: 'admin' — только администраторы (и участники, пока они на странице встречи);
     # 'participants' — участники встречи; явные разрешения (meeting_grants) действуют всегда.
@@ -153,6 +158,8 @@ class Room(Base):
     live_replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)    # зрители могут смотреть запись последнего эфира на странице после его окончания
     live_cdn: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)       # раздавать этот эфир через CDN (если администратор включил CDN)
     live_password_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    live_download: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)    # зрители могут скачать запись эфира (если запись показывается)
+    live_link_days: Mapped[int] = mapped_column(Integer, default=5, server_default="5", nullable=False)                 # сколько дней после эфира ссылка зрителя открывает запись
     # Могут ли обычные участники (не руководители) править общую доску; руководители — всегда.
     board_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Кто работает с общей доской: auto — по типу комнаты (обычная: все, если board_allowed; презентация: только руководитель); everyone — все правят;
@@ -1143,6 +1150,17 @@ class Broadcast(Base):
     error: Mapped[str | None] = mapped_column(String(300))
     peak_viewers: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hls_cleaned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Ссылка и параметры ЭТОГО эфира (снимок настроек комнаты при запуске; дальнейшие изменения комнаты их не трогают). Ссылка /live/<view_token> показывает эфир,
+    # пока он идёт, и его запись после окончания — до access_until, если запись разрешена и доступ не закрыт досрочно.
+    view_token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str | None] = mapped_column(String(200))
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    download: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    link_days: Mapped[int] = mapped_column(Integer, default=5, server_default="5", nullable=False)
+    access_until: Mapped[datetime | None] = mapped_column(UTCDateTime)          # конец доступа к записи по ссылке: фактическое окончание эфира + link_days
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)            # доступ закрыт досрочно (владелец или администратор)
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                # запись этого эфира (recordings.id); сама запись живёт по общей политике хранения
 
 
 class LiveDestination(Base):

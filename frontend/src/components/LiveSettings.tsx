@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type LivePatchBody, type LiveRoomSettings } from "../api";
+import { api, type ApiError, type LiveBroadcast, type LivePatchBody, type LiveRoomSettings } from "../api";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
 import LiveDestinations from "./LiveDestinations";
@@ -24,8 +24,9 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
   const [speakerPw, setSpeakerPw] = useState("");
   const [title, setTitle] = useState("");
   const [startsAt, setStartsAt] = useState("");
+  const [days, setDays] = useState(5);
 
-  const apply = (c: LiveRoomSettings) => { setCfg(c); setTitle(c.title); setStartsAt(c.starts_at ? toLocal(c.starts_at) : ""); };
+  const apply = (c: LiveRoomSettings) => { setCfg(c); setTitle(c.title); setStartsAt(c.starts_at ? toLocal(c.starts_at) : ""); setDays(c.link_days); };
   const load = useCallback(() => { api.liveRoom(roomId).then(apply).catch((e) => setErr((e as ApiError).message)); }, [roomId]);
   useEffect(() => { load(); }, [load]);
   const flash = (t: string) => { setMsg(t); window.setTimeout(() => setMsg(""), 3500); };
@@ -104,13 +105,22 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
               <option value="manual">Вручную: руководитель нажимает «Начать эфир»</option>
               <option value="auto">Автоматически: эфир начинается, когда подключился первый выступающий</option>
             </select></label>
-          <label className="check"><input type="checkbox" checked={cfg.replay} disabled={busy || !cfg.record} onChange={(e) => void patch({ live_replay: e.target.checked }, e.target.checked ? "После эфира зрители смогут посмотреть запись" : "Запись зрителям не показывается")} />
-            <span className="check-body">Разрешить зрителям смотреть запись после эфира<InfoTip>На странице «Эфир завершён» появится кнопка «Смотреть запись» (последний эфир комнаты). Действует тот же пароль зрителя; ссылка на запись отзывается вместе со ссылкой зрителя. Файл отдаёт сервер приложения, поэтому для больших аудиторий лучше выложить запись на площадку. Нужна включённая запись эфира.</InfoTip></span></label>
-          <label className="check"><input type="checkbox" checked={cfg.record} disabled={busy || live} onChange={(e) => void patch({ live_record: e.target.checked }, "Сохранено")} />
-            <span className="check-body">Сохранять запись эфира в историю (MP4)<InfoTip>Запись идёт тем же процессом, что и эфир: лишней нагрузки нет. Файл появится в «Истории» после завершения.</InfoTip></span></label>
+          <div className="lv-rec">
+            <span className="field-title">Запись эфира<InfoTip>Каждый эфир записывается автоматически (MP4 — общая сцена встречи: выступающие, показ экрана, доска, звук) и хранится по общей политике хранения видеозаписей. Если запись начать нельзя (нет места, служба недоступна), эфир не начнётся — ведущий увидит причину. Параметры ниже действуют для новых эфиров: у уже прошедшего эфира свои значения, их меняют в списке «Эфиры».</InfoTip></span>
+            <label className="check"><input type="checkbox" checked={cfg.replay} disabled={busy} onChange={(e) => void patch({ live_replay: e.target.checked }, e.target.checked ? "Новые эфиры: запись будет доступна по ссылке зрителя" : "Новые эфиры: запись зрителям не показывается")} />
+              <span className="check-body">Показывать запись после завершения эфира<InfoTip>Та же ссылка зрителя после окончания открывает запись этого эфира — когда она готова. Действует пароль зрителя. Выключено — запись остаётся во внутреннем хранилище, зрителям не выдаётся.</InfoTip></span></label>
+            <label className="check"><input type="checkbox" checked={cfg.download} disabled={busy || !cfg.replay} onChange={(e) => void patch({ live_download: e.target.checked }, "Сохранено")} />
+              <span className="check-body">Разрешить скачивание записи<InfoTip>На странице зрителя появится «Скачать запись» (MP4). Без этого — только просмотр; полностью исключить копирование воспроизводимого видео технически нельзя.</InfoTip></span></label>
+            <label className="lv-days">Ссылка на запись действует
+              <input type="number" min={1} max={cfg.link_days_max} value={days} disabled={busy || !cfg.replay} onChange={(e) => setDays(Number(e.target.value))}
+                     onBlur={() => { if (days !== cfg.link_days && days >= 1 && days <= cfg.link_days_max) void patch({ live_link_days: days }, "Срок сохранён"); }} />
+              <span className="muted">дн. после окончания<InfoTip>{`Срок отсчитывается от фактического окончания эфира. Не больше ${cfg.link_days_max} дн. — предел администратора сервера. Истечение срока закрывает доступ по ссылке, но не удаляет запись: её хранение — по политике хранения видеозаписей.`}</InfoTip></span></label>
+          </div>
         </fieldset>
 
         <LiveDestinations roomId={roomId} cfg={cfg} onChange={apply} />
+
+        {cfg.broadcasts.length > 0 && <LiveBroadcasts roomId={roomId} cfg={cfg} busy={busy} run={run} />}
 
         <details className="lv-sect"><summary>Дополнительно</summary>
           <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</InfoTip></span><select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" }, "Качество сохранено")}>
@@ -126,6 +136,49 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
       {msg && <div className="alert ok" role="status">{msg}</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
     </div>
+  );
+}
+
+const BCAST_STATUS: Record<LiveBroadcast["status"], string> = { live: "идёт", ending: "завершается", ended: "завершён", failed: "прерван" };
+const ACCESS: Record<LiveBroadcast["access"], string> = { off: "запись зрителям не показывается", open: "запись доступна по ссылке", expired: "срок ссылки истёк", revoked: "доступ закрыт" };
+
+/** Эфиры комнаты: у каждого своя ссылка, параметры доступа к записи и срок. Организатор и администратор меняют их здесь; запись — в материалах встречи. */
+function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveRoomSettings; busy: boolean; run: (fn: () => Promise<LiveRoomSettings | void>, ok?: string) => Promise<void> }) {
+  const [copied, setCopied] = useState("");
+  const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
+  const upd = (b: LiveBroadcast, body: Parameters<typeof api.patchBroadcast>[2], ok: string) => run(() => api.patchBroadcast(roomId, b.id, body), ok);
+  return (
+    <fieldset className="group lv-bcasts"><legend>Эфиры<InfoTip>Для каждого эфира создаётся своя ссылка зрителя: пока эфир идёт — прямой эфир, после окончания — его запись (если показ разрешён) до конца срока. Повторный эфир из этой комнаты — новая ссылка; старые ссылки остаются привязаны к своим записям.</InfoTip></legend>
+      <ul className="lv-bcast-list">
+        {cfg.broadcasts.map((b) => {
+          const rec = b.recording;
+          const recText = !rec ? "записи нет" : rec.file_state === "missing" ? "запись удалена" : rec.status === "ready" ? "запись готова" : rec.status === "failed" ? "запись не сохранилась" : "запись готовится";
+          return (
+            <li key={b.id} className="lv-bcast">
+              <div className="lv-bcast-head">
+                <b>{b.title || cfg.title || "Эфир"}</b>
+                <span className={`badge ${b.status === "live" ? "live" : b.status === "failed" ? "warn" : ""}`}>{BCAST_STATUS[b.status]}</span>
+                <span className="muted small">{fmt(b.started_at)}{b.ended_at ? ` — ${fmt(b.ended_at)}` : ""}{b.password ? " · с паролем" : ""}</span>
+              </div>
+              <div className="lv-bcast-meta muted small">
+                {recText} · {ACCESS[b.access]}{b.replay && b.access_until && b.access === "open" ? ` до ${fmt(b.access_until)}` : ""}{b.download && b.replay ? " · скачивание разрешено" : ""}
+              </div>
+              <div className="lv-bcast-acts row">
+                {b.view_path && <button type="button" className="btn mini" onClick={async () => { const ok = await copyText(`${origin()}${b.view_path}`); setCopied(ok ? b.id : ""); window.setTimeout(() => setCopied(""), 2500); }}>{copied === b.id ? "Скопировано" : "Копировать ссылку"}</button>}
+                <a className="btn mini ghost" href={`/history/${b.meeting_id}`}>Запись и материалы</a>
+                <label className="check small"><input type="checkbox" checked={b.replay} disabled={busy} onChange={(e) => void upd(b, { replay: e.target.checked }, "Сохранено")} /> показывать запись</label>
+                <label className="check small"><input type="checkbox" checked={b.download} disabled={busy || !b.replay} onChange={(e) => void upd(b, { download: e.target.checked }, "Сохранено")} /> скачивание</label>
+                {b.status !== "live" && b.replay && (
+                  <label className="small">срок <select value={b.link_days} disabled={busy} onChange={(e) => void upd(b, { link_days: Number(e.target.value) }, "Срок изменён")}>
+                    {[...new Set([1, 3, 5, 7, 14, 30, 90, 365, b.link_days])].filter((d) => d <= cfg.link_days_max || d === b.link_days).sort((x, y) => x - y).map((d) => <option key={d} value={d}>{d} дн.</option>)}
+                  </select></label>)}
+                {b.replay && b.access !== "revoked" && b.status !== "live" && <button type="button" className="btn mini danger" disabled={busy} onClick={() => void upd(b, { revoke: true }, "Доступ к записи закрыт")}>Закрыть доступ</button>}
+                {b.access === "revoked" && <button type="button" className="btn mini" disabled={busy} onClick={() => void upd(b, { revoke: false }, "Доступ открыт снова")}>Открыть снова</button>}
+              </div>
+            </li>);
+        })}
+      </ul>
+    </fieldset>
   );
 }
 

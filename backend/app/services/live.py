@@ -18,7 +18,7 @@ import secrets
 import shutil
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from livekit.protocol import egress as eg
@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
-from . import events
+from . import events, rec_scene
 from .livekit import list_present_identities
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoRecorder
@@ -230,13 +230,29 @@ class LiveBroadcaster:
             if last is not None and last.status == "failed" and last.ended_at is not None and (datetime.now(timezone.utc) - last.ended_at).total_seconds() < 900:
                 b = last
         live = b is not None and b.status in ("starting", "live")
-        out = {"enabled": bool(cfg.enabled and room.live_enabled), "available": bool(cfg.enabled), "live": live, "status": b.status if b else "idle",
+        ends_at = b.started_at + timedelta(hours=cfg.max_hours + await self._extra_h(b.id)) if live and b else None
+        out = {"ends_at": ends_at, "enabled": bool(cfg.enabled and room.live_enabled), "available": bool(cfg.enabled), "live": live, "status": b.status if b else "idle",
                "since": b.started_at if live and b else None, "quality": room.live_quality, "record": room.live_record, "own_hls": room.live_own_hls,
                "viewers": await self.viewers(room.id) if live else 0, "error": b.error if b else None, "broadcast_id": str(b.id) if b else None,
                "hls_ready": self.hls_ready(b), "limit": int(cfg.max_concurrent), "cdn": bool(cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn), "can_start": bool(cfg.enabled and room.live_enabled and not live)}
         if self.destinations is not None:
             out["destinations"] = await self.destinations.live_state(db, room, b)
         return out
+
+    async def _extra_h(self, bid) -> int:
+        return int(await self._r.get(f"live:extra:{bid}") or 0)
+
+    async def extend(self, db, room: Room) -> datetime:
+        """Продлить идущий эфир на час сверх предела `max_hours` (ведущий видит предупреждение перед пределом); всего — не больше 48 часов."""
+        cfg, b = await self.cfg(db), await self.current(db, room.id)
+        if b is None or b.status not in ("starting", "live"):
+            raise LiveError("not_live", "Эфир не идёт.")
+        key = f"live:extra:{b.id}"
+        if cfg.max_hours + await self._extra_h(b.id) + 1 > 48:
+            raise LiveError("extend_limit", "Эфир уже продлён до предела — 48 часов.")
+        extra = await self._r.incr(key)
+        await self._r.expire(key, 3 * 86400)
+        return b.started_at + timedelta(hours=cfg.max_hours + int(extra))
 
     # ------------------------------------------------------------------ проверки перед стартом
     async def _guards(self, db, meeting: Meeting, cfg, urls: list[str]) -> None:
@@ -271,7 +287,36 @@ class LiveBroadcaster:
             raise LiveError("disk_low", f"Мало свободного места на томе трансляций (меньше {cfg.min_free_gb} ГБ): эфир не начат.")
 
     # ------------------------------------------------------------------ старт и остановка
-    async def start(self, db, meeting: Meeting, *, by: str = "") -> Broadcast:
+    async def _record_guard(self, db) -> None:
+        """Запись эфира обязательна: если её нельзя начать (нет места, том записей недоступен для записи, исчерпан объём видеозаписей), эфир не начинается вовсе —
+        чтобы не было эфира, который идёт, а запись тихо не пишется."""
+        vcfg = await self._svc.get(db, "video")
+        root = Path(self._s.recordings_path)
+        try:
+            free = shutil.disk_usage(root if root.exists() else root.parent).free
+        except OSError:
+            free = None
+        if free is not None and free < vcfg.min_free_gb * 1024**3:
+            raise LiveError("record_disk_low", f"Запись эфира невозможна: на томе записей меньше {vcfg.min_free_gb} ГБ свободного места. Эфир не начат — освободите место или обратитесь к администратору.")
+        if root.exists() and not os.access(root, os.W_OK):
+            raise LiveError("record_unwritable", "Запись эфира невозможна: каталог записей недоступен для записи. Эфир не начат — сообщите администратору (Администрирование → Состояние системы).")
+        if vcfg.quota_gb:
+            used = (await db.execute(select(func.coalesce(func.sum(Recording.size_bytes), 0)).where(Recording.kind == "mix_video"))).scalar_one()
+            if used >= vcfg.quota_gb * 1024**3:
+                raise LiveError("record_quota", f"Запись эфира невозможна: достигнут предел объёма видеозаписей ({vcfg.quota_gb} ГБ). Эфир не начат.")
+
+    @staticmethod
+    def options(room: Room, cfg, opts: dict | None = None) -> dict:
+        """Параметры этого эфира: значения комнаты, которые ведущий может поменять при запуске (название, показ записи, скачивание, срок ссылки). Срок — в пределах администратора."""
+        o = opts or {}
+        title = o.get("title") if isinstance(o.get("title"), str) else room.live_title
+        days = o.get("link_days") if isinstance(o.get("link_days"), int) and not isinstance(o.get("link_days"), bool) else room.live_link_days
+        return {"title": ((title or "").strip()[:200]) or None,
+                "replay": o["replay"] if isinstance(o.get("replay"), bool) else room.live_replay,
+                "download": o["download"] if isinstance(o.get("download"), bool) else room.live_download,
+                "link_days": max(1, min(int(days or 5), int(cfg.replay_days_max)))}
+
+    async def start(self, db, meeting: Meeting, *, by: str = "", opts: dict | None = None) -> Broadcast:
         lock = await self._r.set(f"live:start:{meeting.id}", "1", nx=True, ex=30)
         if not lock:
             raise LiveError("live_starting", "Эфир уже запускается.")
@@ -288,37 +333,43 @@ class LiveBroadcaster:
                 raise LiveError("livekit_unavailable", "Сервер звонков недоступен: эфир не начат.", 503)
             if not present:
                 raise LiveError("room_empty", "В комнате никого нет: начинать эфир не с кого.")
+            await self._record_guard(db)
             await self.ensure_links(db, room)
             hls_dir = new_access() if room.live_own_hls else None
             quality = room.live_quality if room.live_quality in LIVE_QUALITY else cfg.default_quality
-            rel = None
-            if room.live_record:
-                # запись входит в этот же процесс: отдельную видеозапись комнаты закрываем, чтобы не гонять второй браузер
-                if await self.video.active_rows(db, meeting.id):
-                    await self.video.stop(db, meeting, by="live")
-                n = (await db.execute(select(func.count()).select_from(Recording).where(Recording.meeting_id == meeting.id, Recording.kind == "mix_video"))).scalar_one() + 1
-                tz = await self.video._tz(db)  # noqa: SLF001
-                rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz))}/video-{n}.mp4"
+            # Запись каждого эфира обязательна и входит в этот же процесс Egress (MP4 рядом с HLS и площадками): отдельную видеозапись комнаты закрываем,
+            # чтобы не гонять второй браузер. Прежняя настройка «сохранять запись» (rooms.live_record) больше не отключает запись.
+            if await self.video.active_rows(db, meeting.id):
+                await self.video.stop(db, meeting, by="live")
+            n = (await db.execute(select(func.count()).select_from(Recording).where(Recording.meeting_id == meeting.id, Recording.kind == "mix_video"))).scalar_one() + 1
+            tz = await self.video._tz(db)  # noqa: SLF001
+            rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz))}/video-{n}.mp4"
             vcfg = await self._svc.get(db, "video")
-            req = build_live_request(meeting.livekit_room, quality, mp4_path=f"{self.video.out_dir()}/{rel}" if rel else None,
-                                     hls_prefix=f"{self.egress_dir()}/b/{hls_dir}" if hls_dir else None, urls=urls, template_url=vcfg.template_url)
+            # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
+            tpl = vcfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if vcfg.scene_template and self._s.recorder_base_url else "")
+            req = build_live_request(meeting.livekit_room, quality, mp4_path=f"{self.video.out_dir()}/{rel}",
+                                     hls_prefix=f"{self.egress_dir()}/b/{hls_dir}" if hls_dir else None, urls=urls, template_url=tpl)
             try:
                 info = await self.api.start(req)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Не удалось запустить Egress для эфира", extra={"meeting_id": str(meeting.id), "error": str(exc)[:300]})
                 raise LiveError("egress_unavailable", "Служба трансляций (LiveKit Egress) недоступна или не установлена. Сообщите администратору: Администрирование → Видеозапись и Трансляции.", 503) from exc
             now = datetime.now(timezone.utc)
-            b = Broadcast(room_id=room.id, meeting_id=meeting.id, status="starting", egress_id=info.egress_id, hls_dir=hls_dir, quality=quality, started_by=by[:200] or None, started_at=now)
+            o = self.options(room, cfg, opts)
+            rec = Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="meeting", path=rel, size_bytes=0, kind="mix_video", mime="video/mp4",
+                            status="processing", has_video=True, egress_id=info.egress_id, started_at=now)
+            db.add(rec)
+            await db.flush()
+            b = Broadcast(room_id=room.id, meeting_id=meeting.id, status="starting", egress_id=info.egress_id, hls_dir=hls_dir, quality=quality, started_by=by[:200] or None, started_at=now,
+                          view_token=new_token(), title=o["title"], password_hash=room.live_password_hash if room.live_password_enabled else None,
+                          replay=o["replay"], download=o["download"], link_days=o["link_days"], recording_id=rec.id)
             db.add(b)
-            if rel:
-                db.add(Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="meeting", path=rel, size_bytes=0, kind="mix_video", mime="video/mp4",
-                                 status="processing", has_video=True, egress_id=info.egress_id, started_at=now))
-                meeting.record_video = True
+            meeting.record_video = True
             await db.commit()
             self.link_access(room.live_view_access, hls_dir)
             self.link_access(room.live_stream_access, hls_dir)
             await self._announce(meeting, True, by)
-            self._emit("live_started", meeting, by=by, egress=info.egress_id, quality=quality, urls=len(urls), hls=bool(hls_dir), record=bool(rel))
+            self._emit("live_started", meeting, by=by, egress=info.egress_id, quality=quality, urls=len(urls), hls=bool(hls_dir), record=True)
             return b
         finally:
             await self._r.delete(f"live:start:{meeting.id}")
@@ -388,6 +439,7 @@ class LiveBroadcaster:
             return
         failed = info is not None and info.status in (eg.EgressStatus.EGRESS_FAILED, eg.EgressStatus.EGRESS_ABORTED)
         b.ended_at = datetime.now(timezone.utc)
+        b.access_until = b.ended_at + timedelta(days=max(1, int(b.link_days or 5)))       # срок ссылки на запись — от фактического окончания эфира
         if lost:
             b.status, b.error = "failed", "Служба трансляций перестала отвечать во время эфира."
         elif failed:
@@ -451,7 +503,7 @@ class LiveBroadcaster:
                 reason = ""
                 if meeting is None or meeting.ended_at is not None:
                     reason = "meeting_end"
-                elif cfg is not None and age > cfg.max_hours * 3600:
+                elif cfg is not None and age > (cfg.max_hours + await self._extra_h(b.id)) * 3600:
                     reason = "limit"
                 elif meeting.empty_since is not None and (datetime.now(timezone.utc) - meeting.empty_since).total_seconds() > EMPTY_GRACE_S:
                     reason = "empty"

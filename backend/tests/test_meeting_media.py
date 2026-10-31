@@ -268,7 +268,7 @@ def test_retention_does_not_delete_tracks_while_the_mix_is_being_built_and_unsti
         async def prep(mix_age_h: float, status: str):
             async with sm() as db:
                 old = utcnow() - dt.timedelta(hours=2)
-                await db.execute(update(Room).values(audio_retention_days=0))
+                await db.execute(update(Room).values(audio_retention_days=0, audio_retention_custom=True))
                 await db.execute(update(Recording).values(created_at=old))
                 await db.execute(update(Recording).where(Recording.kind == "mix_audio").values(status=status, created_at=utcnow() - dt.timedelta(hours=mix_age_h)))
                 await db.commit()
@@ -301,3 +301,48 @@ def test_reconcile_notices_a_mix_deleted_by_hand_and_playback_says_so_clearly(tm
         after = c.get(f"/api/v1/meetings/{mid}/media").json()["mixes"][0]
         assert after["file_state"] == "missing"
         assert c.get(f"/api/v1/meetings/{mid}/media/{mix['id']}/stream").status_code == 410
+
+
+def test_retention_uses_server_defaults_waits_for_the_start_date_and_keeps_video_and_audio_apart(tmp_path, directory):
+    """Общие сроки (аудио 60, видео 30): аудиосрок не удаляет видео, видео — по своему сроку; пока не наступила дата начала очистки, общие сроки ничего не удаляют."""
+    import datetime as dt
+
+    from sqlalchemy import select, update
+
+    from app.models import Recording, utcnow
+    from app.workers.retention import run_retention_once
+
+    s = make_settings(tmp_path)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)
+        app = c.app_obj
+        sm = app.state.session_maker
+        svc = app.state.settings_svc
+
+        async def setup():
+            async with sm() as db:
+                rec = (await db.execute(select(Recording).where(Recording.meeting_id == uuid.UUID(mid)))).scalars().first()
+                db.add(Recording(meeting_id=rec.meeting_id, room_id=rec.room_id, participant_identity="meeting", path="v/video-1.mp4", kind="mix_video", status="ready", has_video=True))
+                await db.flush()
+                await db.execute(update(Recording).values(created_at=utcnow() - dt.timedelta(days=45)))      # аудио моложе 60 дней, видео старше 30
+                await svc.update(db, "general", {"retention_cleanup_from": (utcnow() + dt.timedelta(days=3)).isoformat()}, actor="тест")
+                await db.commit()
+
+        async def kinds():
+            async with sm() as db:
+                return sorted(r.kind for r in (await db.execute(select(Recording))).scalars().all())
+
+        c.portal.call(setup)
+        before = c.portal.call(kinds)
+        c.portal.call(lambda: run_retention_once(sm, app.state.protocols))
+        assert c.portal.call(kinds) == before, "до даты начала очистки общие сроки ничего не удаляют"
+
+        async def start_now():
+            async with sm() as db:
+                await svc.update(db, "general", {"retention_cleanup_from": ""}, actor="тест")
+                await db.commit()
+        c.portal.call(start_now)
+        stats = c.portal.call(lambda: run_retention_once(sm, app.state.protocols))
+        after = c.portal.call(kinds)
+        assert "mix_video" not in after and stats.get("video_recordings") == 1, "видео старше 30 дней удалено"
+        assert after == [k for k in before if k != "mix_video"], "аудио (45 дней при сроке 60) осталось — срок аудио видео не касается и наоборот"

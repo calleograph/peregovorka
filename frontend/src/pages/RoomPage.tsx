@@ -8,6 +8,7 @@ import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
 import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
 import { applyLocalMute, loadLocalMuted, sameUser, saveLocalMuted, toggleLocalMute } from "../localMute";
+import { useIdleEnd } from "../idleEnd";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
 import { ParticipantTile, ScreenStage, moderationItems, pipSupported, toggleFullscreen, togglePip, type PView, type TileActions } from "../components/room/Tiles";
@@ -1176,6 +1177,20 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     await teardown(false);
     if (mid) navigate(`/history/${mid}`); else navigate("/");
   };
+  // забытая встреча: человек один и ничего не делает — предупреждение, затем завершение (сервер проверяет, что других людей нет); эфир живёт по своим правилам
+  const selfId = join?.identity ?? "";
+  const alone = participants.length > 0 && !participants.some((p) => !p.local && !sameUser(p.identity, selfId) && !/^(EG_|asr-)/.test(p.identity));
+  const idleEnd = async () => {
+    const mid = meetingRef.current;
+    if (!mid || endedRef.current) return;
+    if (guest) { await leave(); return; }
+    try { await api.idleEnd(mid); } catch (e) { setErr("general", (e as ApiError).message); return; }      // пришёл кто-то ещё или эфир — встреча продолжается
+    endedRef.current = true;
+    await teardown(false);
+    navigate(`/history/${mid}`);
+  };
+  const liveLeftMin = lv.state?.live && lv.state.ends_at && join?.client.can_control ? Math.ceil((new Date(lv.state.ends_at).getTime() - Date.now()) / 60_000) : null;
+  const idle = useIdleEnd(join?.client.idle_end, alone, ended || stage !== "ready" || state !== ConnectionState.Connected || !!lv.state?.live, !!(meLocal?.speaking || meLocal?.screen), () => void idleEnd());
   const onMeetingEnded = useCallback(() => {
     endedRef.current = true;
     setEnded(true);
@@ -1470,6 +1485,18 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                                       onCard={(p) => { if (!p.local) setCardOf({ identity: p.identity, name: p.name, role: p.leader ? "Руководитель" : p.floor ? "Есть слово" : undefined }); }} />
                      )}
                      <div className="st-toasts">
+                       {liveLeftMin !== null && liveLeftMin <= 15 && !ended && (
+                         <div className="alert warn idle-warn" role="alert">
+                           <span>Эфир завершится через {Math.max(1, liveLeftMin)} мин.: достигнут предел длительности трансляции. Запись сохранится.</span>
+                           <button className="btn mini primary" onClick={() => { const mid = meetingRef.current; if (mid) api.liveExtend(mid).then(lv.refresh, (e) => setErr("general", (e as ApiError).message)); }}>Продлить на час</button>
+                         </div>
+                       )}
+                       {idle.left !== null && !ended && (
+                         <div className="alert warn idle-warn" role="alert">
+                           <span>Похоже, встреча больше не используется. Она завершится через {idle.left > 60 ? `${Math.ceil(idle.left / 60)} минуты` : `${idle.left} с`}.</span>
+                           <span className="row"><button className="btn mini primary" onClick={idle.keep}>Продолжить встречу</button><button className="btn mini ghost" onClick={() => void idleEnd()}>Завершить сейчас</button></span>
+                         </div>
+                       )}
                        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}
                        {notice && !ended && <div className={`alert ${notice.kind === "ok" ? "ok" : notice.kind === "warn" ? "error" : "info"}`} role="status">{notice.text} <button className="btn mini ghost" onClick={() => setNotice(null)}>Закрыть</button></div>}
                      </div>

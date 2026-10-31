@@ -810,40 +810,127 @@ def _ended_broadcast_with_recording(lv, room, mid, payload=b"0123456789" * 100):
 from pathlib import Path as Path_  # noqa: E402
 
 
-def test_replay_is_off_by_default_and_the_owner_can_allow_it_for_viewers(lv):
+def bpatch(lv, room, bid, **body):
+    login(lv, "carol")
+    return lv.patch(f"/api/v1/rooms/{room['id']}/live/broadcasts/{bid}", json=body)
+
+
+def only_broadcast(lv, mid):
+    (b,) = broadcasts(lv, mid)
+    return b
+
+
+def test_replay_is_off_by_default_and_the_organizer_can_allow_it_for_one_broadcast(lv):
     room = room_live(lv)
     mid = _join(lv, "alice", room["id"])["meeting_id"]
     token = get_room(lv, room["id"]).live_token
     _ended_broadcast_with_recording(lv, room, mid)
     reconcile(lv)
-    assert viewer(lv, token).json()["replay"] is False
+    b = only_broadcast(lv, mid)
+    assert viewer(lv, token).json()["replay"] is False and viewer(lv, b.view_token).json()["replay_state"] == "off"
     lv.cookies.clear()
-    assert lv.post(f"/api/v1/live/{token}/replay", json={}).status_code == 404, "по умолчанию запись зрителям не показывается"
+    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).status_code == 404, "по умолчанию запись зрителям не показывается"
     assert patch(lv, room, live_replay=True).json()["replay"] is True
-    assert viewer(lv, token).json()["replay"] is True and viewer(lv, token).json()["status"] == "ended"
+    assert viewer(lv, b.view_token).json()["replay_state"] == "off", "настройки комнаты после эфира не меняют уже прошедший эфир"
+    out = bpatch(lv, room, b.id, replay=True).json()
+    assert out["broadcasts"][0]["replay"] is True and out["broadcasts"][0]["access"] == "open"
+    for t in (b.view_token, token):                      # ссылка эфира и постоянная ссылка комнаты (последний эфир) — по правилам эфира
+        v = viewer(lv, t).json()
+        assert v["replay"] is True and v["status"] == "ended" and v["replay_state"] == "ready" and v["access_until"]
 
 
-def test_replay_link_streams_with_ranges_and_dies_with_the_access_id_and_wrong_signatures(lv):
+def test_replay_link_streams_with_ranges_and_dies_with_revocation_and_wrong_signatures(lv):
     room = room_live(lv)
+    patch(lv, room, live_replay=True)
     mid = _join(lv, "alice", room["id"])["meeting_id"]
-    token = get_room(lv, room["id"]).live_token
     payload = bytes(range(256)) * 20
     _ended_broadcast_with_recording(lv, room, mid, payload)
     reconcile(lv)
-    patch(lv, room, live_replay=True)
+    b = only_broadcast(lv, mid)
+    token = b.view_token
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
     j = lv.post(f"/api/v1/live/{token}/replay", json={}).json()
+    assert j["download_url"] is None, "скачивание по умолчанию выключено"
     r = lv.get(j["url"])
-    assert r.status_code == 200 and r.content == payload and r.headers["accept-ranges"] == "bytes" and "no-store" in r.headers["cache-control"]
+    assert r.status_code == 200 and r.content == payload and r.headers["accept-ranges"] == "bytes" and "no-store" in r.headers["cache-control"] and r.headers["content-disposition"].startswith("inline")
     r = lv.get(j["url"], headers={"Range": "bytes=10-19"})
     assert r.status_code == 206 and r.content == payload[10:20] and r.headers["content-range"] == f"bytes 10-19/{len(payload)}"
     assert lv.get(j["url"][:-4] + "AAAA").status_code == 403, "подпись подделана"
     assert lv.get(j["url"].replace("&e=", "&e=1")).status_code == 403, "срок/подпись изменены"
-    # отзыв ссылки зрителя и смена пароля обесценивают выданную ссылку на запись
-    login(lv, "carol")
-    lv.post(f"/api/v1/rooms/{room['id']}/live/links/view/revoke")
+    assert lv.get(j["url"].replace("&d=0", "&d=1")).status_code == 403, "режим «скачивание» не подделать сменой параметра"
+    # досрочное закрытие доступа: старый адрес файла больше не открывается, в том числе запросом части (Range)
+    bpatch(lv, room, b.id, revoke=True)
     lv.cookies.clear()
-    assert lv.get(j["url"]).status_code == 404, "ссылка зрителя отозвана — старый адрес записи больше не открывается"
+    assert lv.get(j["url"], headers={"Range": "bytes=0-9"}).status_code == 410
+    assert viewer(lv, token).json()["replay_state"] == "revoked"
+    bpatch(lv, room, b.id, revoke=False)
+    lv.cookies.clear()
+    assert lv.get(j["url"]).status_code == 200, "доступ открыт снова (в пределах срока)"
+
+
+def test_download_is_given_only_when_allowed_and_checked_on_the_file_request(lv):
+    room = room_live(lv)
+    patch(lv, room, live_replay=True, live_download=True)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    _ended_broadcast_with_recording(lv, room, mid, b"x" * 500)
+    reconcile(lv)
+    b = only_broadcast(lv, mid)
+    lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
+    assert viewer(lv, b.view_token).json()["download"] is True
+    j = lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).json()
+    r = lv.get(j["download_url"])
+    assert r.status_code == 200 and r.headers["content-disposition"].startswith("attachment") and ".mp4" in r.headers["content-disposition"]
+    bpatch(lv, room, b.id, download=False)
+    lv.cookies.clear()
+    assert lv.get(j["download_url"]).status_code == 403, "скачивание выключили — выданная ссылка на скачивание больше не работает"
+    assert lv.get(j["url"]).status_code == 200, "просмотр остаётся"
+
+
+def test_link_expires_days_after_the_real_end_and_the_file_itself_stays(lv):
+    from datetime import timedelta as td  # noqa: PLC0415
+
+    room = room_live(lv)
+    patch(lv, room, live_replay=True)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    rid = _ended_broadcast_with_recording(lv, room, mid)
+    reconcile(lv)
+    b = only_broadcast(lv, mid)
+    assert b.link_days == 5 and abs((b.access_until - b.ended_at) - td(days=5)) < td(seconds=2), "срок по умолчанию — 5 дней от фактического окончания"
+
+    async def age(db):
+        row = await db.get(Broadcast, b.id)
+        row.access_until = row.ended_at - td(seconds=1)
+        await db.commit()
+    call(lv, age)
+    lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
+    assert viewer(lv, b.view_token).json()["replay_state"] == "expired"
+    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).json()["detail"]["code"] == "replay_expired"
+    assert call(lv, lambda db: db.get(Recording, rid)).status == "ready", "истечение ссылки не удаляет запись"
+    out = bpatch(lv, room, b.id, link_days=10).json()
+    assert out["broadcasts"][0]["access"] == "open", "организатор продлил срок — доступ снова есть"
+    assert bpatch(lv, room, b.id, link_days=999).status_code == 422, "не больше предела администратора"
+
+
+def test_each_broadcast_has_its_own_link_settings_and_recording(lv):
+    room = room_live(lv)
+    patch(lv, room, live_replay=True, live_title="Первый")
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    _ended_broadcast_with_recording(lv, room, mid, b"1" * 100)
+    reconcile(lv)
+    first = only_broadcast(lv, mid)
+    patch(lv, room, live_replay=False, live_title="Второй")
+    login(lv, "carol")
+    r = lv.post(f"/api/v1/meetings/{mid}/live", json={"enabled": True, "options": {"title": "Второй эфир", "replay": True, "link_days": 3}})
+    assert r.status_code == 200, r.text
+    rows = sorted(broadcasts(lv, mid), key=lambda x: x.started_at)
+    assert len(rows) == 2 and rows[0].view_token != rows[1].view_token and rows[0].recording_id != rows[1].recording_id
+    second = rows[1]
+    assert (second.title, second.replay, second.link_days) == ("Второй эфир", True, 3), "параметры ведущего при запуске — у этого эфира"
+    assert (rows[0].title, rows[0].replay) == ("Первый", True), "прошлый эфир сохранил свои параметры"
+    lv.cookies.clear()
+    v1, v2 = viewer(lv, first.view_token).json(), viewer(lv, second.view_token).json()
+    assert v1["status"] == "ended" and v1["title"] == "Первый" and v2["status"] in ("starting", "live") and v2["title"] == "Второй эфир"
+    assert lv.post(f"/api/v1/live/{first.view_token}/access", json={}).status_code == 409, "ссылка прошлого эфира не открывает новый эфир комнаты"
 
 
 def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
@@ -852,17 +939,31 @@ def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
     login(lv, "carol")
     lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"})
     patch(lv, room, live_replay=True)
-    token = get_room(lv, room["id"]).live_token
+    _ended_broadcast_with_recording(lv, room, mid)
+    b = only_broadcast(lv, mid)
+    token = b.view_token
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
     assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required", "без пароля наличие записи не раскрывается"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"}).json()["detail"]["code"] == "no_replay", "готовой записи ещё нет"
-    _ended_broadcast_with_recording(lv, room, mid)
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"}).json()["detail"]["code"] == "replay_live", "эфир ещё не закрыт"
     reconcile(lv)
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
     assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required"
     assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "не тот"}).json()["detail"]["code"] == "password_invalid"
     ok = lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"})
     assert ok.status_code == 200 and ok.json()["pass"] and ok.json()["url"].startswith(f"/api/v1/live/{token}/replay.mp4?")
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"pass": ok.json()["pass"]}).status_code == 200, "пропуск после пароля действует"
+
+
+def test_broadcast_does_not_start_when_its_recording_cannot_be_written(lv, monkeypatch):
+    import shutil as sh  # noqa: PLC0415
+
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    real = sh.disk_usage
+    monkeypatch.setattr("app.services.live.shutil.disk_usage", lambda p: real(p)._replace(free=1024))
+    r = start(lv, mid)
+    assert r.status_code == 409 and r.json()["detail"]["code"] in ("record_disk_low", "disk_low"), r.text
+    assert broadcasts(lv, mid) == [], "эфир не начат, раз запись невозможна"
 
 
 def test_file_check_does_not_declare_a_recording_in_progress_lost_and_finalizing_clears_a_stale_flag(lv):
@@ -888,3 +989,82 @@ def test_file_check_does_not_declare_a_recording_in_progress_lost_and_finalizing
     call(lv, lambda db: lv.app_obj.state.video.on_egress_event(db, ev))
     st = call(lv, state)
     assert st[0] in ("ready", "failed") and (st[0] == "failed" or st[1] == "ok")
+
+
+def test_broadcast_stops_at_the_time_limit_unless_the_leader_extends_it(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    lv.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    limit_s = 12 * 3600
+
+    async def age(db, seconds):
+        b = (await db.execute(select(Broadcast).where(Broadcast.meeting_id == uuid.UUID(mid)))).scalars().one()
+        b.started_at = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+        await db.commit()
+    call(lv, lambda db: age(db, limit_s - 300))
+    login(lv, "carol")
+    ends = datetime.fromisoformat(lv.get(f"/api/v1/rooms/{room['id']}/live").json()["state"]["ends_at"])
+    assert timedelta(minutes=4) < ends - datetime.now(timezone.utc) < timedelta(minutes=6), "ведущий видит, когда эфир упрётся в предел"
+    login(lv, "alice")
+    assert lv.post(f"/api/v1/meetings/{mid}/live/extend").status_code == 403, "продлевают только руководители"
+    login(lv, "carol")
+    r = lv.post(f"/api/v1/meetings/{mid}/live/extend")
+    assert r.status_code == 200 and datetime.fromisoformat(r.json()["ends_at"]) - ends > timedelta(minutes=59)
+    call(lv, lambda db: age(db, limit_s + 60))
+    reconcile(lv)
+    assert lv.fake.stopped == [], "продлённый эфир идёт дальше обычного предела"
+    call(lv, lambda db: age(db, limit_s + 3600 + 60))
+    reconcile(lv)
+    assert lv.fake.stopped == ["EG_test1"] and broadcasts(lv, mid)[0].status == "ending", "после продлённого предела эфир заканчивается штатно (файл закрывает Egress)"
+    put_settings(lv, "live", max_hours=48)
+    mid2 = _join(lv, "alice", room_live(lv)["id"])["meeting_id"]
+    put_settings(lv, "live", max_concurrent=2)
+    start(lv, mid2)
+    login(lv, "carol")
+    assert lv.post(f"/api/v1/meetings/{mid2}/live/extend").json()["detail"]["code"] == "extend_limit", "больше 48 часов не продлевается"
+
+
+def test_admin_room_list_shows_people_and_connections_and_the_join_carries_the_idle_mode(lv, monkeypatch):
+    monkeypatch.setattr("app.api.admin.list_present_identities", live_mod.list_present_identities)        # подделка присутствия из lv
+    room, other = room_live(lv), room_live(lv)
+    j = _join(lv, "alice", room["id"])
+    assert j["client"]["idle_end"] == "standard", "по умолчанию страница предупреждает о забытой одиночной встрече"
+    lv.present["set"] = {"u-1", "u-1~ab12", "EG_test9"}           # EG_ — служебный рекордер; список присутствия его уже отбрасывает (здесь подделка — считаем как есть)
+    login(lv, "root")
+    row = next(r for r in lv.get("/api/v1/admin/rooms").json() if r["id"] == room["id"])
+    assert row["active_meeting_id"] == j["meeting_id"] and row["active_people"] == 1 and row["active_connections"] == 3
+    idle = next(r for r in lv.get("/api/v1/admin/rooms").json() if r["id"] == other["id"])
+    assert idle["active_people"] == 0 and idle["active_connections"] is None
+    put_settings(lv, "general", idle_end_mode="off")
+    assert _join(lv, "bob", room["id"])["client"]["idle_end"] == "off"
+    login(lv, "root")
+    assert lv.post(f"/api/v1/admin/meetings/{j['meeting_id']}/end").status_code == 204
+    assert lv.post(f"/api/v1/admin/meetings/{j['meeting_id']}/end").status_code == 204, "повторное нажатие ничего не ломает"
+    audit = [a for a in lv.get("/api/v1/admin/audit?limit=50").json()["items"] if a["action"] == "meeting.force_end"] if isinstance(lv.get("/api/v1/admin/audit?limit=1").json(), dict) \
+        else [a for a in lv.get("/api/v1/admin/audit?limit=50").json() if a["action"] == "meeting.force_end"]
+    assert len(audit) == 1, "в журнале аудита — одна запись, повтор не дублирует"
+
+
+def test_forgotten_meeting_is_ended_by_its_last_person_only_when_nobody_else_is_there(lv, monkeypatch):
+    monkeypatch.setattr("app.api.meetings.list_present_identities", live_mod.list_present_identities)
+    room = room_live(lv)
+    j = _join(lv, "alice", room["id"])
+    me, mid = j["identity"].split("~")[0], j["meeting_id"]
+    lv.present["set"] = {me, "u-" + uuid.uuid4().hex}
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code == 409, "пришёл другой человек — встреча продолжается"
+    lv.present["set"] = {me, f"{me}~ab12", "g-" + uuid.uuid4().hex}
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code == 409, "гость — тоже человек"
+    lv.present["set"] = None
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code == 409, "LiveKit не ответил — ничего не завершаем"
+    lv.present["set"] = {me, f"{me}~ab12"}
+    assert start(lv, mid).status_code == 200
+    login(lv, "alice")
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").json()["detail"].startswith("Идёт эфир"), "эфир с одним ведущим — не забытая встреча"
+    start(lv, mid, enabled=False)
+    login(lv, "alice")
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code == 204, "один человек (два его устройства) — встреча завершается без прав руководителя"
+    m = call(lv, lambda db: db.get(Meeting, uuid.UUID(mid)))
+    assert m.ended_at is not None and m.end_reason == "idle"
+    login(lv, "bob")
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code in (403, 404), "посторонний не завершает чужую встречу"

@@ -17,6 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
+from ..services import retention_policy
 from ..services.protocols import ProtocolService
 
 log = logging.getLogger("app.retention")
@@ -40,10 +41,18 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 mix.status, mix.error = "failed", "Сведение прервано (перезапуск сервера)"
             else:
                 mixing.add(mix.meeting_id)
+        settings_svc0 = getattr(protocols, "_svc", None) or getattr(protocols, "settings_svc", None)
+        general = await settings_svc0.get(db, "general") if settings_svc0 is not None else None
+        paused = general is not None and retention_policy.inherited_paused(general, now)
         rooms = (await db.execute(select(Room))).scalars().all()
         for room in rooms:
-            if room.text_retention_days is not None:
-                cutoff = now - (RETENTION_GRACE if room.text_retention_days == 0 else timedelta(days=room.text_retention_days))
+            if general is not None:
+                eff = retention_policy.effective(room, general)
+            else:                                       # без службы настроек (старые тесты) — прежнее поведение: значения комнаты
+                eff = {"text": room.text_retention_days, "audio": room.audio_retention_days, "video": None, "custom": {"text": True, "audio": True, "video": True}}
+            skip = {k for k in ("text", "audio", "video") if paused and not eff["custom"][k]}     # общие сроки ещё не вступили в силу
+            if eff["text"] is not None and "text" not in skip:
+                cutoff = now - (RETENTION_GRACE if eff["text"] == 0 else timedelta(days=eff["text"]))
                 ids = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_not(None),
                                                                  Meeting.ended_at < cutoff))).scalars().all()
                 if ids:
@@ -55,24 +64,20 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                     stats["protocols"] += r2.rowcount or 0
                     stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
                     stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
-            if room.audio_retention_days is not None:
-                cutoff = now - (RETENTION_GRACE if room.audio_retention_days == 0 else timedelta(days=room.audio_retention_days))
-                recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, Recording.created_at < cutoff))).scalars().all()
+            # аудио (файлы участников и общая аудиозапись) и видео (видеозаписи и записи эфиров) — каждое по своему сроку
+            for kind, days in (("audio", eff["audio"]), ("video", eff["video"])):
+                if days is None or kind in skip:
+                    continue
+                cutoff = now - (RETENTION_GRACE if days == 0 else timedelta(days=days))
+                cond = Recording.kind == "mix_video" if kind == "video" else Recording.kind != "mix_video"
+                recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, cond, Recording.created_at < cutoff))).scalars().all()
                 for rec in recs:
                     if rec.meeting_id in mixing:
                         continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
                     if rec.kind == "mix_video" and rec.status in ("processing", "finishing"):
                         continue                  # видеофайл ещё пишет Egress — живую запись по сроку не удаляем
                     await protocols.purge_recording(db, rec)
-                    stats["recordings"] += 1
-        settings_svc0 = getattr(protocols, "_svc", None) or getattr(protocols, "settings_svc", None)
-        vdays = (await settings_svc0.get(db, "video")).retention_days if settings_svc0 is not None else 0
-        if vdays:         # общий срок хранения видеофайлов (стенограмма и протокол остаются); 0 — хранить до удаления администратором
-            old = (await db.execute(select(Recording).where(Recording.kind == "mix_video", Recording.status.in_(("ready", "failed")),
-                                                            Recording.created_at < now - timedelta(days=vdays)))).scalars().all()
-            for rec in old:
-                await protocols.purge_recording(db, rec)
-                stats["video_recordings"] = stats.get("video_recordings", 0) + 1
+                    stats["video_recordings" if kind == "video" else "recordings"] = stats.get("video_recordings" if kind == "video" else "recordings", 0) + 1
         if protocols.chat_files is not None:
             orphans = await protocols.chat_files.purge_orphans(db)   # загружены, но не отправлены
             if orphans:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from ..services import retention_policy
 from ..services import server_components as _sc
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -172,10 +173,20 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         sip, sip_opts = await _sip_block(request, db, room)
         video_enabled = bool((await st.settings_svc.get(db, "video")).enabled)
         extra = {"video_enabled": video_enabled, "llm": room_choice(room), "llm_effective": describe(ch), "llm_summary": room_choice(room, "summary"), "llm_summary_effective": describe(chs), "llm_options": await llm_options(st.protocols.profiles, st.local_llm, db), "sip": sip, "sip_options": sip_opts}
+    if request is not None:
+        general = await request.app.state.settings_svc.get(db, "general")
+    else:
+        from ..services.settings import GeneralSettings  # noqa: PLC0415
+        general = GeneralSettings()
+    eff = retention_policy.effective(room, general)
     return RoomManageOut(
         icon=icon_out(room),
         protocol_instructions=room.protocol_instructions,
-        retention={"text_days": room.text_retention_days, "audio_days": room.audio_retention_days, "history_access": room.history_access, "anonymize_mode": room.anonymize_mode,
+        # действующие сроки (свой срок комнаты или общий), отдельно — заданные у комнаты и общие значения сервера
+        retention={"text_days": eff["text"], "audio_days": eff["audio"], "video_days": eff["video"], "custom": eff["custom"],
+                   "own": {"text": room.text_retention_days, "audio": room.audio_retention_days, "video": room.video_retention_days},
+                   "server": {"text": general.default_text_retention_days, "audio": general.default_audio_retention_days, "video": general.default_video_retention_days},
+                   "history_access": room.history_access, "anonymize_mode": room.anonymize_mode,
                    **({"anonymizer_profile_id": str(room.anonymizer_profile_id) if room.anonymizer_profile_id else None} if su.is_admin else {})},
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,

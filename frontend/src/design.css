@@ -703,6 +703,8 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 .st-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #8996a8; }
 .st-toasts { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 7; display: grid; gap: 6px; width: min(640px, calc(100% - 24px)); pointer-events: none; }
 .st-toasts .alert { margin: 0; pointer-events: auto; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+.st-toasts .idle-warn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.st-toasts .idle-warn .row { gap: 6px; }
 .st-view.mode-stage .st-toasts, .st-view.mode-side .st-toasts { bottom: auto; top: 54px; }
 @media (prefers-reduced-motion: reduce) { .st-cell { will-change: auto; } }
 @media (max-width: 600px) {
@@ -1189,3 +1191,15 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; }
 dl.kv dt { color: var(--muted, #6b7280); }
 dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Меню администрирования — своя область прокрутки: колёсико над меню прокручивает меню, над содержимым — содержимое; на краю меню прокрутка
+   не переходит на страницу (overscroll-behavior). Высота — до низа окна, поэтому нижние разделы доступны при любом числе пунктов. */
+@media (min-width: 861px) {
+  .admin-nav { max-height: calc(100dvh - 82px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding-right: 2px; }
+}
+
+/* сроки хранения в редакторе комнаты: «общий срок / свой» и дни в одну строку */
+.ret-grid { display: grid; gap: 8px; margin-bottom: 8px; }
+.ret-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 260px) 90px auto; gap: 8px; align-items: center; }
+.ret-row input { width: 90px; }
+@media (max-width: 560px) { .ret-row { grid-template-columns: 1fr 1fr; } .ret-row .field-title { grid-column: 1 / -1; } }

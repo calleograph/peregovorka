@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ApiError, type LiveState } from "../api";
+import { api, type ApiError, type LiveStartOptions, type LiveState } from "../api";
+import InfoTip from "./InfoTip";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
 import { Modal } from "./Dialogs";
@@ -37,9 +38,12 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings }:
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
   const links = state.links;
+  // параметры именно этого эфира: по умолчанию — из настроек комнаты, ведущий может поменять их перед запуском (после запуска они фиксируются у эфира)
+  const [opts, setOpts] = useState<LiveStartOptions>(() => ({ title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5 }));
+  const current = links?.broadcasts.find((b) => b.status === "live");
   const toggle = async () => {
     setBusy(true); setErr("");
-    try { await api.setLive(meetingId, !state.live); onChanged(); }
+    try { await api.setLive(meetingId, !state.live, state.live ? undefined : opts); onChanged(); }
     catch (e) { setErr((e as ApiError).message || "Не удалось переключить эфир."); }
     finally { setBusy(false); }
   };
@@ -66,13 +70,27 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings }:
               <Icon name={state.live ? "stop" : "broadcast"} size={18} /> {busy ? "Подождите…" : state.live ? "Остановить эфир" : "Начать эфир"}
             </button>
           </div>)}
-        {!state.live && state.can_control && <p className="lv-note">Эфир начинается с текущего момента. {state.record ? "Запись MP4 сохранится в «Истории». " : "Запись выключена. "}Конференцию выступающих это не прерывает. Качество — {state.quality}.</p>}
+        {!state.live && state.can_control && links && (
+          <fieldset className="group lv-opts"><legend>Этот эфир<InfoTip>Значения подставлены из настроек комнаты. Здесь их можно поменять только для этого эфира: после запуска они сохраняются у эфира и не меняются от последующих изменений настроек комнаты.</InfoTip></legend>
+            <label>Название для зрителей <input value={opts.title ?? ""} maxLength={200} onChange={(e) => setOpts({ ...opts, title: e.target.value })} placeholder="Название мероприятия" /></label>
+            <label className="check"><input type="checkbox" checked={!!opts.replay} onChange={(e) => setOpts({ ...opts, replay: e.target.checked })} /> Показывать запись по ссылке после эфира</label>
+            {opts.replay && <div className="row lv-opt-row">
+              <label className="check"><input type="checkbox" checked={!!opts.download} onChange={(e) => setOpts({ ...opts, download: e.target.checked })} /> Разрешить скачивание</label>
+              <label>Срок ссылки <input type="number" min={1} max={links.link_days_max} value={opts.link_days ?? 5} onChange={(e) => setOpts({ ...opts, link_days: Number(e.target.value) })} /> дн.</label>
+            </div>}
+          </fieldset>)}
+        {current?.view_path && (
+          <div className="lv-link">
+            <div><b>Ссылка этого эфира</b><code>{`${origin()}${current.view_path}`}</code><span className="muted small">{current.replay ? `после эфира откроет запись (${current.link_days} дн.)` : "после эфира запись по ней не показывается"}</span></div>
+            <button className="btn primary" onClick={() => void copy(current.view_path, "Ссылка эфира")}><Icon name="copy" size={16} /> Копировать</button>
+          </div>)}
+        {!state.live && state.can_control && <p className="lv-note">Эфир начинается с текущего момента. Эфир записывается автоматически (MP4 сохранится в «Истории»). Конференцию выступающих это не прерывает. Качество — {state.quality}.</p>}
         {state.live && !state.hls_ready && state.own_hls && <p className="lv-note">Поток готовится — зрители увидят эфир через несколько секунд.</p>}
         {warnBig && <p className="lv-note warn">Зрителей уже {state.viewers}: прямая раздача с этого сервера рассчитана на небольшую аудиторию. Для больших мероприятий подключите CDN (администратору: Администрирование → Трансляции).</p>}
         {links && (
           <div className="lv-links">
             <div className="lv-link">
-              <div><b>Ссылка зрителя</b><code>{links.view_path ? `${origin()}${links.view_path}` : "не создана"}</code></div>
+              <div><b>Постоянная ссылка комнаты</b><code>{links.view_path ? `${origin()}${links.view_path}` : "не создана"}</code></div>
               <button className="btn" onClick={() => void copy(links.view_path, "Ссылка зрителя")} disabled={!links.view_path}><Icon name="copy" size={16} /> Копировать ссылку зрителя</button>
             </div>
             <div className="lv-link">

@@ -80,23 +80,36 @@ export interface LiveState {
   enabled: boolean; available: boolean; live: boolean; status: "idle" | "starting" | "live" | "ending" | "ended" | "failed"; since: string | null;
   quality: string; record: boolean; own_hls: boolean; viewers: number; error: string | null; hls_ready: boolean; limit: number; can_start: boolean;
   can_control?: boolean; links?: LiveRoomSettings; destinations?: LiveDestination[];
+  /** Когда идущий эфир упрётся в предел длительности (Администрирование → Трансляции); ведущий может продлить на час. */
+  ends_at?: string | null;
 }
 export interface LiveRoomSettings {
   enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
-  cdn: boolean; cdn_available: boolean; replay: boolean;
+  cdn: boolean; cdn_available: boolean; replay: boolean; download: boolean; link_days: number; link_days_max: number; broadcasts: LiveBroadcast[];
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
   destinations: LiveDestination[]; platforms: { id: string; name: string }[]; max_destinations: number; allow_private_destinations: boolean;
 }
+/** Один эфир комнаты для организатора: своя ссылка, параметры доступа к записи, срок, запись. */
+export interface LiveBroadcast {
+  id: string; status: "live" | "ending" | "ended" | "failed"; title: string | null; started_at: string | null; ended_at: string | null; view_path: string | null;
+  replay: boolean; download: boolean; link_days: number; access_until: string | null; revoked_at: string | null; access: "off" | "open" | "expired" | "revoked";
+  password: boolean; meeting_id: string; peak_viewers: number; error: string | null;
+  recording: { id: string; status: "ready" | "processing" | "failed"; file_state: string; duration_s: number | null; size_bytes: number } | null;
+}
+export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number }
 export interface LivePatchBody {
+  live_download?: boolean; live_link_days?: number;
   live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
   live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
 }
 export interface LiveViewerInfo {
   title: string; starts_at: string | null; status: "waiting" | "starting" | "live" | "ended"; password_required: boolean; own_hls: boolean;
-  ended_at: string | null; quality: string; available: boolean; now: string; replay?: boolean;
+  ended_at: string | null; quality: string; available: boolean; now: string; replay?: boolean; kind?: "broadcast" | "room";
+  /** Запись эфира для зрителя: off — не открыта; preparing/slow — готовится; ready; expired — срок ссылки истёк; revoked — доступ закрыт; deleted; failed. */
+  replay_state?: "off" | "live" | "preparing" | "slow" | "ready" | "expired" | "revoked" | "deleted" | "failed"; download?: boolean; access_until?: string | null;
 }
-export interface LiveReplay { url: string; duration_s: number | null; expires_at: number; pass?: string }
+export interface LiveReplay { url: string; download_url?: string | null; duration_s: number | null; expires_at: number; pass?: string }
 export type LiveDestStatus = "idle" | "connecting" | "live" | "failed" | "finished";
 export interface LiveDestination {
   id: string; platform: "rutube" | "vk" | "youtube" | "twitch" | "custom"; platform_name: string; name: string; server_url: string; channel: string | null; watch_url: string | null;
@@ -126,6 +139,8 @@ export interface ClientConfig {
   can_view_board?: boolean; board_access?: string;
   /** Комната допускает запись аудио (кнопка «Начать запись»). */
   recording_allowed?: boolean;
+  /** Забытая встреча с одним человеком (Администрирование → Общие): standard | careful | off. */
+  idle_end?: "standard" | "careful" | "off";
   /** Вложения в чат включены. */
   attachments?: boolean;
 }
@@ -361,7 +376,8 @@ export interface RoomManage {
   mail_delivery?: MailDeliverySpec | null;
   protocol_instructions?: string | null;
   /** Сроки хранения и обезличивание задаёт администратор: руководителю показываются только для сведения. */
-  retention?: { text_days: number | null; audio_days: number | null; history_access: string; anonymize_mode: string; anonymizer_profile_id?: string | null } | null;
+  retention?: { text_days: number | null; audio_days: number | null; video_days?: number | null; custom?: Record<"text" | "audio" | "video", boolean>;
+    server?: Record<"text" | "audio" | "video", number | null>; history_access: string; anonymize_mode: string; anonymizer_profile_id?: string | null } | null;
   llm?: LlmChoice | null; llm_effective?: LlmEffective | null; llm_options?: LlmOptions | null;
   /** Модель для краткого резюме — отдельная цепочка «система → комната → встреча». */
   llm_summary?: LlmChoice | null; llm_summary_effective?: LlmEffective | null;
@@ -546,8 +562,11 @@ export interface RoomAdmin {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number;
   has_password: boolean; transcription_enabled: boolean; record_audio: boolean; camera_allowed: boolean;
-  screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null;
+  screen_share_allowed: boolean; text_retention_days: number | null; audio_retention_days: number | null; video_retention_days?: number | null;
+  text_retention_custom?: boolean; audio_retention_custom?: boolean; video_retention_custom?: boolean;
   protocol_instructions: string | null; history_access: HistoryAccess; acl: AclEntry[]; active_meeting_id: string | null;
+  /** Только в списке комнат: люди в идущей встрече и технические подключения (null — LiveKit не ответил). */
+  active_people?: number; active_connections?: number | null;
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymizer_profile_id: string | null;
   mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
@@ -932,6 +951,8 @@ export const api = {
   allowShare: (meetingId: string, identity: string) => request<{ identity: string; blocked: boolean }>("POST", `/meetings/${meetingId}/moderation/allow-share`, { identity }),
   stopCamera: (meetingId: string, identity: string) => request<{ identity: string; stopped: boolean }>("POST", `/meetings/${meetingId}/moderation/stop-camera`, { identity }),
   endMeeting: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/end`),
+  /** Забытая встреча: последний оставшийся участник завершает её (сервер проверяет, что других людей нет). */
+  idleEnd: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/idle-end`),
   meetings: (roomId?: string, offset = 0) => request<Meeting[]>("GET", `/meetings?limit=30&offset=${offset}${roomId ? `&room_id=${roomId}` : ""}`),
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),
   transcript: (id: string, afterId = 0) =>
@@ -1023,7 +1044,9 @@ export const api = {
   probeLiveDestination: (roomId: string, id: string) => request<{ ok: boolean; message: string }>("POST", `/rooms/${roomId}/live/destinations/${id}/probe`),
   toggleLiveDestination: (meetingId: string, id: string, enabled: boolean) => request<LiveState>("POST", `/meetings/${meetingId}/live/destinations/${id}`, { enabled }),
   liveState: (meetingId: string) => request<LiveState>("GET", `/meetings/${meetingId}/live`),
-  setLive: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/live`, { enabled }),
+  liveExtend: (meetingId: string) => request<{ ends_at: string }>("POST", `/meetings/${meetingId}/live/extend`),
+  setLive: (meetingId: string, enabled: boolean, options?: LiveStartOptions) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/live`, options ? { enabled, options } : { enabled }),
+  patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
   liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
