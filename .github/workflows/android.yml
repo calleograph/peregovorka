@@ -34,6 +34,8 @@ jobs:
             echo "PEREGOVORKA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "SIGNED=release" >> "$GITHUB_ENV"
           else
+            # публичный выпуск временным ключом запрещён: каждая такая сборка получает новый сертификат, и обновление поверх перестаёт ставиться
+            case "$GITHUB_REF" in refs/tags/android-v*) echo "::error::Нет секретов подписи ANDROID_KEYSTORE_*: публичный выпуск временным ключом запрещён (docs/ANDROID_SIGNING.md)"; exit 1 ;; esac
             echo "SIGNED=debug-key" >> "$GITHUB_ENV"
           fi
       - name: Модульные тесты и линт
@@ -56,7 +58,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          python3 ../../scripts/android_release_check.py app/build/outputs/apk/release/app-release.apk --expect-key $([ "$SIGNED" = release ] && echo release || echo debug) | tee update-check.txt
+          python3 ../../scripts/android_release_check.py app/build/outputs/apk/release/app-release.apk --expect-key $([ "$SIGNED" = release ] && echo release || echo debug) $([ "$SIGNED" = release ] && echo --expect-cert "$(cat release-cert.sha256)") | tee update-check.txt
+          code0=${PIPESTATUS[0]}
+          # подписан не постоянным ключом организации (отпечаток закреплён в mobile/android/release-cert.sha256) — выпуск останавливается
+          if [ "$SIGNED" = release ] && [ "$code0" != 0 ]; then echo "::error::Сертификат подписи не совпадает с постоянным ключом"; exit 1; fi
           mkdir -p prev; cur="${GITHUB_REF_NAME:-}"
           # предыдущий выпуск — самый свежий android-v* (кроме текущего тега)
           prevtag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName --jq '.[].tagName' | grep '^android-v' | grep -vx "$cur" | sort -V | tail -1)
@@ -71,7 +76,11 @@ jobs:
           if [ "$code" = 3 ]; then
             if [ "$SIGNED" = release ] && ! ls prev/*debugkey* >/dev/null 2>&1; then echo "::error::Сертификат подписи изменился относительно прошлого выпуска с постоянным ключом — обновление поверх не получится. Проверьте секреты подписи."; exit 1; fi
             echo "::warning::Обновление поверх предыдущего выпуска невозможно (другой сертификат подписи): пользователям нужно удалить прежнюю версию."
-            printf '%s\n' "> **Установка поверх прежней версии невозможна.** Этот APK подписан другим ключом, чем предыдущий выпуск (${prevtag}): Android ответит «пакет обновления некорректен». Удалите прежнюю версию и установите эту (сохранённые серверы и вход придётся добавить заново). Начиная с выпуска с постоянным ключом обновления ставятся поверх." > update-note.md
+            if [ "$SIGNED" = release ]; then
+              printf '%s\n' "> **Первый выпуск с постоянным ключом подписи.** Предыдущие версии (до ${prevtag#android-v} включительно) были подписаны временными ключами, поэтому один раз удалите прежнюю версию и установите эту (сохранённые серверы и вход придётся добавить заново). Все следующие выпуски ставятся поверх этой с сохранением данных." > update-note.md
+            else
+              printf '%s\n' "> **Установка поверх прежней версии невозможна.** Этот APK подписан другим ключом, чем предыдущий выпуск (${prevtag}): Android ответит «пакет обновления некорректен». Удалите прежнюю версию и установите эту (сохранённые серверы и вход придётся добавить заново). Начиная с выпуска с постоянным ключом обновления ставятся поверх." > update-note.md
+            fi
           elif [ "$code" = 1 ]; then
             # на ветках версия совпадает с последним выпуском — это не ошибка; перед публикацией (тег) нарушение останавливает выпуск
             case "$GITHUB_REF" in refs/tags/android-v*) echo "::error::Нарушены правила обновления: пакет или versionCode."; exit 1 ;; *) echo "::notice::versionCode не новее последнего выпуска (ветка, не публикация)." ;; esac
@@ -124,7 +133,16 @@ jobs:
       - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v6
+      - name: Ключ подписи (для проверки обновления поверх сборкой с постоянным ключом)
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then echo "$KS" | base64 -d > "$RUNNER_TEMP/release.jks"; echo "PEREGOVORKA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"; fi
       - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          PEREGOVORKA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PEREGOVORKA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PEREGOVORKA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64

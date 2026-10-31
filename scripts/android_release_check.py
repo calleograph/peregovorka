@@ -86,6 +86,7 @@ def compare(new: dict, old: dict | None) -> tuple[int, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("apk"); ap.add_argument("--previous"); ap.add_argument("--expect-key", choices=("release", "debug"), help="какой подписью должен быть подписан новый APK")
+    ap.add_argument("--expect-cert", help="SHA-256 сертификата постоянного ключа (AA:BB:…): иначе — ошибка")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     new = inspect(a.apk)
@@ -93,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     code, msgs = compare(new, old)
     if a.expect_key == "release" and any("Android Debug" in c for c in new["certs"]):
         msgs.append("ОШИБКА: ожидалась подпись постоянным ключом, а APK подписан отладочным."); code = max(code, 1)
+    if a.expect_cert and a.expect_cert.strip().upper() not in new["certs"]:
+        msgs.append(f"ОШИБКА: APK подписан не постоянным ключом организации (ожидался {a.expect_cert.strip().upper()})."); code = max(code, 1)
     if a.json:
         print(json.dumps({"new": new, "previous": old, "code": code, "messages": msgs}, ensure_ascii=False))
     else:

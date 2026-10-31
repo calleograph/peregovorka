@@ -59,7 +59,9 @@ android {
     }
     packaging { resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
     lint { abortOnError = true; warningsAsErrors = false; checkReleaseBuilds = true }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    // AGP 9.x регистрирует для каждого варианта с Compose задачу Compose Preview; ей нужны собранные ресурсы (ресурсный APK и R.jar) из модульного теста.
+    // Без этого `gradlew tasks --all` и импорт проекта в VS Code падают. Unit-тесты проекта ресурсы Android не используют, их поведение не меняется.
+    testOptions { unitTests.isReturnDefaultValues = true; unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {

@@ -1865,3 +1865,15 @@ Frontend: `site.ts` — хранилище + `applySite()` (атрибут те�
 **Обновление APK.** Причина «пакет обновления некорректен»: пакет и versionCode в порядке (101 → 102), расходится сертификат — каждая CI-сборка без секретов подписи получает новый отладочный ключ (0.1.1: `5D:A4:77…A0:75`, 0.1.2: `88:55:7D…A9:74:16`). Постоянный ключ не использовался. `scripts/android_release_check.py` (+ тесты) сравнивает с предыдущим выпуском, CI предупреждает и пишет заметку на странице выпуска, при постоянном ключе и смене сертификата останавливает публикацию; `update-over-test.sh` на эмуляторе проверяет `adb install -r` и сохранность данных; приложение показывает тип подписи.
 
 **Несколько показов экрана.** Это настройка комнаты `one_sharer_at_a_time` (по умолчанию выключена), а не архитектурное ограничение; веб и Windows поддерживают несколько показов, Android теперь их показывает, но сам экран не транслирует. Оценка нагрузки и дальнейшие шаги — `docs/MULTI_SCREEN_SHARE.md`.
+
+## 2026-10-31 — Android: Gradle-модель в VS Code (Compose Preview)
+
+**Симптом.** Расширение Gradle в VS Code не загружало проект `mobile/android`: «Could not create task ':app:generateDebugComposePreviewRunfiles'… Compose Preview requires compiled Android resources». Сборка при этом не ломалась: `assembleDebug`, `assembleRelease`, `testDebugUnitTest` проходили.
+
+**Причина (установлена по коду AGP 9.5.0 и воспроизведена в командной строке: `gradlew tasks --all`).** `isIncludeAndroidResources = false` в проекте никто не задавал: это умолчание AGP, а «в finalizeDsl» означает лишь момент, когда значение прочитано. Для каждого варианта при `buildFeatures.compose = true` AGP регистрирует задачу Compose Preview, которой нужны ресурсы из модульного теста. Пока задачи не перебирают (`assembleDebug`, CI), ошибки нет; расширение Gradle и `tasks --all` создают все задачи и падают. Для release добавляется второе умолчание AGP 9: модульные тесты включены только для тестируемого типа сборки (`android.onlyEnableUnitTestForTheTestedBuildType=true`).
+
+**Исправление.** `app/build.gradle.kts`: `testOptions { unitTests.isIncludeAndroidResources = true }`; `gradle.properties`: `android.onlyEnableUnitTestForTheTestedBuildType=false`. Версии и конфигурация подписи не менялись. Последствия: у release появляется задача `testReleaseUnitTest` (общий `test` и `check` запустят и её; CI вызывает конкретные `testDebugUnitTest`, `lintDebug`, `assembleRelease`); unit-тесты проекта ресурсов не используют (32 теста, до и после 32/0 сбоев).
+
+**Проверено.** `gradlew help --stacktrace`, `tasks --all`, `:app:assembleDebug`, `:app:assembleRelease`, `:app:testDebugUnitTest` (32/32), `:app:generateDebugComposePreviewRunfiles --compose-preview-manifest-file=…` (манифест создан). **Не проверено:** сама загрузка проекта расширением в VS Code (требуется «Gradle: Refresh» или перезагрузка окна), `lintDebug`, `assembleDebugAndroidTest`, живой звонок.
+
+**Ловушка.** Задачу `generate*ComposePreviewRunfiles` нельзя запускать без `--compose-preview-manifest-file`: её вызывает среда разработки.
