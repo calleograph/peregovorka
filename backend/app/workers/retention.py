@@ -76,8 +76,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                         continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
                     if rec.kind == "mix_video" and rec.status in ("processing", "finishing"):
                         continue                  # видеофайл ещё пишет Egress — живую запись по сроку не удаляем
-                    await protocols.purge_recording(db, rec)
-                    stats["video_recordings" if kind == "video" else "recordings"] = stats.get("video_recordings" if kind == "video" else "recordings", 0) + 1
+                    key = ("video_recordings" if kind == "video" else "recordings") if await protocols.purge_recording(db, rec) else "deferred_external"      # хранилище недоступно — повтор в следующий раз
+                    stats[key] = stats.get(key, 0) + 1
         if protocols.chat_files is not None:
             orphans = await protocols.chat_files.purge_orphans(db)   # загружены, но не отправлены
             if orphans:

@@ -796,8 +796,9 @@ class ProtocolService:
         size = await asyncio.to_thread(storage.size_of, rec.path)
         return size, lambda s, e: storage.read_range(rec.path, s, e)
 
-    async def delete_recording(self, db: AsyncSession, rec: Recording) -> None:
-        """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается."""
+    async def delete_recording(self, db: AsyncSession, rec: Recording, *, keep_on_external_error: bool = False) -> bool:
+        """Удаляет файл (локальный и во внешнем хранилище) и строку. Сбой внешнего удаления не скрывается; при `keep_on_external_error`
+        строка остаётся (False), чтобы очистка по сроку повторила удаление и файл не пережил свой срок во внешнем хранилище."""
         await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
         from ..models import RecordingWaveform  # noqa: PLC0415
 
@@ -811,7 +812,10 @@ class ProtocolService:
                     await asyncio.to_thread(storage.delete, rec.path)
                 except StorageError as exc:
                     log.error("Не удалось удалить файл записи во внешнем хранилище", extra={"recording": str(rec.id), "error": str(exc)})
+                    if keep_on_external_error:
+                        return False
         await db.delete(rec)
+        return True
 
     # ------------------------------------------------------- протокол и краткое резюме (LLM)
     async def default_instruction(self, db: AsyncSession, meeting: Meeting, kind: str) -> str:
@@ -1190,5 +1194,5 @@ class ProtocolService:
             log.error("Выгрузка протокола не удалась", extra={"protocol": str(rec.id), "error": str(exc)})
 
     # ------------------------------------------------------------------------- хранение
-    async def purge_recording(self, db: AsyncSession, rec: Recording) -> None:
-        await self.delete_recording(db, rec)
+    async def purge_recording(self, db: AsyncSession, rec: Recording) -> bool:
+        return await self.delete_recording(db, rec, keep_on_external_error=True)

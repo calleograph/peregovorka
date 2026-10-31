@@ -346,3 +346,51 @@ def test_retention_uses_server_defaults_waits_for_the_start_date_and_keeps_video
         after = c.portal.call(kinds)
         assert "mix_video" not in after and stats.get("video_recordings") == 1, "видео старше 30 дней удалено"
         assert after == [k for k in before if k != "mix_video"], "аудио (45 дней при сроке 60) осталось — срок аудио видео не касается и наоборот"
+
+
+def test_retention_keeps_the_row_when_the_external_copy_cannot_be_deleted_and_retries(tmp_path, directory, monkeypatch):
+    """SMB недоступен в момент очистки: строка записи остаётся (иначе файл навсегда остался бы во внешнем хранилище), следующая очистка удаляет её вместе с файлом."""
+    import datetime as dt
+
+    from sqlalchemy import select, update
+
+    from app.models import Recording, utcnow
+    from app.services.storage import StorageError
+    from app.workers.retention import run_retention_once
+
+    s = make_settings(tmp_path)
+    with running_app(s, directory) as c:
+        mid = _meeting_with_recordings(c, s)
+        app = c.app_obj
+        sm, protocols = app.state.session_maker, app.state.protocols
+        deleted, fail = [], {"on": True}
+
+        class Smb:
+            def delete(self, path):
+                if fail["on"]:
+                    raise StorageError("SMB недоступен")
+                deleted.append(path)
+
+        async def smb_for(db, rec):
+            return Smb()
+        monkeypatch.setattr(protocols, "storage_for", smb_for)
+
+        async def setup():
+            async with sm() as db:
+                rec = (await db.execute(select(Recording).where(Recording.meeting_id == uuid.UUID(mid)))).scalars().first()
+                db.add(Recording(meeting_id=rec.meeting_id, room_id=rec.room_id, participant_identity="meeting", path="v/old.mp4", kind="mix_video", status="ready", has_video=True,
+                                 export_status="exported"))
+                await db.flush()
+                await db.execute(update(Recording).where(Recording.kind == "mix_video").values(created_at=utcnow() - dt.timedelta(days=45)))
+                await db.commit()
+
+        async def videos():
+            async with sm() as db:
+                return [r.path for r in (await db.execute(select(Recording).where(Recording.kind == "mix_video"))).scalars().all()]
+
+        c.portal.call(setup)
+        stats = c.portal.call(lambda: run_retention_once(sm, protocols))
+        assert c.portal.call(videos) == ["v/old.mp4"] and stats.get("deferred_external") == 1, "внешний файл не удалён — строка осталась для повтора"
+        fail["on"] = False
+        stats = c.portal.call(lambda: run_retention_once(sm, protocols))
+        assert c.portal.call(videos) == [] and deleted == ["v/old.mp4"] and stats.get("video_recordings") == 1
