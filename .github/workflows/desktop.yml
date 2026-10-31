@@ -113,7 +113,7 @@ jobs:
           # ключ обновлений: из секрета; на ветке без секрета — одноразовый (в выпуски по тегу не попадает)
           $keyFile = Join-Path $env:RUNNER_TEMP update-key.pem
           $pub = ""
-          if ($env:UPDKEY -and $env:UPDPUB) { Set-Content -NoNewline $keyFile $env:UPDKEY; $pub = $env:UPDPUB }
+          if ($env:UPDKEY -and $env:UPDPUB) { [IO.File]::WriteAllText($keyFile, $env:UPDKEY.Trim() + "`n"); $pub = $env:UPDPUB.Trim() }        # PEM пишется как есть: Set-Content спотыкался о многострочное значение секрета
           elseif (-not $tag) {
             $out = node scripts/update-manifest.mjs keygen
             $pub = ($out | Select-String "^DESKTOP_UPDATE_PUBKEY=").Line.Split("=", 2)[1]
