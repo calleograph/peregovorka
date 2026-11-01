@@ -107,7 +107,7 @@ cmd_release() {
   set_pkg_version "$PJ" "$new"
   set_lock_version "$PL" "$new"
   g add VERSION CHANGELOG.md frontend/package.json frontend/package-lock.json 2>/dev/null
-  g commit -q -m "Релиз $new" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || die "commit не удался"
+  g commit -q -m "Релиз $new" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || die "commit не удался"
   g tag -a "v$new" -m "Peregovorka $new"$'\n\n'"$body" || die "не удалось создать тег"
   say "Готово: $cur → $new, commit «Релиз $new», тег v$new."
   say "Дальше: ./scripts/release.sh push   (отправит ветку $branch и тег; GitHub Actions опубликует релиз)"
