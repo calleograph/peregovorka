@@ -93,12 +93,11 @@ function FallbackPolicy({ value, onSaved }: { value: "system" | "unavailable"; o
   const [err, setErr] = useState("");
   return (
     <div className="card small">
-      <label>Если выбранная для переговорки или встречи модель недоступна (удалена, отключена)
+      <label><span className="field-title">Если модель комнаты или встречи недоступна<InfoTip>Например, подключение удалено или отключено. Разовый выбор модели при формировании документа молча не заменяется.</InfoTip></span>
         <select value={value} onChange={async (e) => { try { await api.admin.saveSettings("llm", { on_missing: e.target.value }); onSaved(); } catch (x) { setErr((x as ApiError).message); } }}>
           <option value="system">Использовать системное назначение задачи (с пометкой)</option>
           <option value="unavailable">Не формировать: показать «модель недоступна»</option>
         </select></label>
-      <InfoTip>Разовый выбор модели при формировании документа молча не заменяется.</InfoTip>
       {err && <div className="alert error">{err}</div>}
     </div>
   );

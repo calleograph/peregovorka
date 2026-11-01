@@ -249,7 +249,8 @@ fieldset.group { border: 1px solid var(--line); border-radius: 8px; padding: 10p
 .doc-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; cursor: pointer; }
 .doc-item:hover { background: var(--soft); } .doc-item.active { background: var(--soft); border-color: var(--line); }
 
-.check-body { display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
+.check-body { display: block; font-weight: 500; min-width: 0; }   /* текст и ⓘ в одной строке; пояснение, список и блоки — своими строками ниже */
+.check-body > select, .check-body > .help, .check-body > div, .check-body > p, .check-body > small { display: block; margin: 2px 0 0; }
 label.check { align-items: flex-start; }
 label.check input { margin-top: 3px; }
 
@@ -871,7 +872,8 @@ details.group { margin: 8px 0; }
 .modal .tabs { flex: none; }
 
 /* длинные значения (идентификаторы, JSON подробностей) переносятся внутри ячейки, а не растягивают страницу */
-.table td, .table th { overflow-wrap: anywhere; }
+.table td, .table th { overflow-wrap: break-word; }   /* слова целиком: «anywhere» позволял сжимать столбец до «персон|ала» */
+.table td code, .table td .mono { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .table input[type="checkbox"] { width: 24px; height: 24px; } }   /* мелкие цели нажатия в таблицах (журнал, списки): не меньше 24 px, WCAG 2.2 / 2.5.8 */
 .btn.mini { min-width: 24px; }
 
@@ -952,7 +954,11 @@ details.group { margin: 8px 0; }
 .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(300px, calc((100% - 32px) / 3)), 1fr)); gap: 4px 16px; align-items: end; }
 .field-grid > .wide { grid-column: 1 / -1; }            /* список с длинными вариантами — во всю ширину, иначе текст обрезается */
 .tip-tail { white-space: nowrap; }                       /* единица и значок ⓘ не отрываются от последнего слова подписи */
-.field-grid.checks { grid-template-columns: repeat(auto-fill, minmax(max(260px, calc((100% - 16px) / 2)), 1fr)); align-items: start; gap: 0 16px; }
+.field-grid.checks { grid-template-columns: repeat(auto-fill, minmax(max(230px, calc((100% - 48px) / 3)), 1fr)); align-items: start; gap: 2px 24px; }   /* флажки и переключатели: 3 колонки на широком экране, 2 — на среднем, 1 — на узком */
+.field-grid.checks > label.check, .opt-item > label.check { margin-bottom: 6px; }
+.opt-item { min-width: 0; }
+.opt-item .opt-sub { margin: 0 0 8px 24px; }              /* «кому» и выбранные люди — под своим пунктом, вровень с его названием */
+.opt-item label.opt-sub select { width: 100%; }
 .field-grid > label { min-width: 0; }
 @media (max-width: 640px) { .field-grid, .field-grid.checks { grid-template-columns: 1fr; } }
 
@@ -994,3 +1000,9 @@ input[type="date"], input[type="datetime-local"], input[type="time"] { height: c
 .admin-layout select, .admin-layout label.inline select { max-width: 100%; }   /* список с длинными вариантами не шире экрана телефона */
 .admin-nav { min-width: 0; }
 .admin-layout .row > label { min-width: 0; max-width: 100%; }   /* подпись с полем в строке может сузиться до ширины экрана */
+label.field-short { max-width: 280px; }                   /* короткое значение (номер, порт) — не на всю ширину карточки */
+.cols:not(:has(> fieldset, > .group, > div)) { align-items: end; }   /* соседние поля начинаются на одном уровне, даже если одна подпись в две строки */
+.picker.plain { border: 0; padding: 0; }                  /* поиск внутри своего блока — без второй рамки */
+/* ровно четыре поля — по два в ряд (иначе при трёх колонках четвёртое остаётся одно в ряду) */
+.field-grid:has(> :nth-child(4):last-child), .cols:has(> :nth-child(4):last-child) { grid-template-columns: repeat(auto-fill, minmax(max(240px, calc((100% - 16px) / 2)), 1fr)); }
+.form > h3:first-child + * { margin-top: 10px; }        /* заголовок формы не прилипает к первому полю */

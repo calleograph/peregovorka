@@ -121,7 +121,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [ended, setEnded] = useState(false);
   const [recording, setRecording] = useState(false);          // идёт запись аудио
   const [video, setVideo] = useState<VideoState | null>(null);   // видеозапись встречи (отдельно от аудио)
-  const lv = useLive(join?.meeting_id);                       // прямой эфир (трансляция) встречи
+  const lv = useLive(guest ? null : join?.meeting_id);       // прямой эфир (трансляция) встречи; гостю запрос закрыт (401 выбросил бы его из встречи как «ссылка отозвана»)
   const [liveOpen, setLiveOpen] = useState(false);
   const [liveFlag, setLiveFlag] = useState(false);               // «идёт эфир» по событию: гости состояние эфира запросить не могут, а метку видят
   const liveRefresh = useRef(lv.refresh);
@@ -786,7 +786,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     applyClient(info);
     setFloorIds(new Set()); setLeaderIds(new Set()); setHands([]);
     loadFloor(info.meeting_id);
-    api.videoState(info.meeting_id).then(setVideo).catch(() => setVideo(null));
+    if (!guestRef.current) api.videoState(info.meeting_id).then(setVideo).catch(() => setVideo(null));   // гостю закрыто: 401 выбросил бы его из встречи
     setAsrReady(info.asr_ready);
     asrWasReadyRef.current = info.asr_ready;
     setAsrLost(false);
@@ -1157,7 +1157,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       const mid = meetingRef.current;
       if (!mid) return;
       loadFloor(mid);
-      api.videoState(mid).then(setVideo).catch(() => undefined);
+      if (!guestRef.current) api.videoState(mid).then(setVideo).catch(() => undefined);
       liveRefresh.current();
       api.getStage(mid).then(st.applyServer).catch(() => undefined);       // общую сцену могли сменить, пока канал событий был разорван
     });

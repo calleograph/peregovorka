@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 const HOVER = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
 /**
- * Значок ⓘ рядом с коротким названием параметра: подробное пояснение — во всплывающей подсказке, а не постоянным текстом на странице.
+ * Значок «?» в круге (рисунок — в design.css, .infotip-btn) сразу после короткого названия параметра: подробное пояснение — во всплывающей подсказке, а не постоянным текстом на странице.
  * Компьютер — по наведению и по нажатию; телефон — по нажатию (наведения там нет). Закрывается повторным нажатием, Esc, нажатием вне подсказки.
  * Внутри `<label>` значок не переключает поле (событие гасится) и не отнимает у поля подпись: это не <button>, а элемент с ролью кнопки.
  * `doc` — ссылка «Подробнее» на статью вики.
@@ -31,7 +31,7 @@ export default function InfoTip({ children, doc, label = "Пояснение" }:
       {/* не <button>: внутри <label> кнопка стала бы связанным с меткой элементом и поле ввода потеряло бы подпись */}
       <span role="button" tabIndex={0} className="infotip-btn" aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggle(); }}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(); } }}>ⓘ</span>
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(); } }} />
       {open && (
         <span className="infotip-pop" role="tooltip" id={id}>
           {children}

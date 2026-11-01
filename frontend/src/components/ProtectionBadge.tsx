@@ -33,7 +33,7 @@ function Flow({ steps, title }: { steps: { label: string; note?: string; lock?: 
 
 /**
  * Индикатор сквозного шифрования (E2EE) в шапке комнаты. В обычной комнате (E2EE выключено) его нет вообще: TLS/WebRTC работают штатно и отдельного значка не требуют.
- * Показывается «Шифрование включено», когда E2EE реально активно, и предупреждение, если комната его требует, а оно не активно (фактическое состояние защиты). ⓘ открывает пояснение.
+ * Показывается «Шифрование включено», когда E2EE реально активно, и предупреждение, если комната его требует, а оно не активно (фактическое состояние защиты). Значок «?» открывает пояснение.
  */
 export default function ProtectionBadge({ input, e2eeExpected = false }: { input: ProtectionInput; e2eeExpected?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -43,7 +43,7 @@ export default function ProtectionBadge({ input, e2eeExpected = false }: { input
     <>
       <span className={`prot-badge ${input.e2ee ? "prot-red" : "prot-warn"}`} title={input.e2ee ? "Сквозное шифрование звука и видео включено" : "Комната требует сквозного шифрования, но оно не активно"}>
         <span className="prot-label">{input.e2ee ? "🔒 Шифрование" : "⚠ Шифрование не активно"}</span>
-        <button type="button" className="prot-info" onClick={() => setOpen(true)} aria-label="Что именно защищено: пояснение и схема" title="Что именно защищено">ⓘ</button>
+        <button type="button" className="prot-info" onClick={() => setOpen(true)} aria-label="Что именно защищено: пояснение и схема" title="Что именно защищено" />
       </span>
       {open && (
         <Modal title="Защита этой встречи" onClose={() => setOpen(false)}>

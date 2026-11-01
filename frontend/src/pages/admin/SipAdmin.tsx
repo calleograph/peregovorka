@@ -146,49 +146,47 @@ export default function SipAdmin() {
             <label className="check"><input type="checkbox" checked={form.is_default} onChange={(e) => set("is_default", e.target.checked)} /><span className="check-body">Профиль по умолчанию<InfoTip>Используется комнатами с вариантом «профиль по умолчанию».</InfoTip></span></label>
           </div>
           <fieldset className="group"><legend>Подключение к АТС</legend>
-            <div className="cols">
+            <div className="field-grid">
+              <label><span className="field-title">Адрес АТС (SIP host)<InfoTip>Имя или IP, без схемы. Для Asterisk — адрес сервера с PJSIP.</InfoTip></span><input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="pbx.example.local" autoCapitalize="none" spellCheck={false} />
+                </label>
+              <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} /></label>
+              <label>Транспорт
+                <select value={form.transport} onChange={(e) => { const v = e.target.value as Form["transport"]; setForm((f) => (f ? { ...f, transport: v, port: v === "tls" && f.port === 5060 ? 5061 : v !== "tls" && f.port === 5061 ? 5060 : f.port } : f)); }}>
+                  <option value="udp">UDP</option><option value="tcp">TCP</option><option value="tls">TLS</option></select></label>
               <label>Направление
                 <select value={form.direction} onChange={(e) => set("direction", e.target.value as Form["direction"])}>
                   <option value="both">Двусторонний (входящие и исходящие)</option><option value="outbound">Исходящий (комната звонит на телефоны)</option><option value="inbound">Входящий (на телефоны комнат звонят с АТС)</option>
                 </select></label>
-              <label><span className="field-title">Адрес АТС (SIP host)<InfoTip>Имя или IP, без схемы. Для Asterisk — адрес сервера с PJSIP.</InfoTip></span><input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="pbx.example.local" autoCapitalize="none" spellCheck={false} />
-                </label>
-              <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
-              <label>Транспорт
-                <select value={form.transport} onChange={(e) => { const v = e.target.value as Form["transport"]; setForm((f) => (f ? { ...f, transport: v, port: v === "tls" && f.port === 5060 ? 5061 : v !== "tls" && f.port === 5061 ? 5060 : f.port } : f)); }}>
-                  <option value="udp">UDP</option><option value="tcp">TCP</option><option value="tls">TLS</option></select></label>
-            </div>
-            <div className="cols">
               <label><span className="field-title">Логин<InfoTip>Для Asterisk — имя в секции auth. Если АТС сопоставляет транк только по IP (<code>identify</code>), логин и пароль не нужны.</InfoTip></span><input value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" spellCheck={false} placeholder="необязательно" />
                 </label>
               <SecretInput label="Пароль" isSet={form.secret_set} value={form.secret} onChange={(v) => set("secret", v)} help="Хранится в зашифрованном виде и после сохранения не показывается." />
-            </div>
-            <div className="cols">
               <label><span className="field-title">Caller ID / номер<InfoTip>С какого номера звонит комната. Многие АТС отклоняют вызов без разрешённого номера.</InfoTip></span><input value={form.caller_id} onChange={(e) => set("caller_id", e.target.value)} placeholder="+70001112233" inputMode="tel" />
                 </label>
               <label><span className="field-title">Realm / домен<InfoTip>Для входящей авторизации, если АТС её требует.</InfoTip></span><input value={form.realm} onChange={(e) => set("realm", e.target.value)} placeholder="pbx.example.local" spellCheck={false} /></label>
             </div>
           </fieldset>
           <fieldset className="group"><legend>Номера и адреса</legend>
-            <label><span className="field-title">Допустимые номера назначения<InfoTip>Куда разрешено звонить из комнат: номер должен начинаться с одного из префиксов. Защита от случайных и дорогих звонков.</InfoTip></span><span className="muted small">(префиксы через запятую; пусто — любые)</span>
+            <div className="field-grid">
+            <label><span className="field-title">Допустимые номера назначения<InfoTip>Префиксы через запятую; пусто — любые. Куда разрешено звонить из комнат: номер должен начинаться с одного из префиксов. Защита от случайных и дорогих звонков.</InfoTip></span>
               <input value={form.allowed_numbers} onChange={(e) => set("allowed_numbers", e.target.value)} placeholder="+7, 8, 2" spellCheck={false} />
               </label>
-            <label><span className="field-title">Принимаемые входящие номера<InfoTip>Внутренние номера, на которые транк принимает звонки.</InfoTip></span><span className="muted small">(пусто — любые)</span>
+            <label><span className="field-title">Принимаемые входящие номера<InfoTip>Внутренние номера через запятую, на которые транк принимает звонки; пусто — любые.</InfoTip></span>
               <input value={form.inbound_numbers} onChange={(e) => set("inbound_numbers", e.target.value)} placeholder="201, 202" spellCheck={false} />
               </label>
-            <label><span className="field-title">Разрешённые адреса АТС для входящих<InfoTip>Звонки принимаются только с этих адресов — так в Asterisk сопоставляют входящий транк по IP. Для входящих рекомендуется всегда.</InfoTip></span><span className="muted small">(IP или подсети через запятую)</span>
+            <label><span className="field-title">Разрешённые адреса АТС для входящих<InfoTip>Звонки принимаются только с этих адресов — так в Asterisk сопоставляют входящий транк по IP. Для входящих рекомендуется всегда. IP или подсети через запятую.</InfoTip></span>
               <input value={form.allowed_addresses} onChange={(e) => set("allowed_addresses", e.target.value)} placeholder="192.0.2.10, 192.0.2.0/24" spellCheck={false} />
               </label>
+            </div>
           </fieldset>
           <details className="group"><summary>Кодеки, шифрование и время ожидания</summary>
+            <span className="field-title small"><b>Кодеки</b><InfoTip>Ничего не отмечено — кодеки по умолчанию LiveKit. Если отмечено, используются только выбранные (должны быть разрешены и на АТС).</InfoTip></span>
             <div className="checks">{CODECS.map((c) => (
               <label key={c} className="check"><input type="checkbox" checked={form.codecs.includes(c)} onChange={(e) => set("codecs", e.target.checked ? [...form.codecs, c] : form.codecs.filter((x) => x !== c))} /> {c}</label>))}</div>
-            <InfoTip>Ничего не отмечено — кодеки по умолчанию LiveKit. Если отмечено, используются только выбранные (должны быть разрешены и на АТС).</InfoTip>
             <div className="cols">
               <label>Шифрование медиа (SRTP)
                 <select value={form.media_encryption} onChange={(e) => set("media_encryption", e.target.value as Form["media_encryption"])}>
                   <option value="disable">Отключено</option><option value="allow">Допускается</option><option value="require">Обязательно</option></select></label>
-              <label><span className="field-title">Ждать ответа абонента<span className="muted small"> (секунд)</span></span><input type="number" min={5} max={120} value={form.ring_timeout_s} onChange={(e) => set("ring_timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
+              <label><span className="field-title">Ждать ответа абонента, с</span><input type="number" min={5} max={120} value={form.ring_timeout_s} onChange={(e) => set("ring_timeout_s", Number(e.target.value))} /></label>
             </div>
           </details>
           <div className="row form-actions">

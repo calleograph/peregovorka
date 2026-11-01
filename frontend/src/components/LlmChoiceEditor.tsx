@@ -21,23 +21,25 @@ export default function LlmChoiceEditor({ value, onChange, options, effective, s
   });
   return (
     <div role="group" aria-label="Языковая модель">
-      <p className="help" style={{ marginTop: 0 }}>Языковая модель составляет краткие резюме и протоколы. Системная модель — значение по умолчанию для всех комнат; здесь можно выбрать другую только для {scope === "room" ? "этой комнаты" : "этой встречи"}.
-        Например, для важных протоколов можно выбрать более сильную модель.</p>
+      {/* редактор стоит парой «протокол, затем резюме»: общее вступление — у первого, общая политика недоступности — у второго, без повторов */}
+      {purpose === "protocol" && <p className="help" style={{ marginTop: 0 }}>Языковая модель составляет краткие резюме и протоколы. Системная модель — значение по умолчанию для всех комнат; здесь можно выбрать другую только для {scope === "room" ? "этой комнаты" : "этой встречи"}.
+        Например, для важных протоколов можно выбрать более сильную модель.</p>}
       <fieldset className="group"><legend>Какая модель {purpose === "summary" ? "пишет резюме" : "формирует протокол"} ({who})</legend>
+        <div className="field-grid checks">
         <label className="check"><input type="radio" name={`llm-${scope}-${purpose}`} checked={value.mode === "inherit"} onChange={() => set("inherit")} />
           <span className="check-body">{scope === "room" ? "Использовать системную по умолчанию" : "Как в комнате"}<InfoTip>Сейчас системная для {what}: {sysText}.</InfoTip></span></label>
         <label className="check"><input type="radio" name={`llm-${scope}-${purpose}`} checked={value.mode === "profile"} disabled={!options.profiles.length} onChange={() => set("profile")} />
-          <span className="check-body">Подключение к модели
+          <span className="check-body">Подключение к модели<InfoTip>Подключения создаёт администратор («Языковая модель (LLM)» → подключения): внешний сервис или модель на сервере организации. Пароли и ключи в запрос не попадают никогда; имена и другие сведения — обезличиваются, если обезличивание включено в комнате.</InfoTip>
             <select value={value.profile_id ?? ""} disabled={value.mode !== "profile"} onChange={(e) => onChange({ ...value, profile_id: e.target.value })} aria-label="Подключение к модели">
               {options.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}{p.model ? ` — ${p.model}` : ""}</option>)}
-            </select>
-            <InfoTip>Подключения создаёт администратор («Языковая модель (LLM)» → подключения): внешний сервис или модель на сервере организации. Пароли и ключи в запрос не попадают никогда; имена и другие сведения — обезличиваются, если обезличивание включено в комнате.</InfoTip></span></label>
+            </select></span></label>
         <label className="check"><input type="radio" name={`llm-${scope}-${purpose}`} checked={value.mode === "off"} onChange={() => set("off")} />
           <span className="check-body">Отключить языковую модель<InfoTip>{purpose === "summary" ? "Резюме" : "Протоколы"} для {scope === "room" ? "этой комнаты" : "этой встречи"} формироваться не будут.</InfoTip></span></label>
+        </div>
       </fieldset>
       {eff && <div className={`alert ${eff.tone === "ok" ? "ok" : eff.tone === "warn" ? "info" : "error"}`} role="status">{eff.text}</div>}
-      <p className="help">Если выбранная модель станет недоступной (подключение удалено или выключено), {options.on_missing === "system"
-        ? "будет использована системная модель по умолчанию, а в сведениях о протоколе появится пометка." : "протокол не создаётся, а в комнате показывается «модель недоступна» с причиной."} Эту политику задаёт администратор.</p>
+      {purpose === "summary" && <p className="help">Если выбранная модель станет недоступной (подключение удалено или выключено), {options.on_missing === "system"
+        ? "будет использована системная модель по умолчанию, а в сведениях о протоколе появится пометка." : "протокол не создаётся, а в комнате показывается «модель недоступна» с причиной."} Эту политику задаёт администратор.</p>}
     </div>
   );
 }

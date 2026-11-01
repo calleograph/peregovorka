@@ -87,7 +87,7 @@ export default function MailAdmin({ onOpen }: { onOpen?: (id: string) => void })
                   <option value="starttls">STARTTLS (обычно порт 587)</option><option value="ssl">SSL/TLS (обычно порт 465)</option><option value="none">Без шифрования (порт 25, только внутри сети)</option>
                 </select></label>
               <label>Порт<input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
-              <label><span className="field-title">Таймаут<span className="muted small"> (секунд)</span></span><input type="number" min={3} max={120} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
+              <label><span className="field-title">Таймаут, с</span><input type="number" min={3} max={120} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} /></label>
             </div>
             {form.security === "none" && <div className="alert info small">Без шифрования письма (и пароль, если он задан) идут открытым текстом. Используйте только для внутреннего relay в доверенной сети.</div>}
           </fieldset>

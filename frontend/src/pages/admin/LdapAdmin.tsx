@@ -111,35 +111,37 @@ export default function LdapAdmin({ onOpen }: { onOpen?: (id: string) => void })
             <label className="check"><input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.target.checked)} /> <span className="check-body">Подключение включено</span></label>
           </div>
           <fieldset className="group"><legend>Сервер</legend>
-            <div className="cols">
+            <div className="field-grid">
               <label><span className="field-title">Сервер (имя или IP)<InfoTip>Без схемы и слэшей. Имя должно совпадать с именем в сертификате сервера.</InfoTip></span><input value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="dc1.example.local" autoCapitalize="none" spellCheck={false} />
                 </label>
               <label>Протокол
                 <select value={form.protocol} onChange={(e) => { const v = e.target.value as "ldaps" | "starttls"; setForm((f) => (f ? { ...f, protocol: v, port: v === "ldaps" ? 636 : 389 } : f)); }}>
                   <option value="ldaps">LDAPS (шифрование с первого байта)</option><option value="starttls">LDAP + STARTTLS</option>
                 </select></label>
-              <label><span className="field-title">Порт<InfoTip>LDAPS — 636 (или 3269 для глобального каталога), STARTTLS — 389.</InfoTip></span><input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} style={{ maxWidth: 140 }} />
+              <label><span className="field-title">Порт<InfoTip>LDAPS — 636 (или 3269 для глобального каталога), STARTTLS — 389.</InfoTip></span><input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
                 </label>
-              <label><span className="field-title">Таймаут<span className="muted small"> (секунд)</span></span><input type="number" min={1} max={60} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} style={{ maxWidth: 140 }} /></label>
-            </div>
-            <label><span className="field-title">Base DN<InfoTip>Корень поиска пользователей и групп.</InfoTip></span><input value={form.base_dn} onChange={(e) => set("base_dn", e.target.value)} placeholder="DC=example,DC=local" spellCheck={false} />
-              </label>
-            <div className="cols">
               <label><span className="field-title">Домен (NetBIOS)<InfoTip>Для входа в виде <code>EXAMPLE\user1</code>.</InfoTip></span><input value={form.netbios_domain} onChange={(e) => set("netbios_domain", e.target.value)} placeholder="EXAMPLE" />
                 </label>
               <label><span className="field-title">Суффикс UPN<InfoTip>Для входа в виде <code>user1@example.local</code>.</InfoTip></span><input value={form.upn_suffix} onChange={(e) => set("upn_suffix", e.target.value)} placeholder="example.local" />
                 </label>
+              <label><span className="field-title">Таймаут, с</span><input type="number" min={1} max={60} value={form.timeout_s} onChange={(e) => set("timeout_s", Number(e.target.value))} /></label>
+              <label className="wide"><span className="field-title">Base DN<InfoTip>Корень поиска пользователей и групп.</InfoTip></span><input value={form.base_dn} onChange={(e) => set("base_dn", e.target.value)} placeholder="DC=example,DC=local" spellCheck={false} />
+              </label>
             </div>
           </fieldset>
           <fieldset className="group"><legend>Сервисная учётная запись (только чтение)</legend>
+            <div className="field-grid">
             <label>DN или логин<input value={form.bind_dn} onChange={(e) => set("bind_dn", e.target.value)} placeholder="CN=svc-read,OU=Service,DC=example,DC=local" spellCheck={false} autoComplete="off" /></label>
             <SecretInput label="Пароль" isSet={form.secret_set} value={form.secret} onChange={(v) => set("secret", v)} help="Хранится в зашифрованном виде и после сохранения не показывается." />
+            </div>
           </fieldset>
           <fieldset className="group"><legend>Для чего используется</legend>
+            <div className="field-grid checks">
             <label className="check"><input type="checkbox" checked={form.use_for_users} onChange={(e) => set("use_for_users", e.target.checked)} />
               <span className="check-body">Вход пользователей<InfoTip>Сотрудники этого каталога входят в комнаты и историю.</InfoTip></span></label>
             <label className="check"><input type="checkbox" checked={form.use_for_admins} onChange={(e) => set("use_for_admins", e.target.checked)} />
               <span className="check-body">Вход администраторов<InfoTip>Члены групп из раздела «Администраторы» получают права администратора. Если выключено — через это подключение администратором не войти (локальный администратор не затрагивается).</InfoTip></span></label>
+            </div>
           </fieldset>
           <details className="group"><summary>Атрибуты каталога (обычно менять не нужно)</summary>
             <div className="cols">

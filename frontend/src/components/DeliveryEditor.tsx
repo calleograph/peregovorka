@@ -80,50 +80,51 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId?: st
 
   return (
     <div role="tabpanel">
-      <fieldset className="group"><legend>Что отправлять автоматически после завершения встречи</legend>
-        <InfoTip>По умолчанию всё выключено: протокол, резюме, стенограмма и карта могут быть конфиденциальными. Каждый материал включается отдельно, включение одного не включает остальные. Автоматически уходит только полностью сформированный документ: черновик, ошибочный или оборванный по длине документ не отправляется (о причине останется запись в журнале), отправить такой можно вручную («Отправить материалы»). Пересозданный материал повторно сам не уходит — рассылка выполняется один раз на встречу; журнал покажет, что уже отправлялось. Рассылка по почте не даёт права открывать остальные материалы встречи; доступ к встрече выдаётся отдельно («Управление доступом» в истории встречи).</InfoTip>
+      <fieldset className="group"><legend>Что отправлять автоматически после завершения встречи<InfoTip>По умолчанию всё выключено: протокол, резюме, стенограмма и карта могут быть конфиденциальными. Каждый материал включается отдельно, включение одного не включает остальные. Автоматически уходит только полностью сформированный документ: черновик, ошибочный или оборванный по длине документ не отправляется (о причине останется запись в журнале), отправить такой можно вручную («Отправить материалы»). Пересозданный материал повторно сам не уходит — рассылка выполняется один раз на встречу; журнал покажет, что уже отправлялось. Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется; большие документы не вкладываются — в письме будет ссылка на страницу встречи (открыть её сможет только тот, у кого есть доступ). Рассылка по почте не даёт права открывать остальные материалы встречи; доступ выдаётся отдельно («Управление доступом» в истории встречи).</InfoTip></legend>
+        <div className="field-grid checks opt-grid">
         {MATERIAL_KINDS.map((m) => {
           const on = pm[m.kind].mode !== "none";
           return (
-            <div key={m.kind} className="picker autosend-row" data-material={m.kind}>
+            <div key={m.kind} className="opt-item" data-material={m.kind}>
               <label className="check"><input type="checkbox" checked={on} aria-label={`Автоматически отправлять: ${m.label}`}
                 onChange={(e) => { if (e.target.checked) { const mode = lastMode[m.kind] ?? "leader"; setMat(m.kind, { mode, users: mode === "selected" ? pm[m.kind].users : [] }); if (mode === "selected") setPickFor(m.kind); } else { setLastMode((l) => ({ ...l, [m.kind]: pm[m.kind].mode })); setMat(m.kind, { mode: "none", users: [] }); } }} />
-                <span className="check-body"><b>{m.label}</b><InfoTip>Автоматически отправлять: <b>{on ? "Да" : "Нет"}</b>. {m.help}</InfoTip></span></label>
+                <span className="check-body">{m.label}<InfoTip>{m.help}</InfoTip></span></label>
               {on && (
-                <label>Кому
+                <label className="opt-sub"><span className="sr-only">{m.label}: кому</span>
                   <select value={pm[m.kind].mode} onChange={(e) => { const mode = e.target.value as PerMode; setMat(m.kind, { mode, users: mode === "selected" ? pm[m.kind].users : [] }); if (mode === "selected") setPickFor(m.kind); }}>
                     {(Object.keys(MODE_LABEL) as PerMode[]).filter((k) => k !== "none").map((k) => <option key={k} value={k}>{MODE_LABEL[k]}</option>)}
                   </select></label>)}
               {pm[m.kind].mode === "selected" && (
-                <ul className="chips-list">{pm[m.kind].users.map((u) => (
+                <ul className="chips-list opt-sub">{pm[m.kind].users.map((u) => (
                   <li key={u.ref} title={u.email || "в каталоге не найден адрес электронной почты"}>{u.name || u.ref} <span className="muted small">{u.email || "нет e-mail"}</span>
                     <button type="button" className="chip-x" aria-label={`Убрать ${u.name}`} onClick={() => setMat(m.kind, { mode: "selected", users: pm[m.kind].users.filter((x) => x.ref !== u.ref) })}>✕</button></li>))}
                   <li><button type="button" className="btn mini" onClick={() => setPickFor(m.kind)}>＋ Добавить</button></li></ul>)}
             </div>);
         })}
-        <label className="check"><input type="checkbox" checked={!!spec.archive} onChange={(e) => set({ archive: e.target.checked })} disabled={spec.materials.length < 2} />
-          <span className="check-body">Отправлять одним архивом (zip)<InfoTip>{spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала." : "Все материалы для одних получателей кладутся в один файл."}</InfoTip></span></label>
-        <InfoTip>Если протокол или резюме к концу встречи ещё не готовы, система попробует сформировать их сама. Запись аудио по почте не отправляется. Большие документы не вкладываются — в письме будет ссылка на страницу встречи (после входа; открыть её сможет только тот, у кого есть доступ).</InfoTip>
+        <label className="check opt-item"><input type="checkbox" checked={!!spec.archive} onChange={(e) => set({ archive: e.target.checked })} disabled={spec.materials.length < 2} />
+          <span className="check-body">Одним архивом (zip)<InfoTip>{spec.materials.length < 2 ? "Доступно, когда выбрано два и более материала: все материалы для одних получателей кладутся в один файл." : "Все материалы для одних получателей кладутся в один файл."}</InfoTip></span></label>
+        </div>
       </fieldset>
       <fieldset className="group"><legend>Письмо и документы</legend>
-        <label><span className="field-title">Шаблон письма<InfoTip>Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</InfoTip></span><select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
-            <option value="">По умолчанию{tpls.find((t) => t.is_default) ? ` («${tpls.find((t) => t.is_default)!.name}»)` : ""}</option>
-            {tpls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select></label>
-        <div><b className="small">Формат документов</b>
+        <div className="field-grid">
+          <label><span className="field-title">Шаблон письма<InfoTip>Тему, текст и подпись задаёт администратор («Электронная почта → Шаблоны писем»).</InfoTip></span><select value={spec.template_id ?? ""} onChange={(e) => set({ template_id: e.target.value || null })}>
+              <option value="">По умолчанию{tpls.find((t) => t.is_default) ? ` («${tpls.find((t) => t.is_default)!.name}»)` : ""}</option>
+              {tpls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select></label>
+          <label><span className="field-title">Если материал не готов<InfoTip>Например, протокол завершился ошибкой. В обоих случаях событие записывается в журнал.</InfoTip></span>
+            <select value={spec.if_missing ?? "send"} onChange={(e) => set({ if_missing: e.target.value as "send" | "skip" })}>
+              <option value="send">Отправить то, что готово</option>
+              <option value="skip">Не отправлять письмо</option>
+            </select></label>
+        </div>
+        <div role="group" aria-label="Формат документов"><span className="field-title small"><b>Формат документов</b><InfoTip>Ничего не выбрано — формат по умолчанию из правил рассылки.</InfoTip></span>
           <div className="checks">{fmts.map((f) => (
             <label key={f} className="check"><input type="checkbox" checked={(spec.formats ?? []).includes(f)}
-              onChange={(e) => set({ formats: e.target.checked ? [...(spec.formats ?? []), f] : (spec.formats ?? []).filter((x) => x !== f) })} /> {FORMAT_LABEL[f] ?? f}</label>))}</div>
-          <InfoTip>Ничего не выбрано — формат по умолчанию из правил рассылки.</InfoTip></div>
-        <label>Если какой-то материал не готов (например, протокол завершился ошибкой)
-          <select value={spec.if_missing ?? "send"} onChange={(e) => set({ if_missing: e.target.value as "send" | "skip" })}>
-            <option value="send">Отправить то, что готово (событие записывается в журнал)</option>
-            <option value="skip">Не отправлять письмо (событие записывается в журнал)</option>
-          </select></label>
+              onChange={(e) => set({ formats: e.target.checked ? [...(spec.formats ?? []), f] : (spec.formats ?? []).filter((x) => x !== f) })} /> {FORMAT_LABEL[f] ?? f}</label>))}</div></div>
       </fieldset>
 
       <fieldset className="group"><legend>Поиск сотрудников для «{MATERIAL_KINDS.find((m) => m.kind === pickFor)?.label}»</legend>
-        <div className="picker">
+        <div className="picker plain">
           <div className="row">
             <select value={pickFor} onChange={(e) => setPickFor(e.target.value)} aria-label="Материал">{MATERIAL_KINDS.map((m) => <option key={m.kind} value={m.kind}>{m.label}</option>)}</select>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти сотрудника в каталоге (от 2 символов)" aria-label="Поиск сотрудника" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} />
@@ -135,7 +136,7 @@ export default function DeliveryEditor({ roomId, spec, onChange }: { roomId?: st
               <button type="button" className="btn mini primary" onClick={() => addUser(pickFor, h)}>＋ Добавить</button></div>))}
         </div>
 
-        <label>Свои адреса электронной почты <span className="muted small">(по одному в строке или через запятую)</span>
+        <label><span className="field-title">Свои адреса электронной почты<InfoTip>По одному в строке или через запятую.</InfoTip></span>
           <textarea rows={3} value={emailsText} onChange={(e) => onEmails(e.target.value)} placeholder={"user1@example.local\npartner@example.org"} spellCheck={false} aria-invalid={bad.length > 0} />
           {bad.length > 0 && <span className="field-err" role="alert">Некорректный адрес: {bad.slice(0, 3).join(", ")}{bad.length > 3 ? "…" : ""}</span>}
         </label>

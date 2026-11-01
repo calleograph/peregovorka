@@ -35,7 +35,7 @@ export function SecretInput({ label, isSet, value, onChange, onClear, help, plac
 }) {
   const editing = !isSet || value !== "";
   return (
-    <label>{label}
+    <label><span className="field-title">{label}{help && <InfoTip>{help}</InfoTip>}</span>
       {isSet && !editing ? (
         <span className="row tight secret-row">
           <span className="badge ok">пароль задан</span>
@@ -48,7 +48,6 @@ export function SecretInput({ label, isSet, value, onChange, onClear, help, plac
           {isSet && <button type="button" className="btn mini" onClick={() => onChange("")}>Отмена</button>}
         </span>
       )}
-      {help && <InfoTip>{help}</InfoTip>}
     </label>
   );
 }
