@@ -12,6 +12,7 @@ import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
+import io.livekit.android.util.flow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -118,6 +119,47 @@ class CallManager(private val app: Application) {
             else finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
         }
         jobs += scope.launch { while (true) { pollHands(); delay(6000) } }
+        jobs += scope.launch { watchScreen() }
+    }
+
+    /**
+     * Сторож чужой демонстрации экрана: демонстрация подписана, а новые кадры не декодируются 15 с — в журнал устройства (PGCALL) и на сервер
+     * («Диагностика клиентов», событие screen_frozen) уходит, что именно происходит: кодек, декодер (аппаратный или программный), сколько кадров пришло
+     * и сколько декодировано. Один раз на дорожку; звонок не трогается.
+     */
+    private suspend fun watchScreen() {
+        val reported = HashSet<String>()
+        var lastDecoded = -1L; var stillFor = 0; var track = ""
+        while (true) {
+            delay(5_000)
+            val r = room ?: continue
+            if (_ui.value.phase != Phase.Connected) { stillFor = 0; continue }
+            val pub = r.remoteParticipants.values.firstNotNullOfOrNull { it.getTrackPublication(Track.Source.SCREEN_SHARE) }
+            val sid = pub?.sid ?: run { stillFor = 0; lastDecoded = -1; track = ""; continue }
+            if (sid != track) { track = sid; stillFor = 0; lastDecoded = -1 }
+            val st = screenStats(r)
+            if (st != null && st.decoded > lastDecoded) { lastDecoded = st.decoded; stillFor = 0; continue }
+            stillFor += 5
+            if (stillFor >= 15 && reported.add(sid)) {
+                val why = st?.let { "${it.codec} dec=${it.decoder} recv=${it.received} decd=${it.decoded} ${it.width}x${it.height}" } ?: "no inbound video"
+                android.util.Log.w("PGCALL", "screen_frozen $why")
+                val a = api; val mid = _ui.value.meetingId
+                if (a != null && mid.isNotEmpty()) scope.launch { a.reportEvent("screen_frozen", mid, why) }
+            }
+        }
+    }
+
+    private data class ScreenStats(val codec: String, val decoder: String, val received: Long, val decoded: Long, val width: Long, val height: Long)
+
+    /** Входящее видео с наибольшим кадром (демонстрация крупнее камер) из статистики WebRTC; null — статистики нет. */
+    private suspend fun screenStats(r: Room): ScreenStats? = suspendCancellableCoroutine { c ->
+        r.getSubscriberRTCStats { report ->
+            val codecs = report.statsMap.values.filter { it.type == "codec" }.associate { it.id to (it.members["mimeType"]?.toString() ?: "?") }
+            fun n(v: Any?) = (v as? Number)?.toLong() ?: 0L
+            val v = report.statsMap.values.filter { it.type == "inbound-rtp" && it.members["kind"] == "video" }.maxByOrNull { n(it.members["frameWidth"]) }
+            val out = v?.members?.let { m -> ScreenStats(codecs[m["codecId"]] ?: "?", m["decoderImplementation"]?.toString() ?: "?", n(m["framesReceived"]), n(m["framesDecoded"]), n(m["frameWidth"]), n(m["frameHeight"])) }
+            if (c.isActive) c.resume(out) {}
+        }
     }
 
     /** Создаёт комнату LiveKit и подключается; true — подключено. События прежней (отключённой) комнаты дальше не обрабатываются. */
@@ -132,6 +174,10 @@ class CallManager(private val app: Application) {
         )
         room = r
         roomJobs += scope.launch { r.events.events.collect { if (room === r) onEvent(it) } }
+        // «микрофон/камера включены» в SDK — производные состояния, обновляются асинхронно: refresh() сразу после переключения читал прежнее значение,
+        // и кнопка оставалась «Выключить микрофон», пока не придёт какое-нибудь другое событие. Подписка на сами состояния обновляет кнопки сразу.
+        roomJobs += scope.launch { r.localParticipant::isMicrophoneEnabled.flow.collect { if (room === r) refresh() } }
+        roomJobs += scope.launch { r.localParticipant::isCameraEnabled.flow.collect { if (room === r) refresh() } }
         return try {
             r.connect(join.livekitUrl, join.token)
             _ui.update { it.copy(phase = Phase.Connected, meetingId = join.meetingId) }
