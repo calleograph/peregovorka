@@ -66,3 +66,11 @@ export function wheelFactor(deltaY: number, deltaMode = 0, ctrlKey = false): num
 }
 
 export function percent(v: View): string { return `${Math.round(v.s * 100)}%`; }
+
+/** Сцена изменила размер (поворот телефона, полный экран): та же точка изображения остаётся в центре, масштаб сохраняется — выбранная область не теряется. */
+export function rescaleView(v: View, from: Size, to: Size, video: Size, fill: boolean): View {
+  if (v.s <= MIN_SCALE || !from.w || !from.h || !to.w || !to.h) return clampView(v, to, video, fill);
+  const r0 = contentRect(from, video, fill), r1 = contentRect(to, video, fill);
+  const u = ((from.w / 2 - v.x) / v.s - r0.x) / r0.w, w = ((from.h / 2 - v.y) / v.s - r0.y) / r0.h;      // центр экрана — в долях кадра
+  return clampView({ s: v.s, x: to.w / 2 - (r1.x + u * r1.w) * v.s, y: to.h / 2 - (r1.y + w * r1.h) * v.s }, to, video, fill);
+}

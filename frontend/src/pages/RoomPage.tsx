@@ -1195,7 +1195,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     navigate(`/history/${mid}`);
   };
   const liveLeftMin = lv.state?.live && lv.state.ends_at && join?.client.can_control ? Math.ceil((new Date(lv.state.ends_at).getTime() - Date.now()) / 60_000) : null;
-  const idle = useIdleEnd(join?.client.idle_end, alone, ended || stage !== "ready" || state !== ConnectionState.Connected || !!lv.state?.live, !!(meLocal?.speaking || meLocal?.screen), () => void idleEnd());
+  // действие на любом своём устройстве (говорит с телефона, показывает экран с другого подключения) — тоже действие: иначе вкладка на компьютере
+  // завершала «забытую» встречу, пока человек говорил с телефона, и приложение на телефоне выбрасывало из встречи
+  const ownActive = participants.some((p) => (p.local || sameUser(p.identity, selfId)) && (p.speaking || p.screen));
+  const idle = useIdleEnd(join?.client.idle_end, alone, ended || stage !== "ready" || state !== ConnectionState.Connected || !!lv.state?.live, ownActive, () => void idleEnd());
   const onMeetingEnded = useCallback(() => {
     endedRef.current = true;
     setEnded(true);
@@ -1353,7 +1356,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     setDevPop((cur) => (cur ? null : { left: Math.max(8, Math.min(r.left - 120, window.innerWidth - 376)), bottom: window.innerHeight - r.top + 8 }));
   };
   /** «Ещё»: то, что нужно реже основных кнопок. Права проверяет сервер; недоступное этому пользователю не показывается. */
+  const toggleBoard = () => { setBoardMounted(true); setBoardNews(null); if (boardVisible) closeBoard(); else { setBoardOpen(true); st.openLarge("board"); } };
   const moreItems = (): MenuItem[] => [
+    // на телефоне «Доска» и «Вид» — здесь, а не в панели: так у оставшихся кнопок хватает места и «Выйти» не стоит вплотную к соседней
+    { id: "board", label: boardVisible ? "Скрыть доску" : boardNews ? "Доска · обновлена" : "Доска", icon: "board", hidden: !(mobile && canViewBoard), onSelect: toggleBoard },
+    { id: "layout", label: "Вид сцены", icon: "layout", hidden: !mobile, onSelect: () => undefined, submenu: layoutItems() },
     { id: "devices", label: "Устройства…", icon: "sliders", hint: "Микрофон, динамики и камера", hidden: !roomRef.current, onSelect: () => setDevPop({ left: Math.max(8, window.innerWidth - 392), bottom: 96 }) },
     { id: "noise", label: "Шумоподавление", icon: micPrefs.noiseMode === "off" ? "noiseOff" : "noise", hint: "Обработка вашего микрофона (нейросеть работает на вашем устройстве)", hidden: !canMic, disabled: stage !== "ready", onSelect: () => undefined,
       submenu: NOISE_MODES.map((m) => ({ id: `noise-${m}`, label: NOISE_LABEL[m], hint: NOISE_HINT[m], checked: micPrefs.noiseMode === m, onSelect: () => { if (micPrefs.noiseMode !== m) void applyMicPrefs({ ...micPrefs, noiseMode: m }, `noise_${m}`); } })) },
@@ -1531,16 +1538,16 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                            title={!canScreen ? listenerHint : me?.screen ? "Остановить показ экрана" : `Выберите экран, окно или вкладку — трансляция начнётся сразу${join.client.screen_share_audio && withAudio ? " (со звуком)" : ""}`} disabled={ended || stage !== "ready" || !canScreen} onClick={() => toggle("screen")} />
             </Ctl>
           )}
-          {canViewBoard && <Ctl onClose={() => undefined}>
+          {canViewBoard && !mobile && <Ctl onClose={() => undefined}>
             <RoundButton icon="board" label={boardNews && !boardVisible ? "Доска · обновлена" : "Доска"} short={boardNews && !boardVisible ? "Доска ●" : "Доска"} tone={boardVisible ? "on" : "neutral"} pressed={boardVisible} disabled={ended}
                          title={canBoard ? "Общая доска для схем: рисуют участники, схема сохраняется со встречей" : "Общая доска: вы можете смотреть. Править — руководитель или тот, кому дали слово"}
-                         onClick={() => { setBoardMounted(true); setBoardNews(null); if (boardVisible) closeBoard(); else { setBoardOpen(true); st.openLarge("board"); } }} />
+                         onClick={toggleBoard} />
           </Ctl>}
-          <Ctl onClose={() => undefined}>
+          {!mobile && <Ctl onClose={() => undefined}>
             <RoundButton icon="layout" label="Вид" tone={st.personal.layout !== "auto" || st.personal.pins.length ? "on" : "neutral"} disabled={ended}
                          title="Вид сцены: авто, сетка, сцена, рядом; сбросить закрепления. Меняет раскладку только у вас"
                          onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, layoutItems(), { above: true, anchor: e.currentTarget }); }} />
-          </Ctl>
+          </Ctl>}
           <Ctl onClose={() => undefined}>
             <RoundButton icon="hand" label={myHand ? "Опустить руку" : "Поднять руку"} short="Рука" tone={myHand ? "on" : "neutral"} pressed={myHand} disabled={ended}
                          title={myHand ? "Опустить руку" : "Поднять руку: все увидят отметку, а вы встанете в очередь"} onClick={toggleHand} />
@@ -1555,7 +1562,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); if (window.innerWidth > 1000) lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
           </Ctl>
           <Ctl error={ctlErr.rec ?? ctlErr.vid ?? ctlErr.tr} onClose={() => { setErr("rec"); setErr("vid"); setErr("tr"); }}>
-            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live} disabled={ended}
+            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live || (mobile && !!boardNews && !boardVisible)} disabled={ended}
                          title="Шумоподавление, устройства, запись, транскрибация и другие действия"
                          onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, moreItems(), { above: true, anchor: e.currentTarget }); }} />
           </Ctl>

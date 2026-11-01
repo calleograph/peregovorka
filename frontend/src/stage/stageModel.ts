@@ -141,7 +141,10 @@ export function layoutStage(o: { main: string[]; rest: string[]; mode: "grid" | 
   const vertical = mode === "side" && w >= 760;
   const stripSize = !rest.length ? 0 : vertical ? clamp(Math.round(w * 0.2), 170, 260) : o.dense ? clamp(Math.round(h * 0.1), 52, 68) : o.mobile ? clamp(Math.round(h * 0.16), 64, 96) : clamp(Math.round(h * 0.17), 92, 150);
   const mainBox: Rect = vertical ? { x: 0, y: 0, w: w - (stripSize ? stripSize + gap : 0), h } : { x: 0, y: 0, w, h: h - (stripSize ? stripSize + gap : 0) };
-  gridRects(main.length, mainBox, gap).forEach((r, i) => { rects[main[i]] = r; });
+  // телефон: демонстрация или доска крупно — на всю площадь над лентой (изображение вписывается внутри, панель управления — отдельной строкой);
+  // камера остаётся в пропорции 16:9, иначе узкая высокая ячейка обрезала бы лицо
+  if (o.mobile && main.length === 1 && (main[0].startsWith("screen:") || main[0] === "board")) rects[main[0]] = rnd(mainBox);
+  else gridRects(main.length, mainBox, gap).forEach((r, i) => { rects[main[i]] = r; });
   if (!rest.length) return { rects, hidden, strip: null };
   const tile = vertical ? { w: stripSize, h: Math.round(stripSize * 9 / 16) } : { w: Math.round(stripSize * 16 / 9), h: stripSize };
   const step = (vertical ? tile.h : tile.w) + gap;

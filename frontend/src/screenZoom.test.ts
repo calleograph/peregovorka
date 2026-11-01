@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IDENTITY, SCALE_CEIL, SCALE_FLOOR, clampView, contentRect, maxScale, panBy, percent, wheelFactor, zoomAt } from "./screenZoom";
+import { IDENTITY, SCALE_CEIL, SCALE_FLOOR, clampView, contentRect, maxScale, panBy, percent, rescaleView, wheelFactor, zoomAt } from "./screenZoom";
 
 const stage = { w: 1200, h: 700 };
 const video = { w: 1920, h: 1080 };
@@ -102,4 +102,24 @@ describe("wheelFactor", () => {
 it("percent: 100% — вписанный вид", () => {
   expect(percent(IDENTITY)).toBe("100%");
   expect(percent({ s: 2.5, x: 0, y: 0 })).toBe("250%");
+});
+
+describe("rescaleView: поворот сохраняет выбранную область", () => {
+  const video = { w: 1920, h: 1080 };
+  const centerFrac = (v: { s: number; x: number; y: number }, st: { w: number; h: number }) => {
+    const r = contentRect(st, video, false);
+    return [((st.w / 2 - v.x) / v.s - r.x) / r.w, ((st.h / 2 - v.y) / v.s - r.y) / r.h];
+  };
+  it("книжная → альбомная: в центре та же точка кадра, масштаб тот же", () => {
+    const portrait = { w: 390, h: 600 }, landscape = { w: 844, h: 360 };
+    const v = zoomAt(IDENTITY, 3, 300, 280, portrait, video, false);
+    const after = rescaleView(v, portrait, landscape, video, false);
+    expect(after.s).toBeCloseTo(v.s);
+    const [u0, w0] = centerFrac(v, portrait), [u1, w1] = centerFrac(after, landscape);
+    expect(Math.abs(u1 - u0)).toBeLessThan(0.02);
+    expect(Math.abs(w1 - w0)).toBeLessThan(0.05);
+  });
+  it("без приближения — исходный вид", () => {
+    expect(rescaleView(IDENTITY, { w: 390, h: 600 }, { w: 844, h: 360 }, video, false)).toEqual(IDENTITY);
+  });
 });

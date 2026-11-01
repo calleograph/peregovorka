@@ -1006,3 +1006,27 @@ label.field-short { max-width: 280px; }                   /* короткое з
 /* ровно четыре поля — по два в ряд (иначе при трёх колонках четвёртое остаётся одно в ряду) */
 .field-grid:has(> :nth-child(4):last-child), .cols:has(> :nth-child(4):last-child) { grid-template-columns: repeat(auto-fill, minmax(max(240px, calc((100% - 16px) / 2)), 1fr)); }
 .form > h3:first-child + * { margin-top: 10px; }        /* заголовок формы не прилипает к первому полю */
+
+/* ---- демонстрация экрана: изображение — своя область (жесты только в ней); на телефоне и сенсорном экране панель и масштаб — отдельной строкой под
+   изображением, а не поверх него; «На весь экран» без поддержки браузера (iPhone, приложение с главного экрана) — сцена поверх страницы с учётом выреза и полосы «Домой» */
+.screen-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
+.sb-zoom, .tile-more.sb-more { display: none; }
+@media (max-width: 760px), (pointer: coarse) {
+  .screen-stage.big { display: flex; flex-direction: column; align-items: stretch; }
+  .screen-stage.big .screen-view { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }
+  .screen-stage.big .screen-bar { position: static; opacity: 1; flex: none; flex-wrap: nowrap; gap: 6px; padding: 6px 8px; background: #0b0e14; border-top: 1px solid rgba(255, 255, 255, .12); }
+  .screen-stage.big .zoom-badge, .screen-stage.big > .tile-more.st-more, .screen-stage.big .hint-zoom, .screen-stage.big .sb-size, .screen-stage.big .sb-long, .screen-stage.big .sb-plus { display: none; }
+  .screen-stage.big .sb-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .screen-stage.big .screen-bar .spacer { display: none; }
+  .screen-stage.big .sb-zoom { display: inline-flex; gap: 2px; flex: none; }
+  .screen-stage.big .sb-pct { min-width: 52px; font-variant-numeric: tabular-nums; }
+  .screen-stage.big .screen-bar .btn.mini { min-height: 36px; min-width: 36px; flex: none; white-space: nowrap; }
+  .screen-stage.big .tile-more.sb-more { display: inline-grid; place-items: center; position: static; opacity: 1; flex: none; width: 36px; height: 36px; }
+}
+.screen-stage.max { position: fixed; inset: 0; z-index: 1300; margin: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none;
+  display: flex; flex-direction: column; align-items: stretch; background: #000;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.screen-stage.max .screen-view { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }
+.screen-stage.max .screen-bar { position: static; opacity: 1; }
+body.screen-max-open { overflow: hidden; }
+@media (max-width: 480px) { .screen-stage.big:not(.max) .sb-title { display: none; } .screen-stage.big:not(.max) .screen-bar { justify-content: flex-end; } }

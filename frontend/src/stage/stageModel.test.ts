@@ -163,3 +163,13 @@ describe("личное состояние", () => {
     expect(parsePersonal(JSON.stringify({ layout: "huge" })).layout).toBe("auto");
   });
 });
+
+describe("layoutStage на телефоне", () => {
+  it("демонстрация занимает всю площадь над лентой, камера — в пропорции 16:9", () => {
+    const g = layoutStage({ main: ["screen:u-b"], rest: ["camera:u-a", "camera:u-b"], mode: "stage", w: 374, h: 600, mobile: true });
+    const strip = g.strip!;
+    expect(g.rects["screen:u-b"]).toEqual({ x: 0, y: 0, w: 374, h: strip.y - 6 });
+    const cam = layoutStage({ main: ["camera:u-b"], rest: ["camera:u-a"], mode: "stage", w: 374, h: 600, mobile: true }).rects["camera:u-b"];
+    expect(cam.h).toBeLessThan(400);
+  });
+});

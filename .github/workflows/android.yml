@@ -106,7 +106,8 @@ jobs:
   emulator:
     # Настоящий Android (эмулятор с KVM) на трёх версиях: Android 10 (окно сжимается по adjustResize), 14 и 16 (сквозной режим, клавиатура приходит как отступы).
     # Проверяются: Keystore, холодный запуск, экранная клавиатура на экранах приложения и в WebView, вход в конференцию (системные запросы разрешений, приложение остаётся
-    # на переднем плане) и — к настоящему LiveKit (версия закреплена в deployment/compat.env) — подключение, служба переднего плана и возврат из фона.
+    # на переднем плане) и — к настоящему LiveKit (версия закреплена в deployment/compat.env) — подключение, служба переднего плана и возврат из фона;
+    # длинный звонок (LongCallTest): демонстрация экрана VP9 и звук в обе стороны от второго участника (ci/peer.py), поворот, фон, блокировка экрана, пропадание сети.
     # Реальная камера, микрофон, Bluetooth и устройства производителей здесь не проверяются.
     runs-on: ubuntu-24.04
     needs: build
@@ -130,6 +131,15 @@ jobs:
           nohup ./livekit-server --dev --bind 0.0.0.0 --node-ip 10.0.2.2 > livekit.log 2>&1 &
           for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7880 >/dev/null 2>&1 && break; sleep 1; done
           curl -fsS http://127.0.0.1:7880 && echo " LiveKit ${tag} запущен"
+      - name: Второй участник длинного звонка (показывает экран VP9 и говорит; LongCallTest)
+        working-directory: .
+        run: |
+          # сервер звонков объявляет адрес 10.0.2.2 (так эмулятор видит хост); чтобы участник на самом хосте мог по нему отправлять медиа — тот же адрес на loopback
+          sudo ip addr add 10.0.2.2/32 dev lo
+          python3 -m pip install --quiet livekit==1.1.21 livekit-api==1.2.2
+          nohup python3 mobile/android/ci/peer.py --url ws://10.0.2.2:7880 --room long-room --port 7999 --seconds 3600 > peer.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7999/stats >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:7999/stats && echo && cat peer.log
       - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v6
@@ -171,6 +181,7 @@ jobs:
             mobile/android/app/build/outputs/androidTest-results
             mobile/android/app/build/join-attempts
             livekit.log
+            peer.log
           retention-days: 14
 
   release:

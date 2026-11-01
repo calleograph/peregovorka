@@ -829,6 +829,14 @@ body.in-room.board-focus main { padding: 4px 6px; }
 body.in-room.board-focus .room-wrap { height: calc(100dvh - 8px); }
 @media (max-width: 1000px) { body.in-room .transcript.collapsed { width: 36px; height: 36px; border-radius: 50%; right: 8px; bottom: 76px; overflow: visible; } body.in-room .transcript.collapsed .rail-label, body.in-room .transcript.collapsed .dot { display: none; } body.in-room .transcript.collapsed .rail-btn { padding: 0; width: 36px; height: 36px; justify-content: center; } }
 @media (max-width: 600px) { body.in-room .rbar .rbtn-wrap, body.in-room .rbar-slot { width: 39px; } }
+/* телефон: «Доска» и «Вид» — в «Ещё», кнопок меньше — они шире и с промежутками; «Выйти» отделена чертой и отступом, чтобы не нажать соседнюю */
+@media (max-width: 600px) and (min-width: 361px) {
+  body.in-room .rbar-main { gap: 4px; justify-content: space-between; }
+  body.in-room .rbar .rbtn-wrap { width: 46px; }
+  body.in-room .rbar .rbtn, body.in-room .rbar .rbtn-box { width: 42px; height: 42px; }
+  body.in-room .rbar .rbtn-label { font-size: 10px; max-width: 46px; }
+}
+@media (max-width: 600px) { body.in-room .rbar-end { padding-left: 10px; margin-left: 8px; } }
 
 /* диагностика встречи у администратора: полноэкранное окно поверх страницы, закрывается крестиком и Esc */
 .diag-btn { width: 30px; height: 30px; padding: 0; border-radius: 50%; font-weight: 700; display: inline-grid; place-items: center; }

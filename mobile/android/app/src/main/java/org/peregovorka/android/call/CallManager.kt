@@ -5,6 +5,7 @@ import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
 import io.livekit.android.audio.AudioSwitchHandler
 import io.livekit.android.e2ee.E2EEOptions
+import io.livekit.android.events.DisconnectReason
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.Participant
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import io.livekit.android.e2ee.BaseKeyProvider
 import org.peregovorka.android.data.*
+import org.peregovorka.android.net.ApiError
 import org.peregovorka.android.net.ServerApi
 import org.peregovorka.android.net.SessionExpired
 
@@ -59,7 +61,20 @@ data class CallUi(
  * Звук в фоне держит [CallService] (служба переднего плана с типом microphone); камера при сворачивании выключается — система всё равно не даёт к ней доступ.
  */
 class CallManager(private val app: Application) {
-    private companion object { const val RELEASE_DELAY_MS = 1500L }
+    companion object {
+        private const val RELEASE_DELAY_MS = 1500L
+        private val RECOVER_PAUSES_MS = longArrayOf(1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000)
+
+        /** Сообщение на экране завершения по причине отключения: null — обрыв связи, входим заново; "" — человек вышел сам. */
+        fun endMessage(reason: DisconnectReason?): String? = when (reason) {
+            DisconnectReason.CLIENT_INITIATED -> ""
+            DisconnectReason.ROOM_DELETED, DisconnectReason.ROOM_CLOSED -> "Встреча завершена."
+            DisconnectReason.PARTICIPANT_REMOVED -> "Вас отключили от встречи."
+            DisconnectReason.DUPLICATE_IDENTITY -> "В эту встречу вошли с другого устройства под тем же подключением."
+            DisconnectReason.USER_REJECTED, DisconnectReason.USER_UNAVAILABLE, DisconnectReason.SIP_TRUNK_FAILURE -> "Соединение с конференцией завершено."
+            else -> null
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _ui = MutableStateFlow(CallUi())
     val ui: StateFlow<CallUi> = _ui
@@ -73,10 +88,19 @@ class CallManager(private val app: Application) {
 
     val active: Boolean get() = _ui.value.phase != Phase.Idle && _ui.value.phase != Phase.Ended
 
-    /** wantMic/wantCamera — включить сейчас (есть разрешения); intentMic/intentCamera — чего человек хотел: если разрешения не было, устройство включится само после выдачи доступа. */
-    fun start(api: ServerApi, serverTitle: String, join: JoinDto, wantMic: Boolean, wantCamera: Boolean, intentMic: Boolean = wantMic, intentCamera: Boolean = wantCamera) {
+    /** Новый вход в ту же комнату (свежий токен от сервера) — для восстановления после обрыва; null — восстановление невозможно. */
+    private var rejoin: (suspend () -> JoinDto)? = null
+    private val roomJobs = mutableListOf<Job>()
+    private var recovering: Job? = null
+
+    /**
+     * wantMic/wantCamera — включить сейчас (есть разрешения); intentMic/intentCamera — чего человек хотел: если разрешения не было, устройство включится само после выдачи доступа.
+     * [rejoin] — повторный вход в комнату: после обрыва связи (сеть, сервер звонков перезапущен) приложение входит заново само, а не выбрасывает человека из встречи.
+     */
+    fun start(api: ServerApi, serverTitle: String, join: JoinDto, wantMic: Boolean, wantCamera: Boolean, intentMic: Boolean = wantMic, intentCamera: Boolean = wantCamera,
+              rejoin: (suspend () -> JoinDto)? = null) {
         if (active) return
-        this.api = api; myIdentity = join.identity
+        this.api = api; this.rejoin = rejoin
         val sources = join.client.sources
         val canMic = "microphone" in sources
         val canCam = "camera" in sources && join.room.cameraAllowed
@@ -89,6 +113,16 @@ class CallManager(private val app: Application) {
         // Служба переднего плана нужна, чтобы звук не прерывался в фоне; если система в этот момент её не разрешает (запуск из состояния «не на переднем плане»,
         // сразу после окна разрешений), конференция всё равно идёт — приложение не должно из-за этого завершаться
         runCatching { CallService.start(app, join.room.name, serverTitle) }.onFailure { android.util.Log.w("PGCALL", "fgs_start_failed ${it.javaClass.simpleName}: ${it.message?.take(200)}") }
+        jobs += scope.launch {
+            if (connectRoom(join, mic, wantCamera && canCam)) api.reportEvent("join_ok", join.meetingId)
+            else finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
+        }
+        jobs += scope.launch { while (true) { pollHands(); delay(6000) } }
+    }
+
+    /** Создаёт комнату LiveKit и подключается; true — подключено. События прежней (отключённой) комнаты дальше не обрабатываются. */
+    private suspend fun connectRoom(join: JoinDto, mic: Boolean, camera: Boolean): Boolean {
+        myIdentity = join.identity
         val r = LiveKit.create(
             app,
             options = RoomOptions(
@@ -97,36 +131,80 @@ class CallManager(private val app: Application) {
             ),
         )
         room = r
-        jobs += scope.launch { r.events.events.collect { onEvent(it) } }
-        jobs += scope.launch {
-            try {
-                r.connect(join.livekitUrl, join.token)
-                _ui.update { it.copy(phase = Phase.Connected) }
-                if (mic) runCatching { r.localParticipant.setMicrophoneEnabled(true) }
-                if (wantCamera && canCam) runCatching { r.localParticipant.setCameraEnabled(true) }
-                refresh()
-                api.reportEvent("join_ok", join.meetingId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // причина — в журнал устройства (тег PGCALL); токен доступа из текста вырезается
-                android.util.Log.w("PGCALL", "connect_failed ${e.javaClass.name}: ${e.message?.replace(Regex("access_token=[^&\\s\"]+"), "access_token=<скрыто>")?.take(300)}")
-                api.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName)
-                finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
-            }
+        roomJobs += scope.launch { r.events.events.collect { if (room === r) onEvent(it) } }
+        return try {
+            r.connect(join.livekitUrl, join.token)
+            _ui.update { it.copy(phase = Phase.Connected, meetingId = join.meetingId) }
+            if (mic) runCatching { r.localParticipant.setMicrophoneEnabled(true) }
+            if (camera) runCatching { r.localParticipant.setCameraEnabled(true) }
+            refresh()
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // причина — в журнал устройства (тег PGCALL); токен доступа из текста вырезается
+            android.util.Log.w("PGCALL", "connect_failed ${e.javaClass.name}: ${e.message?.replace(Regex("access_token=[^&\\s\"]+"), "access_token=<скрыто>")?.take(300)}")
+            api?.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName)
+            releaseRoom()
+            false
         }
-        jobs += scope.launch { while (true) { pollHands(); delay(6000) } }
     }
 
     private fun onEvent(e: RoomEvent) {
         when (e) {
-            is RoomEvent.Disconnected -> finish(if (_ui.value.phase == Phase.Ended) null else "Соединение с конференцией завершено.")
+            is RoomEvent.Disconnected -> onDisconnected(e.reason, e.error)
             is RoomEvent.Reconnecting -> _ui.update { it.copy(phase = Phase.Reconnecting) }
             is RoomEvent.Reconnected -> _ui.update { it.copy(phase = Phase.Connected) }
-            is RoomEvent.FailedToConnect -> finish("Не удалось подключиться к конференции.")
             else -> {}
         }
         refresh()
+    }
+
+    /**
+     * Сервер звонков закрыл подключение. Причина пишется в журнал устройства (PGCALL) и уходит на сервер («Диагностика клиентов»): по ней видно, что случилось —
+     * встречу завершили, участника удалили или пропала связь. Встреча завершена или человека удалили — экран завершения с понятной причиной; обрыв связи
+     * (сеть, перезапуск сервера звонков, сбой сигнального канала) — приложение входит в комнату заново само, не выбрасывая человека.
+     */
+    private fun onDisconnected(reason: DisconnectReason?, error: Exception?) {
+        val ph = _ui.value.phase
+        if (ph == Phase.Ended || ph == Phase.Idle) return
+        android.util.Log.w("PGCALL", "disconnected reason=${reason?.name} error=${error?.javaClass?.simpleName}")
+        val a = api; val mid = _ui.value.meetingId
+        if (a != null && mid.isNotEmpty()) scope.launch { a.reportEvent("disconnected", mid, reason?.name ?: "UNKNOWN") }
+        val msg = endMessage(reason)
+        when {
+            msg == null -> recover(reason?.name ?: "UNKNOWN")
+            msg.isEmpty() -> finish(null)
+            else -> finish(msg)
+        }
+    }
+
+    /** Повторный вход после обрыва: свежий токен от сервера и новое подключение; паузы растут, всего около двух минут. Встреча закончилась — экран завершения. */
+    private fun recover(why: String) {
+        if (recovering?.isActive == true) return
+        val rj = rejoin ?: run { finish("Соединение с конференцией завершено."); return }
+        val mic = _ui.value.micOn || room?.localParticipant?.isMicrophoneEnabled == true
+        val camera = cameraWasOn || room?.localParticipant?.isCameraEnabled == true
+        releaseRoom()
+        _ui.update { it.copy(phase = Phase.Reconnecting, tiles = emptyList()) }
+        recovering = scope.launch {
+            for (pause in RECOVER_PAUSES_MS) {
+                delay(pause)
+                val j = try { rj() } catch (e: CancellationException) { throw e } catch (e: SessionExpired) {
+                    finish("Сессия истекла. Войдите снова."); return@launch
+                } catch (e: ApiError) {
+                    // 4xx (кроме «слишком часто») — входить больше некуда: встреча закончилась, доступ закрыт; связь и 5xx — пробуем ещё
+                    if (e.status in 400..499 && e.status != 429 && e.status != 408) { finish(e.message); return@launch }
+                    null
+                } catch (e: Exception) { null }
+                if (j != null && connectRoom(j, mic, camera && _ui.value.canCamera)) {
+                    android.util.Log.i("PGCALL", "rejoin_ok after=$why")
+                    api?.reportEvent("rejoin_ok", j.meetingId, why)
+                    return@launch
+                }
+            }
+            finish("Связь с конференцией потеряна. Проверьте интернет и войдите снова.")
+        }
     }
 
     private fun refresh() {
@@ -204,10 +282,16 @@ class CallManager(private val app: Application) {
 
     private fun finish(reason: String?) {
         if (_ui.value.phase == Phase.Idle) return
+        recovering?.cancel(); recovering = null
         jobs.forEach { it.cancel() }; jobs.clear()
-        val r = room; room = null
+        releaseRoom()
         CallService.stop(app)
         _ui.update { it.copy(phase = Phase.Ended, endReason = reason, tiles = emptyList()) }
+    }
+
+    private fun releaseRoom() {
+        roomJobs.forEach { it.cancel() }; roomJobs.clear()
+        val r = room; room = null
         if (r != null) scope.launch(NonCancellable) {
             // Освобождение WebRTC сразу после disconnect() иногда завершает процесс нативным сбоем (SIGSEGV в потоке AudioDeviceBuffer, пойман на эмуляторе при частых входах и выходах):
             // захват звука и видео ещё работает, а к трекам ещё подключены отрисовщики. Поэтому сначала останавливаем захват, отключаемся и освобождаем ресурсы с паузой,

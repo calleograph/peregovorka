@@ -6,7 +6,7 @@ import { Icon } from "../Icons";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { api } from "../../api";
 import { copyText } from "../../util";
-import { IDENTITY, clampView, panBy, percent, wheelFactor, zoomAt, type Size, type View } from "../../screenZoom";
+import { IDENTITY, clampView, panBy, percent, rescaleView, wheelFactor, zoomAt, type Size, type View } from "../../screenZoom";
 
 export interface PView {
   identity: string; name: string; local: boolean; mic: boolean; cam: boolean; screen: boolean; speaking: boolean; participant: Participant;
@@ -230,7 +230,8 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
   items?: () => MenuItem[];
   onOpen?: () => void;
 }) {
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);          // область изображения: жесты, размер для масштаба
+  const stageEl = useRef<HTMLDivElement>(null);      // вся сцена с панелью: она уходит на полный экран
   const { onContextMenu, node: ctxNode, openAt } = useContextMenu();
   const bigRef = useRef(big);
   bigRef.current = big;
@@ -239,6 +240,8 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
   const [fill, setFill] = useState(false);
   const [view, setView] = useState<View>(IDENTITY);
   const [panning, setPanning] = useState(false);
+  /** «На весь экран» там, где браузер не умеет разворачивать элемент (iPhone: Safari и приложение с главного экрана) — сцена поверх страницы. */
+  const [max, setMax] = useState(false);
   const onSize = useCallback((w: number, h: number) => setVsize((o) => (o.w === w && o.h === h ? o : { w, h })), []);
   const size = vsize.w && vsize.h ? `${vsize.w}×${vsize.h}` : "";
   // актуальные значения для обработчиков событий (колесо вешается один раз, как не-passive слушатель)
@@ -246,19 +249,33 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
   geo.current = { view, stage, vsize, fill };
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef(0);
+  /** Идёт жест над изображением (два пальца или сдвиг приближенного): события не уходят выше — иначе сцена приняла бы их за свайп и сменила главный элемент. */
+  const gesture = useRef(false);
+  const prevStage = useRef<Size>({ w: 0, h: 0 });
 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const measure = () => setStage({ w: el.clientWidth, h: el.clientHeight });
+    const measure = () => setStage((o) => (o.w === el.clientWidth && o.h === el.clientHeight ? o : { w: el.clientWidth, h: el.clientHeight }));
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-  // изменился размер сцены/кадра или режим — допустимый сдвиг пересчитывается
-  useEffect(() => { setView((v) => clampView(v, stage, vsize, fill)); }, [stage, vsize, fill]);
-  useEffect(() => { if (!big) { setView(IDENTITY); setFill(false); } }, [big]);         // в ленте — всегда исходный вид
+  }, [max]);
+  // изменился размер сцены (поворот, полный экран) — в центре остаётся та же точка изображения; изменился кадр или режим — сдвиг пересчитывается
+  useEffect(() => {
+    const from = prevStage.current;
+    prevStage.current = stage;
+    setView((v) => (from.w && (from.w !== stage.w || from.h !== stage.h) ? rescaleView(v, from, stage, vsize, fill) : clampView(v, stage, vsize, fill)));
+  }, [stage, vsize, fill]);
+  useEffect(() => { if (!big) { setView(IDENTITY); setFill(false); setMax(false); } }, [big]);         // в ленте — всегда исходный вид
+  useEffect(() => {
+    if (!max) return;
+    document.body.classList.add("screen-max-open");          // страница под сценой не прокручивается
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMax(false); };
+    window.addEventListener("keydown", esc);
+    return () => { document.body.classList.remove("screen-max-open"); window.removeEventListener("keydown", esc); };
+  }, [max]);
 
   const local = useCallback((e: { clientX: number; clientY: number }) => {
     const r = box.current!.getBoundingClientRect();
@@ -274,18 +291,29 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
     const el = box.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!bigRef.current || (e.target as HTMLElement).closest(".screen-bar, .zoom-badge")) return;     // в ленте колесо прокручивает ленту
+      if (!bigRef.current) return;     // в ленте колесо прокручивает ленту
       e.preventDefault();   // колесо над экраном — приближение, а не прокрутка страницы
       zoomBy(wheelFactor(e.deltaY, e.deltaMode, e.ctrlKey), local(e));
     };
+    // iPhone: «щипок» над демонстрацией приближает её, а не всю страницу (Safari не всегда соблюдает touch-action)
+    const noPageZoom = (e: Event) => { if (bigRef.current) e.preventDefault(); };
+    const noTwoFinger = (e: TouchEvent) => { if (bigRef.current && e.touches.length > 1) e.preventDefault(); };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomBy, local]);
+    el.addEventListener("gesturestart", noPageZoom);
+    el.addEventListener("gesturechange", noPageZoom);
+    el.addEventListener("touchmove", noTwoFinger, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel); el.removeEventListener("gesturestart", noPageZoom); el.removeEventListener("gesturechange", noPageZoom);
+      el.removeEventListener("touchmove", noTwoFinger);
+    };
+  }, [zoomBy, local, max]);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (!big || (e.target as HTMLElement).closest(".screen-bar, .zoom-badge") || (e.pointerType === "mouse" && e.button !== 0 && e.button !== 1)) return;
+    if (!big || (e.pointerType === "mouse" && e.button !== 0 && e.button !== 1)) return;
     pointers.current.set(e.pointerId, local(e));
-    box.current?.setPointerCapture(e.pointerId);
+    if (pointers.current.size >= 2 || geo.current.view.s > 1) gesture.current = true;
+    try { box.current?.setPointerCapture(e.pointerId); } catch { /* указатель уже отпущен — жест продолжается без захвата */ }
+    if (gesture.current) e.stopPropagation();
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       pinch.current = Math.hypot(a.x - b.x, a.y - b.y);
@@ -310,7 +338,8 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
   const onPointerUp = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId);
     pinch.current = 0;
-    if (pointers.current.size === 0) setPanning(false);
+    if (gesture.current) e.stopPropagation();
+    if (pointers.current.size === 0) { setPanning(false); gesture.current = false; }
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!big) { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget && onOpen) { e.preventDefault(); onOpen(); } return; }
@@ -327,21 +356,32 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
     e.preventDefault();
   };
 
-  const fullscreen = () => toggleFullscreen(box.current);
+  const fullscreen = () => {
+    if (max) { setMax(false); return; }
+    if (nativeFullscreen()) toggleFullscreen(stageEl.current);
+    else setMax(true);
+  };
   const openMenu = (e: React.MouseEvent) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); if (items) openAt(r.left, r.bottom + 4, items()); };
   const title = p.local ? "Вы показываете экран" : `Экран: ${p.name}`;
   const zoomed = view.s > 1;
   const zoomStyle = zoomed ? { width: stage.w * view.s, height: stage.h * view.s, transform: `translate(${view.x}px, ${view.y}px)` } : undefined;
-  return (
-    <div className={`screen-stage ${big ? "big" : "small"} ${fill ? "fill" : ""} ${zoomed ? "zoomed" : ""} ${panning ? "panning" : ""}`} ref={box} tabIndex={0} data-identity={p.identity}
+  const more = (cls: string) => items && (
+    <button type="button" className={`tile-more ${cls}`} onClick={openMenu} onDoubleClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
+            title={`Действия: ${title}`} aria-label={`Действия: ${title}`} aria-haspopup="menu"><Icon name="more" size={18} /></button>
+  );
+  const scene = (
+    <div className={`screen-stage ${big ? "big" : "small"} ${fill ? "fill" : ""} ${zoomed ? "zoomed" : ""} ${panning ? "panning" : ""} ${max ? "max" : ""}`} ref={stageEl} tabIndex={0} data-identity={p.identity}
          onContextMenu={items ? onContextMenu(items) : undefined}
          onClick={!big && onOpen ? () => onOpen() : undefined}
-         onDoubleClick={(e) => { if (big && !(e.target as HTMLElement).closest(".screen-bar, .zoom-badge, .tile-more")) fullscreen(); }}
-         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onKeyDown={onKeyDown}
-         role={big ? undefined : "button"}
-         aria-label={big ? `${title}. Колесо мыши — масштаб, перетаскивание — сдвиг, клавиши плюс, минус и ноль — масштаб` : `${title}. Enter — открыть крупно`}>
-      <div className="screen-zoom" style={zoomStyle}>
-        <VideoTile p={p.participant} source={Track.Source.ScreenShare} className="screen-video" onSize={onSize} />
+         onKeyDown={onKeyDown}
+         role={max ? "dialog" : big ? undefined : "button"} aria-modal={max || undefined}
+         aria-label={big ? `${title}. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг, клавиши плюс, минус и ноль — масштаб` : `${title}. Enter — открыть крупно`}>
+      <div className="screen-view" ref={box}
+           onDoubleClick={() => { if (big) fullscreen(); }}
+           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+        <div className="screen-zoom" style={zoomStyle}>
+          <VideoTile p={p.participant} source={Track.Source.ScreenShare} className="screen-video" onSize={onSize} />
+        </div>
       </div>
       {big && zoomed && (
         <div className="zoom-badge" role="group" aria-label="Масштаб">
@@ -352,19 +392,31 @@ export function ScreenStage({ p, big = true, items, onOpen }: {
       )}
       {big ? (
         <div className="screen-bar">
-          <span>{title}{size && <span className="muted"> · {size}</span>}
+          <span className="sb-title">{title}{size && <span className="muted sb-size"> · {size}</span>}
             <span className="muted hint-zoom"> · колесо мыши — приблизить, перетаскивание — сдвиг</span></span>
           <span className="spacer" />
-          {!zoomed && <button className="btn mini" onClick={() => zoomBy(1.25)} title="Приблизить (+)" aria-label="Приблизить">+</button>}
+          {/* на телефоне масштаб — здесь, в панели, а не поверх изображения */}
+          <span className="sb-zoom" role="group" aria-label="Масштаб">
+            <button className="btn mini" onClick={() => zoomBy(0.8)} disabled={!zoomed} aria-label="Отдалить">−</button>
+            <button className="btn mini sb-pct" onClick={() => setView(IDENTITY)} disabled={!zoomed} aria-label={zoomed ? `Масштаб ${percent(view)}, сбросить` : "Исходный масштаб"}>{percent(view)}</button>
+            <button className="btn mini" onClick={() => zoomBy(1.25)} aria-label="Приблизить">+</button>
+          </span>
+          {!zoomed && <button className="btn mini sb-plus" onClick={() => zoomBy(1.25)} title="Приблизить (+)" aria-label="Приблизить">+</button>}
           <button className="btn mini" onClick={() => setFill((f) => !f)} title="Вписать / заполнить окно">{fill ? "Вписать" : "Заполнить"}</button>
-          <button className="btn mini" onClick={fullscreen} title="Полный экран (или двойной клик)">⛶ На весь экран</button>
+          <button className="btn mini" onClick={fullscreen} title={max ? "Вернуть в окно встречи (Esc)" : "Полный экран (или двойной клик)"} aria-label={max ? "Свернуть" : "На весь экран"}>
+            {max ? "Свернуть" : <>⛶<span className="sb-long"> На весь экран</span></>}</button>
+          {more("sb-more")}
         </div>
       ) : <div className="screen-label"><Icon name="screen" size={14} /> {p.local ? "Ваш экран" : p.name}</div>}
-      {items && (
-        <button type="button" className="tile-more" onClick={openMenu} onDoubleClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
-                title={`Действия: ${title}`} aria-label={`Действия: ${title}`} aria-haspopup="menu"><Icon name="more" size={18} /></button>
-      )}
+      {more("st-more")}
       {ctxNode}
     </div>
   );
+  return max ? createPortal(scene, document.body) : scene;
+}
+
+/** Разворачивает ли браузер на весь экран произвольный элемент. На iPhone (Safari и приложение с главного экрана) — нет: там сцена разворачивается поверх страницы. */
+function nativeFullscreen(): boolean {
+  const d = document as Document & { webkitFullscreenEnabled?: boolean };
+  return !!(d.fullscreenEnabled ?? d.webkitFullscreenEnabled) && typeof HTMLElement.prototype.requestFullscreen === "function";
 }

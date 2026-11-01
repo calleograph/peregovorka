@@ -219,7 +219,7 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         viewModelScope.launch {
             try {
                 val j = a.join(roomId, password)
-                calls.start(a, s.title, j, mic, camera, intentMic, intentCamera)
+                calls.start(a, s.title, j, mic, camera, intentMic, intentCamera, rejoin = { a.join(roomId, password) })
                 _s.update { it.copy(joining = false) }
                 onResult(true)
             } catch (e: SessionExpired) {

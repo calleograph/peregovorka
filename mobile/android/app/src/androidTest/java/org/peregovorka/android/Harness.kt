@@ -28,6 +28,10 @@ class FakePeregovorka {
     val realLivekit: String? = args.getString("livekit_url")
     @Volatile var livekitUrl = realLivekit ?: "ws://127.0.0.1:1"
     @Volatile var serverVersion = "0.49.6"          // с этой версии у сайта есть раздел /chats и режим «внутри приложения»
+    /** Комната LiveKit в выдаваемом токене: длинный звонок (LongCallTest) — в своей комнате, где второй участник показывает экран. */
+    @Volatile var livekitRoom = "test-room"
+    /** Сколько раз приложение входило в комнату (повторный вход после обрыва связи — тоже вход). */
+    val joins = java.util.concurrent.atomic.AtomicInteger()
 
     private fun b64(b: ByteArray) = android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
     private fun livekitToken(): String {
@@ -35,7 +39,7 @@ class FakePeregovorka {
         val key = args.getString("livekit_key", "devkey"); val secret = args.getString("livekit_secret", "secret")
         val now = System.currentTimeMillis() / 1000
         val head = b64("""{"alg":"HS256","typ":"JWT"}""".toByteArray())
-        val body = b64("""{"iss":"$key","sub":"u1","name":"Тест Тестов","nbf":${now - 10},"exp":${now + 3600},"video":{"room":"test-room","roomJoin":true,"canPublish":true,"canSubscribe":true,"canPublishData":true}}""".toByteArray())
+        val body = b64("""{"iss":"$key","sub":"u1","name":"Тест Тестов","nbf":${now - 10},"exp":${now + 3600},"video":{"room":"$livekitRoom","roomJoin":true,"canPublish":true,"canSubscribe":true,"canPublishData":true}}""".toByteArray())
         val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(secret.toByteArray(), "HmacSHA256")) }
         return "$head.$body.${b64(mac.doFinal("$head.$body".toByteArray()))}"
     }
@@ -61,9 +65,9 @@ class FakePeregovorka {
                     path == "/api/v1/rooms" -> json("""[{"id":"r1","slug":"main","name":"Основная","has_password":false,"camera_allowed":true},
                         {"id":"r2","slug":"secret","name":"Закрытая","has_password":true,"camera_allowed":true}]""")
                     path == "/api/v1/rooms/upcoming" -> json("""{"items":[]}""")
-                    path.startsWith("/api/v1/rooms/") && path.endsWith("/join") -> json(
+                    path.startsWith("/api/v1/rooms/") && path.endsWith("/join") -> { joins.incrementAndGet(); json(
                         """{"meeting_id":"m1","room":{"id":"r1","name":"Основная","camera_allowed":true},"livekit_url":"$livekitUrl","token":"${livekitToken()}","identity":"u1",
-                        "client":{"sources":["microphone","camera"]}}""")
+                        "client":{"sources":["microphone","camera"]}}""") }
                     path.endsWith("/hands") -> json("""{"hands":[]}""")
                     path.endsWith("/chat") -> json("""{"messages":[],"me":"u1"}""")
                     path.endsWith("/leave") || path == "/api/v1/client/events" -> MockResponse().setResponseCode(204)
