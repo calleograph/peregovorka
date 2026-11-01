@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type JournalRow, type OutlookCenterInfo, type OutlookCheck, type OutlookConference } from "../../api";
 import SettingsForm from "./SettingsForm";
@@ -98,8 +99,8 @@ export default function OutlookAdmin() {
 
       <div className="card" aria-label="Пакет надстройки">
         <h3 style={{ margin: 0 }}>Надстройка для этого сервера</h3>
-        <p className="muted">Пакет содержит манифест с адресами вашего сервера и постоянным идентификатором надстройки (он не меняется при повторном скачивании), сценарии <code>Install-OutlookAddin.ps1</code> и
-          <code> Test-OutlookAddin.ps1</code> и инструкцию по установке, обновлению и удалению. Паролей и ключей в пакете нет.</p>
+        <Lead summary="Пакет для установки надстройки Outlook во всей организации.">Пакет содержит манифест с адресами вашего сервера и постоянным идентификатором надстройки (он не меняется при повторном скачивании), сценарии <code>Install-OutlookAddin.ps1</code> и
+          <code> Test-OutlookAddin.ps1</code> и инструкцию по установке, обновлению и удалению. Паролей и ключей в пакете нет.</Lead>
         <div className="row">
           <a className="btn primary" href="/api/v1/admin/outlook/package" download>Скачать надстройку для этого сервера</a>
           <a className="btn" href="/api/v1/outlook/manifest.xml" download>Только манифест (XML)</a></div>

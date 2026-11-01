@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type IpAccessEntry, type IpAccessState } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
@@ -53,7 +54,7 @@ export default function IpAccessAdmin() {
           <div className="spacer" />
           <span className="muted small">Отказов за 24 часа: <strong>{st.denied_24h}</strong></span>
         </div>
-        <p className="muted small" style={{ margin: "4px 0 10px" }}>Если ограничение включено, к Peregovorka можно обращаться только с перечисленных адресов и подсетей. Это <b>не то же самое</b>, что «доверенные прокси»: те сообщают серверу настоящий адрес клиента (раздел «Сеть и IP-адреса»), а здесь решается, какие сети допущены. По умолчанию ограничение выключено.</p>
+        <Lead summary="Доступ к Peregovorka только с перечисленных адресов и подсетей.">Если ограничение включено, к Peregovorka можно обращаться только с перечисленных адресов и подсетей. Это <b>не то же самое</b>, что «доверенные прокси»: те сообщают серверу настоящий адрес клиента (раздел «Сеть и IP-адреса»), а здесь решается, какие сети допущены. По умолчанию ограничение выключено.</Lead>
         {err && <div className="alert error" role="alert">{err}</div>}
         {st.warnings.map((w) => <div key={w} className="alert info small" role="status">⚠ {w}</div>)}
         {st.pending && (

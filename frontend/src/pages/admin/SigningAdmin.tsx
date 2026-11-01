@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useEffect, useState } from "react";
 import { api, type ApiError, type SigningAgent, type SigningCert, type SigningJob, type SigningOverview } from "../../api";
 import { Icon } from "../../components/Icons";
@@ -65,8 +66,8 @@ export default function SigningAdmin() {
   return (
     <section aria-label="Подпись и корпоративные сборки" className="signing">
       <h2>Подпись и корпоративные сборки</h2>
-      <p className="muted">Установщики приложения Windows подписываются на <b>подписывающем узле</b> — отдельном доверенном компьютере Windows организации с агентом Peregovorka.
-        Закрытый ключ остаётся в хранилище сертификатов этого компьютера: сервер хранит только сведения о сертификате, его открытую часть и готовые пакеты.</p>
+      <Lead summary="Подпись установщиков приложения Windows сертификатом организации на доверенном узле.">Установщики приложения Windows подписываются на <b>подписывающем узле</b> — отдельном доверенном компьютере Windows организации с агентом Peregovorka.
+        Закрытый ключ остаётся в хранилище сертификатов этого компьютера: сервер хранит только сведения о сертификате, его открытую часть и готовые пакеты.</Lead>
       <div className="tabs" role="tablist" aria-label="Разделы подписи">
         {TABS.map(([id, label]) => <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
       </div>

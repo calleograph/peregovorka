@@ -1,6 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { tabFromSearch } from "../navMenu";
+import { focusAnchor } from "../focusAnchor";
+import { api } from "../api";
 import { collapseAll, expandAll, initialCollapsed, saveCollapsed, toggleGroup } from "../adminNav";
 import { Icon } from "../components/Icons";
 import AccessAdmin from "./admin/AccessAdmin";
@@ -186,13 +188,42 @@ export default function AdminPage({ version }: { version: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // переход из верхнего меню (/admin?tab=…) при уже открытой странице
-  useEffect(() => { const t = tabFromSearch(location.search, ids); if (t) pick(t); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [location.search]);
+  useEffect(() => {
+    const t = tabFromSearch(location.search, ids);
+    if (t) pick(t);
+    const f = new URLSearchParams(location.search).get("focus");
+    if (f && /^[\w-]{1,80}$/.test(f)) focusAnchor(f);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+  // число состояний, требующих действия (критичные и предупреждения) — значком у «Обзора» в меню
+  const [attn, setAttn] = useState(0);
+  useEffect(() => {
+    const f = () => api.admin.attention().then((a) => setAttn(a.counts.critical + a.counts.warning)).catch(() => undefined);
+    void f(); const t = window.setInterval(f, 60000); return () => window.clearInterval(t);
+  }, []);
   const page = GROUPS.flatMap((g) => g.pages).find((p) => p.id === tab);
+  // прокрутка меню сохраняется при уходе со страницы администрирования и возврате; выбранный пункт всегда в видимой области меню
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const n = navRef.current;
+    if (!n) return;
+    try { n.scrollTop = Number(sessionStorage.getItem("adminNavScroll") || 0); } catch { /* без сохранённого положения */ }
+    const save = () => { try { sessionStorage.setItem("adminNavScroll", String(Math.round(n.scrollTop))); } catch { /* не запомнится */ } };
+    n.addEventListener("scroll", save, { passive: true });
+    return () => n.removeEventListener("scroll", save);
+  }, []);
+  useEffect(() => {
+    const n = navRef.current, a = n?.querySelector<HTMLElement>("[aria-current='page']");
+    if (!n || !a) return;
+    const nr = n.getBoundingClientRect(), ar = a.getBoundingClientRect();                    // только внутри меню: scrollIntoView прокрутил бы и страницу
+    if (ar.top < nr.top) n.scrollTop -= nr.top - ar.top + 8;
+    else if (ar.bottom > nr.bottom) n.scrollTop += ar.bottom - nr.bottom + 8;
+  }, [tab]);
   return (
     <section>
       <div className="row"><h1>Администрирование</h1><div className="spacer" /><span className="muted small">Версия: {version || "—"}</span></div>
       <div className="admin-layout">
-        <nav className={`admin-nav ${navOpen ? "nav-open" : ""}`} aria-label="Разделы администрирования">
+        <nav ref={navRef} className={`admin-nav ${navOpen ? "nav-open" : ""}`} aria-label="Разделы администрирования">
           <button type="button" className="nav-toggle" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
             <span className="muted small">Раздел</span><b>{page?.label ?? "—"}</b><Icon name="chevronD" size={16} className="chev" />
           </button>
@@ -215,7 +246,8 @@ export default function AdminPage({ version }: { version: string }) {
                 <h4><button type="button" className="nav-head" aria-expanded={open} aria-controls={`navg-${gi}`} onClick={() => setGroups(toggleGroup(collapsed, g.title))}
                             title={open ? "Свернуть раздел" : "Развернуть раздел"}><Icon name="chevronD" size={14} className="chev" /><span>{g.title}</span></button></h4>
                 <div id={`navg-${gi}`} className="nav-items" hidden={!open}>
-                  {g.pages.map((p) => <button key={p.id} className={tab === p.id ? "active" : ""} aria-current={tab === p.id ? "page" : undefined} onClick={() => pick(p.id)}>{p.label}</button>)}
+                  {g.pages.map((p) => <button key={p.id} className={tab === p.id ? "active" : ""} aria-current={tab === p.id ? "page" : undefined} onClick={() => pick(p.id)}>
+                    {p.label}{p.id === "system" && attn > 0 && <span className="nav-badge" aria-label={`требует внимания: ${attn}`}>{attn}</span>}</button>)}
                 </div>
               </div>
             );

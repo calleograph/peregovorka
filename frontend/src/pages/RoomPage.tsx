@@ -72,12 +72,17 @@ const lsGet = (k: string): string | null => { try { return localStorage.getItem(
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 
-/** Ошибка действия — рядом с той кнопкой, которая её вызвала. */
-function Ctl({ error, onClose, children }: { error?: string; onClose: () => void; children: React.ReactNode }) {
+/** Ошибка действия — рядом с той кнопкой, которая её вызвала; действие («Повторить») — в том же сообщении, а не отдельным блоком поверх него. */
+function Ctl({ error, extra, onClose, children }: { error?: string; extra?: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="ctl">
       {children}
-      {error && <div className="ctl-err" role="alert"><span>{error}</span><button className="x" onClick={onClose} aria-label="Закрыть сообщение">×</button></div>}
+      {(error || extra) && (
+        <div className="ctl-err" role="alert">
+          <div className="ctl-err-body">{error && <span>{error}</span>}{extra}</div>
+          {error && <button className="x" onClick={onClose} aria-label="Закрыть сообщение">×</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1504,16 +1509,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         {menu.node}
         <div className="controls rbar" role="toolbar" aria-label="Управление встречей">
          <div className="rbar-main">
-          <Ctl error={ctlErr.mic} onClose={() => setErr("mic")}>
+          <Ctl error={ctlErr.mic} onClose={() => setErr("mic")} extra={micFail && !ended ? (
+            <div className="row tight small">
+              <button className="btn mini primary" onClick={() => { setErr("mic", undefined); setMicFail(null); void enableMic(); }}>Повторить</button>
+              {micFail === "busy" && <span className="muted">Устройство занято — закройте другую программу или выберите другой микрофон через стрелку у кнопки.</span>}
+            </div>) : undefined}>
             <RoundButton icon={me?.mic ? "mic" : "micOff"} label={!canMic ? "Слушаете" : me?.mic ? "Микрофон" : "Микрофон выкл."} short={!canMic ? "Слушаете" : "Микрофон"} tone={me?.mic ? "on" : "off"} pressed={!!me?.mic} pulse={!!me?.mic && !!me?.speaking}
                          title={!canMic ? listenerHint : me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready" || !canMic} onClick={() => { setMicFail(null); void toggle("mic"); }}
                          onMore={roomRef.current ? openDevices : undefined} moreLabel="Выбор микрофона, динамиков и камеры" />
-            {micFail && !ended && (
-              <div className="row tight small">
-                <button className="btn mini primary" onClick={() => { setErr("mic", undefined); setMicFail(null); void enableMic(); }}>Повторить</button>
-                {micFail === "busy" && <span className="muted">Устройство занято — закройте другую программу или выберите другой микрофон через стрелку у кнопки.</span>}
-              </div>
-            )}
           </Ctl>
           {showCam && (
             <Ctl error={ctlErr.cam} onClose={() => setErr("cam")}>

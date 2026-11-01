@@ -5,6 +5,8 @@ import { api, type ApiError, type JournalStats, type SystemStatus } from "../../
 import { bytes, downloadText, versionLabel } from "../../util";
 import ComponentsTable from "./ComponentsTable";
 import RepairsPanel from "./RepairsPanel";
+import AttentionPanel from "./AttentionPanel";
+import { focusAnchor } from "../../focusAnchor";
 import StorageStatsCard from "./StorageStatsCard";
 
 const TIMING_LABEL: Record<string, [string, string]> = {
@@ -67,11 +69,12 @@ export default function SystemAdmin({ onOpen, view = "overview" }: { onOpen?: (p
         <button className="btn primary" onClick={report} disabled={!!busy} title="Только чтение: формирует файл с диагностикой без секретов">{busy === "report" ? "Формирование…" : "Скачать диагностический отчёт"}</button></div>
       {note && <div className={`alert ${note.ok ? "ok" : "error"}`} role="status">{note.text}</div>}
       {problems && (problems.length ? <div className="alert error"><b>Найдено в отчёте:</b><ul style={{ margin: "4px 0 0" }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul></div> : <div className="alert ok">Диагностика не нашла проблем.</div>)}
+      {!tech && onOpen && <AttentionPanel onOpen={(t, a) => { onOpen(t); if (a) focusAnchor(a); }} />}
       {!tech && <SetupChecklistCard onOpen={onOpen} />}
       <RepairsPanel onOpen={onOpen} />
-      {!s.master_key_ok && <div className="alert error">APP_MASTER_KEY не задан или некорректен — секретные настройки (пароли, токены, ключи) сохранить нельзя.</div>}
+      {tech && !s.master_key_ok && <div className="alert error">APP_MASTER_KEY не задан или некорректен — секретные настройки (пароли, токены, ключи) сохранить нельзя.</div>}
       {s.kernel && !s.kernel.ok && <div className="alert"><b>Параметры ядра ниже рекомендаций WebRTC.</b> {s.kernel.note} На общем сервере применяет администратор сервера.</div>}
-      {(s.recording_export?.failed ?? 0) > 0 && <div className="alert error">Записей, не выгруженных во внешнее хранилище: {s.recording_export?.failed}. Файлы сохранены локально — проверьте раздел «Хранилище записей» и нажмите «Повторить выгрузку».</div>}
+      {tech && (s.recording_export?.failed ?? 0) > 0 && <div className="alert error">Записей, не выгруженных во внешнее хранилище: {s.recording_export?.failed}. Файлы сохранены локально — проверьте раздел «Хранилище записей» и нажмите «Повторить выгрузку».</div>}
 
       <div className="kpi">
         <div className="card"><div className="l">Идёт встреч</div><div className="v">{s.counts.active_meetings}</div></div>

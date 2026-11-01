@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type AutoUpdateInfo } from "../../api";
 import { spanRu } from "../../util";
@@ -40,8 +41,8 @@ export default function AutoUpdatePanel() {
   return (
     <section className="card autoupd" aria-labelledby="autoupd-h">
       <h3 id="autoupd-h" style={{ margin: "0 0 6px" }}>Автоматическое обновление</h3>
-      <p className="muted small" style={{ marginTop: 0 }}>Раз в сутки в выбранное время сервис проверяет, есть ли новая версия, и если есть — ставит её тем же способом, что кнопка «Обновить проект».
-        <b> Идущие встречи не прерываются:</b> пока они есть, обновление ждёт окна без встреч, а если за отведённое время его нет — переносится на следующие сутки.</p>
+      <Lead summary="Ежедневная проверка и установка новых версий в выбранное время.">Раз в сутки в выбранное время сервис проверяет, есть ли новая версия, и если есть — ставит её тем же способом, что кнопка «Обновить проект».
+        <b> Идущие встречи не прерываются:</b> пока они есть, обновление ждёт окна без встреч, а если за отведённое время его нет — переносится на следующие сутки.</Lead>
       <div className="row" style={{ alignItems: "flex-end" }}>
         <label className="check" style={{ margin: 0 }}><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /><span className="check-body">Автоматически устанавливать обновления</span></label>
         <label style={{ margin: 0 }}>Время запуска<input type="time" value={time} onChange={(e) => setTime(e.target.value)} disabled={!enabled} style={{ width: 130 }} /></label>

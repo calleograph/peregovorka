@@ -100,6 +100,29 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     return await svc.public(db, group)
 
 
+async def probe_storage(app, db: AsyncSession, group: str, cfg) -> dict:
+    """Пробная запись в хранилище функции (документы встреч, аудио, журнал, вложения чата) — кнопка «Проверить подключение» и центр уведомлений «Обзора»."""
+    files = app.state.files
+    try:
+        if group == "chat_files":
+            backend = (await files.chat_backend(db))[0]
+        elif getattr(cfg, "profile_id", ""):
+            backend = await files.backend(db, group, "") if cfg.enabled else None   # type: ignore[attr-defined]
+        else:
+            backend = build_storage(cfg, app.state.settings.data_dir)  # type: ignore[arg-type]
+    except StorageError as exc:
+        return {"ok": False, "message": str(exc), "ms": 0}
+    if backend is None:
+        return {"ok": False, "message": "Выгрузка выключена (включите и сохраните).", "ms": 0}
+    started = asyncio.get_running_loop().time()
+    try:
+        msg = await asyncio.to_thread(backend.test)
+        ok = True
+    except StorageError as exc:
+        msg, ok = str(exc), False
+    return {"ok": ok, "message": msg, "ms": int((asyncio.get_running_loop().time() - started) * 1000)}
+
+
 @router.post("/settings/{group}/test")
 async def test_settings(group: str, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Проверка СОХРАНЁННЫХ настроек: хранилище (пробная запись), обезличивание, LLM."""
@@ -111,25 +134,7 @@ async def test_settings(group: str, request: Request, su: SessionUser = Depends(
     except SettingsError as exc:
         return {"ok": False, "message": str(exc), "ms": 0}
     if group in ("storage", "audio_storage", "journal", "chat_files"):
-        files = request.app.state.files
-        try:
-            if group == "chat_files":
-                backend = (await files.chat_backend(db))[0]
-            elif getattr(cfg, "profile_id", ""):
-                backend = await files.backend(db, group, "") if cfg.enabled else None   # type: ignore[attr-defined]
-            else:
-                backend = build_storage(cfg, app_s.data_dir)  # type: ignore[arg-type]
-        except StorageError as exc:
-            return {"ok": False, "message": str(exc), "ms": 0}
-        if backend is None:
-            return {"ok": False, "message": "Выгрузка выключена (включите и сохраните).", "ms": 0}
-        started = asyncio.get_running_loop().time()
-        try:
-            msg = await asyncio.to_thread(backend.test)
-            ok = True
-        except StorageError as exc:
-            msg, ok = str(exc), False
-        return {"ok": ok, "message": msg, "ms": int((asyncio.get_running_loop().time() - started) * 1000)}
+        return await probe_storage(request.app, db, group, cfg)
     if group == "llm":
         ext = cfg.model_copy(update={"provider": "external", "enabled": True})   # type: ignore[attr-defined]
         ok, msg, ms = await request.app.state.llm.client(ext, ca_file=app_s.ldap_ca_file or None, transport=tr.get("llm")).test()  # type: ignore[arg-type]
@@ -408,6 +413,14 @@ _host_stats = diagnostics.host_stats
 
 
 # -------------------------------------------------------------------------------- система
+@router.get("/attention")
+async def attention_list(request: Request, refresh: bool = False, su: SessionUser = Depends(require_admin)):
+    """Центр внимания «Обзора»: состояния всех модулей, требующие действия администратора (services/attention.py)."""
+    from ..services import attention  # noqa: PLC0415
+
+    return await attention.collect(request.app, request.app.state.session_maker, refresh=refresh)
+
+
 @router.get("/system")
 async def system_status(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     app = request.app

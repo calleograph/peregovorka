@@ -4,15 +4,14 @@ import { ChatNavButton } from "../chat/ChatNav";
 import { useSite } from "../site";
 import { useCalendarAvailable } from "../useCalendarAvailable";
 import { Icon, type IconName } from "./Icons";
-import NavMenu from "./NavMenu";
-import type { MenuItem } from "../navMenu";
+import { adminHref } from "../navMenu";
 
 function RailLink({ to, end, icon, children }: { to: string; end?: boolean; icon: IconName; children: ReactNode }) {
   return <NavLink to={to} end={end} className="rail-item" title={String(children)}><Icon name={icon} size={22} /><span>{children}</span></NavLink>;
 }
 
-/** Левая узкая панель разделов (на телефоне — нижняя полоса). Пункты те же, что были в верхнем меню; «Чаты» — кнопка с счётчиком, «Администрирование» — быстрые разделы. */
-export default function AppRail({ isAdmin, adminItems, adminActive }: { isAdmin: boolean; adminItems: MenuItem[]; adminActive: boolean }) {
+/** Левая узкая панель разделов (на телефоне — нижняя полоса). «Чаты» — кнопка со счётчиком; «Админ» — сразу «Обзор» администрирования (без промежуточного меню). */
+export default function AppRail({ isAdmin }: { isAdmin: boolean }) {
   const site = useSite();
   const mark = site.assets.logo_compact ?? null;
   const calendar = useCalendarAvailable();
@@ -26,7 +25,7 @@ export default function AppRail({ isAdmin, adminItems, adminActive }: { isAdmin:
         {calendar && <RailLink to="/calendar" icon="calendar">Календарь</RailLink>}
         <RailLink to="/history" icon="clock">История</RailLink>
         <ChatNavButton />
-        {isAdmin && <NavMenu className="rail-admin" label={<><Icon name="gear" size={22} /><span>Админ</span></>} items={adminItems} active={adminActive} title="Администрирование" />}
+        {isAdmin && <RailLink to={adminHref("system")} icon="gear">Админ</RailLink>}
       </nav>
     </aside>
   );

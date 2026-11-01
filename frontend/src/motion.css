@@ -14,7 +14,7 @@
   .btn, .rc, .rm, .sec-tile, .kpi > *, .admin-nav .nav-items button, .tabs button { transition: transform .18s var(--ease, ease), box-shadow .2s ease, background-color .18s ease, border-color .18s ease, color .18s ease; }
   .btn:active:not(:disabled) { transform: translateY(1px) scale(.985); }
   .kpi > *:hover, button.sec-tile:hover { transform: translateY(-2px); box-shadow: 0 10px 22px -14px rgb(20 40 90 / 35%); }
-  .admin-nav .nav-items button:hover { transform: translateX(3px); }
+  .admin-nav .nav-items button:hover { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }   /* не сдвиг: сдвиг на 3 px делал меню шире области и вызывал скачки */
   .tabs button:active { transform: scale(.97); }
 
   /* каскад: первые строки карточек-таблиц и журнала проявляются по очереди (плитки комнат уже появляются сами) */

@@ -136,7 +136,7 @@ export function ChecksList({ checks, ctl, onRepair }: { checks: MediaCheck[]; ct
     <>
       <ul className="checks-list" aria-label="Проверки">
         {checks.map((c) => (
-          <li key={c.id} className={c.status}>
+          <li key={c.id} id={`chk-${c.id}`} className={c.status}>
             <span className="ck-mark" aria-label={c.status}>{MARK[c.status]}</span>
             <span><b>{c.title}.</b> {c.message}{c.doc && c.status !== "ok" && <> <a href={c.doc} target="_blank" rel="noopener noreferrer">Решение</a></>}</span>
             <span className="ck-actions">

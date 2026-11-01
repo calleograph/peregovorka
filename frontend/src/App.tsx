@@ -16,7 +16,7 @@ import { applyFavicon, pageTitle } from "./pageTitle";
 import NavMenu from "./components/NavMenu";
 import AppRail from "./components/AppRail";
 import ThemeMenu from "./components/ThemeMenu";
-import { ADMIN_QUICK, adminHref, type MenuItem } from "./navMenu";
+import { adminHref, type MenuItem } from "./navMenu";
 import { useActiveMeeting } from "./activeMeeting";
 import GuestPage from "./pages/GuestPage";
 import HistoryPage from "./pages/HistoryPage";
@@ -128,12 +128,6 @@ function StaffApp() {
   if (me.must_enroll_totp && !me.must_change_password) return <TotpEnrollGate onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
   if (me.must_change_password) return <ChangePasswordPage onDone={() => { void api.me().then((m) => { setCsrf(m.csrf_token); setMe(m); }); }} onLogout={logout} />;
 
-  // Верхнее меню — для повседневной работы; полный список разделов администрирования остаётся в левом меню самой админки
-  const adminItems: MenuItem[] = [
-    ...ADMIN_QUICK.map((q) => ({ kind: "link" as const, key: q.tab, label: q.label, to: adminHref(q.tab), hint: q.hint })),
-    { kind: "divider", key: "sep" },
-    { kind: "link", key: "all", label: "Все разделы администрирования →", to: "/admin" },
-  ];
   const userItems: MenuItem[] = [
     { kind: "text", key: "who", label: me.user.is_admin ? "Администратор системы" : "Пользователь" },
     { kind: "link", key: "profile", label: "Личный кабинет", to: "/profile", hint: "профиль, аватарка, данные из AD" },
@@ -151,7 +145,7 @@ function StaffApp() {
   );
   return (
     <div className={`shell ${rail ? "has-rail" : ""}`}>
-      {rail && <AppRail isAdmin={me.user.is_admin} adminItems={adminItems} adminActive={pathname.startsWith("/admin")} />}
+      {rail && <AppRail isAdmin={me.user.is_admin} />}
       <div className="shell-col">
       {rail ? (
         <header className="topbar">
@@ -168,7 +162,7 @@ function StaffApp() {
             <NavItem to="/" end newTab>Переговорки</NavItem>
             <NavItem to="/history" newTab>История</NavItem>
             <ChatNavButton />
-            {me.user.is_admin && <NavMenu label="Администрирование" items={adminItems} active={pathname.startsWith("/admin")} newTab />}
+            {me.user.is_admin && <NavItem to={adminHref("system")} newTab>Администрирование</NavItem>}
           </nav>
           <div className="spacer" />
           {userMenu}

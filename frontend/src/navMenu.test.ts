@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADMIN_QUICK, adminHref, focusable, nextIndex, tabFromSearch, type MenuItem } from "./navMenu";
+import { adminHref, focusable, nextIndex, tabFromSearch, type MenuItem } from "./navMenu";
 
 describe("клавиатурная навигация по меню", () => {
   it("стрелки идут по кругу, Home/End — к краям", () => {
@@ -29,9 +29,5 @@ describe("ссылки в администрирование", () => {
     expect(tabFromSearch("?tab=sip", ["sip", "system"])).toBe("sip");
     expect(tabFromSearch("?tab=evil", ["sip"])).toBeNull();
     expect(tabFromSearch("", ["sip"])).toBeNull();
-  });
-  it("быстрое меню короткое и содержит новые разделы", () => {
-    expect(ADMIN_QUICK.length).toBeLessThanOrEqual(7);
-    expect(ADMIN_QUICK.map((x) => x.tab)).toEqual(expect.arrayContaining(["system", "updates", "llm", "sip"]));
   });
 });

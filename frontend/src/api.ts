@@ -227,6 +227,12 @@ export interface PublicApiLogRow { id: number; at: string; client_id: string | n
 export type SettingsValues = Record<string, string | number | boolean | null>;
 export interface TestResult { ok: boolean; message: string; ms: number }
 export interface TimingStat { n: number; avg: number; p95: number; max: number }
+/** Пункт центра внимания «Обзора» (backend: services/attention.py). */
+export interface AttentionItem {
+  id: string; level: "critical" | "warning" | "info"; component: string; title: string; impact: string; action: string; tab: string; anchor: string | null;
+  fix: { kind: "repair"; repair: string; label: string; confirm: string } | null; doc: string | null;
+}
+export interface AttentionInfo { items: AttentionItem[]; counts: Record<"critical" | "warning" | "info", number>; checked_at: number }
 export interface SystemStatus {
   version: string; commit: string; built_at?: string; public_url: string; master_key_ok: boolean; disk_free_bytes: number | null;
   checks: Record<string, { ok: boolean; error?: string; [k: string]: unknown }>; counts: Record<string, number>;
@@ -1199,6 +1205,7 @@ export const api = {
     addGrant: (id: string, userId: string) => request<{ ok: boolean }>("POST", `/admin/meetings/${id}/grants`, { user_id: userId }),
     removeGrant: (id: string, userId: string) => request<void>("DELETE", `/admin/meetings/${id}/grants/${userId}`),
     system: () => request<SystemStatus>("GET", "/admin/system"),
+    attention: (refresh = false) => request<AttentionInfo>("GET", `/admin/attention${refresh ? "?refresh=1" : ""}`),
     audit: (offset = 0, f: AuditFilter = {}) => request<AuditRow[]>("GET", `/admin/audit?limit=100&offset=${offset}&${auditParams(f)}`),
     auditExportUrl: (format: "csv" | "json", f: AuditFilter = {}) => `/api/v1/admin/audit/export?format=${format}&${auditParams(f)}`,
     auditVerify: () => request<AuditVerify>("GET", "/admin/audit/verify"),

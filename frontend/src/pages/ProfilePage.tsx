@@ -107,8 +107,8 @@ function ProfileFields({ p, onChange, disabled }: { p: Profile; onChange: (p: Pr
               ) : (
                 <>
                   {f.value || <span className="muted">не указано</span>}
-                  {p.source === "ad" && f.value && <span className={`badge ${f.manual ? "warn" : ""}`} style={{ marginLeft: 8 }} title={f.manual && f.manual_at ? `Изменено вами ${fmt(f.manual_at)}` : undefined}>{f.manual ? "изменено вами" : SOURCE_LABEL[f.source]}</span>}
-                  {f.editable && <button className="btn mini ghost" style={{ marginLeft: 8 }} disabled={disabled || busy} onClick={() => { setEditing(f.name); setVal(f.value ?? ""); setErr(""); }}>Изменить</button>}
+                  {p.source === "ad" && f.value && <span className={`badge ${f.manual ? "warn" : ""}`} title={f.manual && f.manual_at ? `Изменено вами ${fmt(f.manual_at)}` : undefined}>{f.manual ? "изменено вами" : SOURCE_LABEL[f.source]}</span>}
+                  {f.editable && <button className="btn mini ghost dd-act" disabled={disabled || busy} onClick={() => { setEditing(f.name); setVal(f.value ?? ""); setErr(""); }}>Изменить</button>}
                   {f.manual && p.restorable && <>
                     <div className="muted small">В каталоге: {f.ad_value || "не указано"}{f.manual_at ? ` · изменено ${fmt(f.manual_at)}` : ""}</div>
                     <button className="btn mini ghost" disabled={disabled || busy} onClick={() => void run(() => api.restoreProfile([f.name]))}>Восстановить из LDAP</button>

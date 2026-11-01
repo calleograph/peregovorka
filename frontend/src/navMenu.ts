@@ -31,13 +31,3 @@ export function tabFromSearch(search: string, known: string[]): string | null {
   return t && known.includes(t) ? t : null;
 }
 
-/** Пункты меню «Администрирование» для повседневной работы; полный список — в левом меню админки. */
-export const ADMIN_QUICK: { tab: string; label: string; hint: string }[] = [
-  { tab: "system", label: "Обзор", hint: "службы, проблемы, «Исправить автоматически»" },
-  { tab: "updates", label: "Обновления и версии", hint: "обновить проект одной кнопкой" },
-  { tab: "rooms", label: "Комнаты и доступ", hint: "комнаты, доступ, роли" },
-  { tab: "llm", label: "Языковая модель (LLM)", hint: "подключения к моделям по API" },
-  { tab: "outlook", label: "Microsoft Outlook", hint: "надстройка, календарь, пакет для Exchange" },
-  { tab: "sip", label: "SIP-телефония", hint: "транки и звонки в комнаты" },
-  { tab: "journal", label: "Журнал событий", hint: "что происходит в системе" },
-];

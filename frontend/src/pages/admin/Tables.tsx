@@ -1,3 +1,4 @@
+import DateRange from "../../components/DateRange";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, auditParams, type AdminUser, type ApiError, type AuditFilter, type AuditRow, type AuditVerify, type Meeting, type RecordingRow, type SessionInfo } from "../../api";
@@ -125,21 +126,20 @@ export function AuditAdmin() {
     <section>
       <h2>Журнал аудита</h2>
       <p className="muted small">Кто, что и когда сделал: изменения настроек, удаления записей, протоколов и встреч, выдача доступа, скачивание аудио.<InfoTip>Хранится отдельно от журнала событий и вручную не удаляется; пароли и секреты в него не попадают. Записи аудита также отражаются в «Журнале событий» (категория «администрирование») и попадают в его архив. Время хранится в UTC.</InfoTip></p>
-      <div className="row filter-row">
-        <input className="grow" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} placeholder="Поиск по исполнителю, действию, объекту, IP" aria-label="Поиск" />
-        <input value={f.actor} onChange={(e) => setF({ ...f, actor: e.target.value })} placeholder="Кто выполнил" aria-label="Исполнитель" style={{ maxWidth: 220 }} />
-        <input value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })} placeholder="Действие, например room." aria-label="Действие" style={{ maxWidth: 220 }} />
-      </div>
-      <div className="row filter-row">
+      <div className="filter-grid">
+        <input className="span-2" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} placeholder="Поиск по исполнителю, действию, объекту, IP" aria-label="Поиск" />
+        <input value={f.actor} onChange={(e) => setF({ ...f, actor: e.target.value })} placeholder="Кто выполнил" aria-label="Исполнитель" />
+        <input value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })} placeholder="Действие, например room." aria-label="Действие" />
         <select value={f.result} onChange={(e) => upd("result", e.target.value)} aria-label="Результат"><option value="">Любой результат</option><option value="success">успех</option><option value="denied">отказ</option><option value="failure">ошибка</option></select>
         <select value={f.actor_type} onChange={(e) => upd("actor_type", e.target.value)} aria-label="Тип исполнителя"><option value="">Любой исполнитель</option><option value="user">пользователь</option><option value="guest">гость</option><option value="system">система</option><option value="service">сервис</option></select>
-        <input value={f.object_type} onChange={(e) => upd("object_type", e.target.value)} placeholder="Тип объекта" aria-label="Тип объекта" style={{ maxWidth: 160 }} />
-        <input value={f.ip} onChange={(e) => upd("ip", e.target.value)} placeholder="IP" aria-label="IP" style={{ maxWidth: 160 }} />
-        <label className="small">с <input type="date" value={f.since} onChange={(e) => upd("since", e.target.value)} aria-label="С даты" /></label>
-        <label className="small">по <input type="date" value={f.until} onChange={(e) => upd("until", e.target.value)} aria-label="По дату" /></label>
+        <input value={f.object_type} onChange={(e) => upd("object_type", e.target.value)} placeholder="Тип объекта" aria-label="Тип объекта" />
+        <input value={f.ip} onChange={(e) => upd("ip", e.target.value)} placeholder="IP" aria-label="IP" />
+        <DateRange since={f.since} until={f.until} onSince={(v) => upd("since", v)} onUntil={(v) => upd("until", v)} />
+      </div>
+      <div className="row filter-actions">
         <div className="spacer" />
         <a className="btn" href={api.admin.auditExportUrl("csv", applied)} download title="Выгрузка по текущим фильтрам, до 100 000 записей">⬇ CSV</a>
-        <a className="btn" href={api.admin.auditExportUrl("json", applied)} download>⬇ JSON</a>
+        <a className="btn" href={api.admin.auditExportUrl("json", applied)} download title="Выгрузка по текущим фильтрам, до 100 000 записей">⬇ JSON</a>
         <button className="btn" onClick={verify} title="Проверка подписей записей и непрерывности нумерации">Проверить целостность</button>
       </div>
       {verErr && <div className="alert error">{verErr}</div>}

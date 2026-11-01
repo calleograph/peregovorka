@@ -1,3 +1,4 @@
+import DateRange from "../components/DateRange";
 import { Fragment, Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useActiveMeeting } from "../activeMeeting";
 import Avatar from "../components/Avatar";
@@ -346,8 +347,7 @@ function SearchBar({ chat, info, onGo, onMarks, onClose }: { chat: ChatItem; inf
       </div>
       <div className="conv-search-row filters">
         <label>Автор <select value={author} onChange={(e) => setAuthor(e.target.value)}><option value="">все</option>{info?.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-        <label>с <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label>по <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        <DateRange since={from} until={to} onSince={setFrom} onUntil={setTo} label="Даты" />
       </div>
       {err && <div className="alert error small">{err}</div>}
       {res && res.items.length > 0 && (

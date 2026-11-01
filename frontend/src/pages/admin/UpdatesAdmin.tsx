@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ApiError, type UpdateAttempt, type UpdateReport, type UpdatesOverview } from "../../api";
 import { ConfirmDialog } from "../../components/Dialogs";
@@ -111,8 +112,8 @@ export default function UpdatesAdmin({ onOpen }: { onOpen?: (page: string) => vo
     <section className="updates">
       <div className="row"><h2>Обновления</h2><div className="spacer" />
         <button className="btn" onClick={check} disabled={!!busy || !u?.available}>{busy === "check" ? "Проверка…" : "Проверить сейчас"}</button></div>
-      <p className="muted">Здесь видно, какая редакция проекта установлена на сервере и что опубликовано на GitHub, и можно обновиться одной кнопкой. Обновление выполняет тот же скрипт, что и в командной строке
-        (<code>scripts/update.sh</code>): резервная копия базы и настроек, сборка, миграции, перезапуск, проверки. Данные, модели и настройки не удаляются.</p>
+      <Lead summary="Установленная версия, опубликованные выпуски и обновление одной кнопкой.">Здесь видно, какая редакция проекта установлена на сервере и что опубликовано на GitHub, и можно обновиться одной кнопкой. Обновление выполняет тот же скрипт, что и в командной строке
+        (<code>scripts/update.sh</code>): резервная копия базы и настроек, сборка, миграции, перезапуск, проверки. Данные, модели и настройки не удаляются.</Lead>
       {err && <div className="alert error" role="alert">{err}</div>}
       {lost && <div className="alert info" role="status">Связь с сервером прервана — вероятно, он перезапускается при обновлении. Окно переподключится само; обновление продолжается на сервере.</div>}
 

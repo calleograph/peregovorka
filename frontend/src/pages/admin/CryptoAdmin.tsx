@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useEffect, useState } from "react";
 import { api, type ApiError, type CryptoStatus } from "../../api";
 import { fmt } from "../../util";
@@ -23,7 +24,7 @@ export default function CryptoAdmin() {
   return (
     <section aria-label="Шифрование хранилища">
       <h2>Шифрование хранилища</h2>
-      <p className="muted">Чат и стенограммы комнат, у которых включено «Шифровать чат и стенограммы при хранении», записываются в базу в зашифрованном виде ({st.algorithm}). Ключ данных лежит в базе только в зашифрованном виде и расшифровывается мастер-ключом сервера (<code>APP_MASTER_KEY</code>). Это защита хранилища и его копий; звук и видео этим режимом не шифруются.</p>
+      <Lead summary="Шифрование чата и стенограмм при хранении в базе данных.">Чат и стенограммы комнат, у которых включено «Шифровать чат и стенограммы при хранении», записываются в базу в зашифрованном виде ({st.algorithm}). Ключ данных лежит в базе только в зашифрованном виде и расшифровывается мастер-ключом сервера (<code>APP_MASTER_KEY</code>). Это защита хранилища и его копий; звук и видео этим режимом не шифруются.</Lead>
       {!st.master_key_set && <div className="alert warn">Мастер-ключ <code>APP_MASTER_KEY</code> не задан: шифрование хранилища недоступно.</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
       {note && <div className="alert ok">{note}</div>}

@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type ClientEventRow, type ClientMetricRow, type MicByClientRow } from "../../api";
 import InfoTip from "../../components/InfoTip";
@@ -60,7 +61,7 @@ export default function ClientDiagAdmin({ meetingId }: { meetingId?: string } = 
         {events.slice(0, 100).map((e, i) => <tr key={i}><td>{t(e.ts)}</td><td>{e.user}</td><td>{EVENT_LABEL[e.event] ?? e.event}</td><td><code>{e.reason ?? ""}</code></td><td className="small">{e.detail ?? ""}</td></tr>)}
       </tbody></table>
       <h3>Жизненный цикл Room и показа экрана</h3>
-      <p className="muted small">Фазы ROOM_CREATE → CONNECT_START → SIGNALING_CONNECTED → ICE_CONNECTED → CONNECT_OK → RECONNECTING/RECONNECTED → DISCONNECTED → ROOM_DISPOSE и SCREEN_*. Одинаковый <code>instance</code> у всех фаз — один и тот же объект (нормальное переподключение); новый <code>instance</code> с <code>reason=rejoin</code> — создан новый Room.</p>
+      <Lead summary="Как браузеры и приложения подключались к комнатам: фазы подключения и ошибки по каждому клиенту.">Фазы ROOM_CREATE → CONNECT_START → SIGNALING_CONNECTED → ICE_CONNECTED → CONNECT_OK → RECONNECTING/RECONNECTED → DISCONNECTED → ROOM_DISPOSE и SCREEN_*. Одинаковый <code>instance</code> у всех фаз — один и тот же объект (нормальное переподключение); новый <code>instance</code> с <code>reason=rejoin</code> — создан новый Room.</Lead>
       <table className="table compact"><thead><tr><th>Время</th><th>Пользователь</th><th>Фаза</th><th>Подробности</th></tr></thead><tbody>
         {lifecycle.length === 0 && <tr><td colSpan={4} className="muted">Фаз пока нет.</td></tr>}
         {lifecycle.slice(0, 120).map((e, i) => <tr key={i}><td>{t(e.ts)}</td><td>{e.user}</td><td><code>{e.reason ?? ""}</code></td><td className="small">{e.detail ?? ""}</td></tr>)}

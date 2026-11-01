@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useEffect, useState } from "react";
 import { api, type ApiError, type AutoBackupRun, type AutoBackupStatus, type StorageProfile } from "../../api";
 import { bytes, copyText, fmt } from "../../util";
@@ -51,7 +52,7 @@ export default function AutoBackupPanel() {
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>Автоматическая копия на сетевое хранилище</h3>
-      <p className="small muted">Копия настроек шифруется на сервере до отправки: на сетевой папке лежит только шифрованный файл. Пароль шифрования создаётся здесь, показывается один раз и хранится на сервере в зашифрованном виде — запишите его отдельно: без него копию не открыть. Записи и документы не копируются, только настройки.</p>
+      <Lead summary="Автоматические зашифрованные копии настроек в выбранное хранилище.">Копия настроек шифруется на сервере до отправки: на сетевой папке лежит только шифрованный файл. Пароль шифрования создаётся здесь, показывается один раз и хранится на сервере в зашифрованном виде — запишите его отдельно: без него копию не открыть. Записи и документы не копируются, только настройки.</Lead>
       {st.stale && <div className="alert warn" role="alert">Давно нет успешной копии{st.last_ok ? ` (последняя: ${fmt(st.last_ok.finished_at ?? st.last_ok.started_at)})` : ""}. Проверьте хранилище и историю ниже.</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
       {note && <div className="alert ok">{note}</div>}

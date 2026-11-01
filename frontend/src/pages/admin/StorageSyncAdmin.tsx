@@ -1,3 +1,4 @@
+import Lead from "../../components/Lead";
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type SyncOverview, type SyncRun } from "../../api";
 import SettingsForm from "./SettingsForm";
@@ -62,9 +63,9 @@ export default function StorageSyncAdmin() {
     <section>
       <div className="row"><h2>Проверка целостности хранилищ</h2><div className="spacer" />
         <button className="btn primary" onClick={() => void run(false)} disabled={busy || !!ov?.running}>{ov?.running ? "Сверка идёт…" : "Проверить / синхронизировать хранилище"}</button></div>
-      <p className="muted">База данных не считает файл доступным только потому, что он когда-то был создан. Сверка сравнивает записи (аудио, стенограммы, протоколы, вложения чата, переписку и схемы досок) с тем, что реально лежит в хранилище.
+      <Lead summary="Сверка базы с хранилищами: какие материалы встреч на месте, какие пропали.">База данных не считает файл доступным только потому, что он когда-то был создан. Сверка сравнивает записи (аудио, стенограммы, протоколы, вложения чата, переписку и схемы досок) с тем, что реально лежит в хранилище.
         Если файл удалили вручную (например, прямо на SMB-ресурсе), он перестаёт предлагаться пользователям, а состояние фиксируется в базе и в аудите. Неизвестные файлы <b>не</b> импортируются — они только показываются в отчёте.
-        При недоступном хранилище файлы не объявляются удалёнными. Сверка идёт в фоне пакетами и не замедляет страницы.</p>
+        При недоступном хранилище файлы не объявляются удалёнными. Сверка идёт в фоне пакетами и не замедляет страницы.</Lead>
       {error && <div className="alert error" role="alert">{error}</div>}
       {ov?.running && <div className="alert info" role="status">Сверка запущена {fmtDate(ov.running.started_at)} — отчёт появится здесь, когда она закончится.</div>}
       {suspicious && <div className="row"><button className="btn danger" onClick={() => void run(true)} disabled={busy || !!ov?.running}>Применить несмотря на предупреждение…</button></div>}
