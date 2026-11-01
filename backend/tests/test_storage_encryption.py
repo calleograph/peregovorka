@@ -28,7 +28,9 @@ def test_keyring_roundtrip_aad_tamper_and_rotation():
     with pytest.raises(sc.StorageCryptoError):
         kr.open_(t, b"chat:other")                                   # перенос шифртекста в другую встречу
     body = t.split(":", 2)[2]
-    bad = "pgenc1:2:" + base64.b64encode(bytearray(base64.b64decode(body))[:-1] + b"\x00").decode()
+    raw = bytearray(base64.b64decode(body))
+    raw[-1] ^= 1                                                         # байт меняется всегда (запись 0x00 не меняла его в 1 случае из 256)
+    bad = "pgenc1:2:" + base64.b64encode(raw).decode()
     with pytest.raises(sc.StorageCryptoError):
         kr.open_(bad, b"chat:m1")                                    # подмена
     assert kr.open_("обычный текст", b"x") == "обычный текст"          # не шифртекст — возвращается как есть
