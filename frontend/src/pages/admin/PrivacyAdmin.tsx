@@ -314,7 +314,7 @@ function FindingTable({ title, items, noteTitle, empty, hint, action }: { title:
           <tbody>{items.map((f) => (
             <tr key={f.original + f.note}>
               <td><b>{f.original}</b></td>
-              <td className="pv-context">{f.context.before}<mark className="pv-mark">{f.context.match}</mark>{f.context.after}</td>
+              <td className="pv-context"><span>{f.context.before}<mark className="pv-mark">{f.context.match}</mark>{f.context.after}</span></td>
               {items.some((x) => x.replacement) && <td>{f.replacement}</td>}
               <td>{f.note}</td><td>{f.count}</td>{action && <td>{action(f)}</td>}
             </tr>))}</tbody>

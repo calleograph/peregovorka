@@ -1213,6 +1213,8 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .pv-mark.pv-person { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .pv-findings { margin-top: 12px; }
 .pv-findings > summary { font-weight: 600; cursor: pointer; }
+.pv-findings .table td { overflow-wrap: break-word; }
+.pv-findings .table .btn { white-space: nowrap; }
 .pv-context { font-size: 13px; color: var(--muted); min-width: 16rem; }
 .pv-context .pv-mark { color: var(--text); }
 @media (max-width: 860px) { .pv-diff { grid-template-columns: 1fr; } }
