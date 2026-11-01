@@ -1011,6 +1011,7 @@ label.field-short { max-width: 280px; }                   /* короткое з
    изображением, а не поверх него; «На весь экран» без поддержки браузера (iPhone, приложение с главного экрана) — сцена поверх страницы с учётом выреза и полосы «Домой» */
 .screen-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
 .sb-zoom, .tile-more.sb-more { display: none; }
+.screen-bar .btn { white-space: nowrap; flex: none; } .screen-bar .sb-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* кнопки не переносятся; длинная подпись — многоточием */
 @media (max-width: 760px), (pointer: coarse) {
   .screen-stage.big { display: flex; flex-direction: column; align-items: stretch; }
   .screen-stage.big .screen-view { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }

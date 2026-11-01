@@ -144,7 +144,7 @@ class CallManager(private val app: Application) {
         } catch (e: Exception) {
             // причина — в журнал устройства (тег PGCALL); токен доступа из текста вырезается
             android.util.Log.w("PGCALL", "connect_failed ${e.javaClass.name}: ${e.message?.replace(Regex("access_token=[^&\\s\"]+"), "access_token=<скрыто>")?.take(300)}")
-            api?.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName)
+            api?.let { a -> scope.launch { a.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName) } }
             releaseRoom()
             false
         }
@@ -187,7 +187,9 @@ class CallManager(private val app: Application) {
         val camera = cameraWasOn || room?.localParticipant?.isCameraEnabled == true
         releaseRoom()
         _ui.update { it.copy(phase = Phase.Reconnecting, tiles = emptyList()) }
+        val a = api; val mid = _ui.value.meetingId
         recovering = scope.launch {
+            if (a != null && mid.isNotEmpty()) launch { a.reportEvent("rejoin_started", mid, why) }      // отдельно: без сети отправка ждёт таймаута и не должна задерживать попытки
             for (pause in RECOVER_PAUSES_MS) {
                 delay(pause)
                 val j = try { rj() } catch (e: CancellationException) { throw e } catch (e: SessionExpired) {
@@ -199,10 +201,11 @@ class CallManager(private val app: Application) {
                 } catch (e: Exception) { null }
                 if (j != null && connectRoom(j, mic, camera && _ui.value.canCamera)) {
                     android.util.Log.i("PGCALL", "rejoin_ok after=$why")
-                    api?.reportEvent("rejoin_ok", j.meetingId, why)
+                    api?.let { x -> scope.launch { x.reportEvent("reconnected", j.meetingId, why) } }
                     return@launch
                 }
             }
+            if (a != null && mid.isNotEmpty()) scope.launch { a.reportEvent("rejoin_failed", mid, why) }
             finish("Связь с конференцией потеряна. Проверьте интернет и войдите снова.")
         }
     }
