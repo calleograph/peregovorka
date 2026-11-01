@@ -278,6 +278,8 @@ class CallManager(private val app: Application) {
         }
         val list = listOf(tile(r.localParticipant, true)) + r.remoteParticipants.values.map { tile(it, false) }
         val me = r.localParticipant
+        val micNow = sourceOn(me, Track.Source.MICROPHONE)
+        if (micNow != _ui.value.micOn) android.util.Log.i("PGCALL", "ui_mic $micNow pub=${me.getTrackPublication(Track.Source.MICROPHONE)?.let { "muted=${it.muted} track=${it.track != null}" }}")
         _ui.update {
             it.copy(
                 tiles = list, micOn = sourceOn(me, Track.Source.MICROPHONE), camOn = sourceOn(me, Track.Source.CAMERA),

@@ -159,7 +159,10 @@ class JoinFlowTest {
             val micOn = device().hasObject(By.desc("Выключить микрофон"))
             android.util.Log.i("PGTEST", "микрофон включён в конференции: $micOn")
             device().findObject(By.desc(if (micOn) "Выключить микрофон" else "Включить микрофон"))!!.click()          // переключение микрофона
-            assertNotNull("микрофон не переключился", device().waitFor(By.desc(if (micOn) "Включить микрофон" else "Выключить микрофон"), 8_000))
+            val switched = device().waitFor(By.desc(if (micOn) "Включить микрофон" else "Выключить микрофон"), 8_000)
+            val st = App.instance.calls.ui.value
+            assertNotNull("микрофон не переключился: состояние приложения micOn=${st.micOn}, фаза ${st.phase}; кнопки: " +
+                device().findObjects(By.descStartsWith("")).mapNotNull { it.contentDescription }.filter { "микрофон" in it || "камер" in it }, switched)
             assertStaysForeground(sc, 2_000, "переключение микрофона")
         }
     }
