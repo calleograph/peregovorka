@@ -229,8 +229,8 @@ class CallManager(private val app: Application) {
     private fun recover(why: String) {
         if (recovering?.isActive == true) return
         val rj = rejoin ?: run { finish("Соединение с конференцией завершено."); return }
-        val mic = _ui.value.micOn || room?.localParticipant?.isMicrophoneEnabled == true
-        val camera = cameraWasOn || room?.localParticipant?.isCameraEnabled == true
+        val mic = _ui.value.micOn || room?.localParticipant?.let { sourceOn(it, Track.Source.MICROPHONE) } == true
+        val camera = cameraWasOn || room?.localParticipant?.let { sourceOn(it, Track.Source.CAMERA) } == true
         releaseRoom()
         _ui.update { it.copy(phase = Phase.Reconnecting, tiles = emptyList()) }
         val a = api; val mid = _ui.value.meetingId
@@ -256,6 +256,12 @@ class CallManager(private val app: Application) {
         }
     }
 
+    /**
+     * Включён ли источник: публикация есть и не заглушена. Читается прямо из публикации (поле muted меняется сразу при переключении), а не из производного
+     * состояния SDK isMicrophoneEnabled — оно обновляется асинхронно, и кнопка после выключения микрофона оставалась «Выключить микрофон».
+     */
+    private fun sourceOn(p: Participant, source: Track.Source): Boolean = p.getTrackPublication(source)?.let { !it.muted && it.track != null } ?: false
+
     private fun refresh() {
         val r = room ?: return
         val hands = _ui.value.hands
@@ -266,7 +272,7 @@ class CallManager(private val app: Application) {
             val camTrack = (cam?.track as? VideoTrack)?.takeIf { cam.muted.not() }
             return Tile(
                 key = id.ifEmpty { p.sid.value }, name = p.name?.takeIf { it.isNotBlank() } ?: id, isLocal = local,
-                camera = camTrack, screen = scr?.track as? VideoTrack, micOn = p.isMicrophoneEnabled, speaking = p.isSpeaking,
+                camera = camTrack, screen = scr?.track as? VideoTrack, micOn = sourceOn(p, Track.Source.MICROPHONE), speaking = p.isSpeaking,
                 hand = hands.any { it.identity == id }, screenW = scr?.dimensions?.width ?: 0, screenH = scr?.dimensions?.height ?: 0,
             )
         }
@@ -274,7 +280,7 @@ class CallManager(private val app: Application) {
         val me = r.localParticipant
         _ui.update {
             it.copy(
-                tiles = list, micOn = me.isMicrophoneEnabled, camOn = me.isCameraEnabled,
+                tiles = list, micOn = sourceOn(me, Track.Source.MICROPHONE), camOn = sourceOn(me, Track.Source.CAMERA),
                 handUp = hands.any { h -> h.identity == myIdentity },
                 audioDevice = (r.audioHandler as? AudioSwitchHandler)?.selectedAudioDevice?.name.orEmpty(),
             )
@@ -297,13 +303,17 @@ class CallManager(private val app: Application) {
 
     fun toggleMic() {
         val r = room ?: return
-        val on = !r.localParticipant.isMicrophoneEnabled
+        val on = !sourceOn(r.localParticipant, Track.Source.MICROPHONE)
         _ui.update { it.copy(micWanted = on) }
-        scope.launch { runCatching { r.localParticipant.setMicrophoneEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "mic_toggle_failed ${it.javaClass.simpleName}") }; refresh() }
+        scope.launch {
+            runCatching { r.localParticipant.setMicrophoneEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "mic_toggle_failed ${it.javaClass.simpleName}") }
+            android.util.Log.i("PGCALL", "mic_toggle want=$on now=${sourceOn(r.localParticipant, Track.Source.MICROPHONE)} sdk=${r.localParticipant.isMicrophoneEnabled}")
+            refresh()
+        }
     }
     fun toggleCamera() {
         val r = room ?: return
-        val on = !r.localParticipant.isCameraEnabled
+        val on = !sourceOn(r.localParticipant, Track.Source.CAMERA)
         _ui.update { it.copy(camWanted = on) }
         scope.launch { runCatching { r.localParticipant.setCameraEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "camera_toggle_failed ${it.javaClass.simpleName}") }; refresh() }
     }
@@ -316,9 +326,9 @@ class CallManager(private val app: Application) {
         val r = room ?: return
         val s = _ui.value
         if (s.phase != Phase.Connected && s.phase != Phase.Reconnecting) return
-        if (s.micWanted && s.canMic && granted(org.peregovorka.android.ui.Perm.Mic) && !r.localParticipant.isMicrophoneEnabled)
+        if (s.micWanted && s.canMic && granted(org.peregovorka.android.ui.Perm.Mic) && !sourceOn(r.localParticipant, Track.Source.MICROPHONE))
             scope.launch { runCatching { r.localParticipant.setMicrophoneEnabled(true) }; refresh() }
-        if (s.camWanted && s.canCamera && granted(org.peregovorka.android.ui.Perm.Camera) && !r.localParticipant.isCameraEnabled && !cameraWasOn)
+        if (s.camWanted && s.canCamera && granted(org.peregovorka.android.ui.Perm.Camera) && !sourceOn(r.localParticipant, Track.Source.CAMERA) && !cameraWasOn)
             scope.launch { runCatching { r.localParticipant.setCameraEnabled(true) }; refresh() }
     }
     fun flipCamera() {
@@ -358,7 +368,7 @@ class CallManager(private val app: Application) {
     // ── сворачивание: камера в фоне недоступна ───────────────────────────────────────────
     fun onBackground() {
         val r = room ?: return
-        if (r.localParticipant.isCameraEnabled) { cameraWasOn = true; scope.launch { runCatching { r.localParticipant.setCameraEnabled(false) }; refresh() } }
+        if (sourceOn(r.localParticipant, Track.Source.CAMERA)) { cameraWasOn = true; scope.launch { runCatching { r.localParticipant.setCameraEnabled(false) }; refresh() } }
     }
     fun onForeground() {
         val r = room ?: return
