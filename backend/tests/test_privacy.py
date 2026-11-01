@@ -270,6 +270,14 @@ def test_names_in_latin_and_capitals_and_with_initials_are_the_same_person():
     assert out.splitlines()[1].startswith("Иван И.") and "CONTROL SUMMARY" in out
 
 
+def test_participant_found_by_the_list_when_ner_misses_name_and_patronymic():
+    """«Иван Петрович» в начале строки и после короткой реплики NER пропускал — участник узнаётся по списку в любом порядке и падеже."""
+    for prof in ("basic", "strict"):
+        out = run("Иван Петрович: да.\nДа. Иван Петрович, начнём. Мария Сергеевна, Петровой передайте. С Кузнецовым и Петровой Марией обсудим.", profile=prof)
+        assert not re.search(r"Петрович|Сергеевн|Петров|Кузнецов", out), out
+        assert out.count("Мари") == (3 if prof == "basic" else 0)
+
+
 def test_a_value_found_once_is_replaced_everywhere_and_a_login_from_an_email():
     out = run("пароль: Zx9!kLm2q-77\nпозже повторил в чате Zx9!kLm2q-77\nпочта m.voronova@example.org, в VPN заходит как m.voronova", people=[])
     assert "Zx9!kLm2q-77" not in out and "m.voronova" not in out
@@ -324,6 +332,48 @@ def test_scanned_pdf_page_blocks_the_whole_document():
         extract("scan.pdf", _pdf("", image=True))
     text, info = extract("text.pdf", _pdf("Ivanov Ivan, password=Qw3rty-Pass-2026, phone +7 916 123-45-67"))
     assert "Ivanov" in text and info["pages"] == 1
+    import io as _io
+
+    from pypdf import PdfReader, PdfWriter
+
+    w = PdfWriter()
+    for src in (_pdf("Ivanov Ivan, phone +7 916 123-45-67"), _pdf("", image=True)):
+        w.add_page(PdfReader(_io.BytesIO(src)).pages[0])
+    buf = _io.BytesIO()
+    w.write(buf)
+    with pytest.raises(ExtractError, match=r"сканы\): 2 из 2"):
+        extract("mixed.pdf", buf.getvalue())             # текст первой страницы не выдаётся за обезличенный документ
+
+
+def test_docx_headers_footnotes_are_checked_and_image_only_documents_are_refused():
+    import io as _io
+    import zipfile as _zip
+
+    from docx import Document
+
+    from app.privacy.extract import ExtractError, extract
+
+    d = Document()
+    d.add_paragraph("Основной текст протокола.")
+    d.sections[0].header.paragraphs[0].text = "Исполнитель: ivanov@example.org"
+    d.sections[0].footer.paragraphs[0].text = "Тел. +7 912 345-67-89"
+    buf = _io.BytesIO()
+    d.save(buf)
+    text, info = extract("a.docx", buf.getvalue())
+    assert "ivanov@example.org" in text and "345-67-89" in text and text.startswith("Основной текст") and "note" not in info
+
+    def with_image(body: str) -> bytes:
+        d = Document()
+        d.add_paragraph(body)
+        b = _io.BytesIO()
+        d.save(b)
+        with _zip.ZipFile(b, "a") as z:
+            z.writestr("word/media/image1.png", b"\x89PNG")
+        return b.getvalue()
+    with pytest.raises(ExtractError, match="изображений"):
+        extract("scan.docx", with_image(""))
+    text, info = extract("logo.docx", with_image("Договор поставки, ответственный Иванов."))
+    assert "Договор" in text and "Изображений в документе: 1" in info["note"]
 
 
 def test_lab_text_file_formats_draft_settings_limits_and_rights(client):

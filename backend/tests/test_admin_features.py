@@ -218,7 +218,7 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
 
     def llm(req: httpx.Request) -> httpx.Response:
         llm_seen.append(json.loads(req.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "Решение: [ФИО_2] подготовит отчёт к пятнице."}}],
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Решение: Участник 2 подготовит отчёт к пятнице."}}],
                                          "usage": {"prompt_tokens": 10, "completion_tokens": 8}})
 
     s = make_settings(tmp_path)
@@ -241,9 +241,15 @@ def test_summary_goes_through_anonymizer_and_llm_only_sees_masked_text(tmp_path,
 
         sent = json.dumps(llm_seen[0], ensure_ascii=False)
         assert "Alice A" not in sent and "Bob B" not in sent, "имена не должны уходить в LLM"
-        assert "[ФИО_1]" in sent and "ГЛОБАЛЬНАЯ ИНСТРУКЦИЯ" in sent and "ИНСТРУКЦИЯ КОМНАТЫ" in sent
+        assert "Участвовали: Участник 1 A, Участник 2 B" in sent and "ГЛОБАЛЬНАЯ ИНСТРУКЦИЯ" in sent and "ИНСТРУКЦИЯ КОМНАТЫ" in sent
         assert list((tmp_path / "out").rglob("official-protocol.md")), "краткий протокол выгружен рядом со стенограммой"
         assert len(c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols").json()) == 1
+        # инструкция пользователя — тоже его данные: имена в ней заменяются теми же обозначениями, что в стенограмме
+        c.post(f"/api/v1/meetings/{a['meeting_id']}/protocols", json={"kind": "summary", "instruction": "Отдельно перечисли поручения, которые дал Bob B."})
+        _drain(c)
+        sent = json.dumps(llm_seen[-1], ensure_ascii=False)
+        assert "Bob B" not in sent and "поручения, которые дал" in sent
+        assert "которые дал Участник 2" in sent and "Участник 2 B: Отчёт" in sent, "в инструкции то же обозначение участника, что и в тексте"
         login(c, "carol")
         assert c.get(f"/api/v1/meetings/{a['meeting_id']}/protocols/{pid}").status_code == 404
 

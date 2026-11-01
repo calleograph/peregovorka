@@ -45,6 +45,7 @@ class LlmError(Exception):
             "unavailable": self.detail or "Выбранная языковая модель недоступна.",
             "invalid_response": self.detail or "Неожиданный формат ответа провайдера.",
             "timeout": "Таймаут при обращении к LLM.",
+            "privacy_check_failed": "Обязательная проверка на пароли и ключи не выполнена — запрос в модель не отправлялся. Повторите; при повторе — журнал сервера.",
         }
         if c in table:
             return table[c]

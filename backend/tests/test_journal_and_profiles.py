@@ -164,6 +164,37 @@ def test_failing_anonymizer_still_blocks_when_it_is_enabled(tmp_path, directory,
         assert got["status"] == "failed" and calls["llm"] == [] and "остался секрет" in got["error"], "включённое обезличивание — fail closed"
 
 
+def test_secrets_never_reach_the_model_and_a_broken_check_blocks_the_request(tmp_path, directory, monkeypatch):
+    """Все пути в модель: без обезличивания пароль и токен из стенограммы и из инструкции всё равно скрыты; непредвиденный сбой обезличивания
+    или обязательной маскировки секретов — документ не создаётся, запрос в модель не уходит."""
+    from app.integrations import llm as llm_mod
+    from app.privacy import engine
+
+    calls, gen, _ = _app(tmp_path, directory)
+    with gen as c:
+        put_settings(c, "llm", enabled=True, type="openai", model="m", api_key="k")
+        _room, mid = _meeting_with_text(c, "Пароль стенда P@ssw0rd-Crm-2026, токен ghp_abcdefghijklmnopqrstuvwxyz0123456789 отозвать. Решили перенести в пятницу.")
+        login(c, "alice")
+        r = c.post(f"/api/v1/meetings/{mid}/protocols", json={"kind": "protocol", "instruction": "Кратко. Ключ для справки: sk-proj-AbCdEfGhIjKlMnOpQrStUvWx0123456789"})
+        _drain(c)
+        assert c.get(f"/api/v1/meetings/{mid}/protocols/{r.json()['protocol_id']}").json()["status"] == "ready"
+        sent = _sent(calls)
+        assert "P@ssw0rd" not in sent and "ghp_abcdef" not in sent and "sk-proj-AbCd" not in sent and "[секрет удалён]" in sent and "пятницу" in sent
+
+        def boom(_text):
+            raise RuntimeError("сбой")
+        monkeypatch.setattr(llm_mod, "mask_secrets", boom)
+        n = len(calls["llm"])
+        got = _make_protocol(c, mid)
+        assert got["status"] == "failed" and len(calls["llm"]) == n and "пароли и ключи" in got["error"], got
+        monkeypatch.undo()
+
+        put_settings(c, "anonymizer", required=True)
+        monkeypatch.setattr(engine.Anonymizer, "process", lambda self, text: boom(text))
+        got = _make_protocol(c, mid)
+        assert got["status"] == "failed" and len(calls["llm"]) == n and "не отправлялся" in got["error"], "непредвиденная ошибка обезличивания — тоже отказ без отправки"
+
+
 # ===================================================================================== API-профили
 def test_profiles_default_and_per_room_selection(tmp_path, directory):
     calls, gen, _ = _app(tmp_path, directory)

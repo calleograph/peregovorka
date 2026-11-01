@@ -223,6 +223,8 @@ class Anonymizer:
                     continue
                 cands.append((Found(start, end, cat, "ner"), s.kind))
             if self.policy.action("person") != "keep":
+                for s0, e0 in self._participant_runs(text):
+                    cands.append((Found(s0, e0, "person", "participant"), "PER"))
                 for s0, e0 in nm.initials_people(text):
                     cands.append((Found(s0, e0, "person", "initials"), "PER"))
                 for s0, e0, cyr in nm.caps_people(text):
@@ -240,6 +242,33 @@ class Anonymizer:
             taken.append((f, k))
         taken += self._repeats(text, taken)
         return sorted(taken, key=lambda c: c[0].start)
+
+    def _participant_runs(self, text: str) -> list[tuple[int, int]]:
+        """Участник по списку, даже если NER его не увидел: две и более частей ФИО подряд в любом порядке и падеже («Иван Петрович», «Петровой Марии»)
+        или одна фамилия с заглавной буквы."""
+        people = [p for p in self.roster.people if p.participant]
+        if not people:
+            return []
+        toks = [(t.start(), t.end(), frozenset({w, *(x.normal_form for x in nm.morph().parse(w))} if re.fullmatch(r"[а-яё-]+", w) else {w}))
+                for t in _LEMMA_TOKEN.finditer(text) if t.group(0)[:1].isupper() and (w := t.group(0).lower())]
+        out: list[tuple[int, int]] = []
+        for p in people:
+            words = {r: {w} | {x.normal_form for x in nm.morph().parse(w)} for r in ("surname", "first", "patronymic") if (w := getattr(p.parts, r))}
+            i = 0
+            while i < len(toks):
+                j, used = i, set()
+                while j < len(toks) and (j == i or re.fullmatch(r"[ \t]+", text[toks[j - 1][1]:toks[j][0]])):
+                    role = next((r for r, f in words.items() if r not in used and f & toks[j][2]), None)
+                    if role is None:
+                        break
+                    used.add(role)
+                    j += 1
+                if len(used) >= 2 or (used == {"surname"} and len(p.parts.surname) > 2):
+                    out.append((toks[i][0], toks[j - 1][1]))
+                    i = j
+                else:
+                    i += 1
+        return out
 
     _DATE = re.compile(r"(?<![\d./-])(?:(?P<d>\d{1,2})[./-](?P<m>\d{1,2})[./-](?P<y>(?:19|20)?\d{2})|(?P<d2>\d{2})(?P<m2>\d{2})(?P<y2>(?:19|20)\d{2})|(?P<y3>(?:19|20)\d{2})-(?P<m3>\d{2})-(?P<d3>\d{2})"
                        r"|(?P<d4>\d{1,2})\s+(?P<m4>январ|феврал|март|апрел|ма[яй]|июн|июл|август|сентябр|октябр|ноябр|декабр|янв|фев|мар|апр|авг|сен|окт|ноя|дек)[а-я]*\.?\s+(?P<y4>(?:19|20)\d{2}))(?![\d/-]|\.\d)")
