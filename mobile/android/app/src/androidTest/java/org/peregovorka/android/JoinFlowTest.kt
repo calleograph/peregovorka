@@ -159,7 +159,11 @@ class JoinFlowTest {
             val micOn = device().hasObject(By.desc("Выключить микрофон"))
             android.util.Log.i("PGTEST", "микрофон включён в конференции: $micOn")
             device().findObject(By.desc(if (micOn) "Выключить микрофон" else "Включить микрофон"))!!.click()          // переключение микрофона
-            val switched = device().waitFor(By.desc(if (micOn) "Включить микрофон" else "Выключить микрофон"), 8_000)
+            // опрос прямым поиском: Until.findObject не замечает смену описания у уже существующего элемента Compose (кнопка та же, меняется подпись)
+            val want = if (micOn) "Включить микрофон" else "Выключить микрофон"
+            var switched: androidx.test.uiautomator.UiObject2? = null
+            val end = System.currentTimeMillis() + 8_000
+            while (switched == null && System.currentTimeMillis() < end) { switched = device().findObject(By.desc(want)); if (switched == null) Thread.sleep(300) }
             val st = App.instance.calls.ui.value
             assertNotNull("микрофон не переключился: состояние приложения micOn=${st.micOn}, фаза ${st.phase}; кнопки: " +
                 device().findObjects(By.descStartsWith("")).mapNotNull { it.contentDescription }.filter { "микрофон" in it || "камер" in it }, switched)
