@@ -66,10 +66,10 @@ async def main(a):
     stats["connected"] = True
     src = rtc.VideoSource(W, H)
     await room.local_participant.publish_track(rtc.LocalVideoTrack.create_video_track("screen", src),
-                                               rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE, video_codec=rtc.VideoCodec.VP9))
+                                               rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE, video_codec=rtc.VideoCodec.VP8 if a.codec == "vp8" else rtc.VideoCodec.VP9))
     asrc = rtc.AudioSource(48000, 1, queue_size_ms=100)
     await room.local_participant.publish_track(rtc.LocalAudioTrack.create_audio_track("mic", asrc), rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
-    print(f"{time.strftime('%T')} PEER READY room={a.room}", flush=True)
+    print(f"{time.strftime('%T')} PEER READY room={a.room} codec={a.codec}", flush=True)
     frame = pattern()
 
     async def video():
@@ -92,5 +92,5 @@ async def main(a):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="ws://127.0.0.1:7880"); p.add_argument("--key", default="devkey"); p.add_argument("--secret", default="secret")
-    p.add_argument("--room", default="long-room"); p.add_argument("--port", type=int, default=7999); p.add_argument("--seconds", type=int, default=3000)
+    p.add_argument("--room", default="long-room"); p.add_argument("--port", type=int, default=7999); p.add_argument("--seconds", type=int, default=3000); p.add_argument("--codec", choices=["vp9", "vp8"], default="vp9")
     asyncio.run(main(p.parse_args()))
