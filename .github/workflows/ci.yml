@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
-      - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg fonts-dejavu-core libkrb5-dev gcc
+      - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core libkrb5-dev gcc
       # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt
       - run: pytest -q --junitxml=junit.xml
@@ -160,7 +161,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
-      - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libkrb5-dev gcc      # gssapi и krb5 собираются из исходников
+      - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libkrb5-dev gcc      # gssapi и krb5 собираются из исходников
       - run: pip install -r backend/requirements.txt -c backend/constraints.txt
       - run: bash tests/ps/run.sh python3
 
@@ -169,6 +171,7 @@ jobs:
     # (модель отвечает с задержкой). Падает при росте доли 5xx или при «idle in transaction» дольше порога — то есть если код снова удержит соединение во время долгой операции.
     # Полные испытания на 100/500/1000/2000 пользователей — tests/perf/run_matrix.sh (docs/PERFORMANCE.md).
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -183,7 +186,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
-      - run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libkrb5-dev gcc
+      - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libkrb5-dev gcc
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt psutil aiohttp
       - name: Сервер и нагрузка
         env:

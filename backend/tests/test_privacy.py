@@ -218,6 +218,69 @@ def test_verification_fails_closed_when_a_secret_survives(monkeypatch):
     assert e.value.code == "verification_failed"
 
 
+# ------------------------------------------------- правила, перенесённые из прежнего PHP-обезличивателя (сверка — docs/ANONYMIZATION.md)
+@pytest.mark.parametrize("text,gone,kept", [
+    # подписанные номера заменяются и с неверной контрольной суммой — опечатка не делает номер открытым
+    ("СНИЛС 123-456-789 01\nИНН/КПП 2308123456 / 230801001\nОГРН 1232300004567\nр/с 40702810900000012345\nBIK=040349225",
+     ["123-456-789 01", "2308123456", "230801001", "1232300004567", "40702810900000012345", "040349225"], []),
+    ("— паспорт?\n— 03 18 654321, выдан 21.04.2018\nпаспорт серии 03 16 номер 445566\nп-т 0314 №991122\nзагранпаспорт 72 9988776\nкод подр 230-017",
+     ["03 18 654321", "21.04.2018", "03 16 номер 445566", "0314 №991122", "72 9988776", "230-017"], []),
+    ("Дата рожденuя: 05.08.1989.\nдата рождения 17.04.1986 | 17/04/1986 | 17 апреля 1986\nПациентка Петрова Е.А., 07.11.1992, карта №184725.",
+     ["05.08.1989", "17.04.1986", "17/04/1986", "17 апреля 1986", "07.11.1992", "184725"], ["Пациентка"]),
+    ("Карта МИР 2202 2000 1234 5678; valid thru 10/29; CVC 411; CARDHOLDER ALEXEY ORLOV\norder_id=4111111111111111",
+     ["2202 2000 1234 5678", "10/29", "CVC 411", "ALEXEY ORLOV"], ["order_id=4111111111111111"]),
+    ('DB_PASSWORD="Prod-Med!8891"\n{"username":"nlebedev","password":"Json!Pass#2026"}\n<password>Xml!Pass#2026</password>\n'
+     '<input name="client_secret" value="html_secret_abcdef123456">\nAUTH-003 | пароль | Temp!Auth#003\nusername,password,host\nsvc_csv,Csv!Pass#2026,db\n'
+     "login;pass = report_user;Report#7788!\ncurl -u k.zhdanov:Curl!Core#2026 https://api.example.org\nTOTP secret JBSWY3DPEHPK3PXR\n"
+     "backup codes 19aa-22bb-33cc,44dd-55ee-66ff\nCookie: remember_me=remember_778899abcdef\nпароль........ Qwerty-Test!995\nbind pwd Ldap#Bind!7788",
+     ["Prod-Med!8891", "nlebedev", "Json!Pass#2026", "Xml!Pass#2026", "html_secret_abcdef123456", "Temp!Auth#003", "Csv!Pass#2026", "svc_csv",
+      "report_user", "Report#7788!", "Curl!Core#2026", "JBSWY3DPEHPK3PXR", "19aa-22bb-33cc", "44dd-55ee-66ff", "remember_778899abcdef", "Qwerty-Test!995", "Ldap#Bind!7788"],
+     ["AUTH-003"]),
+    ('ПарольБД = "Test!1C#2026";\nСоединение = Новый HTTPСоединение(\n    "api.example.org",\n    443,\n    "svc_1c",\n    "Http!1C#2026");\n'
+     'Параметры = Новый Структура("Логин,Пароль", "exchangeuser", "Params!1C#2026");\n1cestart.exe ENTERPRISE /N"svc_launch" /P"Launch!1C#2026"\n'
+     'ЭтоНеПароль = "просто строка без метки";\nПолучитьТокен();\nРелизКонфигурации = "8.3.24.1559";\nВерсия платформы 192.0.2.17\nTOKEN=${TOKEN}\nPASSWORD=%PASSWORD%\nSECRET={{SECRET}}',
+     ["Test!1C#2026", "svc_1c", "Http!1C#2026", "exchangeuser", "Params!1C#2026", "svc_launch", "Launch!1C#2026"],
+     ['ЭтоНеПароль = "просто строка без метки"', "ПолучитьТокен()", "8.3.24.1559", "Версия платформы 192.0.2.17", "${TOKEN}", "%PASSWORD%", "{{SECRET}}"]),
+    ("сервер db-prod-02.corp.example.org\nрабочая станция KRD-WS-0091\nC:\\Users\\kovalev\\Desktop\\passwords.txt\n/home/svc_med/.ssh/id_ed25519\n"
+     "S-1-5-21-1234567890-2233445566-998877665-1104\nTG @petrova_ea, почта petrova.elena(at)example.org\nIPv6 2001:db8:85a3::8a2e:370:7334\n"
+     "Инцидент INC-2026-001, горячая линия 8-800-555-35-35, пакет @scope/pkg",
+     ["db-prod-02", "KRD-WS-0091", "kovalev", "svc_med", "S-1-5-21", "@petrova_ea", "petrova.elena", "2001:db8"],
+     ["INC-2026-001", "8-800-555-35-35", "@scope/pkg"]),
+    ("Ds: первичная открытоугольная глаукома OD.\nМКБ-10 H40.1.\nАллергоанамнез: пенициллин. ВИЧ — отриц.\nу неё рекуррентное депрессивное расстройство, врач в курсе",
+     ["глаукома", "H40.1", "пенициллин", "ВИЧ — отриц", "депрессивное расстройство"], ["врач в курсе"]),
+    ("Себестоимость 13 420 000; маржа 31,4%; цена продажи 12 500 000; бонус менеджера 240 000.\nОткрытая цена на сайте 4 900 руб. Скидка по публичной акции 10%.",
+     ["13 420 000", "31,4%", "12 500 000", "240 000"], ["4 900 руб.", "акции 10%"]),
+    ("Коммерческая тайна. ДСП. Клиенту не передавать.\nДело № 2-1847/2026, Дело № А40-55123/2026\nVIN XTA212140Y1234567, кадастровый номер 23:43:0205017:1122, "
+     "государственный регистрационный знак А123ВС123\nПроект MED-CORE-2027 стартует. Ст. 309 ГК РФ.",
+     ["Коммерческая тайна", "ДСП", "Клиенту не передавать", "2-1847/2026", "XTA212140Y1234567", "23:43:0205017:1122", "А123ВС123", "MED-CORE-2027"],
+     ["А40-55123/2026", "ГК РФ"]),
+])
+def test_rules_carried_over_from_the_previous_anonymizer(text, gone, kept):
+    out = run(text, people=[])
+    for g in gone:
+        assert g not in out, (g, out)
+    for k in kept:
+        assert k in out, (k, out)
+
+
+def test_names_in_latin_and_capitals_and_with_initials_are_the_same_person():
+    out = run("IVANOV IVAN PETROVICH подписал. ПЕТРОВА МАРИЯ СЕРГЕЕВНА согласовала. Пациент: Кузнецов Сергей Андреевич.\nИванов И.П. тел. 1234\n"
+              "=== CONTROL SUMMARY ===")
+    assert out.splitlines()[0] == "Иван И. подписал. Мария П. согласовала. Пациент: Сергей К."
+    assert out.splitlines()[1].startswith("Иван И.") and "CONTROL SUMMARY" in out
+
+
+def test_a_value_found_once_is_replaced_everywhere_and_a_login_from_an_email():
+    out = run("пароль: Zx9!kLm2q-77\nпозже повторил в чате Zx9!kLm2q-77\nпочта m.voronova@example.org, в VPN заходит как m.voronova", people=[])
+    assert "Zx9!kLm2q-77" not in out and "m.voronova" not in out
+
+
+def test_a_secret_revealed_by_earlier_replacements_is_masked_not_refused():
+    """Коды восстановления — секрет; маркерное правило после первой замены могло увидеть следующую строку как «новый» секрет."""
+    out = run("recovery codes 11aa-22bb-33dd,44dd-55ee-66aa\n\nstate=550e8400-e29b-41d4-a716-446655440051 nonce=r4nd0mN0nc3Value7788", people=[])
+    assert "11aa-22bb-33dd" not in out and "44dd-55ee-66aa" not in out
+
+
 # ---------------------------------------------------------------------------------------------------- лаборатория
 def _docx(text: str) -> bytes:
     import io as _io
@@ -232,12 +295,17 @@ def _docx(text: str) -> bytes:
     return buf.getvalue()
 
 
-def _pdf(text: str) -> bytes:
+def _pdf(text: str, image: bool = False) -> bytes:
     """Простой PDF с текстовым слоем (латиница — встроенный шрифт Helvetica без кириллицы)."""
     content = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    if image:                                       # «скан»: страница — изображение без текстового слоя
+        content = b"q 612 0 0 792 0 0 cm /Im1 Do Q"
+    xobj = b" /XObject << /Im1 6 0 R >>" if image else b""
     objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >>" + xobj + b" >> >>",
             b"<< /Length %d >>stream\n" % len(content) + content + b"\nendstream", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    if image:
+        objs.append(b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>stream\n\x80\nendstream")
     out, offs = bytearray(b"%PDF-1.4\n"), []
     for i, o in enumerate(objs, 1):
         offs.append(len(out))
@@ -246,6 +314,16 @@ def _pdf(text: str) -> bytes:
     out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % x for x in offs)
     out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % (len(objs) + 1, xref)
     return bytes(out)
+
+
+def test_scanned_pdf_page_blocks_the_whole_document():
+    """Страница-изображение без текста не проверена: результат по документу не выдаётся (отказ), а не «чистый» текст остальных страниц."""
+    from app.privacy.extract import ExtractError, extract
+
+    with pytest.raises(ExtractError, match="сканы"):
+        extract("scan.pdf", _pdf("", image=True))
+    text, info = extract("text.pdf", _pdf("Ivanov Ivan, password=Qw3rty-Pass-2026, phone +7 916 123-45-67"))
+    assert "Ivanov" in text and info["pages"] == 1
 
 
 def test_lab_text_file_formats_draft_settings_limits_and_rights(client):

@@ -232,6 +232,62 @@ def ner_spans(text: str, known_surnames: set[str] | frozenset[str] = frozenset()
     return sorted(out, key=lambda s: s.start)
 
 
+_TRANSLIT = [("shch", "щ"), ("sch", "щ"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"), ("yo", "ё"),
+             ("iy", "ий"), ("yy", "ый"), ("ey", "ей"), ("ay", "ай"), ("oy", "ой")]
+_LAT1 = str.maketrans("abvgdezijklmnoprstufhcwxyq", "абвгдезийклмнопрстуфхквхык")
+
+
+def to_cyrillic(name: str) -> str:
+    """Латинская запись русского имени → кириллица для разбора: «IVANOV MAKSIM» → «Иванов Максим», «Dmitry» → «Дмитрий»; кириллица — с заглавной."""
+    words = []
+    for w in name.split():
+        x = w.lower()
+        if re.search(r"[a-z]", x):
+            x = re.sub(r"(?<=[bcdfghjklmnpqrstvwxz])y$", "iy", x).replace("x", "ks")
+            for a, b in _TRANSLIT:
+                x = x.replace(a, b)
+            x = x.translate(_LAT1)
+        words.append(x.capitalize())
+    return " ".join(words)
+
+
+_CAPS_SEQ = re.compile(r"(?<![\w.])(?:[A-Z][a-z]+|[A-Z]{2,}|[А-ЯЁ]{2,})(?:[ \t]+(?:[A-Z][a-z]+|[A-Z]{2,}|[А-ЯЁ]{2,})){1,2}(?![\w])")
+_SURNAME_END = ("ов", "ова", "ев", "ева", "ёв", "ёва", "ин", "ина", "ын", "ына", "ский", "ская", "цкий", "цкая", "ко", "ук", "юк", "ич")
+
+
+_INITIALS_NAME = re.compile(r"(?<![\w.])(?:[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s?(?:[А-ЯЁ]\.)?|[А-ЯЁ]\.\s?(?:[А-ЯЁ]\.)?\s?[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?)(?![\w])")
+
+
+def initials_people(text: str) -> list[tuple[int, int]]:
+    """«Иванов М.С.», «М.С.Иванов», «Петрова Е.А.» — фамилия с инициалами узнаётся и там, где NER промолчал (в начале строки, в обрывках)."""
+    m = morph()
+    out = []
+    for c in _INITIALS_NAME.finditer(text):
+        word = re.search(r"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?", c.group(0).replace(".", " ").strip())
+        w = word.group(0) if word else ""
+        if w and len(w) > 2 and (any("Surn" in p.tag for p in m.parse(w)) or w.lower().endswith(_SURNAME_END)):
+            out.append((c.start(), c.end()))
+    return out
+
+
+def caps_people(text: str) -> list[tuple[int, int, str]]:
+    """Имена, которые NER не видит: латиницей («ELENA PETROVA», «Dmitry Morozov») и прописными кириллицей («ВОРОНОВА МАРИНА СЕРГЕЕВНА»).
+    [(начало, конец, кириллическая запись для разбора)] — только если есть имя и ещё одна часть ФИО (фамилия, отчество или второе имя)."""
+    m = morph()
+    out = []
+    for c in _CAPS_SEQ.finditer(text):
+        words = c.group(0).split()
+        if not (all(re.fullmatch(r"[A-Za-z]+", w) for w in words) or all(w.isupper() for w in words)):
+            continue
+        cyr = to_cyrillic(c.group(0)).split()
+        tags = [{g for p in m.parse(w.lower()) if p.score > 0.05 for g in ("Name", "Surn", "Patr") if g in p.tag} for w in cyr]
+        names = sum("Name" in t for t in tags)
+        other = sum(bool(t - {"Name"}) or (not t and w.lower().endswith(_SURNAME_END)) for t, w in zip(tags, cyr))
+        if names and names + other >= 2 and all(t or w.lower().endswith(_SURNAME_END) for t, w in zip(tags, cyr)):
+            out.append((c.start(), c.end(), " ".join(cyr)))
+    return out
+
+
 def _chunks(text: str, size: int):
     pos = 0
     while pos < len(text):

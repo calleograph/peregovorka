@@ -1,6 +1,7 @@
 """Текст из файла для лаборатории обезличивания: TXT/MD/CSV/LOG/JSON, DOCX, ODT, PDF (текстовый слой), HTML. Всё в памяти: файл на диск не пишется.
 
-Сканированные PDF без текстового слоя распознаванием (OCR) не обрабатываются — лаборатория прямо сообщает об этом, а не возвращает пустой «чистый» результат.
+Сканированные страницы PDF (изображение без текстового слоя) распознаванием (OCR) пока не обрабатываются. Документ с такой страницей отклоняется целиком:
+её содержимое не проверено, поэтому «обезличенный» результат по остальным страницам выглядел бы чистым, не будучи им.
 """
 from __future__ import annotations
 
@@ -93,15 +94,24 @@ def extract(name: str, data: bytes) -> tuple[str, dict]:
             reader = PdfReader(io.BytesIO(data))
             if reader.is_encrypted:
                 raise ExtractError("PDF защищён паролем")
-            pages = [p.extract_text() or "" for p in reader.pages]
+            pages, scans = [], []
+            for i, page in enumerate(reader.pages, 1):
+                t = page.extract_text() or ""
+                pages.append(t)
+                if len(t.strip()) < 20:
+                    try:
+                        has_image = len(page.images) > 0
+                    except Exception:  # noqa: BLE001
+                        has_image = True                    # не удалось проверить — считаем непроверенной
+                    if has_image:
+                        scans.append(i)
         except ExtractError:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ExtractError(f"PDF не читается ({type(exc).__name__})") from None
-        text = "\n\n".join(pages).strip()
-        info = {"format": "PDF", "pages": len(pages)}
-        if len(text) < 20 * max(1, len(pages)):
-            info["note"] = ("Текстового слоя почти нет — похоже, это скан. Распознавание сканов (OCR) в лаборатории пока не выполняется: "
-                            "проверьте документ в текстовом виде.")
-        return text, info
+        if scans:
+            listed = ", ".join(map(str, scans[:10])) + ("…" if len(scans) > 10 else "")
+            raise ExtractError(f"Страницы без текстового слоя (сканы): {listed} из {len(pages)}. Их содержимое не проверено, поэтому результат не выдаётся. "
+                               "Распознавание сканов (OCR) пока не выполняется — проверьте документ в текстовом виде.")
+        return "\n\n".join(pages).strip(), {"format": "PDF", "pages": len(pages)}
     raise ExtractError("Формат не поддерживается. Поддерживаются: " + ", ".join(SUPPORTED))

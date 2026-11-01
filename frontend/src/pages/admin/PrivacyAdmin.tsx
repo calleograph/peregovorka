@@ -1,9 +1,10 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiError, type PrivacyAction, type PrivacyCatalog, type PrivacyLabResult, type PrivacyProfile, type SettingsValues } from "../../api";
 
 type Draft = Record<string, unknown>;
 import InfoTip from "../../components/InfoTip";
 import { useFocusOnMount } from "../../useInitialFocus";
+import { mergeTerms, parseTermsCsv, type Term, termsToCsv } from "../../termsCsv";
 
 const TABS = [["general", "Общие"], ["categories", "Категории"], ["rules", "Правила"], ["people", "Участники и имена"], ["dict", "Словари и исключения"],
   ["profiles", "Профили"], ["lab", "Тестирование"]] as const;
@@ -159,9 +160,26 @@ export default function PrivacyAdmin() {
 }
 
 function Dictionaries({ draft, set }: { draft: Draft; set: (k: string, v: unknown) => void }) {
-  const terms = (draft.terms as { term: string; category: string; replacement: string }[]) ?? [];
+  const terms = (draft.terms as Term[]) ?? [];
   const lines = (k: string) => ((draft[k] as string[]) ?? []).join("\n");
   const upd = (i: number, k: string, v: string) => set("terms", terms.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  const [csvNote, setCsvNote] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const importCsv = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 1024 * 1024) { setCsvNote("Файл больше 1 МБ — не загружен."); return; }
+    const { terms: added, skipped } = parseTermsCsv(await file.text());
+    const merged = mergeTerms(terms, added);
+    set("terms", merged.terms);
+    setCsvNote(`Добавлено терминов: ${merged.added}` + (added.length - merged.added ? `, уже были: ${added.length - merged.added}` : "") + (skipped ? `, пропущено строк: ${skipped}` : "") + ". Сохраните изменения.");
+  };
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob(["﻿" + termsToCsv(terms)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = "slovar-obezlichivaniya.csv"; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  };
   return (
     <div role="tabpanel">
       <h3 className="field-title">Словарь<InfoTip>Клиенты, проекты, внутренние системы, свои термины. Узнаются в любой форме слова («Альфа», «по Альфе»). Замена — своя или обозначение категории («Проект 1»).</InfoTip></h3>
@@ -175,13 +193,20 @@ function Dictionaries({ draft, set }: { draft: Draft; set: (k: string, v: unknow
             <td><button type="button" className="btn mini ghost danger" onClick={() => set("terms", terms.filter((_, j) => j !== i))}>Удалить</button></td>
           </tr>))}</tbody>
       </table></div>
-      <button type="button" className="btn mini" onClick={() => set("terms", [...terms, { term: "", category: "project", replacement: "" }])}>＋ Термин</button>
+      <div className="row">
+        <button type="button" className="btn mini" onClick={() => set("terms", [...terms, { term: "", category: "project", replacement: "" }])}>＋ Термин</button>
+        <button type="button" className="btn mini ghost" onClick={() => fileRef.current?.click()}>Загрузить CSV</button>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => { void importCsv(e.target.files?.[0]); e.target.value = ""; }} />
+        <button type="button" className="btn mini ghost" onClick={exportCsv} disabled={!terms.length}>Выгрузить CSV</button>
+        <InfoTip>Столбцы «термин, категория, замена». Подходит и выгрузка прежнего обезличивателя документов («значение, метка»): метка станет своей заменой. Повторы не добавляются.</InfoTip>
+      </div>
+      {csvNote && <p className="help" role="status">{csvNote}</p>}
       <div className="cols" style={{ marginTop: 12 }}>
         <label>Исключения — не заменять никогда (кроме паролей и ключей), по строке на термин
           <textarea rows={6} value={lines("exceptions")} onChange={(e) => set("exceptions", e.target.value.split("\n"))} placeholder="Например: название своей компании, общеизвестные продукты" /></label>
         <label>Внутренние домены — адреса и серверы в них заменяются
           <textarea rows={6} value={lines("internal_domains")} onChange={(e) => set("internal_domains", e.target.value.split("\n"))} placeholder="corp.example.org" />
-          <span className="help">Домены *.local, *.corp, *.lan, *.internal считаются внутренними всегда.</span></label>
+          <span className="help">Домены *.local, *.corp, *.lan, *.internal, *.test и имена с внутренней частью (db.corp.…) считаются внутренними всегда.</span></label>
       </div>
     </div>
   );

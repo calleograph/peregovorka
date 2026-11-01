@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 
 from . import names as nm
 from .patterns import find_structured
-from .secrets import Found, find_secrets
+from .guard import mask_secrets
+from .secrets import Found, find_secrets, shadow
 
 # ---------------------------------------------------------------------------------------------------- категории
 CATEGORIES: dict[str, str] = {
@@ -29,6 +30,8 @@ CATEGORIES: dict[str, str] = {
     "login": "Учётные записи",
     "id_number": "Документы и идентификаторы: ИНН, СНИЛС, паспорт, ОГРН",
     "bank": "Банковские реквизиты и карты",
+    "health": "Сведения о здоровье: диагнозы, анамнез, результаты обследований",
+    "marker": "Грифы и пометки конфиденциальности",
     "doc_number": "Номера договоров, счетов, заявок",
     "money": "Суммы и финансовые показатели",
     "project": "Внутренние проекты и системы (словарь)",
@@ -39,23 +42,41 @@ ACTIONS = ("keep", "mask", "pseudonym")           # оставить | заме�
 PERSON_FORMATS = ("short", "role")                # «Иван И.» | «Участник 2»
 
 LABEL = {"organization": "Организация", "location": "Место", "address": "адрес", "phone": "телефон", "email": "почта", "ip": "IP", "host": "сервер",
-         "url": "ссылка", "login": "учётная запись", "id_number": "идентификатор", "bank": "реквизит", "doc_number": "номер", "money": "сумма",
+         "url": "ссылка", "login": "учётная запись", "id_number": "идентификатор", "bank": "реквизит", "health": "сведения о здоровье", "marker": "гриф", "doc_number": "номер", "money": "сумма",
          "project": "Проект", "custom": "скрыто", "secret": "секрет удалён"}
 _BARE = {"organization", "location", "project"}      # обозначения без скобок: «Организация 2», «Проект 1» — читаются как имена собственные
 
 PROFILES: dict[str, dict] = {
     "basic": {"title": "Базовый", "person_format": "short", "org_scope": "legal", "actions": {
         "person": "pseudonym", "organization": "pseudonym", "location": "keep", "address": "mask", "phone": "mask", "email": "pseudonym", "ip": "pseudonym",
-        "host": "pseudonym", "url": "pseudonym", "login": "pseudonym", "id_number": "mask", "bank": "mask", "doc_number": "pseudonym", "money": "mask",
+        "host": "pseudonym", "url": "pseudonym", "login": "pseudonym", "id_number": "mask", "bank": "mask", "health": "mask", "marker": "mask", "doc_number": "pseudonym", "money": "mask",
         "project": "pseudonym", "custom": "pseudonym"}},
     "strict": {"title": "Строгий", "person_format": "role", "org_scope": "all", "actions": {
         "person": "pseudonym", "organization": "pseudonym", "location": "pseudonym", "address": "mask", "phone": "mask", "email": "mask", "ip": "mask",
-        "host": "pseudonym", "url": "mask", "login": "mask", "id_number": "mask", "bank": "mask", "doc_number": "mask", "money": "mask",
+        "host": "pseudonym", "url": "mask", "login": "mask", "id_number": "mask", "bank": "mask", "health": "mask", "marker": "mask", "doc_number": "mask", "money": "mask",
         "project": "pseudonym", "custom": "pseudonym"}},
 }
-PRIORITY = {"secret": 100, "url": 90, "email": 88, "bank": 86, "id_number": 85, "login": 84, "ip": 82, "host": 80, "phone": 78, "address": 76,
-            "doc_number": 74, "money": 72, "custom": 70, "project": 69, "organization": 60, "person": 55, "location": 40}
+PRIORITY = {"secret": 100, "url": 90, "email": 88, "bank": 86, "id_number": 85, "health": 83, "login": 84, "ip": 82, "host": 80, "phone": 78, "address": 76,
+            "doc_number": 74, "money": 72, "marker": 71, "custom": 70, "project": 69, "organization": 60, "person": 55, "location": 40}
 _LEGAL = re.compile(r"(?i)\b(?:ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|ФГУП|ГУП|МУП|ГК|ТОО|LLC|Ltd|Inc|GmbH)\b")
+
+
+_LAW_CODE = re.compile(r"^(?:ГК|ГПК|УК|УПК|НК|ТК|КоАП|АПК|ЖК|СК|БК|ЗК|КАС)(?:\s+РФ)?$")
+
+
+def _ner_plausible(text: str, s: int, e: int, cat: str) -> bool:
+    """Отсев промахов NER: часть слова (ПолучитьТокен), обрывок кода через строку или скобку, коды и заголовки (ERP_PROD, INC-2026-001,
+    CONTROL SUMMARY), сокращения кодексов (ГК РФ)."""
+    span = text[s:e]
+    if e <= s or (s > 0 and text[s - 1].isalnum()) or (e < len(text) and text[e].isalnum()):
+        return False
+    if re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z]+(?:[А-ЯЁA-Z][а-яёa-z0-9]*)+", span):
+        return False                                    # ПолныеПрава, ТекущийПользователь — идентификатор из кода, а не имя
+    if cat == "organization" and (re.search(r"[\d_]", span) and not re.search(r"[а-яё]", span) or re.fullmatch(r"[A-Z][A-Z ]+", span) and " " in span or _LAW_CODE.match(span)):
+        return False
+    if cat == "location" and re.fullmatch(r"РФ|Росси[яиюей]|Российск\w+\s+Федераци\w+", span):
+        return False                                    # страна — общеизвестное место, а не сведения о человеке
+    return True
 
 
 class PrivacyError(Exception):
@@ -146,6 +167,7 @@ class Anonymizer:
         self._numbers: dict[tuple[str, str], int] = {}
         self._counts: Counter = Counter()
         self._aliases: dict[int, str] = {}
+        self._cyr: dict[tuple[int, int], str] = {}          # имя латиницей/прописными → кириллическая запись для разбора
         if policy.use_ner and policy.action("person") != "keep":
             for p in participants:
                 self.roster.add_participant(p)
@@ -183,6 +205,7 @@ class Anonymizer:
 
     def find(self, text: str) -> list[tuple[Found, str]]:
         """Непересекающиеся находки (с приоритетом категорий) и их тип для NER: [(находка, PER|ORG|LOC|'')]."""
+        text = shadow(text)
         cands: list[tuple[Found, str]] = [(f, "") for f in find_secrets(text)]
         cands += [(f, "") for f in find_structured(text, internal_domains=self.policy.internal_domains, public_domains=self.policy.public_domains)]
         toks = _forms(text, self.policy.use_ner) if self._term_lemmas else []
@@ -191,9 +214,20 @@ class Anonymizer:
             known = {p.parts.surname for p in self.roster.people if p.parts.surname}
             for s in nm.ner_spans(text, known):
                 cat = {"PER": "person", "ORG": "organization", "LOC": "location"}[s.kind]
-                if cat == "organization" and self.policy.org_scope == "legal" and not _LEGAL.search(text[max(0, s.start - 6):s.end]):
+                start, end = s.start, s.start + len(re.split(r"\s*[\n(=]", text[s.start:s.end])[0])          # «Иванов М.С.\nАбонент» — имя до конца строки
+                while cat == "person" and (w := re.match(r"([А-ЯЁ][а-яё]+)\s+", text[start:end])) and not nm._name_like(w.group(1), nm.morph()):
+                    start += w.end()                        # «Пациентка Петрова Е.А.» — должность или роль перед именем остаётся
+                if not _ner_plausible(text, start, end, cat):
                     continue
-                cands.append((Found(s.start, s.end, cat, "ner"), s.kind))
+                if cat == "organization" and self.policy.org_scope == "legal" and not _LEGAL.search(text[max(0, start - 6):end]):
+                    continue
+                cands.append((Found(start, end, cat, "ner"), s.kind))
+            if self.policy.action("person") != "keep":
+                for s0, e0 in nm.initials_people(text):
+                    cands.append((Found(s0, e0, "person", "initials"), "PER"))
+                for s0, e0, cyr in nm.caps_people(text):
+                    self._cyr[(s0, e0)] = cyr
+                    cands.append((Found(s0, e0, "person", "name_caps"), "PER"))
         cands.sort(key=lambda c: (-PRIORITY.get(c[0].category, 0), -(c[0].end - c[0].start), c[0].start))
         taken: list[tuple[Found, str]] = []
         for f, k in cands:
@@ -204,7 +238,59 @@ class Anonymizer:
             if any(f.start < g.end and g.start < f.end for g, _ in taken):
                 continue
             taken.append((f, k))
+        taken += self._repeats(text, taken)
         return sorted(taken, key=lambda c: c[0].start)
+
+    _DATE = re.compile(r"(?<![\d./-])(?:(?P<d>\d{1,2})[./-](?P<m>\d{1,2})[./-](?P<y>(?:19|20)?\d{2})|(?P<d2>\d{2})(?P<m2>\d{2})(?P<y2>(?:19|20)\d{2})|(?P<y3>(?:19|20)\d{2})-(?P<m3>\d{2})-(?P<d3>\d{2})"
+                       r"|(?P<d4>\d{1,2})\s+(?P<m4>январ|феврал|март|апрел|ма[яй]|июн|июл|август|сентябр|октябр|ноябр|декабр|янв|фев|мар|апр|авг|сен|окт|ноя|дек)[а-я]*\.?\s+(?P<y4>(?:19|20)\d{2}))(?![\d/-]|\.\d)")
+    _MONTHS = ("янв", "фев", "мар", "апр", "ма", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
+
+    @classmethod
+    def _date_key(cls, m: re.Match) -> tuple[int, int, int] | None:
+        for d, mo, y in (("d", "m", "y"), ("d2", "m2", "y2"), ("d3", "m3", "y3"), ("d4", "m4", "y4")):
+            if m.group(d):
+                mon = m.group(mo)
+                mon = int(mon) if mon.isdigit() else next(i + 1 for i, x in enumerate(cls._MONTHS) if mon.startswith(x))
+                year = int(m.group(y))
+                year = year + (1900 if year > 30 else 2000) if year < 100 else year
+                return (int(m.group(d)), mon, year) if 1 <= int(m.group(d)) <= 31 and 1 <= mon <= 12 else None
+        return None
+
+    def _repeats(self, text: str, taken: list[tuple[Found, str]]) -> list[tuple[Found, str]]:
+        """Значение, найденное в одном месте, заменяется везде, где оно повторяется без подсказки (таблица, CSV, пересказ);
+        дата сразу после ФИО — дата рождения («Петрова Е.А., 07.11.1992»)."""
+        busy = [(f.start, f.end) for f, _ in taken]
+        free = lambda s, e: not any(s < b and a < e for a, b in busy)          # noqa: E731
+        out: list[tuple[Found, str]] = []
+        dates = [(m, self._date_key(m)) for m in self._DATE.finditer(text)]
+        births = {k for m, k in dates if k and any(f.rule in ("birth_date", "issue_details") and f.start <= m.start() < f.end for f, _ in taken)}
+        for m, k in dates:                       # та же дата рождения в другой записи (17/04/1986, 17041986, 17 апреля 1986) и дата сразу после ФИО
+            if not k or not free(m.start(), m.end()):
+                continue
+            near = k[2] <= 2012 and any(f.category == "person" and 0 <= m.start() - f.end <= 4 and re.fullmatch(r"[\s,;.]*", text[f.end:m.start()]) for f, _ in taken)
+            if k in births or near:
+                out.append((Found(m.start(), m.end(), "id_number", "birth_date_repeat" if k in births else "birth_date_near_person"), ""))
+                busy.append((m.start(), m.end()))
+        values = {text[f.start:f.end]: f.category for f, _ in taken if f.category not in ("person", "organization", "location", "money", "marker")}
+        for f, _ in taken:                       # логин из адреса почты: m.voronova@… → m.voronova в учётных записях и текстах
+            local = text[f.start:f.end].split("@")[0].strip() if f.category == "email" else ""
+            if len(local) >= 5 and re.fullmatch(r"[A-Za-z0-9._-]+", local) and re.search(r"[._\d]", local):
+                values.setdefault(local, "login")
+        for v, cat in list(values.items()):
+            if cat == "login":                   # «k.zhdanov : Core!Pair#2039», «k.zhdanov/Core!Pair#2038» — пароль после известного логина
+                for m in re.finditer(re.escape(v) + r"\s*[:/]\s*(?P<p>(?=\S*\d)(?=\S*[A-Za-z])[^\s|,;]{6,64})", text):
+                    if free(m.start("p"), m.end("p")):
+                        out.append((Found(m.start("p"), m.end("p"), "secret", "password_after_login"), ""))
+                        busy.append((m.start("p"), m.end("p")))
+        for v, cat in sorted(values.items(), key=lambda x: -len(x[0])):
+            if len(v.strip()) < 4 or v.isalpha() and len(v) < 6:
+                continue
+            rx = re.compile(("(?<![\\w])" if v[0].isalnum() else "") + re.escape(v) + ("(?![\\w])" if v[-1].isalnum() else ""))
+            for m in rx.finditer(text):
+                if free(m.start(), m.end()):
+                    out.append((Found(m.start(), m.end(), cat, "known_value"), ""))
+                    busy.append((m.start(), m.end()))
+        return out
 
     # --------------------------------------------------------------------------------------- замены
     def _number(self, cat: str, key: str) -> int:
@@ -273,7 +359,7 @@ class Anonymizer:
                 if re.fullmatch(r",?\s*(?:и|или|либо)\s+", text[last_end:f.start]) and last_prev:
                     prev = last_prev                         # «с Петровым и Сидоровой» — падеж второго, как у первого
                 last_end, last_prev = f.end, prev
-                rep = self._person(orig, prev)
+                rep = self._person(self._cyr.get((f.start, f.end), orig), prev)
                 if rep is None or rep == orig:
                     continue
             elif f.rule == "dictionary":
@@ -304,6 +390,11 @@ class Anonymizer:
 
     def _verify(self, res: Result) -> None:
         """Повторная проверка результата: секрет после замены — ошибка; фамилия участника, оставшаяся в тексте, — дозаменяется с предупреждением."""
+        for _ in range(2):
+            if not find_secrets(res.text):
+                break
+            res.text, n = mask_secrets(res.text)
+            res.warnings.append(f"При повторной проверке скрыто секретов: {n}")
         left = find_secrets(res.text)
         if left:
             raise PrivacyError("verification_failed", "После обезличивания в тексте остался секрет (правило " + left[0].rule + "): отправка остановлена.")
