@@ -138,12 +138,21 @@ def parse_name(tokens: list[str], prev: str = "") -> NameParts:
     return out
 
 
+_FEM_SURNAME = (("цкая", "цкий"), ("ская", "ский"), ("ова", "ов"), ("ева", "ев"), ("ёва", "ёв"), ("ина", "ин"), ("ына", "ын"))
+
+
+def surname_key(s: str) -> str:
+    """Фамилия без родового окончания: «полякова» и «поляков» (так разбирается одиночное «Полякова» — как род. падеж мужской) — одна основа."""
+    return next((s[: -len(f)] + m for f, m in _FEM_SURNAME if s.endswith(f) and len(s) > len(f) + 1), s)
+
+
 def same_person(a: NameParts, b: NameParts) -> bool:
     """Совместимы ли два набора частей имени (ни одна из известных частей не противоречит, есть хотя бы одна общая)."""
     common = 0
-    for x, y in ((a.first, b.first), (a.patronymic, b.patronymic), (a.surname, b.surname)):
+    for f in ("first", "patronymic", "surname"):
+        x, y = getattr(a, f), getattr(b, f)
         if x and y:
-            if x != y:
+            if x != y and not (f == "surname" and surname_key(x) == surname_key(y) and not (a.gender and b.gender and a.gender != b.gender)):
                 return False
             common += 1
     if a.initials and b.first and a.initials[0] != b.first[0]:
@@ -186,9 +195,20 @@ class Roster:
                 return
         self.people.append(Person(p, len(self.people) + 1, participant=True))
 
+    def _match(self, p: NameParts) -> list[Person]:
+        match = [x for x in self.people if same_person(x.parts, p)]
+        if len(match) > 1 and p.surname:                    # «Иванову» при Петре Иванове и Анне Ивановой — тот, чья форма фамилии совпадает точно
+            match = [x for x in match if x.parts.surname == p.surname] or match
+        return match
+
+    def known(self, p: NameParts) -> Person | None:
+        """Уже известное лицо (участник или подтверждённое упоминание) — без заведения нового и без учёта упоминания."""
+        match = self._match(p)
+        return match[0] if len(match) == 1 else None
+
     def resolve(self, p: NameParts) -> Person | None:
         """Лицо для упоминания: единственный совместимый — он; несколько (например, только имя «Сергей» при двух Сергеях) — None (неоднозначно)."""
-        match = [x for x in self.people if same_person(x.parts, p)]
+        match = self._match(p)
         if len(match) == 1:
             match[0].absorb(p)
             match[0].mentions += 1
@@ -284,6 +304,8 @@ def caps_people(text: str) -> list[tuple[int, int, str]]:
         names = sum("Name" in t for t in tags)
         other = sum(bool(t - {"Name"}) or (not t and w.lower().endswith(_SURNAME_END)) for t, w in zip(tags, cyr))
         if names and names + other >= 2 and all(t or w.lower().endswith(_SURNAME_END) for t, w in zip(tags, cyr)):
+            if all(re.fullmatch(r"[A-Za-z]+", w) for w in words) and not any(m.word_is_known(w.lower()) and name_is_top(w) and "Name" in m.parse(w.lower())[0].tag for w in cyr):
+                continue                                  # «Windows NTLM», «Exchange Online» — названия продуктов: латиницей ФИО — только с известным словарю именем
             out.append((c.start(), c.end(), " ".join(cyr)))
     return out
 
@@ -310,6 +332,66 @@ def _name_like(w: str, m) -> bool:
     return any(g in p.tag for p in m.parse(w) for g in ("Name", "Surn", "Patr"))
 
 
+# междометия, заполнители речи и звукоподражания: «Угу», «Хмм», «Эээ», «Ага» — никогда не имя
+_FILLER = re.compile(r"(?i)(?:у+г+у+|а+г+а+|о+г+о+|х+м+|м+|э+|а+|о+|у+|ах+|ох+|ух+|эх+|ой|ай|ну|неа|ладно|окей|ок|алло|ау|кхм|тсс|аха+|ахах\w*)")
+_NOT_NAME_POS = {"VERB", "INFN", "GRND", "PRTF", "PRTS", "ADVB", "INTJ", "PRCL", "CONJ", "PREP", "NPRO", "PRED", "COMP", "NUMR", "ADJS"}
+_POS_TITLE = {"VERB": "глагол", "INFN": "глагол", "GRND": "деепричастие", "PRTF": "причастие", "PRTS": "причастие", "ADVB": "наречие", "INTJ": "междометие",
+              "PRCL": "частица", "CONJ": "союз", "PREP": "предлог", "NPRO": "местоимение", "PRED": "предикатив", "COMP": "сравнительная степень",
+              "NUMR": "числительное", "ADJS": "краткое прилагательное"}
+
+
+def name_score(word: str, roles: tuple[str, ...] = ROLES) -> float:
+    """Наибольшая уверенность словаря, что слово — имя, фамилия или отчество (roles) в единственном числе (0 — таких разборов нет)."""
+    return max((p.score for p in morph().parse(word.lower()) if "sing" in p.tag and any(g in p.tag for g in roles)), default=0.0)
+
+
+# служебные и рабочие термины, которые словарь знает как редкие имена или фамилии: в речи это не люди
+_NOT_NAMES = {"токен", "токена", "токену", "токеном", "токене", "токены", "роут", "лид", "лида", "лиды", "техлид", "тимлид", "спринт", "релиз", "билд"}
+
+
+def other_score(word: str) -> float:
+    """Наибольшая уверенность словаря в обычном значении слова (не имя, не фамилия, не отчество): «роза» — цветок, «лука» — лук."""
+    return max((p.score for p in morph().parse(word.lower()) if not any(g in p.tag for g in ROLES)), default=0.0)
+
+
+def name_word(word: str) -> str:
+    """Пусто — слово может быть частью имени; иначе причина, почему нет (для лаборатории): междометие, повтор, часть речи, обычное слово, организация."""
+    if _INITIAL.match(word):
+        return ""
+    w = word.lower()
+    parts = w.split("-")
+    if len(parts) > 1 and len(set(parts)) == 1:
+        return "повтор слова"                                # «Да-да-да», «Раз-раз-раз», «Ток-ток»
+    if all(_FILLER.fullmatch(p) for p in parts):
+        return "междометие"
+    if len(w.replace("-", "")) < 2:
+        return "короткое слово"
+    if w in _NOT_NAMES:
+        return "рабочий термин"
+    if len(parts) > 1:                                       # двойная фамилия — каждая часть похожа на имя; иначе составное слово («Бизнес-заказчик»)
+        return "" if all(name_score(p) > 0 for p in parts) else "составное слово, не имя"
+    ps = morph().parse(w)
+    score = name_score(w)
+    top = ps[0]
+    if score == 0:
+        if any("Orgn" in p.tag for p in ps):
+            return "организация"
+        if top.tag.POS in _NOT_NAME_POS:
+            return _POS_TITLE[top.tag.POS]
+        return "обычное слово" if morph().word_is_known(w) else "нет признаков имени"
+    if top.tag.POS in _NOT_NAME_POS and top.score > score:
+        return _POS_TITLE[top.tag.POS]
+    return ""
+
+
+def name_is_top(word: str) -> bool:
+    """Самый вероятный разбор слова — имя, фамилия или отчество («Иванов», «Сергей»), а не обычное слово, у которого есть и такое значение."""
+    if _INITIAL.match(word):
+        return True
+    p = morph().parse(word.lower())[0]
+    return "sing" in p.tag and any(g in p.tag for g in ROLES)            # «Техлид» разбирается как «имя во мн. числе» — не имя
+
+
 def _extend_people(text: str, spans: list[Span], m) -> list[Span]:
     words = [(t.start(), t.end(), t.group(0)) for t in _TOKEN.finditer(text)]
     taken = [(s.start, s.end) for s in spans]
@@ -322,8 +404,10 @@ def _extend_people(text: str, spans: list[Span], m) -> list[Span]:
         if inside(ws, we) or _INITIAL.match(w):
             continue
         prev = text[max(0, ws - 2):ws]
-        if ws == 0 or re.search(r"[.!?\n]\s*$", text[max(0, ws - 3):ws]) or prev.endswith("«"):
-            continue                                          # в начале предложения заглавная буква ничего не значит
+        if ws == 0 or re.search(r"[.!?\n:]\s*$", text[max(0, ws - 3):ws]) or prev.endswith("«"):
+            if m.word_is_known(w.lower()) and name_is_top(w) and name_score(w) >= 0.4:
+                res.append(Span(ws, we, "PER"))               # в начале предложения заглавная буква ничего не значит — только слово, которое прежде всего фамилия или имя
+            continue
         if any(("Surn" in p.tag or "Name" in p.tag) and p.score >= 0.3 for p in m.parse(w)):
             res.append(Span(ws, we, "PER"))
     for i, s in enumerate(res):                              # 2. соседние слова-части имени присоединяются к лицу

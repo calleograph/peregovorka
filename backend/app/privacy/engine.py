@@ -64,6 +64,67 @@ _LEGAL = re.compile(r"(?i)\b(?:ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|ФГ
 _LAW_CODE = re.compile(r"^(?:ГК|ГПК|УК|УПК|НК|ТК|КоАП|АПК|ЖК|СК|БК|ЗК|КАС)(?:\s+РФ)?$")
 
 
+_PTOK = re.compile(r"[А-ЯЁ]\.|[А-ЯЁA-Zа-яёa-z]+(?:-[А-ЯЁA-Zа-яёa-z]+)*")
+
+
+def _split_people(run: list[tuple[int, int, str]]) -> list[list[tuple[int, int, str]]]:
+    """Подряд идущие части ФИО разных людей: новая часть той же роли (второе имя, второе отчество) или другого рода начинает следующее лицо
+    («Иван Петрович Петровой Марии» без запятой — двое; «Ольга Николаевна Зайцева» — одна)."""
+    out, cur, used, gender = [], [], set(), ""
+    for t in run:
+        w = t[2]
+        initial = bool(nm._INITIAL.match(w))
+        if cur and not initial:
+            r = nm._role(w, gender) if gender else nm._role(w)
+            if (r and r[0] in used) or (r is None and gender and nm._role(w)):
+                out.append(cur)
+                cur, used, gender = [], set(), ""
+        r = None if initial else (nm._role(w, gender) if gender else nm._role(w))
+        cur.append(t)
+        if r:
+            used.add(r[0])
+            if r[0] in ("Name", "Patr") and r[1].tag.gender in ("masc", "femn"):
+                gender = gender or r[1].tag.gender
+    if cur:
+        out.append(cur)
+    return out
+
+
+_SURNAME_FORM = re.compile(r"(?:[оеё]в|[иы]н)(?:а|у|ым|ой|е|ы|ых|ою)?$|[сц]к(?:ий|ая|ого|ому|им|ом|ой|ую)$")
+_UTTER = re.compile(r"^\[\d{1,2}:\d{2}(?::\d{2})?\][^:\n]{1,80}:[ \t]*([А-ЯЁа-яё])", re.M)
+
+
+def _lowercase_transcript(text: str) -> bool:
+    """Стенограмма, где распознавание речи не ставит заглавные буквы: реплики почти не начинаются с заглавной."""
+    firsts = _UTTER.findall(text)
+    return len(firsts) >= 10 and sum(c.isupper() for c in firsts) < 0.1 * len(firsts)
+
+
+def _lower_name_runs(text: str) -> list[tuple[int, int]]:
+    """Подряд идущие строчные слова, у которых есть разбор «имя/фамилия/отчество» (кандидаты; проверяются как обычные)."""
+    out, run = [], []
+    for m in re.finditer(r"(?<![\w-])[а-яё]+(?:-[а-яё]+)*(?![\w-])", text):
+        if nm.name_score(m.group(0)) > 0 and not nm.name_word(m.group(0)):
+            if run and not re.fullmatch(r"[ \t]+", text[run[-1][1]:m.start()]):
+                out.append((run[0][0], run[-1][1]))
+                run = []
+            run.append((m.start(), m.end()))
+        elif run:
+            out.append((run[0][0], run[-1][1]))
+            run = []
+    if run:
+        out.append((run[0][0], run[-1][1]))
+    return out
+
+
+def _sentence_start(text: str, i: int) -> bool:
+    """Слово начинает реплику или предложение: заглавная буква здесь не говорит, что это имя (после «Имя:», временной метки, точки, начала строки)."""
+    j = i
+    while j > 0 and text[j - 1] in " \t":
+        j -= 1
+    return j == 0 or text[j - 1] in ".!?…:;\n«\"(—–]"
+
+
 def _ner_plausible(text: str, s: int, e: int, cat: str) -> bool:
     """Отсев промахов NER: часть слова (ПолучитьТокен), обрывок кода через строку или скобку, коды и заголовки (ERP_PROD, INC-2026-001,
     CONTROL SUMMARY), сокращения кодексов (ГК РФ)."""
@@ -123,6 +184,7 @@ class Replacement:
     rule: str
     original: str        # только для лаборатории (ответ администратору); в журнал не попадает
     replacement: str
+    evidence: str = ""   # почему кандидат признан человеком (лаборатория)
 
 
 @dataclass
@@ -130,6 +192,7 @@ class Result:
     text: str
     replacements: list[Replacement]
     warnings: list[str] = field(default_factory=list)
+    candidates: list[dict] = field(default_factory=list)      # спорные кандидаты в люди, оставленные текстом: {start, end, reason} (лаборатория)
 
     def stats(self) -> dict[str, int]:
         return dict(Counter(r.category for r in self.replacements))
@@ -168,6 +231,10 @@ class Anonymizer:
         self._counts: Counter = Counter()
         self._aliases: dict[int, str] = {}
         self._cyr: dict[tuple[int, int], str] = {}          # имя латиницей/прописными → кириллическая запись для разбора
+        self._seen: list[nm.NameParts] = []                 # подтверждённые лица сессии: повторное упоминание одной фамилией узнаётся
+        self._why: dict[tuple[int, int], str] = {}          # основание, по которому кандидат признан человеком (для лаборатории)
+        self._rejected: list[dict] = []                     # спорные кандидаты последней обработки: остались текстом (для лаборатории)
+        self._orgs: list[Found] = []
         if policy.use_ner and policy.action("person") != "keep":
             for p in participants:
                 self.roster.add_participant(p)
@@ -206,24 +273,39 @@ class Anonymizer:
     def find(self, text: str) -> list[tuple[Found, str]]:
         """Непересекающиеся находки (с приоритетом категорий) и их тип для NER: [(находка, PER|ORG|LOC|'')]."""
         text = shadow(text)
+        self._rejected, self._orgs = [], []
         cands: list[tuple[Found, str]] = [(f, "") for f in find_secrets(text)]
         cands += [(f, "") for f in find_structured(text, internal_domains=self.policy.internal_domains, public_domains=self.policy.public_domains)]
         toks = _forms(text, self.policy.use_ner) if self._term_lemmas else []
         cands += [(f, "") for f in self._dictionary(text, toks)]
         if self.policy.use_ner and any(self.policy.action(c) != "keep" for c in ("person", "organization", "location")):
             known = {p.parts.surname for p in self.roster.people if p.parts.surname}
+            people: list[tuple[int, int]] = []
             for s in nm.ner_spans(text, known):
                 cat = {"PER": "person", "ORG": "organization", "LOC": "location"}[s.kind]
                 start, end = s.start, s.start + len(re.split(r"\s*[\n(=]", text[s.start:s.end])[0])          # «Иванов М.С.\nАбонент» — имя до конца строки
-                while cat == "person" and (w := re.match(r"([А-ЯЁ][а-яё]+)\s+", text[start:end])) and not nm._name_like(w.group(1), nm.morph()):
-                    start += w.end()                        # «Пациентка Петрова Е.А.» — должность или роль перед именем остаётся
+                if cat == "person":
+                    people.append((start, end))                # находка NER — только кандидат: проверяется ниже по составу, контексту и списку участников
+                    continue
                 if not _ner_plausible(text, start, end, cat):
+                    continue
+                if (w := _PTOK.fullmatch(text, start, end)) and (why := nm.name_word(w.group(0))) and why not in ("обычное слово", "нет признаков имени", "организация"):
+                    self._rejected.append({"start": start, "end": end, "reason": why})     # «Окей» как организация, «Хм» как место — междометие, а не название
                     continue
                 if cat == "organization" and self.policy.org_scope == "legal" and not _LEGAL.search(text[max(0, start - 6):end]):
                     continue
                 cands.append((Found(start, end, cat, "ner"), s.kind))
+            lower = _lowercase_transcript(text)
+            if lower:                                          # стенограмма без заглавных букв: кандидаты — слова, которые словарь считает частями имени
+                people += _lower_name_runs(text)
+            for f in [*self._people(text, people, lower), *self._orgs]:
+                if f.category == "person" and self.policy.action("person") == "keep":
+                    continue
+                if f.category == "organization" and self.policy.org_scope == "legal" and not _LEGAL.search(text[max(0, f.start - 6):f.end]):
+                    continue
+                cands.append((f, "PER" if f.category == "person" else "ORG"))
             if self.policy.action("person") != "keep":
-                for s0, e0 in self._participant_runs(text):
+                for s0, e0 in self._participant_runs(text, lower):
                     cands.append((Found(s0, e0, "person", "participant"), "PER"))
                 for s0, e0 in nm.initials_people(text):
                     cands.append((Found(s0, e0, "person", "initials"), "PER"))
@@ -243,14 +325,93 @@ class Anonymizer:
         taken += self._repeats(text, taken)
         return sorted(taken, key=lambda c: c[0].start)
 
-    def _participant_runs(self, text: str) -> list[tuple[int, int]]:
+    def _people(self, text: str, spans: list[tuple[int, int]], lower: bool = False) -> list[Found]:
+        """Кандидаты в люди от NER → подтверждённые упоминания. Кандидат делится по границам полей и знакам препинания («Иванов Иван: Подрядчика» —
+        имя говорящего и первое слово реплики раздельно), из него убираются слова, которые не могут быть частью имени (междометия, повторы, глаголы,
+        должности, обычные слова). Остаток принимается: участник встречи; несколько слов ФИО; одно слово, если словарь видит в нём прежде всего
+        фамилию или имя (в начале реплики и предложения, где заглавная буква ничего не значит) или хотя бы заметный признак имени (внутри фразы);
+        повторное упоминание уже подтверждённого лица. Отклонённое остаётся текстом и попадает в список спорных кандидатов лаборатории."""
+        runs: list[list[tuple[int, int, str]]] = []
+        for a, b in spans:
+            toks = [(m.start(), m.end(), m.group(0)) for m in _PTOK.finditer(text, a, b)]
+            group: list[tuple[int, int, str]] = []
+            for t in toks + [None]:                                                      # type: ignore[list-item]
+                if t is not None and group and re.fullmatch(r"[ \t]*", text[group[-1][1]:t[0]]):
+                    group.append(t)
+                    continue
+                run: list[tuple[int, int, str]] = []
+                for g in group + [None]:                                                 # type: ignore[list-item]
+                    why = (nm.name_word(g[2]) if g[2][:1].isupper() or lower else "строчная буква") if g is not None else "x"
+                    if why in nm._POS_TITLE.values() and g[2][:1].isupper() and not _sentence_start(text, g[0]) and nm.name_score(g[2], ("Surn",)) > 0:
+                        why = ""                    # «Или Ли из отдела продаж» — частица с заглавной внутри фразы, у которой есть разбор «фамилия»
+                    if g is not None and not why:
+                        run.append(g)
+                        continue
+                    if run:
+                        runs.append(run)
+                    run = []
+                    if g is not None:
+                        self._reject(text, g[0], g[1], why)
+                group = [t] if t is not None else []
+        runs = [part for run in runs for part in _split_people(run)]
+        out: list[Found] = []
+        singles = []
+        for run in runs:                                          # 1. несколько слов и участники — сразу; их части запоминаются для повторных упоминаний
+            s, e, words = run[0][0], run[-1][1], [w for _, _, w in run]
+            if not _ner_plausible(text, s, e, "person"):
+                self._reject(text, s, e, "часть идентификатора или кода")
+                continue
+            parts = nm.parse_name([w[:1].upper() + w[1:] for w in words])           # разбор ФИО ждёт заглавные (стенограмма без заглавных)
+            known = self.roster.known(parts)
+            full = [w for w in words if not nm._INITIAL.match(w)]
+            if known is not None and known.participant:
+                why = "участник встречи"
+            elif len(words) >= 2 and any(nm.name_is_top(w) for w in full or words):
+                why = "ФИО из нескольких слов"
+            elif len(words) >= 2:
+                self._reject(text, s, e, "слабые признаки имени")
+                continue
+            else:
+                singles.append((s, e, words[0], parts))
+                continue
+            self._seen.append(parts)
+            self._why[(s, e)] = why
+            out.append(Found(s, e, "person", "ner"))
+        for s, e, w, parts in singles:                            # 2. одно слово
+            if self.roster.known(parts) is not None or any(nm.same_person(x, parts) for x in self._seen):
+                why = "повторное упоминание подтверждённого лица"
+            elif w[:1].islower():
+                if not (nm.name_is_top(w) and nm.name_score(w) >= 0.25 and nm.other_score(w) < 0.25):
+                    self._reject(text, s, e, "строчными: слово не прежде всего фамилия или имя")
+                    continue
+                why = "фамилия или имя по словарю (стенограмма без заглавных)"
+            elif nm.name_is_top(w) and (nm.morph().word_is_known(w.lower()) or not _sentence_start(text, s)):
+                why = "фамилия или имя по словарю"
+            elif _SURNAME_FORM.search(w.lower()) and nm.name_score(w, ("Surn",)) >= 0.1:
+                why = "фамилия по окончанию и словарю"          # «Зайцев», «Борисов» в начале фразы: самый вероятный разбор — мн. число, но это фамилия
+            elif not _sentence_start(text, s) and (nm.name_score(w) >= 0.25 or nm.name_score(w, ("Surn",)) > 0):
+                why = "признак фамилии внутри фразы"   # «А Мельник в отпуске», «Гогоберидзе» (нет в словаре — по аналогии); догадка «имя» не в счёт: имена — закрытый список
+            else:
+                self._reject(text, s, e, "в начале реплики или предложения: слово чаще обычное, чем имя" if _sentence_start(text, s) else "слабые признаки имени")
+                continue
+            self._seen.append(parts)
+            self._why[(s, e)] = why
+            out.append(Found(s, e, "person", "ner"))
+        return out
+
+    def _reject(self, text: str, s: int, e: int, why: str) -> None:
+        if why == "организация" and self.policy.action("organization") != "keep":
+            self._orgs.append(Found(s, e, "organization", "ner_org"))
+        self._rejected.append({"start": s, "end": e, "reason": why})
+
+    def _participant_runs(self, text: str, lower: bool = False) -> list[tuple[int, int]]:
         """Участник по списку, даже если NER его не увидел: две и более частей ФИО подряд в любом порядке и падеже («Иван Петрович», «Петровой Марии»)
-        или одна фамилия с заглавной буквы."""
+        или одна фамилия с заглавной буквы. lower — стенограмма без заглавных: слова любого регистра, одиночная фамилия — если словарь видит в ней прежде всего фамилию."""
         people = [p for p in self.roster.people if p.participant]
         if not people:
             return []
         toks = [(t.start(), t.end(), frozenset({w, *(x.normal_form for x in nm.morph().parse(w))} if re.fullmatch(r"[а-яё-]+", w) else {w}))
-                for t in _LEMMA_TOKEN.finditer(text) if t.group(0)[:1].isupper() and (w := t.group(0).lower())]
+                for t in _LEMMA_TOKEN.finditer(text) if (t.group(0)[:1].isupper() or lower) and (w := t.group(0).lower())]
         out: list[tuple[int, int]] = []
         for p in people:
             words = {r: {w} | {x.normal_form for x in nm.morph().parse(w)} for r in ("surname", "first", "patronymic") if (w := getattr(p.parts, r))}
@@ -263,7 +424,8 @@ class Anonymizer:
                         break
                     used.add(role)
                     j += 1
-                if len(used) >= 2 or (used == {"surname"} and len(p.parts.surname) > 2):
+                single = used == {"surname"} and len(p.parts.surname) > 2 and (text[toks[i][0]].isupper() or nm.name_is_top(text[toks[i][0]:toks[i][1]]))
+                if len(used) >= 2 or single:
                     out.append((toks[i][0], toks[j - 1][1]))
                     i = j
                 else:
@@ -365,8 +527,8 @@ class Anonymizer:
         if not (parts.first or parts.surname or parts.patronymic):
             return None
         person = self.roster.resolve(parts)
-        if person is None:                                # неоднозначное одиночное имя («Сергей» при двух Сергеях)
-            return text if self.policy.person_format == "short" else nm.inflect_word("участник", parts.case, gram="")
+        if person is None:                                # неоднозначное упоминание («Сергей» при двух Сергеях): имя в базовом профиле остаётся, фамилия — никогда
+            return text if self.policy.person_format == "short" and not parts.surname else nm.inflect_word("участник", parts.case, gram="")
         if self.policy.person_format == "role":
             word = "Участник" if person.participant else "Лицо"
             return f"{nm.inflect_word(word, parts.case, gram='')} {person.number}"
@@ -388,7 +550,10 @@ class Anonymizer:
                 if re.fullmatch(r",?\s*(?:и|или|либо)\s+", text[last_end:f.start]) and last_prev:
                     prev = last_prev                         # «с Петровым и Сидоровой» — падеж второго, как у первого
                 last_end, last_prev = f.end, prev
-                rep = self._person(self._cyr.get((f.start, f.end), orig), prev)
+                src = self._cyr.get((f.start, f.end), orig)
+                if src[:1].islower():                       # стенограмма без заглавных: разбор ФИО ждёт заглавные буквы
+                    src = re.sub(r"(?<![\w-])[а-яё]", lambda m: m.group(0).upper(), src)
+                rep = self._person(src, prev)
                 if rep is None or rep == orig:
                     continue
             elif f.rule == "dictionary":
@@ -410,10 +575,11 @@ class Anonymizer:
                 rep = rep[:-1]                              # «… Сергей К.» в конце предложения — одна точка
             out.append(text[pos:f.start])
             out.append(rep)
-            reps.append(Replacement(f.start, f.end, f.category, f.rule, orig, rep))
+            reps.append(Replacement(f.start, f.end, f.category, f.rule, orig, rep, self._why.get((f.start, f.end), "")))
             pos = f.end
         out.append(text[pos:])
-        res = Result("".join(out), reps)
+        busy = [(r.start, r.end) for r in reps]
+        res = Result("".join(out), reps, candidates=[c for c in self._rejected if not any(a < c["end"] and c["start"] < b for a, b in busy)])
         self._verify(res)
         return res
 

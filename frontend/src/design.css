@@ -1211,4 +1211,8 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .pv-mark { background: color-mix(in srgb, var(--warn-text, #b45309) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .pv-mark.pv-secret { background: color-mix(in srgb, #dc2626 30%, transparent); }
 .pv-mark.pv-person { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.pv-findings { margin-top: 12px; }
+.pv-findings > summary { font-weight: 600; cursor: pointer; }
+.pv-context { font-size: 13px; color: var(--muted); min-width: 16rem; }
+.pv-context .pv-mark { color: var(--text); }
 @media (max-width: 860px) { .pv-diff { grid-template-columns: 1fr; } }

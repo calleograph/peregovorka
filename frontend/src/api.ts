@@ -394,9 +394,10 @@ export interface PrivacyCatalog {
   profiles: Record<"basic" | "strict", { title: string; person_format: "short" | "role"; org_scope: "legal" | "all"; actions: Record<string, PrivacyAction> }>;
   rules: { id: string; category: string; title: string }[]; secret_rules: string[]; formats: string[]; nlp: { ready: boolean; engine: string; note: string | null };
 }
-export interface PrivacyReplacement { start: number; end: number; category: string; rule: string; original: string; replacement: string }
+export interface PrivacyReplacement { start: number; end: number; category: string; rule: string; original: string; replacement: string; evidence?: string }
 export interface PrivacyLabResult {
   source: string; text: string; ms: number; profile: PrivacyProfile; stats: Record<string, number>; warnings: string[]; replacements: PrivacyReplacement[];
+  candidates?: { start: number; end: number; original: string; reason: string }[];
   info: { format?: string; pages?: number; note?: string };
 }
 export interface LlmEffective { name: string; source: "system" | "room" | "meeting"; available: boolean; reason: string | null; note: string | null }

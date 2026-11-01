@@ -91,8 +91,10 @@ async def _run(request: Request, db: AsyncSession, su: SessionUser, text: str, p
                       ip=client_ip(request), details={"chars": len(text), "profile": profile, "replaced": len(res.replacements), "draft": bool(draft), **info})
     await db.commit()
     return {"source": text, "text": res.text, "ms": ms, "profile": profile, "stats": res.stats(), "warnings": res.warnings, "info": info,
-            "replacements": [{"start": r.start, "end": r.end, "category": r.category, "rule": r.rule, "original": r.original, "replacement": r.replacement}
-                             for r in res.replacements]}
+            "replacements": [{"start": r.start, "end": r.end, "category": r.category, "rule": r.rule, "original": r.original, "replacement": r.replacement,
+                              "evidence": r.evidence} for r in res.replacements],
+            # спорные кандидаты в люди: найдены распознаванием, но признаны обычной речью и оставлены текстом — с причиной
+            "candidates": [{"start": c["start"], "end": c["end"], "original": text[c["start"]:c["end"]], "reason": c["reason"]} for c in res.candidates]}
 
 
 @router.post("/lab")

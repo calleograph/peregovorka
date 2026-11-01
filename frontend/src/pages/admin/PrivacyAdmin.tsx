@@ -5,6 +5,7 @@ type Draft = Record<string, unknown>;
 import InfoTip from "../../components/InfoTip";
 import { useFocusOnMount } from "../../useInitialFocus";
 import { mergeTerms, parseTermsCsv, type Term, termsToCsv } from "../../termsCsv";
+import { addException, type Finding, labFindings } from "../../labFindings";
 
 const TABS = [["general", "Общие"], ["categories", "Категории"], ["rules", "Правила"], ["people", "Участники и имена"], ["dict", "Словари и исключения"],
   ["profiles", "Профили"], ["lab", "Тестирование"]] as const;
@@ -147,7 +148,7 @@ export default function PrivacyAdmin() {
         </div>
       )}
 
-      {tab === "lab" && <Lab cat={cat} draft={draft} dirty={dirty} allowed={allowed} />}
+      {tab === "lab" && <Lab cat={cat} draft={draft} dirty={dirty} allowed={allowed} set={set} />}
 
       {tab !== "lab" && <div className="row form-actions">
         <button className="btn primary" onClick={save} disabled={busy || !dirty}>{busy ? "Сохранение…" : "Сохранить"}</button>
@@ -212,7 +213,7 @@ function Dictionaries({ draft, set }: { draft: Draft; set: (k: string, v: unknow
   );
 }
 
-function Lab({ cat, draft, dirty, allowed }: { cat: PrivacyCatalog; draft: Draft; dirty: boolean; allowed: PrivacyProfile[] }) {
+function Lab({ cat, draft, dirty, allowed, set }: { cat: PrivacyCatalog; draft: Draft; dirty: boolean; allowed: PrivacyProfile[]; set: (k: string, v: unknown) => void }) {
   const focusOnMount = useFocusOnMount<HTMLTextAreaElement>();
   const [text, setText] = useState("");
   const [people, setPeople] = useState("");
@@ -222,15 +223,28 @@ function Lab({ cat, draft, dirty, allowed }: { cat: PrivacyCatalog; draft: Draft
   const [res, setRes] = useState<PrivacyLabResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [exNote, setExNote] = useState("");
   const catTitle = (id: string) => cat.categories.find((c) => c.id === id)?.title ?? id;
+  const participants = () => people.split("\n").map((s) => s.trim()).filter(Boolean);
   const run = async () => {
-    setBusy(true); setErr("");
-    const participants = people.split("\n").map((s) => s.trim()).filter(Boolean);
+    setBusy(true); setErr(""); setExNote("");
     try {
-      setRes(file ? await api.admin.privacy.labFile(file, profile, participants)
-        : await api.admin.privacy.lab({ text, profile, participants, ...(useDraft && dirty ? { draft } : {}) }));
+      setRes(file ? await api.admin.privacy.labFile(file, profile, participants())
+        : await api.admin.privacy.lab({ text, profile, participants: participants(), ...(useDraft && dirty ? { draft } : {}) }));
     } catch (e) { setErr((e as ApiError).message); setRes(null); } finally { setBusy(false); }
   };
+  // ошибочное срабатывание → исключение в черновике настроек и сразу повторная проверка того же текста (в том числе извлечённого из файла)
+  const except = async (original: string) => {
+    if (!res) return;
+    const next = { ...draft, exceptions: addException(draft.exceptions, original) };
+    set("exceptions", next.exceptions);
+    setBusy(true); setErr("");
+    try {
+      setRes({ ...(await api.admin.privacy.lab({ text: res.source, profile, participants: participants(), draft: next })), info: res.info });
+      setExNote(`«${original}» добавлено в исключения черновика, текст проверен заново. Чтобы исключение действовало во встречах, сохраните его на вкладке «Словари и исключения».`);
+    } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); }
+  };
+  const found = useMemo(() => (res ? labFindings(res) : null), [res]);
   const marked = useMemo(() => {
     if (!res) return null;
     const out: ReactNode[] = [];
@@ -273,11 +287,38 @@ function Lab({ cat, draft, dirty, allowed }: { cat: PrivacyCatalog; draft: Draft
             <div><h3 className="field-title">Исходный текст (найденное выделено)</h3><pre className="pv-text">{marked}</pre></div>
             <div><h3 className="field-title">Что уйдёт в модель</h3><pre className="pv-text">{res.text}</pre></div>
           </div>
-          <details><summary>Замены ({res.replacements.length})</summary>
-            <div className="table-scroll"><table className="table"><thead><tr><th>Найдено</th><th>Категория</th><th>Правило</th><th>Замена</th></tr></thead>
-              <tbody>{res.replacements.map((r, i) => <tr key={i}><td>{r.category === "secret" ? "••••" : r.original}</td><td>{catTitle(r.category)}</td><td><code>{r.rule}</code></td><td>{r.replacement}</td></tr>)}</tbody>
+          {exNote && <div className="alert ok" role="status">{exNote}</div>}
+          {found && <FindingTable title="Люди: признаны персональными данными" items={found.people} noteTitle="Основание"
+            empty="Людей не найдено." action={(f) => <button type="button" className="btn mini ghost" disabled={busy} onClick={() => void except(f.original)}
+              aria-label={`Ошибка: «${f.original}» — не человек. Добавить в исключения и проверить заново`}>Ошибка — в исключения</button>} />}
+          {found && found.disputed.length > 0 && <FindingTable title="Спорные кандидаты: оставлены текстом" items={found.disputed} noteTitle="Почему не человек"
+            hint="Распознавание имён отметило эти слова, но проверка по составу, части речи, месту в реплике и списку участников признала их обычной речью." />}
+          <details><summary>Все замены ({res.replacements.length})</summary>
+            <div className="table-scroll"><table className="table"><thead><tr><th>Найдено</th><th>Категория</th><th>Правило</th><th>Основание</th><th>Замена</th></tr></thead>
+              <tbody>{res.replacements.map((r, i) => <tr key={i}><td>{r.category === "secret" ? "••••" : r.original}</td><td>{catTitle(r.category)}</td><td><code>{r.rule}</code></td><td>{r.evidence}</td><td>{r.replacement}</td></tr>)}</tbody>
             </table></div></details>
         </div>)}
     </div>
+  );
+}
+
+function FindingTable({ title, items, noteTitle, empty, hint, action }: { title: string; items: Finding[]; noteTitle: string; empty?: string; hint?: string;
+  action?: (f: Finding) => ReactNode }) {
+  return (
+    <details className="pv-findings" open>
+      <summary>{title} ({items.reduce((n, f) => n + f.count, 0)})</summary>
+      {hint && <p className="help">{hint}</p>}
+      {!items.length ? <p className="muted small">{empty}</p> : (
+        <div className="table-scroll"><table className="table">
+          <thead><tr><th>Фрагмент</th><th>Контекст</th>{items.some((f) => f.replacement) && <th>Замена</th>}<th>{noteTitle}</th><th>Раз</th>{action && <th />}</tr></thead>
+          <tbody>{items.map((f) => (
+            <tr key={f.original + f.note}>
+              <td><b>{f.original}</b></td>
+              <td className="pv-context">{f.context.before}<mark className="pv-mark">{f.context.match}</mark>{f.context.after}</td>
+              {items.some((x) => x.replacement) && <td>{f.replacement}</td>}
+              <td>{f.note}</td><td>{f.count}</td>{action && <td>{action(f)}</td>}
+            </tr>))}</tbody>
+        </table></div>)}
+    </details>
   );
 }
