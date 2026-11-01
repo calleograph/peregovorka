@@ -3,10 +3,8 @@ package org.peregovorka.android
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
-import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
-import livekit.org.webrtc.AudioTrackSink
 import livekit.org.webrtc.VideoSink
 import org.junit.After
 import org.junit.Assert.*
@@ -34,7 +32,6 @@ class LongCallTest {
     private val calls get() = App.instance.calls
 
     private val frames = AtomicLong()      // кадры демонстрации, дошедшие до отрисовки
-    private val heard = AtomicLong()       // звуковые кадры собеседника, пришедшие в приложение
     private val watched = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
 
     @Before fun up() { fake = FakePeregovorka().also { it.livekitRoom = "long-room" } }
@@ -57,6 +54,19 @@ class LongCallTest {
         return out
     }
 
+    /** Входящие RTP-пакеты звука (приёмник звука получает «тишину» и без сети — считаем именно пакеты). */
+    private fun audioPackets(): Long {
+        val r = calls.room() ?: return 0
+        val done = java.util.concurrent.CountDownLatch(1)
+        var n = 0L
+        r.getSubscriberRTCStats { report ->
+            n = report.statsMap.values.filter { it.type == "inbound-rtp" && it.members["kind"] == "audio" }.sumOf { (it.members["packetsReceived"] as? Number)?.toLong() ?: 0L }
+            done.countDown()
+        }
+        done.await(5, java.util.concurrent.TimeUnit.SECONDS)
+        return n
+    }
+
     private fun micOn() = InstrumentationRegistry.getInstrumentation().runOnMainSync { if (!calls.ui.value.micOn) calls.toggleMic() }
     @After fun down() { logRequests("запросы", fake); fake.close() }
 
@@ -74,8 +84,6 @@ class LongCallTest {
             val r = calls.room() ?: return@runOnMainSync
             for (p in r.remoteParticipants.values) {
                 (p.getTrackPublication(Track.Source.SCREEN_SHARE)?.track as? VideoTrack)?.takeIf { watched.add(it) }?.addRenderer(VideoSink { frames.incrementAndGet() })
-                (p.getTrackPublication(Track.Source.MICROPHONE)?.track as? RemoteAudioTrack)?.takeIf { watched.add(it) }
-                    ?.addSink(AudioTrackSink { _, _, _, _, _, _ -> heard.incrementAndGet() })
             }
         }
     }
@@ -96,11 +104,11 @@ class LongCallTest {
         assertTrue("$what: нет подключения (${calls.ui.value.phase})", waitUntil(ms + 90_000) { calls.ui.value.phase == Phase.Connected || calls.ui.value.phase == Phase.Ended })
         assertNotEnded(what)
         watch()
-        val f0 = frames.get(); val h0 = heard.get(); val p0 = peerHeard()
-        val ok = waitUntil(ms) { watch(); (!screen || frames.get() > f0 + 3) && heard.get() > h0 + 20 && peerHeard() > p0 + 20 }
+        val f0 = frames.get(); val h0 = audioPackets(); val p0 = peerHeard()
+        val ok = waitUntil(ms) { watch(); (!screen || frames.get() > f0 + 3) && audioPackets() > h0 + 20 && peerHeard() > p0 + 20 }
         val vs = videoStats()
-        android.util.Log.i("PGTEST", "$what: кадров ${frames.get() - f0}, звук к нам ${heard.get() - h0}, звук от нас ${peerHeard() - p0}, входов ${fake.joins.get()}; видео: $vs")
-        assertTrue("$what: кадры демонстрации ${frames.get() - f0}, звук к нам ${heard.get() - h0}, звук от нас ${peerHeard() - p0}; видео: $vs", ok)
+        android.util.Log.i("PGTEST", "$what: кадров ${frames.get() - f0}, звук к нам ${audioPackets() - h0} пакетов, звук от нас ${peerHeard() - p0}, входов ${fake.joins.get()}; видео: $vs")
+        assertTrue("$what: кадры демонстрации ${frames.get() - f0}, звук к нам ${audioPackets() - h0} пакетов, звук от нас ${peerHeard() - p0}; видео: $vs", ok)
         assertNotEnded(what)
     }
 
