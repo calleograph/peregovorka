@@ -8,8 +8,7 @@ import { isValidLogin, LOGIN_HINT } from "../loginRules";
 import { useSite } from "../site";
 
 // Фон — только здесь (после входа компонент размонтируется); отдельный чанк, чтобы не утяжелять основной пакет
-const LoginBackdrop = lazy(() => import("../components/LoginBackdrop"));
-const LoginNetwork = lazy(() => import("../components/LoginNetwork"));          // лёгкий SVG-фон «встреча на связи»
+const LoginScenes = lazy(() => import("../components/LoginScenes"));            // фон: четыре сцены (компьютер) или статичная «волна» (телефон, планшет)
 
 /** Страница входа: бренд, одна фраза, форма и мелкая служебная строка. Всё остальное — внутри продукта. */
 export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void; info: BuildInfo | null }) {
@@ -69,7 +68,7 @@ export default function LoginPage({ onLogin, info }: { onLogin: (m: Me) => void;
 
   return (
     <div className="login-simple login-px">
-      <Suspense fallback={null}><LoginBackdrop /><LoginNetwork /></Suspense>
+      <Suspense fallback={null}><LoginScenes /></Suspense>
       <main className="login-center">
         <div className="px-shell">
           <div className="px-brand">

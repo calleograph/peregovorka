@@ -634,8 +634,6 @@ button, .btn, a.btn, select, summary { touch-action: manipulation; }
 
 /* ---- 0.8.4: фон страницы входа — спокойная сетка, форма остаётся главным ---- */
 .login-simple { position: relative; isolation: isolate; }
-.login-backdrop { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .9;
-  -webkit-mask-image: radial-gradient(60% 52% at 50% 50%, rgba(0, 0, 0, .3), #000 100%); mask-image: radial-gradient(60% 52% at 50% 50%, rgba(0, 0, 0, .3), #000 100%); }
 .rc-title h2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .pj-foot label.pj-pass { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; margin: 0; }
 .pj-foot label.pj-pass input { flex: 1 1 auto; width: auto; max-width: 320px; }
@@ -1147,22 +1145,6 @@ label.sec-mode { flex-direction: row; margin-bottom: 0; }
 @media (max-height: 460px) { .pj-hero { padding: 4px 12px; } .pj-mark { display: none; } .pj-hero h1 { font-size: 15px; } }
 
 /* ---- 0.47.0: фон входа «встреча на связи» (components/LoginNetwork.tsx) — вместо летающих кубов. Только transform/opacity/stroke, без перерисовки макета. ---- */
-.login-net { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0; animation: net-in 1.4s var(--ease, ease) .15s forwards; }
-.login-net .ln-tile { fill: color-mix(in srgb, var(--surface) 62%, transparent); stroke: color-mix(in srgb, var(--accent) 30%, transparent); stroke-width: 1.2; filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--accent) 16%, transparent)); }
-.login-net .ln-head, .login-net .ln-body { fill: color-mix(in srgb, var(--accent) 34%, transparent); }
-.login-net .ln-ava { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: color-mix(in srgb, var(--accent) 38%, transparent); stroke-width: 1.2; }
-.login-net .ln-dot { fill: color-mix(in srgb, var(--accent) 55%, transparent); }
-.login-net .ln-line { fill: none; stroke: color-mix(in srgb, var(--accent) 26%, transparent); stroke-width: 1.2; stroke-dasharray: 3 7; stroke-linecap: round; }
-.login-net .ln-pulse { fill: var(--accent); opacity: 0; offset-rotate: 0deg; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent)); }
-.login-net.moving .ln-node { animation: net-float 10s ease-in-out infinite alternate; }
-.login-net.moving .ln-line { animation: net-dash 18s linear infinite; }
-.login-net.moving .ln-pulse { animation: net-pulse 9s ease-in-out infinite; }
-.login-net.paused .ln-node, .login-net.paused .ln-line, .login-net.paused .ln-pulse { animation-play-state: paused; }
-@keyframes net-in { to { opacity: 1; } }
-@keyframes net-float { from { transform: translate(var(--tx, 0), 0); } to { transform: translate(var(--tx, 0), -10px); } }
-@keyframes net-dash { to { stroke-dashoffset: -100; } }
-@keyframes net-pulse { 0% { offset-distance: 0%; opacity: 0; } 12% { opacity: .9; } 88% { opacity: .9; } 100% { offset-distance: 100%; opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .login-net { animation: none; opacity: 1; } .login-net * { animation: none !important; } .login-net .ln-pulse { display: none; } }
 
 /* ---- ⓘ: подробное пояснение параметра во всплывающей подсказке (components/InfoTip.tsx) */
 /* Значок — один рисунок для всех экранов («?» в круге, SVG-маска), а не символ шрифта: выглядит одинаково при любом шрифте и масштабе.

@@ -62,7 +62,7 @@ async def main():
         px = await anon.js("getComputedStyle(document.querySelector('.px-cta')).fontFamily")
         S.check("вход: кнопка «Войти» набрана пиксельным шрифтом", "Press Start 2P" in px, px)
         S.check("вход: стандартное оформление Peregovorka на чистой установке", ff["text"] == "Peregovorka" and "Peregovorka" in ff["title"])
-        S.check("вход: интерактивный фон на месте", await anon.js("!!document.querySelector('.login-backdrop')||!!document.querySelector('canvas')"))
+        S.check("вход: фон на месте", await anon.wait_for("!!document.querySelector('.lscn')", 10), str(await anon.js("document.querySelector('.lscn')?.className")))
         await anon.shot("login-default")
         # --------------------------------------------------- администратор: оформление через интерфейс
         await R.goto("/admin?tab=site", 3.0)

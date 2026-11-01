@@ -26,8 +26,8 @@ describe("основной бандл не тянет livekit-client", () => {
 });
 
 describe("анимация страницы входа — отдельным чанком", () => {
-  it("LoginPage подгружает LoginNetwork лениво", () => {
-    expect(loginPage).toMatch(/lazy\(\(\) => import\("\.\.\/components\/LoginNetwork"\)\)/);
-    expect(loginPage).not.toMatch(/^import\s+LoginNetwork\b/m);
+  it("LoginPage подгружает фон LoginScenes лениво (его рисунки и стили — отдельный чанк)", () => {
+    expect(loginPage).toMatch(/lazy\(\(\) => import\("\.\.\/components\/LoginScenes"\)\)/);
+    expect(loginPage).not.toMatch(/^import\s+LoginScenes\b/m);
   });
 });
