@@ -1,99 +1,125 @@
-/* Фон страницы входа (components/LoginScenes.tsx). Цвета — только из переменных темы; движение — только transform и opacity отдельных слоёв. */
+/* Фон страницы входа (components/LoginScenes.tsx): одна композиция «волны и орбиты». Цвета — только из переменных темы; движение — только transform и opacity
+   отдельных слоёв. Слои привязаны к краям окна: волны — к низу, орбиты — к правому верхнему углу, дуга — к левому краю, сетка — к правому нижнему. */
 
 .lscn { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; contain: strict; --ls-k: 1;
-  /* середина под формой входа приглушена: текст формы читается на любой сцене */
-  -webkit-mask-image: radial-gradient(52% 46% at 50% 50%, rgba(0, 0, 0, .18), rgba(0, 0, 0, .55) 62%, #000 100%);
-  mask-image: radial-gradient(52% 46% at 50% 50%, rgba(0, 0, 0, .18), rgba(0, 0, 0, .55) 62%, #000 100%); }
+  /* основа: объёмный градиент — светлый верх слева, глубже и насыщеннее к правому нижнему углу */
+  background:
+    radial-gradient(48% 60% at 6% 0%, color-mix(in srgb, var(--surface) calc(80% * var(--ls-k)), transparent), transparent 72%),
+    radial-gradient(42% 46% at 98% 4%, color-mix(in srgb, var(--accent) calc(16% * var(--ls-k)), transparent), transparent 72%),
+    radial-gradient(62% 70% at 100% 100%, color-mix(in srgb, var(--accent) calc(24% * var(--ls-k)), transparent), transparent 72%),
+    radial-gradient(50% 55% at 0% 100%, color-mix(in srgb, var(--accent) calc(12% * var(--ls-k)), transparent), transparent 70%),
+    linear-gradient(172deg, color-mix(in srgb, var(--bg) 55%, var(--surface)) 0%, var(--bg) 48%, color-mix(in srgb, var(--bg) 86%, var(--accent)) 100%);
+  transition: background .8s ease; }
 :root[data-theme="dark"] .lscn { --ls-k: .72; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) .lscn { --ls-k: .72; } }
+.lscn .g-acc { stop-color: var(--accent); transition: stop-color .8s ease; }
+.lscn > * { position: absolute; }
 
-.ls-scene { position: absolute; inset: 0; opacity: 0; transition: opacity 2.4s cubic-bezier(.45, 0, .25, 1); }
-.ls-scene.on { opacity: 1; }
-/* «коробка» холста 1600×1000, вписанная с обрезкой (как preserveAspectRatio slice): спрайты стоят в тех же долях, что и рисунок */
-.ls-box { position: absolute; left: 50%; top: 50%; width: max(100vw, 160vh); height: max(100vh, 62.5vw); transform: translate(-50%, -50%); }
-.ls-art { position: absolute; inset: 0; width: 100%; height: 100%; opacity: calc(.95 * var(--ls-k)); }
-.ls-sprite { position: absolute; overflow: visible; opacity: calc(var(--ls-k) * 1); }
-.ls-light { position: absolute; border-radius: 50%; opacity: calc(.55 * var(--ls-k));
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 22%, transparent), transparent); }
-.lscn.mobile .ls-mobile { position: absolute; inset: 0; width: 100%; height: 100%; opacity: calc(.95 * var(--ls-k)); }
+/* ── свет: три мягких пятна, медленно «дышат» и смещаются ─────────────────────────────── */
+.lb-light { border-radius: 50%; background: radial-gradient(closest-side, var(--lb-c), transparent); }
+.lb-light.l1 { --lb-c: color-mix(in srgb, var(--surface) calc(75% * var(--ls-k)), transparent); left: -12vmax; top: -16vmax; width: 60vmax; height: 50vmax; }
+.lb-light.l2 { --lb-c: color-mix(in srgb, var(--accent) calc(20% * var(--ls-k)), transparent); right: 4vw; top: 22vh; width: 34vmax; height: 30vmax; }
+.lb-light.l3 { --lb-c: color-mix(in srgb, var(--accent) calc(16% * var(--ls-k)), transparent); left: 18vw; bottom: -12vh; width: 46vmax; height: 30vmax; }
 
-/* ── краски (плавная смена темы) ─────────────────────────────────────────────────────── */
-.lscn :is(rect, circle, ellipse, path, stop) { transition: fill .8s ease, stroke .8s ease, stop-color .8s ease; }
-.lscn .g-stop { stop-color: var(--accent); }
-.lscn .g-surface { stop-color: var(--surface); }
-.lscn .k-card { fill: color-mix(in srgb, var(--surface) 64%, transparent); stroke: color-mix(in srgb, var(--accent) 20%, transparent); stroke-width: 1.2; }
-.lscn .k-card.strong { fill: color-mix(in srgb, var(--surface) 78%, transparent); }
-.lscn .k-soft { fill: color-mix(in srgb, var(--accent) 15%, transparent); }
-.lscn .k-person { fill: color-mix(in srgb, var(--accent) 62%, transparent); }
-.lscn .k-text { fill: color-mix(in srgb, var(--accent) 24%, transparent); }
-.lscn .k-text.faint { fill: color-mix(in srgb, var(--accent) 13%, transparent); }
-.lscn .k-icon { fill: none; stroke: color-mix(in srgb, var(--accent) 80%, var(--text)); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.lscn .k-ink-fill { fill: color-mix(in srgb, var(--accent) 72%, transparent); stroke: none; }
-.lscn .k-badge { fill: color-mix(in srgb, var(--accent) 16%, var(--surface)); stroke: color-mix(in srgb, var(--accent) 30%, transparent); }
-.lscn .k-line { fill: none; stroke: color-mix(in srgb, var(--accent) 32%, transparent); stroke-width: 1.4; stroke-linecap: round; }
-.lscn .k-line.thin { stroke-width: 1; stroke: color-mix(in srgb, var(--accent) 22%, transparent); }
-.lscn .k-line.dashed { stroke-dasharray: 5 8; }
-.lscn .k-node-core { fill: var(--accent); }
-.lscn .k-halo { fill: color-mix(in srgb, var(--accent) 30%, transparent); }
-.lscn .k-orbit { fill: none; stroke: color-mix(in srgb, var(--accent) 26%, transparent); stroke-width: 1.2; }
-.lscn .k-orbit.faint { stroke: color-mix(in srgb, var(--accent) 12%, transparent); stroke-dasharray: 2 10; }
-.lscn .k-orb { stroke: color-mix(in srgb, var(--surface) 70%, transparent); stroke-width: 1.5; }
-.lscn .k-mesh path { fill: none; stroke: color-mix(in srgb, var(--accent) 18%, transparent); stroke-width: 1; }
-.lscn .k-wave { stroke: none; }
-.lscn .k-wave.w0 { fill: color-mix(in srgb, var(--accent) 10%, transparent); }
-.lscn .k-wave.w1 { fill: color-mix(in srgb, var(--accent) 13%, transparent); }
-.lscn .k-wave.w2 { fill: color-mix(in srgb, var(--accent) 9%, var(--surface) 4%); }
-.lscn .k-spark { fill: color-mix(in srgb, var(--accent) 55%, var(--surface)); }
-.lscn .k-grid { fill: none; stroke: color-mix(in srgb, var(--accent) 9%, transparent); stroke-width: 1; }
-.lscn .k-dot { fill: color-mix(in srgb, var(--accent) 30%, transparent); }
-.lscn .k-screen { fill: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
-.lscn .k-shirt { fill: color-mix(in srgb, var(--accent) 52%, var(--surface)); }
-.lscn .k-skin { fill: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
-.lscn .k-hair { fill: color-mix(in srgb, var(--accent) 70%, var(--text) 30%); }
-.lscn .k-device { fill: color-mix(in srgb, var(--accent) 24%, var(--surface)); stroke: color-mix(in srgb, var(--accent) 40%, transparent); }
-.lscn .k-device-edge { fill: color-mix(in srgb, var(--accent) 34%, var(--surface)); }
-.lscn .k-table { fill: none; stroke: color-mix(in srgb, var(--accent) 28%, transparent); stroke-width: 3; stroke-linecap: round; }
-.lscn .k-stem { fill: none; stroke: color-mix(in srgb, var(--accent) 34%, transparent); stroke-width: 2; }
-.lscn .k-leaf { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
-.lscn .k-bar { fill: color-mix(in srgb, var(--accent) 52%, transparent); }
+/* ── волны: слой у нижнего края; ширина дорожки 200 % — сдвиг на половину замыкает течение без шва ───────────────── */
+.lb-waves { left: 0; right: 0; bottom: 0; height: max(58vh, 300px);
+  /* под подписью с версией волны мягко растворяются: линии гребней не проходят сквозь текст */
+  --lb-foot: radial-gradient(max(30vw, 300px) 58px at 50% 100%, rgba(0, 0, 0, .12) 35%, #000 100%);
+  -webkit-mask-image: var(--lb-foot); mask-image: var(--lb-foot); }
+.lb-wave { position: absolute; inset: 0; overflow: hidden; }
+.lb-wave.w0 { transform: translateY(-6%) scale(1.06) rotate(-3deg); --wave-top: calc(.16 * var(--ls-k)); --wave-mid: calc(.10 * var(--ls-k)); --wave-low: calc(.05 * var(--ls-k)); }
+.lb-wave.w1 { transform: rotate(-4.5deg) scale(1.1); --wave-top: calc(.22 * var(--ls-k)); --wave-mid: calc(.12 * var(--ls-k)); --wave-low: calc(.06 * var(--ls-k)); }
+.lb-wave.w2 { transform: rotate(2deg) scale(1.08) translateY(3%); --wave-top: calc(.18 * var(--ls-k)); --wave-mid: calc(.11 * var(--ls-k)); --wave-low: calc(.08 * var(--ls-k)); }
+.lb-wave.w3 { transform: rotate(-1.5deg) scale(1.08) translateY(4%); --wave-top: calc(.14 * var(--ls-k)); --wave-mid: calc(.12 * var(--ls-k)); --wave-low: calc(.16 * var(--ls-k)); }
+.lb-track { position: absolute; top: 0; bottom: 0; left: 0; width: 200%; }
+.lb-track svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.lb-crest { fill: none; stroke: color-mix(in srgb, var(--surface) calc(85% * var(--ls-k)), transparent); stroke-width: 1.4; }
+.w0 .lb-crest { stroke-width: 0; }
+.lb-ray { fill: none; stroke: color-mix(in srgb, var(--accent) calc(42% * var(--ls-k)), transparent); stroke-width: 1; }
+.lb-ray.r1 { stroke: color-mix(in srgb, var(--accent) calc(26% * var(--ls-k)), transparent); }
+.lb-ray.r2 { stroke: color-mix(in srgb, var(--surface) calc(60% * var(--ls-k)), transparent); }
+.lb-spark { position: absolute; width: 8px; height: 8px; margin: -4px; border-radius: 50%; opacity: .55;
+  background: radial-gradient(closest-side, var(--surface), color-mix(in srgb, var(--accent) 70%, transparent) 55%, transparent);
+  box-shadow: 0 0 12px 3px color-mix(in srgb, var(--accent) calc(30% * var(--ls-k)), transparent); }
 
-/* ── движение: только у живой сцены (на экране или гаснущей), у остальных — ни одного кадра ─────────────── */
-.ls-scene.live :is(.ls-float, .ls-pulse, .ls-twinkle, .ls-sway, .ls-wave, .ls-light) { will-change: transform, opacity; }
-.ls-scene.live .ls-float { animation: ls-float 9s ease-in-out infinite alternate; }
-.ls-scene.live .ls-float.f2 { animation-duration: 11s; animation-delay: -3s; }
-.ls-scene.live .ls-float.f3 { animation-duration: 10s; animation-delay: -6s; }
-.ls-scene.live .ls-float.f4 { animation-duration: 12s; animation-delay: -1.5s; }
-.ls-scene.live .ls-pulse { animation: ls-pulse 3.6s ease-in-out infinite; }
-.ls-scene.live .ls-twinkle { animation: ls-twinkle 4.2s ease-in-out infinite; }
-.ls-scene.live :is(.ls-pulse, .ls-twinkle).d1 { animation-delay: -.9s; }
-.ls-scene.live :is(.ls-pulse, .ls-twinkle).d2 { animation-delay: -1.8s; }
-.ls-scene.live :is(.ls-pulse, .ls-twinkle).d3 { animation-delay: -2.7s; }
-.ls-scene.live .ls-sway { transform-origin: 12% 100%; animation: ls-sway 7s ease-in-out infinite alternate; }
-.ls-scene.live .ls-wave { animation: ls-wave 46s linear infinite; }
-.ls-scene.live .ls-wave.w1 { animation-duration: 34s; animation-direction: reverse; }
-.ls-scene.live .ls-wave.w2 { animation-duration: 58s; }
-.ls-scene.live .ls-light { animation: ls-light 14s ease-in-out infinite alternate; }
-.ls-scene.live .ls-light.l2 { animation-duration: 17s; animation-delay: -5s; }
-.ls-scene.live .typing { animation: ls-typing 1.4s ease-in-out infinite; }
-.ls-scene.live .typing.t1 { animation-delay: .2s; } .ls-scene.live .typing.t2 { animation-delay: .4s; }
+/* ── орбиты справа сверху ───────────────────────────────────────────────────────────── */
+.lb-orbits { right: -18vmax; top: -24vmax; width: 70vmax; height: 70vmax; transform: rotate(-16deg); }
+.lb-sway { position: absolute; inset: 0; }
+.lb-orbits svg, .lb-arc svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.lb-orbit { fill: none; stroke: color-mix(in srgb, var(--accent) calc(30% * var(--ls-k)), transparent); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+.lb-orbit.o1 { stroke: color-mix(in srgb, var(--accent) calc(22% * var(--ls-k)), transparent); }
+.lb-orbit.o2 { stroke: color-mix(in srgb, var(--accent) calc(16% * var(--ls-k)), transparent); }
+.lb-orbit.dash { stroke: color-mix(in srgb, var(--accent) calc(18% * var(--ls-k)), transparent); stroke-dasharray: 2 9; }
+.lb-node { fill: var(--accent); opacity: calc(.85 * var(--ls-k)); }
+.lb-link { fill: none; stroke: color-mix(in srgb, var(--accent) calc(18% * var(--ls-k)), transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lb-halo-node { position: absolute; width: 30px; height: 30px; margin: -15px; border-radius: 50%; opacity: .6;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) calc(38% * var(--ls-k)), transparent), transparent); }
+/* световая точка идёт по орбите (offset-path задан в разметке); хвост — точки поменьше с отставанием */
+.lb-run { position: absolute; inset: 0; }
+.lb-dot { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; offset-rotate: 0deg; offset-anchor: 50% 50%; offset-distance: 12%;
+  background: radial-gradient(closest-side, var(--surface), color-mix(in srgb, var(--accent) 80%, var(--surface)) 45%, transparent);
+  box-shadow: 0 0 16px 4px color-mix(in srgb, var(--accent) calc(34% * var(--ls-k)), transparent); }
+.lb-dot.tail { width: 6px; height: 6px; box-shadow: none; background: color-mix(in srgb, var(--accent) 70%, var(--surface)); }
+.lb-dot.t1 { opacity: calc(.55 * var(--ls-k)); offset-distance: 11.4%; } .lb-dot.t2 { opacity: calc(.32 * var(--ls-k)); offset-distance: 10.8%; } .lb-dot.t3 { opacity: calc(.16 * var(--ls-k)); offset-distance: 10.2%; }
+.lb-run.run1 .lb-dot { offset-distance: 62%; } .lb-run.run1 .t1 { offset-distance: 61.4%; } .lb-run.run1 .t2 { offset-distance: 60.8%; } .lb-run.run1 .t3 { offset-distance: 60.2%; }
+.lb-run.run2 .lb-dot { offset-distance: 88%; } .lb-run.run2 .t1 { offset-distance: 88.4%; } .lb-run.run2 .t2 { offset-distance: 88.8%; } .lb-run.run2 .t3 { offset-distance: 89.2%; }
 
-@keyframes ls-float { from { transform: translate3d(0, -5px, 0); } to { transform: translate3d(0, 6px, 0); } }
-@keyframes ls-pulse { 0%, 100% { transform: scale(.55); opacity: .25; } 50% { transform: scale(1.15); opacity: 1; } }
-@keyframes ls-twinkle { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
-@keyframes ls-sway { from { transform: rotate(-2.5deg); } to { transform: rotate(2.5deg); } }
-@keyframes ls-wave { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
-@keyframes ls-light { from { transform: translate3d(-3%, -2%, 0) scale(.94); opacity: calc(.4 * var(--ls-k)); } to { transform: translate3d(3%, 2%, 0) scale(1.06); opacity: calc(.7 * var(--ls-k)); } }
-@keyframes ls-typing { 0%, 100% { opacity: .25; } 40% { opacity: 1; } }
+/* ── большая дуга слева: центр окружности за левым краем ───────────────────────────────── */
+.lb-arc { left: -72vmax; top: calc(46% - 46vmax); width: 92vmax; height: 92vmax; }
 
-/* спокойнее (медленные кадры): остаются смена сцен и свет, мелкое движение выключено */
-.lscn.lv-1 .ls-scene.live :is(.ls-float, .ls-pulse, .ls-twinkle, .ls-sway, .typing) { animation: none; will-change: auto; }
-.lscn.lv-1 .ls-scene.live .ls-wave { animation-duration: 90s; }
-/* вкладка в фоне — всё стоит на месте (без скачка сцены) */
-.lscn.paused .ls-scene * { animation-play-state: paused !important; }
-/* без движения: «уменьшить движение», слабое устройство, очень медленные кадры */
-.lscn.still .ls-scene * { animation: none !important; will-change: auto !important; }
-@media (prefers-reduced-motion: reduce) { .lscn * { animation: none !important; transition: none !important; } }
-/* телефон и планшет: рисунок проще и меньше — волны и орбита чуть плотнее, чтобы не потеряться */
-.lscn.mobile .k-wave.w0 { fill: color-mix(in srgb, var(--accent) 16%, transparent); }
-.lscn.mobile .k-wave.w1 { fill: color-mix(in srgb, var(--accent) 20%, transparent); }
-.lscn.mobile .k-orbit { stroke: color-mix(in srgb, var(--accent) 34%, transparent); }
+/* ── перспективная сетка справа снизу, под волнами ───────────────────────────────────── */
+.lb-mesh { right: -4vw; bottom: 0; width: 58vw; height: 40vh; opacity: calc(.9 * var(--ls-k));
+  -webkit-mask-image: radial-gradient(70% 90% at 70% 100%, #000 20%, transparent 75%); mask-image: radial-gradient(70% 90% at 70% 100%, #000 20%, transparent 75%); }
+.lb-mesh svg { width: 100%; height: 100%; }
+.lb-mesh line { stroke: color-mix(in srgb, var(--accent) 22%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+/* ── тишина вокруг формы и под подписью: свет поверх фона, а не прозрачность формы ───────────────────────────── */
+.lb-halo { inset: 0; background:
+  radial-gradient(44% 40% at 50% 48%, color-mix(in srgb, var(--surface) calc(62% * var(--ls-k)), transparent), transparent 100%),
+  radial-gradient(max(32vw, 340px) max(9vh, 64px) at 50% 100%, color-mix(in srgb, var(--surface) calc(82% * var(--ls-k)), transparent), transparent 100%); }
+
+/* ── движение: только в режиме live ──────────────────────────────────────────────────── */
+.lscn.live :is(.lb-track, .lb-sway, .lb-light, .lb-spark, .lb-halo-node) { will-change: transform, opacity; }
+.lscn.live .lb-track { animation: lb-flow 96s linear infinite; }
+.lscn.live .w0 .lb-track { animation-duration: 140s; }
+.lscn.live .w1 .lb-track { animation-duration: 80s; animation-direction: reverse; }
+.lscn.live .w2 .lb-track { animation-duration: 110s; }
+.lscn.live .w3 .lb-track { animation-duration: 70s; animation-direction: reverse; }
+.lscn.live .lb-wave.w1, .lscn.live .lb-wave.w3 { animation: lb-swell 17s ease-in-out infinite alternate; }
+.lscn.live .lb-wave.w3 { animation-duration: 13s; animation-delay: -5s; }
+.lscn.live .lb-light { animation: lb-breathe 16s ease-in-out infinite alternate; }
+.lscn.live .lb-light.l2 { animation-duration: 19s; animation-delay: -6s; }
+.lscn.live .lb-light.l3 { animation-duration: 23s; animation-delay: -11s; }
+.lscn.live .lb-sway { animation: lb-sway 26s ease-in-out infinite alternate; }
+/* точки на орбитах: у каждой точки хвоста та же анимация с небольшим отставанием (задержка) */
+.lscn.live .lb-run .lb-dot { animation: lb-orbit 64s linear infinite; animation-delay: -7.7s; }
+.lscn.live .lb-run .t1 { animation-delay: -7.3s; } .lscn.live .lb-run .t2 { animation-delay: -6.9s; } .lscn.live .lb-run .t3 { animation-delay: -6.5s; }
+.lscn.live .lb-run.run1 .lb-dot { animation-duration: 90s; animation-delay: -55.8s; }
+.lscn.live .lb-run.run1 .t1 { animation-delay: -55.3s; } .lscn.live .lb-run.run1 .t2 { animation-delay: -54.7s; } .lscn.live .lb-run.run1 .t3 { animation-delay: -54.2s; }
+.lscn.live .lb-run.run2 .lb-dot { animation-duration: 150s; animation-direction: reverse; animation-delay: -18s; }
+.lscn.live .lb-run.run2 .t1 { animation-delay: -17.4s; } .lscn.live .lb-run.run2 .t2 { animation-delay: -16.8s; } .lscn.live .lb-run.run2 .t3 { animation-delay: -16.2s; }
+.lscn.live .lb-spark { animation: lb-twinkle 7s ease-in-out infinite; }
+.lscn.live .lb-spark.s1 { animation-delay: -1.4s; } .lscn.live .lb-spark.s2 { animation-delay: -2.8s; } .lscn.live .lb-spark.s3 { animation-delay: -4.2s; } .lscn.live .lb-spark.s4 { animation-delay: -5.6s; }
+.lscn.live .lb-halo-node { animation: lb-pulse 5.5s ease-in-out infinite; }
+.lscn.live .lb-halo-node.h1 { animation-delay: -1.1s; } .lscn.live .lb-halo-node.h2 { animation-delay: -2.2s; } .lscn.live .lb-halo-node.h3 { animation-delay: -3.3s; } .lscn.live .lb-halo-node.h4 { animation-delay: -4.4s; }
+
+@keyframes lb-flow { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
+@keyframes lb-swell { from { translate: 0 -1.5%; } to { translate: 0 1.5%; } }
+@keyframes lb-breathe { from { transform: translate3d(-2%, -2%, 0) scale(.94); opacity: .7; } to { transform: translate3d(2%, 2%, 0) scale(1.06); opacity: 1; } }
+@keyframes lb-sway { from { transform: rotate(-2.5deg); } to { transform: rotate(2.5deg); } }
+@keyframes lb-orbit { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+@keyframes lb-twinkle { 0%, 100% { opacity: .1; transform: scale(.6); } 50% { opacity: .9; transform: scale(1.15); } }
+@keyframes lb-pulse { 0%, 100% { opacity: .25; transform: scale(.7); } 50% { opacity: .75; transform: scale(1.2); } }
+
+/* спокойнее (медленные кадры, обычно — без видеокарты): крупные слои стоят, мелкие точки на орбитах и искры живут — они почти ничего не стоят */
+.lscn.lv-1.live :is(.lb-track, .lb-wave, .lb-light, .lb-sway) { animation: none; will-change: auto; }
+/* вкладка в фоне — всё стоит на месте */
+.lscn.paused * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) { .lscn * { animation: none !important; } }
+
+/* ── телефон и планшет: та же композиция проще и без движения ─────────────────────────────── */
+.lscn.mobile .lb-waves { height: max(34vh, 220px); }
+.lscn.mobile .lb-orbits { right: -34vmax; top: -30vmax; width: 84vmax; height: 84vmax; }
+.lscn.mobile .lb-arc { left: -78vmax; }
+.lscn.mobile :is(.lb-spark, .lb-dot.tail, .lb-orbit.dash, .lb-light.l2) { display: none; }
+.lscn.mobile .lb-halo { background: radial-gradient(70% 34% at 50% 46%, color-mix(in srgb, var(--surface) calc(55% * var(--ls-k)), transparent), transparent 100%); }

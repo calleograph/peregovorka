@@ -49,7 +49,7 @@ async def count_audio(track: rtc.Track, identity: str):
 async def main(a):
     srv = ThreadingHTTPServer(("0.0.0.0", a.port), Stats)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    token = api.AccessToken(a.key, a.secret).with_identity("pc").with_name("Компьютер").with_grants(api.VideoGrants(room_join=True, room=a.room)).to_jwt()
+    token = api.AccessToken(a.key, a.secret).with_identity(a.identity).with_name(a.name).with_grants(api.VideoGrants(room_join=True, room=a.room)).to_jwt()
     room = rtc.Room()
 
     @room.on("track_subscribed")
@@ -93,4 +93,5 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="ws://127.0.0.1:7880"); p.add_argument("--key", default="devkey"); p.add_argument("--secret", default="secret")
     p.add_argument("--room", default="long-room"); p.add_argument("--port", type=int, default=7999); p.add_argument("--seconds", type=int, default=3000); p.add_argument("--codec", choices=["vp9", "vp8"], default="vp9")
+    p.add_argument("--identity", default="pc"); p.add_argument("--name", default="Компьютер")
     asyncio.run(main(p.parse_args()))

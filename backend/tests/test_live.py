@@ -1068,6 +1068,7 @@ def test_admin_room_list_shows_people_and_connections_and_the_join_carries_the_i
     room, other = room_live(lv), room_live(lv)
     j = _join(lv, "alice", room["id"])
     assert j["client"]["idle_end"] == "standard", "по умолчанию страница предупреждает о забытой одиночной встрече"
+    assert j["client"]["idle_minutes"] == 30, "по умолчанию — 30 минут (настройка комнаты)"
     lv.present["set"] = {"u-1", "u-1~ab12", "EG_test9"}           # EG_ — служебный рекордер; список присутствия его уже отбрасывает (здесь подделка — считаем как есть)
     login(lv, "root")
     row = next(r for r in lv.get("/api/v1/admin/rooms").json() if r["id"] == room["id"])
@@ -1075,7 +1076,8 @@ def test_admin_room_list_shows_people_and_connections_and_the_join_carries_the_i
     idle = next(r for r in lv.get("/api/v1/admin/rooms").json() if r["id"] == other["id"])
     assert idle["active_people"] == 0 and idle["active_connections"] is None
     put_settings(lv, "general", idle_end_mode="off")
-    assert _join(lv, "bob", room["id"])["client"]["idle_end"] == "off"
+    bob = _join(lv, "bob", room["id"])["client"]
+    assert bob["idle_end"] == "off" and bob["idle_minutes"] == 0, "общий выключатель сервера главнее настройки комнаты"
     login(lv, "root")
     assert lv.post(f"/api/v1/admin/meetings/{j['meeting_id']}/end").status_code == 204
     assert lv.post(f"/api/v1/admin/meetings/{j['meeting_id']}/end").status_code == 204, "повторное нажатие ничего не ломает"
@@ -1101,7 +1103,7 @@ def test_forgotten_meeting_is_ended_by_its_last_person_only_when_nobody_else_is_
     assert lv.post(f"/api/v1/meetings/{mid}/idle-end").json()["detail"].startswith("Идёт эфир"), "эфир с одним ведущим — не забытая встреча"
     start(lv, mid, enabled=False)
     login(lv, "alice")
-    assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code == 204, "один человек (два его устройства) — встреча завершается без прав руководителя"
+    assert lv.post(f"/api/v1/meetings/{mid}/idle-end", json={"quiet_s": 1805}).status_code == 204, "один человек (два его устройства) — встреча завершается без прав руководителя"
     m = call(lv, lambda db: db.get(Meeting, uuid.UUID(mid)))
     assert m.ended_at is not None and m.end_reason == "idle"
     login(lv, "bob")

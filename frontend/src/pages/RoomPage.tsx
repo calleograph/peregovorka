@@ -8,7 +8,7 @@ import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
 import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
 import { applyLocalMute, loadLocalMuted, sameUser, saveLocalMuted, toggleLocalMute } from "../localMute";
-import { useIdleEnd } from "../idleEnd";
+import { idleMinutes, useIdleEnd } from "../idleEnd";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
 import { ParticipantTile, ScreenStage, moderationItems, pipSupported, toggleFullscreen, togglePip, type PView, type TileActions } from "../components/room/Tiles";
@@ -57,6 +57,9 @@ type CtlKey = "mic" | "cam" | "screen" | "rec" | "vid" | "tr" | "device" | "audi
 type CtlErrors = Partial<Record<CtlKey, string>>;
 
 // Библиотека звонков на уровне info пишет в консоль адрес подключения целиком (с токеном доступа и большим join_request) — оставляем только предупреждения.
+/** Все места для показа экрана заняты (сервер держит не больше пяти одновременных показов, при «только один показывающий» — один). */
+const sharesFullText = (max: number) => max <= 1 ? "Сейчас экран уже показывает другой участник. Показать свой можно, когда он завершит показ."
+  : `Сейчас экран показывают ${max} участников — это предел. Место освободится, как только кто-то завершит показ.`;
 setLogLevel(LogLevel.warn);
 
 const ALL_SOURCES = ["microphone", "camera", "screen_share", "screen_share_audio"];
@@ -890,7 +893,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   }, [join, stage]);
 
   // ------------------------------------------------------------------------------- действия
-  const someoneElseSharing = participants.some((p) => p.screen && !p.local);
+  // занятые места показа экрана: каждый показывающий, кроме этой вкладки (свои другие устройства — тоже место); предел приходит с сервера, он же его и соблюдает
+  const othersSharing = new Set(participants.filter((p) => p.screen && !p.local).map((p) => p.identity)).size;
 
   const toggle = async (what: "mic" | "cam" | "screen") => {
     const lp = roomRef.current?.localParticipant;
@@ -913,7 +917,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           await lp.setScreenShareEnabled(false);
           stopScreenBookkeeping("user_button");
         } else {
-          if (join.client.one_sharer_at_a_time && someoneElseSharing) { setErr("screen", "Сейчас экран уже показывает другой участник."); return; }
+          const maxSharers = join.client.max_sharers ?? (join.client.one_sharer_at_a_time ? 1 : 5);
+          if (othersSharing >= maxSharers) { setErr("screen", sharesFullText(maxSharers)); return; }
           const profile = loadProfile(join.client.screen_profile);
           const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps);
           userStopRef.current = false;
@@ -1135,6 +1140,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         const lp = roomRef.current?.localParticipant;
         if (lp?.getTrackPublication(Track.Source.ScreenShare)) { userStopRef.current = true; void lp.setScreenShareEnabled(false).catch(() => undefined).then(() => { stopScreenBookkeeping("user_button"); refresh(); }); }
         if (e.blocked) setSources((s) => s.filter((x) => x !== "screen_share" && x !== "screen_share_audio"));
+        if (e.reason === "limit") { setErr("screen", sharesFullText(e.limit ?? 5)); reportEvent("screen_share_stopped", { meetingId: meetingRef.current ?? undefined, reason: "limit" }); return; }
         setNotice({ kind: "warn", text: `${e.by || "Руководитель"} остановил ваш показ экрана.${e.blocked ? " Повторный показ в этой встрече запрещён — его может разрешить руководитель." : " Его можно начать снова."}` });
         reportEvent("screen_share_stopped", { meetingId: meetingRef.current ?? undefined, reason: e.blocked ? "moderator_block" : "moderator" });
       } else {
@@ -1185,11 +1191,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   // забытая встреча: человек один и ничего не делает — предупреждение, затем завершение (сервер проверяет, что других людей нет); эфир живёт по своим правилам
   const selfId = join?.identity ?? "";
   const alone = participants.length > 0 && !participants.some((p) => !p.local && !sameUser(p.identity, selfId) && !/^(EG_|asr-)/.test(p.identity));
-  const idleEnd = async () => {
+  const idleEnd = async (quietS?: number) => {
     const mid = meetingRef.current;
     if (!mid || endedRef.current) return;
     if (guest) { await leave(); return; }
-    try { await api.idleEnd(mid); } catch (e) { setErr("general", (e as ApiError).message); return; }      // пришёл кто-то ещё или эфир — встреча продолжается
+    try { await api.idleEnd(mid, quietS); } catch (e) { setErr("general", (e as ApiError).message); return; }      // пришёл кто-то ещё или эфир — встреча продолжается
     endedRef.current = true;
     await teardown(false);
     navigate(`/history/${mid}`);
@@ -1198,7 +1204,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   // действие на любом своём устройстве (говорит с телефона, показывает экран с другого подключения) — тоже действие: иначе вкладка на компьютере
   // завершала «забытую» встречу, пока человек говорил с телефона, и приложение на телефоне выбрасывало из встречи
   const ownActive = participants.some((p) => (p.local || sameUser(p.identity, selfId)) && (p.speaking || p.screen));
-  const idle = useIdleEnd(join?.client.idle_end, alone, ended || stage !== "ready" || state !== ConnectionState.Connected || !!lv.state?.live, ownActive, () => void idleEnd());
+  const idle = useIdleEnd(idleMinutes(join?.client), alone, ended || stage !== "ready" || state !== ConnectionState.Connected || !!lv.state?.live, ownActive, (q) => void idleEnd(q));
   const onMeetingEnded = useCallback(() => {
     endedRef.current = true;
     setEnded(true);
@@ -1506,7 +1512,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                        {idle.left !== null && !ended && (
                          <div className="alert warn idle-warn" role="alert">
                            <span>Похоже, встреча больше не используется. Она завершится через {idle.left > 60 ? `${Math.ceil(idle.left / 60)} минуты` : `${idle.left} с`}.</span>
-                           <span className="row"><button className="btn mini primary" onClick={idle.keep}>Продолжить встречу</button><button className="btn mini ghost" onClick={() => void idleEnd()}>Завершить сейчас</button></span>
+                           <span className="row"><button className="btn mini primary" onClick={idle.keep}>Продолжить встречу</button><button className="btn mini ghost" onClick={() => void idleEnd(idle.quietS())}>Завершить сейчас</button></span>
                          </div>
                        )}
                        {welcome && !ended && <div className="alert info welcome" role="status">{welcome} <button className="btn mini ghost" onClick={() => setWelcome(null)}>Скрыть</button></div>}

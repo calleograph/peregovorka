@@ -19,7 +19,7 @@ export type LiveEvent =
   | ({ type: "whiteboard_patch" } & WhiteboardPatch)
   | { type: "whiteboard_saved"; seq: number; shapes: number; by: string }
   | { type: "stage_changed"; items: { type: StageKind; identity?: string }[]; by: string | null; at: number | null }
-  | { type: "share_stopped"; identity: string; by: string; blocked: boolean; was_sharing: boolean }
+  | { type: "share_stopped"; identity: string; by: string; blocked: boolean; was_sharing?: boolean; reason?: "limit"; limit?: number }
   | { type: "share_permission"; identity: string; allowed: boolean; by: string }
   | { type: "camera_stopped"; identity: string; by: string }
   | { type: "mic_owner"; user_id: string; identity: string };

@@ -168,6 +168,9 @@ class Room(Base):
     board_access: Mapped[str] = mapped_column(String(10), default="auto", server_default="auto", nullable=False)
     # Скрывать нецензурную лексику в стенограмме (выдача: живая стенограмма, история, субтитры, выгрузки, письма, материалы для протокола); исходный текст хранится как есть.
     mask_profanity: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Забытая встреча: человек остался в комнате один и столько минут ничего не делает (не говорит, не показывает экран, не трогает страницу) — встреча
+    # завершается после предупреждения. 0 — не завершать. Встреча, где есть другие люди, по тишине не завершается: молча слушать — нормально.
+    idle_end_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default=text("30"), nullable=False)
     # Значок комнаты: NULL — стандартный (цветной квадрат с буквами); library — из встроенной библиотеки (icon_key); image — загруженное изображение (файл в каталоге данных, icon_rev — его хэш).
     icon_kind: Mapped[str | None] = mapped_column(String(10))
     icon_key: Mapped[str | None] = mapped_column(String(40))

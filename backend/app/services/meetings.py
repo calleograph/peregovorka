@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from ..auth.deps import SessionUser
 from ..config import Settings
 from ..models import MEETING_LITE, GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
 from ..security.passwords import verify_room_password
-from . import events, roles, temp_rooms
+from . import events, leave_reasons, roles, temp_rooms
 from . import e2ee as e2ee_svc
 from . import outlook as outlook_svc
 from .access import grant_leases
@@ -45,12 +46,14 @@ from .livekit import (
     remove_participant,
     set_publish_permission,
     user_identity,
+    screen_sharers,
 )
 from .rooms import RoomNotFound, acl_allows, get_accessible_room
 
 log = logging.getLogger("app.meetings")
 
 GUEST_REVOKE_TTL = 24 * 3600
+MAX_SCREEN_SHARES = 5           # одновременных показов экрана во встрече: больше крупных изображений не читаются, а у каждого зрителя — свой входящий поток на каждый показ
 STATE_TTL = 3 * 24 * 3600      # состояние встречи в Redis (слово, привилегированные); сбрасывается и при завершении встречи
 KICK_BLOCK_SECONDS = 600       # удалённый руководителем сотрудник не может сразу вернуться
 
@@ -262,6 +265,7 @@ class MeetingService:
         if guest.left_at is None:
             guest.left_at = utcnow()
             await db.commit()
+            await leave_reasons.mark(self._r, meeting_id, guest_identity(guest_id), "left")
             if not await self._quiet_presence(db, meeting_id, guest_identity(guest_id)):
                 await events.publish(self._r, meeting_id, {"type": "participant_left", "guest_id": str(guest_id), "participant_type": "phone" if guest.is_phone else "guest"})
         await self._update_emptiness(db, meeting_id)
@@ -327,6 +331,7 @@ class MeetingService:
         """Выход одного устройства: участником во встрече пользователь остаётся, пока подключено хотя бы одно его устройство."""
         if session_id:
             ident = await self._device_identity(meeting_id, user_id, device_tag(session_id, client_id), session_id)
+            await leave_reasons.mark(self._r, meeting_id, ident, "left")
             if await self._other_devices(meeting_id, user_id, ident):
                 return
         await self._close_participant(db, meeting_id, user_id)
@@ -592,7 +597,7 @@ class MeetingService:
         return bool(await self._r.sismember(self._priv_key(meeting_id), identity))
 
     async def _clear_state(self, meeting_id: uuid.UUID) -> None:
-        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id), f"hands:{meeting_id}", self._share_block_key(meeting_id), f"stage:{meeting_id}")
+        await self._r.delete(self._floor_key(meeting_id), self._priv_key(meeting_id), f"hands:{meeting_id}", self._share_block_key(meeting_id), f"stage:{meeting_id}", f"shares:{meeting_id}")
 
     # ------------------------------------------------------------ показ экрана и камера: модерация (сцена ведущего — services/stage.py)
     @staticmethod
@@ -635,6 +640,30 @@ class MeetingService:
                 raise JoinError("livekit_unavailable", "Сервер звонков недоступен — запрет показа не применён. Повторите.", 503)
         await events.publish(self._r, meeting.id, {"type": "share_stopped", "identity": identity, "by": by, "blocked": block, "was_sharing": bool(muted)})
         return {"identity": identity, "stopped": bool(muted), "blocked": block}
+
+    async def enforce_share_limit(self, meeting_id: uuid.UUID, room_name: str, identity: str, limit: int) -> bool:
+        """Предел одновременных показов экрана (MAX_SCREEN_SHARES, «только один показывающий» — 1). Вызывается на каждую опубликованную дорожку экрана.
+        Места — по очереди начала показа: кто начал позже остальных и не поместился, у того показ выключается на сервере звонков, а сам он получает
+        событие с причиной и понятное сообщение. Очередь сверяется с тем, кто показывает сейчас (по данным сервера звонков), поэтому место
+        освобождается сразу, как только кто-то завершил показ. True — показ этого участника остановлен."""
+        key = f"shares:{meeting_id}"
+        await self._r.zadd(key, {identity: time.time()}, nx=True)
+        await self._r.expire(key, STATE_TTL)
+        active = await screen_sharers(self._s, room_name)
+        if active is None:
+            return False            # сервер звонков не ответил — не останавливаем вслепую
+        queue = await self._r.zrange(key, 0, -1)
+        stale = [m for m in queue if m not in active and m != identity]
+        if stale:
+            await self._r.zrem(key, *stale)
+        ranked = [m for m in queue if m in active or m == identity]
+        if identity in ranked[:limit]:
+            return False
+        await self._r.zrem(key, identity)
+        await mute_sources(self._s, room_name, {"screen_share", "screen_share_audio"}, only={identity})
+        await events.publish(self._r, meeting_id, {"type": "share_stopped", "identity": identity, "by": "", "blocked": False, "reason": "limit", "limit": limit})
+        log.info("Показ экрана сверх предела остановлен", extra={"meeting_id": str(meeting_id), "limit": limit})
+        return True
 
     async def allow_share(self, db: AsyncSession, meeting: Meeting, identity: str, *, by: str) -> dict:
         """Снять запрет показа экрана (вернуть право, которое даёт комната)."""
@@ -702,6 +731,7 @@ class MeetingService:
             # если участник их не снял (изменённый клиент), он отключается и вернуться с этими правами не может (токен выдаётся по текущему слову).
             res = await enforce_sources(self._s, meeting.livekit_room, identity, sources)
             if res.get("removed"):
+                await leave_reasons.mark(self._r, meeting.id, identity, "rights")
                 await events.publish(self._r, meeting.id, {"type": "floor_revoke_enforced", "identity": identity})
         log.info("Слово изменено", extra={"meeting_id": str(meeting.id), "granted": granted})
         return granted
@@ -722,6 +752,7 @@ class MeetingService:
         else:
             await self._r.set(self._kick_key(meeting.room_id, ref), "1", ex=KICK_BLOCK_SECONDS)
             await self._close_participant(db, meeting.id, ref)
+        await leave_reasons.mark(self._r, meeting.id, identity, "removed")
         await remove_participant(self._s, meeting.livekit_room, identity)
         await self._r.srem(self._floor_key(meeting.id), identity)
         await events.publish(self._r, meeting.id, {"type": "participant_left", "identity": identity, "removed": True,

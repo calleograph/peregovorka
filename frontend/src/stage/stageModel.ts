@@ -15,6 +15,7 @@ export interface Rect { x: number; y: number; w: number; h: number }
 export interface SpotItem { type: StageType; identity?: string }
 
 export const MAX_PINS = 4;          // больше четырёх крупных элементов не читаются; на телефоне крупно — один
+export const MAX_SCREENS = 5;       // одновременных показов экрана во встрече (предел сервера): все чужие показы — крупно, сеткой
 export const GRID_AUTO_MAX = 9;     // «Авто» без показа экрана: сетка, пока плитки крупные; дальше — говорящий крупно и лента
 export const GRID_MAX = 16;         // «Сетка»: не больше 16 ячеек, остальные — в ленте
 export const MOBILE_W = 600;
@@ -59,7 +60,7 @@ export interface Choice { main: string[]; reason: MainReason; mode: "grid" | "st
 
 /**
  * Что крупно. Личное важнее общего: закреплённое зрителем → общая сцена ведущего (если зритель её не перекрыл) → свежий показ экрана чужого участника →
- * доска → говорящий. Свой собственный экран крупно не ставится, пока в комнате есть кто-то ещё (зеркало «экран в экране» никому не нужно).
+ * доска → говорящий; показов экрана несколько — все чужие крупно. Свой собственный экран крупно не ставится, пока в комнате есть кто-то ещё (зеркало «экран в экране» никому не нужно).
  */
 export function chooseMain(o: { items: StageItem[]; pins: string[]; spotlight: string[]; speaker: string | null; layout: LayoutMode; mobile?: boolean }): Choice {
   const have = new Set(o.items.map((i) => i.key));
@@ -72,9 +73,9 @@ export function chooseMain(o: { items: StageItem[]; pins: string[]; spotlight: s
   if (pins.length) return { main: pins, reason: "pins", mode: side };
   const spot = o.spotlight.filter((k) => have.has(k)).slice(0, limit);
   if (spot.length) return { main: spot, reason: "spotlight", mode: side };
-  const screens = o.items.filter((i) => i.type === "screen").sort((a, b) => Number(!!a.local) - Number(!!b.local) || b.since - a.since);
-  const top = screens[0];
-  if (top && (!top.local || cams.length <= 1)) return { main: [top.key], reason: "screen", mode: side };
+  // несколько показов — все крупно (на телефоне — самый свежий, остальные в ленте); места — по времени начала, новый показ встаёт последним, прежние не прыгают
+  const screens = o.items.filter(({ type, local }) => type === "screen" && (!local || cams.length <= 1)).sort((a, b) => b.since - a.since).slice(0, o.mobile ? 1 : MAX_SCREENS);
+  if (screens.length) return { main: screens.sort((a, b) => a.since - b.since).map((i) => i.key), reason: "screen", mode: side };
   if (have.has("board")) return { main: ["board"], reason: "board", mode: side };
   if (o.layout === "auto" && !o.mobile && cams.length <= GRID_AUTO_MAX) return { main: [], reason: "grid", mode: "grid" };
   const sp = o.speaker && have.has(keyOf("camera", o.speaker)) ? keyOf("camera", o.speaker) : (cams.find((c) => !c.local) ?? cams[0])?.key;

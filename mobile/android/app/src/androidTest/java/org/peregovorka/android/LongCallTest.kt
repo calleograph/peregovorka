@@ -185,4 +185,32 @@ class LongCallTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync { calls.leave() }
         }
     }
+
+    /** Несколько демонстраций одновременно (два участника ci/peer.py в комнате multi-room): обе видны (крупно и в ленте) и кадры каждой декодируются. */
+    @Test fun twoScreenShares_bothArrive() {
+        assumeTrue("не задан livekit_url", fake.realLivekit != null)
+        val p1 = InstrumentationRegistry.getArguments().getString("peer_multi_url", "http://10.0.2.2:7997")
+        assumeTrue("участники с демонстрацией не отвечают", runCatching { (URL("$p1/stats").openConnection() as HttpURLConnection).apply { connectTimeout = 3_000 }.inputStream.close() }.isSuccess)
+        fake.livekitRoom = "multi-room"
+        resetApp(fake)
+        launchApp().use { _ ->
+            device().findObject(By.text("Закрыть"))?.click()
+            device().wait(androidx.test.uiautomator.Until.findObject(By.text("Позже")), 2_500)?.click()
+            device().waitFor(By.text("Основная"))
+            device().findObjects(By.text("Войти"))[0].click()
+            device().waitFor(By.text("Подключиться"))!!.click()
+            acceptPermissionDialogs(4_000)
+            assertTrue("две демонстрации не появились: ${calls.ui.value.tiles.map { it.name to (it.screen != null) }}",
+                waitUntil(40_000) { calls.ui.value.tiles.count { it.screen != null } == 2 })
+            // крупная демонстрация и миниатюра второй в ленте: у каждой свой входящий поток с декодированными кадрами
+            var vs = ""
+            val both = waitUntil(40_000) {
+                vs = videoStats()
+                Regex("декодировано=(\\d+)").findAll(vs).count { it.groupValues[1].toLong() > 5 } >= 2
+            }
+            android.util.Log.i("PGTEST", "две демонстрации: $vs")
+            assertTrue("кадры обеих демонстраций не идут: $vs", both)
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { calls.leave() }
+        }
+    }
 }

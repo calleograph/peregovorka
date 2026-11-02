@@ -30,7 +30,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
               "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "video_retention_days",
               "text_retention_custom", "audio_retention_custom", "video_retention_custom", "protocol_instructions", "history_access",
-              "anonymize_mode", "llm_profile_id", "anonymize_profile", "mute_on_join", "mask_profanity", "welcome_message",
+              "anonymize_mode", "llm_profile_id", "anonymize_profile", "mute_on_join", "mask_profanity", "idle_end_minutes", "welcome_message",
               "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access", "encrypt_storage", "e2ee_mode")
 
 
@@ -94,7 +94,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         text_retention_custom=room.text_retention_custom, audio_retention_custom=room.audio_retention_custom, video_retention_custom=room.video_retention_custom,
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
         anonymize_mode=room.anonymize_mode, llm_profile_id=room.llm_profile_id, anonymize_profile=room.anonymize_profile,
-        mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, welcome_message=room.welcome_message,
+        mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, idle_end_minutes=room.idle_end_minutes, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, guest_token=room.guest_token,
         room_type=room.room_type, auto_record=room.auto_record, board_allowed=room.board_allowed, board_access=room.board_access, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode,
         slug_history=list(room.slug_history or []), lifetime=room.lifetime, lifecycle=room.lifecycle, closed_at=room.closed_at, created_by_name=room.created_by_name,
@@ -143,7 +143,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         **_retention_fields(body),
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymize_profile=body.anonymize_profile or "",
-        mute_on_join=body.mute_on_join, mask_profanity=body.mask_profanity, welcome_message=body.welcome_message,
+        mute_on_join=body.mute_on_join, mask_profanity=body.mask_profanity, idle_end_minutes=body.idle_end_minutes, welcome_message=body.welcome_message,
         guest_access_enabled=body.guest_access_enabled, guest_token=new_guest_token() if body.guest_access_enabled else None,
         room_type=body.room_type, auto_record=body.auto_record, board_allowed=body.board_allowed, board_access=body.board_access, e2ee_mode=body.e2ee_mode,
         encrypt_storage=body.encrypt_storage or ("encrypt_storage" not in body.model_fields_set and bool((await request.app.state.settings_svc.get(db, "general")).encrypt_new_rooms)

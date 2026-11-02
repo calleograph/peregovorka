@@ -119,7 +119,7 @@ export interface LiveAccess { base?: string; path: string; expires_at: number; r
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
-  screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean;
+  screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean; max_sharers?: number;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
   can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
   /** Гость (вход по ссылке без AD): без административных функций, без показа экрана и стенограммы. */
@@ -141,6 +141,7 @@ export interface ClientConfig {
   recording_allowed?: boolean;
   /** Забытая встреча с одним человеком (Администрирование → Общие): standard | careful | off. */
   idle_end?: "standard" | "careful" | "off";
+  idle_minutes?: number;
   /** Вложения в чат включены. */
   attachments?: boolean;
 }
@@ -377,7 +378,7 @@ export interface RoomManage {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
   camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off"; video_mode?: "off" | "manual" | "auto"; video_quality?: "720p" | "1080p"; video_enabled?: boolean;
-  transcription_enabled: boolean; mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
+  transcription_enabled: boolean; mute_on_join: boolean; mask_profanity?: boolean; idle_end_minutes?: number; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;
   mail_delivery?: MailDeliverySpec | null;
@@ -588,7 +589,7 @@ export interface RoomAdmin {
   /** Только в списке комнат: люди в идущей встрече и технические подключения (null — LiveKit не ответил). */
   active_people?: number; active_connections?: number | null;
   anonymize_mode: AnonymizeMode; llm_profile_id: string | null; anonymize_profile?: string;
-  mute_on_join: boolean; mask_profanity?: boolean; welcome_message: string | null; moderators: AclEntry[];
+  mute_on_join: boolean; mask_profanity?: boolean; idle_end_minutes?: number; welcome_message: string | null; moderators: AclEntry[];
   guest_access_enabled: boolean; guest_token: string | null;
   room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; board_allowed: boolean; board_access?: string;
   slug_history?: string[]; lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed"; closed_at?: string | null; created_by_name?: string | null;
@@ -965,7 +966,7 @@ export const api = {
   stopCamera: (meetingId: string, identity: string) => request<{ identity: string; stopped: boolean }>("POST", `/meetings/${meetingId}/moderation/stop-camera`, { identity }),
   endMeeting: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/end`),
   /** Забытая встреча: последний оставшийся участник завершает её (сервер проверяет, что других людей нет). */
-  idleEnd: (meetingId: string) => request<void>("POST", `/meetings/${meetingId}/idle-end`),
+  idleEnd: (meetingId: string, quietS?: number) => request<void>("POST", `/meetings/${meetingId}/idle-end`, quietS === undefined ? undefined : { quiet_s: quietS }),
   meetings: (roomId?: string, offset = 0) => request<Meeting[]>("GET", `/meetings?limit=30&offset=${offset}${roomId ? `&room_id=${roomId}` : ""}`),
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),
   transcript: (id: string, afterId = 0) =>

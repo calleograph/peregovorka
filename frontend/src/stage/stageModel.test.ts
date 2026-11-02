@@ -27,8 +27,19 @@ describe("что крупно", () => {
   const ps = [P("me", { local: true }), P("b", { screen: true }), P("c", { screen: true }), P("d")];
   const since = new Map([["screen:b", 10], ["screen:c", 20]]);
   const all = items(ps, false, since);
-  it("без закреплений — самый свежий показ экрана", () => {
-    expect(chooseMain({ items: all, pins: [], spotlight: [], speaker: null, layout: "auto" })).toMatchObject({ main: ["screen:c"], reason: "screen", mode: "side" });
+  it("без закреплений — все чужие показы экрана крупно, по времени начала; на телефоне — самый свежий", () => {
+    expect(chooseMain({ items: all, pins: [], spotlight: [], speaker: null, layout: "auto" })).toMatchObject({ main: ["screen:b", "screen:c"], reason: "screen", mode: "side" });
+    expect(chooseMain({ items: all, pins: [], spotlight: [], speaker: null, layout: "auto", mobile: true }).main).toEqual(["screen:c"]);
+  });
+  it("пять показов — все пять крупно, сеткой; свой показ крупно не ставится", () => {
+    const many = [P("me", { local: true, screen: true }), ...["s1", "s2", "s3", "s4", "s5"].map((n) => P(n, { screen: true }))];
+    const t = new Map(["me", "s1", "s2", "s3", "s4", "s5"].map((n, i) => [`screen:${n}`, i * 10] as [string, number]));
+    const c = chooseMain({ items: items(many, false, t), pins: [], spotlight: [], speaker: null, layout: "auto" });
+    expect(c.main).toEqual(["screen:s1", "screen:s2", "screen:s3", "screen:s4", "screen:s5"]);
+    const g = layoutStage({ main: c.main, rest: ["camera:me"], mode: c.mode, w: 1600, h: 900 });
+    const r = c.main.map((k) => g.rects[k]);
+    expect(r.every((x) => x.w > 300 && x.h > 170)).toBe(true);
+    expect(new Set(r.map((x) => `${x.x},${x.y}`)).size).toBe(5);       // не накладываются
   });
   it("«Авто» раскладывает как «Рядом» (колонка справа), «Сцена» — лентой снизу только по явному выбору, на телефоне колонки нет", () => {
     const o = { items: all, pins: [] as string[], spotlight: [] as string[], speaker: null };

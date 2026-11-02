@@ -10,13 +10,15 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from livekit import api as lkapi
+from livekit.protocol import models as lkmodels
 from sqlalchemy import delete, select
 
 from ..services import asr_state
 from ..auth.deps import require_internal
 from ..models import Meeting, MeetingParticipant, Room, TranscriptSegment, User
-from ..services import diagnostics
+from ..services import diagnostics, leave_reasons
 from ..services.asr_bridge import SEGMENTS_STREAM
+from ..services.meetings import MAX_SCREEN_SHARES
 from ..services.livekit import (
     issue_user_token,
     meeting_room_name,
@@ -88,6 +90,18 @@ async def livekit_webhook(request: Request):
                 await svc.sync_rights_on_join(db, meeting_id, ident, event.participant.permission)
             else:
                 await svc.on_participant_left(db, meeting_id, user_id, ident)
+        if event.event == "participant_left":
+            if int(event.participant.disconnect_reason) == 1 and LEFT_GRACE_S:
+                # страница сначала отключается от сервера звонков, затем сообщает «Выйти» (/leave): причину решаем чуть позже, не задерживая очередь webhook
+                t = asyncio.create_task(_journal_left(request, meeting_id, event.participant, delay=LEFT_GRACE_S))
+                _bg.add(t); t.add_done_callback(_bg.discard)
+            else:
+                await _journal_left(request, meeting_id, event.participant)
+    elif event.event == "track_published" and meeting_id and ident and event.track.source == lkmodels.TrackSource.SCREEN_SHARE:
+        async with request.app.state.session_maker() as db:
+            screen = await request.app.state.settings_svc.get(db, "screen")
+        limit = 1 if screen.one_sharer_at_a_time else MAX_SCREEN_SHARES
+        await request.app.state.meetings.enforce_share_limit(meeting_id, event.room.name, ident, limit)
     elif event.event == "room_finished" and meeting_id:
         # Комната LiveKit закрылась (все ушли дольше departure_timeout либо её удалили). Встречу НЕ завершаем мгновенно:
         # обновление страницы или обрыв сети — это не конец встречи. Сверяем присутствие; завершит reaper по истечении
@@ -97,6 +111,30 @@ async def livekit_webhook(request: Request):
             if meeting is not None and meeting.ended_at is None:
                 await request.app.state.meetings.reconcile(db, meeting)
     return {"ok": True}
+
+
+LEFT_GRACE_S = 3.0
+_bg: set[asyncio.Task] = set()
+
+
+async def _journal_left(request: Request, meeting_id: uuid.UUID, participant, delay: float = 0) -> None:
+    """Каждое отключение — в «Журнал событий» (категория room) с причиной: вышел сам, закрыл страницу, удалён, потеря связи, встреча завершена (и почему)."""
+    try:
+        if delay:
+            await asyncio.sleep(delay)
+        async with request.app.state.session_maker() as db:
+            meeting = await db.get(Meeting, meeting_id)
+            room = await db.get(Room, meeting.room_id) if meeting is not None else None
+        code, data = await leave_reasons.resolve(request.app.state.redis, meeting_id, participant.identity, int(participant.disconnect_reason),
+                                                 meeting.end_reason if meeting is not None and meeting.ended_at is not None else None)
+        joined = int(participant.joined_at or 0)
+        dur = int(time.time()) - joined if joined else None
+        data.update(reason=code, identity=participant.identity, in_meeting_s=dur)
+        request.app.state.journal.emit("room", "participant_left", level="warn" if code in ("connection_lost", "server", "other") else "info",
+                                       user=participant.name or None, room=room.name if room is not None else None, meeting_id=str(meeting_id),
+                                       message=leave_reasons.message(participant.name, code, data, dur), data=data)
+    except Exception:  # noqa: BLE001 — журнал не должен мешать обработке события
+        log.exception("Не удалось записать причину отключения")
 
 
 @router.post("/smoke", dependencies=[Depends(require_internal)])

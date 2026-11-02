@@ -32,7 +32,7 @@ const RET_KINDS: [RetKind, string, string][] = [
 const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
 
 export interface RoomForm {
-  name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean; mask_profanity: boolean;
+  name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean; mask_profanity: boolean; idle_end_minutes: number;
   room_type: RoomType; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off";
   video_mode: "off" | "manual" | "auto"; video_quality: "720p" | "1080p"; camera_allowed: boolean; screen_share_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
@@ -42,7 +42,7 @@ export interface RoomForm {
 }
 
 export const newRoomForm = (): RoomForm => ({
-  name: "", description: "", max_participants: 20, password: "", clearPassword: false, welcome_message: "", mute_on_join: false, mask_profanity: true,
+  name: "", description: "", max_participants: 20, password: "", clearPassword: false, welcome_message: "", mute_on_join: false, mask_profanity: true, idle_end_minutes: 30,
   room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p",
   camera_allowed: true, screen_share_allowed: true, board_access: "auto", guest_access_enabled: false, acl: [], moderators: [], mail_delivery: emptySpec(),
   protocol_instructions: "", llm: emptyChoice(), llm_summary: emptyChoice(), sip: emptySip(), auto_map_mode: "inherit",
@@ -51,7 +51,7 @@ export const newRoomForm = (): RoomForm => ({
 
 export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
   ...newRoomForm(),
-  name: r.name, description: r.description ?? "", max_participants: r.max_participants, welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, mask_profanity: r.mask_profanity ?? true,
+  name: r.name, description: r.description ?? "", max_participants: r.max_participants, welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, mask_profanity: r.mask_profanity ?? true, idle_end_minutes: r.idle_end_minutes ?? 30,
   room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
   video_mode: r.video_mode ?? "off", video_quality: r.video_quality ?? "720p", camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
   board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
@@ -68,7 +68,7 @@ export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
 export function managePayload(f: RoomForm): Record<string, unknown> {
   return {
     name: f.name.trim(), description: f.description.trim() || null, max_participants: f.max_participants, welcome_message: f.welcome_message.trim() || null, mute_on_join: f.mute_on_join,
-    mask_profanity: f.mask_profanity, room_type: f.room_type, record_audio: f.record_audio || f.auto_record, auto_record: f.auto_record, recording_mode: f.recording_mode,
+    mask_profanity: f.mask_profanity, idle_end_minutes: f.idle_end_minutes, room_type: f.room_type, record_audio: f.record_audio || f.auto_record, auto_record: f.auto_record, recording_mode: f.recording_mode,
     video_mode: f.video_mode, video_quality: f.video_quality, encrypt_storage: f.encrypt_storage, e2ee_mode: f.e2ee_mode, camera_allowed: f.camera_allowed, screen_share_allowed: f.screen_share_allowed,
     board_allowed: f.board_access !== "private" && f.board_access !== "leaders", board_access: f.board_access, guest_access_enabled: f.guest_access_enabled, acl: f.acl, moderators: f.moderators,
     mail_delivery: f.mail_delivery, protocol_instructions: f.protocol_instructions.trim() || null, llm: f.llm, llm_summary: f.llm_summary, sip: f.sip, auto_map_mode: f.auto_map_mode,
@@ -188,6 +188,9 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
             <F title={<>Пароль комнаты{room?.has_password && <span className="muted small"> (пусто — не менять)</span>}</>} tip="Необязательно: участники вводят его при входе дополнительно к учётной записи.">
               <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" disabled={form.clearPassword} /></F>
           </div>
+          <F title="Автозавершение при бездействии, минут" tip="Человек остался в комнате один и столько минут ничего не делает (не говорит, не показывает экран, не пользуется мышью и клавиатурой) — страница предупреждает и через 2 минуты завершает встречу. Встречи, где есть другие люди, по тишине не завершаются: молча слушать можно сколько угодно. 0 — не завершать."
+             className="field-short">
+            <input type="number" min={0} max={720} step={5} value={form.idle_end_minutes} onChange={(e) => set("idle_end_minutes", Math.max(0, Math.min(720, Math.round(Number(e.target.value) || 0))))} /></F>
           {room?.has_password && <Check checked={form.clearPassword} onChange={(v) => set("clearPassword", v)} title="Убрать пароль" />}
           {admin && <Check checked={form.is_enabled} onChange={(v) => set("is_enabled", v)} title="Комната включена" tip="Выключенная комната не показывается в списке и недоступна для входа." />}
           <Check checked={form.mute_on_join} onChange={(v) => set("mute_on_join", v)} title="Микрофон при входе выключен" tip="Участники заходят без звука и включают микрофон сами. Удобно для больших встреч." />

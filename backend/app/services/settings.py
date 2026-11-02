@@ -494,9 +494,15 @@ class GeneralSettings(_Group):
     temp_room_idle_minutes: int = Field(default=30, ge=5, le=1440)       # комната, в которую так никто и не вошёл
     temp_room_max_hours: int = Field(default=12, ge=1, le=168)           # предельная жизнь, если встреча осталась без корректного завершения
     temp_room_allow_guest_link: bool = False
-    # Забытая встреча: человек остался в комнате один и ничего не делает — страница предупреждает и через 2 минуты выходит (дальше сервер завершает опустевшую
-    # встречу как обычно, записи закрываются штатно). standard — один ≥ 15 мин и без действий ≥ 10 мин; careful — 30 и 30; off — не предупреждать.
+    # Забытая встреча: человек остался в комнате один и ничего не делает — страница предупреждает и через 2 минуты завершает встречу (записи закрываются штатно).
+    # Сколько минут ждать — настройка комнаты (Room.idle_end_minutes, по умолчанию 30). standard — по настройке комнаты; off — нигде не завершать.
+    # careful — значение до 0.61 (тогда 30 и 30 минут), читается как standard.
     idle_end_mode: str = Field(default="standard", pattern="^(standard|careful|off)$")
+
+    @field_validator("idle_end_mode")
+    @classmethod
+    def _idle_mode(cls, v: str) -> str:
+        return "standard" if v == "careful" else v
     # Временные равноправные комнаты (создаются по ссылке /p/<код> или кнопкой; без обязательного ведущего). По умолчанию выключены.
     encrypt_new_rooms: bool = False                                       # новые комнаты создаются с шифрованием хранимых чата и стенограмм
     peer_rooms_enabled: bool = False

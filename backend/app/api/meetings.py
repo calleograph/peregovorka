@@ -14,6 +14,7 @@ from ..models import (MEETING_LITE, GuestParticipant, Meeting, MeetingChatMessag
 from ..services.access import accessible_history, can_access_meeting, release_lease
 from ..services import roles
 from ..services.room_icons import icon_out
+from ..services import leave_reasons
 from ..services.audit import audit_now, write_audit
 from ..services.video_rec import VideoError
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
@@ -162,7 +163,8 @@ async def end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser =
 
 
 @router.post("/{meeting_id}/idle-end", status_code=204)
-async def idle_end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def idle_end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db),
+                           quiet_s: int | None = Body(default=None, embed=True, ge=0, le=86400)):
     """Забытая встреча: участник остался один и нажал «Завершить сейчас» или не ответил на предупреждение (правило — на странице комнаты). Права руководителя не нужны:
     сервер сам проверяет, что других людей в комнате нет (несколько устройств самого участника и служебные подключения не считаются) и что не идёт эфир."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
@@ -175,9 +177,14 @@ async def idle_end_meeting(meeting_id: uuid.UUID, request: Request, su: SessionU
     b = await live.current(db, meeting.room_id) if live is not None else None
     if b is not None and b.status in ("starting", "live"):
         raise HTTPException(status_code=409, detail="Идёт эфир — он завершается по своим правилам.")
+    await leave_reasons.mark_idle(request.app.state.redis, meeting_id, quiet_s)          # в журнал: сколько человек ничего не делал
     if await request.app.state.meetings.end(db, meeting, "idle", kick=True):
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.idle_end", target_type="meeting", target_id=str(meeting_id),
-                          details={"room": meeting.room.slug})
+                          details={"room": meeting.room.slug, "quiet_s": quiet_s})
+        request.app.state.journal.emit("room", "idle_end", user=su.sam_account_name, room=meeting.room.name, meeting_id=str(meeting_id), ip=client_ip(request),
+                                       message=f"Встреча завершена автоматически: {su.display_name} был в комнате один"
+                                               + (f" и ничего не делал {max(1, quiet_s // 60)} мин" if quiet_s else " и ничего не делал"),
+                                       data={"quiet_s": quiet_s, "idle_minutes": meeting.room.idle_end_minutes})
         await db.commit()
 
 

@@ -256,6 +256,22 @@ async def list_present_identities(settings: Settings, room_name: str) -> set[str
         return None
 
 
+async def screen_sharers(settings: Settings, room_name: str) -> set[str] | None:
+    """Кто сейчас показывает экран (опубликована и не выключена дорожка SCREEN_SHARE); None — LiveKit недоступен."""
+    from livekit.protocol import models as lkmodels  # noqa: PLC0415
+
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
+        return {p.identity for p in resp.participants if any(t.source == lkmodels.TrackSource.SCREEN_SHARE and not t.muted for t in p.tracks)}
+    except Exception as exc:  # noqa: BLE001
+        text = str(exc).lower()
+        if "not_found" in text or "not found" in text or "does not exist" in text:
+            return set()
+        log.warning("LiveKit недоступен при подсчёте показов экрана", extra={"error": type(exc).__name__})
+        return None
+
+
 async def mute_microphones(settings: Settings, room_name: str, *, only: set[str] | None = None, exclude: set[str] | None = None) -> list[str] | None:
     """Выключает (mute) микрофонные дорожки участников на стороне сервера LiveKit.
 

@@ -85,6 +85,7 @@ class ClientConfig(BaseModel):
     screen_eco_kbps: int = 800      # цель битрейта профиля «Экономный 720p» (500–900 кбит/с)
     screen_share_audio: bool = False
     one_sharer_at_a_time: bool = False
+    max_sharers: int = 5            # одновременных показов экрана во встрече (1 — «только один показывающий»); сервер останавливает показ сверх предела
     can_moderate: bool = False      # руководитель комнаты / администратор: может выключать микрофоны участников
     is_guest: bool = False          # гость: без административных функций, без демонстрации экрана
     mute_on_join: bool = False      # участники входят с выключенным микрофоном
@@ -99,7 +100,8 @@ class ClientConfig(BaseModel):
     board_access: str = "everyone"  # действующий уровень: everyone | speakers | leaders | private
     recording_allowed: bool = False  # комната допускает запись аудио (кнопка «Начать запись»)
     attachments: bool = True        # вложения в чат включены
-    idle_end: str = "standard"      # забытая встреча с одним человеком: standard | careful | off (GeneralSettings.idle_end_mode)
+    idle_end: str = "standard"      # прежнее поле (клиенты до 0.61): standard | off
+    idle_minutes: int = 30          # забытая встреча с одним человеком: через сколько минут бездействия предупредить и завершить; 0 — выключено (комната, общий выключатель сервера)
 
 
 class E2EEOut(BaseModel):
@@ -210,6 +212,7 @@ class RoomAdminOut(BaseModel):
     anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool = False
     mask_profanity: bool = True
+    idle_end_minutes: int = 30
     welcome_message: str | None = None
     room_type: str = "regular"
     auto_record: bool = False
@@ -256,6 +259,7 @@ class RoomCreateIn(BaseModel):
     anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool = False
     mask_profanity: bool = True
+    idle_end_minutes: int = Field(default=30, ge=0, le=720)
     welcome_message: str | None = Field(default=None, max_length=2000)
     room_type: str = Field(default="regular", pattern="^(regular|presentation|broadcast)$")
     auto_record: bool = False
@@ -303,6 +307,7 @@ class RoomPatchIn(BaseModel):
     anonymize_profile: str | None = Field(default=None, pattern="^(|basic|strict|custom)$")
     mute_on_join: bool | None = None
     mask_profanity: bool | None = None
+    idle_end_minutes: int | None = Field(default=None, ge=0, le=720)
     welcome_message: str | None = Field(default=None, max_length=2000)
     room_type: str | None = Field(default=None, pattern="^(regular|presentation|broadcast)$")
     auto_record: bool | None = None
