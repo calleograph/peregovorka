@@ -2195,4 +2195,4 @@ DocClean изучен только чтением (файлы с учётным�
 
 - `frontend/src/androidDist.ts`: `ANDROID_VERSION` 0.1.4 → 0.1.5 (ссылка в подвале). Пропущено при выпуске клиента; поймал `androidDist.test.ts` в CI main. Урок: выпуск Android-клиента включает и эту константу (как `DESKTOP_VERSION` для Windows).
 - DEP-9 (LiveKit Server v1.13.11): срок повторной проверки истёк 2026-11-01 — продлён до 2026-11-15 с обоснованием в `docs/DEPENDENCIES.md` (сервер 0.59–0.60 и Android 0.1.5 только что проверены на v1.13.10; переход — отдельным шагом с живыми сценариями и `LongCallTest`).
-- Проверено: vitest `androidDist` 3/3, `typecheck:tests`, `deps.py verify` — OK.
+- Также README (блок `android-release`) — на 0.1.5. Проверено: vitest 622/622 (в т.ч. `androidDist` 3/3), `typecheck:tests`, `test_deps_tool`, `deps.py verify` — OK.
