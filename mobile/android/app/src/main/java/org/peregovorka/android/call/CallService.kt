@@ -46,9 +46,7 @@ class CallService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun action(name: String, title: String, icon: Int) = NotificationCompat.Action.Builder(
-        icon, title, PendingIntent.getService(this, name.hashCode(), Intent(this, CallService::class.java).setAction(name), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
-    ).build()
+    private fun action(name: String, title: String, icon: Int) = NotificationCompat.Action.Builder(icon, title, actionIntent(this, name)).build()
 
     private fun notification(room: String, server: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT), PendingIntent.FLAG_IMMUTABLE)
@@ -57,7 +55,7 @@ class CallService : Service() {
             .setContentIntent(open).setOngoing(true).setCategory(NotificationCompat.CATEGORY_CALL).setOnlyAlertOnce(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .addAction(action(ACTION_MIC, "Микрофон", R.drawable.ic_call))
-            .addAction(action(ACTION_LEAVE, "Выйти", R.drawable.ic_call))
+            .addAction(action(ACTION_LEAVE, "Выйти", R.drawable.ic_call_end))
             .build()
     }
 
@@ -65,12 +63,16 @@ class CallService : Service() {
 
     companion object {
         private const val ID = 1001
-        private const val ACTION_LEAVE = "org.peregovorka.android.LEAVE"
-        private const val ACTION_MIC = "org.peregovorka.android.MIC"
+        const val ACTION_LEAVE = "org.peregovorka.android.LEAVE"
+        const val ACTION_MIC = "org.peregovorka.android.MIC"
         private const val ACTION_STOP = "org.peregovorka.android.STOP"
         private const val EXTRA_ROOM = "room"
         private const val EXTRA_SERVER = "server"
         private const val MAX_CALL_MS = 12L * 60 * 60 * 1000       // страховка: блокировка процессора не может висеть дольше 12 часов
+
+        /** Действие над идущим звонком (уведомление, кнопки плавающего окна): служба уже на переднем плане, поэтому запуск разрешён и из фона. */
+        fun actionIntent(ctx: Context, name: String): PendingIntent =
+            PendingIntent.getService(ctx, name.hashCode(), Intent(ctx, CallService::class.java).setAction(name), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         fun start(ctx: Context, room: String, server: String) =
             ContextCompat.startForegroundService(ctx, Intent(ctx, CallService::class.java).putExtra(EXTRA_ROOM, room).putExtra(EXTRA_SERVER, server))

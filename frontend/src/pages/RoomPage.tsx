@@ -13,6 +13,7 @@ import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSou
 import ConnectProgress from "../components/room/ConnectProgress";
 import { ParticipantTile, ScreenStage, moderationItems, pipSupported, toggleFullscreen, togglePip, type PView, type TileActions } from "../components/room/Tiles";
 import StageView from "../components/room/StageView";
+import { useAutoPip } from "../components/room/AutoPip";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { useMeetingStage, type StageSource } from "../stage/useMeetingStage";
 import { LAYOUTS, MAX_PINS, MOBILE_W, stripOrder, type StageItem } from "../stage/stageModel";
@@ -1174,6 +1175,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const meLocal = participants.find((p) => p.local);
   useEffect(() => { desktopState({ sharing: !!meLocal?.screen, mic: !!meLocal?.mic }); }, [meLocal?.screen, meLocal?.mic]);
   useEffect(() => () => desktopState({ sharing: false, mic: false }), []);
+  // плавающее окно встречи при уходе со вкладки (где браузер это разрешает): изображение главного собеседника и кнопки «Микрофон», «Выйти»
+  const pipPortal = useAutoPip({
+    active: !!join && stage === "ready" && state === ConnectionState.Connected && !ended, title: join?.room.name ?? "Встреча",
+    people: participants, micOn: !!meLocal?.mic, canMic: sources.includes("microphone") && (!join?.client.presentation || pubAllowed),
+    onMic: () => void toggle("mic"), onLeave: () => void leave(),
+  });
   const desktopRef = useRef({ leave, toggle });
   desktopRef.current = { leave, toggle };
   useEffect(() => {
@@ -1601,6 +1608,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} recording={recording} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />
+      {pipPortal}
     </div>
   );
 }

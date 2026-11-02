@@ -162,6 +162,64 @@ class LongCallTest {
         }
     }
 
+    /**
+     * Плавающее окно (картинка в картинке): «Домой» во время встречи переводит приложение в системное окно (Android 12+ — автопереход, 8–11 — onUserLeaveHint);
+     * в окне звонок продолжается (звук в обе стороны, кадры демонстрации), работают кнопки окна «Микрофон» и «Выйти», поворот и блокировка экрана не рвут связь,
+     * возврат разворачивает встречу; после «Выйти» окно убирается само.
+     */
+    @Test fun pictureInPicture_home_callContinues_actions_return_leave() {
+        assumeTrue("не задан livekit_url", fake.realLivekit != null)
+        assumeTrue("второй участник (ci/peer.py) не отвечает по $peer", peerHeard() >= 0)
+        assumeTrue("на устройстве нет плавающих окон", appContext().packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE))
+        resetApp(fake)
+        launchApp().use { sc ->
+            fun pip(): Boolean { var v = false; runCatching { sc.onActivity { v = it.isInPictureInPictureMode } }; return v }
+            fun send(action: String) = org.peregovorka.android.call.CallService.actionIntent(appContext(), action).send()
+            device().findObject(By.text("Закрыть"))?.click()
+            device().wait(androidx.test.uiautomator.Until.findObject(By.text("Позже")), 2_500)?.click()
+            device().waitFor(By.text("Основная"))
+            device().findObjects(By.text("Войти"))[0].click()
+            device().waitFor(By.text("Подключиться"))!!.click()
+            acceptPermissionDialogs(4_000)
+            assertTrue("демонстрация экрана собеседника не появилась за 40 с", waitUntil(40_000) { calls.ui.value.tiles.any { it.screen != null } })
+            micOn()
+            alive("до сворачивания")
+            assertFalse("плавающее окно до сворачивания", pip())
+
+            device().pressHome()
+            assertTrue("«Домой» во время встречи не открыл плавающее окно", waitUntil(10_000) { pip() })
+            alive("в плавающем окне")
+
+            // кнопка окна «Микрофон»: выключает и включает обратно, звонок продолжается
+            send(org.peregovorka.android.call.CallService.ACTION_MIC)
+            assertTrue("кнопка окна не выключила микрофон", waitUntil(10_000) { !calls.ui.value.micOn })
+            send(org.peregovorka.android.call.CallService.ACTION_MIC)
+            assertTrue("кнопка окна не включила микрофон", waitUntil(10_000) { calls.ui.value.micOn })
+            assertTrue("после кнопок окно закрылось", pip())
+
+            device().setOrientationLandscape(); Thread.sleep(2_000)
+            alive("в плавающем окне после поворота")
+            device().setOrientationPortrait(); device().unfreezeRotation()
+
+            device().sleep(); Thread.sleep(15_000)
+            alive("в плавающем окне при заблокированном экране (звук)", screen = false)
+            device().wakeUp(); device().executeShellCommand("wm dismiss-keyguard"); Thread.sleep(2_000)
+
+            // возврат: встреча снова на весь экран, всё на месте
+            device().executeShellCommand("monkey -p $PKG -c android.intent.category.LAUNCHER 1")
+            assertTrue("возврат в приложение не развернул встречу", waitUntil(10_000) { !pip() })
+            assertNotNull("экран встречи после возврата", device().waitFor(By.desc("Выйти из конференции"), 10_000))
+            alive("после возврата из плавающего окна")
+
+            // снова в окно и выход кнопкой окна: встреча завершена, окно убирается само
+            device().pressHome()
+            assertTrue("повторное сворачивание не открыло окно", waitUntil(10_000) { pip() })
+            send(org.peregovorka.android.call.CallService.ACTION_LEAVE)
+            assertTrue("кнопка окна «Выйти» не завершила звонок", waitUntil(10_000) { calls.ui.value.phase == Phase.Ended })
+            assertTrue("окно не убралось после завершения встречи", waitUntil(10_000) { !pip() })
+        }
+    }
+
     /** Сравнение: демонстрация кодеком VP8 (второй участник ci/peer.py --codec vp8 в комнате long-room-vp8). Если VP8 показывается, а VP9 нет — дело в декодировании VP9 на устройстве. */
     @Test fun screenShareVp8_framesArrive() {
         assumeTrue("не задан livekit_url", fake.realLivekit != null)

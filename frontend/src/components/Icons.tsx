@@ -78,9 +78,41 @@ const PATHS: Record<string, ReactNode> = {
   cc: <><rect x="3" y="5.5" width="18" height="13" rx="2.6" /><path d="M10.2 10.2a2.2 2.2 0 1 0 0 3.6M16.6 10.2a2.2 2.2 0 1 0 0 3.6" /></>,
   mini: <><rect x="12" y="12" width="9" height="7" rx="1.6" /><path d="M3.5 3.5h9M3.5 3.5v9M3.5 3.5 10 10" /></>,
   download: <><path d="M12 4v11M7.5 10.8 12 15.3l4.5-4.5M5 19.5h14" /></>,
+  // меню администрирования (у каждого раздела своя пиктограмма — adminIcons.ts)
+  dashboard: <><rect x="3.5" y="3.5" width="7" height="8.5" rx="1.6" /><rect x="13.5" y="3.5" width="7" height="5" rx="1.6" /><rect x="13.5" y="11.5" width="7" height="9" rx="1.6" /><rect x="3.5" y="15" width="7" height="5.5" rx="1.6" /></>,
+  cpu: <><rect x="6.5" y="6.5" width="11" height="11" rx="2" /><rect x="9.6" y="9.6" width="4.8" height="4.8" rx=".8" /><path d="M9.5 3v3.5M14.5 3v3.5M9.5 17.5V21M14.5 17.5V21M3 9.5h3.5M3 14.5h3.5M17.5 9.5H21M17.5 14.5H21" /></>,
+  gauge: <><path d="M4.2 17.6a8.6 8.6 0 1 1 15.6 0" /><path d="m13.1 12.9 3.4-3.6" /><circle cx="12" cy="14" r="1.6" /></>,
+  devices: <><path d="M4.5 15V6.5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2V8M2.5 18.5h9.5" /><rect x="14.8" y="10.5" width="6.7" height="10" rx="1.6" /><path d="M18.1 18h.1" /></>,
+  door: <><path d="M4.5 20.5h15M7 20.5V5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 17 5v15.5M14 12v.6" /></>,
+  login: <><path d="M14 4h3.5A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5H14M4 12h11M11 8l4 4-4 4" /></>,
+  crown: <><path d="M4 8.2 7.8 12 12 5.4l4.2 6.6L20 8.2l-1.6 9.3H5.6ZM6 20.6h12" /></>,
+  userEdit: <><circle cx="9.5" cy="8" r="3.4" /><path d="M3 20c.4-3.6 3-5.6 6.5-5.6 1 0 1.9.2 2.7.5M14.5 20.5l.4-2.6 4.6-4.6a1.4 1.4 0 0 1 2 2l-4.6 4.6Z" /></>,
+  sitemap: <><rect x="9" y="3" width="6" height="4.6" rx="1.2" /><rect x="3" y="16.4" width="6" height="4.6" rx="1.2" /><rect x="15" y="16.4" width="6" height="4.6" rx="1.2" /><path d="M12 7.6v4.6M6 16.4v-2.2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2.2" /></>,
+  certificate: <><path d="M12.5 18H5.5A2.5 2.5 0 0 1 3 15.5v-9A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5v3M7 8.5h8M7 12h3.5" /><circle cx="17.5" cy="14" r="2.8" /><path d="m16 16.4-.8 4.6 2.3-1.3 2.3 1.3-.8-4.6" /></>,
+  mail: <><rect x="3" y="5" width="18" height="14" rx="2.4" /><path d="m3.8 6.8 8.2 6 8.2-6" /></>,
+  mailOpen: <><path d="M3 10.2v8.3A2.5 2.5 0 0 0 5.5 21h13a2.5 2.5 0 0 0 2.5-2.5v-8.3L12 3.8Z" /><path d="m3.6 10.6 8.4 5.6 8.4-5.6" /></>,
+  inbox: <><path d="M3.5 13.5 6 5.6a2 2 0 0 1 1.9-1.4h8.2a2 2 0 0 1 1.9 1.4l2.5 7.9V18a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" /><path d="M3.5 13.5h4.6l1.4 2.4h5l1.4-2.4h4.6" /></>,
+  dialpad: <>{[5, 10.6, 16.2].flatMap((y) => [6, 12, 18].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.5" fill="currentColor" stroke="none" />))}<circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none" /></>,
+  building: <><path d="M4 20.5h16M6 20.5V4.8a1.3 1.3 0 0 1 1.3-1.3h9.4A1.3 1.3 0 0 1 18 4.8v15.7M9.5 7.5h1M13.5 7.5h1M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M11 20.5v-3h2v3" /></>,
+  code: <><path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5M13.4 4.5l-2.8 15" /></>,
+  signature: <><path d="M3.5 17.5c2.2 0 3.2-7 5.4-7 1.6 0 .2 5.6 1.9 5.6 1.3 0 2.1-2.6 3.4-2.6 1 0 1 1.8 2 1.8M3.5 20.5h17M16.5 9.6l3.6-3.6a1.4 1.4 0 0 0-2-2l-3.6 3.6-.6 2.6Z" /></>,
+  key: <><circle cx="8" cy="15.5" r="4.2" /><path d="m11 12.5 8.6-8.6M16.4 7.1l2.6 2.6M14 9.5l2 2" /></>,
+  alert: <><path d="M10.3 4.3 2.9 17.2a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z" /><path d="M12 9.5v4.2M12 16.8v.2" /></>,
+  ban: <><circle cx="12" cy="12" r="8.6" /><path d="m5.9 5.9 12.2 12.2" /></>,
+  robot: <><rect x="4.5" y="8" width="15" height="11.5" rx="3" /><path d="M12 5v3M9.2 12.6v.6M14.8 12.6v.6M9.5 16.2h5M2.5 12.5v3M21.5 12.5v3" /><circle cx="12" cy="3.8" r="1.2" /></>,
+  wall: <><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M3 9.5h18M3 14.5h18M12 4.5v5M7.5 9.5v5M16.5 9.5v5M12 14.5v5" /></>,
+  history: <><path d="M3.8 12a8.2 8.2 0 1 0 2.4-5.8L3.8 8.6M3.8 4v4.6h4.6M12 8v4.2l3 1.8" /></>,
+  listCheck: <><path d="M11 6h9.5M11 12h9.5M11 18h9.5M3.5 6l1.5 1.5L8 4.5M3.5 12l1.5 1.5 3-3M3.5 18l1.5 1.5 3-3" /></>,
+  route: <><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="6" r="2.4" /><path d="M8.4 18h7.1a3 3 0 0 0 0-6h-7a3 3 0 0 1 0-6h7.1" /></>,
+  clipboard: <><rect x="5" y="4.5" width="14" height="16.5" rx="2.4" /><path d="M9 4.5v-.7a1.3 1.3 0 0 1 1.3-1.3h3.4A1.3 1.3 0 0 1 15 3.8v.7M8.5 10h7M8.5 13.5h7M8.5 17h4" /></>,
+  database: <><ellipse cx="12" cy="5.8" rx="7.5" ry="2.8" /><path d="M4.5 5.8v12.4c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.8M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8" /></>,
+  globe: <><circle cx="12" cy="12" r="8.6" /><path d="M3.4 12h17.2M12 3.4c2.3 2.4 3.4 5.3 3.4 8.6s-1.1 6.2-3.4 8.6c-2.3-2.4-3.4-5.3-3.4-8.6S9.7 5.8 12 3.4Z" /></>,
+  palette: <><path d="M12 3.4a8.6 8.6 0 0 0 0 17.2c1.1 0 1.9-.8 1.9-1.9 0-.5-.2-.9-.5-1.3-.3-.3-.5-.8-.5-1.3 0-1 .8-1.9 1.9-1.9h2.2a4.4 4.4 0 0 0 4.4-4.4c0-3.9-4.2-6.4-9.4-6.4Z" /><circle cx="7.6" cy="11.4" r="1.2" fill="currentColor" stroke="none" /><circle cx="10.2" cy="7.4" r="1.2" fill="currentColor" stroke="none" /><circle cx="14.8" cy="7.6" r="1.2" fill="currentColor" stroke="none" /></>,
+  cookie: <><path d="M20.5 12.6a8.6 8.6 0 1 1-9-9.1 3 3 0 0 0 3.6 3.7 3 3 0 0 0 3.7 3.7 3 3 0 0 0 1.7 1.7Z" /><path d="M8.5 9.5v.1M8 14.5v.1M12.5 13v.1M15.5 16.5v.1M11.5 17.6v.1" /></>,
 };
 
 export type IconName = keyof typeof PATHS;
+export const ICON_NAMES: readonly string[] = Object.keys(PATHS);
 
 export function Icon({ name, size = 22, ...rest }: { name: IconName; size?: number } & Omit<SVGProps<SVGSVGElement>, "name">) {
   return (

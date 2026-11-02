@@ -5,6 +5,7 @@ import { focusAnchor } from "../focusAnchor";
 import { api } from "../api";
 import { collapseAll, expandAll, initialCollapsed, saveCollapsed, toggleGroup } from "../adminNav";
 import { Icon } from "../components/Icons";
+import { ADMIN_ICONS } from "../adminIcons";
 import AccessAdmin from "./admin/AccessAdmin";
 import LoginAccessAdmin from "./admin/LoginAccessAdmin";
 import AsrModelsAdmin from "./admin/AsrModelsAdmin";
@@ -225,14 +226,14 @@ export default function AdminPage({ version }: { version: string }) {
       <div className="admin-layout">
         <nav ref={navRef} className={`admin-nav ${navOpen ? "nav-open" : ""}`} aria-label="Разделы администрирования">
           <button type="button" className="nav-toggle" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
-            <span className="muted small">Раздел</span><b>{page?.label ?? "—"}</b><Icon name="chevronD" size={16} className="chev" />
+            <span className="muted small">Раздел</span>{page && <Icon name={ADMIN_ICONS[page.id]} size={18} className="nav-ico" />}<b>{page?.label ?? "—"}</b><Icon name="chevronD" size={16} className="chev" />
           </button>
           <input type="search" className="nav-search" placeholder="Найти раздел…" aria-label="Поиск по разделам администрирования" value={q} onChange={(e) => setQ(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter" && found?.length) { pick(found[0].id); setQ(""); } if (e.key === "Escape") setQ(""); }} />
           {found && (
             <div className="nav-found" role="list">
               {found.length === 0 && <div className="muted small">Ничего не найдено</div>}
-              {found.map((x) => <button key={x.id} role="listitem" className={tab === x.id ? "active" : ""} onClick={() => { pick(x.id); setQ(""); }}>{x.label}<span className="muted small"> · {x.group}</span></button>)}
+              {found.map((x) => <button key={x.id} role="listitem" className={tab === x.id ? "active" : ""} onClick={() => { pick(x.id); setQ(""); }}><Icon name={ADMIN_ICONS[x.id]} size={18} className="nav-ico" /><span className="nav-label">{x.label}<span className="muted small"> · {x.group}</span></span></button>)}
             </div>
           )}
           <div className="nav-tools" role="group" aria-label="Все разделы меню" hidden={!!found}>
@@ -247,7 +248,7 @@ export default function AdminPage({ version }: { version: string }) {
                             title={open ? "Свернуть раздел" : "Развернуть раздел"}><Icon name="chevronD" size={14} className="chev" /><span>{g.title}</span></button></h4>
                 <div id={`navg-${gi}`} className="nav-items" hidden={!open}>
                   {g.pages.map((p) => <button key={p.id} className={tab === p.id ? "active" : ""} aria-current={tab === p.id ? "page" : undefined} onClick={() => pick(p.id)}>
-                    {p.label}{p.id === "system" && attn > 0 && <span className="nav-badge" aria-label={`требует внимания: ${attn}`}>{attn}</span>}</button>)}
+                    <Icon name={ADMIN_ICONS[p.id]} size={18} className="nav-ico" /><span className="nav-label">{p.label}</span>{p.id === "system" && attn > 0 && <span className="nav-badge" aria-label={`требует внимания: ${attn}`}>{attn}</span>}</button>)}
                 </div>
               </div>
             );

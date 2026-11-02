@@ -229,7 +229,7 @@ main { max-width: 1900px; }
 .menu-pop button:hover, .menu-pop a:hover { background: var(--soft); }
 
 /* админка: группы, подсказки и примеры у полей */
-.admin-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
+.admin-layout { display: grid; grid-template-columns: 256px minmax(0, 1fr); gap: 20px; align-items: start; }
 .admin-nav { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; }
 .admin-nav h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .admin-nav button { display: block; width: 100%; text-align: left; padding: 6px 10px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text); }

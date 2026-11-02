@@ -94,6 +94,8 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     }
     BackHandler { if (sheet != null) { if (sheet == Sheet.Chat) calls.setChatOpen(false); sheet = null } else if (fullscreen) fullscreen = false else confirmLeave = true }
     LaunchedEffect(s.phase) { while (s.phase == Phase.Connected || s.phase == Phase.Reconnecting) { calls.refreshChat(); delay(if (s.chatOpen) 3000 else 10_000) } }
+    // Плавающее окно: только изображение. Открытые панели и диалоги не показываются, но их состояние (выше) сохраняется и возвращается при разворачивании.
+    if (LocalInPip.current) { PipView(calls, s); return }
 
     if (s.phase == Phase.Ended) {
         Column(Modifier.fillMaxSize().background(CallBg).systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
