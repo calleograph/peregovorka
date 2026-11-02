@@ -138,8 +138,8 @@ jobs:
         working-directory: .
         run: |
           python3 -m pip install --quiet livekit==1.1.21 livekit-api==1.2.2
-          nohup python3 mobile/android/ci/peer.py --url ws://127.0.0.1:7880 --room long-room --port 7999 --seconds 3600 > peer.log 2>&1 &
-          nohup python3 mobile/android/ci/peer.py --url ws://127.0.0.1:7880 --room long-room-vp8 --port 7998 --codec vp8 --seconds 3600 > peer-vp8.log 2>&1 &
+          nohup python3 mobile/android/ci/peer.py --url ws://127.0.0.1:7880 --room long-room --port 7999 --seconds 7200 > peer.log 2>&1 &
+          nohup python3 mobile/android/ci/peer.py --url ws://127.0.0.1:7880 --room long-room-vp8 --port 7998 --codec vp8 --seconds 7200 > peer-vp8.log 2>&1 &
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7999/stats >/dev/null 2>&1 && curl -fsS http://127.0.0.1:7998/stats >/dev/null 2>&1 && break; sleep 1; done
           curl -fsS http://127.0.0.1:7999/stats && echo && cat peer.log peer-vp8.log
       - uses: actions/setup-java@v6
