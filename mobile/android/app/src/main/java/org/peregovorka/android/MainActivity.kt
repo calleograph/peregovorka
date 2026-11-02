@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -60,10 +61,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             calls.ui.map { Triple(PipModel.wanted(it.phase), it.micOn to it.canMic, shareAspect(it)) }.distinctUntilChanged().collect { updatePip() }
         }
-        // Встреча закончилась, пока приложение было в плавающем окне: окно показывает «Встреча завершена» и через пару секунд убирается.
-        lifecycleScope.launch {
-            calls.ui.map { it.phase == Phase.Ended }.distinctUntilChanged().collect { ended -> if (ended && inPip) { delay(2_500); if (inPip) moveTaskToBack(false) } }
-        }
+        lifecycleScope.launch { calls.ui.map { it.phase == Phase.Ended }.distinctUntilChanged().collect { ended -> if (ended) closeEndedPip() } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -103,7 +101,24 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip = isInPictureInPictureMode
         lifecycleNote("pip=$isInPictureInPictureMode")
-        if (isInPictureInPictureMode) calls.onBackground()
+        if (isInPictureInPictureMode) { calls.onBackground(); if (!PipModel.wanted(calls.ui.value.phase)) closeEndedPip() }
+    }
+
+    /**
+     * Встреча закончилась, а приложение в плавающем окне: окно показывает «Встреча завершена» и через пару секунд убирается.
+     * Вызывается и по концу встречи, и по входу в окно: уведомление о входе в окно приходит с задержкой (на эмуляторах Android 10 и 16 — уже после «Выйти»),
+     * поэтому решение принимается по фактическому isInPictureInPictureMode, а не по флагу. Не убрал moveTaskToBack — задача закрывается (встреча уже окончена, терять нечего).
+     */
+    private var closingPip: Job? = null
+    private fun closeEndedPip() {
+        if (closingPip?.isActive == true) return
+        closingPip = lifecycleScope.launch {
+            delay(2_500)
+            if (!isInPictureInPictureMode || PipModel.wanted(calls.ui.value.phase)) return@launch
+            moveTaskToBack(false)
+            delay(1_500)
+            if (isInPictureInPictureMode && !PipModel.wanted(calls.ui.value.phase)) { lifecycleNote("pip_close_task"); finishAndRemoveTask() }
+        }
     }
 
     // Камера в фоне и в плавающем окне выключена (система её ограничивает, а человек ушёл из встречи взглядом); возвращается, когда встреча снова на весь экран.
