@@ -6,6 +6,7 @@ import InfoTip from "../../components/InfoTip";
 const EVENT_LABEL: Record<string, string> = {
   join_ok: "Вход выполнен", join_failed: "Вход не удался", disconnected: "Отключение от LiveKit", reconnecting: "Переподключение", reconnected: "Соединение восстановлено",
   rejoin_started: "Повторный вход начат", rejoin_failed: "Повторный вход не удался",
+  connect_failed: "Подключение не удалось", ice_failed: "Голос и видео не прошли (нет медиасоединения)", ice_stats: "Путь медиа", screen_frozen: "Показ экрана участника «завис»",
   screen_share_started: "Показ экрана начат", screen_share_restarted: "Показ экрана начат повторно", screen_share_stopped: "Показ экрана остановлен", screen_share_failed: "Показ экрана не удался",
   screen_share_ended_by_browser: "Показ остановлен кнопкой браузера", screen_track_published: "Трек экрана опубликован", screen_track_unpublished: "Трек экрана снят", screen_track_ended: "Трек экрана завершён",
   device_error: "Ошибка устройства", mic_failed: "Микрофон: ошибка", camera_failed: "Камера: ошибка", publish_failed: "Публикация не удалась", autoplay_blocked: "Звук заблокирован браузером",

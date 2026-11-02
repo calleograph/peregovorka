@@ -15,6 +15,7 @@ import io.livekit.android.room.track.VideoTrack
 import io.livekit.android.util.flow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import io.livekit.android.e2ee.BaseKeyProvider
@@ -24,6 +25,9 @@ import org.peregovorka.android.net.ServerApi
 import org.peregovorka.android.net.SessionExpired
 
 enum class Phase { Idle, Connecting, Connected, Reconnecting, Ended }
+
+/** Итог подключения: NoMedia — сигнал прошёл (вход в комнату принят), а голос и видео до сервера звонков не дошли (ICE). */
+enum class Connect { Ok, Failed, NoMedia }
 
 data class Tile(
     val key: String, val name: String, val isLocal: Boolean,
@@ -65,6 +69,14 @@ class CallManager(private val app: Application) {
     companion object {
         private const val RELEASE_DELAY_MS = 1500L
         private val RECOVER_PAUSES_MS = longArrayOf(1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000)
+        /** Сколько ждать медиасоединения после входа: Room.connect() SDK возвращается сразу после сигнала, не дожидаясь ICE (браузерная библиотека ждёт). */
+        private const val MEDIA_TIMEOUT_MS = 25_000L
+        /** Подряд столько повторных входов без медиа — дальше не пробуем: сеть телефона не пропускает голос и видео, повторы ничего не изменят. */
+        const val NO_MEDIA_LIMIT = 2
+        const val NO_MEDIA_MESSAGE = "Голос и видео не проходят: сервер звонков недоступен из сети, к которой подключён телефон. Подключитесь к рабочей Wi‑Fi или VPN и войдите снова."
+
+        /** Повторять ли вход после очередной попытки: да — пока не набралось [NO_MEDIA_LIMIT] попыток подряд без медиа. */
+        fun keepTrying(noMediaInRow: Int): Boolean = noMediaInRow < NO_MEDIA_LIMIT
 
         /** Сообщение на экране завершения по причине отключения: null — обрыв связи, входим заново; "" — человек вышел сам. */
         fun endMessage(reason: DisconnectReason?): String? = when (reason) {
@@ -86,6 +98,8 @@ class CallManager(private val app: Application) {
     private var cameraWasOn = false
     private var myIdentity = ""
     private var myUserId = ""
+    /** Медиасоединение текущей комнаты установлено (после этого события переподключения SDK управляют экраном). */
+    private var mediaUp = false
 
     val active: Boolean get() = _ui.value.phase != Phase.Idle && _ui.value.phase != Phase.Ended
 
@@ -115,8 +129,11 @@ class CallManager(private val app: Application) {
         // сразу после окна разрешений), конференция всё равно идёт — приложение не должно из-за этого завершаться
         runCatching { CallService.start(app, join.room.name, serverTitle) }.onFailure { android.util.Log.w("PGCALL", "fgs_start_failed ${it.javaClass.simpleName}: ${it.message?.take(200)}") }
         jobs += scope.launch {
-            if (connectRoom(join, mic, wantCamera && canCam)) api.reportEvent("join_ok", join.meetingId)
-            else finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
+            when (connectRoom(join, mic, wantCamera && canCam)) {
+                Connect.Ok -> api.reportEvent("join_ok", join.meetingId)
+                Connect.NoMedia -> finish(NO_MEDIA_MESSAGE)
+                Connect.Failed -> finish("Не удалось подключиться к конференции. Проверьте интернет и повторите.")
+            }
         }
         jobs += scope.launch { while (true) { pollHands(); delay(6000) } }
         jobs += scope.launch { watchScreen() }
@@ -162,8 +179,12 @@ class CallManager(private val app: Application) {
         }
     }
 
-    /** Создаёт комнату LiveKit и подключается; true — подключено. События прежней (отключённой) комнаты дальше не обрабатываются. */
-    private suspend fun connectRoom(join: JoinDto, mic: Boolean, camera: Boolean): Boolean {
+    /**
+     * Создаёт комнату LiveKit и подключается. Подключено — только когда установилось медиасоединение (Room.State.CONNECTED ставится по ICE): иначе приложение
+     * показывало «подключено», SDK минуту переподключался, отключался, повторный вход снова «удавался» по сигналу — и так по кругу («Связь потеряна, восстанавливаем»).
+     * События прежней (отключённой) комнаты дальше не обрабатываются.
+     */
+    private suspend fun connectRoom(join: JoinDto, mic: Boolean, camera: Boolean): Connect {
         myIdentity = join.identity
         val r = LiveKit.create(
             app,
@@ -179,12 +200,22 @@ class CallManager(private val app: Application) {
         roomJobs += scope.launch { r.localParticipant::isMicrophoneEnabled.flow.collect { if (room === r) refresh() } }
         roomJobs += scope.launch { r.localParticipant::isCameraEnabled.flow.collect { if (room === r) refresh() } }
         return try {
+            mediaUp = false
             r.connect(join.livekitUrl, join.token)
+            if (withTimeoutOrNull(MEDIA_TIMEOUT_MS) { r::state.flow.first { it == Room.State.CONNECTED } } == null) {
+                val host = runCatching { java.net.URI(join.livekitUrl).host }.getOrNull().orEmpty()
+                android.util.Log.w("PGCALL", "media_unreachable state=${r.state} host=$host")
+                api?.let { a -> scope.launch { a.reportEvent("ice_failed", join.meetingId, "no_media_${MEDIA_TIMEOUT_MS / 1000}s state=${r.state}") } }
+                releaseRoom()
+                return Connect.NoMedia
+            }
+            mediaUp = true
             _ui.update { it.copy(phase = Phase.Connected, meetingId = join.meetingId) }
+            scope.launch { delay(3_000); if (room === r) icePath(r)?.let { p -> api?.reportEvent("ice_stats", join.meetingId, p) } }
             if (mic) runCatching { r.localParticipant.setMicrophoneEnabled(true) }
             if (camera) runCatching { r.localParticipant.setCameraEnabled(true) }
             refresh()
-            true
+            Connect.Ok
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -192,15 +223,28 @@ class CallManager(private val app: Application) {
             android.util.Log.w("PGCALL", "connect_failed ${e.javaClass.name}: ${e.message?.replace(Regex("access_token=[^&\\s\"]+"), "access_token=<скрыто>")?.take(300)}")
             api?.let { a -> scope.launch { a.reportEvent("connect_failed", join.meetingId, e.javaClass.simpleName) } }
             releaseRoom()
-            false
+            Connect.Failed
+        }
+    }
+
+    /** Каким путём идёт медиа (для «Диагностики клиентов»): протокол и типы кандидатов выбранной пары, например «udp host→host» или «tcp host→host». */
+    private suspend fun icePath(r: Room): String? = suspendCancellableCoroutine { c ->
+        r.getSubscriberRTCStats { report ->
+            val all = report.statsMap
+            val pair = all.values.firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" && it.members["nominated"] == true }
+            val loc = pair?.members?.get("localCandidateId")?.let { all[it] }?.members
+            val rem = pair?.members?.get("remoteCandidateId")?.let { all[it] }?.members
+            val out = if (loc == null || rem == null) null else "${loc["protocol"]} ${loc["candidateType"]}→${rem["candidateType"]}"
+            if (c.isActive) c.resume(out) {}
         }
     }
 
     private fun onEvent(e: RoomEvent) {
         when (e) {
-            is RoomEvent.Disconnected -> onDisconnected(e.reason, e.error)
-            is RoomEvent.Reconnecting -> _ui.update { it.copy(phase = Phase.Reconnecting) }
-            is RoomEvent.Reconnected -> _ui.update { it.copy(phase = Phase.Connected) }
+            // пока медиасоединение не установилось, исход решает connectRoom (ожидание с пределом), а не события переподключения SDK
+            is RoomEvent.Disconnected -> if (mediaUp) onDisconnected(e.reason, e.error)
+            is RoomEvent.Reconnecting -> if (mediaUp) _ui.update { it.copy(phase = Phase.Reconnecting) }
+            is RoomEvent.Reconnected -> if (mediaUp) _ui.update { it.copy(phase = Phase.Connected) }
             else -> {}
         }
         refresh()
@@ -236,6 +280,7 @@ class CallManager(private val app: Application) {
         val a = api; val mid = _ui.value.meetingId
         recovering = scope.launch {
             if (a != null && mid.isNotEmpty()) launch { a.reportEvent("rejoin_started", mid, why) }      // отдельно: без сети отправка ждёт таймаута и не должна задерживать попытки
+            var noMedia = 0
             for (pause in RECOVER_PAUSES_MS) {
                 delay(pause)
                 val j = try { rj() } catch (e: CancellationException) { throw e } catch (e: SessionExpired) {
@@ -245,10 +290,17 @@ class CallManager(private val app: Application) {
                     if (e.status in 400..499 && e.status != 429 && e.status != 408) { finish(e.message); return@launch }
                     null
                 } catch (e: Exception) { null }
-                if (j != null && connectRoom(j, mic, camera && _ui.value.canCamera)) {
-                    android.util.Log.i("PGCALL", "rejoin_ok after=$why")
-                    api?.let { x -> scope.launch { x.reportEvent("reconnected", j.meetingId, why) } }
-                    return@launch
+                when (if (j == null) Connect.Failed else connectRoom(j, mic, camera && _ui.value.canCamera)) {
+                    Connect.Ok -> {
+                        android.util.Log.i("PGCALL", "rejoin_ok after=$why")
+                        api?.let { x -> scope.launch { x.reportEvent("reconnected", j?.meetingId ?: mid, why) } }
+                        return@launch
+                    }
+                    Connect.NoMedia -> if (!keepTrying(++noMedia)) {
+                        if (a != null && mid.isNotEmpty()) scope.launch { a.reportEvent("rejoin_failed", mid, "no_media") }
+                        finish(NO_MEDIA_MESSAGE); return@launch
+                    }
+                    Connect.Failed -> noMedia = 0
                 }
             }
             if (a != null && mid.isNotEmpty()) scope.launch { a.reportEvent("rejoin_failed", mid, why) }

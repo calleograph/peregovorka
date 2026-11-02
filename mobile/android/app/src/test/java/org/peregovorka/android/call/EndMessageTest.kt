@@ -17,4 +17,9 @@ class EndMessageTest {
         assertEquals("Вас отключили от встречи.", CallManager.endMessage(DisconnectReason.PARTICIPANT_REMOVED))
         assertEquals("", CallManager.endMessage(DisconnectReason.CLIENT_INITIATED))
     }
+    /** Сигнал проходит, медиа нет: после NO_MEDIA_LIMIT таких попыток подряд приложение останавливается с сообщением, а не переподключается по кругу. */
+    @Test fun noMediaStopsTheLoop() {
+        assertEquals(true, CallManager.keepTrying(1))
+        assertEquals(false, CallManager.keepTrying(CallManager.NO_MEDIA_LIMIT))
+    }
 }
