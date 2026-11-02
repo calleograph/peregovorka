@@ -1377,7 +1377,7 @@
    "group": "Frontend",
    "pinned": "6.1.2",
    "tested": "6.1.2",
-   "reviewed_latest": "6.1.2",
+   "reviewed_latest": "6.2.0",
    "source": {
     "type": "npm",
     "name": "@vitejs/plugin-react"
@@ -1389,7 +1389,14 @@
      "name": "@vitejs/plugin-react"
     }
    ],
-   "changelog": "https://www.npmjs.com/package/@vitejs/plugin-react?activeTab=versions"
+   "changelog": "https://www.npmjs.com/package/@vitejs/plugin-react?activeTab=versions",
+   "deferred": {
+    "version": "6.2.0",
+    "reason": "Минорная версия вышла в день выпуска 0.61.0 (2026-11-02), после ревизии компонентов; выпуск меняет страницу комнаты и фон входа, а не сборку. Сборка и все проверки выпуска выполнены с 6.1.2.",
+    "issue": "DEP-19",
+    "recheck": "2026-11-16",
+    "plan": "Обновить @vitejs/plugin-react до 6.2.0, npm install, сборка, vitest и живые сценарии страницы комнаты и входа."
+   }
   },
   {
    "key": "node",
