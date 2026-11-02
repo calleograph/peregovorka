@@ -123,9 +123,9 @@ async def main():
         gtok = await R.js(f"(async()=>{{const a={api};const rooms=JSON.parse((await a('GET','/admin/rooms'))[1]);const r=rooms.find(x=>x.slug==='it-1');return r.guest_token||null}})()")
         # --------------------------------------------------- темы пользователя
         await B.goto("/profile", 3.0)
-        S.check("личный кабинет: карточка «Оформление» с шестью темами", await B.js("document.querySelectorAll('.theme-opt').length") == 6)
+        S.check("личный кабинет: карточка «Оформление» с семью темами", await B.js("document.querySelectorAll('.theme-opt').length") == 7)
         d0 = await B.js("document.documentElement.getAttribute('data-theme')")
-        S.check("по умолчанию — тема системы (атрибут темы не задан)", d0 is None, str(d0))
+        S.check("по умолчанию — тема «Стекло»", d0 == "glass", str(d0))
         res = {}
         for label, tid in (("Янтарная", "amber"), ("Бриллиант", "diamond"), ("Корпоративная", "corporate"), ("Тёмная", "dark"), ("Светлая", "light")):
             await click_theme(B, label)

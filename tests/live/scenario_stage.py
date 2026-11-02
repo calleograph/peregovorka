@@ -102,7 +102,7 @@ async def main():
         S.check("6. C видит оба показа экрана (два элемента сцены, кадры идут)", ok, str([x["k"][:16] for x in await C.js(CELLS)]))
         v = await view(C)
         bScreen = await key_of(C, "screen", "Алиса"); aScreen = await key_of(C, "screen", "Админ"); bCam = await key_of(C, "camera", "Алиса")
-        S.check("6. у C крупно — самый свежий показ (B), режим «сцена»", v and v["main"] == bScreen and v["reason"] == "screen", str(v))
+        S.check("6. у C крупно — оба показа, по времени начала (A, затем B)", v and v["main"] == f"{aScreen} {bScreen}" and v["reason"] == "screen", str(v))
         await C.shot("06-two-screens")
         s = await C.js(S.STATS)
         S.check("6. у C декодируются видеокадры", s["vin"] > 20, str(s))
