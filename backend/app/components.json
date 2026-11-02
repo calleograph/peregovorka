@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.61.1",
+ "release": "0.62.0",
  "reviewed_at": "2026-11-02",
  "components": [
   {
@@ -1335,9 +1335,9 @@
    "key": "vitest",
    "title": "Vitest",
    "group": "Frontend",
-   "pinned": "5.0.5",
-   "tested": "5.0.5",
-   "reviewed_latest": "5.0.5",
+   "pinned": "5.1.0",
+   "tested": "5.1.0",
+   "reviewed_latest": "5.1.0",
    "source": {
     "type": "npm",
     "name": "vitest"
