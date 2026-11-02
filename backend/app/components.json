@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.61.0",
+ "release": "0.61.1",
  "reviewed_at": "2026-11-02",
  "components": [
   {
@@ -519,7 +519,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159",
+   "digest": "sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -1173,7 +1173,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159",
+   "digest": "sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
@@ -1377,7 +1377,7 @@
    "group": "Frontend",
    "pinned": "6.1.2",
    "tested": "6.1.2",
-   "reviewed_latest": "6.2.0",
+   "reviewed_latest": "6.2.1",
    "source": {
     "type": "npm",
     "name": "@vitejs/plugin-react"
@@ -1391,11 +1391,11 @@
    ],
    "changelog": "https://www.npmjs.com/package/@vitejs/plugin-react?activeTab=versions",
    "deferred": {
-    "version": "6.2.0",
-    "reason": "Минорная версия вышла в день выпуска 0.61.0 (2026-11-02), после ревизии компонентов; выпуск меняет страницу комнаты и фон входа, а не сборку. Сборка и все проверки выпуска выполнены с 6.1.2.",
+    "version": "6.2.1",
+    "reason": "Минорная версия (6.2.0, затем 6.2.1) вышла в день выпуска 0.61.0 (2026-11-02), после ревизии компонентов; выпуски 0.61.0 и 0.61.1 меняют страницу комнаты, фон входа и сценарий обновления, а не сборку. Сборка и все проверки выпусков выполнены с 6.1.2.",
     "issue": "DEP-19",
     "recheck": "2026-11-16",
-    "plan": "Обновить @vitejs/plugin-react до 6.2.0, npm install, сборка, vitest и живые сценарии страницы комнаты и входа."
+    "plan": "Обновить @vitejs/plugin-react до 6.2.1, npm install, сборка, vitest и живые сценарии страницы комнаты и входа."
    }
   },
   {
