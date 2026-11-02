@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.peregovorka.Peregovorka</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Peregovorka</name>
+  <summary>Video meetings, chats and materials of your organization</summary>
+  <summary xml:lang="ru">Видеовстречи, чаты и материалы вашей организации</summary>
+  <description>
+    <p>Desktop client for corporate Peregovorka servers: meetings with voice, video and screen sharing, chats, meeting history and materials, desktop notifications.</p>
+    <p xml:lang="ru">Приложение для корпоративных серверов Peregovorka: встречи со звуком, видео и показом экрана, чаты, история и материалы встреч, уведомления рабочего стола.</p>
+  </description>
+  <developer id="io.github.calleograph"><name>Peregovorka</name></developer>
+  <launchable type="desktop-id">peregovorka.desktop</launchable>
+  <url type="homepage">https://github.com/calleograph/peregovorka</url>
+  <categories><category>Network</category><category>VideoConference</category></categories>
+  <content_rating type="oars-1.1"/>
+</component>

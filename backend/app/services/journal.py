@@ -53,6 +53,8 @@ def parse_client(ua: str | None) -> str | None:
         if m:
             os_ = name + (f" {m.group(1)}" if name in ("Android", "iOS") else "")
             break
+    if br and br.startswith("Peregovorka для Windows") and os_ == "Linux":
+        br = br.replace("для Windows", "для Linux")            # то же настольное приложение (PeregovorkaDesktop), собранное для Linux
     out = " · ".join(x for x in (br, os_) if x)
     return out or u[:80]
 

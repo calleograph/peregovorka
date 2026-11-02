@@ -7,7 +7,7 @@ import type { TrustStore } from "./trust";
 export interface Ctx {
   version: string;
   buildKind: string;                  // release | test
-  install: "msi" | "exe" | "dev";     // MSI — корпоративная установка (обновляет администратор)
+  install: "msi" | "exe" | "deb" | "dev";     // MSI — корпоративная установка (обновляет администратор); deb — пакет Linux (обновляет APT)
   userData: string;
   log: Log;
   settings: SettingsStore;

@@ -145,3 +145,5 @@ mirror.gcr.io
 quay.io
 files.pythonhosted.org
 docs.python.org
+# --- сайт репозитория APT приложения для Linux (GitHub Pages проекта, docs/LINUX.md)
+calleograph.github.io

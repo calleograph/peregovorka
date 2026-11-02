@@ -22,6 +22,7 @@ import { contextMenu, handleDownload, openDownloaded } from "./system";
 import { applyAutostart, AppTray } from "./tray";
 import { TrustStore } from "./trust";
 import { Updater } from "./updater";
+import { watchPackage } from "./linuxPackage";
 import { MainWindow, themeBg } from "./window";
 import { audioDiag, securityProducts, setupNativeAudioLog } from "./audiolog";
 
@@ -33,7 +34,7 @@ const dev = !app.isPackaged;
 const argv = process.argv;
 const flag = (f: string) => argv.includes(f);
 if (dev && process.env.PEREGOVORKA_USER_DATA) app.setPath("userData", process.env.PEREGOVORKA_USER_DATA);       // испытания: свой каталог данных
-app.setAppUserModelId("org.peregovorka.desktop");                   // совпадает с appId установщика: иначе Windows не показывает уведомления приложения
+if (process.platform === "win32") app.setAppUserModelId("org.peregovorka.desktop");      // совпадает с appId установщика: иначе Windows не показывает уведомления приложения
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 setupNativeAudioLog(app);            // до готовности приложения: журнал звука Chromium с кодами WASAPI (разбор отказов микрофона, см. audiolog.ts)
@@ -56,7 +57,7 @@ async function boot(): Promise<void> {
   process.on("uncaughtException", (e) => log.error("main.exception", { error: String(e?.stack ?? e).slice(0, 1500) }));
   process.on("unhandledRejection", (e) => log.error("main.rejection", { error: String((e as Error)?.stack ?? e).slice(0, 1500) }));
   const settings = new SettingsStore(userData);
-  const policy = await loadPolicy();
+  const policy = await loadPolicy(app.isPackaged);
   const ctx: Ctx = {
     version: __APP_VERSION__, buildKind: __BUILD_KIND__, install: app.isPackaged ? "exe" : "dev", userData, log, settings, policy,
     trust: new TrustStore(userData, dev && flag("--e2e")),
@@ -139,8 +140,11 @@ async function boot(): Promise<void> {
   let lastDownload: string | null = null;
   orgs.load();
 
-  const managedInstall = await isMsiInstall();
-  if (managedInstall) ctx.install = "msi";
+  // Обновления ставит не приложение: MSI — администратор; Linux — менеджер пакетов (APT, репозиторий Peregovorka). Своя замена файлов программы
+  // поверх установленного пакета конфликтовала бы с dpkg, поэтому в Linux собственный механизм обновления выключен всегда.
+  const linuxPackage = process.platform === "linux" && app.isPackaged;
+  const managedInstall = linuxPackage || await isMsiInstall();
+  if (managedInstall) ctx.install = linuxPackage ? "deb" : "msi";
   const updater = new Updater(ctx, () => orgs.list.map((o) => o.state), managedInstall, () => ctx.emit(), (version) => {
     const n = ctx.eff().notifications;
     if (!n.enabled || n.dndUntil === -1 || n.dndUntil > Date.now() || !Notification.isSupported()) return;
@@ -260,6 +264,7 @@ async function boot(): Promise<void> {
   handle("shell:update:check", "main", () => updater.check(true));
   handle("shell:update:download", "main", () => updater.download());
   handle("shell:update:install", "main", (_e, a) => {
+    if (updater.state.status === "restart") return updater.relaunch() ? { ok: true } : { ok: false, reason: "Перезапуск будет доступен после завершения встречи." };
     const now = a.now === true;
     if (now && !updater.canRestart()) return { ok: false, reason: "Установка будет доступна после завершения встречи." };
     return { ok: updater.install(now) };
@@ -472,6 +477,14 @@ async function boot(): Promise<void> {
   orgs.startAll();
   applyAutostart(ctx.eff().autostart, managedInstall && !!policy.autostart);
   updater.schedule();
+  if (linuxPackage) watchPackage(ctx, (v) => {
+    updater.packageUpgraded(v);
+    const n = ctx.eff().notifications;
+    if (!n.enabled || n.dndUntil === -1 || n.dndUntil > Date.now() || !Notification.isSupported()) return;
+    const note = new Notification({ title: "Peregovorka обновлена", body: `Установлена версия ${v}. Перезапустите приложение — «Настройки → Обновления».`, silent: true });
+    note.on("click", () => openSettings("updates"));
+    note.show();
+  });
   const link = findDeepLinkArg(argv);
   if (link) main.win.webContents.once("did-finish-load", () => void openLink(link));
 

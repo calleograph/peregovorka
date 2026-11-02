@@ -93,7 +93,7 @@ sudo ./install.sh
 - **[Peregovorka-Setup-1.4.3.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/Peregovorka-Setup-1.4.3.exe)** — установка для себя, без прав администратора
 - **[Peregovorka-1.4.3-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/Peregovorka-1.4.3-x64.msi)** — для развёртывания в организации (групповые политики)
 
-Несколько серверов организаций в одном окне, трей и уведомления Windows, новое оформление «Стекло». Установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае».
+Несколько серверов организаций в одном окне, трей и уведомления, оформление «Стекло». Для Windows установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае». Для Linux пакеты ставятся и обновляются через APT, подпись репозитория проверяет сам apt ([docs/LINUX.md](docs/LINUX.md)).
 <!-- desktop-release:end -->
 
 ## Приложение для Android

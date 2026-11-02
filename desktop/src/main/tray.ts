@@ -1,8 +1,11 @@
 // Значок в области уведомлений: левая кнопка — открыть окно, правая — меню (организации, чаты, предстоящие встречи, текущая встреча, настройки, обновления, выход).
 // Есть непрочитанные — значок с отметкой и число во всплывающей подсказке.
 import { app, Menu, nativeImage, Tray } from "electron";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Autostart } from "../common/policy";
+import { autostartEntry } from "../common/linux";
 import type { Org } from "./orgs";
 
 export type TrayActions = {
@@ -22,7 +25,9 @@ export class AppTray {
       out.addRepresentation({ scaleFactor: 2, buffer: big.toPNG() });
       return out;
     };
-    this.icons = { normal: img("tray.png", "tray-hi.png"), unread: img(null, "tray-unread-hi.png") };
+    // Linux (StatusNotifierItem): оболочка берёт одну картинку и масштабирует сама — даём 32 px, чтобы значок не расплывался на экранах с масштабом
+    const linux = (f: string) => nativeImage.createFromPath(join(__dirname, "assets", f));
+    this.icons = process.platform === "linux" ? { normal: linux("tray-hi.png"), unread: linux("tray-unread-hi.png") } : { normal: img("tray.png", "tray-hi.png"), unread: img(null, "tray-unread-hi.png") };
     this.tray = new Tray(this.icons.normal);
     this.tray.setToolTip("Peregovorka");
     this.tray.on("click", () => a.open());
@@ -59,5 +64,16 @@ export function applyAutostart(mode: Autostart, machineWide = false): void {
   if (!app.isPackaged) return;                         // запуск из исходников не прописывается в автозапуск
   // проверочный запуск с отдельным профилем (--user-data-dir) не трогает автозапуск настоящей установки на этом компьютере; проверка записи — с PEREGOVORKA_AUTOSTART_TEST=1
   if (process.argv.some((a) => a.startsWith("--user-data-dir=")) && !process.env.PEREGOVORKA_AUTOSTART_TEST) return;
+  if (process.platform === "linux") { xdgAutostart(mode); return; }
   app.setLoginItemSettings({ name: "Peregovorka", openAtLogin: mode !== "off" && !machineWide, path: process.execPath, args: mode === "tray" ? ["--hidden"] : [] });
+}
+
+function xdgAutostart(mode: Autostart): void {
+  const dir = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "autostart");
+  const file = join(dir, "peregovorka.desktop");
+  const body = autostartEntry(mode);
+  try {
+    if (!body) rmSync(file, { force: true });
+    else { mkdirSync(dir, { recursive: true }); writeFileSync(file, body, { mode: 0o644 }); }
+  } catch { /* каталог недоступен на запись — автозапуск не настроится, приложение работает */ }
 }

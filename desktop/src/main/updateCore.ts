@@ -35,3 +35,9 @@ export function sha256File(buf: Buffer): string {
 
 /** Можно ли перезапускать для установки сейчас: никогда во время встречи или показа экрана. */
 export const canRestartNow = (orgs: { inCall: boolean; sharing: boolean }[]) => !orgs.some((o) => o.inCall || o.sharing);
+
+/** Команда перезапуска после обновления пакетом: путь программы без пометки «(deleted)» (файл заменён менеджером пакетов), прежние аргументы,
+ *  кроме --hidden (человек нажал «Перезапустить» — окно должно появиться). */
+export function relaunchCommand(execPath: string, argv: string[]): string[] {
+  return [execPath.replace(/ \(deleted\)$/, ""), ...argv.slice(1).filter((a) => a !== "--hidden")];
+}

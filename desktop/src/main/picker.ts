@@ -1,6 +1,7 @@
 // Показ экрана: страница вызывает getDisplayMedia → окно выбора (экраны и окна с миниатюрами, звук компьютера) в доверенной оболочке. Без выбора — отказ.
 // Индикатор: пока идёт показ экрана или встреча при свёрнутом окне — маленькое окно поверх всех «Идёт показ экрана · Остановить» (в захват не попадает).
 import { BrowserWindow, desktopCapturer, screen, type DisplayMediaRequestHandlerHandlerRequest, type Streams } from "electron";
+import { waylandSession } from "../common/linux";
 import type { Ctx } from "./ctx";
 import type { Org } from "./orgs";
 import { shellPrefs, themeBg } from "./window";
@@ -29,6 +30,14 @@ export class ScreenPicker {
       return;
     }
     sources = sources.filter((s) => !s.name.startsWith("Peregovorka — индикатор"));
+    // Wayland: экран или окно человек уже выбрал в системном окне (XDG Desktop Portal, захват через PipeWire) — getSources вернул только выбранное.
+    // Второе окно выбора не показываем; пусто — отказался в системном окне.
+    if (waylandSession(process.env, process.platform) && sources.length <= 1) {
+      const src = sources[0];
+      cb(src ? { video: src } : null);
+      this.ctx.log.info(src ? "share.started" : "share.cancelled", { org: org.rec.id, kind: src ? src.id.split(":")[0] : null, portal: true });
+      return;
+    }
     this.pending = { org, req, cb, sources };
     const w = new BrowserWindow({ parent: this.parent(), modal: true, width: 820, height: 600, minWidth: 640, minHeight: 460, show: false, title: "Показ экрана",
       backgroundColor: themeBg(), autoHideMenuBar: true, minimizable: false, maximizable: false, webPreferences: shellPrefs(this.ctx.flags.devTools) });

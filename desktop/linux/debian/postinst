@@ -1,0 +1,50 @@
+#!/bin/sh
+# Peregovorka: настройка после установки и обновления пакета (сценарий повторяем: можно запускать сколько угодно раз).
+set -e
+
+KEYRING=/usr/share/keyrings/peregovorka-archive-keyring.gpg
+SOURCES=/etc/apt/sources.list.d/peregovorka.sources
+REPO_URL="@REPO_URL@"
+
+case "$1" in
+  configure)
+    # песочница Chromium: помощник setuid root (если права сбросили, приложение не запустится)
+    chown root:root /opt/Peregovorka/chrome-sandbox
+    chmod 4755 /opt/Peregovorka/chrome-sandbox
+
+    # AppArmor 4 (Ubuntu 24.04+, Debian 13): песочнице нужны пространства имён пользователя — профиль разрешает их только этой программе
+    if [ -f /etc/apparmor.d/abi/4.0 ]; then
+      install -m 0644 /usr/share/peregovorka/apparmor-peregovorka /etc/apparmor.d/peregovorka
+      if command -v apparmor_parser >/dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+        apparmor_parser -r -T -W /etc/apparmor.d/peregovorka 2>/dev/null || echo "Peregovorka: профиль AppArmor загрузится после перезагрузки" >&2
+      fi
+    fi
+
+    # ключ репозитория — при каждой установке и обновлении: новый ключ приходит обновлением пакета заранее, до смены подписи (docs/LINUX.md, «Смена ключа»)
+    if ! cmp -s /usr/share/peregovorka/peregovorka-archive-keyring.gpg "$KEYRING"; then
+      install -m 0644 /usr/share/peregovorka/peregovorka-archive-keyring.gpg "$KEYRING"
+    fi
+
+    # репозиторий APT — только при первой установке, если администратор не запретил (/etc/default/peregovorka) и источник ещё не описан
+    if [ -z "$2" ] && [ ! -e "$SOURCES" ]; then
+      if [ -r /etc/default/peregovorka ] && grep -Eq '^[[:space:]]*PEREGOVORKA_REPO=(off|no|false|0)[[:space:]]*$' /etc/default/peregovorka; then
+        :
+      elif grep -rqsF "${REPO_URL#https://}" /etc/apt/sources.list /etc/apt/sources.list.d/; then
+        :
+      else
+        cat > "$SOURCES" <<SRC
+# Репозиторий Peregovorka: обновления приложения через apt update && apt upgrade. Удалить: sudo rm $SOURCES
+Types: deb
+URIs: $REPO_URL
+Suites: stable
+Components: main
+Architectures: $(dpkg --print-architecture)
+Signed-By: $KEYRING
+SRC
+        chmod 0644 "$SOURCES"
+      fi
+    fi
+    ;;
+esac
+
+exit 0

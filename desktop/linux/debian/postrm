@@ -1,0 +1,21 @@
+#!/bin/sh
+# Peregovorka: уборка после удаления. Данные пользователей (~/.config/Peregovorka) пакет не трогает — их удаляют сами пользователи.
+set -e
+
+case "$1" in
+  remove|purge)
+    if [ -f /etc/apparmor.d/peregovorka ]; then
+      if command -v apparmor_parser >/dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+        apparmor_parser -R /etc/apparmor.d/peregovorka 2>/dev/null || true
+      fi
+      rm -f /etc/apparmor.d/peregovorka
+    fi
+    ;;
+esac
+
+# apt remove оставляет репозиторий и ключ (программу можно поставить снова через apt install); apt purge убирает и их
+if [ "$1" = purge ]; then
+  rm -f /etc/apt/sources.list.d/peregovorka.sources /usr/share/keyrings/peregovorka-archive-keyring.gpg
+fi
+
+exit 0

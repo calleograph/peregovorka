@@ -467,6 +467,8 @@ def test_room_form_fields_roundtrip(client):
 @pytest.mark.parametrize("ua,expect", [
     ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0", "Edge 131 · Windows 10/11"),
     ("Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0", "Firefox 130 · Linux"),
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Electron/44.10.0 Safari/537.36 PeregovorkaDesktop/1.5.0", "Peregovorka для Windows 1.5.0 · Windows 10/11"),
+    ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Electron/44.10.0 Safari/537.36 PeregovorkaDesktop/1.5.0", "Peregovorka для Linux 1.5.0 · Linux"),
     ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1", "Safari 17 · iOS 17"),
     (None, None),
 ])

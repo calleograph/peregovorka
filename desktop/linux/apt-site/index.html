@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peregovorka для Linux</title>
+<meta name="description" content="Установка и обновление приложения Peregovorka в Ubuntu и Debian из репозитория APT.">
+<style>
+  :root { --bg: #f5f7fb; --card: #ffffff; --fg: #18202e; --muted: #5a667a; --line: #dbe2ee; --accent: #2456d3; --code: #eef2f9; --warn: #8a5a00; --warn-bg: #fff6e0; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f141c; --card: #161d29; --fg: #e6ebf3; --muted: #9aa6b8; --line: #2a3446; --accent: #7aa2ff; --code: #1c2533; --warn: #f0c46b; --warn-bg: #2a2416; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, "Noto Sans", sans-serif; }
+  main { max-width: 780px; margin: 0 auto; padding: 40px max(16px, env(safe-area-inset-left)) 64px; }
+  header { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
+  .mark { width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, #3b6df0, #1d46b8); display: grid; place-items: center; flex: none; }
+  h1 { margin: 0; font-size: 30px; line-height: 1.2; text-wrap: balance; }
+  h2 { font-size: 20px; margin: 36px 0 10px; }
+  p, li { max-width: 68ch; }
+  .lead { color: var(--muted); margin: 6px 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  pre { background: var(--code); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font: 14px/1.5 ui-monospace, "DejaVu Sans Mono", monospace; margin: 8px 0; }
+  code { font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: 0.92em; }
+  .row { display: flex; gap: 8px; align-items: flex-start; }
+  .row pre { flex: 1; min-width: 0; }
+  button { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 8px 12px; cursor: pointer; margin-top: 8px; }
+  button:hover { border-color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 15px; }
+  a { color: var(--accent); }
+  .fp { font-family: ui-monospace, "DejaVu Sans Mono", monospace; word-break: break-all; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 64 64"><rect x="12" y="14" width="40" height="29" rx="10" fill="#fff"/><path d="M22 43 18 52l13-9" fill="#fff"/><path d="M24 24v9M30 21v15M36 24v9M42 26v5" stroke="#2456d3" stroke-width="4" stroke-linecap="round"/></svg></div>
+    <div><h1>Peregovorka для Linux</h1></div>
+  </header>
+  <p class="lead">Видеовстречи, чаты и материалы вашей организации в отдельном окне. Версия @VERSION@ для Ubuntu 22.04 и 24.04, Debian 12 и 13 (x86_64). Обновления приходят штатно: <code>apt update</code> и <code>apt upgrade</code> или «Обновление программ».</p>
+
+  <h2>Установка одной командой</h2>
+  <div class="card">
+    <div class="row"><pre id="cmd">curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh</pre></div>
+    <button type="button" data-copy="cmd">Скопировать команду</button>
+    <p>Сценарий проверит систему, скачает ключ репозитория и сверит его отпечаток, подключит репозиторий и установит приложение. Запуск — «Peregovorka» в меню приложений или команда <code>peregovorka</code>.</p>
+  </div>
+
+  <h2>Или: скачать пакет</h2>
+  <div class="card">
+    <p>Скачайте <a href="@DEB_URL@">@DEB_NAME@</a> и установите — репозиторий для обновлений подключится сам:</p>
+    <pre>sudo apt install ./@DEB_NAME@</pre>
+  </div>
+
+  <h2>Вручную, с проверкой отпечатка ключа</h2>
+  <div class="card">
+<pre>curl -fsSLo /tmp/peregovorka.gpg https://calleograph.github.io/peregovorka-apt/peregovorka-archive-keyring.gpg
+gpg --show-keys /tmp/peregovorka.gpg      # отпечаток должен быть @FINGERPRINT_SPACED@
+sudo install -m 0644 /tmp/peregovorka.gpg /usr/share/keyrings/peregovorka-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/peregovorka.sources &lt;&lt;EOF
+Types: deb
+URIs: https://calleograph.github.io/peregovorka-apt
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/peregovorka-archive-keyring.gpg
+EOF
+sudo apt update &amp;&amp; sudo apt install peregovorka</pre>
+    <p>Отпечаток ключа репозитория: <span class="fp">@FINGERPRINT_SPACED@</span></p>
+  </div>
+
+  <h2>Обновление, удаление</h2>
+  <table>
+    <tr><th>Обновить</th><td><code>sudo apt update &amp;&amp; sudo apt upgrade</code> или «Обновление программ». Работающее приложение сообщит, что нужен перезапуск.</td></tr>
+    <tr><th>Удалить приложение</th><td><code>sudo apt remove peregovorka</code> — репозиторий остаётся, поставить снова можно командой <code>sudo apt install peregovorka</code>.</td></tr>
+    <tr><th>Удалить с репозиторием</th><td><code>sudo apt purge peregovorka</code> — убирает и источник APT, и ключ.</td></tr>
+    <tr><th>Вернуть прежнюю версию</th><td><code>sudo apt install peregovorka=X.Y.Z --allow-downgrades</code></td></tr>
+    <tr><th>Ваши данные</th><td><code>~/.config/Peregovorka</code> — пакет их не удаляет.</td></tr>
+  </table>
+
+  <h2>Администраторам</h2>
+  <p>Корпоративные политики (серверы, разрешённые домены, автозапуск) — <code>/etc/peregovorka/policy.json</code>; автоматические обновления через <code>unattended-upgrades</code> — по выбору администратора; не подключать репозиторий при установке пакета — <code>PEREGOVORKA_REPO=off</code> в <code>/etc/default/peregovorka</code>. Подробно — <a href="https://github.com/calleograph/peregovorka/blob/main/docs/LINUX.md">руководство по Linux</a>.</p>
+  <p class="note">Подпись репозитория проверяется APT при каждом обновлении. Если <code>apt update</code> сообщает об ошибке подписи — не отключайте проверку, а сообщите администратору: см. раздел «Диагностика» руководства.</p>
+
+  <footer>Peregovorka · <a href="https://github.com/calleograph/peregovorka">исходный код и выпуски</a> · состояние репозитория обновлено @DATE@</footer>
+</main>
+<script>
+  for (const b of document.querySelectorAll("[data-copy]")) b.addEventListener("click", async () => {
+    const t = document.getElementById(b.dataset.copy).textContent;
+    try { await navigator.clipboard.writeText(t); b.textContent = "Скопировано"; } catch { getSelection().selectAllChildren(document.getElementById(b.dataset.copy)); b.textContent = "Выделено — нажмите Ctrl+C"; }
+    setTimeout(() => (b.textContent = "Скопировать команду"), 2500);
+  });
+</script>
+</body>
+</html>

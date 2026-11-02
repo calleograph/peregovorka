@@ -7,6 +7,7 @@
   "author": "Peregovorka",
   "license": "UNLICENSED",
   "main": "dist/main.js",
+  "desktopName": "peregovorka.desktop",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "preview": "node scripts/preview.mjs",

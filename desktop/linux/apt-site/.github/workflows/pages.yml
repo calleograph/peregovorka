@@ -1,0 +1,49 @@
+name: Pages
+# Сайт репозитория APT Peregovorka (GitHub Pages). Подписанные индексы (dists/) лежат в этом репозитории — их публикует владелец доверенным
+# сценарием scripts/linux-apt/apt-publish.sh основного репозитория; пакеты .deb — файлы выпусков GitHub (pool.lock: путь, SHA-256, размер, адрес).
+# Здесь пакеты скачиваются, сверяются с pool.lock и с подписанными индексами, проверяются подписи InRelease и Release.gpg (verify-repo.py) —
+# и только тогда сайт выкладывается целиком (Pages заменяет сайт атомарно). Любая ошибка — сайт остаётся прежним. Закрытого ключа здесь нет и быть не должно.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Сборка сайта из подписанных индексов и выпусков
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r dists index.html install.sh peregovorka-archive-keyring.gpg peregovorka-archive-keyring.asc FINGERPRINT site/
+          while read -r path sha size url; do
+            case "$path" in pool/main/p/peregovorka/peregovorka_*.deb) ;; *) echo "::error::странный путь в pool.lock: $path"; exit 1 ;; esac
+            mkdir -p "site/$(dirname "$path")"
+            curl -fsSL --retry 5 --retry-all-errors -o "site/$path" "$url"
+            [ "$(stat -c %s "site/$path")" = "$size" ] && [ "$(sha256sum "site/$path" | cut -d' ' -f1)" = "$sha" ] || { echo "::error::$path не совпал с pool.lock"; exit 1; }
+          done < pool.lock
+      - name: Проверка репозитория (подписи, индексы, пакеты)
+        run: python3 verify-repo.py site peregovorka-archive-keyring.gpg --expect-fingerprint "$(tail -1 FINGERPRINT)"
+      - uses: actions/upload-pages-artifact@v5
+        with: { path: site }
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

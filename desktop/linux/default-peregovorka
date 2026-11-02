@@ -1,0 +1,3 @@
+# /etc/default/peregovorka — параметры пакета Peregovorka для администратора (пакет этот файл не создаёт и не меняет).
+# PEREGOVORKA_REPO=off — не подключать репозиторий APT Peregovorka при установке пакета (обновления — своим зеркалом или вручную).
+#PEREGOVORKA_REPO=off

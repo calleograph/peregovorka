@@ -1,0 +1,182 @@
+name: Linux
+# Приложение Peregovorka для Linux (desktop/ — тот же клиент, что для Windows): сборка .deb для amd64 и arm64, проверки пакета (lintian, зависимости,
+# архитектура, версия), полный круг установки/обновления/удаления в Ubuntu 22.04/24.04 и Debian 12/13, запуск на настоящих виртуальных машинах
+# (песочница Chromium, AppArmor), проверка инструментов репозитория APT настоящим apt, SHA-256. На теге desktop-vX.Y.Z пакеты добавляются в тот же
+# выпуск, что и установщики Windows (версия Linux = версия desktop/package.json). Сборка Windows и её обновления этим workflow не затрагиваются.
+# Подпись репозитория APT здесь не выполняется: закрытый ключ — только у владельца (scripts/linux-apt/apt-publish.sh, docs/LINUX.md).
+on:
+  push:
+    branches: [main, "feat/**"]
+    tags: ["desktop-v[0-9]+.[0-9]+.[0-9]+"]
+    paths: ["desktop/**", "frontend/src/components/Icons.tsx", "frontend/public/**", "scripts/linux-apt/**", ".github/workflows/linux.yml"]
+  pull_request:
+    paths: ["desktop/**", "frontend/src/components/Icons.tsx", "frontend/public/**", "scripts/linux-apt/**", ".github/workflows/linux.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04, eb: x64 }
+          - { arch: arm64, runner: ubuntu-24.04-arm, eb: arm64 }
+    runs-on: ${{ matrix.runner }}
+    defaults: { run: { working-directory: desktop } }
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "24" }
+      - run: npm ci
+      - id: v
+        name: Версия
+        run: |
+          v="$(node -p "require('./package.json').version")"; echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF" in refs/tags/desktop-v*) [ "${GITHUB_REF_NAME#desktop-v}" = "$v" ] || { echo "::error::тег $GITHUB_REF_NAME не совпадает с версией $v"; exit 1; } ;; esac
+      - name: Типы, модульные тесты, безопасность исходников
+        run: node build.mjs && npx tsc --noEmit && npm test && node scripts/security-check.mjs
+      - name: Программа (electron-builder --linux dir)
+        env:
+          PEREGOVORKA_BUILD_KIND: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'release' || 'test' }}
+        run: node build.mjs && npx electron-builder --linux dir --${{ matrix.eb }} --publish never
+      - name: Пакет .deb (архитектура и версия сверяются с программой)
+        run: |
+          dir="$(ls -d release/linux*-unpacked | head -1)"
+          linux/build-deb.sh "$dir" "${{ steps.v.outputs.version }}" ${{ matrix.arch }} out
+          ls -la out
+      - name: lintian (Debian 13)
+        run: docker run --rm -v "$PWD/out:/out:ro" debian:13 bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends lintian >/dev/null && lintian --fail-on error,warning /out/*.deb'
+      - name: Контрольная сумма
+        run: cd out && sha256sum *.deb | tee SHA256SUMS-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v7
+        with: { name: linux-deb-${{ matrix.arch }}, path: desktop/out/, retention-days: 30 }
+
+  # Полный круг пакета в чистых системах (контейнеры): установка apt (только Depends), запуск от пользователя под Xvfb с песочницей, обновление поверх
+  # предыдущего выпуска (если он есть), remove, повторная установка, purge. Сценарий — desktop/linux/test/deb-check.sh.
+  install:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        os: ["ubuntu:22.04", "ubuntu:24.04", "debian:12", "debian:13"]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { name: "linux-deb-${{ matrix.arch }}", path: debs }
+      - name: Предыдущий выпуск для проверки обновления поверх
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          cur="$(ls debs/*.deb | head -1)"; v="$(dpkg-deb -f "$cur" Version)"
+          for t in $(gh release list --limit 50 --json tagName --jq '.[].tagName' | grep -E '^desktop-v[0-9.]+$'); do
+            pv="${t#desktop-v}"
+            if dpkg --compare-versions "$pv" lt "$v" && gh release download "$t" -p "peregovorka_${pv}_${{ matrix.arch }}.deb" -D prev 2>/dev/null; then echo "предыдущий выпуск: $pv"; break; fi
+          done
+          ls prev 2>/dev/null || echo "предыдущего выпуска с пакетом Linux нет — проверка обновления поверх пропускается"
+      - name: "${{ matrix.os }}: установка, запуск, обновление, удаление"
+        run: |
+          prev="$(ls prev/*.deb 2>/dev/null | head -1 || true)"; cur="$(ls debs/*.deb | head -1)"
+          args="/debs/$(basename "$cur")"; vols="-v $PWD/debs:/debs:ro"
+          if [ -n "$prev" ]; then args="/prev/$(basename "$prev") $args"; vols="$vols -v $PWD/prev:/prev:ro"; fi
+          docker run --rm --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined $vols -v "$PWD/desktop/linux/test:/t:ro" ${{ matrix.os }} bash /t/deb-check.sh $args
+
+  # Настоящие виртуальные машины (не контейнеры): штатная установка apt, AppArmor и песочница Chromium как у пользователя, запуск обычным пользователем.
+  vm:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64 }
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with: { name: "linux-deb-${{ matrix.arch }}", path: debs }
+      - name: Установка пакета (apt)
+        run: |
+          echo "ограничение пространств имён AppArmor: $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo нет)"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ./debs/*.deb xvfb >/dev/null
+          dpkg-query -W peregovorka; stat -c '%a %U %n' /opt/Peregovorka/chrome-sandbox
+          if [ -f /etc/apparmor.d/abi/4.0 ]; then sudo aa-status 2>/dev/null | grep -q peregovorka && echo "профиль AppArmor peregovorka загружен" || { echo "::error::профиль AppArmor не загружен"; exit 1; }; fi
+      - name: Запуск обычным пользователем, песочница включена (отчёт диагностики)
+        run: |
+          v="$(dpkg-query -W -f '${Version}' peregovorka)"
+          timeout 150 xvfb-run -a -s '-screen 0 1600x900x24' peregovorka --diagnostics="$RUNNER_TEMP/diag.json" > "$RUNNER_TEMP/app.log" 2>&1 || true
+          test -s "$RUNNER_TEMP/diag.json" || { tail -40 "$RUNNER_TEMP/app.log"; echo "::error::программа не записала отчёт"; exit 1; }
+          python3 -c "
+          import json,sys; d=json.load(open('$RUNNER_TEMP/diag.json')); c=d['client']
+          assert c['version']=='$v' and d['shell']['ok'] and c['install']=='deb', (c, d['shell'])
+          print('запуск', c['version'], c['os'], c['arch'], 'оболочка за', c['startup_ms'], 'мс')"
+          ! grep -E "No usable sandbox|SUID sandbox helper binary was found, but is not configured" "$RUNNER_TEMP/app.log"
+      - name: Удаление
+        run: sudo apt-get purge -y -qq peregovorka && test ! -e /opt/Peregovorka && test ! -e /etc/apt/sources.list.d/peregovorka.sources
+
+  # Инструменты репозитория APT (make-repo, sign-repo, verify-repo) и настоящий apt в чистых системах. Подпись — одноразовым ключом CI:
+  # проверяется устройство репозитория, а не ключ владельца (его здесь нет).
+  apt-repo:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { name: linux-deb-amd64, path: debs }
+      - name: Репозиторий из пакета, одноразовый ключ, проверка
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"
+          K="$RUNNER_TEMP/key"; mkdir -m 700 "$K"; printf 'ci-%s' "$RANDOM$RANDOM" > "$K/passphrase.txt"
+          gpg --batch --pinentry-mode loopback --passphrase-file "$K/passphrase.txt" --quick-gen-key "Peregovorka CI test key" rsa4096 sign 1d
+          fpr="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')"
+          cp -r "$GNUPGHOME" "$K/gnupg"; printf '%s\n' "$fpr" > "$K/FINGERPRINT.txt"; gpg --export "$fpr" > "$RUNNER_TEMP/ci-keyring.gpg"
+          scripts/linux-apt/make-repo.sh debs site
+          scripts/linux-apt/sign-repo.sh site "$K"
+          python3 scripts/linux-apt/verify-repo.py site "$RUNNER_TEMP/ci-keyring.gpg" --expect-fingerprint "$fpr"
+          echo "fpr=$fpr" >> "$GITHUB_ENV"
+      - name: apt в Ubuntu 22.04/24.04 и Debian 12/13 ставит пакет из репозитория (подпись проверяет apt)
+        run: |
+          (cd site && python3 -m http.server 18080 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 1
+          for img in ubuntu:22.04 ubuntu:24.04 debian:12 debian:13; do
+            docker run --rm --network host -v "$RUNNER_TEMP/ci-keyring.gpg:/k.gpg:ro" "$img" bash -c '
+              set -e; install -m 0644 /k.gpg /usr/share/keyrings/peregovorka-archive-keyring.gpg
+              printf "Types: deb\nURIs: http://127.0.0.1:18080\nSuites: stable\nComponents: main\nSigned-By: /usr/share/keyrings/peregovorka-archive-keyring.gpg\n" > /etc/apt/sources.list.d/peregovorka.sources
+              apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends peregovorka >/dev/null && echo "$(. /etc/os-release; echo $PRETTY_NAME): $(dpkg-query -W -f "\${Version}" peregovorka)"'
+          done
+      - name: Подмена индекса без подписи отвергается
+        run: |
+          printf '\n' >> site/dists/stable/main/binary-amd64/Packages
+          ! python3 scripts/linux-apt/verify-repo.py site "$RUNNER_TEMP/ci-keyring.gpg"
+
+  release:
+    needs: [build, install, vm, apt-repo]
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { pattern: linux-deb-*, path: out, merge-multiple: true }
+      - name: Пакеты Linux — в выпуск desktop-vX.Y.Z (вместе с установщиками Windows)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#desktop-v}"
+          cd out && cat SHA256SUMS-*.txt > SHA256SUMS-linux.txt && sha256sum -c SHA256SUMS-linux.txt && cd ..
+          # выпуск создаёт workflow Desktop (Windows); ждём его до 90 минут, иначе создаём сами — Windows-публикация тогда допишет свои файлы
+          for i in $(seq 90); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 60; done
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "Peregovorka для Windows и Linux $v" --notes "Установщики Windows появятся после их сборки." --latest=false --prerelease --verify-tag
+          fi
+          gh release upload "$GITHUB_REF_NAME" out/*.deb out/SHA256SUMS-linux.txt --clobber
+          gh release view "$GITHUB_REF_NAME" --json body --jq .body > notes.md
+          if ! grep -q "^## Linux" notes.md; then
+            printf '\n## Linux (Ubuntu 22.04/24.04, Debian 12/13)\n\n- Репозиторий APT (обновления через apt update && apt upgrade): `curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh`\n- Или пакет: **peregovorka_%s_amd64.deb** — `sudo apt install ./peregovorka_%s_amd64.deb` (репозиторий для обновлений подключится сам).\n- Контрольные суммы — SHA256SUMS-linux.txt. Подробно — [docs/LINUX.md](https://github.com/calleograph/peregovorka/blob/main/docs/LINUX.md).\n' "$v" "$v" >> notes.md
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md --title "Peregovorka для Windows и Linux $v"
+          fi

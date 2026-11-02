@@ -1,0 +1,11 @@
+# Peregovorka: песочнице Chromium нужны пространства имён пользователя. В Ubuntu 24.04 и новее их создание ограничено AppArmor
+# (kernel.apparmor_restrict_unprivileged_userns=1): этот профиль разрешает его только программе /opt/Peregovorka/peregovorka, ничего больше не ограничивая.
+# Ставится сценарием пакета, только если в системе AppArmor 4 (есть /etc/apparmor.d/abi/4.0). Локальные дополнения — /etc/apparmor.d/local/peregovorka.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile peregovorka /opt/Peregovorka/peregovorka flags=(unconfined) {
+  userns,
+
+  include if exists <local/peregovorka>
+}

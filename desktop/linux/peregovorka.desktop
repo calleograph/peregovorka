@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Peregovorka
+GenericName=Video meetings
+GenericName[ru]=Видеовстречи
+Comment=Video meetings, chats and materials of your organization
+Comment[ru]=Видеовстречи, чаты и материалы вашей организации
+Exec=/usr/bin/peregovorka %U
+Icon=peregovorka
+Terminal=false
+StartupNotify=true
+StartupWMClass=peregovorka
+Categories=Network;Chat;VideoConference;
+MimeType=x-scheme-handler/peregovorka;
+Keywords=meeting;video;conference;chat;Peregovorka;встреча;переговорка;видеосвязь;

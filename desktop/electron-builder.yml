@@ -45,3 +45,12 @@ nsis:
   deleteAppDataOnUninstall: false        # данные — по выбору при удалении (installer/include.nsh)
   include: installer/include.nsh
   guid: 6d2b7c51-1d83-4b0c-9a7e-0c7f5a3b1e42
+# Linux: electron-builder готовит только распакованную программу (`--linux dir`: asar, предохранители, chrome-sandbox); пакет .deb собирает
+# desktop/linux/build-deb.sh — свои сценарии установки (песочница, AppArmor, репозиторий APT), см. docs/LINUX.md.
+linux:
+  target:
+    - target: dir
+  executableName: peregovorka
+  icon: dist/assets/icon.png
+  category: Network
+  artifactName: Peregovorka-${version}-linux-${arch}.${ext}

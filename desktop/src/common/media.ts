@@ -121,6 +121,7 @@ export function diagnoseMic(i: MicProblemInput): MicProblem {
   const name = i.error.name ?? "";
   const win = i.platform === "win32";
   const acts = (...a: MicAction[]) => (win ? a : a.filter((x) => x === "retry"));
+  if (!win) return diagnoseMicLinux(name, i);
 
   if (name === "NotAllowedError" || name === "SecurityError") {
     if (i.osAccess === "denied" || i.osAccess === "restricted") {
@@ -255,4 +256,35 @@ export function levelOf(samples: ArrayLike<number>): number {
   const rms = Math.sqrt(sum / Math.max(1, samples.length));
   if (rms <= 0) return 0;
   return Math.min(1, Math.max(0, (20 * Math.log10(rms) - LEVEL_FLOOR_DB) / -LEVEL_FLOOR_DB));
+}
+
+/** Linux: звук идёт через звуковой сервер рабочего стола (PipeWire или PulseAudio) — ни параметров конфиденциальности, ни монопольного режима, как в Windows, нет. */
+const LINUX_SOUND = "Откройте «Настройки → Звук» рабочего стола (или pavucontrol) и проверьте, что микрофон выбран, не выключен и уровень входа не на нуле.";
+const LINUX_SERVER = "Проверьте, что звуковой сервер запущен: в терминале systemctl --user status pipewire wireplumber (или pulseaudio).";
+function diagnoseMicLinux(name: string, i: MicProblemInput): MicProblem {
+  const r = (cause: MicProblem["cause"], confidence: MicProblem["confidence"], title: string, text: string, steps: string[], reboot = false): MicProblem =>
+    ({ cause, confidence, title, text, steps, actions: ["retry"], reboot });
+  const msg = i.error?.message ?? "";
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return r("denied", "possible", "Доступ к микрофону не выдан", "Приложению отказано в доступе к микрофону.",
+      ["Повторите попытку.", LINUX_SOUND, "Если приложение установлено не из пакета Peregovorka (например, в песочнице), разрешите ему доступ к микрофону в настройках конфиденциальности рабочего стола."]);
+  if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    if (i.selectedMissing && i.micCount > 0)
+      return r("selected_missing", "certain", "Выбранный микрофон не найден", "Устройство, которое вы выбирали, больше не подключено. Остальные микрофоны доступны.",
+        ["Выберите другой микрофон в списке или «По умолчанию в системе».", "Если это беспроводная гарнитура, проверьте, что она включена и подключена (Bluetooth)."]);
+    if (i.micCount === 0)
+      return r("no_device", "certain", "Система не видит ни одного микрофона", "Микрофон не подключён, выключен в звуковом сервере или для звуковой карты нет драйвера.",
+        ["Подключите микрофон или гарнитуру.", LINUX_SOUND, LINUX_SERVER]);
+    return r("constraints", "possible", "Микрофон не поддерживает выбранные параметры", "Устройство найдено, но не приняло заданные параметры обработки звука.",
+      ["Выберите другой микрофон или «По умолчанию в системе»."]);
+  }
+  if ((name === "NotReadableError" || name === "TrackStartError") && /was removed/i.test(msg))
+    return r("removed", "certain", "Микрофон отключён", "Устройство удалено или стало недоступно (отключили гарнитуру, перезапустился звуковой сервер).",
+      ["Подключите микрофон и нажмите «Повторить» или выберите другой микрофон."]);
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError")
+    return r(/in use/i.test(msg) ? "busy" : "start_failed", "possible", /in use/i.test(msg) ? "Микрофон занят" : "Микрофон не удалось открыть",
+      "Устройство найдено, но открыть его не получилось: его держит другая программа напрямую через ALSA, звуковой сервер не отвечает или микрофон выключен кнопкой на корпусе.",
+      ["Закройте программы, которые могут использовать микрофон: другие конференции, запись звука.", LINUX_SERVER, LINUX_SOUND], true);
+  return r("unknown", "possible", "Микрофон не открылся", `Причина неизвестна (${name || "ошибка"}). Повторите попытку и проверьте микрофон в настройках звука системы.`,
+    ["Повторите попытку.", "Выберите другое устройство.", "Сохраните отчёт во вкладке «Диагностика» и передайте его администратору."]);
 }

@@ -113,13 +113,17 @@ function reg(key: string): Promise<string> {
   }));
 }
 
-/** Политики Windows (HKLM сильнее HKCU). Вне Windows — файл из PEREGOVORKA_POLICY_FILE (только для испытаний). */
-export async function loadPolicy(): Promise<Policy> {
+/** Политики Linux — файл администратора: изменить его может только root, поэтому пользовательская настройка его не обходит. */
+export const LINUX_POLICY_FILE = "/etc/peregovorka/policy.json";
+
+/** Политики Windows (HKLM сильнее HKCU). Linux — /etc/peregovorka/policy.json (имена и значения — как у параметров реестра, см. docs/LINUX.md);
+ *  запуск из исходников — файл из PEREGOVORKA_POLICY_FILE (испытания): переменная окружения в установленной программе не действует — иначе её задал бы сам пользователь. */
+export async function loadPolicy(packaged: boolean): Promise<Policy> {
   if (process.platform === "win32") {
     const [m, u] = await Promise.all([reg("HKLM\\SOFTWARE\\Policies\\Peregovorka"), reg("HKCU\\SOFTWARE\\Policies\\Peregovorka")]);
     return mergePolicy(policyFromValues(parseRegExport(m)), policyFromValues(parseRegExport(u)));
   }
-  const f = process.env.PEREGOVORKA_POLICY_FILE;
+  const f = packaged ? (process.platform === "linux" ? LINUX_POLICY_FILE : null) : process.env.PEREGOVORKA_POLICY_FILE;
   if (!f) return { servers: [] };
   try {
     const raw = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown>;

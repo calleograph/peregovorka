@@ -36,7 +36,8 @@ const repo = "https://github.com/calleograph/peregovorka", tag = `desktop-v${ver
 const block = [
   `**Версия ${version}** · [страница выпуска](${repo}/releases/tag/${tag}) · [контрольные суммы](${rel}/SHA256SUMS.txt)`, "",
   `- **[Peregovorka-Setup-${version}.exe](${rel}/Peregovorka-Setup-${version}.exe)** — установка для себя, без прав администратора`,
-  `- **[Peregovorka-${version}-x64.msi](${rel}/Peregovorka-${version}-x64.msi)** — для развёртывания в организации (групповые политики)`, "",
+  `- **[Peregovorka-${version}-x64.msi](${rel}/Peregovorka-${version}-x64.msi)** — для развёртывания в организации (групповые политики)`,
+  `- **Linux** (Ubuntu 22.04/24.04, Debian 12/13): [репозиторий APT](https://calleograph.github.io/peregovorka-apt/) — \`curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh\`, обновления через \`apt upgrade\`; или пакет [peregovorka_${version}_amd64.deb](${rel}/peregovorka_${version}_amd64.deb)`, "",
 ].join("\n");
 const rm = readFileSync(readme, "utf8");
 if (!rm.includes("<!-- desktop-release:start -->")) die("в README.md нет блока <!-- desktop-release -->");

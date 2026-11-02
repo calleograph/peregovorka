@@ -1,0 +1,32 @@
+.TH PEREGOVORKA 1 "2026" "Peregovorka" "User Commands"
+.SH NAME
+peregovorka \- video meetings, chats and materials of your organization
+.SH SYNOPSIS
+.B peregovorka
+[\fB\-\-hidden\fR] [\fIperegovorka://...\fR]
+.SH DESCRIPTION
+Desktop client for corporate Peregovorka servers. Several organizations can be
+connected and switched in one window; sign-in is kept as a revocable device token
+protected by the desktop keyring.
+.SH OPTIONS
+.TP
+.B \-\-hidden
+Start minimized to the tray (used by autostart).
+.TP
+.B \-\-diagnostics=\fIFILE\fR
+Write a diagnostics report (versions, organizations, devices) to FILE and exit.
+.TP
+.B \-\-debug\-log
+Copy the application log to the terminal.
+.SH FILES
+.TP
+.I ~/.config/Peregovorka/
+Settings, organizations, logs (\fIlogs/main.log\fR) and saved sign-in of the user.
+.TP
+.I /etc/peregovorka/policy.json
+Administrator policies (servers, allowed domains, updates, autostart).
+.TP
+.I /etc/apt/sources.list.d/peregovorka.sources
+Peregovorka APT repository; updates arrive with \fBapt update && apt upgrade\fR.
+.SH SEE ALSO
+https://github.com/calleograph/peregovorka/blob/main/docs/LINUX.md

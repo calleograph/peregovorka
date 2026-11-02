@@ -1,0 +1,8 @@
+# Peregovorka — сторонний пакет (не из архива дистрибутива), как Chrome или VS Code: программа целиком в /opt/Peregovorka.
+peregovorka: dir-or-file-in-opt [opt/Peregovorka/*]
+# Chromium внутри Electron содержит свои копии библиотек (так собирается сам Chromium); заменить их системными нельзя.
+peregovorka: embedded-library * [opt/Peregovorka/peregovorka]
+# libvulkan.so.1 поставляется Electron в готовом виде.
+peregovorka: unstripped-binary-or-object [opt/Peregovorka/libvulkan.so.1]
+# Помощник песочницы Chromium обязан быть setuid root (на системах без пространств имён пользователя).
+peregovorka: elevated-privileges 4755 root/root [opt/Peregovorka/chrome-sandbox]

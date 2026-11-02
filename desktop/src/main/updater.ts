@@ -9,9 +9,9 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { Ctx } from "./ctx";
-import { newer, sha256File, verifyManifest, canRestartNow, type Manifest } from "./updateCore";
+import { newer, sha256File, verifyManifest, canRestartNow, relaunchCommand, type Manifest } from "./updateCore";
 
-export type UpdateState = { status: "idle" | "checking" | "none" | "available" | "downloading" | "ready" | "error" | "disabled" | "managed"; version?: string; notes?: string;
+export type UpdateState = { status: "idle" | "checking" | "none" | "available" | "downloading" | "ready" | "error" | "disabled" | "managed" | "restart"; version?: string; notes?: string;
   progress?: number; error?: string; checkedAt?: number; installOnQuit?: boolean; latest?: string; manualUrl?: string | null };
 
 const ERRORS: Record<string, string> = {
@@ -85,7 +85,7 @@ export class Updater {
 
   async check(manual: boolean): Promise<UpdateState> {
     const m = this.mode();
-    if (m === "managed") { this.set({ status: "managed" }); return this.state; }
+    if (m === "managed") { if (this.state.status !== "restart") this.set({ status: "managed" }); return this.state; }
     if (m === "nokey") { this.schedule(); return this.state; }
     if (m === "off" && !manual) return this.state;
     if (this.state.status === "downloading" || this.state.status === "ready") return this.state;
@@ -166,6 +166,29 @@ export class Updater {
   }
 
   canRestart(): boolean { return canRestartNow(this.orgsState()); }
+
+  /** Linux: менеджер пакетов (apt upgrade) уже заменил файлы программы, а работает прежняя версия — до перезапуска новые окна и процессы
+   *  смешали бы версии. Состояние «нужен перезапуск»; перезапуск — кнопкой, только вне встречи и показа экрана. */
+  packageUpgraded(version: string): void {
+    if (this.state.status === "restart" && this.state.version === version) return;
+    this.ctx.log.info("update.package_installed", { version });
+    this.set({ status: "restart", version, latest: version, error: undefined, checkedAt: Date.now() });
+  }
+
+  relaunch(): boolean {
+    if (this.state.status !== "restart" || !this.canRestart()) return false;
+    this.ctx.log.info("update.relaunch", { version: this.state.version });
+    // Не app.relaunch(): после apt upgrade исполняемый файл заменён, и встроенный перезапуск Electron берёт путь из /proc/self/exe —
+    // «/opt/Peregovorka/peregovorka (deleted)»: новая версия не запускалась. Запускаем сами по постоянному пути, когда этот процесс завершится
+    // (две копии одновременно не открывают один профиль). Унаследованные дескрипторы прежнего процесса закрываются: часть сокетов Chromium открывает без
+    // FD_CLOEXEC, и новая копия держала бы их (найдено испытанием: прежний сокет отладки оставался открытым и не обслуживался).
+    const script = 'for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-" 2>/dev/null; done; while kill -0 "$0" 2>/dev/null; do sleep 0.2; done; exec "$@"';
+    const child = spawn("/bin/bash", ["-c", script, String(process.pid), ...relaunchCommand(process.execPath, process.argv)], { detached: true, stdio: "ignore" });
+    child.unref();
+    this.ctx.quitting = true;
+    app.quit();
+    return true;
+  }
 
   /** Перезапустить и установить сейчас (только вне встречи) или отметить установку при выходе из приложения. */
   install(now: boolean): boolean {

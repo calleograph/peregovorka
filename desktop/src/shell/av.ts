@@ -3,6 +3,7 @@
 // Проверка не меняет системных параметров, не требует прав администратора и не занимает микрофон «монопольно»: работает общий режим Windows, встреча не прерывается.
 import { deviceKind, diagnoseMic, diffDevices, EXCLUSIVE_STEPS, findByLabel, kindAdvice, KIND_TEXT, levelOf, REBOOT_HINT, type DevInfo, type MediaPrefs, type MicProblem, type NoiseMode } from "../common/media";
 import { call, h, icon } from "./ui";
+import { osText } from "../common/osText";
 
 type Kind = DevInfo["kind"];
 type Os = { platform: string; mic: string; camera: string; security?: string[] };
@@ -34,6 +35,7 @@ export function avPanel(host: AvHost): AvPanel {
   let devices: DevInfo[] = [];
   let withId: MediaDeviceInfo[] = [];
   let os: Os = { platform: host.platform(), mic: "unknown", camera: "unknown" };
+  const O = osText(os.platform);
   let micStream: MediaStream | null = null, camStream: MediaStream | null = null, ctx: AudioContext | null = null;
   let raf = 0, micTimer = 0, camTimer = 0, heardAt = 0, micStartedAt = 0, stopped = false;
   let lastSelectedMissing = false;
@@ -73,7 +75,7 @@ export function avPanel(host: AvHost): AvPanel {
   function fill(sel: HTMLSelectElement, role: "mic" | "speaker" | "camera", wanted: string): void {
     const list = withId.filter((d) => d.kind === KIND[role]);
     const missing = !!wanted && !findByLabel(list, wanted);
-    const opts = [h("option", { value: "" }, "По умолчанию в Windows")];
+    const opts = [h("option", { value: "" }, O.byDefault)];
     list.forEach((d, i) => opts.push(h("option", { value: d.label || `#${i}` }, d.label || `${{ mic: "Микрофон", speaker: "Устройство воспроизведения", camera: "Камера" }[role]} ${i + 1}`)));
     if (missing) opts.push(h("option", { value: wanted }, `${wanted} — не подключено`));
     sel.replaceChildren(...opts);
@@ -99,7 +101,7 @@ export function avPanel(host: AvHost): AvPanel {
   function renderStatus(): void {
     const n = (k: Kind) => devices.filter((d) => d.kind === k).length;
     const parts = [`микрофонов ${n("audioinput")}`, `устройств воспроизведения ${n("audiooutput")}`, `камер ${n("videoinput")}`];
-    status.textContent = `Windows видит: ${parts.join(", ")}.` + (os.platform === "win32" ? ` Доступ приложений: микрофон — ${OS_ACCESS[os.mic] ?? os.mic}; камера — ${OS_ACCESS[os.camera] ?? os.camera}.` : "");
+    status.textContent = `${O.sees}: ${parts.join(", ")}.` + (os.platform === "win32" ? ` Доступ приложений: микрофон — ${OS_ACCESS[os.mic] ?? os.mic}; камера — ${OS_ACCESS[os.camera] ?? os.camera}.` : "");
   }
 
   // ------------------------------------------------------------------------------------------ микрофон
@@ -150,7 +152,7 @@ export function avPanel(host: AvHost): AvPanel {
     const track = micStream.getAudioTracks()[0];
     micBtn.replaceChildren(icon("stop"), "Остановить проверку");
     track.onended = () => { stopMic(); micState.textContent = "Микрофон отключился во время проверки"; void refresh(true); };
-    track.onmute = () => { micState.textContent = "Микрофон выключен в системе (кнопкой на корпусе, клавишей ноутбука или в параметрах Windows)"; };
+    track.onmute = () => { micState.textContent = `Микрофон выключен в системе (кнопкой на корпусе, клавишей ноутбука или ${O.inOs})`; };
     track.onunmute = () => { heardAt = performance.now(); };
     ctx = new AudioContext({ sinkId: { type: "none" } } as AudioContextOptions);   // шкала уровня ничего не воспроизводит: устройство вывода не открываем
     const src = ctx.createMediaStreamSource(micStream);
@@ -166,7 +168,7 @@ export function avPanel(host: AvHost): AvPanel {
       meter.value = Math.round(lv * 100);
       const now = performance.now();
       if (lv > 0.25) { heard = true; heardAt = now; micState.textContent = "Сигнал есть — микрофон работает"; }
-      else if (!heard && now - micStartedAt > 3000 && !track.muted) micState.textContent = "Сигнала нет. Скажите что-нибудь; если шкала не двигается, проверьте кнопку выключения на гарнитуре и уровень входа в Windows";
+      else if (!heard && now - micStartedAt > 3000 && !track.muted) micState.textContent = `Сигнала нет. Скажите что-нибудь; если шкала не двигается, проверьте кнопку выключения на гарнитуре и уровень входа ${O.inOs}`;
       else if (heard && now - heardAt > 4000) micState.textContent = "Сигнал был, сейчас тишина";
       raf = requestAnimationFrame(loop);
     };
@@ -201,7 +203,7 @@ export function avPanel(host: AvHost): AvPanel {
         gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.18, t + 0.04); gain.gain.linearRampToValueAtTime(0, t + 0.26);
         o.start(t); o.stop(t + 0.28);
       });
-      status.textContent = routed ? "Воспроизводится короткая мелодия. Если вы её не слышите, проверьте выбранное устройство и громкость в Windows." : "Выбрать устройство воспроизведения для проверки не удалось — звук идёт на устройство по умолчанию.";
+      status.textContent = routed ? `Воспроизводится короткая мелодия. Если вы её не слышите, проверьте выбранное устройство и громкость ${O.inOs}.` : "Выбрать устройство воспроизведения для проверки не удалось — звук идёт на устройство по умолчанию.";
       setTimeout(() => { void ac.close().catch(() => undefined); renderStatus(); }, 1400);
     } catch (e) {
       status.textContent = `Не удалось воспроизвести звук: ${(e as Error)?.message ?? e}. Выберите другое устройство воспроизведения.`;
@@ -287,8 +289,8 @@ export function avPanel(host: AvHost): AvPanel {
       h("div", { class: "field" }, h("span", null, "Шумоподавление микрофона"), noise, noiseHint),
       sw("Эхоподавление", "Нужно, если слушаете через колонки. В наушниках можно выключить.", m0.echo, (v) => host.save({ echo: v })),
       sw("Автоусиление", "Выравнивает громкость голоса.", m0.agc, (v) => host.save({ agc: v }))),
-    h("div", { class: "card flat stack" }, h("h3", { style: { margin: 0 } }, "Настройки Windows"),
-      h("p", { class: "small muted" }, "Откроется окно «Звук» (вкладка «Запись»): там выбирается микрофон по умолчанию, уровень и монопольный режим. Приложение ничего не меняет в Windows само."), sysRow, winHelp));
+    ...(winOnly ? [] : [h("div", { class: "card flat stack" }, h("h3", { style: { margin: 0 } }, "Настройки Windows"),
+      h("p", { class: "small muted" }, "Откроется окно «Звук» (вкладка «Запись»): там выбирается микрофон по умолчанию, уровень и монопольный режим. Приложение ничего не меняет в Windows само."), sysRow, winHelp)]));
   if (winOnly) { sysRow.hidden = true; winHelp.hidden = true; }
 
   const onChange = () => void refresh(true);

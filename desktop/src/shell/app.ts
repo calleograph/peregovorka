@@ -1,10 +1,13 @@
 // Доверенная оболочка: боковая панель организаций и разделы приложения (подключение, настройки, диагностика). Страница сервера показывается главным процессом
 // справа от панели; когда открыт раздел оболочки, страница скрыта (встреча и чаты при этом продолжают работать).
 import { parseMeetingUrl } from "../common/links";
+import { osText } from "../common/osText";
 import { avPanel, type AvPanel } from "./av";
 import { call, h, icon, orgTile, pg, type OrgView, type State } from "./ui";
 
 let S: State | null = null;
+/** Слова о системе (Windows или Linux): до первого состояния — по платформе браузерного движка. */
+const O = () => osText(S?.platform ?? (/Linux/.test(navigator.userAgent) ? "linux" : "win32"));
 let page = "org";                 // org | add | settings
 let tab = "general";
 let addPrefill: { url?: string; route?: string; error?: string | null } = {};
@@ -158,7 +161,7 @@ function welcomePage(): HTMLElement {
   return h("div", { class: "page narrow welcome" },
     h("img", { class: "brandmark xl", src: "assets/icon.svg", alt: "" }),
     h("h1", null, "Добро пожаловать в Peregovorka"),
-    h("p", { class: "lead" }, "Встречи, чаты, история и материалы вашей организации — в отдельном окне, с уведомлениями Windows."),
+    h("p", { class: "lead" }, O().welcome),
     h("ol", { class: "how" },
       h("li", null, h("b", null, "Укажите сервер"), h("span", null, "Адрес Peregovorka вашей организации — его сообщит администратор.")),
       h("li", null, h("b", null, "Войдите"), h("span", null, "Учётной записью организации: доменной или локальной.")),
@@ -230,10 +233,10 @@ function fillPanel(): void {
   if (tab === "general") {
     P.replaceChildren(T("Общие"),
       h("div", { class: "card flat stack" },
-        h("div", { class: "field" }, h("span", null, "Запускать вместе с Windows"), seg([["off", "Не запускать"], ["tray", "Свёрнутым в трей"], ["window", "С открытым окном"]], s.autostart,
-          (v) => setS({ autostart: v }), isLocked("autostart")), h("small", null, "Рекомендуется «свёрнутым в трей»: сообщения и уведомления приходят сразу после входа в Windows."),
+        h("div", { class: "field" }, h("span", null, O().startWithOs), seg([["off", "Не запускать"], ["tray", "Свёрнутым в трей"], ["window", "С открытым окном"]], s.autostart,
+          (v) => setS({ autostart: v }), isLocked("autostart")), h("small", null, O().autostartHint),
           isLocked("autostart") ? lockNote() : null),
-        h("div", { class: "field" }, h("span", null, "Оформление"), seg([["system", "Как в Windows"], ["light", "Светлое"], ["dark", "Тёмное"]], s.theme, (v) => setS({ theme: v })),
+        h("div", { class: "field" }, h("span", null, "Оформление"), seg([["system", O().themeSystem], ["light", "Светлое"], ["dark", "Тёмное"]], s.theme, (v) => setS({ theme: v })),
           h("small", null, "Окна приложения. Страница организации следует своей теме из профиля, если там не выбрано «как в системе».")),
         h("div", { class: "field" }, h("span", null, "Язык"), h("div", { class: "muted" }, "Русский")),
         h("div", { class: "field" }, h("span", null, "Кнопка «Закрыть» окна"), seg([["tray", "Свернуть в трей"], ["quit", "Выйти из приложения"], ["ask", "Спрашивать"]], s.closeAction,
@@ -246,13 +249,13 @@ function fillPanel(): void {
     const dnd = s.notifications.dndUntil === -1 || s.notifications.dndUntil > Date.now();
     P.replaceChildren(T("Уведомления"),
       h("div", { class: "card flat" },
-        sw("Уведомления Windows", "Новые сообщения, упоминания и события встреч из всех подключённых организаций", s.notifications.enabled, (v) => setS({ notifications: { enabled: v } }), isLocked("notifications.enabled")),
+        sw(O().notifications, "Новые сообщения, упоминания и события встреч из всех подключённых организаций", s.notifications.enabled, (v) => setS({ notifications: { enabled: v } }), isLocked("notifications.enabled")),
         sw("Звук", null, s.notifications.sound, (v) => setS({ notifications: { sound: v } })),
         sw("Скрывать текст сообщений", "В уведомлении — только «Новое сообщение», без автора и текста", s.notifications.hideContent, (v) => setS({ notifications: { hideContent: v } }), isLocked("notifications.hideContent")),
         sw("Не беспокоить", dnd && s.notifications.dndUntil > 0 ? `До ${new Date(s.notifications.dndUntil).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : "Уведомления не показываются, сообщения копятся в непрочитанных",
           dnd, (v) => setS({ notifications: { dndUntil: v ? -1 : 0 } }))),
       h("div", { class: "row" }, h("span", { class: "muted small" }, "Не беспокоить на:"), ...[[60, "1 час"], [240, "4 часа"]].map(([m, l]) => h("button", { class: "btn sm", on: { click: () => setS({ notifications: { dndUntil: Date.now() + Number(m) * 60_000 } }) } }, String(l)))),
-      h("p", { class: "small muted" }, "Отключить уведомления отдельного чата можно в самом чате («Без уведомлений»). Режим фокусировки Windows тоже учитывается."));
+      h("p", { class: "small muted" }, O().focusNote));
   } else if (tab === "orgs") {
     P.replaceChildren(T("Организации"),
       h("div", { class: "card flat list" }, S.orgs.length ? S.orgs.map((o, i) => orgRow(o, i)) : h("p", { class: "muted" }, "Нет подключённых организаций.")),
@@ -270,16 +273,16 @@ function fillPanel(): void {
     show();
     P.replaceChildren(T("Сеть"),
       h("div", { class: "card flat stack" },
-        h("div", { class: "field" }, h("span", null, "Прокси"), seg([["system", "Как в Windows"], ["direct", "Без прокси"], ["manual", "Вручную"], ["pac", "Сценарий PAC"]], mode, (v) => { mode = v; show(); }, locked), locked ? lockNote() : null),
+        h("div", { class: "field" }, h("span", null, "Прокси"), seg([["system", O().proxySystem], ["direct", "Без прокси"], ["manual", "Вручную"], ["pac", "Сценарий PAC"]], mode, (v) => { mode = v; show(); }, locked), locked ? lockNote() : null),
         extra,
         h("div", { class: "actions" }, h("button", { class: "btn primary", disabled: locked, on: { click: () => setS({ proxy: { mode, rules: rules.value, bypass: bypass.value, pac: pac.value } }) } }, "Применить"))),
       h("div", { class: "alert info" }, icon("shield"), h("div", { class: "body" }, h("b", null, "Сертификаты"),
-        h("span", null, "Приложение доверяет сертификатам из хранилища Windows. Для внутреннего центра сертификации организации администратор устанавливает его корневой сертификат групповой политикой. Проверка сертификатов не отключается."))));
+        h("span", null, O().certificates))));
   } else if (tab === "updates") {
     const u = S.update;
     const status: Record<string, string> = { idle: "Проверка ещё не выполнялась", checking: "Проверка…", none: "Установлена последняя версия", available: `Доступна версия ${u.version}`,
       downloading: `Загрузка версии ${u.version}… ${u.progress ?? 0}%`, ready: `Версия ${u.version} загружена и проверена`, error: "Ошибка", disabled: "Автоматическая проверка выключена",
-      managed: "Версию приложения устанавливает администратор (корпоративная установка MSI)" };
+      managed: O().managedUpdates, restart: `Установлена версия ${u.version} — перезапустите приложение` };
     const inCall = S.orgs.some((o) => o.inCall || o.sharing);
     const nokey = u.status === "disabled" && !!u.error;                       // сборка без ключа проверки: только ручная установка новой версии
     const busy = u.status === "checking" || u.status === "downloading";
@@ -296,9 +299,11 @@ function fillPanel(): void {
         u.status === "error" && u.error ? alertBox("err", u.error) : null,
         nokey ? alertBox("info", "Обновление установщиком", u.error) : null,
         u.status === "ready" && inCall ? alertBox("info", "Установка — после встречи", "Во время встречи и показа экрана приложение не перезапускается.") : null,
-        u.status === "managed" || nokey ? null : sw("Автоматически проверять обновления", "Раз в несколько часов. Новая версия устанавливается, только если подписана ключом издателя Peregovorka.",
+        u.status === "managed" || u.status === "restart" || nokey ? null : sw("Автоматически проверять обновления", "Раз в несколько часов. Новая версия устанавливается, только если подписана ключом издателя Peregovorka.",
           S.settings.updateMode !== "off", (v) => setS({ updateMode: v ? "notify" : "off" }), isLocked("updateMode")),
-        u.status === "managed" ? null : h("div", { class: "actions" }, manual,
+        u.status === "restart" ? h("div", { class: "actions" }, h("button", { class: "btn primary", disabled: inCall, on: { click: () => void call("shell:update:install", { now: true }) } }, icon("retry"), "Перезапустить")) : null,
+        u.status === "restart" && inCall ? alertBox("info", "Перезапуск — после встречи", "Во время встречи и показа экрана приложение не перезапускается.") : null,
+        u.status === "managed" || u.status === "restart" ? null : h("div", { class: "actions" }, manual,
           nokey ? null : h("button", { class: "btn", disabled: busy || u.status === "ready", on: { click: () => void call("shell:update:check") } }, icon("retry"), "Проверить обновления"),
           u.status === "available" ? h("button", { class: "btn primary", on: { click: () => void call("shell:update:download") } }, icon("download"), "Скачать обновление") : null,
           u.status === "ready" ? h("button", { class: "btn", disabled: !!u.installOnQuit, on: { click: () => void call("shell:update:install", { now: false }) } }, u.installOnQuit ? "Установится при выходе" : "Установить при выходе") : null,
@@ -311,9 +316,9 @@ function fillPanel(): void {
   } else if (tab === "about") {
     P.replaceChildren(T("О программе"),
       h("div", { class: "card flat stack" },
-        h("div", { class: "row" }, h("img", { class: "brandmark", src: "assets/icon.svg", alt: "" }), h("div", null, h("h2", null, "Peregovorka для Windows"), h("p", { class: "muted" }, `Версия ${S.version}`))),
+        h("div", { class: "row" }, h("img", { class: "brandmark", src: "assets/icon.svg", alt: "" }), h("div", null, h("h2", null, O().product), h("p", { class: "muted" }, `Версия ${S.version}`))),
         S.buildKind !== "release" ? alertBox("warn", "Тестовая сборка", "Сборка не подписана сертификатом издателя и не является доверенным корпоративным выпуском.") : null,
-        h("p", { class: "muted" }, "Клиент подключается к корпоративным серверам Peregovorka. Пароли не хранятся; вход сохраняется отзываемым токеном устройства, защищённым средствами Windows.")));
+        h("p", { class: "muted" }, O().about)));
   }
 }
 
@@ -349,9 +354,10 @@ async function devices() {
 }
 const ORG_ST: Record<string, string> = { online: "в сети", "signed-out": "нужен вход", connecting: "подключение", offline: "нет связи", error: "ошибка" };
 const UPD_ST: Record<string, string> = { idle: "не проверялись", checking: "проверка", none: "последняя версия", available: "есть новая версия", downloading: "загрузка", ready: "готово к установке",
-  error: "ошибка проверки", disabled: "выключены", managed: "управляет администратор" };
+  error: "ошибка проверки", disabled: "выключены", managed: "управляет администратор", restart: "нужен перезапуск" };
 const WS_ST: Record<string, string> = { online: "подключён", connecting: "подключается", reconnecting: "переподключается", offline: "нет связи" };
 const PERM: Record<string, string> = { granted: "разрешено", denied: "запрещено в параметрах конфиденциальности Windows", restricted: "ограничено", "not-determined": "не запрашивалось", unknown: "нет данных" };
+const perm = (v: string) => (v === "denied" ? O().permDenied : PERM[v] ?? v);
 function diagView(r: Diag): HTMLElement {
   const c = r.client;
   const mem = r.processes.reduce((n, p) => n + p.mb, 0);
@@ -361,14 +367,14 @@ function diagView(r: Diag): HTMLElement {
       h("dt", null, "Electron / Chromium"), h("dd", null, `${c.electron} / ${c.chrome}`),
       h("dt", null, "Система"), h("dd", null, `${c.os}, ${c.arch}`),
       h("dt", null, "Мониторы"), h("dd", null, (c.displays as { w: number; h: number; scale: number }[]).map((d) => `${d.w}×${d.h} @ ${Math.round(d.scale * 100)}%`).join("; ")),
-      h("dt", null, "Камера"), h("dd", null, PERM[r.permissions.camera] ?? r.permissions.camera),
-      h("dt", null, "Микрофон"), h("dd", null, PERM[r.permissions.microphone] ?? r.permissions.microphone),
+      h("dt", null, "Камера"), h("dd", null, perm(r.permissions.camera)),
+      h("dt", null, "Микрофон"), h("dd", null, perm(r.permissions.microphone)),
       h("dt", null, "Устройства"), h("dd", null, r.devices ? `микрофонов ${r.devices.audioinput}, динамиков ${r.devices.audiooutput}, камер ${r.devices.videoinput}` : "нет данных"),
       h("dt", null, "Память"), h("dd", null, `${mem} МБ, процессов ${r.processes.length}`),
       h("dt", null, "Запуск"), h("dd", null, c.startup_ms ? `${c.startup_ms} мс` : "—"),
-      h("dt", null, "Обновления"), h("dd", null, UPD_ST[r.update.status] ?? r.update.status),
+      h("dt", null, "Обновления"), h("dd", null, r.update.status === "managed" ? O().managedShort : UPD_ST[r.update.status] ?? r.update.status),
       h("dt", null, "Файлы программы"), h("dd", null, r.app_files ? "в порядке" : "повреждены — переустановите приложение"),
-      h("dt", null, "Хранилище входа"), h("dd", null, r.trust_storage === "os" ? "защищено Windows (DPAPI)" : "недоступно — вход не сохраняется"))),
+      h("dt", null, "Хранилище входа"), h("dd", null, r.trust_storage === "os" ? O().trustOk : O().trustNone))),
     h("div", { class: "card flat list" }, r.organizations.map((o) => h("div", { class: "item" }, h("div", { class: "who" }, h("b", null, String(o.host)),
       h("span", null, [ORG_ST[String(o.status)] ?? String(o.status), o.problem ? `ошибка ${o.problem}` : null, o.server_version ? `сервер ${o.server_version}` : null, `канал событий: ${WS_ST[String(o.websocket)] ?? "—"}`,
         o.in_call ? "идёт встреча" : null, o.saved_sign_in ? "вход сохранён" : "вход не сохранён"].filter(Boolean).join(" · ")))))),

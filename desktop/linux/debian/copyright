@@ -1,0 +1,16 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Peregovorka
+Source: https://github.com/calleograph/peregovorka
+
+Files: *
+Copyright: 2024-2026 Peregovorka
+License: other
+ Условия использования и распространения определяет владелец репозитория
+ https://github.com/calleograph/peregovorka (файл лицензии в репозитории пока не опубликован).
+
+Files: opt/Peregovorka/*
+Copyright: 2013-2026 GitHub Inc. and Electron contributors
+           2006-2026 The Chromium Authors
+License: MIT and BSD-3-Clause and others
+ Электрон (Electron) распространяется по лицензии MIT: /opt/Peregovorka/LICENSE.electron.txt.
+ Chromium и его компоненты — по лицензиям из /opt/Peregovorka/LICENSES.chromium.html.
