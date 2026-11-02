@@ -233,7 +233,7 @@ export default function AdminPage({ version }: { version: string }) {
           {found && (
             <div className="nav-found" role="list">
               {found.length === 0 && <div className="muted small">Ничего не найдено</div>}
-              {found.map((x) => <button key={x.id} role="listitem" className={tab === x.id ? "active" : ""} onClick={() => { pick(x.id); setQ(""); }}><Icon name={ADMIN_ICONS[x.id]} size={18} className="nav-ico" /><span className="nav-label">{x.label}<span className="muted small"> · {x.group}</span></span></button>)}
+              {found.map((x) => <button key={x.id} role="listitem" className={tab === x.id ? "active" : ""} onClick={() => { pick(x.id); setQ(""); }}><Icon name={ADMIN_ICONS[x.id]} size={18} className="nav-ico" /><span className="nav-label">{x.label}<span className="muted small nav-sub">{x.group}</span></span></button>)}
             </div>
           )}
           <div className="nav-tools" role="group" aria-label="Все разделы меню" hidden={!!found}>

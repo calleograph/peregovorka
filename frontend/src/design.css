@@ -490,6 +490,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .admin-nav .nav-items button:hover .nav-ico, .admin-nav .nav-found button:hover .nav-ico, .admin-nav button.active .nav-ico, .admin-nav .nav-toggle .nav-ico { color: currentColor; }
 .admin-nav .nav-toggle .nav-ico { color: var(--accent); }
 .admin-nav .nav-label { flex: 1 1 auto; min-width: 0; }
+.admin-nav .nav-sub { display: block; }   /* раздел найденного пункта — строкой ниже названия */
 .admin-nav .nav-badge { margin-left: 0; }
 .maintenance { border-left: 3px solid var(--warn, #c77c00); margin-top: 14px; }
 .quick-links { margin-top: 14px; }
