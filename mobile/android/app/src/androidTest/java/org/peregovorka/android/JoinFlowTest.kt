@@ -159,14 +159,15 @@ class JoinFlowTest {
             val micOn = device().hasObject(By.desc("Выключить микрофон"))
             android.util.Log.i("PGTEST", "микрофон включён в конференции: $micOn")
             device().findObject(By.desc(if (micOn) "Выключить микрофон" else "Включить микрофон"))!!.click()          // переключение микрофона
-            // опрос прямым поиском: Until.findObject не замечает смену описания у уже существующего элемента Compose (кнопка та же, меняется подпись)
+            // подпись проверяется перечислением описаний на экране: при непрерывно обновляемой картинке камеры findObject/Until по точному описанию
+            // не находил кнопку, хотя она уже показывала новую подпись (её видно в перечислении) — проверено в CI на Android 10, 14 и 16
             val want = if (micOn) "Включить микрофон" else "Выключить микрофон"
-            var switched: androidx.test.uiautomator.UiObject2? = null
+            fun labels() = device().findObjects(By.descStartsWith("")).mapNotNull { it.contentDescription }
             val end = System.currentTimeMillis() + 8_000
-            while (switched == null && System.currentTimeMillis() < end) { switched = device().findObject(By.desc(want)); if (switched == null) Thread.sleep(300) }
+            while (want !in labels() && System.currentTimeMillis() < end) Thread.sleep(300)
             val st = App.instance.calls.ui.value
-            assertNotNull("микрофон не переключился: состояние приложения micOn=${st.micOn}, фаза ${st.phase}; кнопки: " +
-                device().findObjects(By.descStartsWith("")).mapNotNull { it.contentDescription }.filter { "микрофон" in it || "камер" in it }, switched)
+            assertTrue("микрофон не переключился: состояние приложения micOn=${st.micOn}, фаза ${st.phase}; кнопки: ${labels().filter { "микрофон" in it || "камер" in it }}",
+                want in labels() && st.micOn == !micOn)
             assertStaysForeground(sc, 2_000, "переключение микрофона")
         }
     }
