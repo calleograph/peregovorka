@@ -10,7 +10,7 @@
 # Что делает (по порядку): определяет проект и текущий commit → git fetch и список новых commit'ов → локальные изменения файлов проекта
 # СОХРАНЯЕТ (scripts/lib/autorepair.sh: патч, архив, git stash — в BACKUP_DIR/local-changes-*) и продолжает → резервная копия .env и сравнение с новым .env.example (только имена, без значений) →
 # git merge --ff-only → [новая версия скрипта продолжает работу] → безопасные новые параметры .env, закрепление LiveKit на проверенной
-# версии → preflight → проверка моделей (ничего не скачивает повторно) → backup БД → сборка образов (retry сети, fallback BuildKit→legacy,
+# версии → место на диске (обслуживание кэша сборки) → preflight → проверка моделей (ничего не скачивает повторно) → backup БД → сборка образов (retry сети, fallback BuildKit→legacy,
 # commit/время сборки в образах) → Alembic upgrade head (current == head) → запуск и ожидание healthcheck → миграция собственного
 # nginx-site → verify → smoke-test → итог.
 #
@@ -68,6 +68,7 @@ upd_advice() {
     *"Источники сборки"*|*"registry-network"*|*"источник зависимостей"*) netcheck_advice | head -3 | tr '\n' ' '; echo "После устранения повторите обновление: уже собранные компоненты повторно не собираются." ;;
     *"git fetch"*) echo "Нет доступа к репозиторию проекта: проверьте сеть/прокси сервера до GitHub и повторите обновление." ;;
     *"Сборка образов"*) echo "См. журнал сборки компонента в отчёте; если это ошибка проекта — обновитесь до исправленной версии." ;;
+    *"Preflight"*) echo "Посмотрите проваленные пункты Preflight в журнале. Если это место на диске: обновление уже очистило кэш сборки Docker и старые образы проекта (данные, модели, резервные копии и образы отката не удаляются) — освободите место на сервере и повторите." ;;
     *"Резервная копия БД"*) echo "Проверьте место на диске в каталоге резервных копий и состояние PostgreSQL (scripts/logs.sh postgres), затем повторите." ;;
     *"healthy"*|*"не стали"*) echo "Посмотрите журнал сервиса из отчёта (scripts/logs.sh <сервис>); прежняя версия восстановлена автоматически, если это было возможно (см. «Автоматические действия»)." ;;
     *) echo "Повторите обновление; если остановка повторится — передайте этот отчёт в поддержку." ;;
@@ -234,7 +235,7 @@ phase1() {
 
   if [ "$DRY_RUN" = "1" ]; then
     log; info "[dry-run] дальше было бы: резервная копия .env → переход на ${TARGET:0:12} (ветка: merge --ff-only, тег: checkout --detach) → перезапуск скрипта новой версией →"
-    info "[dry-run] preflight → проверка моделей → backup БД → сборка образов → Alembic upgrade head → up -d + ожидание healthcheck → nginx-site → verify → smoke-test"
+    info "[dry-run] место на диске (обслуживание кэша сборки, если мало места или кэш больше ${UPD_BUILD_CACHE_MAX_GB:-20} ГБ) → preflight → проверка моделей → backup БД → сборка образов → Alembic upgrade head → up -d + ожидание healthcheck → nginx-site → verify → smoke-test"
     exit 0
   fi
 
@@ -293,6 +294,9 @@ phase2() {
   upd_livekit_pin "$ENV_FILE" || stop_update "Не удалось закрепить версию LiveKit"
   host_version_info
 
+  step "Место на диске: обслуживание кэша сборки Docker"
+  upd_disk_maintenance || warn "Места мало — Preflight покажет, хватит ли его для обновления"
+
   step "Preflight новой версии"
   if [ "$SKIP_PREFLIGHT" -eq 1 ]; then warn "Preflight пропущен (--skip-preflight)"
   else "$REPO_ROOT/scripts/preflight.sh" --env "$ENV_FILE" --skip-network || stop_update "Preflight не пройден (код уже обновлён до ${TARGET:0:12}; контейнеры не тронуты)"; fi
@@ -313,7 +317,7 @@ phase2() {
   upd_ensure_data_dirs
 
   step "Сборка образов (retry сети, fallback BuildKit → legacy, commit ${APP_GIT_COMMIT} в образах)"
-  upd_free_space
+  upd_disk_maintenance || true          # модели и образы видеозаписи могли занять место после Preflight
   info "Сборка ASR (torch, pip install gigaam с GitHub) может занимать 15+ минут — это не зависание; каждую минуту печатается прогресс."
   [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }
   build_images || stop_update "Сборка образов не удалась (код и контейнеры не тронуты; лог: $DATA_ROOT/state/build-*.log). Уже собранные сервисы повторно не собираются."

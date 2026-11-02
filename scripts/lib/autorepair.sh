@@ -108,24 +108,87 @@ upd_default_target() {
   git -C "$REPO_ROOT" rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' 2>/dev/null
 }
 
-# Место на диске перед сборкой: меньше UPD_MIN_FREE_GB — очищаются кэш сборки Docker, «висячие» образы и старые образы ЭТОГО проекта
-# (кроме работающих, предыдущей версии для отката и собираемой). Тома, данные, модели и чужие образы не трогаются.
-upd_free_space() { # [нужно_ГБ]
-  local need="${1:-${UPD_MIN_FREE_GB:-6}}" root img keep
-  root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)"; [ -d "$root" ] || root=/var/lib/docker; [ -d "$root" ] || root=/
-  _upd_free_gb() { df -Pk "$root" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}'; }
-  [ -n "$(_upd_free_gb)" ] || return 0                                   # размер не определить — не чистим наугад
-  [ "$(_upd_free_gb)" -ge "$need" ] && return 0
-  warn "Автопочинка: на диске Docker свободно $(_upd_free_gb) ГБ (нужно ≥ $need ГБ для сборки) — очищаю кэш сборки и старые образы проекта"
-  docker builder prune -f >/dev/null 2>&1
-  docker image prune -f >/dev/null 2>&1                                   # только «висячие» (без тега), не используемые
-  keep="$(docker ps -a --format '{{.Image}}' 2>/dev/null | sort -u)"
-  while IFS= read -r img; do
-    [ -n "$img" ] || continue
-    case "$img" in *":${IMAGE_TAG:-none}"|*":prev-"*|*":latest") continue ;; esac
-    grep -qxF "$img" <<<"$keep" && continue
-    docker rmi "$img" >/dev/null 2>&1
-  done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^${COMPOSE_PROJECT_NAME}-(backend|asr|web|livekit):[0-9a-f]{7,40}$")
-  ok "После очистки свободно $(_upd_free_gb) ГБ"
-  [ "$(_upd_free_gb)" -ge "$need" ] || warn "Места всё ещё мало ($(_upd_free_gb) ГБ): сборка может не уместиться — освободите место на диске сервера"
+# Обслуживание диска перед сборкой (update.sh вызывает ДО Preflight и ещё раз перед сборкой). Причина: на стенде ~28 ГБ кэша сборки BuildKit
+# заняли диск, и обновление остановилось на Preflight — прежняя очистка шла только после него.
+# Цели: на диске Docker свободно ≥ UPD_MIN_FREE_GB (сборка образов; по умолчанию 15 ГБ); если DATA_ROOT на той же файловой системе —
+# ещё и ≥ MIN_FREE_DISK_GB (требование Preflight, 30 ГБ). Гигиена: кэш сборки больше UPD_BUILD_CACHE_MAX_GB (20 ГБ) подрезается и при достатке места.
+# Ступени — по возрастанию цены; каждая только пока цель не достигнута, после каждой — новый замер и строка в журнале обновления:
+#   1. неиспользуемый кэш сборки старше UPD_BUILD_CACHE_KEEP_DAYS (7) дней — слои текущей версии остаются, следующая сборка не дольше;
+#   2. «висячие» образы (без тега и без контейнеров) — в том числе промежуточные слои классического builder'а;
+#   3. кэш сборки сверх UPD_BUILD_CACHE_KEEP_GB (8 ГБ) — остаются последние использованные слои (torch, pip, npm);
+#   4. образы ЭТОГО проекта, не нужные ни для работы, ни для отката: остаются работающие, собираемая версия, версия отката
+#      (previous_git_commit: <sha12> и prev-<sha12>) и ещё UPD_KEEP_IMAGE_VERSIONS (2) самые новые версии;
+#   5. весь неиспользуемый кэш сборки — следующая сборка дольше (зависимости скачиваются заново), данные не затрагиваются.
+# Никогда: тома, контейнеры, чужие образы (postgres, redis, LiveKit, Egress, SIP — тоже), DATA_ROOT, модели, резервные копии, docker system prune.
+# Кэш сборки общий для всего Docker на сервере: ступени 1, 3, 5 затрагивают и кэш других проектов (только неиспользуемый — идущие сборки защищены).
+# UPD_DISK_MAINTENANCE=0 — выключить (тогда только замер и предупреждение).
+_disk_free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}'; }
+_docker_root() { local r; r="$(timeout 20 docker info -f '{{.DockerRootDir}}' 2>/dev/null)"; [ -d "$r" ] || r=/var/lib/docker; [ -d "$r" ] || r=/; printf '%s\n' "$r"; }
+_build_cache_gb() { # размер кэша сборки (целые ГБ, с округлением вверх); пусто — неизвестно
+  timeout 60 docker system df --format '{{.Type}}|{{.Size}}' 2>/dev/null | awk -F'|' '$1=="Build Cache" {
+    v=$2; n=v+0; u=v; gsub(/[0-9.]/, "", u); m=1/1e9
+    if (u=="B") m=1/1e9; else if (u=="kB"||u=="KB") m=1/1e6; else if (u=="MB") m=1/1e3; else if (u=="GB") m=1; else if (u=="TB") m=1000
+    g=n*m; printf "%d\n", (g==int(g) ? g : int(g)+1) }'
+}
+_builder_keep_flag() { docker builder prune --help 2>&1 | grep -q -- '--reserved-space' && echo --reserved-space || echo --keep-storage; }
+_disk_same_fs() { [ -n "$1" ] && [ -n "$2" ] && [ "$(stat -c %d "$1" 2>/dev/null)" = "$(stat -c %d "$2" 2>/dev/null)" ] && [ -n "$(stat -c %d "$1" 2>/dev/null)" ]; }
+
+# Какие образы проекта нельзя удалять: печатает «репозиторий:тег» по строке.
+_disk_keep_images() {
+  local prev keep=() v
+  prev="$(upd_state_get previous_git_commit 2>/dev/null)"; prev="${prev:0:12}"
+  docker ps -a --format '{{.Image}}' 2>/dev/null
+  for v in "${IMAGE_TAG:-}" "$prev"; do [ -n "$v" ] && keep+=("${v:0:12}"); done
+  # ещё UPD_KEEP_IMAGE_VERSIONS самых новых версий (по времени создания образа backend; prev- и обычный тег — одна версия)
+  while IFS= read -r v; do [ -n "$v" ] && keep+=("$v"); done < <(docker images --format '{{.CreatedAt}}|{{.Tag}}' "${COMPOSE_PROJECT_NAME}-backend" 2>/dev/null \
+      | sort -r | cut -d'|' -f2 | sed 's/^prev-//' | grep -E '^[0-9a-f]{7,40}$' | awk '!s[$0]++' | head -n "${UPD_KEEP_IMAGE_VERSIONS:-2}")
+  for v in "${keep[@]}"; do printf '%s\n' "$v"; done | awk '!s[$0]++' | while IFS= read -r v; do
+    printf '%s\n' "${COMPOSE_PROJECT_NAME}-backend:$v" "${COMPOSE_PROJECT_NAME}-asr:$v" "${COMPOSE_PROJECT_NAME}-web:$v" "${COMPOSE_PROJECT_NAME}-livekit:$v" \
+                  "${COMPOSE_PROJECT_NAME}-backend:prev-$v" "${COMPOSE_PROJECT_NAME}-asr:prev-$v" "${COMPOSE_PROJECT_NAME}-web:prev-$v" "${COMPOSE_PROJECT_NAME}-livekit:prev-$v"
+  done
+}
+
+upd_disk_maintenance() { # [нужно_ГБ_на_диске_Docker] → 0 — цель достигнута (или замер невозможен), 1 — места всё ещё мало
+  local need="${1:-${UPD_MIN_FREE_GB:-15}}" root probe target same=0 free0 free cache0 cache step keep img n=0 kf
+  root="$(_docker_root)"
+  [ -n "$(_disk_free_gb "$root")" ] || { warn "Место на диске Docker определить не удалось — обслуживание кэша пропущено"; return 0; }
+  target="$need"
+  if [ -n "${DATA_ROOT:-}" ]; then
+    probe="$DATA_ROOT"; while [ ! -e "$probe" ] && [ "$probe" != "/" ]; do probe="$(dirname "$probe")"; done
+    if _disk_same_fs "$root" "$probe"; then same=1; [ "${MIN_FREE_DISK_GB:-30}" -gt "$target" ] && target="${MIN_FREE_DISK_GB:-30}"; fi
+  fi
+  free0="$(_disk_free_gb "$root")"; cache0="$(_build_cache_gb)"
+  info "Диск: на диске Docker ($root) свободно ${free0} ГБ, кэш сборки ${cache0:-?} ГБ; нужно ≥ ${target} ГБ$([ "$same" = 1 ] && echo " (сборка и Preflight: DATA_ROOT на том же диске)")"
+  _ok_now() { [ "$(_disk_free_gb "$root")" -ge "$target" ] && { [ -z "$(_build_cache_gb)" ] || [ "$(_build_cache_gb)" -le "${UPD_BUILD_CACHE_MAX_GB:-20}" ]; }; }
+  _ok_now && return 0
+  if [ "${UPD_DISK_MAINTENANCE:-1}" = 0 ]; then
+    warn "Обслуживание кэша выключено (UPD_DISK_MAINTENANCE=0): свободно ${free0} ГБ, кэш сборки ${cache0:-?} ГБ"; [ "$free0" -ge "$target" ]; return
+  fi
+  kf="$(_builder_keep_flag)"
+  _step() { # описание команда…
+    local what="$1" f1 c1; shift
+    step=$((step + 1))
+    "$@" >/dev/null 2>&1 || warn "  ступень ${step} ($what): команда завершилась с ошибкой — продолжаю"
+    f1="$(_disk_free_gb "$root")"; c1="$(_build_cache_gb)"
+    ok "  ступень ${step} — ${what}: свободно ${f1} ГБ, кэш сборки ${c1:-?} ГБ"
+  }
+  step=0
+  _step "кэш сборки старше ${UPD_BUILD_CACHE_KEEP_DAYS:-7} дней" timeout 1800 docker builder prune -f --filter "until=$(( ${UPD_BUILD_CACHE_KEEP_DAYS:-7} * 24 ))h"
+  _ok_now || _step "образы без тега" timeout 600 docker image prune -f
+  _ok_now || _step "кэш сборки сверх ${UPD_BUILD_CACHE_KEEP_GB:-8} ГБ (последние слои остаются)" timeout 1800 docker builder prune -f "$kf" "${UPD_BUILD_CACHE_KEEP_GB:-8}gb"
+  if [ "$(_disk_free_gb "$root")" -lt "$target" ]; then
+    keep="$(_disk_keep_images)"
+    while IFS= read -r img; do
+      [ -n "$img" ] || continue
+      grep -qxF "$img" <<<"$keep" && continue
+      timeout 300 docker rmi "$img" >/dev/null 2>&1 && n=$((n + 1))
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^${COMPOSE_PROJECT_NAME}-(backend|asr|web|livekit):(prev-)?[0-9a-f]{7,40}$")
+    step=$((step + 1)); ok "  ступень ${step} — старые образы проекта (откат и работающие сохранены): удалено тегов ${n}, свободно $(_disk_free_gb "$root") ГБ"
+  fi
+  [ "$(_disk_free_gb "$root")" -ge "$target" ] || _step "весь неиспользуемый кэш сборки (следующая сборка дольше)" timeout 1800 docker builder prune -f
+  free="$(_disk_free_gb "$root")"; cache="$(_build_cache_gb)"
+  upd_action "обслуживание диска: свободно ${free0} → ${free} ГБ, кэш сборки ${cache0:-?} → ${cache:-?} ГБ"
+  if [ "$free" -ge "$target" ]; then ok "Диск: свободно ${free} ГБ (было ${free0}), кэш сборки ${cache:-?} ГБ (был ${cache0:-?}) — достаточно"; return 0; fi
+  warn "Диск: и после очистки свободно ${free} ГБ (нужно ≥ ${target}). Данные, модели, резервные копии и образы отката не удаляются автоматически — освободите место на сервере (что занимает: du -xh --max-depth=1 ${DATA_ROOT:-/} | sort -h | tail; docker system df)"
+  return 1
 }

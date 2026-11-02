@@ -160,7 +160,7 @@ elif [ -n "${DATA_ROOT:-}" ]; then
   esac
   probe="$DATA_ROOT"; while [ ! -e "$probe" ] && [ "$probe" != "/" ]; do probe="$(dirname "$probe")"; done
   free_gb=$(( $(df -Pk "$probe" | awk 'NR==2 {print $4}') / 1024 / 1024 ))
-  if [ "$free_gb" -ge "${MIN_FREE_DISK_GB:-30}" ]; then pass "Свободно на диске DATA_ROOT: ${free_gb} ГБ"; else pfail "Свободно ${free_gb} ГБ < MIN_FREE_DISK_GB=${MIN_FREE_DISK_GB:-30}"; fi
+  if [ "$free_gb" -ge "${MIN_FREE_DISK_GB:-30}" ]; then pass "Свободно на диске DATA_ROOT: ${free_gb} ГБ"; else pfail "Свободно ${free_gb} ГБ < MIN_FREE_DISK_GB=${MIN_FREE_DISK_GB:-30}$(bc_gb="$(_build_cache_gb 2>/dev/null)"; [ -n "$bc_gb" ] && [ "$bc_gb" -gt 0 ] && printf '; кэш сборки Docker %s ГБ — update.sh очищает его сам перед Preflight, вручную: docker builder prune -f --filter until=168h' "$bc_gb")"; fi
 fi
 if [ -n "${BACKUP_DIR:-}${BACKUP_COPY_DIR:-}" ]; then
   # BACKUP_DIR/BACKUP_COPY_DIR — только локальные абсолютные пути (UNC и smb:// отвергаются), BACKUP_DIR — вне репозитория
