@@ -35,7 +35,7 @@ for f in "peregovorka_${v}_amd64.deb" "peregovorka_${v}_arm64.deb" SHA256SUMS-li
   grep -qx "$f" <<<"$assets" || { echo "$tag: ещё нет $f (CI не закончил) — позже"; exit 0; }
 done
 if [ "$FORCE" = 0 ]; then
-  live() { curl -fsS --max-time 60 "$APT_URL/dists/stable/main/binary-$1/Packages?t=$(date +%s)" 2>/dev/null | grep -qx "Version: $v"; }
+  live() { curl -fsS --max-time 60 "$APT_URL/dists/stable/main/binary-$1/Packages?t=$(date +%s)" 2>/dev/null | grep -x "Version: $v" >/dev/null; }
   if live amd64 && live arm64; then echo "$v уже опубликована"; exit 0; fi
   lock="$(gh api "repos/$APT_REPO/contents/pool.lock" -H "Accept: application/vnd.github.raw" 2>/dev/null || true)"
   if grep -q "/desktop-v$v/peregovorka_${v}_arm64.deb\$" <<<"$lock" && grep -q "/desktop-v$v/peregovorka_${v}_amd64.deb\$" <<<"$lock"; then
