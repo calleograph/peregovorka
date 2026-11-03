@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from livekit import api, rtc
 
 W, H, FPS = 1280, 720, 5
-stats = {"connected": False, "audio_frames": {}, "since": time.time()}
+stats = {"connected": False, "audio_frames": {}, "screen_frames": {}, "since": time.time()}
 
 
 def pattern() -> bytes:
@@ -46,6 +46,12 @@ async def count_audio(track: rtc.Track, identity: str):
         stats["audio_frames"][identity] = stats["audio_frames"].get(identity, 0) + 1
 
 
+async def count_screen(track: rtc.Track, identity: str):
+    """Кадры демонстрации экрана от приложения (показ экрана с телефона, MediaProjection): видит ли её собеседник на самом деле."""
+    async for _ in rtc.VideoStream(track):
+        stats["screen_frames"][identity] = stats["screen_frames"].get(identity, 0) + 1
+
+
 async def main(a):
     srv = ThreadingHTTPServer(("0.0.0.0", a.port), Stats)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -57,6 +63,9 @@ async def main(a):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             asyncio.ensure_future(count_audio(track, participant.identity))
             print(f"{time.strftime('%T')} слушаю {participant.identity}", flush=True)
+        elif track.kind == rtc.TrackKind.KIND_VIDEO and _pub.source == rtc.TrackSource.SOURCE_SCREENSHARE:
+            asyncio.ensure_future(count_screen(track, participant.identity))
+            print(f"{time.strftime('%T')} вижу демонстрацию экрана {participant.identity}", flush=True)
 
     @room.on("participant_disconnected")
     def _gone(p):

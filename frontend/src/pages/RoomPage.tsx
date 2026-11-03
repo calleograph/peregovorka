@@ -1425,12 +1425,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <span className="rec-badge off prep" title="Подготовка: участники говорят между собой, зрители видят заставку «Эфир скоро начнётся». Запись и транскрибация не идут">ПОДГОТОВКА</span>)}
           {join.client.broadcast && lv.state?.can_control && !ended && (lv.state.live
             ? <button type="button" className="btn mini onair-stop" onClick={() => setConfirmOffAir(true)} title="Закончить эфир для зрителей: запись сохранится, комната останется открытой">Завершить эфир</button>
-            : <button type="button" className="btn primary onair-go" disabled={airBusy || !lv.state.can_start || lv.state.status === "starting"}
+            : <button type="button" className="btn onair-go" disabled={airBusy || !lv.state.can_start || lv.state.status === "starting"}
                       title="Начать эфир: зрители увидят изображение и звук, начнутся запись и транскрибация, откроется приём вопросов"
-                      onClick={() => { setAirBusy(true); api.setLive(join.meeting_id, true).then(lv.refresh, (e) => setErr("general", (e as ApiError).message)).finally(() => setAirBusy(false)); }}>
+                      onClick={() => { setAirBusy(true); api.setLive(join.meeting_id, true).then(lv.refresh, (e) => setNotice({ kind: "warn", text: `Эфир не начат: ${(e as ApiError).message}` })).finally(() => setAirBusy(false)); }}>
                 <span className="rec-dot" aria-hidden /> {airBusy || lv.state.status === "starting" ? "Запуск…" : "Выйти в эфир"}</button>)}
           {video?.recording && <span className="rec-badge on video" title="Идёт видеозапись встречи: изображение и звук всех участников"><span className="rec-dot" aria-hidden /> ВИДЕОЗАПИСЬ</span>}
-          {serverTranscript && !transcribing && (
+          {serverTranscript && !transcribing && !(join.client.broadcast && lv.state && !lv.state.live) && (
             <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
           )}
           <div className="spacer" />
@@ -1610,7 +1610,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         )}
         {confirmOffAir && <ConfirmDialog title="Завершить эфир?" confirmLabel="Да, завершить эфир" onClose={() => setConfirmOffAir(false)}
                                          body={<p>Зрители увидят «Эфир завершён». Запись эфира сохранится; участники останутся в комнате и могут продолжить разговор без трансляции.</p>}
-                                         onConfirm={() => { setConfirmOffAir(false); api.setLive(join.meeting_id, false).then(lv.refresh, (e) => setErr("general", (e as ApiError).message)); }} />}
+                                         onConfirm={() => { setConfirmOffAir(false); api.setLive(join.meeting_id, false).then(lv.refresh, (e) => setNotice({ kind: "warn", text: `Эфир не остановлен: ${(e as ApiError).message}` })); }} />}
         {confirmEnd && <ConfirmDialog title="Завершить встречу для всех?" confirmLabel="Да, завершить" onClose={() => setConfirmEnd(false)}
                                       body={<p>Встреча закончится у всех участников. Стенограмма и материалы сохранятся.</p>} onConfirm={endForAll} />}
         {ctlErr.device && <div className="alert error" role="alert">Устройство: {ctlErr.device} <button className="btn mini" onClick={() => setErr("device")}>Закрыть</button></div>}
@@ -1626,7 +1626,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} recording={recording} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal}
-                       questions={!!join.client.broadcast} />
+                       questions={!!join.client.broadcast} prep={!!join.client.broadcast && !!lv.state && !lv.state.live} />
       {pipPortal}
     </div>
   );

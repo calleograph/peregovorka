@@ -167,8 +167,13 @@ def test_legacy_room_settings_are_shown_and_sent_the_same_way():
 
     legacy = clean_spec({"enabled": True, "materials": ["protocol"], "recipients": {"organizer": True}})
     assert view_spec(legacy)["per_material"]["protocol"]["mode"] == "organizer", "прежняя настройка «организатору» видна в редакторе, а не как «не отправлять»"
-    only_emails = clean_spec({"enabled": True, "materials": ["protocol"], "recipients": {"emails": ["x@example.org"]}})
-    assert view_spec(only_emails)["per_material"]["protocol"]["mode"] == "none"
+    from app.services.mail_delivery import recipients_spec
+
+    with_mails = view_spec(clean_spec({"enabled": True, "materials": ["protocol"], "recipients": {"participants": True, "emails": ["x@example.org"]}}))
+    assert recipients_spec(with_mails, "protocol")["recipients"]["emails"] == ["x@example.org"], "«Свои адреса» видны в редакторе — и получают материал"
+    assert recipients_spec(with_mails, "summary")["recipients"]["emails"] == [], "выключенный материал на свои адреса не уходит"
+    only = view_spec(clean_spec({"enabled": True, "materials": ["protocol"], "recipients": {"emails": ["x@example.org"]}}))
+    assert only["per_material"]["protocol"]["mode"] == "emails", "прежняя настройка «только свои адреса» видна в редакторе как есть"
 
 
 # ====================================================================================== вложения чатов

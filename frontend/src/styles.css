@@ -1040,7 +1040,8 @@ body.screen-max-open { overflow: hidden; }
 @media (max-width: 480px) { .screen-stage.big:not(.max) .sb-title { display: none; } .screen-stage.big:not(.max) .screen-bar { justify-content: flex-end; } }
 
 /* Комната трансляции: верх боковой панели — «Вопросы» / «Транскрибация» (components/TranscriptPanel.tsx), лента вопросов зрителей (LiveQuestionsPanel.tsx) */
-.tp-seg button { padding: 4px 10px; font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; min-height: 28px; }
+.tp-seg { flex: 0 1 auto; min-width: 0; }
+.tp-seg button { padding: 4px 8px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; min-height: 28px; white-space: nowrap; }
 .tp-seg button[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
 .tp-seg button[aria-selected="true"] .unread-dot { background: #fff; color: var(--accent); }
 .tp-q { min-height: 0; overflow: auto; }
@@ -1062,7 +1063,8 @@ body.screen-max-open { overflow: hidden; }
 .lq-act { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Комната трансляции: подготовка и выход в эфир (заметная кнопка руководителя в шапке комнаты) */
 .rec-badge.off.prep { background: var(--soft); color: var(--muted); border: 1px dashed var(--line-strong); }
-.btn.onair-go { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 700; gap: 8px; }
+.btn.onair-go { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 700; gap: 8px; display: inline-flex; align-items: center; }
+.btn.onair-go:disabled { opacity: .6; }
 .btn.onair-go:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.onair-go .rec-dot { background: #fff; }
 .btn.onair-stop { border-color: var(--danger); color: var(--danger-text); }

@@ -18,7 +18,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.StopScreenShare
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -62,6 +64,15 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
         calls.permissionsChanged(access::granted)
         val blocked = listOf(Perm.Mic, Perm.Camera).firstOrNull { p -> (if (p == Perm.Mic) calls.ui.value.micWanted else calls.ui.value.camWanted) && !access.granted(p) && !access.canAskAgain(p) }
         if (blocked != null) settingsFor = blocked
+    }
+    // Показ своего экрана: системное окно MediaProjection («Начать трансляцию»); отказ — понятное сообщение, а не тишина
+    val projection = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val d = r.data
+        if (r.resultCode == android.app.Activity.RESULT_OK && d != null) calls.startScreenShare(d) else calls.screenConsentDenied()
+    }
+    fun askScreen() {
+        val m = ctx.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        runCatching { projection.launch(m.createScreenCaptureIntent()) }.onFailure { calls.screenConsentDenied() }
     }
     fun ask(p: Perm) {
         if (asking) return
@@ -108,6 +119,7 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
     }
 
     val controls: @Composable () -> Unit = {
+        if (s.screenOn) ScreenShareStrip(onStop = calls::stopScreenShare)
         if (micMissing || camMissing) PermissionStrip(if (micMissing) Perm.Mic else Perm.Camera) { ask(if (micMissing) Perm.Mic else Perm.Camera) }
         Controls(
             s, onMic = { ask(Perm.Mic) }, onCam = { ask(Perm.Camera) }, onHand = calls::toggleHand,
@@ -131,7 +143,7 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
         when (sheet) {
             Sheet.Chat -> ChatSheet(s, calls)
             Sheet.People -> PeopleSheet(s, calls)
-            Sheet.More -> MoreSheet(s, calls) { sheet = null }
+            Sheet.More -> MoreSheet(s, calls, onScreen = { if (s.screenOn) calls.stopScreenShare() else askScreen() }) { sheet = null }
             null -> {}
         }
     }
@@ -142,6 +154,10 @@ fun CallScreen(calls: CallManager, onClose: () -> Unit) {
             confirmButton = { TextButton(onClick = { settingsFor = null; access.openSettings() }) { Text("Открыть настройки") } },
             dismissButton = { TextButton(onClick = { settingsFor = null }) { Text("Не сейчас") } },
         )
+    }
+    s.screenNote?.let { note ->
+        AlertDialog(onDismissRequest = calls::dismissScreenNote, title = { Text("Показ экрана") }, text = { Text(note) },
+            confirmButton = { TextButton(onClick = calls::dismissScreenNote) { Text("Понятно") } })
     }
     if (confirmLeave) AlertDialog(
         onDismissRequest = { confirmLeave = false }, title = { Text("Выйти из конференции?") },
@@ -298,10 +314,28 @@ private fun PeopleSheet(s: CallUi, calls: CallManager) {
     }
 }
 
+/** Полоса над кнопками, пока идёт показ своего экрана: участники видят экран телефона; остановить — одним нажатием. */
 @Composable
-private fun MoreSheet(s: CallUi, calls: CallManager, close: () -> Unit) {
+private fun ScreenShareStrip(onStop: () -> Unit) {
+    Row(Modifier.fillMaxWidth().background(Color(0xFF14365F)).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.AutoMirrored.Filled.ScreenShare, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+        Text("Вы показываете экран", color = Color.White, modifier = Modifier.weight(1f))
+        TextButton(onClick = onStop, modifier = Modifier.heightIn(min = 48.dp)) { Text("Остановить", color = Color.White) }
+    }
+}
+
+@Composable
+private fun MoreSheet(s: CallUi, calls: CallManager, onScreen: () -> Unit, close: () -> Unit) {
     Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
         Text("Ещё", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+        if (s.canScreen) {
+            TextButton(onClick = { close(); onScreen() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Icon(if (s.screenOn) Icons.AutoMirrored.Filled.StopScreenShare else Icons.AutoMirrored.Filled.ScreenShare, null); Spacer(Modifier.width(12.dp))
+                Text(if (s.screenOn) "Остановить показ экрана" else "Показать экран", Modifier.weight(1f))
+            }
+            if (!s.screenOn) Text("Участники увидят всё, что на экране телефона, в том числе уведомления. На заблокированном экране изображение не передаётся.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 12.dp, bottom = 4.dp))
+        }
         if (s.camOn) TextButton(onClick = { calls.flipCamera(); close() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Filled.FlipCameraAndroid, null); Spacer(Modifier.width(12.dp)); Text("Переключить камеру", Modifier.weight(1f)) }
         val devices = remember(s.audioDevice, s.phase) { calls.audioDevices() }
         if (devices.isNotEmpty()) {

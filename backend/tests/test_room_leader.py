@@ -324,7 +324,7 @@ def test_room_journal_records_every_listed_action_with_actor_time_and_meeting(tm
         _feed_and_consume(c, [_segment(a["meeting_id"], a["identity"], "Принято решение")])
         mid = a["meeting_id"]
         login(c, "carol")
-        r = c.put(f"{API}/meetings/{mid}/settings", json={"delivery": {"enabled": True, "per_material": {"summary": {"mode": "leader"}}}})  # настройки встречи
+        r = c.put(f"{API}/meetings/{mid}/settings", json={"llm": None})       # настройки встречи (рассылка с 0.64 — только в комнате, у встречи — модель)
         assert r.status_code == 200, r.text
         login(c, "alice")
         assert c.post(f"{API}/meetings/{mid}/leave").status_code == 204                                                  # выход

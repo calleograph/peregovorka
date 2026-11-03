@@ -35,7 +35,7 @@ export function GuestContactFields({ value, onChange, onEnter, preview, suffix =
                onChange={(e) => onChange({ ...value, name: e.target.value })} onKeyDown={enter} />
       </label>
       {preview && value.name.trim() && <p className="muted small">{preview}: <b>{value.name.trim().replace(/\s+/g, " ")}{suffix}</b></p>}
-      <label>Электронная почта <span className="muted small">— необязательно</span>
+      <label><span>Электронная почта <span className="muted small">— необязательно</span></span>
         <input type="email" inputMode="email" value={value.email} maxLength={254} autoComplete="email" placeholder="name@example.org" aria-invalid={bad}
                aria-describedby={`${id}-hint`} onChange={(e) => onChange({ ...value, email: e.target.value })} onKeyDown={enter} />
       </label>

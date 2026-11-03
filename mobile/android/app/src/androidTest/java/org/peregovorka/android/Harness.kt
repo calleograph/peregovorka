@@ -30,6 +30,8 @@ class FakePeregovorka {
     @Volatile var serverVersion = "0.49.6"          // с этой версии у сайта есть раздел /chats и режим «внутри приложения»
     /** Комната LiveKit в выдаваемом токене: длинный звонок (LongCallTest) — в своей комнате, где второй участник показывает экран. */
     @Volatile var livekitRoom = "test-room"
+    /** Что сервер разрешает публиковать (client.sources); показ своего экрана — только если есть screen_share. */
+    @Volatile var sources = listOf("microphone", "camera")
     /** Сколько раз приложение входило в комнату (повторный вход после обрыва связи — тоже вход). */
     val joins = java.util.concurrent.atomic.AtomicInteger()
 
@@ -67,7 +69,7 @@ class FakePeregovorka {
                     path == "/api/v1/rooms/upcoming" -> json("""{"items":[]}""")
                     path.startsWith("/api/v1/rooms/") && path.endsWith("/join") -> { joins.incrementAndGet(); json(
                         """{"meeting_id":"m1","room":{"id":"r1","name":"Основная","camera_allowed":true},"livekit_url":"$livekitUrl","token":"${livekitToken()}","identity":"u1",
-                        "client":{"sources":["microphone","camera"]}}""") }
+                        "client":{"sources":[${sources.joinToString(",") { "\"$it\"" }}]}}""") }
                     path.endsWith("/hands") -> json("""{"hands":[]}""")
                     path.endsWith("/chat") -> json("""{"messages":[],"me":"u1"}""")
                     path.endsWith("/leave") || path == "/api/v1/client/events" -> MockResponse().setResponseCode(204)

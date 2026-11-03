@@ -38,9 +38,9 @@ FORMAT_MIME = {"html": "text/html; charset=utf-8", "docx": "application/vnd.open
                "txt": "text/plain; charset=utf-8", "md": "text/markdown; charset=utf-8"}
 MAX_MANUAL_EMAILS = 50
 MAX_RECIPIENTS = 300
-MODES = ("none", "leader", "owner", "organizer", "all", "selected")
+MODES = ("none", "leader", "owner", "organizer", "all", "selected", "emails")      # emails — только «Свои адреса» (они получают и любой другой включённый материал)
 MODE_LABEL = {"none": "Не отправлять", "leader": "Руководителям комнаты", "owner": "Владельцу комнаты", "organizer": "Организатору встречи", "all": "Всем участникам встречи",
-              "selected": "Выбранным пользователям"}
+              "selected": "Выбранным пользователям", "emails": "Только на свои адреса"}
 
 
 @dataclass
@@ -191,13 +191,13 @@ def clean_spec(raw: dict | None) -> dict:
 
 def view_spec(spec: dict) -> dict:
     """Настройки в виде «по материалам» для интерфейса: прежние (один набор получателей на все материалы) показываются приближённо — «всем участникам» при выбранных участниках,
-    иначе «только руководителю», «организатору», «владельцу», «выбранным». Автоматическая рассылка идёт ровно по этому виду (что показано выключенным — не уходит);
-    свои адреса прежнего формата в автоматическую рассылку не попадают — их можно указать при ручной отправке."""
+    иначе «только руководителю», «организатору», «владельцу», «выбранным»; «Свои адреса» — как есть. Автоматическая рассылка идёт ровно по этому виду
+    (что показано выключенным — не уходит)."""
     if spec.get("per_material"):
         return spec
     r = spec["recipients"]
     mode = ("all" if r["participants"] else "leader" if r["leaders"] else "organizer" if r.get("organizer") else "owner" if r.get("owner")
-            else "selected" if r["users"] else "none")
+            else "selected" if r["users"] else "emails" if r.get("emails") else "none")
     users = r["users"] if mode == "selected" else []
     pm = {k: {"mode": mode if k in spec["materials"] else "none", "users": users if k in spec["materials"] else []} for k in MATERIALS}
     return {**spec, "per_material": pm, "converted_from_legacy": bool(spec["enabled"] or spec["materials"])}
@@ -209,8 +209,9 @@ def recipients_spec(spec: dict, kind: str) -> dict:
     if not pm:
         return spec
     e = pm.get(kind) or {"mode": "none", "users": []}
+    # «Свои адреса» редактора комнаты получают каждый включённый материал (поле видно в редакторе — значит, письма на эти адреса уходят)
     return {**spec, "recipients": {"leaders": e["mode"] == "leader", "owner": e["mode"] == "owner", "organizer": e["mode"] == "organizer", "participants": e["mode"] == "all",
-                                   "users": e["users"] if e["mode"] == "selected" else [], "emails": []}}
+                                   "users": e["users"] if e["mode"] == "selected" else [], "emails": list(spec["recipients"].get("emails") or []) if e["mode"] != "none" else []}}
 
 
 def group_by_recipients(spec: dict, kinds: list[str], resolved: dict[str, list]) -> list[tuple[list[str], list]]:

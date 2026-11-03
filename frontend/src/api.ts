@@ -567,7 +567,7 @@ export interface AccessState {
 }
 export interface RoomJournalEvent { at: string; kind: string; action: string; title: string; actor: string | null; meeting_id: string | null; result: string | null; details: Record<string, unknown> }
 export interface RoomJournal { items: RoomJournalEvent[]; total: number; kinds: Record<string, string> | string[]; meetings: { id: string; started_at: string }[] }
-export type PerMode = "none" | "leader" | "owner" | "organizer" | "all" | "selected";
+export type PerMode = "none" | "leader" | "owner" | "organizer" | "all" | "selected" | "emails";
 export interface PerMaterial { mode: PerMode; users: { ref: string; name: string; email: string }[] }
 export interface MailDeliverySpec {
   per_material?: Record<string, PerMaterial>; converted_from_legacy?: boolean;
