@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Команда запуска: "dev" — Electron из node_modules с исходниками (dist/), иначе путь к собранной программе (win-unpacked\Peregovorka.exe, linux-unpacked/peregovorka-desktop). */
+/** Команда запуска: "dev" — Electron из node_modules с исходниками (dist/), иначе путь к собранной программе (win-unpacked\Peregovorka.exe, linux-unpacked/peregovorka). */
 export function appCommand(app) {
   if (app === "dev") {
     const bin = join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");

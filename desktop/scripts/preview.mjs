@@ -21,7 +21,7 @@ const builder = join(ROOT, "node_modules", ".bin", win ? "electron-builder.cmd" 
 run(process.execPath, ["build.mjs"]);
 const native = win ? ["--win", "dir", "--x64"] : ["--linux", "dir", "--x64"];
 run(builder, [...native, "--publish", "never"]);
-const app = win ? join(ROOT, "release", "win-unpacked", "Peregovorka.exe") : join(ROOT, "release", "linux-unpacked", "peregovorka-desktop");
+const app = win ? join(ROOT, "release", "win-unpacked", "Peregovorka.exe") : join(ROOT, "release", "linux-unpacked", "peregovorka");
 if (!existsSync(app)) { console.error(`нет собранной программы: ${app}`); process.exit(1); }
 
 if (!win && args.includes("--win")) {
