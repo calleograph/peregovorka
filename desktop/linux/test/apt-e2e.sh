@@ -2,7 +2,7 @@
 # apt-e2e.sh — испытание репозитория APT в чистой системе (контейнер, сеть хоста), от установки до удаления:
 #   desktop/linux/test/apt-e2e.sh <образ> <сайт-v1> <сайт-v2> <версия-v1> <версия-v2> [порт]
 # сайт-v1 — подписанный репозиторий с первой версией, сайт-v2 — с обеими (make-repo.sh + sign-repo.sh). Проверяется:
-#  установка install.sh (ключ по отпечатку, signed-by) → подмена индекса без подписи и подпись чужим ключом отвергаются → обновление
+#  установка install.sh (ключ по отпечатку, signed-by) → подмена индекса без подписи и подпись чужим ключом отвергаются → репозиторий недоступен → обновление
 #  apt update/upgrade с оборванной первой загрузкой пакета → откат на прежнюю версию из истории репозитория → unattended-upgrades (по выбору
 #  администратора) видит обновление → apt purge убирает репозиторий.
 set -euo pipefail
@@ -50,6 +50,16 @@ X "apt-get update 2>&1" > "$W/wrongkey.log" || true
 grep -Eqi "NO_PUBKEY|not signed|signatures couldn't be verified|is not signed|Missing key" "$W/wrongkey.log" || { cat "$W/wrongkey.log"; fail "подпись чужим ключом не отвергнута"; }
 X "apt-get -s upgrade" | grep -q "^Inst peregovorka" && fail "после чужой подписи apt предлагает установить пакет"
 ok "подпись чужим ключом отвергнута (NO_PUBKEY)"
+
+# 2б) репозиторий недоступен (сайт не отвечает: 404 на всё) — apt update сообщает об ошибке, установленная программа и dpkg не затронуты
+serve "$W/nonexistent"
+X "apt-get update 2>&1" > "$W/down.log" && fail "apt update при недоступном репозитории завершился без ошибки"
+grep -Eqi "404|does not have a Release file|Failed to fetch" "$W/down.log" || { cat "$W/down.log"; fail "неожиданная реакция apt на недоступный репозиторий"; }
+[ "$(ver)" = "$V1" ] || fail "при недоступном репозитории версия изменилась: $(ver)"
+X "dpkg --audit" | grep -q . && fail "dpkg --audit при недоступном репозитории"
+X "dpkg -V peregovorka" | grep -q . && fail "файлы программы изменены"
+X "apt-get -s upgrade" | grep -q "^Inst peregovorka" && fail "при недоступном репозитории apt предлагает установку"
+ok "репозиторий недоступен: apt update сообщает об ошибке, установленная $V1 цела (dpkg -V), dpkg в порядке"
 
 # 3) обновление через apt update && apt upgrade, первая загрузка пакета обрывается на середине
 serve "$S2"; touch "$S2/.truncate-once"

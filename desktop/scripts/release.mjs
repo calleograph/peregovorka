@@ -1,4 +1,4 @@
-// npm run release -- X.Y.Z [--push]: выпуск клиента Windows. Сначала всё, что можно проверить локально (типы, модульные тесты, безопасность исходников,
+// npm run release -- X.Y.Z [--push]: выпуск клиента Windows и Linux (пакеты .deb собирает и добавляет в выпуск workflow Linux). Сначала всё, что можно проверить локально (типы, модульные тесты, безопасность исходников,
 // предварительная сборка с проверками первого запуска, работы без сервера и вёрстки), потом версия в package.json, коммит и тег desktop-vX.Y.Z.
 // С --push тег отправляется: CI собирает EXE/MSI на Windows, повторяет предварительные проверки там, подписывает (если настроено),
 // испытывает установку/обновление/удаление и публикует выпуск. Совместимый выпуск сервера — отдельно (./scripts/release.sh, полный CI).
@@ -58,8 +58,8 @@ for (const f of ["package.json", "package-lock.json"]) {
   writeFileSync(p, JSON.stringify(d, null, 2) + "\n");
 }
 git("add", "package.json", "package-lock.json");
-git("commit", "-m", `Peregovorka для Windows ${version}`);
-git("tag", "-a", `desktop-v${version}`, "-m", `Peregovorka для Windows ${version}`);
+git("commit", "-m", `Peregovorka для Windows и Linux ${version}`);
+git("tag", "-a", `desktop-v${version}`, "-m", `Peregovorka для Windows и Linux ${version}`);
 console.log(`\nкоммит и тег desktop-v${version} созданы`);
 if (push) {
   git("push", "origin", "HEAD", `desktop-v${version}`);

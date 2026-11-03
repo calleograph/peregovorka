@@ -10,7 +10,7 @@ set -eu
 BASE="${PEREGOVORKA_APT_URL:-https://calleograph.github.io/peregovorka-apt}"
 FINGERPRINT="48A75B62BFA817D7AAD3E84E2B00ADE5127C5DF9"
 KEY_SHA256="6a8d14a04a6705e52394435c6f0961ff015f58450e3bf2da11c810db0d32445e"
-ARCHS="amd64"                                   # архитектуры, проверенные на настоящих системах (docs/LINUX.md)
+ARCHS="amd64 arm64"                             # архитектуры пакетов репозитория (что проверено — docs/LINUX.md)
 KEYRING=/usr/share/keyrings/peregovorka-archive-keyring.gpg
 SOURCES=/etc/apt/sources.list.d/peregovorka.sources
 

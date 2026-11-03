@@ -14,7 +14,7 @@
 | Debian 13 (trixie) | x86_64 | поддерживается |
 | Debian 12 (bookworm) | x86_64 | поддерживается |
 | Linux Mint 21–22, Pop!_OS 22.04, Zorin, elementary и другие на основе Ubuntu 22.04+/Debian 12+ | x86_64 | должно работать (те же пакеты), отдельно не проверялось |
-| ARM64 (aarch64) | — | пакет собирается и проверяется в CI; в репозиторий и в `install.sh` не включён, пока не проверен звонок на настоящем устройстве ARM |
+| Ubuntu 22.04/24.04, Debian 12/13 | ARM64 (aarch64) | пакет в репозитории; на машинах ARM (CI) проверены установка, запуск с песочницей, обновление и удаление; звонок на устройстве ARM не проверялся |
 
 Рабочий стол: GNOME, KDE Plasma, Xfce, Cinnamon, MATE — X11 и Wayland. Что именно проверено — в разделе «Что проверено».
 
@@ -49,12 +49,12 @@ sudo apt install ./peregovorka_X.Y.Z_amd64.deb
 curl -fsSLo /tmp/peregovorka.gpg https://calleograph.github.io/peregovorka-apt/peregovorka-archive-keyring.gpg
 gpg --show-keys /tmp/peregovorka.gpg          # 48A75B62BFA817D7AAD3E84E2B00ADE5127C5DF9 — иначе не продолжайте
 sudo install -m 0644 /tmp/peregovorka.gpg /usr/share/keyrings/peregovorka-archive-keyring.gpg
-sudo tee /etc/apt/sources.list.d/peregovorka.sources <<'EOF'
+sudo tee /etc/apt/sources.list.d/peregovorka.sources <<EOF
 Types: deb
 URIs: https://calleograph.github.io/peregovorka-apt
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: $(dpkg --print-architecture)
 Signed-By: /usr/share/keyrings/peregovorka-archive-keyring.gpg
 EOF
 sudo apt update && sudo apt install peregovorka
@@ -172,10 +172,13 @@ gpgv --keyring /usr/share/keyrings/peregovorka-archive-keyring.gpg InRelease   #
 | Установка, запуск, обновление поверх предыдущего выпуска, удаление в Ubuntu 22.04/24.04 и Debian 12/13; запуск на настоящих ВМ (песочница, AppArmor) | `linux.yml` (`install`, `vm`), `desktop/linux/test/deb-check.sh` | CI |
 | Инструменты репозитория и настоящий apt (одноразовый ключ CI) | `linux.yml` (`apt-repo`) | CI |
 | Пакеты в выпуске `desktop-vX.Y.Z` | `linux.yml` (`release`) | CI на теге |
-| Подписанные индексы, публикация на GitHub Pages | `scripts/linux-apt/apt-publish.sh` → репозиторий [peregovorka-apt](https://github.com/calleograph/peregovorka-apt) | владелец, на своей машине |
+| Подписанные индексы, публикация на GitHub Pages | `scripts/linux-apt/apt-autopublish.sh` (таймер) → `apt-publish.sh` → репозиторий [peregovorka-apt](https://github.com/calleograph/peregovorka-apt) | машина владельца с ключом, автоматически |
 
-**Выпуск:** `cd desktop && npm run release -- X.Y.Z --push` (как для Windows) → CI собирает и проверяет пакеты и добавляет их в выпуск → владелец запускает
-`scripts/linux-apt/apt-publish.sh` (`--dry-run` — всё, кроме отправки). Публикация: пакеты из выпусков (по 4 последних версии каждой архитектуры) сверяются
+**Выпуск:** `cd desktop && npm run release -- X.Y.Z --push` (как для Windows) → CI собирает и проверяет пакеты и добавляет их в выпуск → таймер
+`peregovorka-apt-autopublish` на машине с ключом (каждые 10 минут) видит в последнем выпуске пакеты обеих архитектур и `SHA256SUMS-linux.txt`
+и сам запускает `scripts/linux-apt/apt-publish.sh`. Включить таймер — `scripts/linux-apt/apt-autopublish.sh --install`, выключить — `--remove`,
+журнал — `journalctl --user -u peregovorka-apt-autopublish`; вручную — `scripts/linux-apt/apt-publish.sh` (`--dry-run` — всё, кроме отправки).
+Ключ в GitHub не передаётся: подпись делается только там, где лежит `.owner-private/`. Публикация: пакеты из выпусков (по 4 последних версии каждой архитектуры) сверяются
 с `SHA256SUMS-linux.txt` → индексы (`apt-ftparchive`, `make-repo.sh`) → подпись (`sign-repo.sh`) → проверка (`verify-repo.py`: подписи, хэши, полнота) →
 установка настоящим apt в чистой Ubuntu → отправка индексов и `pool.lock` в `peregovorka-apt` → GitHub Pages скачивает пакеты, ещё раз всё проверяет
 и только тогда заменяет сайт целиком. Неполный или повреждённый индекс не публикуется ни на одном шаге.
@@ -199,17 +202,6 @@ gpgv --keyring /usr/share/keyrings/peregovorka-archive-keyring.gpg InRelease   #
    apt принимает индекс, если его ключу известна хотя бы одна).
 4. Затем подписывать только новым, а следующей версией пакета убрать старый ключ из файла ключей.
 Срок действия ключа продлевается без смены ключа: `gpg --quick-set-expire <отпечаток> 3y` в каталоге GnuPG владельца, затем выпуск пакета с обновлённым открытым ключом.
-
-## Первый выпуск (владелец)
-
-Сайт репозитория — отдельный публичный репозиторий `calleograph/peregovorka-apt` на GitHub Pages; создаёт его владелец один раз. До этого пакет Linux не выпускается:
-при установке он подключает источник APT, и без сайта `apt update` у пользователей сообщал бы об ошибке.
-
-```bash
-scripts/linux-apt/bootstrap-apt-repo.sh                  # 1. репозиторий сайта и GitHub Pages (из GitHub Actions)
-cd desktop && DISPLAY=:99 npm run release -- 1.5.0 --push # 2. выпуск клиента: Windows и Linux (CI собирает, проверяет и кладёт пакеты в выпуск)
-cd .. && scripts/linux-apt/apt-publish.sh                # 3. после зелёного CI: подписанный репозиторий APT на GitHub Pages
-```
 
 ## Что проверено
 

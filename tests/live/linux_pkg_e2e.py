@@ -310,6 +310,13 @@ async def main():
         check("после возврата сети приложение снова на связи с сервером без перезапуска", back, off[:200])
 
         # ---------------- обновление через apt update && apt upgrade при запущенной программе
+        # ---------------- источник обновлений недоступен: apt update с ошибкой, работающая программа не замечает и не ломается
+        use(os.path.join(OUT, "linux-repo-missing"))
+        out = sh("apt-get update 2>&1 | tail -3; echo rc=${PIPESTATUS[0]}", user=False, timeout=300)
+        alive = await pa.wait("fetch('/api/v1/auth/me').then(r => r.ok).catch(() => false)", 20)
+        st = await shell.js("window.pg.call('shell:state').then(s => s.update.status)")
+        check("репозиторий недоступен: apt update сообщает об ошибке, программа работает, обновление не «сломано»",
+              "rc=0" not in out and alive and st != "error", f"{out[-200:]} status={st}")
         if SITE2 and V2:
             use(SITE2)
             out = sh("apt-get update -qq && apt-get upgrade -y -qq 2>&1 | tail -2", user=False, timeout=900)

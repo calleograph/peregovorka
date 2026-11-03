@@ -38,7 +38,7 @@
     <div class="mark" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 64 64"><rect x="12" y="14" width="40" height="29" rx="10" fill="#fff"/><path d="M22 43 18 52l13-9" fill="#fff"/><path d="M24 24v9M30 21v15M36 24v9M42 26v5" stroke="#2456d3" stroke-width="4" stroke-linecap="round"/></svg></div>
     <div><h1>Peregovorka для Linux</h1></div>
   </header>
-  <p class="lead">Видеовстречи, чаты и материалы вашей организации в отдельном окне. Версия @VERSION@ для Ubuntu 22.04 и 24.04, Debian 12 и 13 (x86_64). Обновления приходят штатно: <code>apt update</code> и <code>apt upgrade</code> или «Обновление программ».</p>
+  <p class="lead">Видеовстречи, чаты и материалы вашей организации в отдельном окне. Версия @VERSION@ для Ubuntu 22.04 и 24.04, Debian 12 и 13 (x86_64 и ARM64). Обновления приходят штатно: <code>apt update</code> и <code>apt upgrade</code> или «Обновление программ».</p>
 
   <h2>Установка одной командой</h2>
   <div class="card">
@@ -63,7 +63,7 @@ Types: deb
 URIs: https://calleograph.github.io/peregovorka-apt
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: $(dpkg --print-architecture)
 Signed-By: /usr/share/keyrings/peregovorka-archive-keyring.gpg
 EOF
 sudo apt update &amp;&amp; sudo apt install peregovorka</pre>
