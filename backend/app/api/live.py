@@ -18,18 +18,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, _origin_ok, client_ip, get_db, require_user
-from ..models import Broadcast, Room
+from ..models import Broadcast, LiveQuestion, LiveViewer, Meeting, Room
 from ..security.passwords import hash_room_password, verify_room_password
 from ..services import roles
+from ..services import events
 from ..services.audit import audit_now, write_audit
 from ..services.live import LiveError, hls_path, hls_secret, new_token
 from ..services.live_destinations import PLATFORMS, DestinationError
-from .guest import _throttle
+from .guest import _throttle, clean_display_name, clean_email
 from .meetings import get_meeting_for_user
 
 router = APIRouter(tags=["live"])
 public_router = APIRouter(prefix="/live", tags=["live-public"])
 
+# Пределы на один адрес: зрители организации нередко выходят в интернет с ОДНОГО адреса (NAT), поэтому предел — на сотни зрителей, а не на одного
+# (страница опрашивает состояние раз в 30 с). От подбора пароля и спама защищают отдельные пределы — на пароль, зрителя и вопрос.
+VIEW_IP_LIMIT = 12000
+Q_MAX_CHARS = 500                           # длина вопроса зрителя
+Q_EVERY_S = 10                              # не чаще одного вопроса за столько секунд от зрителя
+Q_PER_HOUR = 20                             # вопросов от зрителя за час
+Q_PER_BROADCAST = 5000                      # всего вопросов на эфир (защита от массовой отправки)
 PASS_TTL_S = 12 * 3600                      # «пропуск» зрителя после ввода пароля: продление ссылки без повторного пароля
 PW_FAILS, PW_WINDOW = 8, 600                # неверных паролей зрителя с одного адреса за окно
 MIN_PASSWORD = 6
@@ -85,7 +93,7 @@ def _pass_ok(secret: str, scope: str, token: str | None) -> bool:
 class LivePatch(BaseModel):
     live_enabled: bool | None = None
     live_start: str | None = Field(default=None, pattern="^(manual|auto)$")
-    live_quality: str | None = Field(default=None, pattern="^(720p|1080p)$")
+    live_quality: str | None = Field(default=None, pattern="^(720p|1080p|1440p)$")
     live_record: bool | None = None
     live_own_hls: bool | None = None
     live_cdn: bool | None = None
@@ -401,7 +409,7 @@ async def _replay_state(db: AsyncSession, b: Broadcast | None) -> tuple[str, "Re
 
 @public_router.get("/{token}")
 async def viewer_info(token: str, request: Request, db: AsyncSession = Depends(get_db)):
-    await _throttle(request, "live:info", 240, 600)
+    await _throttle(request, "live:info", VIEW_IP_LIMIT, 600)
     v = await _view(request, db, token)
     room, b = v.room, v.b
     if v.kind == "room":
@@ -420,6 +428,7 @@ async def viewer_info(token: str, request: Request, db: AsyncSession = Depends(g
 class AccessIn(BaseModel):
     password: str | None = Field(default=None, max_length=256, repr=False)
     pass_: str | None = Field(default=None, alias="pass", max_length=300, repr=False)
+    viewer: str | None = Field(default=None, max_length=120, repr=False)      # зритель представился (имя обязательно): без этого эфир и запись не выдаются
     long: bool = False                       # нативный HLS (Safari, iPhone) не умеет подменять подпись на лету: ему — долгая подпись (4 часа)
     model_config = {"populate_by_name": True}
 
@@ -449,13 +458,17 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     """Подписанная ссылка на плейлист идущего эфира. Пароль задан — нужен пароль (первый раз) или пропуск (продление без повторного ввода)."""
     if not _origin_ok(request):
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
-    await _throttle(request, "live:access", 120, 600)
+    await _throttle(request, "live:access", VIEW_IP_LIMIT // 4, 600)
     v = await _view(request, db, token)
     room = v.room
     if v.kind == "broadcast" and v.b.status not in ("starting", "live"):
         raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Эфир сейчас не идёт."})      # ссылка прошлого эфира не открывает новый эфир комнаты
     secret = hls_secret(request.app.state.settings)
     new_pass = await _gate(request, db, v, body)
+    viewer = await _viewer_row(request, db, v, body.viewer)
+    if v.b is not None and v.b.status in ("starting", "live") and viewer.broadcast_id != v.b.id:
+        viewer.broadcast_id = v.b.id                  # эфир, который зритель смотрит: по нему — вопросы и (с согласия) материалы встречи
+        await db.commit()
     if not room.live_own_hls or not room.live_view_access:
         raise HTTPException(status_code=409, detail={"code": "no_hls", "message": "Эфир идёт только на внешних площадках."})
     cfg = await request.app.state.settings_svc.get(db, "live")
@@ -483,6 +496,7 @@ async def viewer_replay(token: str, body: AccessIn, request: Request, db: AsyncS
     await _throttle(request, "live:replay", 60, 600)
     v = await _view(request, db, token)
     new_pass = await _gate(request, db, v, body)                 # сначала пароль: без него даже наличие записи не раскрывается
+    await _viewer_row(request, db, v, body.viewer)
     state, rec = await _replay_state(db, v.b)
     if state != "ready":
         raise HTTPException(status_code=404, detail={"code": f"replay_{state}", "message": REPLAY_TEXT.get(state, "Запись недоступна.")})
@@ -552,13 +566,176 @@ async def viewer_replay_file(token: str, request: Request, r: str, e: int, s: st
 
 @public_router.post("/{token}/ping")
 async def viewer_ping(token: str, request: Request, body: dict = Body(default={}), db: AsyncSession = Depends(get_db)):
-    await _throttle(request, "live:ping", 60, 60)
+    await _throttle(request, "live:ping", VIEW_IP_LIMIT // 4, 60)
     room = (await _view(request, db, token)).room
     vid = str(body.get("vid") or "")[:40]
     if not vid or not vid.isalnum():
         raise HTTPException(status_code=422, detail="vid")
     n = await request.app.state.live.viewer_ping(room.id, vid)
     return {"viewers": n}
+
+
+# ------------------------------------------------------------------------------------------------ зритель представляется; вопросы зрителей
+def _viewer_sig(secret: str, room_id: uuid.UUID, vid: uuid.UUID) -> str:
+    return _b64(hmac.new(secret.encode(), f"live-viewer:{room_id.hex}:{vid.hex}".encode(), hashlib.sha256).digest()[:18])
+
+
+def _viewer_id(secret: str, room_id: uuid.UUID, token: str | None) -> uuid.UUID | None:
+    """Токен зрителя «<id>.<подпись>»: подпись привязана к комнате — со ссылки эфира и ссылки комнаты он один и тот же, к другой комнате не подходит."""
+    if not token or token.count(".") != 1:
+        return None
+    raw, sig = token.split(".")
+    try:
+        vid = uuid.UUID(hex=raw)
+    except ValueError:
+        return None
+    return vid if hmac.compare_digest(sig, _viewer_sig(secret, room_id, vid)) else None
+
+
+async def _viewer_row(request: Request, db: AsyncSession, v: _View, token: str | None) -> LiveViewer:
+    vid = _viewer_id(hls_secret(request.app.state.settings), v.room.id, token)
+    row = await db.get(LiveViewer, vid) if vid else None
+    if row is None or row.room_id != v.room.id:
+        raise HTTPException(status_code=403, detail={"code": "viewer_required", "message": "Представьтесь, чтобы смотреть эфир."})
+    return row
+
+
+class ViewerIn(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+    email: str | None = Field(default=None, max_length=254)
+    materials_consent: bool = False
+
+
+@public_router.post("/{token}/viewer")
+async def viewer_register(token: str, body: ViewerIn, request: Request, db: AsyncSession = Depends(get_db)):
+    """Зритель представляется: имя (видят организатор и ведущие у его вопросов), почта и согласие на материалы — по желанию. Ответ — токен зрителя для этой комнаты."""
+    if not _origin_ok(request):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    await _throttle(request, "live:viewer", VIEW_IP_LIMIT // 10, 600)
+    v = await _view(request, db, token)
+    email = clean_email(body.email)
+    row = LiveViewer(room_id=v.room.id, broadcast_id=v.b.id if v.b is not None and v.b.status in ("starting", "live") else None,
+                     display_name=clean_display_name(body.display_name), email=email, materials_consent=bool(email and body.materials_consent))
+    db.add(row)
+    await db.commit()
+    return {"viewer": f"{row.id.hex}.{_viewer_sig(hls_secret(request.app.state.settings), v.room.id, row.id)}", "display_name": row.display_name,
+            "email": row.email, "materials_consent": row.materials_consent}
+
+
+def clean_question(raw: str) -> str:
+    """Текст вопроса: без управляющих и «форматирующих» символов (разворот текста и т. п.), не больше трёх переводов строки подряд; показывается как текст, не как разметка."""
+    import re  # noqa: PLC0415
+    import unicodedata  # noqa: PLC0415
+
+    t = "".join(ch for ch in (raw or "").replace("\r\n", "\n") if ch == "\n" or unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"))
+    t = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", t)).strip()
+    if not t:
+        raise HTTPException(status_code=422, detail={"code": "question_empty", "message": "Напишите вопрос."})
+    if len(t) > Q_MAX_CHARS:
+        raise HTTPException(status_code=422, detail={"code": "question_long", "message": f"Вопрос не длиннее {Q_MAX_CHARS} знаков."})
+    return t
+
+
+def _q_out(q: LiveQuestion, *, contacts: LiveViewer | None = None, mine: bool = False) -> dict:
+    out = {"id": str(q.id), "text": q.text, "status": q.status, "at": _utc(q.created_at), "handled_at": _utc(q.handled_at)}
+    if not mine:
+        out["author"] = q.author_name
+        if contacts is not None:
+            out.update(email=contacts.email, materials_consent=contacts.materials_consent)
+    return out
+
+
+class QuestionIn(AccessIn):
+    text: str = Field(min_length=1, max_length=4 * Q_MAX_CHARS)
+
+
+@public_router.post("/{token}/questions", status_code=201)
+async def viewer_ask(token: str, body: QuestionIn, request: Request, db: AsyncSession = Depends(get_db)):
+    """Вопрос зрителя к ИДУЩЕМУ эфиру по собственной ссылке просмотра: действует пароль зрителя, пределы на зрителя и на эфир. Площадки (YouTube и др.) сюда не ведут."""
+    if not _origin_ok(request):
+        raise HTTPException(status_code=403, detail="Недопустимый Origin")
+    await _throttle(request, "live:ask", VIEW_IP_LIMIT // 10, 600)
+    v = await _view(request, db, token)
+    if v.b is None or v.b.status not in ("starting", "live") or not v.room.live_own_hls:
+        raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Вопросы принимаются, пока идёт эфир."})
+    await _gate(request, db, v, body)
+    viewer = await _viewer_row(request, db, v, body.viewer)
+    text = clean_question(body.text)
+    r = request.app.state.redis
+    if not await r.set(f"live:qv:{viewer.id}", "1", nx=True, ex=Q_EVERY_S):
+        raise HTTPException(status_code=429, detail={"code": "question_too_fast", "message": f"Следующий вопрос можно отправить через {Q_EVERY_S} секунд."},
+                            headers={"Retry-After": str(Q_EVERY_S)})
+    hk = f"live:qh:{viewer.id}"
+    n = await r.incr(hk)
+    if n == 1:
+        await r.expire(hk, 3600)
+    if n > Q_PER_HOUR:
+        raise HTTPException(status_code=429, detail={"code": "question_limit", "message": "Слишком много вопросов. Подождите, пока ведущий ответит на заданные."})
+    from sqlalchemy import func  # noqa: PLC0415
+
+    total = (await db.execute(select(func.count()).select_from(LiveQuestion).where(LiveQuestion.broadcast_id == v.b.id))).scalar_one()
+    if total >= Q_PER_BROADCAST:
+        raise HTTPException(status_code=429, detail={"code": "questions_full", "message": "Ведущий получил очень много вопросов: приём новых закрыт."})
+    q = LiveQuestion(broadcast_id=v.b.id, viewer_id=viewer.id, author_name=viewer.display_name, text=text)
+    db.add(q)
+    await db.commit()
+    await events.publish(r, v.b.meeting_id, {"type": "live_question", "id": str(q.id)})     # текста в событии нет: ведущие получают ленту запросом с проверкой прав
+    return _q_out(q, mine=True)
+
+
+@public_router.get("/{token}/questions")
+async def viewer_questions(token: str, viewer: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Свои вопросы зрителя к текущему (или последнему) эфиру и их состояние. Чужие вопросы зрителю не показываются."""
+    await _throttle(request, "live:qlist", VIEW_IP_LIMIT, 600)
+    v = await _view(request, db, token)
+    row = await _viewer_row(request, db, v, viewer)
+    if v.b is None:
+        return {"items": [], "open": False}
+    items = (await db.execute(select(LiveQuestion).where(LiveQuestion.broadcast_id == v.b.id, LiveQuestion.viewer_id == row.id)
+                              .order_by(LiveQuestion.created_at).limit(100))).scalars().all()
+    return {"items": [_q_out(q, mine=True) for q in items], "open": v.b.status in ("starting", "live") and v.room.live_own_hls}
+
+
+def _can_moderate(meeting: Meeting, su: SessionUser) -> bool:
+    """Отмечать и скрывать вопросы: руководители комнаты и администраторы, а пока встреча идёт — и ведущие (участники комнаты трансляции)."""
+    if roles.can_control_meeting(meeting.room, su):
+        return True
+    return meeting.ended_at is None and any(p.user_id == su.user_id and p.left_at is None for p in meeting.participants)
+
+
+@router.get("/meetings/{meeting_id}/live/questions")
+async def meeting_questions(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Вопросы зрителей ко всем эфирам встречи (новые — первыми по времени). Почта автора — только руководителям, организатору и администраторам."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    contacts = roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id
+    rows = (await db.execute(select(LiveQuestion, LiveViewer).join(Broadcast, Broadcast.id == LiveQuestion.broadcast_id)
+                             .outerjoin(LiveViewer, LiveViewer.id == LiveQuestion.viewer_id)
+                             .where(Broadcast.meeting_id == meeting_id).order_by(LiveQuestion.created_at).limit(2000))).all()
+    counts = {"new": 0, "done": 0, "hidden": 0}
+    for q, _v in rows:
+        counts[q.status] = counts.get(q.status, 0) + 1
+    return {"items": [_q_out(q, contacts=v if contacts and v is not None else None) for q, v in rows], "counts": counts,
+            "can_moderate": _can_moderate(meeting, su), "contacts": contacts}
+
+
+@router.patch("/meetings/{meeting_id}/live/questions/{qid}")
+async def meeting_question_set(meeting_id: uuid.UUID, qid: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user),
+                               db: AsyncSession = Depends(get_db)):
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    if not _can_moderate(meeting, su):
+        raise HTTPException(status_code=403, detail="Вопросами управляют ведущие и руководители комнаты")
+    status = body.get("status")
+    if status not in ("new", "done", "hidden"):
+        raise HTTPException(status_code=422, detail="Ожидается status: new | done | hidden")
+    q = await db.get(LiveQuestion, qid)
+    b = await db.get(Broadcast, q.broadcast_id) if q is not None else None
+    if q is None or b is None or b.meeting_id != meeting.id:
+        raise HTTPException(status_code=404, detail="Вопрос не найден")
+    q.status = status
+    q.handled_at, q.handled_by = (None, None) if status == "new" else (datetime.now(timezone.utc), su.display_name[:200])
+    await db.commit()
+    await events.publish(request.app.state.redis, meeting.id, {"type": "live_question", "id": str(q.id), "status": status})
+    return _q_out(q)
 
 
 # ------------------------------------------------------------------------------------------------ внешние площадки

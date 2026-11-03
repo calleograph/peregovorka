@@ -124,9 +124,10 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
         {cfg.broadcasts.length > 0 && <LiveBroadcasts roomId={roomId} cfg={cfg} busy={busy} run={run} />}
 
         <details className="lv-sect"><summary>Дополнительно</summary>
-          <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</InfoTip></span><select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" }, "Качество сохранено")}>
+          <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</InfoTip></span><select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" | "1440p" }, "Качество сохранено")}>
               <option value="720p">720p — экономичное (≈ 0,6 ГБ/час записи)</option>
-              <option value="1080p">1080p — для презентаций с мелким текстом (≈ 0,8 ГБ/час записи, больше нагрузка)</option>
+              <option value="1080p">1080p (Full HD) — по умолчанию: презентации с мелким текстом (запись до ≈ 2,3 ГБ/час)</option>
+              <option value="1440p">1440p (2K) — для больших экранов (запись до ≈ 4 ГБ/час; до 9 Мбит/с на зрителя, часть площадок принимает не больше 1080p)</option>
             </select></label>
           <label className="check"><input type="checkbox" checked={cfg.cdn} disabled={busy || !cfg.cdn_available} onChange={(e) => void patch({ live_cdn: e.target.checked }, e.target.checked ? "Эфир этой комнаты раздаётся через CDN" : "Раздача через CDN выключена")} />
             <span className="check-body">Раздавать через CDN<InfoTip>{cfg.cdn_available ? "Плеер зрителя и ссылка на поток берут видео прямо с CDN администратора, а не с этого сервера — так можно показывать эфир сотням и тысячам зрителей." : "CDN не подключён администратором сервера (Администрирование → Трансляции). Без CDN каждый зритель получает отдельный поток с основного сервера."}</InfoTip></span></label>

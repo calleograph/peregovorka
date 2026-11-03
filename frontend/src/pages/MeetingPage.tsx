@@ -18,6 +18,7 @@ import { docState, generationLine } from "../components/GenerationInfo";
 import ProtocolViewer from "../components/ProtocolViewer";
 import { formatTime, renderProtocol, transcriptText } from "../transcript";
 import { findSegment } from "../mapExport";
+import LiveQuestionsPanel from "../components/LiveQuestionsPanel";
 import { useToast } from "../components/Toast";
 import { bytes, copyText, downloadText, duration, fileBase, fmt } from "../util";
 
@@ -55,7 +56,9 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [opened, setOpened] = useState<ProtocolItem | null>(null);
   const [dialog, setDialog] = useState<{ kind: ProtocolKind; instruction?: string } | null>(null);
-  const [tab, setTab] = useState<"docs" | "transcript" | "map" | "chat" | "board" | "audio" | "journal">("docs");
+  const [tab, setTab] = useState<"docs" | "transcript" | "map" | "chat" | "board" | "audio" | "journal" | "questions">("docs");
+  const [qCount, setQCount] = useState(0);
+  useEffect(() => { api.liveQuestions(meetingId).then((f) => setQCount(f.items.length)).catch(() => undefined); }, [meetingId]);     // вопросы зрителей эфира — если эфир был
   const [focusSeg, setFocusSeg] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -158,6 +161,10 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       <div className="row"><RoomIcon name={meeting.room_name} icon={meeting.room_icon} size={34} /><h1 style={{ margin: 0 }}>{meeting.room_name}</h1>{!finished && <span className="badge rec">идёт</span>}</div>
       <p className="muted">{fmt(meeting.started_at)} — {meeting.ended_at ? `${fmt(meeting.ended_at)} (${duration(meeting.started_at, meeting.ended_at)})` : "идёт"} · Участвовали: {meeting.participants.map((p) => p.display_name).join(", ") || "—"}
         {(chatCount > 0 || boardUsed) && <> · Материалы: {chatCount > 0 && `чат (${chatCount})`}{chatCount > 0 && boardUsed && ", "}{boardUsed && "общая доска (схема)"}</>}</p>
+      {meeting.participants.some((p) => p.email) && (
+        <p className="small muted guest-mails">Почта гостей (видна только организаторам): {meeting.participants.filter((p) => p.email).map((p, i) => (
+          <span key={p.guest_id ?? i}>{i ? "; " : ""}{p.display_name} — <span className="sel">{p.email}</span>{p.materials_consent ? " (согласен получать материалы)" : ""}</span>))}</p>
+      )}
       {error && <div className="alert error" role="alert">{error}</div>}
       {notice && <div className="alert ok" role="status">{notice}</div>}
       {finished && !isAdmin && <div className="alert warn" role="note"><b>Не закрывайте эту страницу, пока не сохранили нужное.</b> После выхода доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
@@ -185,6 +192,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Стенограмма ({segments.length})</button>
         {finished && <button role="tab" aria-selected={tab === "map"} className={`tab ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}>Карта разговора</button>}
         {chatCount > 0 && <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Чат ({chatCount})</button>}
+        {qCount > 0 && <button role="tab" aria-selected={tab === "questions"} className={`tab ${tab === "questions" ? "active" : ""}`} onClick={() => setTab("questions")}>Вопросы зрителей ({qCount})</button>}
         {boardUsed && <button role="tab" aria-selected={tab === "board"} className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>Доска</button>}
         {(isAdmin || meeting.can_manage_access) && <button role="tab" aria-selected={tab === "journal"} className={`tab ${tab === "journal" ? "active" : ""}`} onClick={() => setTab("journal")}>История действий</button>}
         {isAdmin && <button role="tab" aria-selected={tab === "audio"} className={`tab ${tab === "audio" ? "active" : ""}`} onClick={() => setTab("audio")}>Файлы участников ({recordings.length})</button>}
@@ -238,6 +246,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
+      {tab === "questions" && <div className="card"><LiveQuestionsPanel meetingId={meetingId} /></div>}
       {boardUsed && (tab === "board" || boardWarm) && (
         <div className={tab === "board" ? undefined : "board-warm"} aria-hidden={tab !== "board"}>
           <BoardViewer meetingId={meetingId} fileBase={fileBase(meeting.room_name, meeting.started_at) + "_схема"} warm={tab !== "board"} />

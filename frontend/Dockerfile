@@ -45,7 +45,9 @@ FROM ${NGINX_IMAGE}
 USER root
 # 2000 участников = 2000 WebSocket событий через прокси (по два соединения на каждый) плюс запросы API: 1024 соединений на процесс nginx по умолчанию
 # не хватает («worker_connections are not enough»). Поднимаем предел соединений и дескрипторов процесса (мягкий предел контейнера — 1024).
-RUN rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \
+# Секрет подписи HLS: копия в /tmp, проверка nginx -t и перечитывание при изменении (live-secret.sh); RUN chmod — без BuildKit (COPY --chmod его требует)
+COPY live-secret.sh /docker-entrypoint.d/40-live-secret.sh
+RUN chmod 755 /docker-entrypoint.d/40-live-secret.sh && rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \
     && nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' > /usr/share/nginx/html/nginx-version.txt \
     && sed -i -E 's/^(\s*worker_connections\s+)[0-9]+;/\18192;/' /etc/nginx/nginx.conf \
     && sed -i '1i worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf \

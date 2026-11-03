@@ -226,7 +226,7 @@ async def admin_meetings(active: bool | None = None, limit: int = Query(50, ge=1
         stmt = stmt.where(Meeting.ended_at.is_not(None))
     meetings = list((await db.execute(stmt)).scalars().unique())
     counts, guests = await meeting_counts(db, [m.id for m in meetings]), await meeting_guests(db, [m.id for m in meetings])
-    return [meeting_out(m, counts.get(m.id), guests.get(m.id)) for m in meetings]
+    return [meeting_out(m, counts.get(m.id), guests.get(m.id), contacts=True) for m in meetings]
 
 
 @router.get("/meetings/{meeting_id}/grants")

@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
-from . import events, rec_scene
+from . import events, rec_scene, roles
 from .livekit import list_present_identities
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoRecorder
@@ -36,12 +36,35 @@ log = logging.getLogger("app.live")
 
 LIVE_ACTIVE = ("starting", "live", "ending")
 # Битрейт эфира выше, чем у записи: площадки требуют не меньше (YouTube, H.264: 3 Мбит/с для 720p и 5 Мбит/с для 1080p) и допускают не больше (VK Видео: 720p 1500–4000, 1080p 3000–6000 кбит/с).
-LIVE_QUALITY = {"720p": (1280, 720, 3000), "1080p": (1920, 1080, 5000)}
+# 1440p (2K) — для собственного просмотра на больших экранах: мелкий текст демонстрации остаётся читаемым; 9 Мбит/с (YouTube: 9–18 Мбит/с для 1440p30).
+# 4K не предлагается: браузер-компоновщик Egress на 3840×2160 требует нескольких ядер на эфир и 20+ Мбит/с на зрителя, а источники (камеры, показ экрана
+# с 1080p-мониторов) такой чёткости не дают — замеры в docs/LIVE_BROADCAST.md.
+LIVE_QUALITY = {"720p": (1280, 720, 3000), "1080p": (1920, 1080, 5000), "1440p": (2560, 1440, 9000)}
 KEY_FRAME_S = 2.0                      # ключевой кадр раз в 2 с: так требуют площадки (YouTube, Twitch, VK), он же задаёт длину сегмента HLS
 EMPTY_GRACE_S = 90                     # комната пуста дольше — эфир заканчивается (выступающие ушли)
+BROADCAST_EMPTY_GRACE_S = 900          # комната трансляции: обрыв связи ведущего или перезапуск приложения — эфир и запись ждут его 15 минут
 STOP_GRACE_S = 180                     # после остановки столько ждём итог Egress; потом закрываем сами
+SECRET_GID = 10001                     # общая группа backend (пишет секрет подписи HLS) и web (nginx читает): group_add в deployment/compose.yml
+SECRET_MODE = 0o640
 HLS_FILES = ("index.m3u8",)            # единственный плейлист, который отдаётся зрителям (event.m3u8 — полный, внутренний)
 SWEEP_EVERY_S = 60                     # уборка сегментов не чаще раза в минуту
+
+
+async def purge_audience(db, meeting_ids: list) -> int:
+    """Вопросы зрителей и их контакты (имя, почта) по эфирам этих встреч — вместе с текстовыми материалами встречи (сроки хранения, удаление встречи);
+    почта гостей встречи стирается тогда же. Число удалённых вопросов."""
+    from sqlalchemy import delete, update  # noqa: PLC0415
+
+    from ..models import GuestParticipant, LiveQuestion, LiveViewer  # noqa: PLC0415
+
+    if not meeting_ids:
+        return 0
+    bids = select(Broadcast.id).where(Broadcast.meeting_id.in_(meeting_ids))
+    n = (await db.execute(delete(LiveQuestion).where(LiveQuestion.broadcast_id.in_(bids)))).rowcount or 0
+    await db.execute(delete(LiveViewer).where(LiveViewer.broadcast_id.in_(bids)))
+    await db.execute(update(GuestParticipant).where(GuestParticipant.meeting_id.in_(meeting_ids), GuestParticipant.email.is_not(None))
+                     .values(email=None, materials_consent=False))
+    return n
 
 
 class LiveError(Exception):
@@ -107,6 +130,7 @@ class LiveBroadcaster:
         self._s, self._sm, self._r, self._svc = settings, session_maker, redis, settings_svc
         self.api, self.video, self.journal = api, video, journal
         self.destinations = destinations           # services.live_destinations.Destinations (внешние площадки); задаётся при запуске приложения
+        self.on_air = None                         # (db, meeting, идёт ли эфир) → распознавание и запись комнаты трансляции; задаётся при запуске приложения
         video.live_owner = self.owns_egress
 
     # ------------------------------------------------------------------ каталоги
@@ -116,25 +140,39 @@ class LiveBroadcaster:
     def egress_dir(self) -> str:
         return (os.environ.get("LIVE_EGRESS_DIR") or "/live").rstrip("/")
 
-    def prepare(self) -> None:
-        """Каталоги тома и файл с секретом для nginx. Вызывается при старте backend (web стартует позже и читает файл)."""
+    def prepare(self) -> str | None:
+        """Каталоги тома и файл с секретом для nginx (0640, группа SECRET_GID — её же получает web через group_add: прочие локальные пользователи файл не читают).
+        Замена атомарная (временный файл в том же каталоге → rename); прежний секрет не меняется — он выводится из главного ключа и остаётся тем же.
+        Применяет секрет в nginx сам web (live-secret.sh: nginx -t и перечитывание). Возвращает None или причину отказа (для диагностики)."""
         base = self.live_dir()
         try:
             for sub in ("b", "acc", "nginx"):
                 (base / sub).mkdir(parents=True, exist_ok=True)
-        except OSError:
+        except OSError as exc:
             log.warning("Каталог трансляций недоступен для записи: HLS работать не будет", extra={"path": str(base)})
-            return
+            return f"каталог {base} недоступен: {exc.strerror or exc}"
         conf = base / "nginx" / "secret.conf"
         text = nginx_secret_conf(hls_secret(self._s))
         try:
-            if not conf.exists() or conf.read_text() != text:
-                tmp = conf.with_suffix(".tmp")
-                tmp.write_text(text)
-                os.chmod(tmp, 0o644)
+            st = conf.stat() if conf.exists() else None
+            if st is None or conf.read_text() != text or (st.st_mode & 0o777) != SECRET_MODE or st.st_gid != SECRET_GID:
+                tmp = conf.with_name(f".secret.{os.getpid()}.tmp")
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)       # до назначения группы файл никому, кроме backend, не виден
+                try:
+                    os.write(fd, text.encode())
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                try:
+                    os.chown(tmp, -1, SECRET_GID)
+                except OSError:
+                    pass                                  # нет группы 10001 у процесса (старый compose): каталог с setgid даёт её сам — проверит диагностика
+                os.chmod(tmp, SECRET_MODE)
                 os.replace(tmp, conf)
-        except OSError:
+        except OSError as exc:
             log.warning("Не удалось записать секрет подписи HLS для nginx", extra={"path": str(conf)})
+            return f"{conf} не записан: {exc.strerror or exc}"
+        return None
 
     async def cfg(self, db):
         return await self._svc.get(db, "live")
@@ -370,6 +408,7 @@ class LiveBroadcaster:
             self.link_access(room.live_stream_access, hls_dir)
             await self._announce(meeting, True, by)
             self._emit("live_started", meeting, by=by, egress=info.egress_id, quality=quality, urls=len(urls), hls=bool(hls_dir), record=True)
+            await self._air(db, meeting, True)
             return b
         finally:
             await self._r.delete(f"live:start:{meeting.id}")
@@ -399,7 +438,16 @@ class LiveBroadcaster:
             if m is not None:
                 await self._announce(m, False, by)
                 self._emit("live_stopped", m, by=by)
+                await self._air(db, m, False)
         return len(rows)
+
+    async def _air(self, db, meeting: Meeting, on: bool) -> None:
+        if self.on_air is None:
+            return
+        try:
+            await self.on_air(db, meeting, on)
+        except Exception:  # noqa: BLE001 — эфир не зависит от распознавания
+            log.exception("Не удалось переключить распознавание по эфиру", extra={"meeting_id": str(meeting.id)})
 
     async def _announce(self, meeting: Meeting, live: bool, by: str = "") -> None:
         await events.publish(self._r, meeting.id, {"type": "live_changed", "live": live, "by": by})
@@ -454,6 +502,7 @@ class LiveBroadcaster:
             await self.destinations.finish_all(db, b.room_id)
         meeting = await db.get(Meeting, b.meeting_id)
         if meeting is not None:
+            await self._air(db, meeting, False)
             await self._announce(meeting, False, "egress")
             if b.status == "failed":
                 self._emit("live_failed", meeting, level="error", error=b.error)
@@ -505,7 +554,8 @@ class LiveBroadcaster:
                     reason = "meeting_end"
                 elif cfg is not None and age > (cfg.max_hours + await self._extra_h(b.id)) * 3600:
                     reason = "limit"
-                elif meeting.empty_since is not None and (datetime.now(timezone.utc) - meeting.empty_since).total_seconds() > EMPTY_GRACE_S:
+                elif meeting.empty_since is not None and (datetime.now(timezone.utc) - meeting.empty_since).total_seconds() > (
+                        BROADCAST_EMPTY_GRACE_S if roles.is_broadcast(meeting.room) else EMPTY_GRACE_S):
                     reason = "empty"
                 elif b.status == "ending" and not await self._r.get(f"live:ending:{b.id}"):
                     reason = "stuck"

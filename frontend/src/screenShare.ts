@@ -29,10 +29,18 @@ export const clampEcoKbps = (v: unknown): number => {
  * масштабируемого кодирования: SDK для VP9 принудительно выбирает режим «движение» и частоту до 5 к/с), потолок 800 кбит/с на самом отправителе.
  * Серверного перекодирования нет: SFU пересылает этот единственный поток.
  */
-export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps): {
+export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080): {
   capture: ScreenShareCaptureOptions;
   publish: TrackPublishOptions;
 } {
+  // Комната трансляции с эфиром 2K: захват до 1440p (мелкий текст не растягивается из 1080p), битрейт ~1,6× — у «Экономного» без изменений
+  if (maxHeight >= 1440 && profile !== "eco") {
+    const o = screenShareOptions(profile, withAudio, ecoKbps);
+    const enc = o.publish.screenShareEncoding!;
+    const fps = (o.capture.resolution as { frameRate?: number } | undefined)?.frameRate ?? enc.maxFramerate;
+    return { capture: { ...o.capture, resolution: { width: 2560, height: 1440, frameRate: fps } },
+             publish: { ...o.publish, screenShareEncoding: { ...enc, maxBitrate: Math.round(enc.maxBitrate * 1.6) } } };
+  }
   const p = ScreenSharePresets;
   const common = { audio: withAudio, systemAudio: withAudio ? ("include" as const) : ("exclude" as const), surfaceSwitching: "include" as const,
                    selfBrowserSurface: "exclude" as const, suppressLocalAudioPlayback: true };

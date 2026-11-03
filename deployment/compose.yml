@@ -145,6 +145,7 @@ services:
         APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
     image: ${COMPOSE_PROJECT_NAME}-backend:${IMAGE_TAG:?}
     restart: unless-stopped
+    group_add: ["10001"]              # общая с web группа: секрет подписи HLS backend создаёт с группой 10001 и правами 0640 (читает только nginx)
     security_opt:
       - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет
     depends_on:
@@ -397,9 +398,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    # Общая группа 10001 с backend: секрет подписи HLS (live/nginx/secret.conf, 0640, группа 10001) nginx читает, а прочие локальные пользователи сервера — нет.
+    group_add: ["10001"]
     volumes:
       - ${DATA_ROOT}/live:/live:ro                        # HLS прямых эфиров раздаёт nginx напрямую
-      - ${DATA_ROOT}/live/nginx:/etc/nginx/live:ro        # секрет подписи ссылок (set $hls_secret), его пишет backend
+      - ${DATA_ROOT}/live/nginx:/etc/nginx/live:ro        # секрет подписи ссылок (set $hls_secret), его пишет backend; применяет 40-live-secret.sh (nginx -t, reload)
     ports:
       - "${WEB_BIND_ADDR:?}:${WEB_PORT:?}:8080/tcp"
     healthcheck:

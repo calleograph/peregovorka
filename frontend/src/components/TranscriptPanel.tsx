@@ -8,6 +8,7 @@ import { useContextMenu, type MenuItem } from "./ContextMenu";
 import { chatSoundEnabled, playChatSound, setChatSoundEnabled } from "../chatSound";
 import { type Collapsed, flexFor, loadRatio, ratioFromPointer, saveRatio, clampRatio } from "../panelSplit";
 import ChatPanel from "./ChatPanel";
+import LiveQuestionsPanel from "./LiveQuestionsPanel";
 import { Icon } from "./Icons";
 
 interface Props {
@@ -35,9 +36,11 @@ interface Props {
   selfName?: string;
   /** Просьба открыть вкладку чата (например, из кнопки управления). Меняется — вкладка переключается. */
   openChatSignal?: number;
+  /** Комната трансляции: вверху панели — переключатель «Вопросы» (зрителей эфира, по умолчанию) / «Транскрибация». */
+  questions?: boolean;
 }
 
-type Tab = "transcript" | "chat";
+type Tab = "questions" | "transcript" | "chat";
 
 /** Широкий экран: транскрипция и чат видны одновременно (верх/низ). Узкий — прежние вкладки. */
 function useWide(): boolean {
@@ -66,9 +69,12 @@ function statusText(s: SocketStatus, now: number): { text: string; cls: "ok" | "
 }
 
 /** Живая транскрибация: история встречи + новые реплики по WebSocket (без перезагрузки страницы). */
-export default function TranscriptPanel({ meetingId, enabled, paused = false, recording = false, canAttach = true, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal }: Props) {
+export default function TranscriptPanel({ meetingId, enabled, paused = false, recording = false, canAttach = true, asrReady = true, asrLost = false, collapsed = false, onToggleCollapsed, onMeetingEnded, onEvent: forward, onStatus, bus: busProp, guestToken = null, selfName, openChatSignal, questions: qProp = false }: Props) {
   const guest = !!guestToken;
-  const [tab, setTab] = useState<Tab>(guest ? "chat" : "transcript");
+  const questions = qProp && !guest;
+  const [tab, setTab] = useState<Tab>(guest ? "chat" : questions ? "questions" : "transcript");
+  const [top, setTop] = useState<"questions" | "transcript">("questions");       // верхняя часть широкой панели в комнате трансляции
+  const [qNew, setQNew] = useState(0);
   const [unread, setUnread] = useState(0);
   const ownBus = useRef(new LiveBus());
   const bus = busProp ?? ownBus.current;
@@ -142,6 +148,7 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, re
         <button type="button" className="rail-btn" onClick={onToggleCollapsed} title={guest ? "Развернуть чат" : "Развернуть транскрипцию и чат"} aria-label={guest ? "Развернуть чат" : "Развернуть транскрипцию и чат"}>
           <span className="rail-chevron" aria-hidden><Icon name="chevronL" size={20} /></span>
           {unread > 0 && <span className="unread-dot" aria-label={`Непрочитанных сообщений: ${unread}`}>{unread}</span>}
+          {questions && qNew > 0 && <span className="unread-dot q" aria-label={`Новых вопросов зрителей: ${qNew}`}>?{qNew}</span>}
           <span className="rail-label">{guest ? "Чат" : "Транскрипция и чат"}{!guest && segments.length ? ` · ${segments.length}` : ""}</span>
           <span className={`dot ${st.cls}`} title={st.text} />
         </button>
@@ -150,8 +157,10 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, re
   }
   const head = (
     <div className="row side-head">
-      {split ? <b className="side-title">Транскрипция и чат</b> : (
+      {split ? <b className="side-title">{questions ? "Эфир и чат" : "Транскрипция и чат"}</b> : (
         <div className="tabs side-tabs" role="tablist">
+          {questions && <button role="tab" aria-selected={tab === "questions"} className={`tab ${tab === "questions" ? "active" : ""}`} onClick={() => setTab("questions")}>
+            Вопросы{qNew > 0 && <span className="unread-dot" aria-label={`Новых вопросов: ${qNew}`}>{qNew}</span>}</button>}
           {!guest && <button role="tab" aria-selected={tab === "transcript"} className={`tab ${tab === "transcript" ? "active" : ""}`} onClick={() => setTab("transcript")}>Транскрипция</button>}
           <button role="tab" aria-selected={tab === "chat"} className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>
             Чат{unread > 0 && <span className="unread-dot" aria-label={`Непрочитанных сообщений: ${unread}`}>{unread}</span>}
@@ -194,6 +203,7 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, re
         {head}
         {st.cls !== "ok" && <div className="muted small">{st.text}</div>}
         <ChatPanel meetingId={meetingId} bus={bus} visible={tab === "chat"} selfName={selfName} onUnread={setUnread} canAttach={canAttach} />
+        {questions && <div hidden={tab !== "questions"} className="tp-q"><LiveQuestionsPanel meetingId={meetingId} bus={bus} onCount={setQNew} /></div>}
         {tab === "transcript" && !guest && transcriptBody}
       </aside>
     );
@@ -232,9 +242,18 @@ export default function TranscriptPanel({ meetingId, enabled, paused = false, re
       {head}
       {st.cls !== "ok" && <div className="muted small">{st.text}</div>}
       <div className="tp-body" ref={bodyRef}>
-        <section className={`tp-pane tp-top ${part === "top" ? "min" : ""}`} style={{ flex: flexFor("top", ratio, part) }} aria-label="Транскрипция">
-          <div className="tp-head"><b>Транскрипция</b>{segments.length ? <span className="muted small">{segments.length}</span> : null}<span className="spacer" />{copyBtn}{paneBtns("top", "транскрипцию")}</div>
-          {part !== "top" && <div className="tp-content">{transcriptBody}</div>}
+        <section className={`tp-pane tp-top ${part === "top" ? "min" : ""}`} style={{ flex: flexFor("top", ratio, part) }} aria-label={questions ? "Вопросы и транскрибация" : "Транскрипция"}>
+          <div className="tp-head">
+            {questions ? (
+              <div className="seg tp-seg" role="tablist" aria-label="Верх панели">
+                <button type="button" role="tab" aria-selected={top === "questions"} className={top === "questions" ? "on" : ""} onClick={() => setTop("questions")}>
+                  Вопросы{qNew > 0 && <span className="unread-dot" aria-label={`Новых вопросов: ${qNew}`}>{qNew}</span>}</button>
+                <button type="button" role="tab" aria-selected={top === "transcript"} className={top === "transcript" ? "on" : ""} onClick={() => setTop("transcript")}>Транскрибация</button>
+              </div>
+            ) : <><b>Транскрипция</b>{segments.length ? <span className="muted small">{segments.length}</span> : null}</>}
+            <span className="spacer" />{(!questions || top === "transcript") && copyBtn}{paneBtns("top", questions ? "вопросы и транскрибацию" : "транскрипцию")}</div>
+          {part !== "top" && questions && <div className="tp-content tp-q" hidden={top !== "questions"}><LiveQuestionsPanel meetingId={meetingId} bus={bus} onCount={setQNew} /></div>}
+          {part !== "top" && <div className="tp-content" hidden={questions && top !== "transcript"}>{transcriptBody}</div>}
         </section>
         {part === null && <div className="tp-divider" role="separator" aria-orientation="horizontal" aria-label="Изменить высоту транскрипции и чата (стрелки вверх/вниз)"
                                aria-valuenow={Math.round(ratio * 100)} aria-valuemin={15} aria-valuemax={85} tabIndex={0} onPointerDown={onDividerDown} onKeyDown={onDividerKey}

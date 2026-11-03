@@ -1,3 +1,4 @@
+import { CHAT_ACCEPT, ChatFileRejected, chatFileOk } from "../chatFiles";
 import { playChatSound } from "../chatSound";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { autoGrow } from "../autoGrow";
@@ -151,6 +152,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
+  const [rejected, setRejected] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
   const [me, setMe] = useState("");                                   // свой идентификатор (сотрудник или гость) — «мои» реакции
@@ -268,9 +270,11 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
         setPending((cur) => cur.map((p) => p.key === key ? { ...p, state: "error", error: err.message || "Не удалось загрузить файл" } : p));
       });
   };
-  const addFiles = (files: File[]) => {
-    if (!canAttach || readOnly || !files.length) return;
+  const addFiles = (all: File[]) => {
+    if (!canAttach || readOnly || !all.length) return;
     setError("");
+    const files = all.filter((f) => chatFileOk(f));
+    if (files.length < all.length) setRejected(true);            // слишком большой или неподдерживаемый файл: понятное окно, остальные прикрепляются
     for (const file of files) {
       const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
@@ -357,6 +361,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
 
   return (
     <div className={`chat ${dragOver ? "drop" : ""}`} hidden={!visible} onDragOver={onDragOver} onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }} onDrop={onDrop}>
+      {rejected && <ChatFileRejected onClose={() => setRejected(false)} />}
       <div className="chat-list" ref={boxRef} onScroll={onScroll} aria-live="polite" aria-label="Сообщения чата">
         {hasMore && <button type="button" className="btn mini ghost chat-older" onClick={() => { setHasMore(false); void loadOlder(); }}>Показать более ранние</button>}
         {loaded && items.length === 0 && !error && <p className="muted small">{readOnly ? "В этой встрече чат не использовался." : "Пока пусто. Адреса, ссылки, имена серверов и номера задач попадут в протокол."}</p>}
@@ -385,7 +390,7 @@ export default function ChatPanel({ meetingId, bus, readOnly = false, visible = 
           <div className="chat-box">
             {canAttach && (
               <>
-                <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+                <input ref={fileRef} type="file" multiple hidden accept={CHAT_ACCEPT} onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
                 <button type="button" className="chat-attach" onClick={() => fileRef.current?.click()} title="Прикрепить файл" aria-label="Прикрепить файл"><Icon name="attach" size={18} /></button>
               </>
             )}

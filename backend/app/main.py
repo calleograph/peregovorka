@@ -223,6 +223,7 @@ def create_app(
         from .services.live_destinations import Destinations  # noqa: PLC0415
         app.state.live.destinations = app.state.destinations = Destinations(settings_svc, redis, app.state.video.api, journal=journal)      # внешние площадки трансляций
         app.state.live.prepare()
+        app.state.live.on_air = meetings_svc.set_broadcast_media        # комната трансляции: распознавание и запись — с начала эфира
         protocols.gate = app.state.perf.gate
         app.state.avatars = AvatarStore(settings.data_dir)
         app.state.room_icons = RoomIconStore(settings.data_dir)

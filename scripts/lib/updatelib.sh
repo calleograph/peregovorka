@@ -228,6 +228,68 @@ upd_ensure_updater_dir() {
   chmod 1777 "$d" 2>/dev/null || true
 }
 
+# Каталоги видеоподсистемы — ЕДИНАЯ подготовка для установки (install.sh), обновления (upd_ensure_data_dirs) и «Исправить права каталогов» (repairlib.sh).
+#   live, live/b (HLS эфиров), live/acc (ссылки доступа) — владелец 10001:10001 (backend и Egress работают от uid 10001);
+#   live/nginx — 10001:10001, режим 2750: пишет backend, читает только группа 10001 (её получает web через group_add), setgid — новые файлы в этой группе;
+#   live/nginx/secret.conf — 10001:10001, 0640 (содержимое не трогаем: секрет выводится из главного ключа и при обновлении остаётся прежним).
+# Создаётся ДО запуска контейнеров: иначе Docker создаёт отсутствующий live/nginx (точку монтирования web) от root:root 755 — backend не может записать секрет.
+# Только эти пути, без рекурсии по всему хранилищу (в live/b — файлы эфиров Egress, их владелец и так 10001). От root — молча; иначе sudo -n.
+LIVE_UID=10001; LIVE_GID=10001
+_ld_run() { "$@" 2>/dev/null || sudo -n "$@" 2>/dev/null; }
+_ld_st() { _ld_run stat -c "$1" "$2"; }             # live/nginx (2750) закрыт для посторонних: не от root — смотреть через sudo -n
+live_dirs_prepare() {
+  local b="$1/live" d rc=0
+  for d in "$b" "$b/b" "$b/acc" "$b/nginx"; do
+    [ -d "$d" ] || _ld_run mkdir -p "$d" || { warn "Не удалось создать $d"; rc=1; continue; }
+    [ "$(stat -c '%u:%g' "$d" 2>/dev/null)" = "$LIVE_UID:$LIVE_GID" ] || _ld_run chown "$LIVE_UID:$LIVE_GID" "$d" || { warn "Не удалось назначить владельца $d ($LIVE_UID:$LIVE_GID)"; rc=1; }
+  done
+  [ "$(stat -c '%a' "$b/nginx" 2>/dev/null)" = 2750 ] || _ld_run chmod 2750 "$b/nginx" || { warn "Не удалось задать права $b/nginx (2750)"; rc=1; }
+  if _ld_st %a "$b/nginx/secret.conf" >/dev/null; then
+    [ "$(_ld_st '%u:%g %a' "$b/nginx/secret.conf")" = "$LIVE_UID:$LIVE_GID 640" ] \
+      || { _ld_run chown "$LIVE_UID:$LIVE_GID" "$b/nginx/secret.conf" && _ld_run chmod 640 "$b/nginx/secret.conf"; } || { warn "Не удалось исправить права секрета $b/nginx/secret.conf"; rc=1; }
+  fi
+  return "$rc"
+}
+# Что не так с каталогами видеоподсистемы (пусто — в порядке): для «Исправить автоматически» и проверки после исправления.
+live_dirs_problems() {
+  local b="$1/live" d out=()
+  for d in "$b" "$b/b" "$b/acc" "$b/nginx"; do
+    if [ ! -d "$d" ]; then out+=("${d#"$1/"}: нет каталога")
+    elif [ "$(stat -c '%u:%g' "$d" 2>/dev/null)" != "$LIVE_UID:$LIVE_GID" ]; then out+=("${d#"$1/"}: владелец $(stat -c '%u:%g' "$d" 2>/dev/null), нужен $LIVE_UID:$LIVE_GID"); fi
+  done
+  [ -d "$b/nginx" ] && [ "$(stat -c '%a' "$b/nginx" 2>/dev/null)" != 2750 ] && out+=("live/nginx: режим $(stat -c '%a' "$b/nginx" 2>/dev/null), нужен 2750")
+  local sm; sm="$(_ld_st '%u:%g %a' "$b/nginx/secret.conf")"
+  [ -n "$sm" ] && [ "$sm" != "$LIVE_UID:$LIVE_GID 640" ] && out+=("секрет HLS: $sm, нужно $LIVE_UID:$LIVE_GID 640")
+  [ "${#out[@]}" -gt 0 ] && (IFS=,; printf '%s' "${out[*]}")
+  return 0
+}
+
+# Применил ли РАБОТАЮЩИЙ nginx (web) актуальный секрет HLS: состояние от 40-live-secret.sh в контейнере («ok <поколение>») против sha256 файла.
+# Код 0 — применён; 1 — нет (LIVE_SECRET_STATE — что сообщил web); 2 — проверить нечем (нет файла или web не запущен). Ждёт до $1 секунд (по умолчанию 20).
+live_secret_applied() {
+  local f="$DATA_ROOT/live/nginx/secret.conf" want i n="${1:-20}"
+  LIVE_SECRET_STATE=""
+  want="$( { cat "$f" 2>/dev/null || sudo -n cat "$f" 2>/dev/null; } | sha256sum | cut -c1-12)"
+  [ "$want" != "$(printf '' | sha256sum | cut -c1-12)" ] || return 2            # нет файла (или не прочитать даже через sudo -n)
+  [ -n "$(dc ps -q web 2>/dev/null | head -1)" ] || return 2
+  for i in $(seq "$n"); do
+    LIVE_SECRET_STATE="$(dc exec -T web cat /tmp/hls-live-state 2>/dev/null)"
+    [ "$LIVE_SECRET_STATE" = "ok $want" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+live_secret_report() {   # печатает итог для журнала обновления/исправления; код как у live_secret_applied
+  local rc=0
+  live_secret_applied "${1:-20}" || rc=$?
+  case "$rc" in
+    0) ok "Секрет подписи трансляций применён в nginx (web)" ;;
+    1) warn "Секрет подписи трансляций не применён в nginx: web сообщает «${LIVE_SECRET_STATE:-нет ответа}». Подробности: docker logs web; кнопка «Перезапустить web» в браузере" ;;
+    *) info "Секрет подписи трансляций: проверить применение нечем (web не запущен или секрет ещё не создан)" ;;
+  esac
+  return "$rc"
+}
+
 # Каталоги данных, в которые пишут контейнеры (backend и asr работают от uid 10001): создаются/приводятся к нужному владельцу и режиму ДО запуска
 # контейнеров. Иначе Docker создаёт отсутствующий каталог от root, а каталог, оставшийся за прежним пользователем, не принимает запись — в 0.3.0 из-за
 # этого не собирался набор сертификатов CA и вход по домену «пропадал». Проверяются и вложенные файлы (каталог мог быть создан от root вместе с содержимым).
@@ -242,6 +304,7 @@ upd_ensure_data_dirs() {
     fi
   done
   for d in models/gigaam models/llm state backups; do [ -d "$DATA_ROOT/$d" ] || mkdir -p "$DATA_ROOT/$d" 2>/dev/null || sudo -n mkdir -p "$DATA_ROOT/$d" 2>/dev/null || true; done
+  live_dirs_prepare "$DATA_ROOT" || { warn "Каталоги трансляций (live) не приведены в порядок: запустите обновление от root либо нажмите «Исправить автоматически» в браузере"; rc=1; }
   models_fix_perms || warn "Права на каталог моделей не исправлены: sudo scripts/models.sh"
   upd_ensure_updater_dir
   return "$rc"

@@ -42,6 +42,10 @@ _ZIP_BASED = {"docx", "xlsx", "pptx", "odt", "ods", "odp", "zip"}
 _NAME_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f\u202a-\u202e\u2066-\u2069]')
 
 
+REJECT_TEXT = ("Файл превышает допустимый размер 3 МБ или имеет неподдерживаемый формат. Для передачи таких файлов воспользуйтесь электронной почтой "
+               "или корпоративным файлообменником")
+
+
 class AttachmentError(Exception):
     """Ошибка проверки вложения — текст безопасен для показа пользователю."""
 
@@ -83,11 +87,10 @@ def inspect(name: str, data: bytes, cfg: ChatFilesSettings) -> tuple[str, str, s
     if not data:
         raise AttachmentError("Файл пустой")
     if len(data) > cfg.max_size_mb * 1024 * 1024:
-        raise AttachmentError(f"Файл больше {cfg.max_size_mb} МБ", 413)
+        raise AttachmentError(REJECT_TEXT, 413)
     ext = extension(name)
     if not ext or ext not in cfg.extensions():
-        raise AttachmentError("Такой тип файла не разрешён" + (f" (.{ext})" if ext else " (у файла нет расширения)") +
-                              ". Разрешены: " + ", ".join(sorted(cfg.extensions())))
+        raise AttachmentError(REJECT_TEXT)
     real = _sniff_image(data)
     if ext in INLINE_IMAGES:
         if real is None:

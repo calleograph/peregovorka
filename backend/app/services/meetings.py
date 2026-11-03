@@ -32,6 +32,7 @@ from .asr_bridge import AsrBridge
 from ..auth.devices import LEGACY, device_tag, session_tag
 from .livekit import (
     delete_livekit_room,
+    ensure_room,
     enforce_sources,
     guest_identity,
     permission_sources,
@@ -56,6 +57,7 @@ GUEST_REVOKE_TTL = 24 * 3600
 MAX_SCREEN_SHARES = 5           # одновременных показов экрана во встрече: больше крупных изображений не читаются, а у каждого зрителя — свой входящий поток на каждый показ
 STATE_TTL = 3 * 24 * 3600      # состояние встречи в Redis (слово, привилегированные); сбрасывается и при завершении встречи
 KICK_BLOCK_SECONDS = 600       # удалённый руководителем сотрудник не может сразу вернуться
+BROADCAST_HOLD_S = 1800        # комната трансляции: столько ждём возвращения участников (обрыв связи ведущего, перезапуск приложения), потом закрываем
 
 
 class JoinError(Exception):
@@ -123,9 +125,11 @@ class MeetingService:
         meeting = await self._active_meeting(db, room.id)
         created = False
         if meeting is None:
-            # Транскрибация идёт с первой секунды (если комната её допускает); запись аудио — сразу только при «автоматической записи»
+            # Транскрибация идёт с первой секунды (если комната её допускает); запись аудио — сразу только при «автоматической записи».
+            # Комната трансляции: до «Выйти в эфир» — подготовка, без распознавания и записи (их включает начало эфира, set_broadcast_media)
+            prep = roles.is_broadcast(room)
             meeting = Meeting(room_id=room.id, livekit_room="pending", started_by_user_id=su.user_id,
-                              transcription_enabled=room.transcription_enabled, record_audio=bool(room.record_audio and room.auto_record))
+                              transcription_enabled=room.transcription_enabled and not prep, record_audio=bool(room.record_audio and room.auto_record and not prep))
             meeting.id = uuid.uuid4()
             meeting.livekit_room = meeting_room_name(meeting.id)
             db.add(meeting)
@@ -159,6 +163,8 @@ class MeetingService:
         await db.commit()
         await self._sync_room(db, room, meeting)
 
+        if roles.is_broadcast(room):           # обрыв связи ведущего: комната LiveKit (а с ней эфир и запись) ждёт его возвращения, а не закрывается через минуту
+            await ensure_room(self._s, meeting.livekit_room, departure_s=BROADCAST_HOLD_S, empty_s=BROADCAST_HOLD_S)
         if created:
             e2ee = await e2ee_svc.begin(self._r, room, meeting.id)         # ключ сквозного шифрования этой встречи (если у комнаты включено E2EE)
             if e2ee_svc.blocks_server_features(e2ee) and (meeting.transcription_enabled or meeting.record_audio):
@@ -214,7 +220,8 @@ class MeetingService:
         return (await db.execute(select(func.count()).select_from(GuestParticipant).where(
             GuestParticipant.meeting_id == meeting_id, GuestParticipant.left_at.is_(None)))).scalar_one()
 
-    async def join_guest(self, db: AsyncSession, room: Room, display_name: str, *, ip: str | None, client: str | None) -> JoinResult:
+    async def join_guest(self, db: AsyncSession, room: Room, display_name: str, *, ip: str | None, client: str | None, email: str | None = None,
+                         materials_consent: bool = False) -> JoinResult:
         """Вход гостя по гостевой ссылке. Гость НЕ начинает встречу: она должна быть уже активна (иначе незнакомый человек
         запускал бы запись и ASR в пустой комнате). Права минимальные: без демонстрации экрана и без управления."""
         if room.lifecycle == "closed":
@@ -228,7 +235,8 @@ class MeetingService:
             MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
         if users + await self._open_guests(db, meeting.id) >= room.max_participants:
             raise JoinError("room_full", "В комнате нет свободных мест.", 409)
-        guest = GuestParticipant(meeting_id=meeting.id, room_id=room.id, display_name=display_name, ip=ip, client=client)
+        guest = GuestParticipant(meeting_id=meeting.id, room_id=room.id, display_name=display_name, ip=ip, client=client, email=email,
+                                 materials_consent=bool(email and materials_consent))
         guest.id = uuid.uuid4()
         db.add(guest)
         meeting.empty_since = None
@@ -519,9 +527,11 @@ class MeetingService:
             await db.commit()
             await self._update_emptiness(db, meeting.id)
             await db.refresh(meeting)
-        grace = await self._temp_grace_seconds(db, await db.get(Room, meeting.room_id))
+        room_row = await db.get(Room, meeting.room_id)
+        grace = await self._temp_grace_seconds(db, room_row)
         if grace is None:
-            grace = self._s.meeting_end_grace_seconds
+            # комната трансляции: пустая встреча (все вышли после эфира или ведущий потерял связь) закрывается через BROADCAST_HOLD_S, а не через минуту
+            grace = BROADCAST_HOLD_S if room_row is not None and roles.is_broadcast(room_row) else self._s.meeting_end_grace_seconds
         if (meeting.ended_at is None and meeting.empty_since is not None
                 and now - meeting.empty_since >= timedelta(seconds=grace)):
             await self.end(db, meeting, "empty")
@@ -765,6 +775,26 @@ class MeetingService:
         await self._bridge.configure(meeting_id=str(meeting.id), room_name=meeting.livekit_room, room_id=str(meeting.room_id),
                                      transcribe=meeting.transcription_enabled, record_audio=meeting.record_audio,
                                      e2ee_key=e2ee_svc.asr_key(await e2ee_svc.get(self._r, meeting.id)))
+
+    async def set_broadcast_media(self, db: AsyncSession, meeting: Meeting, on_air: bool) -> None:
+        """Комната трансляции: «Выйти в эфир» включает распознавание и запись звука по настройкам комнаты, конец эфира — выключает (подготовка и
+        разговор после эфира остаются внутри комнаты). Обычные комнаты и эфир из них не затрагиваются."""
+        room = meeting.room
+        if not roles.is_broadcast(room) or meeting.ended_at is not None:
+            return
+        full_e2ee = e2ee_svc.blocks_server_features(await e2ee_svc.get(self._r, meeting.id))
+        tr, rec = (bool(room.transcription_enabled and not full_e2ee), bool(room.record_audio and room.auto_record and not full_e2ee)) if on_air else (False, False)
+        if (meeting.transcription_enabled, meeting.record_audio) == (tr, rec):
+            return
+        changed_tr, changed_rec = meeting.transcription_enabled != tr, meeting.record_audio != rec
+        meeting.transcription_enabled, meeting.record_audio = tr, rec
+        await db.commit()
+        await self._push_flags(meeting)
+        if changed_tr:
+            await events.publish(self._r, meeting.id, {"type": "transcription_changed", "enabled": tr})
+        if changed_rec:
+            await events.publish(self._r, meeting.id, {"type": "recording_changed", "enabled": rec})
+        log.info("Комната трансляции: распознавание и запись по эфиру", extra={"meeting_id": str(meeting.id), "on_air": on_air, "transcription": tr})
 
     async def set_transcription(self, db: AsyncSession, meeting: Meeting, enabled: bool) -> bool:
         """«Остановить / возобновить транскрибацию». Звонок и запись аудио не затрагиваются."""

@@ -1,7 +1,8 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, type ApiError, type LiveAccess, type LiveViewerInfo } from "../api";
+import { api, type ApiError, type LiveAccess, type LiveQuestion, type LiveViewerInfo } from "../api";
 import { Icon } from "../components/Icons";
+import { type Contact, GuestContactFields, contactBody, emailOk, loadContact, nameOk, saveContact } from "../components/GuestContact";
 import "../live.css";
 
 /**
@@ -10,6 +11,9 @@ import "../live.css";
  * сегментов только подписанную часть пути, не перезапуская воспроизведение.
  */
 const SEEN_KEY = (t: string) => `pg:live:${t}`;
+const VIEWER_KEY = (t: string) => `pg:live:viewer:${t}`;
+const ssGet = (k: string) => { try { return sessionStorage.getItem(k) ?? ""; } catch { return ""; } };
+const ssSet = (k: string, v: string) => { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch { /* только на эту вкладку */ } };
 const HLS_PREFIX = /^(?:https?:\/\/[^/]+)?\/hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;       // адрес с узлом (CDN) или без него
 
 /** Нативный HLS — в Safari и на iPhone/iPad (там он надёжнее и экономит заряд; на iOS все браузеры — WebKit). Остальным (в том числе новому Chrome, который тоже отвечает «maybe») — hls.js:
@@ -44,6 +48,86 @@ function PasswordForm({ onSubmit, busy, error }: { onSubmit: (pw: string) => voi
       {error && <div className="alert error" role="alert">{error}</div>}
       <button className="btn primary" disabled={busy || !pw}>{busy ? "Проверка…" : "Смотреть"}</button>
     </form>
+  );
+}
+
+/** Зритель представляется перед просмотром: имя обязательно, почта — по желанию (для протокола и материалов встречи). */
+function ViewerForm({ token, title, onDone }: { token: string; title: string; onDone: (viewer: string) => void }) {
+  const [c, setC] = useState<Contact>(loadContact);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const ok = nameOk(c) && emailOk(c);
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!ok || busy) return;
+    setBusy(true); setErr("");
+    try { const r = await api.liveViewer(token, contactBody(c)); saveContact(c); onDone(r.viewer); }
+    catch (x) { const a = x as ApiError; setErr(a.status === 429 ? "Слишком много попыток. Повторите позже." : a.message || "Не удалось продолжить."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <form className="live-pw live-viewer" onSubmit={(e) => void submit(e)} aria-label="Представьтесь">
+      <h2>{title}</h2>
+      <p className="muted small">Представьтесь, чтобы смотреть эфир и задавать вопросы ведущему.</p>
+      <GuestContactFields value={c} onChange={setC} onEnter={() => void submit()} />
+      {err && <div className="alert error" role="alert">{err}</div>}
+      <button className="btn primary" disabled={!ok || busy}>{busy ? "Подождите…" : "Смотреть"}</button>
+    </form>
+  );
+}
+
+const Q_STATUS: Record<LiveQuestion["status"], string> = { new: "Отправлен ведущему", done: "Ведущий ответил", hidden: "Ведущий не будет отвечать в эфире" };
+const Q_MAX = 500;
+
+/** Вопросы зрителя к идущему эфиру: поле, отправка, свои вопросы и их состояние. Чужие вопросы зрителю не показываются. */
+function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string; viewer: string; pass: () => string; onViewerLost: () => void }) {
+  const [text, setText] = useState("");
+  const [items, setItems] = useState<LiveQuestion[]>([]);
+  const [open, setOpen] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const load = useCallback(() => api.liveMyQuestions(token, viewer).then((r) => { setItems(r.items); setOpen(r.open); })
+    .catch((e) => { if ((e as ApiError).code === "viewer_required") onViewerLost(); }), [token, viewer, onViewerLost]);
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20_000);
+    return () => window.clearInterval(t);
+  }, [load]);
+  const send = async (e?: FormEvent) => {
+    e?.preventDefault();
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true); setNote(null);
+    try {
+      const q = await api.liveAsk(token, { viewer, text: t, ...(pass() ? { pass: pass() } : {}) });
+      setItems((xs) => [...xs, q]); setText(""); setNote({ kind: "ok", text: "Вопрос отправлен ведущему." });
+    } catch (x) {
+      const a = x as ApiError;
+      if (a.code === "viewer_required") onViewerLost();
+      setNote({ kind: "error", text: a.code === "not_live" ? "Эфир сейчас не идёт: вопросы не принимаются." : a.message || "Не удалось отправить вопрос." });
+    } finally { setBusy(false); }
+  };
+  return (
+    <section className="live-q card" aria-label="Вопросы ведущему">
+      <form className="live-q-form" onSubmit={(e) => void send(e)}>
+        <label htmlFor="live-q-text" className="live-q-title">Вопрос ведущему</label>
+        <textarea id="live-q-text" rows={2} maxLength={Q_MAX} value={text} disabled={!open} placeholder={open ? "Напишите вопрос — его увидят ведущие эфира" : "Вопросы принимаются, пока идёт эфир"}
+                  onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void send(); }} />
+        <div className="row live-q-row">
+          <span className="muted small" aria-live="off">{text.length}/{Q_MAX}</span>
+          <span className="spacer" />
+          <button className="btn primary" disabled={!open || busy || !text.trim()}>{busy ? "Отправка…" : "Отправить"}</button>
+        </div>
+        {note && <p className={`small ${note.kind === "error" ? "field-error" : "muted"}`} role={note.kind === "error" ? "alert" : "status"}>{note.text}</p>}
+      </form>
+      {items.length > 0 && (
+        <ul className="live-q-mine" aria-label="Ваши вопросы">
+          {items.slice().reverse().map((q) => (
+            <li key={q.id}><p>{q.text}</p><span className={`live-q-st ${q.status}`}>{Q_STATUS[q.status]}</span></li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -244,6 +328,10 @@ export default function LivePage() {
   const [replayErr, setReplayErr] = useState("");
   const pass = useRef<string>("");
   const infoRef = useRef<LiveViewerInfo | null>(null);
+  const [viewer, setViewerState] = useState(() => ssGet(VIEWER_KEY(token)));
+  const viewerRef = useRef(viewer);
+  const setViewer = useCallback((v: string) => { viewerRef.current = v; ssSet(VIEWER_KEY(token), v); setViewerState(v); }, [token]);
+  const lostViewer = useCallback(() => setViewer(""), [setViewer]);
 
   useEffect(() => { try { pass.current = sessionStorage.getItem(SEEN_KEY(token)) ?? ""; } catch { pass.current = ""; } }, [token]);
 
@@ -258,16 +346,17 @@ export default function LivePage() {
 
   const getAccess = useCallback(async (password?: string): Promise<LiveAccess | null> => {
     try {
-      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native() });
+      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native(), viewer: viewerRef.current });
       if (a.pass) { pass.current = a.pass; try { sessionStorage.setItem(SEEN_KEY(token), a.pass); } catch { /* пропуск не запомнится */ } }
       return a;
     } catch (e) {
       const x = e as ApiError;
       if (x.code === "password_required") { pass.current = ""; try { sessionStorage.removeItem(SEEN_KEY(token)); } catch { /* ок */ } void load(); }
+      if (x.code === "viewer_required") setViewer("");
       if (password) setPwErr(x.status === 429 ? "Слишком много попыток. Повторите позже." : x.code === "password_invalid" ? "Неверный пароль." : x.message);
       return null;
     }
-  }, [token, load]);
+  }, [token, load, setViewer]);
 
   useEffect(() => { void load(); }, [load]);
   // страница ожидания опрашивает состояние чаще, идущий эфир — реже (конец эфира плеер увидит и сам)
@@ -279,11 +368,11 @@ export default function LivePage() {
 
   // доступ выдаём, как только он нужен: пароль не требуется или пропуск уже есть; иначе ждём ввода
   useEffect(() => {
-    if (!info || access || !info.own_hls) return;
+    if (!info || access || !info.own_hls || !viewer) return;
     if (info.status !== "live") return;                          // плейлист готов только при «идёт»: раньше плеер упирался бы в 404
     if (info.password_required && !pass.current) return;
     void getAccess().then((a) => { if (a) setAccess(a); });
-  }, [info, access, getAccess]);
+  }, [info, access, getAccess, viewer]);
 
   const submitPassword = async (pw: string) => {
     setBusy(true); setPwErr("");
@@ -300,12 +389,13 @@ export default function LivePage() {
   const openReplay = async (password?: string) => {
     setBusy(true); setReplayErr("");
     try {
-      const r = await api.liveReplay(token, password ? { password } : pass.current ? { pass: pass.current } : {});
+      const r = await api.liveReplay(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), viewer: viewerRef.current });
       if (r.pass) { pass.current = r.pass; try { sessionStorage.setItem(SEEN_KEY(token), r.pass); } catch { /* пропуск не запомнится */ } }
       setAskReplayPw(false); setReplayUrl(r.url); setDownloadUrl(r.download_url ?? "");
     } catch (e) {
       const x = e as ApiError;
-      if (x.code === "password_required") setAskReplayPw(true);
+      if (x.code === "viewer_required") setViewer("");
+      else if (x.code === "password_required") setAskReplayPw(true);
       else setReplayErr(x.status === 429 ? "Слишком много попыток. Повторите позже." : x.code === "password_invalid" ? "Неверный пароль." : x.message || "Запись недоступна.");
     } finally { setBusy(false); }
   };
@@ -317,6 +407,17 @@ export default function LivePage() {
   const startsMs = info.starts_at ? new Date(info.starts_at).getTime() - now : null;
   const needPw = info.password_required && !pass.current && !access;
   const showPlayer = !!access && info.status === "live" && info.own_hls;
+  // представиться нужно перед ожиданием, эфиром и записью; страница завершённого эфира без записи открывается без этого
+  const needViewer = !viewer && info.own_hls && (info.status !== "ended" || info.replay);
+  if (needViewer) return (
+    <section className="live-wrap">
+      <header className="live-head"><h1>{info.title}</h1>{info.status === "live" && <span className="live-tag on big"><i aria-hidden />Прямой эфир</span>}</header>
+      <div className="live-stage live-msg">
+        <ViewerForm token={token} onDone={setViewer} title={info.status === "waiting" ? "Эфир скоро начнётся" : info.status === "ended" ? "Запись эфира" : "Прямой эфир"} />
+      </div>
+      {info.status === "waiting" && info.starts_at && <p className="live-when muted">Начало: {when(info.starts_at)}</p>}
+    </section>
+  );
 
   return (
     <section className="live-wrap">
@@ -327,6 +428,7 @@ export default function LivePage() {
       </header>
       {!info.available && <div className="alert warn">Трансляции отключены администратором сервера.</div>}
       {showPlayer && access && <Player token={token} access={access} renew={renew} onGone={() => { setAccess(null); void load(); }} />}
+      {showPlayer && viewer && <ViewerQuestions token={token} viewer={viewer} pass={() => pass.current} onViewerLost={lostViewer} />}
       {!showPlayer && info.status === "live" && needPw && info.own_hls && (
         <div className="live-stage live-msg"><PasswordForm onSubmit={(pw) => void submitPassword(pw)} busy={busy} error={pwErr} /></div>)}
       {!showPlayer && info.status === "live" && !needPw && info.own_hls && (
@@ -337,8 +439,8 @@ export default function LivePage() {
         <div className="live-stage live-msg"><Icon name="broadcast" size={30} /><p>Эфир идёт на внешних площадках. Ссылку на просмотр даёт организатор.</p></div>)}
       {info.status === "waiting" && (
         <div className="live-stage live-msg">
-          <Icon name="clock" size={30} />
-          <h2>Эфир ещё не начался</h2>
+          <Icon name="broadcast" size={30} />
+          <h2>Эфир скоро начнётся</h2>
           {info.starts_at && <p className="live-when">Начало: {when(info.starts_at)}</p>}
           {startsMs !== null && startsMs > 0 && <p className="live-count" aria-live="off">{clock(startsMs)}</p>}
           {info.password_required && !pass.current && <p className="muted">Пароль потребуется, когда эфир начнётся.</p>}

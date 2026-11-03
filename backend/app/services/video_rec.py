@@ -323,6 +323,8 @@ class VideoRecorder:
         try:
             if getattr(meeting.room, "video_mode", "off") != "auto" or meeting.record_video or meeting.ended_at is not None:
                 return
+            if getattr(meeting.room, "room_type", "") == "broadcast" and getattr(meeting.room, "live_enabled", False):
+                return                       # комната трансляции: запись — часть эфира (после «Выйти в эфир»), подготовка не записывается
             if await self._r.get(f"video:manual_off:{meeting.id}") or not (await self.cfg(db)).enabled:
                 return
             await self.start(db, meeting, by="auto")

@@ -147,9 +147,11 @@ stage_dirs() {
   # каталог обмена с исполнителем обновлений: backend (uid 10001) пишет запросы, исполнитель на хосте — статус и журнал
   [ "$DRY_RUN" = "1" ] || chmod 1777 "$DATA_ROOT/updater" 2>/dev/null || true
   # Контейнеры backend и asr работают от uid 10001: каталоги записей и выгрузок (и только они) должны быть им доступны на запись.
-  for d in recordings live exports ca chat-files avatars branding; do
+  for d in recordings exports ca chat-files avatars branding; do
     if [ "$(stat -c '%u' "$DATA_ROOT/$d" 2>/dev/null || echo x)" != "10001" ]; then as_root chown 10001:10001 "$DATA_ROOT/$d"; fi
   done
+  # видеоподсистема: live, live/b, live/acc и live/nginx (секрет HLS, 2750) — та же функция, что у обновления и «Исправить права каталогов»
+  [ "$DRY_RUN" = "1" ] || live_dirs_prepare "$DATA_ROOT" || fail_stage dirs "Каталоги трансляций в $DATA_ROOT/live не подготовлены (см. выше): запустите установку от root."
   # Модели монтируются в контейнер ASR (uid 10001) только на чтение: каталог, созданный с umask 077, ему недоступен.
   [ "$DRY_RUN" = "1" ] || models_fix_perms || warn "Права на каталог моделей не исправлены автоматически (см. выше)."
 }

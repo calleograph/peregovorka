@@ -187,6 +187,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [stage, setStage] = useState<Stage>("prepare");
   const [, setTick] = useState(0);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [confirmOffAir, setConfirmOffAir] = useState(false);
+  const [airBusy, setAirBusy] = useState(false);
   const [ctlErr, setCtlErr] = useState<CtlErrors>({});
   const [withAudio, setWithAudio] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -197,6 +199,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [tw, setTw] = useState(() => clamp(Number(lsGet("room.tw")) || TW_DEFAULT, TW_MIN, TW_MAX));
   // Широкое окно — запомненный выбор; узкое (≤1000 px) — панель выезжает поверх сцены, поэтому по умолчанию свёрнута и не наследует «развёрнуто» с широкого окна. Выбор в узком окне не запоминается.
   const [tCollapsed, setTCollapsed] = useState(() => { const v = lsGet("room.tcollapsed"); return window.innerWidth <= 1000 ? true : v === null ? false : v === "1"; });
+  const tCollapsedRef = useRef(tCollapsed);
+  tCollapsedRef.current = tCollapsed;
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1000px)");
     const on = () => { if (mq.matches) setTCollapsed(true); else { const v = lsGet("room.tcollapsed"); setTCollapsed(v === "1"); } };
@@ -921,7 +925,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           const maxSharers = join.client.max_sharers ?? (join.client.one_sharer_at_a_time ? 1 : 5);
           if (othersSharing >= maxSharers) { setErr("screen", sharesFullText(maxSharers)); return; }
           const profile = loadProfile(join.client.screen_profile);
-          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps);
+          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps, join.client.screen_max_height);
           userStopRef.current = false;
           screenPhase("SCREEN_CREATE", `profile=${profile} audio=${o.capture.audio ? "yes" : "no"}`);
           screenPhase("SCREEN_PUBLISH_START");
@@ -1108,6 +1112,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         void lp.setMicrophoneEnabled(false).then(() => { refresh(); setNotice({ kind: "info", text: "Вы включили микрофон на другом своём устройстве — здесь он выключен, чтобы не было эха и двойной стенограммы." }); });
       }
     } else if (e.type === "recording_changed") setRecording(e.enabled);
+    else if (e.type === "live_question" && !e.status && tCollapsedRef.current) {
+      setNotice({ kind: "info", text: "Новый вопрос от зрителя эфира — откройте панель справа, вкладка «Вопросы»." });       // при открытой панели вопрос виден сам, со счётчиком
+    }
     else if (e.type === "live_changed") {
       liveRefresh.current(); setLiveFlag(e.live);
       setNotice({ kind: e.live ? "warn" : "info", text: e.live ? "Началась прямая трансляция: изображение и звук комнаты видят зрители, в том числе на внешних площадках." : "Прямая трансляция остановлена." });
@@ -1414,6 +1421,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           {presentation && myFloor && !isLeader && <span className="badge ok">У вас слово</span>}
           {recording && <span className="rec-badge on" title="Идёт запись звука встречи"><span className="rec-dot" aria-hidden /> АУДИОЗАПИСЬ</span>}
           {(lv.state ? lv.state.live : liveFlag) && <span className="rec-badge on live" title="Идёт прямая трансляция комнаты: её видят зрители по ссылке и на внешних площадках"><span className="rec-dot" aria-hidden /> ПРЯМОЙ ЭФИР{lv.state?.viewers ? ` · ${lv.state.viewers}` : ""}</span>}
+          {join.client.broadcast && !guest && lv.state && !lv.state.live && !ended && (
+            <span className="rec-badge off prep" title="Подготовка: участники говорят между собой, зрители видят заставку «Эфир скоро начнётся». Запись и транскрибация не идут">ПОДГОТОВКА</span>)}
+          {join.client.broadcast && lv.state?.can_control && !ended && (lv.state.live
+            ? <button type="button" className="btn mini onair-stop" onClick={() => setConfirmOffAir(true)} title="Закончить эфир для зрителей: запись сохранится, комната останется открытой">Завершить эфир</button>
+            : <button type="button" className="btn primary onair-go" disabled={airBusy || !lv.state.can_start || lv.state.status === "starting"}
+                      title="Начать эфир: зрители увидят изображение и звук, начнутся запись и транскрибация, откроется приём вопросов"
+                      onClick={() => { setAirBusy(true); api.setLive(join.meeting_id, true).then(lv.refresh, (e) => setErr("general", (e as ApiError).message)).finally(() => setAirBusy(false)); }}>
+                <span className="rec-dot" aria-hidden /> {airBusy || lv.state.status === "starting" ? "Запуск…" : "Выйти в эфир"}</button>)}
           {video?.recording && <span className="rec-badge on video" title="Идёт видеозапись встречи: изображение и звук всех участников"><span className="rec-dot" aria-hidden /> ВИДЕОЗАПИСЬ</span>}
           {serverTranscript && !transcribing && (
             <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
@@ -1593,6 +1608,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <DevicePanel room={roomRef.current} prefs={micPrefs} onPrefs={applyMicPrefs} inline />
           </div>
         )}
+        {confirmOffAir && <ConfirmDialog title="Завершить эфир?" confirmLabel="Да, завершить эфир" onClose={() => setConfirmOffAir(false)}
+                                         body={<p>Зрители увидят «Эфир завершён». Запись эфира сохранится; участники останутся в комнате и могут продолжить разговор без трансляции.</p>}
+                                         onConfirm={() => { setConfirmOffAir(false); api.setLive(join.meeting_id, false).then(lv.refresh, (e) => setErr("general", (e as ApiError).message)); }} />}
         {confirmEnd && <ConfirmDialog title="Завершить встречу для всех?" confirmLabel="Да, завершить" onClose={() => setConfirmEnd(false)}
                                       body={<p>Встреча закончится у всех участников. Стенограмма и материалы сохранятся.</p>} onConfirm={endForAll} />}
         {ctlErr.device && <div className="alert error" role="alert">Устройство: {ctlErr.device} <button className="btn mini" onClick={() => setErr("device")}>Закрыть</button></div>}
@@ -1607,7 +1625,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}
       <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} recording={recording} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
-                       bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal} />
+                       bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal}
+                       questions={!!join.client.broadcast} />
       {pipPortal}
     </div>
   );

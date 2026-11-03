@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db import release
-from ..models import Meeting, MailMessage, Protocol, User, utcnow
+from ..models import Broadcast, GuestParticipant, LiveViewer, Meeting, MailMessage, Protocol, User, utcnow
 from . import mail_templates as mt
 from .export_docs import md_to_plain, to_docx, to_html, to_pdf
 from .mail import MailError, MailService, build_message, send, valid_email
@@ -114,8 +114,9 @@ MATERIALS: dict[str, MaterialDef] = {
 
 
 def effective_delivery(meeting: Meeting) -> dict | None:
-    """Настройки рассылки для встречи: свои (если руководитель их менял) или настройки комнаты по умолчанию."""
-    return meeting.delivery_override if meeting.delivery_override else meeting.room.mail_delivery
+    """Настройки рассылки для встречи — ТОЛЬКО настройки комнаты (с 0.64): второго уровня (своих настроек у встречи) больше нет, поэтому выключенная в комнате
+    рассылка не уходит ни при каких условиях. Прежние настройки встреч (meetings.delivery_override) в базе остаются, но не действуют. По умолчанию — выключено."""
+    return meeting.room.mail_delivery
 
 
 def clean_spec(raw: dict | None) -> dict:
@@ -190,11 +191,13 @@ def clean_spec(raw: dict | None) -> dict:
 
 def view_spec(spec: dict) -> dict:
     """Настройки в виде «по материалам» для интерфейса: прежние (один набор получателей на все материалы) показываются приближённо — «всем участникам» при выбранных участниках,
-    иначе «только руководителю», иначе «выбранным». Рассылка по прежним настройкам продолжает работать как раньше, пока их не сохранят заново из нового экрана."""
+    иначе «только руководителю», «организатору», «владельцу», «выбранным». Автоматическая рассылка идёт ровно по этому виду (что показано выключенным — не уходит);
+    свои адреса прежнего формата в автоматическую рассылку не попадают — их можно указать при ручной отправке."""
     if spec.get("per_material"):
         return spec
     r = spec["recipients"]
-    mode = "all" if r["participants"] else "leader" if r["leaders"] else "selected" if r["users"] else "none"
+    mode = ("all" if r["participants"] else "leader" if r["leaders"] else "organizer" if r.get("organizer") else "owner" if r.get("owner")
+            else "selected" if r["users"] else "none")
     users = r["users"] if mode == "selected" else []
     pm = {k: {"mode": mode if k in spec["materials"] else "none", "users": users if k in spec["materials"] else []} for k in MATERIALS}
     return {**spec, "per_material": pm, "converted_from_legacy": bool(spec["enabled"] or spec["materials"])}
@@ -226,7 +229,7 @@ def group_by_recipients(spec: dict, kinds: list[str], resolved: dict[str, list])
 class Recipient:
     email: str
     name: str
-    source: str            # leader | owner | organizer | participant | user | manual
+    source: str            # leader | owner | organizer | participant | guest | viewer | user | manual
     problem: str | None = None   # no_email | invalid_email | domain_not_allowed
 
     def public(self) -> dict:
@@ -309,6 +312,13 @@ class DeliveryService:
                     continue
                 seen.add(p.user_id)
                 add(p.user.email, p.user.display_name, "participant")
+            # гости и зрители эфира этой встречи — только те, кто сам указал почту и согласился получать материалы
+            for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id, GuestParticipant.materials_consent.is_(True),
+                                                                      GuestParticipant.email.is_not(None)).order_by(GuestParticipant.joined_at))).scalars():
+                add(g.email, f"{g.display_name} (гость)", "guest")
+            for v in (await db.execute(select(LiveViewer).join(Broadcast, Broadcast.id == LiveViewer.broadcast_id).where(
+                    Broadcast.meeting_id == meeting.id, LiveViewer.materials_consent.is_(True), LiveViewer.email.is_not(None)).order_by(LiveViewer.created_at))).scalars():
+                add(v.email, f"{v.display_name} (зритель эфира)", "viewer")
         for u in r["users"]:
             row = (await db.execute(select(User).where(func.lower(User.ad_guid) == u["ref"].lower()))).scalar_one_or_none()
             add((row.email if row and row.email else None) or u.get("email"), (row.display_name if row else None) or u.get("name") or u["ref"], "user")
@@ -393,7 +403,9 @@ class DeliveryService:
                 if meeting is None or meeting.ended_at is None:
                     return
                 try:
-                    spec = clean_spec(effective_delivery(meeting))      # настройки встречи (если руководитель их менял) поверх настроек комнаты
+                    # только настройки комнаты и ровно в том виде, в каком их показывает редактор комнаты (прежний формат — через view_spec):
+                    # всё, что там выключено, автоматически не уходит
+                    spec = view_spec(clean_spec(effective_delivery(meeting)))
                 except ValueError:
                     return
                 if not spec["enabled"]:

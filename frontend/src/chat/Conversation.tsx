@@ -1,3 +1,4 @@
+import { CHAT_ACCEPT, ChatFileRejected, chatFileOk } from "../chatFiles";
 import DateRange from "../components/DateRange";
 import { Fragment, Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useActiveMeeting } from "../activeMeeting";
@@ -379,6 +380,7 @@ function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: 
   const [text, setText] = useState(() => readDraft(chat.id));          // черновик переписки — в этом браузере, до отправки
   const [files, setFiles] = useState<(ChatFileInfo | { id: string; name: string; uploading: true; error?: string })[]>([]);
   const [err, setErr] = useState("");
+  const [rejected, setRejected] = useState(false);
   const [drag, setDrag] = useState(false);
   const [phase, setPhase] = useState<DictationPhase>("idle");
   const [dNote, setDNote] = useState("");
@@ -411,7 +413,7 @@ function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: 
   const upload = async (list: File[]) => {
     if (!cfg?.files.enabled) { setErr("Вложения отключены администратором"); return; }
     for (const f of list.slice(0, cfg.files.max_files)) {
-      if (f.size > cfg.files.max_size_mb * 1024 * 1024) { setErr(`«${f.name}» больше ${cfg.files.max_size_mb} МБ`); continue; }
+      if (!chatFileOk(f, cfg.files.max_size_mb, cfg.files.types)) { setRejected(true); continue; }      // слишком большой или неподдерживаемый: понятное окно
       const tmp = { id: `tmp-${newClientId()}`, name: f.name || "Снимок экрана.png", uploading: true as const };
       setFiles((x) => [...x, tmp]);
       try {
@@ -511,6 +513,7 @@ function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: 
          onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDrag(true); } }}
          onDragLeave={(e) => { if (e.currentTarget === e.target) setDrag(false); }}
          onDrop={(e) => { e.preventDefault(); setDrag(false); void upload([...e.dataTransfer.files]); }}>
+      {rejected && <ChatFileRejected onClose={() => setRejected(false)} />}
       {(reply || edit) && (
         <div className="composer-ctx">
           <Icon name={edit ? "edit" : "reply"} size={16} />
@@ -553,7 +556,7 @@ function Composer({ chat, reply, edit, onDone, onCancel, members, onEditLast }: 
       <div className="composer-row">
         <button type="button" className="cbtn" aria-label="Прикрепить файл" title={cfg?.files.enabled ? `Прикрепить файл (до ${cfg.files.max_size_mb} МБ) — или перетащите, или Ctrl+V` : "Вложения отключены"}
                 disabled={!cfg?.files.enabled} onClick={() => picker.current?.click()}><Icon name="attach" size={20} /></button>
-        <input ref={picker} type="file" multiple hidden onChange={(e) => { void upload([...(e.target.files ?? [])]); e.target.value = ""; }} />
+        <input ref={picker} type="file" multiple hidden accept={CHAT_ACCEPT} onChange={(e) => { void upload([...(e.target.files ?? [])]); e.target.value = ""; }} />
         <textarea ref={ta} rows={1} value={text} maxLength={cfg?.max_message_chars ?? 4000} placeholder={edit ? "Изменение сообщения…" : "Сообщение…"}
                   title="Enter — отправить, Shift+Enter — новая строка, ↑ — изменить последнее, @ — упомянуть"
                   aria-label="Текст сообщения" onChange={(e) => onChange(e.target)} onKeyDown={onKey} onClick={(e) => track(e.currentTarget)} onBlur={() => window.setTimeout(() => setMq(null), 150)}
