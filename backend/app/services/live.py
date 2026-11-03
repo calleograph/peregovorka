@@ -532,6 +532,12 @@ class LiveBroadcaster:
                 continue
             age = (datetime.now(timezone.utc) - b.started_at).total_seconds()
             if info is not None and info.status in ACTIVE_LK:
+                if b.hls_dir and b.status in ("starting", "live"):
+                    room = await db.get(Room, b.room_id)
+                    if room is not None and room.live_view_access and not os.path.lexists(self._acc_dir(room.live_view_access)):
+                        log.warning("Ссылка доступа к HLS идущего эфира пропала — восстанавливается", extra={"broadcast": str(b.id)})
+                        self.link_access(room.live_view_access, b.hls_dir)
+                        self.link_access(room.live_stream_access, b.hls_dir)
                 if b.status == "starting" and (self.hls_ready(b) or (not b.hls_dir and info.status == eg.EgressStatus.EGRESS_ACTIVE)):
                     b.status, b.live_at = "live", datetime.now(timezone.utc)
                     await db.commit()
@@ -610,8 +616,10 @@ class LiveBroadcaster:
         if acc.is_dir():
             for link in list(acc.iterdir()):
                 try:
-                    if link.is_symlink() and not link.exists():
-                        link.unlink(missing_ok=True)         # каталог эфира удалён — ссылка бессмысленна
+                    # каталог эфира удалён — ссылка бессмысленна. Свежую не трогаем: Egress создаёт каталог эфира не сразу (до ~20 с после запуска),
+                    # и уборка в этот промежуток удаляла ссылку идущего эфира — зрители получали 404
+                    if link.is_symlink() and not link.exists() and now - link.lstat().st_mtime > 3600:
+                        link.unlink(missing_ok=True)
                 except OSError:
                     continue
         await db.commit()

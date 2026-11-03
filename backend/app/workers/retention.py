@@ -17,6 +17,7 @@ from datetime import timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..models import LiveViewer
 from ..services.live import purge_audience
 from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
 from ..services import retention_policy
@@ -68,6 +69,8 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                     stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
                     if q := await purge_audience(db, list(ids)):        # вопросы зрителей и почта гостей — по сроку текстов
                         stats["questions"] = stats.get("questions", 0) + q
+                # зрители, представившиеся без идущего эфира (к эфиру не привязаны): имя и почта — по тому же сроку текстов комнаты
+                await db.execute(delete(LiveViewer).where(LiveViewer.room_id == room.id, LiveViewer.broadcast_id.is_(None), LiveViewer.created_at < cutoff))
             # аудио (файлы участников и общая аудиозапись) и видео (видеозаписи и записи эфиров) — каждое по своему сроку
             for kind, days in (("audio", eff["audio"]), ("video", eff["video"])):
                 if days is None or kind in skip:

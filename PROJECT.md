@@ -288,6 +288,21 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
+0zk. **Сервер 0.64.0 / Android 0.1.8: вопросы зрителей, подготовка к эфиру, гости с почтой, рассылка только по комнате, вложения 3 МБ, секрет HLS, показ экрана с Android.**
+* Где в коде:
+  * `api/live.py` — зрители и вопросы;
+  * `roles.is_broadcast`, `meetings.set_broadcast_media`, `livekit.ensure_room` — подготовка и удержание эфира;
+  * `mail_delivery.effective_delivery` — только комната, плюс режим `emails`;
+  * `settings.CHAT_*`, `frontend/src/chatFiles.tsx` — вложения;
+  * `live_dirs_prepare`, `frontend/live-secret.sh`, `media_checks.secret_checks` — секрет HLS;
+  * Android: `CallManager.startScreenShare`, `ScreenShareTest`.
+* Открыто:
+  * ABR (несколько качеств HLS) — нужен второй Egress или перекодирование;
+  * 4K не внедрён;
+  * настоящие телефоны: показ экрана у производителей, iPhone;
+  * Windows и Linux-клиенты не менялись, показ экрана в них этим выпуском не перепроверялся;
+  * проверка на стенде владельца (Keenetic, секрет).
+
 0zj. **Сервер 0.55.0: плеер эфира, очередь удаления записей, доступ к прошедшим эфирам.** Причина зависания плеера — `hls.startLoad()` после 404 плейлиста на старте; страж и сеть в `LivePage.tsx`. Удаление записей — `file_state='deleting'` + `run_deletions` (миграция 0055), удаление комнаты удаляет файлы. Открыто: Safari/iPhone, настоящие CDN, Windows SMB.
 
 0zi. **Сервер 0.54.0 / Android 0.1.4 / клиент Windows 1.4.3: постоянная подпись, запись эфиров по ссылке, сроки хранения, забытые встречи.** Android — постоянный ключ в секретах CI, сертификат закреплён (`mobile/android/release-cert.sha256`), площадки — `docs/ANDROID_SIGNING.md`; Windows — постоянный ключ манифеста обновлений, Authenticode ждёт сертификата УЦ (владелец). Эфир: обязательная запись, `broadcasts.view_token` и снимок параметров (миграция 0053), `replay.mp4` с проверкой на каждый запрос. Сроки: `services/retention_policy.py`, флаги `*_retention_custom` (миграция 0054), пауза `general.retention_cleanup_from`, повтор удаления при недоступном внешнем хранилище. Забытые встречи: `frontend/src/idleEnd.ts` + `POST /meetings/{id}/idle-end`, режим `general.idle_end_mode`; продление эфира `POST /meetings/{id}/live/extend`. Открыто: зависание плеера прямого эфира 1 из 12 (не воспроизведено), живые люди и телефоны, Play/RuStore, Authenticode, ручное удаление записи при недоступном SMB.
