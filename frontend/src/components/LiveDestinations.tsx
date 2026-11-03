@@ -54,7 +54,7 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
   const probe = async () => {
     if (inflight.current) return;
     inflight.current = true; setBusy(true); setErr("");
-    try { const r = edit?.id && !f.server_url ? await api.probeLiveDestination(roomId, edit.id) : await api.probeLiveServer(roomId, f.server_url); flash(r.message); if (!r.ok) setErr(r.message); }
+    try { const r = edit?.id && !f.server_url ? await api.probeLiveDestination(roomId, edit.id) : await api.probeLiveServer(roomId, f.server_url); if (r.ok) flash(r.message); else setErr(r.message); }
     catch (e) { setErr((e as ApiError).message); } finally { inflight.current = false; setBusy(false); }
   };
   const left = cfg.max_destinations - cfg.destinations.length;

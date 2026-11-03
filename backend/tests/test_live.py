@@ -631,6 +631,21 @@ def test_replacing_and_deleting_keys_and_the_per_room_limit(lv, public_dns):
     assert dest(lv, room, platform="youtube").json()["detail"]["code"] == "platform_forbidden"
 
 
+def test_same_server_and_key_twice_is_refused_on_add_and_on_edit(lv, public_dns):
+    # Egress держит один выход на адрес: вторая площадка с тем же сервером и ключом навсегда оставалась «подключается» (найдено живой проверкой).
+    room = room_live(lv)
+    assert dest(lv, room, name="Основная").status_code == 201
+    r = dest(lv, room, name="Копия")
+    assert r.status_code == 409 and "Основная" in r.text and KEY_A not in r.text
+    second = dest(lv, room, name="Запасная", key=KEY_B)
+    assert second.status_code == 201, "тот же сервер с другим ключом — другая площадка"
+    did = next(d["id"] for d in second.json()["destinations"] if d["name"] == "Запасная")
+    url = f"/api/v1/rooms/{room['id']}/live/destinations/{did}"
+    assert lv.patch(url, json={"key": KEY_A}).status_code == 409, "замена ключа на уже занятый"
+    assert lv.patch(url, json={"name": "Запасная 2"}).status_code == 200, "переименование без смены адреса и ключа"
+    assert lv.patch(url, json={"key": KEY_B}).status_code == 200, "тот же ключ у самой себя — не дубликат"
+
+
 def test_destinations_of_another_room_and_other_people_are_not_reachable(lv, public_dns):
     a, b = room_live(lv), room_live(lv)
     did = dest(lv, a).json()["destinations"][0]["id"]

@@ -119,9 +119,9 @@ def test_icon_out_after_restore_from_config_copy_never_points_to_a_missing_file(
     """В копию настроек входят ключ библиотеки и вид значка, но не загруженный файл и его версия: восстановленная комната показывает стандартный значок, а не битую картинку."""
     from types import SimpleNamespace as NS
     rid = "00000000-0000-0000-0000-000000000001"
-    assert room_icons.icon_out(NS(id=rid, icon_kind="image", icon_key=None, icon_rev=None)) is None
-    assert room_icons.icon_out(NS(id=rid, icon_kind="library", icon_key="shield", icon_rev=None))["key"] == "shield"
-    assert room_icons.icon_out(NS(id=rid, icon_kind=None, icon_key=None, icon_rev=None)) is None
+    assert room_icons.icon_out(NS(id=rid, icon_kind="image", icon_key=None, icon_rev=None, icon_hue=None)) is None
+    assert room_icons.icon_out(NS(id=rid, icon_kind="library", icon_key="shield", icon_rev=None, icon_hue=None))["key"] == "shield"
+    assert room_icons.icon_out(NS(id=rid, icon_kind=None, icon_key=None, icon_rev=None, icon_hue=None)) is None
 
 
 def test_icon_color_applies_to_letters_and_library_and_resets_with_the_icon(client, directory):
@@ -129,6 +129,8 @@ def test_icon_color_applies_to_letters_and_library_and_resets_with_the_icon(clie
     login(client, "carol")
     r = client.put(f"{API}/rooms/{room['id']}/icon/color", json={"hue": 145})
     assert r.status_code == 200 and r.json()["icon"] == {"kind": "std", "key": None, "url": None, "hue": 145}, "буквенный значок своего цвета"
+    listed = next(x for x in client.get(f"{API}/rooms").json() if x["id"] == room["id"])
+    assert listed["icon"] == {"kind": "std", "key": None, "url": None, "hue": 145}, "цвет виден и в каталоге комнат (список без ORM)"
     assert client.put(f"{API}/rooms/{room['id']}/icon/library", json={"key": "server"}).json()["icon"]["hue"] == 145, "цвет сохраняется у значка из библиотеки"
     for bad in (360, -1, "красный", True, 12.5):
         assert client.put(f"{API}/rooms/{room['id']}/icon/color", json={"hue": bad}).status_code == 422
