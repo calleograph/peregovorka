@@ -1,6 +1,8 @@
-import { type FormEvent, useState } from "react";
+import { useRef, useState } from "react";
 import { api, type ApiError, type LiveDestination, type LiveDestStatus, type LiveRoomSettings } from "../api";
 import { Icon } from "./Icons";
+import SubForm from "./SubForm";
+import { useDirty } from "../dirtyGuard";
 import "../live.css";
 
 /** Подсказки по площадкам: адреса и ключи берутся из кабинета самой площадки — в приложении они не зашиты, здесь только порядок действий. */
@@ -25,30 +27,35 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false);            // второе нажатие до ответа сервера не отправляет второй запрос (состояние busy обновляется не мгновенно)
+  // несохранённая площадка: браузер предупредит при закрытии вкладки; после сохранения или «Отмены» — нет
+  useDirty(`площадка ${roomId}`, !!edit && !!(f.server_url.trim() || f.key || (edit.id && (f.name || f.channel || f.watch_url))));
   const flash = (t: string) => { setMsg(t); window.setTimeout(() => setMsg(""), 4000); };
   const run = async (fn: () => Promise<LiveRoomSettings | void>, ok?: string) => {
-    setBusy(true); setErr("");
+    if (inflight.current) return false;
+    inflight.current = true; setBusy(true); setErr("");
     try { const r = await fn(); if (r) onChange(r); if (ok) flash(ok); return true; }
-    catch (e) { setErr((e as ApiError).message || "Не удалось выполнить."); return false; }
-    finally { setBusy(false); }
+    catch (e) { const a = e as ApiError; setErr(`${a.message || "Не удалось выполнить."}${a.status ? "" : " Проверьте связь с сервером и повторите — введённое сохранено в форме."}`); return false; }
+    finally { inflight.current = false; setBusy(false); }
   };
   const open = (platform: string, d?: LiveDestination) => {
     setErr("");
     setEdit({ id: d?.id ?? null, platform });
     setF({ name: d?.name ?? HINTS[platform]?.title ?? "", server_url: d?.server_url ?? "", key: "", channel: d?.channel ?? "", watch_url: d?.watch_url ?? "" });
   };
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!edit) return;
+  const ready = !!edit && !!f.name.trim() && (!!edit.id || (!!f.server_url.trim() && !!f.key));
+  const submit = async () => {
+    if (!edit || !ready) return;
     const body: Record<string, unknown> = { name: f.name, server_url: f.server_url, channel: f.channel, watch_url: f.watch_url };
     if (f.key) body.key = f.key;
     const ok = await run(() => edit.id ? api.patchLiveDestination(roomId, edit.id, body) : api.addLiveDestination(roomId, { ...body, platform: edit.platform, key: f.key }), edit.id ? "Площадка сохранена" : "Площадка добавлена");
     if (ok) setEdit(null);
   };
   const probe = async () => {
-    setBusy(true); setErr("");
+    if (inflight.current) return;
+    inflight.current = true; setBusy(true); setErr("");
     try { const r = edit?.id && !f.server_url ? await api.probeLiveDestination(roomId, edit.id) : await api.probeLiveServer(roomId, f.server_url); flash(r.message); if (!r.ok) setErr(r.message); }
-    catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); }
+    catch (e) { setErr((e as ApiError).message); } finally { inflight.current = false; setBusy(false); }
   };
   const left = cfg.max_destinations - cfg.destinations.length;
   const hint = edit ? HINTS[edit.platform] : null;
@@ -59,7 +66,7 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
       <ul className="lv-dests">
         {cfg.destinations.map((d) => (
           <li key={d.id} className="lv-link">
-            <div><b>{d.name}</b> <StatusBadge d={d} /><code>{d.platform_name}{d.channel ? ` · ${d.channel}` : ""} · {d.server_url}</code>
+            <div><b>{d.name}</b> <StatusBadge d={d} /><code>{d.platform_name}{d.channel ? ` · ${d.channel}` : ""} · {d.server_url} · {d.has_key ? "ключ задан ••••••" : "ключа нет"}</code>
               {d.last_error && d.status === "failed" && <span className="lv-err" role="alert">{d.last_error}</span>}</div>
             <button type="button" className="btn mini" disabled={busy} onClick={() => open(d.platform, d)}>Изменить</button>
             <button type="button" className="btn mini ghost" disabled={busy} onClick={() => { if (window.confirm(`Удалить площадку «${d.name}» вместе с ключом?`)) void run(() => api.deleteLiveDestination(roomId, d.id), "Площадка удалена"); }}>Удалить</button>
@@ -71,7 +78,7 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
             : <span className="muted small">Достигнут предел площадок для комнаты ({cfg.max_destinations}).</span>}
         </div>)}
       {edit && hint && (
-        <form className="lv-form" onSubmit={(e) => void submit(e)} aria-label="Площадка">
+        <SubForm className="lv-form" onSubmit={() => void submit()} aria-label="Площадка">
           <h4 style={{ margin: "4px 0" }}>{edit.id ? "Изменение площадки" : `Новая площадка: ${hint.title}`}</h4>
           <p className="lv-note">{hint.steps}</p>
           <label>Название в списке<input value={f.name} maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
@@ -83,12 +90,12 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
             <label>Ссылка для зрителей на площадке <span className="muted small">(необязательно)</span><input value={f.watch_url} onChange={(e) => setF({ ...f, watch_url: e.target.value })} placeholder="https://…" /></label>
           </div>
           <div className="row">
-            <button className="btn primary" disabled={busy || !f.name.trim()}>{edit.id ? "Сохранить" : "Добавить"}</button>
+            <button type="button" className="btn primary" disabled={busy || !ready} onClick={() => void submit()}>{busy ? "Сохранение…" : edit.id ? "Сохранить" : "Добавить"}</button>
             <button type="button" className="btn" disabled={busy || (!f.server_url && !edit.id)} onClick={() => void probe()}>Проверить сервер</button>
             <button type="button" className="btn ghost" disabled={busy} onClick={() => setEdit(null)}>Отмена</button>
           </div>
-          <p className="lv-note">«Проверить сервер» убеждается, что адрес корректен, разрешён политикой и отвечает по сети. Ключ проверит сама площадка при начале эфира.</p>
-        </form>)}
+          <p className="lv-note">«Проверить сервер» убеждается, что адрес корректен, разрешён политикой и отвечает по сети — площадка при этом ещё не сохранена: нажмите «{edit.id ? "Сохранить" : "Добавить"}». Ключ потока проверит сама площадка, когда начнётся эфир: при неверном ключе она отклонит поток, и у площадки появится ошибка.</p>
+        </SubForm>)}
       {msg && <div className="alert ok" role="status">{msg}</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
     </fieldset>

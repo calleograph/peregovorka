@@ -1,8 +1,9 @@
 import { useFocusOnMount } from "../useInitialFocus";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type LiveBroadcast, type LivePatchBody, type LiveRoomSettings } from "../api";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
+import SubForm from "./SubForm";
 import LiveDestinations from "./LiveDestinations";
 import "../live.css";
 import InfoTip from "./InfoTip";
@@ -46,8 +47,8 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
 
   if (!cfg) return <div role="tabpanel">{err ? <div className="alert error" role="alert">{err}</div> : <p className="muted">Загрузка…</p>}</div>;
   const live = cfg.state.live;
-  const setViewer = (e: FormEvent) => { e.preventDefault(); if (viewerPw) void run(async () => { const r = await api.setLivePassword(roomId, viewerPw); setViewerPw(""); return r; }, "Пароль зрителя сохранён: прежние ссылки на видео перестали действовать"); };
-  const setSpeaker = (e: FormEvent) => { e.preventDefault(); if (speakerPw) void run(async () => { await onSpeakerPassword(speakerPw); setSpeakerPw(""); load(); }, "Пароль выступающего сохранён"); };
+  const setViewer = () => { if (viewerPw.length >= 6) void run(async () => { const r = await api.setLivePassword(roomId, viewerPw); setViewerPw(""); return r; }, "Пароль зрителя сохранён: прежние ссылки на видео перестали действовать"); };
+  const setSpeaker = () => { if (speakerPw.length >= 4) void run(async () => { await onSpeakerPassword(speakerPw); setSpeakerPw(""); load(); }, "Пароль выступающего сохранён"); };
 
   return (
     <div role="tabpanel" className="lv-panel">
@@ -63,12 +64,12 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
             <div><b>Ссылка выступающих</b><code>{speakerUrl}</code></div>
             <button type="button" className="btn" onClick={() => void copy(speakerUrl, "Ссылка выступающих")}><Icon name="copy" size={16} /> Скопировать</button>
           </div>
-          <form className="row" onSubmit={setSpeaker} aria-label="Пароль выступающего">
+          <SubForm className="row" onSubmit={setSpeaker} aria-label="Пароль выступающего">
             <label style={{ flex: "1 1 220px" }}>Пароль выступающего {(hasSpeakerPassword || cfg.speaker_password_set) && <span className="muted small">(задан; новый заменит прежний)</span>}
               <input type="password" autoComplete="new-password" value={speakerPw} onChange={(e) => setSpeakerPw(e.target.value)} maxLength={128} placeholder="не короче 4 знаков" /></label>
-            <button className="btn" disabled={busy || speakerPw.length < 4}>{cfg.speaker_password_set ? "Изменить пароль" : "Задать пароль"}</button>
+            <button type="button" className="btn" disabled={busy || speakerPw.length < 4} onClick={setSpeaker}>{cfg.speaker_password_set ? "Изменить пароль" : "Задать пароль"}</button>
             {cfg.speaker_password_set && <button type="button" className="btn ghost" disabled={busy} onClick={() => void run(async () => { await onSpeakerPassword(null); load(); }, "Пароль выступающего сброшен")}>Сбросить</button>}
-          </form>
+          </SubForm>
           <p className="lv-note">Пароль нужен тем, кто входит как выступающий. Он не даёт прав руководителя: запись, участники и эфир управляются по вашим ролям. Владелец, руководители и администраторы входят без пароля.</p>
 
           <h4 style={{ margin: "10px 0 2px" }}>Зрители</h4>
@@ -87,12 +88,12 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
 
           <label className="check"><input type="checkbox" checked={cfg.password_enabled} disabled={busy || (!cfg.password_enabled && !cfg.has_password)} onChange={(e) => void patch({ live_password_enabled: e.target.checked }, e.target.checked ? "Просмотр защищён паролем" : "Пароль зрителя выключен: просмотр по ссылке без пароля")} />
             <span className="check-body">Защитить трансляцию паролем<InfoTip>По умолчанию выключено: любой с действующей ссылкой смотрит без пароля. Пароль защищает и страницу, и сам поток. {cfg.has_password ? "" : "Сначала задайте пароль ниже."}</InfoTip></span></label>
-          <form className="row" onSubmit={setViewer} aria-label="Пароль зрителя">
+          <SubForm className="row" onSubmit={setViewer} aria-label="Пароль зрителя">
             <label style={{ flex: "1 1 220px" }}>Пароль зрителя {cfg.has_password && <span className="muted small">(задан; новый заменит прежний)</span>}
               <input type="password" autoComplete="new-password" value={viewerPw} onChange={(e) => setViewerPw(e.target.value)} maxLength={128} placeholder="не короче 6 знаков, не как у выступающих" /></label>
-            <button className="btn" disabled={busy || viewerPw.length < 6}>{cfg.has_password ? "Изменить пароль" : "Задать пароль"}</button>
+            <button type="button" className="btn" disabled={busy || viewerPw.length < 6} onClick={setViewer}>{cfg.has_password ? "Изменить пароль" : "Задать пароль"}</button>
             {cfg.has_password && <button type="button" className="btn ghost" disabled={busy} onClick={() => void run(() => api.setLivePassword(roomId, null), "Пароль зрителя удалён")}>Удалить</button>}
-          </form>
+          </SubForm>
           <p className="lv-note">Пароль зрителя ничего не открывает, кроме просмотра этого эфира. При смене пароля или отзыве ссылки смотрящие теряют доступ в течение нескольких секунд (плеер получает отказ при следующем обращении к потоку). Пароль Peregovorka не защищает ссылки на внешних площадках: там действуют их настройки приватности.</p>
         </fieldset>
 
@@ -181,11 +182,12 @@ function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveR
                 {pwFor?.id !== b.id && <button type="button" className="btn mini ghost" disabled={busy} onClick={() => setPwFor({ id: b.id, value: "" })}>{b.password ? "Сменить пароль" : "Задать пароль"}</button>}
                 {b.password && pwFor?.id !== b.id && <button type="button" className="btn mini ghost" disabled={busy} onClick={() => void upd(b, { password: null }, "Пароль убран")}>Убрать пароль</button>}
                 {pwFor?.id === b.id && (
-                  <form className="row lv-bcast-pw" onSubmit={(e) => { e.preventDefault(); void upd(b, { password: pwFor.value }, b.password ? "Пароль изменён: прежние ссылки на файл и пропуска больше не действуют" : "Пароль задан").then(() => setPwFor(null)); }}>
-                    <input type="password" autoComplete="new-password" minLength={6} maxLength={128} required ref={focusOnMount} value={pwFor.value} onChange={(e) => setPwFor({ id: b.id, value: e.target.value })} aria-label={`Пароль эфира «${b.title || cfg.title || "Эфир"}»`} placeholder="новый пароль" />
-                    <button className="btn mini primary" disabled={busy}>Сохранить</button>
+                  <SubForm className="row lv-bcast-pw" onSubmit={() => { if (pwFor.value.length >= 6) void upd(b, { password: pwFor.value }, b.password ? "Пароль изменён: прежние ссылки на файл и пропуска больше не действуют" : "Пароль задан").then(() => setPwFor(null)); }}>
+                    <input type="password" autoComplete="new-password" minLength={6} maxLength={128} ref={focusOnMount} value={pwFor.value} onChange={(e) => setPwFor({ id: b.id, value: e.target.value })} aria-label={`Пароль эфира «${b.title || cfg.title || "Эфир"}»`} placeholder="новый пароль" />
+                    <button type="button" className="btn mini primary" disabled={busy || pwFor.value.length < 6}
+                            onClick={() => void upd(b, { password: pwFor.value }, b.password ? "Пароль изменён: прежние ссылки на файл и пропуска больше не действуют" : "Пароль задан").then(() => setPwFor(null))}>Сохранить</button>
                     <button type="button" className="btn mini ghost" onClick={() => setPwFor(null)}>Отмена</button>
-                  </form>)}
+                  </SubForm>)}
               </div>
             </li>);
         })}

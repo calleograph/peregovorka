@@ -88,7 +88,7 @@ export default function RecorderTemplate() {
   const screens = remote.filter((p) => { const c = scrOf(p); return !!c && !!c.track; }).map((p) => p.identity);
   const everyone = [...new Set([...cameras, ...remote.map((p) => p.identity)])];            // без камеры участник представлен плиткой с именем
   const speaker = room.activeSpeakers.find((p) => !p.isLocal)?.identity ?? null;
-  const sc = pickScene({ stage: scene?.stage.items ?? [], boardActive: !!scene?.board.active, boardHasContent: !!scene?.board.xml, cameras: everyone, screens, speaker });
+  const sc = pickScene({ stage: scene?.stage.items ?? [], boardActive: !!scene?.board.active, boardHasContent: !!scene?.board.xml, cameras: everyone, screens, speaker, live: cameras });
   const byId = new Map(remote.map((p) => [p.identity, p] as const));
 
   useEffect(() => {          // можно писать: подключены и получили первое состояние сцены
@@ -112,7 +112,7 @@ export default function RecorderTemplate() {
     return () => window.removeEventListener("resize", place);
   }, [boardOn, sc.main.length, sc.strip.length]);
   return (
-    <div className="rec-root" data-scene={sc.reason}>
+    <div className={`rec-root ${sc.solo ? "solo" : ""}`} data-scene={sc.reason}>
       <div className={`rec-main n${Math.max(1, sc.main.length)}`}>
         {sc.main.length === 0 && <div className="rec-empty">Ожидание участников…</div>}
         {sc.main.map((k) => tile(k, true))}

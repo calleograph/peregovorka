@@ -76,23 +76,32 @@ function ViewerForm({ token, title, onDone }: { token: string; title: string; on
   );
 }
 
-const Q_STATUS: Record<LiveQuestion["status"], string> = { new: "Отправлен ведущему", done: "Ведущий ответил", hidden: "Ведущий не будет отвечать в эфире" };
+const qStatus = (q: LiveQuestion) => q.status === "done" ? "Ведущий ответил" : q.status === "hidden" ? "Ведущий не будет отвечать в эфире" : q.seen ? "Получен ведущим" : "Отправлен";
 const Q_MAX = 500;
 
-/** Вопросы зрителя к идущему эфиру: поле, отправка, свои вопросы и их состояние. Чужие вопросы зрителю не показываются. */
+/** Вопросы зрителя к идущему эфиру — боковая панель рядом с видео: свои вопросы и их состояние (отправлен → получен ведущим → ответил), поле внизу.
+ *  Чужие вопросы зрителю не показываются. */
 function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string; viewer: string; pass: () => string; onViewerLost: () => void }) {
   const [text, setText] = useState("");
   const [items, setItems] = useState<LiveQuestion[]>([]);
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const load = useCallback(() => api.liveMyQuestions(token, viewer).then((r) => { setItems(r.items); setOpen(r.open); })
-    .catch((e) => { if ((e as ApiError).code === "viewer_required") onViewerLost(); }), [token, viewer, onViewerLost]);
+  const prev = useRef<Map<string, string>>(new Map());
+  const list = useRef<HTMLOListElement>(null);
+  const load = useCallback(() => api.liveMyQuestions(token, viewer).then((r) => {
+    // ведущий ответил на вопрос — заметное уведомление в панели (без прокрутки страницы)
+    const answered = r.items.filter((q) => q.status === "done" && prev.current.has(q.id) && prev.current.get(q.id) !== "done");
+    if (answered.length) setNote({ kind: "ok", text: answered.length === 1 ? "Ведущий ответил на ваш вопрос." : `Ведущий ответил на ваши вопросы: ${answered.length}.` });
+    prev.current = new Map(r.items.map((q) => [q.id, q.status]));
+    setItems(r.items); setOpen(r.open);
+  }).catch((e) => { if ((e as ApiError).code === "viewer_required") onViewerLost(); }), [token, viewer, onViewerLost]);
   useEffect(() => {
     void load();
-    const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20_000);
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 10_000);
     return () => window.clearInterval(t);
   }, [load]);
+  useEffect(() => { const el = list.current; if (el) el.scrollTop = el.scrollHeight; }, [items.length]);
   const send = async (e?: FormEvent) => {
     e?.preventDefault();
     const t = text.trim();
@@ -100,6 +109,7 @@ function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string;
     setBusy(true); setNote(null);
     try {
       const q = await api.liveAsk(token, { viewer, text: t, ...(pass() ? { pass: pass() } : {}) });
+      prev.current.set(q.id, q.status);
       setItems((xs) => [...xs, q]); setText(""); setNote({ kind: "ok", text: "Вопрос отправлен ведущему." });
     } catch (x) {
       const a = x as ApiError;
@@ -108,26 +118,26 @@ function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string;
     } finally { setBusy(false); }
   };
   return (
-    <section className="live-q card" aria-label="Вопросы ведущему">
+    <aside className="live-side card" aria-label="Вопросы ведущему">
+      <header className="live-side-head"><b>Вопросы ведущему</b>{items.length > 0 && <span className="muted small">{items.length}</span>}</header>
+      <ol className="live-q-mine" ref={list} aria-live="polite">
+        {items.length === 0 && <li className="live-q-empty muted small">Задайте вопрос — ведущий увидит его во время эфира. Ваши вопросы и ответы на них появятся здесь.</li>}
+        {items.map((q) => (
+          <li key={q.id} className={q.status}><p>{q.text}</p><span className={`live-q-st ${q.status}${q.seen ? " seen" : ""}`}>{qStatus(q)}</span></li>
+        ))}
+      </ol>
+      {note && <p className={`live-q-note small ${note.kind === "error" ? "field-error" : ""}`} role={note.kind === "error" ? "alert" : "status"}>{note.text}</p>}
       <form className="live-q-form" onSubmit={(e) => void send(e)}>
-        <label htmlFor="live-q-text" className="live-q-title">Вопрос ведущему</label>
-        <textarea id="live-q-text" rows={2} maxLength={Q_MAX} value={text} disabled={!open} placeholder={open ? "Напишите вопрос — его увидят ведущие эфира" : "Вопросы принимаются, пока идёт эфир"}
-                  onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void send(); }} />
+        <textarea id="live-q-text" rows={2} maxLength={Q_MAX} value={text} disabled={!open} aria-label="Ваш вопрос ведущему"
+                  placeholder={open ? "Ваш вопрос ведущему" : "Вопросы принимаются, пока идёт эфир"}
+                  onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
         <div className="row live-q-row">
           <span className="muted small" aria-live="off">{text.length}/{Q_MAX}</span>
           <span className="spacer" />
           <button className="btn primary" disabled={!open || busy || !text.trim()}>{busy ? "Отправка…" : "Отправить"}</button>
         </div>
-        {note && <p className={`small ${note.kind === "error" ? "field-error" : "muted"}`} role={note.kind === "error" ? "alert" : "status"}>{note.text}</p>}
       </form>
-      {items.length > 0 && (
-        <ul className="live-q-mine" aria-label="Ваши вопросы">
-          {items.slice().reverse().map((q) => (
-            <li key={q.id}><p>{q.text}</p><span className={`live-q-st ${q.status}`}>{Q_STATUS[q.status]}</span></li>
-          ))}
-        </ul>
-      )}
-    </section>
+    </aside>
   );
 }
 
@@ -198,7 +208,9 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (cancelled) return;
         if (!Hls.isSupported()) { setFatal("Этот браузер не умеет воспроизводить прямой эфир. Попробуйте другой браузер."); return; }
         const hls = new Hls({
-          enableWorker: false, lowLatencyMode: false, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 7, maxBufferLength: 20, backBufferLength: 20,
+          // сегменты по 1 с (без частей LL-HLS — Egress их не выпускает): держимся в 2 сегментах от края эфира, отставание догоняем ускорением до 1,1×,
+          // а не прыжком; дальше 5 сегментов — прыжок к краю. Было 3/7 при сегментах по 2 с — зритель отставал на 11 с.
+          enableWorker: false, lowLatencyMode: false, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 5, maxLiveSyncPlaybackRate: 1.1, maxBufferLength: 10, backBufferLength: 10,
           manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 4000 } } },
           xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, baseRef.current + prefix.current), true); },
         });
@@ -420,14 +432,14 @@ export default function LivePage() {
   );
 
   return (
-    <section className="live-wrap">
+    <section className={`live-wrap ${showPlayer && viewer ? "live-split" : ""}`}>
       <header className="live-head">
         <h1>{info.title}</h1>
         {info.status === "live" && <span className="live-tag on big"><i aria-hidden />Прямой эфир</span>}
         {info.status === "ended" && <span className="badge">Эфир завершён</span>}
       </header>
       {!info.available && <div className="alert warn">Трансляции отключены администратором сервера.</div>}
-      {showPlayer && access && <Player token={token} access={access} renew={renew} onGone={() => { setAccess(null); void load(); }} />}
+      {showPlayer && access && <div className="live-main"><Player token={token} access={access} renew={renew} onGone={() => { setAccess(null); void load(); }} /></div>}
       {showPlayer && viewer && <ViewerQuestions token={token} viewer={viewer} pass={() => pass.current} onViewerLost={lostViewer} />}
       {!showPlayer && info.status === "live" && needPw && info.own_hls && (
         <div className="live-stage live-msg"><PasswordForm onSubmit={(pw) => void submitPassword(pw)} busy={busy} error={pwErr} /></div>)}

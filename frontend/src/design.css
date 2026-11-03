@@ -1013,6 +1013,12 @@ pre.term, .term { font-family: var(--pixel); font-size: 10px; line-height: 1.8; 
 .ricon-tile span.n { font-size: 11.5px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; hyphens: auto; }
 .ricon-cats { display: flex; gap: 6px; flex-wrap: wrap; }
 .ricon-lic { font-size: 11.5px; }
+.ricon-hues { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ricon-hue { width: 32px; height: 32px; border-radius: 10px; border: 2px solid transparent; cursor: pointer; padding: 0;
+  background: linear-gradient(135deg, hsl(var(--ha) 72% 52%), hsl(var(--hb) 72% 46%)); transition: transform .15s; }
+.ricon-hue:hover { transform: scale(1.08); } .ricon-hue[aria-checked="true"] { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface, #fff) inset; }
+.ricon-hue.auto { width: auto; padding: 0 10px; background: var(--surface, #fff); border-color: var(--line); color: inherit; font: inherit; font-size: 12.5px; }
+.ricon-hue.auto[aria-checked="true"] { border-color: var(--accent); }
 
 /* Окно проверки «я не робот» (визуальная CAPTCHA) */
 .captcha-form { display: flex; flex-direction: column; gap: 12px; }

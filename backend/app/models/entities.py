@@ -175,6 +175,7 @@ class Room(Base):
     icon_kind: Mapped[str | None] = mapped_column(String(10))
     icon_key: Mapped[str | None] = mapped_column(String(40))
     icon_rev: Mapped[str | None] = mapped_column(String(16))
+    icon_hue: Mapped[int | None] = mapped_column(Integer)          # цвет буквенного и библиотечного значка (оттенок 0–359 из палитры интерфейса); NULL — по названию
     # доставка материалов встречи по почте (настраивает руководитель): {enabled, materials[], recipients{leaders,participants,users[],emails[]}}
     mail_delivery: Mapped[dict | None] = mapped_column(JSONType)
     # Языковая модель комнаты: inherit — системная по умолчанию; profile — подключение (llm_profile_id); off — отключена.
@@ -1200,6 +1201,7 @@ class LiveQuestion(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     handled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     handled_by: Mapped[str | None] = mapped_column(String(200))
+    seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime)               # ведущий открыл ленту с этим вопросом — зритель видит «Получен ведущим»
 
 
 class LiveDestination(Base):

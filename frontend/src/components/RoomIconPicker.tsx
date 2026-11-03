@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { api, type ApiError, type RoomIconInfo } from "../api";
 import { ROOM_ICON_CATEGORIES, ROOM_ICONS } from "../roomIcons/icons";
 import { findIcons } from "../roomIcons/search";
@@ -7,13 +7,18 @@ import ImageCropper from "./ImageCropper";
 import RoomIcon from "./RoomIcon";
 
 /** Выбор, который ещё не применён: комната создаётся позже, значок присваивается ей сразу после создания. */
-export type PendingIcon = { kind: "library"; key: string } | { kind: "image"; blob: Blob } | { kind: "reset" } | null;
+export type PendingIcon = { key?: string; blob?: Blob; hue?: number | null } | null;
 
 export async function applyPendingIcon(roomId: string, p: PendingIcon): Promise<void> {
-  if (!p || p.kind === "reset") return;
-  if (p.kind === "library") await api.roomIcon.library(roomId, p.key);
-  else await api.roomIcon.upload(roomId, p.blob);
+  if (!p) return;
+  if (p.key) await api.roomIcon.library(roomId, p.key);
+  else if (p.blob) await api.roomIcon.upload(roomId, p.blob);
+  if (p.hue != null) await api.roomIcon.color(roomId, p.hue);
 }
+
+/** Оттенки плитки (hsl): десять различимых цветов; «По названию» — прежний цвет, выводимый из названия. */
+const HUES: [number, string][] = [[0, "Красный"], [25, "Оранжевый"], [45, "Янтарный"], [95, "Салатовый"], [145, "Зелёный"], [175, "Бирюзовый"],
+  [200, "Голубой"], [220, "Синий"], [265, "Фиолетовый"], [320, "Малиновый"]];
 
 const ACCEPT = "image/png,image/jpeg,image/webp";
 const MAX_FILE = 12 * 1024 * 1024;       // выбранный файл до кадрирования; на сервер уходит только результат (≤ 400 КБ)
@@ -35,8 +40,10 @@ export default function RoomIconPicker({ roomId, name, icon, onChange, pending, 
   const [localUrl, setLocalUrl] = useState<string | null>(null);
 
   const shown: RoomIconInfo | null | undefined = !roomId && pending
-    ? (pending.kind === "library" ? { kind: "library", key: pending.key, url: null } : pending.kind === "image" && localUrl ? { kind: "image", key: null, url: localUrl } : null)
+    ? (pending.key ? { kind: "library", key: pending.key, url: null, hue: pending.hue } : pending.blob && localUrl ? { kind: "image", key: null, url: localUrl }
+      : pending.hue != null ? { kind: "std", key: null, url: null, hue: pending.hue } : null)
     : icon;
+  const hue = shown?.hue ?? null;
 
   const run = async (fn: () => Promise<{ icon: RoomIconInfo | null }>) => {
     setBusy(true); setErr("");
@@ -44,7 +51,10 @@ export default function RoomIconPicker({ roomId, name, icon, onChange, pending, 
   };
   const pickLib = async (key: string) => {
     setLib(false);
-    if (roomId) await run(() => api.roomIcon.library(roomId, key)); else { onPending?.({ kind: "library", key }); }
+    if (roomId) await run(() => api.roomIcon.library(roomId, key)); else { onPending?.({ key, hue: pending?.hue }); }
+  };
+  const pickHue = async (h: number | null) => {
+    if (roomId) await run(() => api.roomIcon.color(roomId, h)); else { onPending?.(pending?.blob ? pending : { key: pending?.key, hue: h }); }
   };
   const onFile = (f: File | undefined) => {
     setErr("");
@@ -56,7 +66,7 @@ export default function RoomIconPicker({ roomId, name, icon, onChange, pending, 
   const saveCropped = async (blob: Blob) => {
     if (roomId) { await api.roomIcon.upload(roomId, blob).then((r) => onChange?.(r.icon)); setFile(null); return; }
     if (localUrl) URL.revokeObjectURL(localUrl);
-    setLocalUrl(URL.createObjectURL(blob)); onPending?.({ kind: "image", blob }); setFile(null);
+    setLocalUrl(URL.createObjectURL(blob)); onPending?.({ blob }); setFile(null);
   };
   const reset = async () => {
     if (roomId) await run(() => api.roomIcon.reset(roomId));
@@ -68,7 +78,7 @@ export default function RoomIconPicker({ roomId, name, icon, onChange, pending, 
       <legend>Значок комнаты</legend>
       <div className="ricon-now">
         <RoomIcon name={name || "Комната"} icon={shown} size={64} />
-        <div className="muted small">{shown ? (shown.kind === "library" ? "Значок из библиотеки" : "Своё изображение") : "Стандартный значок: цветной квадрат с буквами названия"}
+        <div className="muted small">{shown?.kind === "library" ? "Значок из библиотеки" : shown?.kind === "image" ? "Своё изображение" : "Стандартный значок: цветной квадрат с буквами названия"}
           {!roomId && " · будет применён после создания комнаты"}</div>
       </div>
       <div className="row">
@@ -77,6 +87,12 @@ export default function RoomIconPicker({ roomId, name, icon, onChange, pending, 
         <button type="button" className="btn ghost" disabled={busy || !shown} onClick={() => void reset()}>Сбросить на стандартный</button>
         <input ref={input} type="file" accept={ACCEPT} hidden aria-label="Файл значка" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
+      {shown?.kind !== "image" && (
+        <div className="ricon-hues" role="radiogroup" aria-label="Цвет значка">
+          <button type="button" role="radio" aria-checked={hue == null} className="ricon-hue auto" disabled={busy} onClick={() => void pickHue(null)} title="По названию">Авто</button>
+          {HUES.map(([h, n]) => <button key={h} type="button" role="radio" aria-checked={hue === h} aria-label={n} title={n} className="ricon-hue" disabled={busy}
+                                         style={{ "--ha": h, "--hb": (h + 38) % 360 } as CSSProperties} onClick={() => void pickHue(h)} />)}
+        </div>)}
       <span className="help">PNG, JPG или WEBP. После выбора откроется окно кадрирования: квадрат, перемещение и масштаб. Сохраняется небольшое изображение 256×256, исходный файл на сервер не отправляется.</span>
       {err && <div className="alert error" role="alert">{err}</div>}
       {lib && <LibraryDialog name={name} current={shown?.kind === "library" ? shown.key : null} onPick={(k) => void pickLib(k)} onClose={() => setLib(false)} />}

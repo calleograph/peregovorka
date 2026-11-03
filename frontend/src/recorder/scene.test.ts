@@ -38,3 +38,18 @@ describe("общая сцена видеозаписи", () => {
     expect(pickScene({ ...base, cameras: [] })).toEqual({ main: [], strip: [], reason: "empty" });
   });
 });
+
+describe("показ экрана на весь кадр", () => {
+  const scr: SceneInput = { ...base, screens: ["b"], cameras: ["a", "b", "c"], live: [] };
+  it("участники без камеры (аватарки) не отнимают у экрана место: экран на весь кадр", () => {
+    expect(pickScene(scr)).toEqual({ main: ["screen:b"], strip: [], reason: "screen", solo: true });
+  });
+  it("участники с камерой остаются полосой, тогда кадр не «solo»", () => {
+    const s = pickScene({ ...scr, live: ["a"] });
+    expect(s.strip).toEqual(["camera:a"]);
+    expect(s.solo).toBeUndefined();
+  });
+  it("обычная конференция по-прежнему показывает всех", () => {
+    expect(pickScene({ ...base, live: ["a"] }).strip).toEqual(["camera:b", "camera:c"]);
+  });
+});

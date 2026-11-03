@@ -19,7 +19,8 @@ export interface Me { user: User; csrf_token: string; local?: boolean; must_chan
 export interface TotpChallenge { totp_required: true; challenge: string }
 export interface TotpStatus { available: boolean; policy: string; enabled: boolean; required: boolean; backup_left: number; enabled_at: string | null }
 export interface ActiveMeeting { id: string; started_at: string; participants: number }
-export interface RoomIconInfo { kind: "library" | "image"; key: string | null; url: string | null }
+/** std — буквы названия, но своего цвета; hue — оттенок плитки 0–359 (null — по названию). */
+export interface RoomIconInfo { kind: "library" | "image" | "std"; key: string | null; url: string | null; hue?: number | null }
 /** «Предстоящие встречи»: конференция из календаря Outlook или временная комната (GET /rooms/upcoming). Время — моменты UTC; отсчёт считает браузер. */
 export interface UpcomingMeeting {
   id: string; slug: string; name: string; kind: "scheduled" | "temporary" | "peer";
@@ -302,7 +303,7 @@ export interface Participant {
   email?: string | null; materials_consent?: boolean;
 }
 /** Вопрос зрителя эфира. author/email — в ленте ведущих (почта — только руководителям и организатору). */
-export interface LiveQuestion { id: string; text: string; status: "new" | "done" | "hidden"; at: string; handled_at?: string | null; author?: string; email?: string | null; materials_consent?: boolean }
+export interface LiveQuestion { id: string; text: string; status: "new" | "done" | "hidden"; at: string; handled_at?: string | null; seen?: boolean; author?: string; email?: string | null; materials_consent?: boolean }
 export interface LiveQuestionFeed { items: LiveQuestion[]; counts: { new: number; done: number; hidden: number }; can_moderate: boolean; contacts: boolean }
 export interface LiveViewerReg { viewer: string; display_name: string; email: string | null; materials_consent: boolean }
 export interface Meeting {
@@ -1053,6 +1054,7 @@ export const api = {
     library: (roomId: string, key: string) => request<{ icon: RoomIconInfo | null }>("PUT", `/rooms/${roomId}/icon/library`, { key }),
     upload: (roomId: string, blob: Blob) => putBlob<{ icon: RoomIconInfo | null }>(`/rooms/${roomId}/icon`, blob),
     reset: (roomId: string) => request<{ icon: RoomIconInfo | null }>("DELETE", `/rooms/${roomId}/icon`),
+    color: (roomId: string, hue: number | null) => request<{ icon: RoomIconInfo | null }>("PUT", `/rooms/${roomId}/icon/color`, { hue }),
   },
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,

@@ -85,11 +85,15 @@ def revision(webp: bytes) -> str:
 
 
 def icon_out(room) -> dict | None:
-    """Сведения о значке для интерфейса: None — стандартный (цветной квадрат с буквами)."""
+    """Сведения о значке для интерфейса: None — стандартный (цветной квадрат с буквами, цвет по названию); std — стандартный своего цвета.
+    hue — выбранный цвет буквенного и библиотечного значка (оттенок палитры интерфейса); к загруженному изображению не относится."""
+    hue = getattr(room, "icon_hue", None)
     if room.icon_kind == "library" and room.icon_key:
-        return {"kind": "library", "key": room.icon_key, "url": None}
+        return {"kind": "library", "key": room.icon_key, "url": None, "hue": hue}
     if room.icon_kind == "image" and room.icon_rev:
         return {"kind": "image", "key": None, "url": f"/api/v1/rooms/{room.id}/icon?v={room.icon_rev}"}
+    if hue is not None:
+        return {"kind": "std", "key": None, "url": None, "hue": hue}
     return None
 
 

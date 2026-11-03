@@ -6,12 +6,12 @@ import { useImageFallback } from "./useImageFallback";
 
 /**
  * Значок комнаты везде одинаково: загруженная картинка, значок из библиотеки на цветной плитке или стандартный вариант (цветной квадрат с одной–двумя буквами названия).
- * Цвет плитки зависит от названия, как и раньше. Картинка адресуется с версией — при замене кэш браузера обновляется сам.
+ * Цвет плитки — заданный в комнате оттенок, иначе зависит от названия, как и раньше. Картинка адресуется с версией — при замене кэш браузера обновляется сам.
  * Если картинка не загрузилась (после повторной попытки), показывается стандартный значок, а не «сломанная картинка».
  */
 export default function RoomIcon({ name, icon, size = 46, className = "" }: { name: string; icon?: RoomIconInfo | null; size?: number; className?: string }) {
   const img = useImageFallback(icon?.kind === "image" ? icon.url : null);
-  const t = tint(name);
+  const t = icon?.hue != null ? { a: icon.hue, b: (icon.hue + 38) % 360 } : tint(name);
   const style = { width: size, height: size, borderRadius: Math.round(size * 0.28), "--ha": t.a, "--hb": t.b, fontSize: Math.round(size * 0.35) } as CSSProperties;
   if (icon?.kind === "image" && icon.url && !img.failed) {
     return <img className={`room-icon img ${className}`} src={img.src ?? icon.url} width={size} height={size} alt="" aria-hidden loading="lazy" decoding="async" style={style} onError={img.onError} />;

@@ -637,7 +637,7 @@ def clean_question(raw: str) -> str:
 
 
 def _q_out(q: LiveQuestion, *, contacts: LiveViewer | None = None, mine: bool = False) -> dict:
-    out = {"id": str(q.id), "text": q.text, "status": q.status, "at": _utc(q.created_at), "handled_at": _utc(q.handled_at)}
+    out = {"id": str(q.id), "text": q.text, "status": q.status, "at": _utc(q.created_at), "handled_at": _utc(q.handled_at), "seen": q.seen_at is not None}
     if not mine:
         out["author"] = q.author_name
         if contacts is not None:
@@ -714,6 +714,13 @@ async def meeting_questions(meeting_id: uuid.UUID, request: Request, su: Session
     counts = {"new": 0, "done": 0, "hidden": 0}
     for q, _v in rows:
         counts[q.status] = counts.get(q.status, 0) + 1
+    if _can_moderate(meeting, su) and meeting.ended_at is None:
+        unseen = [q for q, _v in rows if q.seen_at is None]
+        if unseen:                                    # лента у ведущего открыта: вопросы получены — зритель видит это в статусе
+            now = datetime.now(timezone.utc)
+            for q in unseen:
+                q.seen_at = now
+            await db.commit()
     return {"items": [_q_out(q, contacts=v if contacts and v is not None else None) for q, v in rows], "counts": counts,
             "can_moderate": _can_moderate(meeting, su), "contacts": contacts}
 

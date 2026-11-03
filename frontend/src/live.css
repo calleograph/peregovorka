@@ -82,13 +82,31 @@
 
 /* Зритель представляется; вопросы зрителя к эфиру */
 .live-viewer { width: min(400px, 100%); }
-.live-q { display: grid; gap: 10px; padding: 12px 14px; }
-.live-q-form { display: grid; gap: 6px; }
-.live-q-title { font-weight: 600; }
-.live-q textarea { width: 100%; resize: vertical; min-height: 64px; max-height: 40vh; font: inherit; }
-.live-q-row { align-items: center; gap: 8px; }
-.live-q-mine { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+/* Страница зрителя во время эфира: слева видео (главное, максимальная площадь с сохранением пропорций), справа панель вопросов той же высоты —
+   лента прокручивается внутри, поле ввода всегда внизу; страница целиком не прокручивается. Узкие экраны: видео закреплено сверху, вопросы — под ним. */
+.live-wrap.live-split { max-width: 1680px; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 380px); grid-template-areas: "head head" "main side"; column-gap: 14px; align-items: stretch; }
+.live-split > .live-head { grid-area: head; }
+.live-split > .live-main { grid-area: main; min-width: 0; }
+.live-split .live-main .live-stage { max-height: calc(100dvh - 130px); margin: 0 auto; }
+.live-split > .live-side { grid-area: side; height: 0; min-height: 100%; }
+.live-side { display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; }
+.live-side-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.live-q-mine { flex: 1 1 auto; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .live-q-mine li { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; display: grid; gap: 4px; background: var(--soft); }
+.live-q-mine li.live-q-empty { border: 0; background: none; padding: 4px 2px; }
+.live-q-mine li.done { border-left: 3px solid var(--ok-text, var(--accent)); }
 .live-q-mine p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-q-note { margin: 0; padding: 6px 14px; background: var(--accent-soft); }
+.live-q-form { display: grid; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.live-q-form textarea { width: 100%; resize: none; min-height: 56px; max-height: 30vh; font: inherit; }
+.live-q-row { align-items: center; gap: 8px; }
+@media (max-width: 900px) {
+  .live-wrap.live-split { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "main" "side"; row-gap: 10px; }
+  .live-split > .live-main { position: sticky; top: 0; z-index: 3; background: var(--bg); padding-bottom: 6px; }
+  .live-split .live-main .live-stage { max-height: 42dvh; }
+  .live-split > .live-side { height: auto; min-height: 0; }
+  .live-split .live-q-mine { max-height: none; overflow: visible; }
+}
 .live-q-st { font-size: 12.5px; color: var(--muted); }
 .live-q-st.done { color: var(--ok-text, var(--accent)); } .live-q-st.hidden { color: var(--muted); font-style: italic; }
+.live-q-st.new.seen { color: var(--accent); }
