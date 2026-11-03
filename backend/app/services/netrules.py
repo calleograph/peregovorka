@@ -20,6 +20,10 @@ _ALIASES = {
     "app_public_url": ("APP_PUBLIC_URL",),
     "livekit_public_url": ("LIVEKIT_PUBLIC_URL",),
     "node_ip": ("LIVEKIT_NODE_IP",),
+    "media_mode": ("LIVEKIT_MEDIA_MODE",),
+    "rtc_node_ip": ("LIVEKIT_RTC_NODE_IP",),
+    "public_ip": ("LIVEKIT_PUBLIC_IP",),
+    "stun": ("LIVEKIT_STUN_SERVERS",),
     "lk_tcp": ("LIVEKIT_TCP_PORT", "LIVEKIT_RTC_TCP_PORT"),
     "lk_udp": ("LIVEKIT_UDP_PORT", "LIVEKIT_RTC_UDP_PORT"),
     "lk_bind": ("LIVEKIT_BIND_ADDR", "NET_LIVEKIT_BIND_ADDR"),
@@ -44,6 +48,10 @@ class NetInput:
     app_public_url: str = ""
     livekit_public_url: str = ""
     node_ip: str = ""
+    media_mode: str = ""       # direct | nat-stun | nat-manual | lan (scripts/medianet.py); пусто — установка до 0.63
+    rtc_node_ip: str = ""
+    public_ip: str = ""
+    stun: str = ""
     lk_tcp: int = 0
     lk_udp: int = 0
     lk_bind: str = "0.0.0.0"
@@ -86,6 +94,7 @@ def from_env(env: dict[str, str], outbound: list[dict[str, Any]] | None = None, 
 
     n = NetInput(
         app_public_url=pick("app_public_url"), livekit_public_url=pick("livekit_public_url"), node_ip=pick("node_ip"),
+        media_mode=pick("media_mode"), rtc_node_ip=pick("rtc_node_ip"), public_ip=pick("public_ip", "auto"), stun=pick("stun"),
         lk_tcp=_int(pick("lk_tcp")), lk_udp=_int(pick("lk_udp")), lk_bind=pick("lk_bind", "0.0.0.0"), lk_http=_int(pick("lk_http")),
         web_bind=pick("web_bind", "127.0.0.1"), web_port=_int(pick("web_port")), nginx_port=_int(pick("nginx_port")),
         tls_local=bool(pick("tls_cert")) and pick("tls_cert").lower() not in ("0", "false", "no"),
@@ -211,11 +220,13 @@ def build(n: NetInput) -> dict[str, Any]:
                 ["Адрес отличается от основного: на нём тоже нужен корректный сертификат и проброс WebSocket (Upgrade)."]))
 
     node = n.node_ip
-    where_rtc = f"клиенты → {node or 'LIVEKIT_NODE_IP'}"
+    nat = n.media_mode in ("nat-stun", "nat-manual")
+    where_rtc = f"клиенты → {n.rtc_node_ip} (из интернета) и {node} (локальная сеть)" if nat and n.rtc_node_ip else f"клиенты → {node or 'LIVEKIT_NODE_IP'}"
     rtc_notes = [
-        "LiveKit сообщает клиентам адрес LIVEKIT_NODE_IP и этот же номер порта: на NAT порт пробрасывается на сервер без смены номера.",
+        ("За NAT порт пробрасывается на " + (node or "LIVEKIT_NODE_IP") + " без смены номера и протокола: LiveKit сообщает клиентам этот же номер."
+         if nat else "LiveKit сообщает клиентам этот же номер порта: при NAT порт пробрасывается на сервер без смены номера."),
         "Через HTTP-прокси медиа не ходит: трафик идёт напрямую на сервер.",
-        "Встроенного TURN/STUN в установке нет и внешние STUN/TURN не используются: клиенты должны достучаться до этих портов напрямую.",
+        "TURN в установке нет: клиенты должны достучаться до этих портов напрямую. Проверка сети и правила проброса: scripts/medianet.sh check.",
     ]
     if n.lk_udp:
         rules.append(_rule("rtc-udp", "in", "internet", "required", "UDP", str(n.lk_udp), "LiveKit (ICE/UDP, один порт на всех)",
@@ -232,16 +243,27 @@ def build(n: NetInput) -> dict[str, Any]:
 
     if not node:
         warnings.append("LIVEKIT_NODE_IP не задан: клиенты не получат адрес для медиа.")
+    elif nat:
+        variant.append(f"сервер за NAT: клиентам объявляются публичный адрес {n.rtc_node_ip or '(определяется через STUN)'} и адрес в локальной сети {node}"
+                       + (" (публичный — через STUN при каждом запуске LiveKit)" if n.media_mode == "nat-stun" else " (публичный задан администратором)"))
+    elif n.media_mode == "direct":
+        variant.append(f"публичный адрес на интерфейсе сервера: клиентам объявляется {n.rtc_node_ip or node}")
     else:
         priv = _private(node)
         if priv is None:
             warnings.append("LIVEKIT_NODE_IP — не IP-адрес: LiveKit ожидает именно IP.")
         elif priv:
+            off = n.public_ip.lower() == "off"
             warnings.append(
-                f"LIVEKIT_NODE_IP ({node}) — частный адрес: клиентам из интернета он недоступен. Для доступа извне укажите во "
-                "LIVEKIT_NODE_IP внешний адрес (на межсетевом экране пробросьте порты на сервер) и проверьте, что клиенты из локальной "
-                "сети достают до него (hairpin NAT или внутренняя маршрутизация).")
-            variant.append("медиа за NAT или только для локальной сети (LIVEKIT_NODE_IP частный)")
+                f"LIVEKIT_NODE_IP ({node}) — частный адрес, публичный адрес не объявляется" + (" (LIVEKIT_PUBLIC_IP=off)" if off else "") +
+                ": клиенты из интернета подключиться не смогут. Для доступа извне: LIVEKIT_PUBLIC_IP=auto (STUN) или публичный адрес, "
+                "затем sudo scripts/medianet.sh apply — правила проброса и проверка: scripts/medianet.sh check.")
+            variant.append("медиа только для локальной сети (публичный адрес не объявляется)")
+    if n.media_mode == "nat-stun":
+        stun = n.stun or "stun.l.google.com:19302,stun1.l.google.com:19302"
+        rules.append(_rule("stun", "out", "internet", "conditional", "UDP", ",".join(sorted({x.rsplit(":", 1)[-1] for x in stun.split(",") if ":" in x})),
+                           "LiveKit (STUN)", "Определение публичного адреса сервера за NAT; те же серверы получают клиенты для своих кандидатов ICE.",
+                           f"сервер → {stun}", ["Закрыт — LiveKit объявит последний известный адрес; задать адрес явно: LIVEKIT_PUBLIC_IP."]))
     if n.lk_bind and _listen_scope(n.lk_bind) == "local" and (n.lk_tcp or n.lk_udp):
         warnings.append("LIVEKIT_BIND_ADDR привязан к loopback: порты медиа недоступны с других компьютеров, звонки работать не будут.")
 

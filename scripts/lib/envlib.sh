@@ -114,9 +114,11 @@ print_network_summary() { # читает переменные окружения
         → контейнер web 127.0.0.1:${WEB_PORT:-?}  (интерфейс, /api, WebSocket, сигналинг /livekit)
         → LiveKit API 127.0.0.1:${LIVEKIT_HTTP_PORT:-?} (только loopback, для диагностики)
 
- Звук/видео идут МИМО HTTP-прокси — напрямую клиент → сервер (${LIVEKIT_NODE_IP:-?}):
+ Звук/видео идут МИМО HTTP-прокси — напрямую клиент → сервер (режим ${LIVEKIT_MEDIA_MODE:-?}; в сети сервера ${LIVEKIT_NODE_IP:-?},
+ публичный ${LIVEKIT_RTC_NODE_IP:-—}; проверка и проброс портов: scripts/medianet.sh check):
    ICE/TCP  ${LIVEKIT_TCP_PORT:-?}/tcp   — запасной канал
    ICE/UDP  ${LIVEKIT_UDP_PORT:-?}/udp   — основной канал (один mux-порт)
+ За NAT пробрасывайте порты на ${LIVEKIT_NODE_IP:-?} без смены номера и протокола.
  ВНИМАНИЕ: HTTP reverse proxy (в т.ч. Nginx Proxy Manager) НЕ заменяет доступ клиентов к
  ${LIVEKIT_TCP_PORT:-?}/tcp и ${LIVEKIT_UDP_PORT:-?}/udp сервера. Откройте их для клиентов сети (файрвол установщик не меняет).
 

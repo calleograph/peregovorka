@@ -926,6 +926,13 @@ export interface SecOverview { protection: { login_protection: boolean; captcha_
 export interface WafRule { id: string; title: string; blurb: string; verified: boolean; mode: "inherit" | "off" | "observe" | "block"; observed_24h: number; blocked_24h: number; last_seen: string | null }
 export interface WafState { mode: "off" | "observe" | "protect"; probe_threshold: number; probe_block_minutes: number; exclude_paths: string; exclude_ips: string; rules: WafRule[] }
 export interface NetworkInfo { variant: string[]; rules: NetRule[]; local_only: { proto: string; port: string; component: string; purpose: string; reachable: string; bind?: string }[]; warnings: string[]; limits: string[]; public_host: string; node_ip: string; generated_at: number }
+/** Медиасоединения (ICE): режим, адреса для клиентов, проброс портов и проверки (backend/app/services/medianet.py). */
+export interface MediaNetCheck { id: string; title: string; status: "ok" | "warn" | "fail" | "unknown"; detail: string; action: string }
+export interface MediaNet {
+  plan: { mode: "direct" | "nat-stun" | "nat-manual" | "lan"; mode_text: string; lan_ip: string; public_ip: string | null; public_source: string; setting: string;
+    advertised: string[]; ports: { tcp: string; udp: string }; forward: { proto: string; external: string; target: string; why: string }[]; warnings: string[]; actions: string[] };
+  checks: MediaNetCheck[]; live: boolean; stun?: { server: string; ip: string | null; port: number | null }[];
+}
 export interface NetworkProbe { checks: { id: string; host: string; port: number; what: string; ok: boolean; ms?: number; error?: string }[]; not_checked: { id: string; proto: string; port: string; reason: string }[]; disclaimer: string }
 
 export const api = {
@@ -1322,6 +1329,8 @@ export const api = {
     wafUpdate: (body: Record<string, unknown>) => request<WafState>("PUT", "/admin/security/waf", body),
     loginProtectionStatus: () => request<{ blocked_now: number }>("GET", "/admin/security/login-protection/status"),
     networkProbe: () => request<NetworkProbe>("POST", "/admin/network/probe"),
+    networkMedia: () => request<MediaNet>("GET", "/admin/network/media"),
+    networkMediaProbe: () => request<MediaNet>("POST", "/admin/network/media/probe"),
     resetTotp: (userId: string, password: string) => request<void>("POST", `/admin/users/${userId}/totp/reset`, { password }),
     autoBackup: () => request<AutoBackupStatus>("GET", "/admin/auto-backup"),
     autoBackupSave: (body: Partial<Omit<AutoBackupStatus["settings"], "archive_key_set">>) => request<AutoBackupStatus>("PUT", "/admin/auto-backup/settings", body),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ApiError, type NetRule, type NetworkInfo, type NetworkProbe } from "../../api";
+import { api, type ApiError, type MediaNet, type NetRule, type NetworkInfo, type NetworkProbe } from "../../api";
 import { useToast } from "../../components/Toast";
 import { originMismatch } from "../../networkView";
 import InfoTip from "../../components/InfoTip";
@@ -8,6 +8,58 @@ const REQ: Record<NetRule["required"], string> = { required: "обязатель
 const SCOPE_IN: Record<string, string> = { internet: "из интернета, от клиентов", internal: "внутренняя сеть", pbx: "только от АТС", local: "только сервер" };
 const SCOPE_OUT: Record<string, string> = { internet: "в интернет", internal: "внутренняя сеть организации", pbx: "к АТС", local: "только сервер" };
 const FORMATS: { id: "text" | "md" | "csv"; label: string }[] = [{ id: "text", label: "TXT" }, { id: "csv", label: "CSV" }, { id: "md", label: "Markdown" }];
+
+const ST: Record<MediaNet["checks"][number]["status"], [string, string]> = { ok: ["ok", "в порядке"], warn: ["warn", "внимание"], fail: ["danger", "ошибка"], unknown: ["", "не подтверждено"] };
+const SRC: Record<string, string> = { stun: "определён через STUN", admin: "задан администратором", interface: "на интерфейсе сервера", previous: "последний известный", configured: "по настройкам" };
+
+/** Медиасоединения: какие адреса LiveKit сообщает клиентам (ICE), какие порты пробросить на маршрутизаторе и что показали проверки. */
+function MediaNetPanel() {
+  const [m, setM] = useState<MediaNet | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.admin.networkMedia().then(setM).catch((e) => setErr((e as ApiError).message)); }, []);
+  const probe = async () => {
+    setBusy(true);
+    try { setM(await api.admin.networkMediaProbe()); setErr(""); } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); }
+  };
+  if (err) return <div className="alert error">{err}</div>;
+  if (!m) return <p className="muted">Загрузка…</p>;
+  const p = m.plan;
+  return (
+    <>
+      <p>Режим: <strong>{p.mode_text}</strong>. Клиентам объявляется: {p.advertised.length ? p.advertised.map((a, i) => <code key={a} style={{ marginLeft: i ? 6 : 0 }}>{a}</code>) : "—"}
+        {" "}(UDP <code>{p.ports.udp || "—"}</code>, TCP <code>{p.ports.tcp || "—"}</code>).
+        <InfoTip>Адрес сервера в его сети — {p.lan_ip || "—"}; публичный — {p.public_ip ? `${p.public_ip} (${SRC[p.public_source] ?? p.public_source})` : "не используется"}. Настройка LIVEKIT_PUBLIC_IP={p.setting}: auto — определить, off — только локальная сеть, или адрес. Применить изменения: sudo scripts/medianet.sh apply.</InfoTip></p>
+      {p.forward.length > 0 && (
+        <>
+          <h4>Проброс на маршрутизаторе перед сервером</h4>
+          <p className="muted small">Номер порта и протокол снаружи и на сервере совпадают: LiveKit сообщает клиентам именно эти номера.</p>
+          <div style={{ overflowX: "auto" }}>
+            <table className="table compact">
+              <thead><tr><th>Протокол</th><th>Снаружи</th><th>На сервер</th><th>Зачем</th></tr></thead>
+              <tbody>{p.forward.map((f) => <tr key={f.proto + f.external}><td>{f.proto}</td><td><code>{f.external}</code></td><td><code>{f.target}</code></td><td>{f.why}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {p.warnings.map((w, i) => <div key={i} className="alert warn">{w}</div>)}
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <button className="btn" disabled={busy} onClick={probe}>{busy ? "Проверка…" : "Проверить медиасоединения"}</button>
+        <span className="muted small">{m.live ? "Проверено с сервера: STUN, узлы по пути в интернет, медиапорт по публичному адресу." : "Проверки сети ещё не запускались — показаны настройки и пути настоящих клиентов."}</span>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="table compact" style={{ marginTop: 8 }}>
+          <thead><tr><th>Проверка</th><th>Результат</th><th>Подробности и что сделать</th></tr></thead>
+          <tbody>{m.checks.map((c) => (
+            <tr key={c.id}><td>{c.title}</td><td><span className={`badge ${ST[c.status][0]}`}>{ST[c.status][1]}</span></td>
+              <td>{c.detail}{c.action && <div className="muted small">→ {c.action}</div>}</td></tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <p className="muted small">Все проверки с сервера в терминале, включая порты Docker и межсетевой экран: <code>sudo scripts/medianet.sh check</code>.</p>
+    </>
+  );
+}
 
 /** Тот же перечень, что выводит `scripts/ports.sh`: строится по настройкам этого экземпляра, а не по зашитой таблице. */
 export default function NetworkAdmin() {
@@ -70,6 +122,8 @@ export default function NetworkAdmin() {
           <ul>{info.variant.map((v, i) => <li key={i}>{v}</li>)}</ul>
           {info.warnings.map((w, i) => <div key={i} className="alert warn">{w}</div>)}
           {mismatch && <div className="alert warn">{mismatch}</div>}
+          <h3>Медиасоединения: адреса для звука и видео</h3>
+          <MediaNetPanel />
           <h3>Входящие соединения — открыть на межсетевом экране перед сервером</h3>
           {table("in")}
           <h3>Исходящие соединения сервера</h3>

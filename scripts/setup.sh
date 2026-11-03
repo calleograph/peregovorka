@@ -3,6 +3,7 @@
 #
 #   scripts/setup.sh [--profile shared-host|standalone] [--env-only]
 #   scripts/setup.sh --auto [--host ИМЯ_ИЛИ_IP] [--https-port 443] [--name peregovorka] [--data КАТАЛОГ] [--skip-models]
+#   --public-ip auto|off|IPv4 — публичный адрес для звонков из интернета (по умолчанию auto: адрес на интерфейсе или STUN; см. scripts/medianet.sh)
 #       «Установка без вопросов» (её вызывает корневой install.sh): standalone, самоподписанный сертификат HTTPS, без LDAP в .env — каталог,
 #       сертификаты CA, группы администраторов, SMB и почта настраиваются в веб-интерфейсе; в конце — локальный администратор и блок «ПЕРВИЧНЫЙ ВХОД».
 #
@@ -15,7 +16,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-PROFILE="shared-host"; ENV_ONLY=0; AUTO=0; A_HOST=""; A_PORT="443"; A_NAME="peregovorka"; A_DATA=""; SKIP_MODELS=0
+PROFILE="shared-host"; ENV_ONLY=0; AUTO=0; A_HOST=""; A_PORT="443"; A_NAME="peregovorka"; A_DATA=""; SKIP_MODELS=0; A_PUBLIC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
@@ -26,6 +27,7 @@ while [ $# -gt 0 ]; do
     --name) A_NAME="$2"; shift 2 ;;
     --data) A_DATA="$2"; shift 2 ;;
     --skip-models) SKIP_MODELS=1; shift ;;
+    --public-ip) A_PUBLIC="$2"; shift 2 ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) die "Неизвестный аргумент: $1" ;;
   esac
@@ -88,7 +90,9 @@ if [ ! -f "$ENV" ]; then
   else
     ask_valid "Имя экземпляра (уникальное на сервере)" "peregovorka-prod" v_name; NAME="$REPLY"
     ask_valid "DNS-имя сайта (HTTPS обеспечивает внешний прокси/nginx)" "meet.example.org" v_host; HOSTN="$REPLY"
-    ask_valid "IP сервера, по которому до него доходят клиенты (для звука)" "${defip:-}" v_ip; NODEIP="$REPLY"
+    ask_valid "IP-адрес сервера в его сети (интерфейс; для звука в локальной сети)" "${defip:-}" v_ip; NODEIP="$REPLY"
+    info "Публичный адрес для пользователей из интернета: auto — определить (адрес на интерфейсе или STUN за NAT), off — только локальная сеть, или IPv4."
+    ask "Публичный адрес для звонков из интернета" "${A_PUBLIC:-auto}"; A_PUBLIC="$REPLY"
   fi
   info "DATA_ROOT — ЛОКАЛЬНЫЙ каталог Linux для БД, моделей, записей и бэкапов (не сетевой путь)."
   info "Сетевое SMB-хранилище готовых протоколов настраивается ПОСЛЕ установки: админка → «Хранилище»."
@@ -171,6 +175,9 @@ if [ ! -f "$ENV" ]; then
   elif [ -r "$CA" ]; then :; else warn "Файл CA $CA пока не найден — положите туда PEM цепочки CA, иначе preflight откажет."; fi
 fi
 
+# адреса медиасоединений (ICE): и при первой установке, и при повторном запуске — явные настройки администратора сохраняются
+python3 -I "$REPO_ROOT/scripts/medianet.py" configure --env "$ENV" --write ${A_PUBLIC:+--public-ip "$A_PUBLIC"} \
+  || die "Адреса медиасоединений: проверьте --public-ip (auto, off или IPv4) и запустите scripts/setup.sh снова"
 load_env "$ENV"
 print_network_summary
 [ "$ENV_ONLY" -eq 0 ] || { ok "--env-only: .env готов, дальше — scripts/preflight.sh и scripts/install.sh."; exit 0; }

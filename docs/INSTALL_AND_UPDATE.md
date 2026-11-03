@@ -126,7 +126,7 @@ scripts/setup.sh --profile shared-host --env-only
 - `COMPOSE_PROJECT_NAME` — **уникальное** имя экземпляра (например `peregovorka-prod`); от него зависят имена контейнеров/сетей/томов.
 - `INSTALL_PROFILE` — `shared-host` или `standalone`; `APP_PUBLIC_URL=https://meet.<домен>`; `LIVEKIT_PUBLIC_URL=wss://meet.<домен>/livekit`.
 - `DATA_ROOT` — каталог постоянных данных **вне** checkout (например `/srv/peregovorka-data`).
-- Порты: `WEB_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`, `NGINX_LISTEN_PORT` — свободные; `LIVEKIT_NODE_IP` — IP сервера, по которому до него доходят клиенты.
+- Порты: `WEB_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`, `NGINX_LISTEN_PORT` — свободные; `LIVEKIT_NODE_IP` — адрес сервера в его сети (интерфейс), `LIVEKIT_PUBLIC_IP` — `auto`, `off` или публичный IPv4 (`--public-ip` у `setup.sh`); остальные адреса ICE вычисляет `scripts/medianet.py` и при каждом обновлении проверяет их заново ([NETWORK.md](NETWORK.md#медиасоединения-адреса-ice)).
 - Ключи: `LIVEKIT_API_KEY/SECRET`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_MASTER_KEY`, `INTERNAL_API_TOKEN` — случайные, создаёт мастер. **Сохраните копию `APP_MASTER_KEY` отдельно** — без него зашифрованные настройки (пароль SMB, токены, ключ LLM, пароль LDAP) невосстановимы.
 - Каталог (LDAP), сертификаты CA и группы администраторов настраиваются в браузере; прежние `LDAP_*` в `.env` (если они есть) продолжают работать и переносятся в управляемые настройки кнопкой «Перенести настройки».
 - `TRUSTED_PROXY_HOPS` — сколько прокси перед контейнером web (host-nginx = 1; внешний reverse proxy + host-nginx = 2).

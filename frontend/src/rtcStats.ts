@@ -12,7 +12,8 @@ export interface MediaStats {
   nack?: number; pli?: number; fir?: number; framesEncoded?: number; framesDecoded?: number; framesDropped?: number;
   limitReason?: string; bytes?: number;
 }
-export interface PathStats { candidate?: string; localType?: string; remoteType?: string; protocol?: string; rttMs?: number }
+/** remote — адрес сервера в выбранной паре («udp 192.0.2.2:17882»): какой из объявленных LiveKit кандидатов сработал у клиента. */
+export interface PathStats { candidate?: string; localType?: string; remoteType?: string; protocol?: string; rttMs?: number; remote?: string }
 
 type Rep = Record<string, unknown>;
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -68,7 +69,9 @@ export function parsePath(report: Parameters<typeof entries>[0]): PathStats {
   if (!pair) return {};
   const l = byId.get(pair.localCandidateId as string), r = byId.get(pair.remoteCandidateId as string);
   const lt = l?.candidateType as string | undefined, rt = r?.candidateType as string | undefined, pr = (l?.protocol ?? r?.protocol) as string | undefined;
-  return { localType: lt, remoteType: rt, protocol: pr, candidate: lt || pr ? `${pr ?? "?"}/${lt ?? "?"}→${rt ?? "?"}` : undefined, rttMs: ms(pair.currentRoundTripTime) };
+  const addr = (r?.address ?? r?.ip) as string | undefined, port = r?.port as number | undefined;
+  return { localType: lt, remoteType: rt, protocol: pr, candidate: lt || pr ? `${pr ?? "?"}/${lt ?? "?"}→${rt ?? "?"}` : undefined, rttMs: ms(pair.currentRoundTripTime),
+    ...(addr && port ? { remote: `${pr ?? "?"} ${addr}:${port}` } : {}) };
 }
 
 /** Битрейт по приращению счётчика байт между вызовами (ключ — поток). */

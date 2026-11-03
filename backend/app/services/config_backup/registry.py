@@ -229,7 +229,13 @@ ENV: dict[str, str] = {
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
-ENV_OTHER: dict[str, str] = {"LIVE_DIR": "том трансляций внутри backend (HLS и ссылки доступа; по умолчанию каталог данных/live): общий с Egress и nginx web", "LIVE_EGRESS_DIR": "тот же том внутри контейнера Egress (по умолчанию /live)", "VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)", "PRIVACY_NLP_DIR": "каталог моделей распознавания имён в образе backend"}
+ENV_OTHER: dict[str, str] = {"LIVE_DIR": "том трансляций внутри backend (HLS и ссылки доступа; по умолчанию каталог данных/live): общий с Egress и nginx web", "LIVE_EGRESS_DIR": "тот же том внутри контейнера Egress (по умолчанию /live)", "VIDEO_EGRESS_OUT": "каталог записей внутри контейнера Egress (по умолчанию /out): общий том с backend", "FFMPEG_BIN": "путь к ffmpeg на этом сервере", "PDF_FONT_DIR": "каталог шрифтов на этом сервере", "KRB5_CONFIG": "служебный файл Kerberos, формируется из настроек сверки при необходимости", "OUTLOOK_CHECK_CA_FILE": "файл корня организации для проверок с сервера (относится к этой установке)", "PRIVACY_NLP_DIR": "каталог моделей распознавания имён в образе backend",
+    # медиасоединения (services/medianet.py): адреса и порты этой установки из .env через compose — в резервную копию конфигурации не входят
+    "LIVEKIT_RTC_TCP_PORT": "порт LiveKit ICE/TCP этой установки (из LIVEKIT_TCP_PORT)", "LIVEKIT_RTC_UDP_PORT": "порт LiveKit ICE/UDP этой установки (из LIVEKIT_UDP_PORT)",
+    "LIVEKIT_PUBLIC_IP": "публичный адрес для звонков: auto, off или IPv4 (относится к этой установке)", "LIVEKIT_STUN_SERVERS": "серверы STUN этой установки",
+    "LIVEKIT_MEDIA_MODE": "режим медиасоединений, вычисляет scripts/medianet.py", "LIVEKIT_RTC_NODE_IP": "объявляемый адрес LiveKit, вычисляет scripts/medianet.py",
+    "LIVEKIT_RTC_USE_EXTERNAL_IP": "STUN в LiveKit, вычисляет scripts/medianet.py", "LIVEKIT_RTC_ADVERTISE_INTERNAL": "объявлять адрес локальной сети, вычисляет scripts/medianet.py",
+    "LIVEKIT_RTC_LAN_IP": "адрес сервера в локальной сети для кандидатов ICE, вычисляет scripts/medianet.py"}
 
 
 def exported_tables() -> list[str]:

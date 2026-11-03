@@ -36,9 +36,10 @@
 | `LIVEKIT_UDP_PORT` | UDP | `LIVEKIT_BIND_ADDR` | ICE/UDP, **один mux-порт** вместо диапазона |
 | — | — | — | PostgreSQL/Redis **не публикуются** (только внутренняя сеть проекта) |
 
-Клиентам LAN должны быть доступны `LIVEKIT_TCP_PORT/tcp` и `LIVEKIT_UDP_PORT/udp`
-хоста **напрямую** (не через HTTP-прокси) по адресу `LIVEKIT_NODE_IP`.
-`use_external_ip` отключён: внешние STUN/облачные сервисы не используются.
+Клиентам должны быть доступны `LIVEKIT_TCP_PORT/tcp` и `LIVEKIT_UDP_PORT/udp` хоста **напрямую** (не через HTTP-прокси).
+Какие адреса LiveKit сообщает клиентам, решает `scripts/medianet.py` при установке и каждом обновлении. Публичный адрес на интерфейсе
+объявляется как есть. За NAT клиенты получают публичный адрес (STUN при каждом запуске или `LIVEKIT_PUBLIC_IP`) и `LIVEKIT_NODE_IP`.
+Проверка, правила проброса и CGNAT — `scripts/medianet.sh check`, подробно — [docs/NETWORK.md](docs/NETWORK.md#медиасоединения-адреса-ice).
 
 ## 3. DNS, TLS и reverse proxy
 

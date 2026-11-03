@@ -7,6 +7,7 @@ NAT и межсетевой экран и не доказывает доступ
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from ..services import server_components as _sc
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
 from ..models import ApiProfile, LdapProfile, MailProfile, StorageProfile, WebhookEndpoint
-from ..services import netrules
+from ..services import medianet, netrules
 from ..services.audit import write_audit
 
 router = APIRouter(prefix="/admin/network", tags=["admin-network"])
@@ -85,7 +86,8 @@ def _env_view() -> dict[str, str]:
     """Окружение backend с теми же именами, что в `.env`: порты и режимы берутся из compose, секреты сюда не попадают."""
     keys = ["APP_PUBLIC_URL", "LIVEKIT_PUBLIC_URL", "LIVEKIT_NODE_IP", "LIVEKIT_RTC_TCP_PORT", "LIVEKIT_RTC_UDP_PORT", "NET_LIVEKIT_BIND_ADDR", "NET_WEB_BIND_ADDR",
             "NET_WEB_PORT", "NET_NGINX_LISTEN_PORT", "NET_INSTALL_PROFILE", "TLS_LOCAL_CONFIGURED", "SIP_ENABLED", "SIP_SIGNALING_PORT", "SIP_RTP_START", "SIP_RTP_END",
-            "NET_SIP_BIND_ADDR", "SIP_ALLOWED_CIDRS", "LDAP_URIS", "NET_LIVEKIT_HTTP_PORT"]
+            "NET_SIP_BIND_ADDR", "SIP_ALLOWED_CIDRS", "LDAP_URIS", "NET_LIVEKIT_HTTP_PORT",
+            "LIVEKIT_MEDIA_MODE", "LIVEKIT_RTC_NODE_IP", "LIVEKIT_PUBLIC_IP", "LIVEKIT_STUN_SERVERS"]
     return {k: os.environ.get(k, "") for k in keys}
 
 
@@ -180,3 +182,51 @@ async def probe(request: Request, su: SessionUser = Depends(require_admin), db: 
             "not_checked": [{"id": r["id"], "proto": r["proto"], "port": r["port"], "reason": "UDP нельзя проверить без участия клиента"} for r in udp],
             "disclaimer": "Проверка выполнена с самого сервера. Она не проходит внешний NAT и межсетевой экран и не подтверждает доступ из интернета."}
 
+
+
+# --- медиасоединения (ICE): какие адреса получают клиенты, проброс портов, проверки (services/medianet.py — тот же код, что у scripts/medianet.sh)
+
+async def _recent_paths(request: Request) -> list[dict[str, Any]]:
+    try:
+        raw = await request.app.state.redis.lrange("clientdiag:metrics", 0, 199)
+    except Exception:  # noqa: BLE001 — без Redis раздел работает, только без данных клиентов
+        return []
+    out = []
+    for x in raw:
+        try:
+            m = json.loads(x)
+        except ValueError:
+            continue
+        if m.get("remote"):
+            out.append({"remote": m["remote"], "candidate": m.get("candidate", ""), "ts": m.get("ts")})
+    return out
+
+
+@router.get("/media")
+async def media(request: Request, su: SessionUser = Depends(require_admin)) -> dict[str, Any]:
+    """Без сетевых запросов: решение по текущим настройкам и пути настоящих клиентов."""
+    env = medianet.env_from_process()
+    return medianet.diagnose(env, probe=None, clients=await _recent_paths(request)) | {"live": False}
+
+
+@router.post("/media/probe")
+async def media_probe(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """С сервера: публичный адрес через STUN, узлы по пути (CGNAT, двойной NAT), соединение с медиапортом по публичному адресу."""
+    env = medianet.env_from_process()
+    probe_res = await asyncio.to_thread(medianet.probe_public, env)
+    hops = None
+    for host, _ in medianet.stun_servers(env):
+        try:
+            ip = (await asyncio.get_running_loop().getaddrinfo(host, None, family=2))[0][4][0]
+        except OSError:
+            continue
+        hops = await asyncio.to_thread(medianet.trace, ip)
+        break
+    p = medianet.plan(env, probe_res)
+    hp = await _connect(p["public_ip"], int(p["ports"]["tcp"])) if p["mode"] != "lan" and p["public_ip"] and p["ports"]["tcp"] else None
+    res = medianet.diagnose(env, probe=probe_res, hops=hops, hop_skip=1, hairpin=hp, clients=await _recent_paths(request))
+    res["stun"] = probe_res["results"]
+    await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="network.media_probe", target_type="network", target_id="media",
+                      ip=client_ip(request), details={"mode": p["mode"], "problems": sum(1 for c in res["checks"] if c["status"] in ("warn", "fail"))})
+    await db.commit()
+    return res | {"live": True}

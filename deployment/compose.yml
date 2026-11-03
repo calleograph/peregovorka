@@ -84,11 +84,17 @@ services:
         condition: service_healthy       # нужен, когда включена SIP-телефония (общая шина LiveKit ↔ SIP)
     # Внутренние порты ICE равны опубликованным: LiveKit сообщает клиентам
     # именно эти значения в ICE-кандидатах, расхождение ломает подключение.
+    # Адреса ICE (режим LIVEKIT_MEDIA_MODE и LIVEKIT_RTC_*) вычисляет scripts/medianet.py при установке и обновлении; без них —
+    # прежнее поведение (объявляется LIVEKIT_NODE_IP). NET_ADMIN — только чтобы entrypoint добавил адрес локальной сети на интерфейс
+    # контейнера (сервер за NAT: клиенты офиса получают его вместе с публичным), см. deployment/livekit/entrypoint.sh.
+    cap_add: [NET_ADMIN]
     ports:
       - "127.0.0.1:${LIVEKIT_HTTP_PORT:?}:7880/tcp"
       - "${LIVEKIT_BIND_ADDR:?}:${LIVEKIT_TCP_PORT:?}:${LIVEKIT_TCP_PORT}/tcp"
       - "${LIVEKIT_BIND_ADDR}:${LIVEKIT_UDP_PORT:?}:${LIVEKIT_UDP_PORT}/udp"
     environment:
+      LIVEKIT_LAN_IP: ${LIVEKIT_RTC_LAN_IP:-}
+      LIVEKIT_STUN_SERVERS: ${LIVEKIT_STUN_SERVERS:-stun.l.google.com:19302,stun1.l.google.com:19302}
       LIVEKIT_CONFIG: |
         port: 7880
         log_level: info
@@ -97,8 +103,10 @@ services:
         rtc:
           tcp_port: ${LIVEKIT_TCP_PORT}
           udp_port: ${LIVEKIT_UDP_PORT}
-          use_external_ip: false
-          node_ip: ${LIVEKIT_NODE_IP:?}
+          use_external_ip: ${LIVEKIT_RTC_USE_EXTERNAL_IP:-false}
+          advertise_internal_ip: ${LIVEKIT_RTC_ADVERTISE_INTERNAL:-false}
+          node_ip: ${LIVEKIT_RTC_NODE_IP:-${LIVEKIT_NODE_IP:?}}
+          stun_servers: [${LIVEKIT_STUN_SERVERS:-stun.l.google.com:19302,stun1.l.google.com:19302}]
         ${LIVEKIT_REDIS_LINE:-}
         room:
           # Не закрывать комнату мгновенно: обновление страницы и краткий обрыв сети не должны её удалять.
@@ -154,6 +162,13 @@ services:
       LIVEKIT_SERVER_VERSION: ${LIVEKIT_IMAGE_TAG:-unknown}
       ASR_INTERNAL_URL: http://asr:8090
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
+      LIVEKIT_PUBLIC_IP: ${LIVEKIT_PUBLIC_IP:-auto}
+      LIVEKIT_STUN_SERVERS: ${LIVEKIT_STUN_SERVERS:-stun.l.google.com:19302,stun1.l.google.com:19302}
+      LIVEKIT_MEDIA_MODE: ${LIVEKIT_MEDIA_MODE:-}
+      LIVEKIT_RTC_NODE_IP: ${LIVEKIT_RTC_NODE_IP:-}
+      LIVEKIT_RTC_USE_EXTERNAL_IP: ${LIVEKIT_RTC_USE_EXTERNAL_IP:-false}
+      LIVEKIT_RTC_ADVERTISE_INTERNAL: ${LIVEKIT_RTC_ADVERTISE_INTERNAL:-false}
+      LIVEKIT_RTC_LAN_IP: ${LIVEKIT_RTC_LAN_IP:-}
       LIVEKIT_RTC_TCP_PORT: ${LIVEKIT_TCP_PORT:-0}
       LIVEKIT_RTC_UDP_PORT: ${LIVEKIT_UDP_PORT:-0}
       # LDAP_* необязательны: каталог подключается в веб-интерфейсе (Администрирование → LDAP и доступ); эти значения — прежний способ

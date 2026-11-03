@@ -137,6 +137,12 @@ async def client_event(request: Request, body: dict[str, Any] = Body(...), su: S
     await _push(request, LIFECYCLE_KEY if ev in LIFECYCLE else EVENTS_KEY, item, keep=400 if ev in LIFECYCLE else 200)
 
 
+def _ice_remote(v: Any) -> str:
+    """Адрес сервера в выбранной паре ICE («udp 192.0.2.2:17882»); иное — пусто (поле видно администратору)."""
+    m = re.fullmatch(r"(udp|tcp) (\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{2,39}):(\d{1,5})", str(v or "").strip())
+    return f"{m.group(1)} {m.group(2)}:{m.group(3)}" if m else ""
+
+
 @router.post("/metrics", status_code=204)
 async def client_metrics(request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_user)):
     screen = body.get("screen") if isinstance(body.get("screen"), dict) else {}
@@ -146,6 +152,7 @@ async def client_metrics(request: Request, body: dict[str, Any] = Body(...), su:
         "rtt_ms": _num(body.get("rtt_ms"), 0, 60000), "packet_loss_pct": _num(body.get("packet_loss_pct"), 0, 100), "jitter_ms": _num(body.get("jitter_ms"), 0, 60000),
         "bitrate_out_kbps": _num(body.get("bitrate_out_kbps"), 0, 1e6), "bitrate_in_kbps": _num(body.get("bitrate_in_kbps"), 0, 1e6),
         "candidate": _str(body.get("candidate"), 20), "quality": _str(body.get("quality"), 20),
+        "remote": _ice_remote(body.get("remote")),
         "join_api_ms": _num(body.get("join_api_ms"), 0, 600000), "signaling_connect_ms": _num(body.get("signaling_connect_ms"), 0, 600000),
         "ice_connect_ms": _num(body.get("ice_connect_ms"), 0, 600000), "participant_active_ms": _num(body.get("participant_active_ms"), 0, 600000),
         "microphone_publish_ms": _num(body.get("microphone_publish_ms"), 0, 600000), "room_create_ms": _num(body.get("room_create_ms"), 0, 600000),

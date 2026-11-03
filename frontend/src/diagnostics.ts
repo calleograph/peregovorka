@@ -180,7 +180,8 @@ export async function sampleRoom(room: LkRoom, meter: RateMeter, freeze?: Freeze
         const pair = sender?.transport?.iceTransport?.getSelectedCandidatePair?.();
         if (pair?.local) {
           snap.path = { localType: pair.local.type ?? undefined, remoteType: pair.remote?.type ?? undefined, protocol: pair.local.protocol ?? undefined,
-            candidate: `${pair.local.protocol ?? "?"}/${pair.local.type ?? "?"}→${pair.remote?.type ?? "?"}` };
+            candidate: `${pair.local.protocol ?? "?"}/${pair.local.type ?? "?"}→${pair.remote?.type ?? "?"}`,
+            ...(pair.remote?.address && pair.remote.port ? { remote: `${pair.local.protocol ?? "?"} ${pair.remote.address}:${pair.remote.port}` } : {}) };
           break;
         }
       }
@@ -194,7 +195,7 @@ export function metricsBody(meetingId: string, snap: Snapshot | null, join?: Rec
   const s = snap?.screenOut ?? snap?.screenIn;
   return {
     meeting_id: meetingId, ...join,
-    rtt_ms: snap?.rttMs, packet_loss_pct: snap?.lossPct, bitrate_out_kbps: snap?.outKbps, bitrate_in_kbps: snap?.inKbps, candidate: snap?.path?.candidate,
+    rtt_ms: snap?.rttMs, packet_loss_pct: snap?.lossPct, bitrate_out_kbps: snap?.outKbps, bitrate_in_kbps: snap?.inKbps, candidate: snap?.path?.candidate, remote: snap?.path?.remote,
     screen: s ? { fps: s.fps, bitrate_kbps: s.bitrateKbps, width: s.width, height: s.height, limit_reason: s.limitReason, frames_dropped: s.framesDropped } : undefined,
   };
 }

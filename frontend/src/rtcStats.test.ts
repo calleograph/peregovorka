@@ -36,6 +36,15 @@ describe("путь ICE", () => {
     ).values());
     expect(p).toEqual({ localType: "host", remoteType: "srflx", protocol: "udp", candidate: "udp/host→srflx", rttMs: 18 });
   });
+  it("адрес сервера в выбранной паре — какой объявленный кандидат сработал", () => {
+    const p = parsePath(rep(
+      { id: "t", type: "transport", selectedCandidatePairId: "p" },
+      { id: "p", type: "candidate-pair", localCandidateId: "l", remoteCandidateId: "r" },
+      { id: "l", type: "local-candidate", candidateType: "srflx", protocol: "udp" },
+      { id: "r", type: "remote-candidate", candidateType: "host", protocol: "udp", address: "192.0.2.2", port: 17882 },
+    ).values());
+    expect(p.remote).toBe("udp 192.0.2.2:17882");
+  });
   it("relay/tcp различимы — это признак «плохого» пути", () => {
     const p = parsePath(rep({ id: "p", type: "candidate-pair", nominated: true, localCandidateId: "l", remoteCandidateId: "r" }, { id: "l", candidateType: "relay", protocol: "tcp" }, { id: "r", candidateType: "host", protocol: "tcp" }).values());
     expect(p.candidate).toBe("tcp/relay→host");

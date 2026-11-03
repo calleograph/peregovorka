@@ -286,7 +286,10 @@ phase2() {
   [ "$FORCE" -eq 1 ] && export FORCE_BUILD=1
   [ "$PULL" -eq 1 ] && { export PULL_BASES=1 FORCE_BUILD=1; }
 
-  step "Параметры .env: безопасные новые значения и закрепление LiveKit"
+  step "Параметры .env: безопасные новые значения, адреса медиасоединений и закрепление LiveKit"
+  # адреса ICE: адрес интерфейса, публичный адрес (STUN), режим; явные настройки администратора сохраняются (scripts/medianet.py)
+  python3 -I "$REPO_ROOT/scripts/medianet.py" configure --env "$ENV_FILE" --write || warn "Адреса медиасоединений не пересчитаны — проверьте: scripts/medianet.sh check"
+  load_env "$ENV_FILE"
   upd_env_classify "$ENV_FILE" "$REPO_ROOT/.env.example"
   if [ "${#UPD_NEW_SAFE[@]}" -gt 0 ]; then upd_env_append_safe "$ENV_FILE" "$REPO_ROOT/.env.example"; ok "Добавлено новых параметров: ${#UPD_NEW_SAFE[@]} (${UPD_NEW_SAFE[*]})"; load_env "$ENV_FILE"
   else ok "Новых безопасных параметров нет"; fi
@@ -436,6 +439,9 @@ upd_smoke_run() {
   SMISS="$(sed -n 's/^Integration issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"
   SMCRIT="$(sed -n 's/^Critical issues: //p' "$log" | tail -1 | tr -d '\r' | cut -c1-600)"
   SW="$(grep -o 'Предупреждений: [0-9]*' "$log" | grep -o '[0-9]*$' | tail -1)"; SW="${SW:-0}"; rm -f "$log"
+  # медиасоединения: адреса ICE, проброс, порты Docker, что LiveKit объявил клиентам — не останавливает обновление, ошибки считаются предупреждениями
+  log; log "Медиасоединения (scripts/medianet.sh check):"
+  if ! python3 -I "$REPO_ROOT/scripts/medianet.py" check --env "$ENV_FILE" 2>&1 | sed 's/^/  /'; then SW=$((SW + 1)); fi
 }
 
 # Итоговый вывод: коротко и по делу.

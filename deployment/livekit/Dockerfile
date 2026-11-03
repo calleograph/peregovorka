@@ -8,5 +8,7 @@ FROM livekit/livekit-server:${LIVEKIT_IMAGE_TAG} AS lk
 FROM ${ALPINE_IMAGE}
 RUN apk add --no-cache ca-certificates
 COPY --from=lk /livekit-server /usr/local/bin/livekit-server
-# Конфигурация приходит из переменной окружения LIVEKIT_CONFIG (см. compose.yml).
-ENTRYPOINT ["/usr/local/bin/livekit-server"]
+# Конфигурация приходит из переменной окружения LIVEKIT_CONFIG (см. compose.yml); адреса ICE и проверка STUN — entrypoint.sh.
+COPY entrypoint.sh /usr/local/bin/peregovorka-livekit
+RUN chmod 755 /usr/local/bin/peregovorka-livekit
+ENTRYPOINT ["/usr/local/bin/peregovorka-livekit"]

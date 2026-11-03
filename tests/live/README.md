@@ -18,6 +18,8 @@
 Между запусками состояние встречи остаётся в памяти backend — перезапускайте стенд для чистого прогона.
 
 ## Дополнительные сценарии
+
+* **Медиасоединения (NAT, ICE)** — `tests/live/medianet/run.sh [сценарий…]`: модель сети в Docker (интернет, дом за NAT, офис с маршрутизатором и пробросом, сеть Docker сервера, STUN, CGNAT оператора), настоящие `scripts/medianet.py`, `deployment/compose.yml` и образ `deployment/livekit`; клиенты на LiveKit SDK публикуют звук и видео, печатаются фактические ICE-кандидаты и выбранная пара. Сценарии: `before direct nat nat-tcp manual-stundown stun-down nofwd cgnat legacy`. Итог — `tests/live/out/medianet/results.json`. Root на хосте не нужен.
 Запускаются на том же стенде (`devserver_live.py` + LiveKit + `npm run dev`):
 * `scenario_chat_files.py` — вложения в чате (картинка, просмотрщик, документ, запрещённый тип);
 * `scenario_history_protocol.py` — реплики стенограммы (подсовываются в поток вместо ASR через `/__dev/segment`) → завершение встречи → история → протокол с подставной LLM на порту 9100 → экспорт `.docx/.html/.md/.pdf`;
