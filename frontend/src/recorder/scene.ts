@@ -15,10 +15,12 @@ export interface SceneInput {
   /** Участники с опубликованной камерой / экраном. Порядок — порядок появления. */
   cameras: string[];
   screens: string[];
+  /** Из них — с идущим видео камеры. При показе экрана и доске в полосе только они: плитки-аватарки отнимали у экрана до 20 % кадра (мелкий текст размывался). */
+  live?: string[];
   speaker: string | null;
 }
 export type SceneReason = "stage" | "screen" | "board" | "conference" | "empty";
-export interface Scene { main: string[]; strip: string[]; reason: SceneReason }
+export interface Scene { main: string[]; strip: string[]; reason: SceneReason; /** экран или доска на весь кадр без полей — пиксель в пиксель с выходом Egress */ solo?: boolean }
 
 export const keyOf = (i: StageItem): string => (i.type === "board" ? "board" : `${i.type}:${i.identity}`);
 
@@ -28,10 +30,16 @@ export function pickScene(i: SceneInput): Scene {
   const camKeys = i.cameras.map((id) => `camera:${id}`);
   const rest = (main: string[]) => camKeys.filter((k) => !main.includes(k));
 
+  const live = new Set(i.live ?? i.cameras);
+  const withVideo = (keys: string[]) => keys.filter((k) => live.has(k.slice("camera:".length)));
+  const content = (main: string[]) => main.some((k) => k === "board" || k.startsWith("screen:"));
+  const done = (main: string[], strip: string[], reason: SceneReason): Scene =>
+    ({ main, strip, reason, ...(main.length === 1 && !strip.length && content(main) ? { solo: true } : {}) });
+
   const staged = i.stage.filter(exists).map(keyOf);
-  if (staged.length) return { main: staged.slice(0, 4), strip: rest(staged), reason: "stage" };
-  if (i.screens.length) { const main = [`screen:${i.screens[0]}`]; return { main, strip: rest(main), reason: "screen" }; }
-  if (i.boardActive && i.boardHasContent) return { main: ["board"], strip: camKeys, reason: "board" };
+  if (staged.length) { const main = staged.slice(0, 4); return done(main, content(main) ? withVideo(rest(main)) : rest(main), "stage"); }
+  if (i.screens.length) { const main = [`screen:${i.screens[0]}`]; return done(main, withVideo(rest(main)), "screen"); }
+  if (i.boardActive && i.boardHasContent) return done(["board"], withVideo(camKeys), "board");
   if (!i.cameras.length) return { main: [], strip: [], reason: "empty" };
   const sp = i.speaker && cams.has(i.speaker) ? i.speaker : i.cameras[0];
   const main = [`camera:${sp}`];

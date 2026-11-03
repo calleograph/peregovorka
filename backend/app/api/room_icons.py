@@ -79,13 +79,28 @@ async def choose_library_icon(room_id: uuid.UUID, request: Request, body: dict[s
     return {"icon": room_icons.icon_out(room)}
 
 
+@router.put("/color")
+async def choose_icon_color(room_id: uuid.UUID, request: Request, body: dict[str, Any] = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Цвет буквенного и библиотечного значка: оттенок 0–359 (палитра интерфейса) или null — по названию комнаты."""
+    room = await _manageable(db, room_id, su)
+    hue = body.get("hue")
+    if hue is not None and (not isinstance(hue, int) or isinstance(hue, bool) or not 0 <= hue <= 359):
+        raise HTTPException(status_code=422, detail="Цвет значка: число 0–359 или null.")
+    room.icon_hue = hue
+    await _audit(request, db, su, room, mode="color", hue=hue)
+    await db.commit()
+    return {"icon": room_icons.icon_out(room)}
+
+
 @router.delete("", status_code=200)
 async def reset_icon(room_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     room = await _manageable(db, room_id, su)
     request.app.state.room_icons.delete(room.id)
     was = room.icon_kind
+    had_color = room.icon_hue is not None
     room.icon_kind = room.icon_key = room.icon_rev = None
-    if was:
+    room.icon_hue = None                                              # «Сбросить на стандартный» — и цвет по названию
+    if was or had_color:
         await _audit(request, db, su, room, mode="reset")
     await db.commit()
     return {"icon": None}

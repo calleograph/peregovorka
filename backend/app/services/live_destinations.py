@@ -162,6 +162,12 @@ class Destinations:
             raise DestinationError("platform_forbidden", f"Площадка «{PLATFORMS[platform]}» отключена администратором сервера.", 403)
         return cfg
 
+    async def _ensure_unique(self, db, room_id, url: str, key: str, skip=None) -> None:
+        """Один и тот же сервер с тем же ключом — одна площадка: Egress держит один выход на адрес, и у второй записи статус навсегда оставался «подключается»."""
+        for other in (await db.execute(select(LiveDestination).where(LiveDestination.room_id == room_id, LiveDestination.server_url == url))).scalars():
+            if other.id != skip and self._decrypt(other) == key:
+                raise DestinationError("duplicate", f"Эта площадка уже добавлена: «{other.name}» — тот же сервер и ключ потока.", 409)
+
     async def create(self, db, room: Room, body: dict) -> LiveDestination:
         platform = str(body.get("platform") or "")
         cfg = await self._policy(db, platform)
@@ -170,6 +176,7 @@ class Destinations:
         url, host, _ = normalize_server_url(str(body.get("server_url") or ""))
         await check_host_allowed(host, allow_private=cfg.allow_private_destinations)
         key = clean_key(str(body.get("key") or ""))
+        await self._ensure_unique(db, room.id, url, key)
         name = " ".join(str(body.get("name") or PLATFORMS[platform]).split())[:120] or PLATFORMS[platform]
         did = uuid.uuid4()
         row = LiveDestination(id=did, room_id=room.id, platform=platform, name=name, server_url=url, key_enc=self._encrypt(did, key), channel=(str(body.get("channel") or "").strip()[:160] or None),
@@ -181,12 +188,17 @@ class Destinations:
 
     async def update(self, db, row: LiveDestination, body: dict) -> LiveDestination:
         cfg = await self._svc.get(db, "live")
+        url, key = row.server_url, None
         if "server_url" in body and str(body["server_url"]).strip() != row.server_url:
             url, host, _ = normalize_server_url(str(body["server_url"]))
             await check_host_allowed(host, allow_private=cfg.allow_private_destinations)
-            row.server_url = url
         if body.get("key"):
-            row.key_enc = self._encrypt(row.id, clean_key(str(body["key"])))        # замена ключа; прежний нигде не остаётся
+            key = clean_key(str(body["key"]))
+        if url != row.server_url or key is not None:
+            await self._ensure_unique(db, row.room_id, url, key if key is not None else self._decrypt(row), skip=row.id)
+        row.server_url = url
+        if key is not None:
+            row.key_enc = self._encrypt(row.id, key)        # замена ключа; прежний нигде не остаётся
             row.status, row.last_error = "idle", None
         if "name" in body:
             row.name = " ".join(str(body["name"] or "").split())[:120] or row.name

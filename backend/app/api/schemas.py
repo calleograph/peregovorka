@@ -40,9 +40,10 @@ class ActiveMeetingOut(BaseModel):
 
 
 class RoomIconOut(BaseModel):
-    kind: str                       # library | image (стандартного значка в ответе нет: icon = null)
+    kind: str                       # library | image | std (стандартный своего цвета; стандартный цвета по названию — icon = null)
     key: str | None = None          # ключ значка библиотеки
     url: str | None = None          # адрес загруженного изображения (с версией: кэш обновляется при замене)
+    hue: int | None = None          # цвет буквенного и библиотечного значка (оттенок 0–359); null — по названию
 
 
 class RoomOut(BaseModel):

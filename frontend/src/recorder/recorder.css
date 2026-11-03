@@ -16,3 +16,7 @@ html, body, #root { margin: 0; height: 100%; background: #0b1020; overflow: hidd
 .rec-hidden { position: fixed; left: -99999px; top: 0; width: 1280px; height: 720px; }
 .rec-board-layer { position: fixed; border-radius: 10px; overflow: hidden; background: #fff; }
 .rec-tile.board-slot { background: transparent; }
+/* экран или доска одни: весь кадр без полей и скруглений — показ 2560×1440 в эфире 2K передаётся пиксель в пиксель, без масштабирования */
+.rec-root.solo { padding: 0; gap: 0; }
+.rec-root.solo .rec-tile { border-radius: 0; background: #000; }
+.rec-root.solo .rec-name { display: none; }
