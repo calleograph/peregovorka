@@ -54,7 +54,7 @@ jobs:
       - name: Контрольная сумма
         run: cd out && sha256sum *.deb | tee SHA256SUMS-${{ matrix.arch }}.txt
       - uses: actions/upload-artifact@v7
-        with: { name: linux-deb-${{ matrix.arch }}, path: desktop/out/, retention-days: 30 }
+        with: { name: "linux-deb-${{ matrix.arch }}", path: desktop/out/, retention-days: 30 }
 
   # Полный круг пакета в чистых системах (контейнеры): установка apt (только Depends), запуск от пользователя под Xvfb с песочницей, обновление поверх
   # предыдущего выпуска (если он есть), remove, повторная установка, purge. Сценарий — desktop/linux/test/deb-check.sh.

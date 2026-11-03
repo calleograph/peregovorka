@@ -1,6 +1,6 @@
 // Показ экрана: страница вызывает getDisplayMedia → окно выбора (экраны и окна с миниатюрами, звук компьютера) в доверенной оболочке. Без выбора — отказ.
 // Индикатор: пока идёт показ экрана или встреча при свёрнутом окне — маленькое окно поверх всех «Идёт показ экрана · Остановить» (в захват не попадает).
-import { BrowserWindow, desktopCapturer, screen, type DisplayMediaRequestHandlerHandlerRequest, type Streams } from "electron";
+import { BrowserWindow, desktopCapturer, dialog, screen, type DisplayMediaRequestHandlerHandlerRequest, type Streams } from "electron";
 import { waylandSession } from "../common/linux";
 import type { Ctx } from "./ctx";
 import type { Org } from "./orgs";
@@ -25,8 +25,16 @@ export class ScreenPicker {
     try {
       sources = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true });
     } catch (e) {
-      this.ctx.log.error("share.sources_failed", { error: String(e).slice(0, 160) });
+      this.ctx.log.error("share.sources_failed", { error: String(e).slice(0, 160), portal: waylandSession(process.env, process.platform) });
       cb(null);
+      // Wayland: экран отдаёт только системный портал. Отказ человека в окне портала — не ошибка (пустой список), а сбой портала объясняем:
+      // иначе показ просто «не начинается» без причины (найдено испытанием в sway без портала с захватом)
+      if (waylandSession(process.env, process.platform)) {
+        const w = this.parent();
+        void dialog.showMessageBox(w, { type: "warning", title: "Peregovorka", message: "Показ экрана недоступен",
+          detail: "Системный портал показа экрана (xdg-desktop-portal) не смог начать захват. Проверьте, что установлены xdg-desktop-portal и портал вашего рабочего стола " +
+            "(xdg-desktop-portal-gnome, -kde или -wlr) и запущен PipeWire. Встреча продолжается." }).catch(() => undefined);
+      }
       return;
     }
     sources = sources.filter((s) => !s.name.startsWith("Peregovorka — индикатор"));

@@ -85,7 +85,7 @@ sudo ./install.sh
 
 <sub>Снимки сделаны на тестовом стенде с вымышленными данными.</sub>
 
-## Приложение для Windows
+## Приложение для Windows и Linux
 
 <!-- desktop-release:start -->
 **Версия 1.4.3** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.4.3) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.4.3/SHA256SUMS.txt)

@@ -14,11 +14,11 @@ printf '[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.ScreenCast=wlr
 pgrep -u "$(id -u)" -x pipewire >/dev/null || (pipewire >/tmp/pipewire.log 2>&1 & sleep 0.5)
 pgrep -u "$(id -u)" -x wireplumber >/dev/null || (wireplumber >/tmp/wireplumber.log 2>&1 & sleep 0.5)
 if ! pgrep -u "$(id -u)" -x sway >/dev/null; then
-  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman sway >/tmp/sway.log 2>&1 &
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER="${WLR_RENDERER:-pixman}" sway >/tmp/sway.log 2>&1 &
   for i in $(seq 40); do ls "$XDG_RUNTIME_DIR"/wayland-* >/dev/null 2>&1 && break; sleep 0.25; done
 fi
 export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-? | head -1)")"
-pgrep -u "$(id -u)" -f xdg-desktop-portal-wlr >/dev/null || (/usr/libexec/xdg-desktop-portal-wlr >/tmp/xdpw.log 2>&1 &)
+pgrep -u "$(id -u)" -f xdg-desktop-portal-wlr >/dev/null || (/usr/libexec/xdg-desktop-portal-wlr -l INFO >/tmp/xdpw.log 2>&1 &)
 pgrep -u "$(id -u)" -f "libexec/xdg-desktop-portal$" >/dev/null || (/usr/libexec/xdg-desktop-portal -r >/tmp/xdp.log 2>&1 &)
 sleep 1
 if [ ! -f ~/.local/share/keyrings/login.keyring ]; then
