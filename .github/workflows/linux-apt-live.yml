@@ -1,0 +1,41 @@
+name: Linux APT (опубликованный репозиторий)
+# Проверка того, что видят пользователи: установка командой из инструкции с https://calleograph.github.io/peregovorka-apt в чистых Ubuntu 22.04/24.04
+# и Debian 12/13 на amd64 и arm64 (настоящие машины ARM), версия = последний выпуск desktop-v*, подпись проверяет сам apt, затем apt update, запуск
+# программы (отчёт диагностики) и удаление. Запуск — вручную после публикации и раз в неделю (сайт и ключ живы, срок ключа не истёк).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        image: ["ubuntu:22.04", "ubuntu:24.04", "debian:12", "debian:13"]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Ожидаемая версия — последний выпуск desktop-v*
+        id: v
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v="$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --json tagName --jq '.[].tagName' | grep -E '^desktop-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          echo "version=${v#desktop-v}" >> "$GITHUB_OUTPUT"
+      - name: Установка из опубликованного репозитория, обновление индексов, запуск, удаление
+        run: |
+          docker run --rm --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined "${{ matrix.image }}" bash -c '
+            set -euo pipefail; export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq >/dev/null && apt-get install -y -qq curl ca-certificates xvfb xauth >/dev/null
+            curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sh
+            v="$(dpkg-query -W -f "\${Version}" peregovorka)"; [ "$v" = "${{ steps.v.outputs.version }}" ] || { echo "::error::установлена $v, ожидалась ${{ steps.v.outputs.version }}"; exit 1; }
+            apt-cache policy peregovorka | grep -q "https://calleograph.github.io/peregovorka-apt stable/main" || { apt-cache policy peregovorka; exit 1; }
+            apt-get update 2>&1 | tee /tmp/u.log; ! grep -Eq "^(W|E):.*peregovorka" /tmp/u.log
+            useradd -m tester
+            su tester -c "timeout 150 xvfb-run -a peregovorka --diagnostics=/tmp/diag.json >/tmp/app.log 2>&1" || true
+            test -s /tmp/diag.json || { tail -30 /tmp/app.log; echo "::error::программа не записала отчёт"; exit 1; }
+            grep -q "\"install\": *\"deb\"" /tmp/diag.json && echo "запуск $v: $(dpkg --print-architecture), отчёт диагностики записан"
+            apt-get purge -y -qq peregovorka >/dev/null; test ! -e /etc/apt/sources.list.d/peregovorka.sources'

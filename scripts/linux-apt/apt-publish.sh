@@ -85,7 +85,7 @@ for d in "$SITE"/pool/main/p/peregovorka/*.deb; do
   n="$(basename "$d")"; v="$(dpkg-deb -f "$d" Version)"
   printf '%s %s %s %s\n' "pool/main/p/peregovorka/$n" "$(sha256sum "$d" | cut -d' ' -f1)" "$(stat -c %s "$d")" "https://github.com/$SRC_REPO/releases/download/desktop-v$v/$n" >> "$G/pool.lock"
 done
-if grep -rlaE -- "-----BEGIN (PGP |RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY" "$G" --exclude-dir=.git | grep -q .; then echo "в репозитории сайта закрытый ключ — остановлено" >&2; exit 1; fi
+if grep -rlaE --exclude-dir=.git -- "-----BEGIN (PGP |RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY" "$G" | grep -q .; then echo "в репозитории сайта закрытый ключ — остановлено" >&2; exit 1; fi
 git -C "$G" add -A
 if git -C "$G" diff --cached --quiet; then echo "изменений нет"; exit 0; fi
 git -C "$G" -c user.name="$(git -C "$ROOT" config user.name)" -c user.email="$(git -C "$ROOT" config user.email)" commit -q -m "Репозиторий APT: Peregovorka $NEWEST ($(wc -l < "$G/pool.lock") пакет(ов))"
