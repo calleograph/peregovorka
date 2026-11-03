@@ -288,6 +288,12 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
+0zl. **Сервер 0.65.0: площадки RTMP сохраняются, задержка эфира 11,4 → 7,5 с, экран во весь кадр, страница зрителя в две колонки, цвет значка комнаты.**
+* Где в коде: `frontend/src/components/SubForm.tsx` (вместо вложенных `<form>` в редакторе комнаты; тест `nestedForms.test.ts`), `LiveDestinations.tsx`, `services/live_destinations.py::_ensure_unique`; `services/live.py::KEY_FRAME_S`, `frontend/nginx.conf` (`sub_filter` TARGETDURATION), `pages/LivePage.tsx` (hls.js, `ViewerQuestions`), `recorder/scene.ts` (`solo`); `services/room_icons.py::icon_out`, `api/room_icons.py` (`PUT …/icon/color`), миграция 0059; замер — `tests/live/egress/latency_probe.py`.
+* Проверено на установленном экземпляре (pgdoc): замеры до/после (таблица в `docs/BROADCASTS.md` «Задержка»), площадки из браузера (YouTube, RUTUBE, свой сервер; Enter, тройное нажатие, обрыв сети, перезагрузка, изменение, удаление, повторное добавление), эфир на приёмник mediamtx (верный ключ — поток H.264+AAC, неверный — отклонён), YouTube с тестовым ключом — «ошибка», страница зрителя на 1920/1280/768/390.
+* Не проверено: настоящая внешняя сеть (только ограничение канала через CDP), Safari/iOS (плейлист приведён к спецификации, но не проверен), настоящий приём RUTUBE (адрес выдаёт студия), чат зрителей — не делался (нужна модерация для массовой аудитории).
+* Ограничение: HLS без LL-HLS — меньше ≈5 с не получить; Egress v1.15 не даёт выбрать интервал ключевого кадра при выходе HLS и падает при сегменте < 1 с.
+
 0zk. **Сервер 0.64.0 / Android 0.1.8: вопросы зрителей, подготовка к эфиру, гости с почтой, рассылка только по комнате, вложения 3 МБ, секрет HLS, показ экрана с Android.**
 * Где в коде:
   * `api/live.py` — зрители и вопросы;
