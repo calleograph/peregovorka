@@ -167,6 +167,15 @@ def assess(facts: dict, video_kbps: int = 5000) -> dict[str, Any]:
             "link_mbit": link, "video_kbps": video_kbps, "cache_gb": max(10, min(int(avail_gb * 0.6), 500))}
 
 
+def _hits(c: dict) -> int:
+    """Ответы без обращения к источнику: сегменты из кеша nginx, плейлисты из микрокеша (и ожидавшие чужого запроса)."""
+    return sum(c.get(k, 0) for k in ("cache_HIT", "cache_UPDATING", "cache_STALE", "pl_HIT", "pl_WAIT", "pl_STALE"))
+
+
+def _misses(c: dict) -> int:
+    return sum(c.get(k, 0) for k in ("cache_MISS", "cache_EXPIRED", "pl_MISS"))
+
+
 # ------------------------------------------------------------------------------------------------ служба
 class CdnService:
     def __init__(self, settings, settings_svc, redis, journal=None):
@@ -292,7 +301,7 @@ class CdnService:
                                "mem_total": (sysd.get("mem") or {}).get("total"), "mem_avail": (sysd.get("mem") or {}).get("available"),
                                "load": sysd.get("load"), "cpus": sysd.get("cpus"), "disk": sysd.get("disk"),
                                "req_total": c.get("req", 0), "bytes_total": c.get("bytes", 0), "origin_bytes_total": c.get("origin_bytes", 0),
-                               "hits": c.get("cache_HIT", 0) + c.get("cache_UPDATING", 0) + c.get("cache_STALE", 0), "misses": c.get("cache_MISS", 0) + c.get("cache_EXPIRED", 0),
+                               "hits": _hits(c), "misses": _misses(c),
                                "denied": {k[5:]: v for k, v in c.items() if k.startswith("deny_")}, "_raw": {"counters": c, "sys": {"cpu": sysd.get("cpu"), "net": sysd.get("net")}, "time": raw.get("time")}}
         lookups = out["hits"] + out["misses"]
         out["hit_ratio"] = round(out["hits"] / lookups, 4) if lookups else None
@@ -303,8 +312,7 @@ class CdnService:
             out["req_rate"] = round((c.get("req", 0) - pc.get("req", 0)) / dt, 1)
             out["out_mbit"] = round((c.get("bytes", 0) - pc.get("bytes", 0)) * 8 / dt / 1e6, 1)
             out["origin_mbit"] = round((c.get("origin_bytes", 0) - pc.get("origin_bytes", 0)) * 8 / dt / 1e6, 2)
-            h = (c.get("cache_HIT", 0) + c.get("cache_UPDATING", 0) + c.get("cache_STALE", 0)) - (pc.get("cache_HIT", 0) + pc.get("cache_UPDATING", 0) + pc.get("cache_STALE", 0))
-            m = (c.get("cache_MISS", 0) + c.get("cache_EXPIRED", 0)) - (pc.get("cache_MISS", 0) + pc.get("cache_EXPIRED", 0))
+            h, m = _hits(c) - _hits(pc), _misses(c) - _misses(pc)
             out["hit_ratio_now"] = round(h / (h + m), 4) if h + m > 0 else None
             pcpu, ccpu = (p.get("sys") or {}).get("cpu") or {}, sysd.get("cpu") or {}
             if pcpu and ccpu and ccpu.get("total", 0) > pcpu.get("total", 0):

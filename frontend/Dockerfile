@@ -51,7 +51,9 @@ RUN chmod 755 /docker-entrypoint.d/40-live-secret.sh && rm -f /docker-entrypoint
     && nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' > /usr/share/nginx/html/nginx-version.txt \
     && sed -i -E 's/^(\s*worker_connections\s+)[0-9]+;/\18192;/' /etc/nginx/nginx.conf \
     && sed -i '1i worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf \
-    && grep -Eq '^\s*worker_connections\s+8192;' /etc/nginx/nginx.conf && grep -q '^worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf
+    && grep -Eq '^\s*worker_connections\s+8192;' /etc/nginx/nginx.conf && grep -q '^worker_rlimit_nofile 32768;' /etc/nginx/nginx.conf \
+    && install -d -m 700 -o 101 -g 101 /tmp/hls-live && install -m 600 -o 101 -g 101 /dev/null /tmp/hls-live/cdn-keys.map
+# ^ пустой список ключей узлов CDN: nginx.conf подключает его всегда (map $http_x_pgcdn_key), а проверка образа (nginx -t) идёт без entrypoint
 USER 101
 COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=101:101 /app/dist /usr/share/nginx/html

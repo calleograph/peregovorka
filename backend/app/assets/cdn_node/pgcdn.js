@@ -60,6 +60,54 @@ async function auth(r) {
     r.return(204);
 }
 
+const PL_FRESH_MS = 300;         // плейлист из микрокеша не старше 0,3 с
+const PL_STALE_ERR_MS = 10000;   // источник не отвечает — прежний плейлист ещё 10 с
+const PL_WAIT_MS = 1500;         // сколько ждать чужого запроса к источнику
+
+function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
+
+function sendPlaylist(r, body, how) {
+    ngx.shared.pgcdn_stat.incr('pl_' + how, 1, 0);
+    r.headersOut['Content-Type'] = 'application/vnd.apple.mpegurl';
+    r.headersOut['Cache-Control'] = 'no-cache';
+    r.headersOut['Access-Control-Allow-Origin'] = '*';
+    r.headersOut['Cross-Origin-Resource-Policy'] = 'cross-origin';
+    r.headersOut['X-Content-Type-Options'] = 'nosniff';
+    r.headersOut['X-Cache'] = how;
+    r.return(200, body);
+}
+
+async function playlist(r) {
+    const acc = r.variables.acc;
+    const pl = ngx.shared.pgcdn_pl;
+    const t0 = Date.now();
+    let at = Number(pl.get('t:' + acc) || 0);
+    if (at && t0 - at < PL_FRESH_MS) return sendPlaylist(r, pl.get('b:' + acc), 'HIT');
+    // за обновлением идёт один запрос (add — атомарно); остальные ждут его результата
+    while (!pl.add('l:' + acc, '1', 5000)) {
+        await sleep(25);
+        const t = Number(pl.get('t:' + acc) || 0);
+        if (t > at || (t && Date.now() - t < PL_FRESH_MS)) return sendPlaylist(r, pl.get('b:' + acc), 'WAIT');
+        if (Date.now() - t0 > PL_WAIT_MS) break;
+    }
+    try {
+        const res = await r.subrequest('/_pgcdn_pl/' + acc);
+        if (res.status === 200 && res.responseText) {
+            pl.set('b:' + acc, res.responseText);
+            pl.set('t:' + acc, String(Date.now()));
+            ngx.shared.pgcdn_stat.incr('origin_bytes', res.responseText.length, 0);
+            return sendPlaylist(r, res.responseText, 'MISS');
+        }
+        at = Number(pl.get('t:' + acc) || 0);
+        if (res.status >= 500 && at && Date.now() - at < PL_STALE_ERR_MS) return sendPlaylist(r, pl.get('b:' + acc), 'STALE');
+        r.headersOut['Cache-Control'] = 'no-store';
+        r.headersOut['Access-Control-Allow-Origin'] = '*';
+        r.return(res.status === 200 ? 502 : res.status);
+    } finally {
+        pl.delete('l:' + acc);
+    }
+}
+
 function denied(r) {
     const why = r.variables.pgcdn_reason || '';
     ngx.shared.pgcdn_stat.incr('deny_' + (why || 'other'), 1, 0);
@@ -134,4 +182,4 @@ function stats(r) {
     r.return(200, JSON.stringify(body));
 }
 
-export default { auth, denied, log, stats };
+export default { auth, denied, log, stats, playlist };

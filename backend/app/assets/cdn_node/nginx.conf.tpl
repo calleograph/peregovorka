@@ -34,6 +34,7 @@ http {
     js_shared_dict_zone zone=pgcdn_bad:4m type=number timeout=60s evict;     # неверные подписи по адресам за минуту
     js_shared_dict_zone zone=pgcdn_stat:4m type=number;            # счётчики для основного сервера
     js_shared_dict_zone zone=pgcdn_seen:32m timeout=40s evict;     # адреса зрителей эфира за последние 40 с
+    js_shared_dict_zone zone=pgcdn_pl:16m timeout=15s evict;       # плейлисты эфиров: микрокеш 0,3 с и склейка запросов к источнику
     js_set $pgcdn_log pgcdn.log;
     access_log /var/log/nginx/pgcdn-never.log combined if=$pgcdn_log;   # переменная считает и всегда пуста — журнал не пишется
 
@@ -72,19 +73,19 @@ http {
         set $pgcdn_reason "";
         error_page 403 = @pgcdn_denied;
 
-        # Плейлист: живёт в кеше 1 с, при обновлении зрители получают прежний (updating), к источнику идёт один запрос.
-        location ~ "^/hls/(?<acc>[0-9a-f]{24})/[0-9]{9,11}/[0-9a-f]{8}\.[A-Za-z0-9_-]{86}/(?<file>index\.m3u8)$" {
+        # Плейлист — из микрокеша njs (pgcdn.playlist): 0,3 с, за обновлением к источнику идёт один запрос, остальные ждут его шагами по 25 мс.
+        # Кеш nginx здесь не годится: его срок — не меньше 1 с (плейлист опаздывал, у зрителей появлялись остановки: замер docs/BROADCAST_CDN.md),
+        # а ожидание блокировки — шагами по 500 мс; без кеша же каждый опрос каждого зрителя уходил бы на источник.
+        location ~ "^/hls/(?<acc>[0-9a-f]{24})/[0-9]{9,11}/[0-9a-f]{8}\.[A-Za-z0-9_-]{86}/index\.m3u8$" {
             auth_request /_pgcdn_auth;
             auth_request_set $pgcdn_reason $sent_http_x_pgcdn_reason;
-            proxy_pass @ORIGIN_SCHEME@://pgcdn_origin/cdn-origin/$acc/$file;
+            js_content pgcdn.playlist;
+        }
+        location ~ "^/_pgcdn_pl/(?<acc>[0-9a-f]{24})$" {
+            internal;
+            proxy_pass @ORIGIN_SCHEME@://pgcdn_origin/cdn-origin/$acc/index.m3u8;
             include /etc/pgcdn/proxy.conf;
-            proxy_cache_valid 200 1s;
-            proxy_cache_valid 404 1s;
-            proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
-            proxy_cache_background_update on;
-            add_header Cache-Control "no-cache" always;
-            add_header Access-Control-Allow-Origin "*" always;
-            add_header X-Cache $upstream_cache_status always;
+            subrequest_output_buffer_size 256k;
         }
 
         # Сегменты неизменяемы: первый зритель вызывает один запрос к источнику (lock), остальные ждут его и получают копию с диска.
@@ -93,6 +94,12 @@ http {
             auth_request_set $pgcdn_reason $sent_http_x_pgcdn_reason;
             proxy_pass @ORIGIN_SCHEME@://pgcdn_origin/cdn-origin/$acc/$file;
             include /etc/pgcdn/proxy.conf;
+            proxy_cache pgcdn;
+            proxy_cache_key $acc/$file;
+            proxy_cache_lock on;
+            proxy_cache_lock_timeout 5s;
+            proxy_cache_lock_age 5s;
+            proxy_ignore_headers Cache-Control Expires Set-Cookie Vary X-Accel-Expires;
             proxy_cache_valid 200 30m;
             proxy_cache_valid 404 1s;
             proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
