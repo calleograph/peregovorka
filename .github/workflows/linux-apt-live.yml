@@ -33,9 +33,10 @@ jobs:
             curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sh
             v="$(dpkg-query -W -f "\${Version}" peregovorka)"; [ "$v" = "${{ steps.v.outputs.version }}" ] || { echo "::error::установлена $v, ожидалась ${{ steps.v.outputs.version }}"; exit 1; }
             apt-cache policy peregovorka | grep -q "https://calleograph.github.io/peregovorka-apt stable/main" || { apt-cache policy peregovorka; exit 1; }
-            apt-get update 2>&1 | tee /tmp/u.log; ! grep -Eq "^(W|E):.*peregovorka" /tmp/u.log
+            apt-get update 2>&1 | tee /tmp/u.log; if grep -Eq "^(W|E):.*peregovorka" /tmp/u.log; then echo "::error::apt update: предупреждение об источнике"; exit 1; fi
             useradd -m tester
             su tester -c "timeout 150 xvfb-run -a peregovorka --diagnostics=/tmp/diag.json >/tmp/app.log 2>&1" || true
             test -s /tmp/diag.json || { tail -30 /tmp/app.log; echo "::error::программа не записала отчёт"; exit 1; }
-            grep -q "\"install\": *\"deb\"" /tmp/diag.json && echo "запуск $v: $(dpkg --print-architecture), отчёт диагностики записан"
+            grep -q "\"install\": *\"deb\"" /tmp/diag.json || { echo "::error::отчёт диагностики: не пакет deb"; exit 1; }
+            echo "запуск $v: $(dpkg --print-architecture), отчёт диагностики записан"
             apt-get purge -y -qq peregovorka >/dev/null; test ! -e /etc/apt/sources.list.d/peregovorka.sources'
