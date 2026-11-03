@@ -20,6 +20,7 @@ import { launch, page, sleep, ROOT } from "./cdp.mjs";
 const [mode, ...rest] = process.argv.slice(2);
 const opt = (k, d) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : d; };
 const APP = opt("app", "dev");
+const LINUX = process.platform === "linux";             // тексты о системе в Linux свои (src/common/osText.ts, diagnoseMicLinux)
 const OUT = opt("out", join(ROOT, "out", "check"));
 const PASS = "pg-e2e";                                     // пароль временных PFX испытаний (создаются на машине проверки и удаляются с ней)
 mkdirSync(OUT, { recursive: true });
@@ -138,8 +139,9 @@ async function av() {
     await s.js("document.querySelector('#tab-av').click()");
     check("список устройств: микрофон, воспроизведение, камера — не пустые", await s.until("document.querySelector('#av-mic')?.options.length > 1 && document.querySelector('#av-camera')?.options.length > 1", 20),
       await s.js("[...document.querySelectorAll('#av-mic option, #av-camera option, #av-speaker option')].map((o) => o.textContent).join(' | ')"));
-    check("первым в списке — «По умолчанию в Windows»", await s.js("document.querySelector('#av-mic').options[0].textContent === 'По умолчанию в Windows'"));
-    check("число устройств показано словами", (await s.text()).includes("Windows видит: микрофонов"), (await s.text()).slice(0, 300));
+    const byDefault = LINUX ? "По умолчанию в системе" : "По умолчанию в Windows";
+    check(`первым в списке — «${byDefault}»`, await s.js(`document.querySelector('#av-mic').options[0].textContent === '${byDefault}'`));
+    check("число устройств показано словами", (await s.text()).includes(`${LINUX ? "Система видит" : "Windows видит"}: микрофонов`), (await s.text()).slice(0, 300));
     await s.shot(join(OUT, "30-av.png"));
     // микрофон: шкала уровня оживает (поддельное устройство Chromium издаёт сигнал)
     check("«Проверить микрофон» запускает проверку", await s.click("Проверить микрофон"));
@@ -177,7 +179,8 @@ async function av() {
     // «Could not start audio source» — любой другой отказ (драйвер, защитная программа): не выдаётся за занятость
     await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Could not start audio source'), { name: 'NotReadableError' }))");
     await s.click("Проверить микрофон");
-    check("отказ «Could not start audio source»: «захват не запустился», про защитную программу, не «занят»", await s.until("[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('Захват звука не запустился') && a.innerText.includes('защитн') && !a.innerText.includes('Микрофон занят'))", 10), (await s.text()).slice(0, 300));
+    const [startTitle, startHint] = LINUX ? ["Микрофон не удалось открыть", "звуковой сервер"] : ["Захват звука не запустился", "защитн"];
+    check(`отказ «Could not start audio source»: «${startTitle}», «${startHint}…», не «занят»`, await s.until(`[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('${startTitle}') && a.innerText.includes('${startHint}') && !a.innerText.includes('Микрофон занят'))`, 10), (await s.text()).slice(0, 300));
     await s.shot(join(OUT, "34-av-start-failed.png"));
     // системные настройки: неизвестный вид отклоняется, вне Windows — честный отказ
     const bad = await s.js("window.pg.call('shell:sound:open', { kind: 'cmd /c calc' })");

@@ -22,7 +22,7 @@ import { contextMenu, handleDownload, openDownloaded } from "./system";
 import { applyAutostart, AppTray } from "./tray";
 import { TrustStore } from "./trust";
 import { Updater } from "./updater";
-import { watchPackage } from "./linuxPackage";
+import { installedVersion, watchPackage } from "./linuxPackage";
 import { MainWindow, themeBg } from "./window";
 import { audioDiag, securityProducts, setupNativeAudioLog } from "./audiolog";
 
@@ -57,7 +57,9 @@ async function boot(): Promise<void> {
   process.on("uncaughtException", (e) => log.error("main.exception", { error: String(e?.stack ?? e).slice(0, 1500) }));
   process.on("unhandledRejection", (e) => log.error("main.rejection", { error: String((e as Error)?.stack ?? e).slice(0, 1500) }));
   const settings = new SettingsStore(userData);
-  const policy = await loadPolicy(app.isPackaged);
+  // пакет .deb — по resources/package-version (пишет сборка пакета); распакованная сборка испытаний (release/linux-unpacked) — не пакет
+  const debInstall = process.platform === "linux" && app.isPackaged && installedVersion() !== null;
+  const policy = await loadPolicy(process.platform === "linux" ? debInstall : app.isPackaged);
   const ctx: Ctx = {
     version: __APP_VERSION__, buildKind: __BUILD_KIND__, install: app.isPackaged ? "exe" : "dev", userData, log, settings, policy,
     trust: new TrustStore(userData, dev && flag("--e2e")),
@@ -142,7 +144,7 @@ async function boot(): Promise<void> {
 
   // Обновления ставит не приложение: MSI — администратор; Linux — менеджер пакетов (APT, репозиторий Peregovorka). Своя замена файлов программы
   // поверх установленного пакета конфликтовала бы с dpkg, поэтому в Linux собственный механизм обновления выключен всегда.
-  const linuxPackage = process.platform === "linux" && app.isPackaged;
+  const linuxPackage = debInstall;
   const managedInstall = linuxPackage || await isMsiInstall();
   if (managedInstall) ctx.install = linuxPackage ? "deb" : "msi";
   const updater = new Updater(ctx, () => orgs.list.map((o) => o.state), managedInstall, () => ctx.emit(), (version) => {
