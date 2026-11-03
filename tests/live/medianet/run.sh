@@ -137,7 +137,7 @@ for s in ${*:-$ALL}; do
     cgnat)
       scenario cgnat cgnat - "" "mn-lan:lan:ok:udp mn-lan:lan2:ok:udp"; want_diag cgnat nat fail ;;
     legacy)  # прежняя рекомендация документации: внешний адрес в LIVEKIT_NODE_IP — обновление переносит его в LIVEKIT_PUBLIC_IP
-      scenario legacy nat - "LIVEKIT_NODE_IP=192.0.2.2" "mn-ext:ext:ok:udp mn-lan:lan:ok:udp" rerun; want_mode legacy nat-manual ;;
+      scenario legacy nat - "LIVEKIT_NODE_IP=192.0.2.2 LIVEKIT_PUBLIC_IP=" "mn-ext:ext:ok:udp mn-lan:lan:ok:udp" rerun; want_mode legacy nat-manual ;;
     *) echo "неизвестный сценарий $s"; FAILS=$((FAILS+1)) ;;
   esac
 done

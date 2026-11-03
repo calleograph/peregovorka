@@ -190,3 +190,16 @@ def test_media_endpoints_admin_only_and_no_secrets(client, monkeypatch):
     j = r.json()
     assert j["plan"]["mode"] == "nat-manual" and j["plan"]["advertised"] == ["10.0.0.5", "192.0.2.2"] and j["live"] is False
     assert "SECRET" not in r.text and "API_KEY" not in r.text
+
+
+def test_host_cli_moves_old_scheme_only_from_legacy_env(tmp_path):
+    """.env без LIVEKIT_PUBLIC_IP и с внешним адресом в LIVEKIT_NODE_IP — прежняя схема: адрес переносится; при заданном LIVEKIT_PUBLIC_IP — нет."""
+    spec = importlib.util.spec_from_file_location("medianet_cli", ROOT / "scripts" / "medianet.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    cli.local_ipv4 = lambda: (["10.0.0.5"], "10.0.0.5")
+    ch, _ = cli.fix_lan({"LIVEKIT_NODE_IP": "192.0.2.2"}, legacy=True)
+    assert ch == {"LIVEKIT_NODE_IP": "10.0.0.5", "LIVEKIT_PUBLIC_IP": "192.0.2.2"}
+    ch, _ = cli.fix_lan({"LIVEKIT_NODE_IP": "192.0.2.2", "LIVEKIT_PUBLIC_IP": "auto"}, legacy=False)
+    assert ch == {"LIVEKIT_NODE_IP": "10.0.0.5"}
+    assert cli.fix_lan({"LIVEKIT_NODE_IP": "10.0.0.5"}, legacy=True) == ({}, [])

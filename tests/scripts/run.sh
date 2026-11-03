@@ -61,15 +61,17 @@ t "6.5 ГиБ — предупреждение" eq "$(ram_verdict 6815744 8)" wa
 t "4 ГиБ — отказ" eq "$(ram_verdict 4194304 8)" fail
 
 # ---- сквозной «чистый» запуск мастера (.env), включая неверные ответы
-W="$TMP/repo"; mkdir -p "$W/scripts"; cp -r "$ROOT/scripts/." "$W/scripts/"; cp "$ROOT/.env.example" "$W/"
+W="$TMP/repo"; mkdir -p "$W/scripts" "$W/backend/app/services"; cp -r "$ROOT/scripts/." "$W/scripts/"; cp "$ROOT/.env.example" "$W/"
+cp "$ROOT/backend/app/services/medianet.py" "$W/backend/app/services/"     # общая логика адресов медиасоединений (scripts/medianet.py)
 ANS=$(printf '%s\n' \
-  "peregovorka-test" "meet.corp.local" "192.0.2.241" \
+  "peregovorka-test" "meet.corp.local" "192.0.2.241" "203.0.113.300" "auto" \
   '\fileserver\share' "smb://x/y" "/srv/peregovorka-test-data" "2" "y" \
   "ldaps://AD1.corp.local:636/" "DC=corp,DC=local" "CN=svc ldap,OU=Служебные,DC=corp,DC=local" 'p@ss $w#rd"x' \
   "/etc/peregovorka/ad-ca.pem" "CN=Отдел ИТ,OU=Отдел ИТ,OU=Staff,OU=CORP,DC=corp,DC=local")
 t "мастер --env-only завершается успешно" bash -c 'cd "$1" && printf "%s\n" "$2" | bash scripts/setup.sh --profile shared-host --env-only' _ "$W" "$ANS"
 E="$W/.env"
 t ".env создан" test -f "$E"
+t "публичный адрес для звонков: неверный ответ отвергнут, принят auto; режим и адреса ICE вычислены" bash -c 'grep -qx "LIVEKIT_PUBLIC_IP=auto" "$1" && grep -Eq "^LIVEKIT_MEDIA_MODE=(direct|nat-stun|nat-manual|lan)$" "$1"' _ "$E"
 t "DATA_ROOT локальный" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$DATA_ROOT"' _ "$E")" "/srv/peregovorka-test-data"
 t "LDAP_URIS без слэша" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_URIS"' _ "$E")" "ldaps://AD1.corp.local:636"
 t "DN администраторов читается целиком" eq "$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; printf "%s" "$LDAP_ADMIN_GROUP_DN"' _ "$E")" "CN=Отдел ИТ,OU=Отдел ИТ,OU=Staff,OU=CORP,DC=corp,DC=local"

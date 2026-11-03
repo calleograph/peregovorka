@@ -65,6 +65,7 @@ v_name()  { [[ "$1" =~ ^[a-z][a-z0-9_-]{2,40}$ ]] || { echo "Только a-z, 0
             if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${1}[-_]"; then echo "Контейнеры «$1…» уже есть на сервере — выберите другое имя"; return 1; fi; }
 v_host()  { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo "Нужно DNS-имя без схемы и слэшей (например meet.corp.local)"; return 1; }; }
 v_ip()    { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Нужен IPv4-адрес (например 192.0.2.10)"; return 1; }; }
+v_pub()   { [ "$1" = auto ] || [ "$1" = off ] || python3 -c 'import ipaddress,sys; ipaddress.IPv4Address(sys.argv[1])' "$1" 2>/dev/null || { echo "Нужно auto, off или IPv4-адрес"; return 1; }; }
 v_data()  { validate_local_dir "$1" DATA_ROOT; }
 v_hops()  { [[ "$1" =~ ^[1-9]$ ]] || { echo "Число от 1 до 9"; return 1; }; }
 v_nonempty() { [ -n "$1" ] || { echo "Обязательное поле"; return 1; }; }
@@ -92,7 +93,7 @@ if [ ! -f "$ENV" ]; then
     ask_valid "DNS-имя сайта (HTTPS обеспечивает внешний прокси/nginx)" "meet.example.org" v_host; HOSTN="$REPLY"
     ask_valid "IP-адрес сервера в его сети (интерфейс; для звука в локальной сети)" "${defip:-}" v_ip; NODEIP="$REPLY"
     info "Публичный адрес для пользователей из интернета: auto — определить (адрес на интерфейсе или STUN за NAT), off — только локальная сеть, или IPv4."
-    ask "Публичный адрес для звонков из интернета" "${A_PUBLIC:-auto}"; A_PUBLIC="$REPLY"
+    ask_valid "Публичный адрес для звонков из интернета" "${A_PUBLIC:-auto}" v_pub; A_PUBLIC="$REPLY"
   fi
   info "DATA_ROOT — ЛОКАЛЬНЫЙ каталог Linux для БД, моделей, записей и бэкапов (не сетевой путь)."
   info "Сетевое SMB-хранилище готовых протоколов настраивается ПОСЛЕ установки: админка → «Хранилище»."
@@ -176,8 +177,9 @@ if [ ! -f "$ENV" ]; then
 fi
 
 # адреса медиасоединений (ICE): и при первой установке, и при повторном запуске — явные настройки администратора сохраняются
-python3 -I "$REPO_ROOT/scripts/medianet.py" configure --env "$ENV" --write ${A_PUBLIC:+--public-ip "$A_PUBLIC"} \
-  || die "Адреса медиасоединений: проверьте --public-ip (auto, off или IPv4) и запустите scripts/setup.sh снова"
+python3 -I "$REPO_ROOT/scripts/medianet.py" configure --env "$ENV" --write ${A_PUBLIC:+--public-ip "$A_PUBLIC"}; MNRC=$?
+[ "$MNRC" -ne 2 ] || die "--public-ip: нужно auto, off или IPv4-адрес"
+[ "$MNRC" -eq 0 ] || warn "Адреса медиасоединений не определены (код $MNRC) — LiveKit объявит LIVEKIT_NODE_IP; позже: sudo scripts/medianet.sh apply"
 load_env "$ENV"
 print_network_summary
 [ "$ENV_ONLY" -eq 0 ] || { ok "--env-only: .env готов, дальше — scripts/preflight.sh и scripts/install.sh."; exit 0; }

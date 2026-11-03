@@ -4,7 +4,8 @@
   python3 -I scripts/medianet.py configure --env .env [--write] [--public-ip auto|off|IPv4] [--offline]
       определить адрес сервера в его сети, публичный адрес (STUN с сервера) и режим; --write — записать в .env производные ключи.
       Явные настройки администратора (LIVEKIT_PUBLIC_IP=<адрес>|off, LIVEKIT_STUN_SERVERS, порты) сохраняются.
-      Прежняя схема «внешний адрес в LIVEKIT_NODE_IP» переносится: адрес → LIVEKIT_PUBLIC_IP, в LIVEKIT_NODE_IP — адрес интерфейса.
+      Прежняя схема (.env без LIVEKIT_PUBLIC_IP, внешний адрес в LIVEKIT_NODE_IP) переносится: адрес → LIVEKIT_PUBLIC_IP, в LIVEKIT_NODE_IP —
+      адрес интерфейса. Адрес, которого нет на интерфейсах, иначе заменяется адресом маршрута по умолчанию.
   python3 -I scripts/medianet.py check --env .env [--json] — проверки: публичный адрес, слои NAT (CGNAT, двойной NAT), адрес на
       интерфейсе, порты (прослушивание и публикация Docker — номера внутри и снаружи совпадают), межсетевой экран (с root), что LiveKit
       фактически объявляет клиентам (его журнал), доступность медиапорта по публичному адресу. Код 0 — без ошибок, 1 — есть ошибки.
@@ -46,8 +47,9 @@ def local_ipv4() -> tuple[list[str], str]:
     return ips, (m.group(1) if m else "")
 
 
-def fix_lan(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """LIVEKIT_NODE_IP должен быть адресом интерфейса сервера. Возвращает изменения .env и сообщения."""
+def fix_lan(env: dict[str, str], legacy: bool) -> tuple[dict[str, str], list[str]]:
+    """LIVEKIT_NODE_IP должен быть адресом интерфейса сервера. Возвращает изменения .env и сообщения.
+    legacy — .env прежней схемы (без LIVEKIT_PUBLIC_IP): внешний адрес из LIVEKIT_NODE_IP переносится в LIVEKIT_PUBLIC_IP."""
     ips, src = local_ipv4()
     if not ips:
         return {}, ["адреса интерфейсов не прочитаны (нет команды ip): LIVEKIT_NODE_IP не проверялся"]
@@ -57,7 +59,7 @@ def fix_lan(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     if not src:
         return {}, [f"LIVEKIT_NODE_IP={cur or '—'} нет на интерфейсах сервера, а маршрут по умолчанию не найден: оставлено как есть"]
     ch = {"LIVEKIT_NODE_IP": src}
-    if mn.classify(cur) == "public" and (env.get("LIVEKIT_PUBLIC_IP") or "auto").strip().lower() == "auto":
+    if legacy and mn.classify(cur) == "public":
         ch["LIVEKIT_PUBLIC_IP"] = cur
         return ch, [f"прежняя схема: в LIVEKIT_NODE_IP был внешний адрес {cur} — перенесён в LIVEKIT_PUBLIC_IP; LIVEKIT_NODE_IP={src} (адрес интерфейса)"]
     return ch, [f"LIVEKIT_NODE_IP={cur or '—'} нет на интерфейсах сервера — заменён на {src} (адрес маршрута по умолчанию)"]
@@ -87,6 +89,7 @@ def write_env(path: str, values: dict[str, str]) -> None:
 
 def cmd_configure(a: argparse.Namespace) -> int:
     env = mn.parse_env(open(a.env, encoding="utf-8").read())
+    legacy = not (env.get("LIVEKIT_PUBLIC_IP") or "").strip() and not a.public_ip
     changes: dict[str, str] = {}
     if a.public_ip and a.public_ip.strip().lower() not in ("auto", "off") and mn.classify(a.public_ip) == "invalid":
         print(f"[FAIL] --public-ip {a.public_ip}: нужен auto, off или IPv4-адрес", file=sys.stderr)
@@ -96,7 +99,7 @@ def cmd_configure(a: argparse.Namespace) -> int:
     elif not env.get("LIVEKIT_PUBLIC_IP"):
         changes["LIVEKIT_PUBLIC_IP"] = "auto"
     env.update(changes)
-    lan_ch, msgs = fix_lan(env) if not a.offline else ({}, [])
+    lan_ch, msgs = fix_lan(env, legacy) if not a.offline else ({}, [])
     changes.update(lan_ch)
     env.update(lan_ch)
     probe = mn.probe_public(env) if needs_probe(env) and not a.offline else None
