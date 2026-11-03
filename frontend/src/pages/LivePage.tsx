@@ -208,9 +208,10 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (cancelled) return;
         if (!Hls.isSupported()) { setFatal("Этот браузер не умеет воспроизводить прямой эфир. Попробуйте другой браузер."); return; }
         const hls = new Hls({
-          // сегменты по 1 с (без частей LL-HLS — Egress их не выпускает): держимся в 2 сегментах от края эфира, отставание догоняем ускорением до 1,1×,
-          // а не прыжком; дальше 5 сегментов — прыжок к краю. Было 3/7 при сегментах по 2 с — зритель отставал на 11 с.
-          enableWorker: false, lowLatencyMode: false, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 5, maxLiveSyncPlaybackRate: 1.1, maxBufferLength: 10, backBufferLength: 10,
+          // сегменты ≈1,5 с (без частей LL-HLS — Egress их не выпускает): держимся в 2,5 с от края эфира — в секундах, а не в сегментах, потому что
+          // TARGETDURATION плейлиста 2 (см. nginx.conf); отставание догоняем ускорением до 1,1×, а не прыжком; дальше 7 с — прыжок к краю.
+          // Было 3 сегмента по 2 с — зритель отставал на 11 с.
+          enableWorker: false, lowLatencyMode: false, liveSyncDuration: 2.5, liveMaxLatencyDuration: 7, maxLiveSyncPlaybackRate: 1.1, maxBufferLength: 10, backBufferLength: 10,
           manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 4000 } } },
           xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, baseRef.current + prefix.current), true); },
         });

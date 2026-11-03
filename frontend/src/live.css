@@ -84,7 +84,9 @@
 .live-viewer { width: min(400px, 100%); }
 /* Страница зрителя во время эфира: слева видео (главное, максимальная площадь с сохранением пропорций), справа панель вопросов той же высоты —
    лента прокручивается внутри, поле ввода всегда внизу; страница целиком не прокручивается. Узкие экраны: видео закреплено сверху, вопросы — под ним. */
-.live-wrap.live-split { max-width: 1680px; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 380px); grid-template-areas: "head head" "main side"; column-gap: 14px; align-items: stretch; }
+.live-wrap.live-split { max-width: 2000px; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 380px); grid-template-areas: "head head" "main side"; column-gap: 14px; align-items: stretch; }
+/* общий предел страниц (1480 px) для эфира тесен: на 1920 видео 2K получало ~1000 px — страница зрителя шире */
+main:has(> .live-split) { max-width: 2040px; }
 .live-split > .live-head { grid-area: head; }
 .live-split > .live-main { grid-area: main; min-width: 0; }
 .live-split .live-main .live-stage { max-height: calc(100dvh - 130px); margin: 0 auto; }
