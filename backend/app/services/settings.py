@@ -867,6 +867,11 @@ class LiveSettings(_Group):
     egress_health_url: str = Field(default="http://livekit-egress:8082/", max_length=300)     # адрес health-порта Egress внутри сети проекта (нагрузка процессора); пусто — не проверять
     cdn_enabled: bool = False                                     # раздавать HLS через CDN: плеер берёт поток прямо с CDN, а не с этого сервера
     cdn_base_url: str = Field(default="", max_length=300)         # публичный адрес доставки CDN, https://cdn.example.org (CDN забирает файлы с этого сервера по тем же путям /hls/…)
+    cdn_nodes_enabled: bool = False                               # свои узлы CDN Peregovorka (Администрирование → Трансляции → Узлы CDN): плеер берёт поток с узла
+    cdn_origin_url: str = Field(default="", max_length=300)       # откуда узлы забирают HLS (этот сервер для них): https://meet.example.org; пусто — публичный адрес сервера
+    cdn_origin_tls_verify: bool = True                            # узел проверяет сертификат источника (выключать только для испытательного стенда)
+    cdn_fallback_origin: bool = True                              # все узлы недоступны — зрители смотрят прямо с этого сервера (иначе — «эфир временно недоступен»)
+    cdn_key_gen: int = Field(default=1, ge=1, le=1_000_000)       # поколение ключа подписи ссылок узлов (ES256 из главного ключа); узлы знают текущее и предыдущее
     direct_viewers_warn: int = Field(default=150, ge=10, le=100_000)   # при таком числе зрителей с основного сервера администратор видит предупреждение: для больших аудиторий нужна CDN
     replay_days_max: int = Field(default=30, ge=1, le=365)        # предел, который владелец комнаты может задать сроку ссылки зрителя на запись эфира (по умолчанию в комнате — 5 дней)
 
@@ -876,6 +881,14 @@ class LiveSettings(_Group):
         v = (v or "").strip().rstrip("/")
         if v and not re.match(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$", v):
             raise ValueError("Адрес CDN: https://домен (без пути, параметров и пробелов)")
+        return v
+
+    @field_validator("cdn_origin_url")
+    @classmethod
+    def _cdn_origin(cls, v: str) -> str:
+        v = (v or "").strip().rstrip("/")
+        if v and not re.match(r"^https?://[A-Za-z0-9.-]+(:\d{1,5})?$", v):
+            raise ValueError("Адрес источника для узлов CDN: https://домен[:порт] (без пути)")
         return v
 
     @field_validator("egress_health_url")

@@ -1233,3 +1233,22 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .pv-context { font-size: 13px; color: var(--muted); min-width: 16rem; }
 .pv-context .pv-mark { color: var(--text); }
 @media (max-width: 860px) { .pv-diff { grid-template-columns: 1fr; } }
+
+/* Администрирование → Трансляции → Узлы CDN */
+.cdn-admin .cdn-opts { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.cdn-admin .cdn-origin { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.cdn-admin .cdn-origin label { flex: 1 1 280px; min-width: 0; }
+.cdn-admin .cdn-origin .help { flex-basis: 100%; }
+.cdn-nodes td { vertical-align: top; white-space: nowrap; }
+.cdn-nodes td:first-child { white-space: normal; min-width: 160px; }
+.cdn-nodes .badge + .badge { margin-left: 4px; }
+.cdn-panel { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.cdn-panel .row { flex-wrap: wrap; gap: 6px; }
+.cdn-stages { margin: 0; padding-left: 0; list-style: none; font-size: 13px; display: grid; gap: 2px; }
+.cdn-stages li .st { display: inline-block; width: 1.2em; text-align: center; font-weight: 700; }
+.cdn-stages li.ok .st { color: var(--ok, #1d8a4e); } .cdn-stages li.fail .st { color: var(--danger, #c0362c); } .cdn-stages li.start .st { color: var(--muted); }
+.cdn-log { max-height: 320px; overflow: auto; font-size: 12px; background: var(--surface-2, rgba(0, 0, 0, .04)); padding: 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cdn-manual ol { margin: 4px 0 8px; padding-left: 20px; }
+.cdn-manual code, .cdn-fp code { overflow-wrap: anywhere; }
+.cdn-more { margin-top: 8px; } .cdn-calc { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.cdn-add textarea { font-family: var(--mono, monospace); font-size: 12px; }

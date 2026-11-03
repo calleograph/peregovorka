@@ -791,6 +791,30 @@
    }
   },
   {
+   "key": "asyncssh",
+   "title": "AsyncSSH (подключение узлов CDN по SSH)",
+   "group": "Backend",
+   "pinned": "2.24.1",
+   "tested": "2.24.1",
+   "reviewed_latest": "2.24.1",
+   "source": {
+    "type": "pypi",
+    "name": "asyncssh"
+   },
+   "locations": [
+    {
+     "type": "constraints",
+     "file": "backend/constraints.txt",
+     "name": "asyncssh"
+    }
+   ],
+   "changelog": "https://pypi.org/project/asyncssh/#history",
+   "runtime": {
+    "service": "backend",
+    "python_package": "asyncssh"
+   }
+  },
+  {
    "key": "cryptography",
    "title": "cryptography",
    "group": "Backend",

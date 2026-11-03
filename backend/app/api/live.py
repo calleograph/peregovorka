@@ -134,13 +134,16 @@ async def _out(request: Request, db: AsyncSession, room: Room, su: SessionUser) 
     cdn = bool(cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn)
     if room.live_stream_access and room.live_enabled:
         stream, _ = hls_path(secret, room.live_stream_access, cfg.stream_link_days * 86400, bucket_s=86400)
-        if cdn:
+        node = await request.app.state.cdn.viewer_link(db, cfg, room.live_stream_access, cfg.stream_link_days * 86400, 86400, f"room:{room.id}") if room.live_cdn else None
+        if node is not None:
+            stream = node["base"] + node["path"]          # свои узлы CDN: подпись узла; узел выбран по комнате и меняется, только если он выбыл
+        elif cdn:
             stream = cfg.cdn_base_url + stream            # внешним плеерам — адрес на CDN; страница зрителя тоже берёт поток с CDN
     return {"enabled": room.live_enabled, "start": room.live_start, "quality": room.live_quality, "record": room.live_record, "own_hls": room.live_own_hls,
             "title": room.live_title or "", "starts_at": _utc(room.live_starts_at), "password_enabled": room.live_password_enabled, "has_password": bool(room.live_password_hash),
             "speaker_password_set": bool(room.password_hash), "view_path": f"/live/{room.live_token}" if room.live_token else None, "stream_path": stream,
             "state": await live.state(db, room), "global": {"enabled": bool(cfg.enabled), "direct_viewers_warn": int(cfg.direct_viewers_warn), "max_concurrent": int(cfg.max_concurrent)},
-            "is_broadcast_room": room.room_type == "broadcast", "cdn": room.live_cdn, "replay": room.live_replay, "cdn_available": bool(cfg.cdn_enabled and cfg.cdn_base_url),
+            "is_broadcast_room": room.room_type == "broadcast", "cdn": room.live_cdn, "replay": room.live_replay, "cdn_available": bool((cfg.cdn_enabled and cfg.cdn_base_url) or cfg.cdn_nodes_enabled),
             "destinations": [dests.public(r) for r in await dests.rows(db, room)],
             "platforms": [{"id": k, "name": v} for k, v in PLATFORMS.items() if getattr(cfg, f"allow_{k}", True)], "max_destinations": int(cfg.max_destinations),
             "allow_private_destinations": bool(cfg.allow_private_destinations),
@@ -165,7 +168,8 @@ async def patch_live(room_id: uuid.UUID, body: LivePatch, request: Request, su: 
     state = await live.state(db, room)
     if state["live"] and ({"live_quality", "live_record", "live_own_hls"} & fields.keys()):
         raise HTTPException(status_code=409, detail={"code": "live_running", "message": "Качество, запись и собственный просмотр меняются до начала эфира: остановите эфир."})
-    if fields.get("live_cdn") and not (await request.app.state.settings_svc.get(db, "live")).cdn_enabled:
+    _lc = await request.app.state.settings_svc.get(db, "live") if fields.get("live_cdn") else None
+    if _lc is not None and not (_lc.cdn_enabled or _lc.cdn_nodes_enabled):
         raise HTTPException(status_code=409, detail={"code": "cdn_off", "message": "CDN не подключён администратором сервера (Администрирование → Трансляции)."})
     if fields.get("live_link_days") and fields["live_link_days"] > (await request.app.state.settings_svc.get(db, "live")).replay_days_max:
         raise HTTPException(status_code=422, detail={"code": "link_days_max", "message": "Срок больше предела, заданного администратором сервера (Администрирование → Трансляции)."})
@@ -430,6 +434,7 @@ class AccessIn(BaseModel):
     pass_: str | None = Field(default=None, alias="pass", max_length=300, repr=False)
     viewer: str | None = Field(default=None, max_length=120, repr=False)      # зритель представился (имя обязательно): без этого эфир и запись не выдаются
     long: bool = False                       # нативный HLS (Safari, iPhone) не умеет подменять подпись на лету: ему — долгая подпись (4 часа)
+    avoid: str | None = Field(default=None, max_length=253)                  # узел CDN, с которого плеер не смог получить поток: выдать другой
     model_config = {"populate_by_name": True}
 
 
@@ -473,9 +478,21 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
         raise HTTPException(status_code=409, detail={"code": "no_hls", "message": "Эфир идёт только на внешних площадках."})
     cfg = await request.app.state.settings_svc.get(db, "live")
     ttl = max(int(cfg.view_link_ttl_s), 4 * 3600) if body.long else int(cfg.view_link_ttl_s)
-    path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=1800 if body.long else 300)
+    bucket = 1800 if body.long else 300
+    path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=bucket)
     out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16],
            "base": cfg.cdn_base_url if (cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn) else ""}       # CDN: плеер берёт поток прямо с него, а не с этого сервера
+    if room.live_cdn and cfg.cdn_nodes_enabled:
+        # свои узлы CDN: ссылка на узел зрителя (подпись ES256 — её проверяет узел); путь к этому серверу — запасной, если узел перестанет отвечать
+        node = await request.app.state.cdn.viewer_link(db, cfg, room.live_view_access, ttl, bucket, str(viewer.id), avoid=body.avoid)
+        if node is not None:
+            out.update(base=node["base"], path=node["path"], expires_at=node["expires_at"], node=node["node"])
+            if cfg.cdn_fallback_origin:
+                out["origin_path"] = path
+        elif cfg.cdn_fallback_origin:
+            out["base"] = ""                                 # все узлы недоступны: прямо с этого сервера
+        else:
+            raise HTTPException(status_code=503, detail={"code": "cdn_unavailable", "message": "Узлы раздачи эфира временно недоступны. Плеер повторит попытку."})
     if new_pass:
         out["pass"] = new_pass
     return out

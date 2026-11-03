@@ -142,11 +142,13 @@ function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string;
 }
 
 /** Плеер: нативный HLS (Safari, iPhone, iPad) или hls.js (остальные). Свои кнопки: пауза, звук, возврат к эфиру, полный экран. */
-function Player({ token, access, renew, onGone }: { token: string; access: LiveAccess; renew: () => Promise<LiveAccess | null>; onGone: () => void }) {
+function Player({ token, access, renew, onGone }: { token: string; access: LiveAccess; renew: (avoid?: string) => Promise<LiveAccess | null>; onGone: () => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const prefix = useRef<string>(access.path.replace(/[^/]+$/, ""));
   const baseRef = useRef<string>(access.base ?? "");                 // CDN; при его недоступности плеер сам переходит на сервер-источник (пусто)
+  const nodeRef = useRef<string>(access.node ?? "");                 // свой узел CDN, с которого идёт поток
+  const originRef = useRef<string>(access.origin_path ?? "");        // запасной путь к серверу-источнику (узлы CDN)
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(false);
   const [vol, setVol] = useState(1);
@@ -164,13 +166,32 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const cb = useRef({ renew, onGone });
   cb.current = { renew, onGone };
 
+  // новая ссылка: узел CDN (или источник) и префикс подписи; адреса сегментов меняются без перезапуска плеера
+  function adopt(a: LiveAccess) {
+    // свои узлы и источник: решает сервер (узел восстановился — зритель возвращается на него). Внешний CDN (base без node): если плеер
+    // уже ушёл на источник, он там и остаётся — как раньше.
+    if (a.node || !a.base) { baseRef.current = a.base ?? ""; nodeRef.current = a.node ?? ""; }
+    originRef.current = a.origin_path ?? "";
+    prefix.current = a.path.replace(/[^/]+$/, "");
+  }
+  // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
+  async function failover(): Promise<string> {
+    const failed = nodeRef.current;
+    const a = await cb.current.renew(failed || undefined).catch(() => null);
+    if (a && a.node && a.node !== failed) { adopt(a); return baseRef.current + prefix.current + "index.m3u8"; }
+    const o = a?.origin_path || originRef.current;
+    if (!o) return "";
+    baseRef.current = ""; nodeRef.current = ""; prefix.current = o.replace(/[^/]+$/, "");
+    return o;
+  }
+
   // подпись продлевается заранее; адреса сегментов получают свежий префикс без перезапуска плеера
   useEffect(() => {
     let alive = true;
     let timer = window.setTimeout(function tick() {
       void renew().then((a) => {
         if (!alive || !a) return;
-        prefix.current = a.path.replace(/[^/]+$/, "");
+        adopt(a);
         const el = video.current;
         if (el && native()) { const was = !el.paused; el.src = baseRef.current + a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
       }).finally(() => { if (alive) timer = window.setTimeout(tick, Math.max(60, access.refresh_in) * 1000); });
@@ -199,9 +220,10 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       el.addEventListener("loadedmetadata", () => void start(), { once: true });
       el.addEventListener("error", () => {
         fails.current += 1;
+        if (baseRef.current && nodeRef.current && fails.current >= 2) { fails.current = 0; void failover().then((u) => { if (u) { el.src = u; void start(); } }); return; }   // узел CDN не отвечает
         if (baseRef.current && fails.current >= 2) { baseRef.current = ""; fails.current = 0; el.src = access.path; void start(); return; }         // CDN недоступна: источник
         if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Нажмите «Повторить» или попробуйте позже."); return; }
-        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); el.src = baseRef.current + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
+        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); adopt(a); el.src = baseRef.current + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
       });
     } else {
       void import("hls.js").then(({ default: Hls }) => {
@@ -224,6 +246,12 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
           const code = (d as { response?: { code?: number } }).response?.code;
           if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
             // повторы с нарастающей паузой и пределом: сломанный адрес не должен превращаться в шквал запросов к приложению
+            if (baseRef.current && nodeRef.current && (!code || code >= 500 || code === 429) && fails.current >= 1) {
+              // свой узел CDN не отвечает: другой узел или сервер-источник; зритель увидит короткую паузу
+              fails.current = 0;
+              void failover().then((u) => { if (u) hls.loadSource(u); else window.setTimeout(() => hls.startLoad(), 3000); });
+              return;
+            }
             if (baseRef.current && (!code || code >= 500) && fails.current >= 1) {
               // CDN недоступна (нет ответа или 5xx): те же подписанные адреса берём прямо с сервера-источника, зритель этого почти не заметит
               baseRef.current = "";
@@ -236,7 +264,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
             const wait = Math.min(15_000, 1000 * 2 ** (fails.current - 1));
             // плейлист ещё не загружался (404, пока Egress его не записал; обрыв на первом запросе) — startLoad() его уже не запросит: источник загружается заново
             const resume = () => (hls.levels?.length ? hls.startLoad() : hls.loadSource(baseRef.current + prefix.current + "index.m3u8"));
-            if (code === 404 || code === 403 || code === 410) { window.setTimeout(() => void renew().then((a) => { if (!a) onGone(); else { prefix.current = a.path.replace(/[^/]+$/, ""); resume(); } }), wait); }
+            if (code === 404 || code === 403 || code === 410) { window.setTimeout(() => void renew().then((a) => { if (!a) onGone(); else { adopt(a); resume(); } }), wait); }
             else window.setTimeout(resume, wait);
           } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
           else setFatal("Не удалось воспроизвести эфир.");
@@ -259,7 +287,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       since = Date.now();
       tries += 1;
       if (tries > 5) { setFatal("Эфир не воспроизводится: поток не поступает. Проверьте подключение к интернету и нажмите «Повторить»."); return; }
-      void cb.current.renew().then((a) => { if (!a) return cb.current.onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); fails.current = 0; setAttempt((n) => n + 1); });
+      void cb.current.renew().then((a) => { if (!a) return cb.current.onGone(); adopt(a); fails.current = 0; setAttempt((n) => n + 1); });
     }, 5000);
     const off = () => setOffline(true);
     const on = () => { setOffline(false); setFatal(""); fails.current = 0; setAttempt((n) => n + 1); };
@@ -296,7 +324,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   };
 
   if (fatal) return <div className="live-stage live-msg"><Icon name="info" size={26} /><p>{fatal}</p>
-    <button className="btn primary" onClick={() => { setFatal(""); fails.current = 0; void renew().then((a) => { if (!a) return onGone(); prefix.current = a.path.replace(/[^/]+$/, ""); setAttempt((n) => n + 1); }); }}>Повторить</button></div>;
+    <button className="btn primary" onClick={() => { setFatal(""); fails.current = 0; void renew().then((a) => { if (!a) return onGone(); adopt(a); setAttempt((n) => n + 1); }); }}>Повторить</button></div>;
   return (
     <div className={`live-stage ${ui || paused ? "ui" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
       <video ref={video} playsInline autoPlay aria-label="Прямой эфир" onClick={toggle} />
@@ -357,9 +385,9 @@ export default function LivePage() {
     } catch (e) { setErr((e as ApiError).status === 404 ? "Трансляция не найдена: ссылка неверна или отозвана." : (e as ApiError).message || "Нет связи с сервером."); }
   }, [token]);
 
-  const getAccess = useCallback(async (password?: string): Promise<LiveAccess | null> => {
+  const getAccess = useCallback(async (password?: string, avoid?: string): Promise<LiveAccess | null> => {
     try {
-      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native(), viewer: viewerRef.current });
+      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native(), viewer: viewerRef.current, ...(avoid ? { avoid } : {}) });
       if (a.pass) { pass.current = a.pass; try { sessionStorage.setItem(SEEN_KEY(token), a.pass); } catch { /* пропуск не запомнится */ } }
       return a;
     } catch (e) {
@@ -393,8 +421,8 @@ export default function LivePage() {
     setBusy(false);
     if (a) setAccess(a);
   };
-  const renew = useCallback(async () => {
-    const a = await getAccess();
+  const renew = useCallback(async (avoid?: string) => {
+    const a = await getAccess(undefined, avoid);
     if (!a) { setAccess(null); void load(); }
     return a;
   }, [getAccess, load]);

@@ -39,5 +39,27 @@ sync_secret() {
   rm -f "$DIR/prev"
 }
 
+# Ключи узлов CDN (map $http_x_pgcdn_key): тот же порядок — копия, nginx -t, перечитывание; отклонённый файл не применяется.
+# Файл подключается из nginx.conf всегда, поэтому пустая копия создаётся заранее: без неё nginx не запустился бы.
+MAP_SRC=/etc/nginx/live/cdn-keys.map
+MAP_DST=$DIR/cdn-keys.map
+[ -e "$MAP_DST" ] || : > "$MAP_DST"
+sync_map() {
+  [ -e "$MAP_SRC" ] || { [ -s "$MAP_DST" ] || return 0; : > "$DIR/map.new"; }
+  [ -e "$MAP_SRC" ] && { cat "$MAP_SRC" > "$DIR/map.new" 2>/dev/null || { note "$MAP_SRC недоступен для чтения"; return 0; }; }
+  if cmp -s "$DIR/map.new" "$MAP_DST"; then rm -f "$DIR/map.new"; return 0; fi
+  [ "$(gen "$DIR/map.new")" = "$(cat "$DIR/map.bad" 2>/dev/null)" ] && { rm -f "$DIR/map.new"; return 0; }
+  cp -p "$MAP_DST" "$DIR/map.prev"; chmod 600 "$DIR/map.new" && mv -f "$DIR/map.new" "$MAP_DST"
+  [ "$1" = start ] && return 0
+  if ! nginx -t -q 2>"$DIR/test.err"; then
+    note "nginx -t отклонил ключи узлов CDN (работают прежние): $(head -c 300 "$DIR/test.err")"
+    mv -f "$DIR/map.prev" "$MAP_DST"
+    printf '%s' "$(gen "$MAP_SRC")" > "$DIR/map.bad"; return 0
+  fi
+  if nginx -s reload 2>/dev/null; then note "ключи узлов CDN применены ($(grep -c . "$MAP_DST") шт.)"; rm -f "$DIR/map.prev" "$DIR/map.bad"
+  else mv -f "$DIR/map.prev" "$MAP_DST"; fi
+}
+
 sync_secret start
-( while sleep "${LIVE_SECRET_POLL:-5}"; do sync_secret reload; done ) &
+sync_map start
+( while sleep "${LIVE_SECRET_POLL:-5}"; do sync_secret reload; sync_map reload; done ) &

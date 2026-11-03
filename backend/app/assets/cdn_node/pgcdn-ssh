@@ -1,0 +1,10 @@
+#!/bin/sh
+# pgcdn-ssh — принудительная команда ключа управления (authorized_keys пользователя pgcdn): разрешены только подкоманды pgcdn-ctl.
+# Основной сервер Peregovorka подключается этим ключом; оболочки, переадресации портов и произвольных команд у ключа нет.
+set -- $SSH_ORIGINAL_COMMAND
+[ "${1:-}" = pgcdn-ctl ] || { echo "разрешена только команда pgcdn-ctl" >&2; exit 2; }
+case "${2:-}" in
+    apply|render|status|diskstat|restart|upgrade|logs) exec sudo -n /usr/local/sbin/pgcdn-ctl "$2" ;;
+    uninstall) if [ "${3:-}" = --purge ]; then exec sudo -n /usr/local/sbin/pgcdn-ctl uninstall --purge; else exec sudo -n /usr/local/sbin/pgcdn-ctl uninstall; fi ;;
+    *) echo "неизвестная подкоманда" >&2; exit 2 ;;
+esac
