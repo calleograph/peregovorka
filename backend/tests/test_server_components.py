@@ -100,7 +100,7 @@ def test_video_checks_show_one_cause_when_the_subsystem_is_off(client):
     lv = client.get("/api/v1/admin/live/status").json()
     lby = {c["id"]: c for c in lv["checks"]}
     assert lby["server"]["status"] == "off" and lby["egress"]["status"] == "skipped"
-    assert lby["health"]["status"] in ("info", "skipped") and lby["secret"]["status"] in ("ok", "error")
+    assert lby["health"]["status"] in ("info", "skipped") and lby["secret_file"]["status"] in ("ok", "error") and lby["secret_dir"]["status"] in ("ok", "error")
 
 
 def test_failed_image_pull_shows_the_real_reason_not_a_guess_about_disk(client):
