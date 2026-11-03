@@ -442,6 +442,8 @@ upd_smoke_run() {
   # медиасоединения: адреса ICE, проброс, порты Docker, что LiveKit объявил клиентам — не останавливает обновление, ошибки считаются предупреждениями
   log; log "Медиасоединения (scripts/medianet.sh check):"
   if ! python3 -I "$REPO_ROOT/scripts/medianet.py" check --env "$ENV_FILE" 2>&1 | sed 's/^/  /'; then SW=$((SW + 1)); fi
+  log; log "Трансляции (секрет подписи HLS в nginx):"
+  live_secret_report 30 || { [ "$?" = 2 ] || SW=$((SW + 1)); }
 }
 
 # Итоговый вывод: коротко и по делу.

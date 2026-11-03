@@ -149,23 +149,20 @@ def test_meeting_overrides_win_over_room_and_can_be_reset(tmp_path, directory):
         assert c.put(f"/api/v1/meetings/{mid}/settings", json={"delivery": {"enabled": False, "materials": []}}).status_code == 409
 
 
-def test_meeting_delivery_override_and_archive(client, fake_smtp):
+def test_delivery_follows_only_the_room_and_archive_works(client, fake_smtp):
+    """С 0.64 автоматическую рассылку решает только комната: своя настройка у встречи отклоняется, письма уходят по комнате, архив — из настроек комнаты."""
     add_profile(client)
     room = make_room(client, moderators=LEADERS)
     login(client, "carol")
-    client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"mail_delivery": {"enabled": True, "archive": False, "materials": ["protocol"],
+    client.patch(f"/api/v1/rooms/{room['id']}/manage", json={"mail_delivery": {"enabled": True, "archive": True, "materials": ["protocol", "summary"],
                                                                                   "recipients": {"leaders": False, "participants": False, "emails": ["room@example.local"]}}})
     mid = _join(client, "alice", room["id"])["meeting_id"]
     _join(client, "bob", room["id"])
     login(client, "carol")
     s = client.get(f"/api/v1/meetings/{mid}/settings").json()
     assert s["delivery"]["effective"]["recipients"]["emails"] == ["room@example.local"] and s["delivery"]["override"] is False
-    # руководитель встречи меняет рассылку только для этой встречи: другие получатели, два материала, одним архивом
     spec = {"enabled": True, "archive": True, "materials": ["protocol", "summary"], "recipients": {"leaders": False, "participants": False, "emails": ["only-this@example.local"]}}
-    s = client.put(f"/api/v1/meetings/{mid}/settings", json={"delivery": spec}).json()
-    assert s["delivery"]["override"] is True and s["delivery"]["effective"]["archive"] is True and s["delivery"]["room"]["recipients"]["emails"] == ["room@example.local"]
-    assert client.put(f"/api/v1/meetings/{mid}/settings", json={"delivery": {"enabled": True, "materials": []}}).status_code == 422
-    import asyncio  # noqa: F401
+    assert client.put(f"/api/v1/meetings/{mid}/settings", json={"delivery": spec}).status_code == 409, "своей рассылки у встречи больше нет"
     from app.models import Protocol
 
     async def add():
@@ -179,7 +176,7 @@ def test_meeting_delivery_override_and_archive(client, fake_smtp):
     assert client.post(f"/api/v1/meetings/{mid}/end").status_code == 204
     _drain(client)
     rows = messages(client)
-    assert {r["recipient"] for r in rows} == {"only-this@example.local"}, "для встречи действуют её настройки, а не комнаты"
+    assert {r["recipient"] for r in rows} == {"room@example.local"}, "письма — по настройкам комнаты"
     assert run_queue(client) == 1
     atts = list(fake_smtp.sent[0].iter_attachments())
     assert len(atts) == 1 and atts[0].get_filename().endswith(".zip")

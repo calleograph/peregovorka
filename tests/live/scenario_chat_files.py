@@ -65,7 +65,8 @@ async def main():
         # запрещённый тип
         await attach(A, exe); await asyncio.sleep(2.0)
         txtA = await A.js("document.body.innerText")
-        S.check("запрещённый тип (.exe) отклонён с понятным сообщением", ("нельзя" in txtA or "не разрешён" in txtA or "не поддерж" in txtA or "тип" in txtA.lower()) and "вредонос.exe" not in (await B.js("document.body.innerText")), "")
+        S.check("запрещённый тип (.exe) отклонён окном «…3 МБ или неподдерживаемый формат…» с кнопкой «Понятно»", "неподдерживаемый формат" in txtA and "Понятно" in txtA and "вредонос.exe" not in (await B.js("document.body.innerText")), txtA[-300:])
+        await A.js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Понятно')?.click()")
         for e in (await A.state())["errs"][:2]:
             print("Алиса ERR:", e)
         print("Боб errs:", (await B.state())["errs"][:3])

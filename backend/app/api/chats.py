@@ -20,7 +20,7 @@ from ..models import Chat, ChatFile, ChatMember, ChatMessage, User, utcnow
 from ..services import avatars
 from ..services import chats as cs
 from ..services.audit import audit_now, write_audit
-from ..services.chat_files import INLINE_IMAGES, AttachmentError, verify_upload
+from ..services.chat_files import INLINE_IMAGES, REJECT_TEXT, AttachmentError, verify_upload
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -678,12 +678,12 @@ async def watch(user_id: uuid.UUID, request: Request, body: dict = Body(default=
 async def _read_limited(request: Request, limit: int) -> bytes:
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > limit:
-        raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+        raise HTTPException(status_code=413, detail=REJECT_TEXT)
     buf = bytearray()
     async for chunk in request.stream():
         buf += chunk
         if len(buf) > limit:
-            raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+            raise HTTPException(status_code=413, detail=REJECT_TEXT)
     return bytes(buf)
 
 

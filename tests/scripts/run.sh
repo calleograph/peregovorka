@@ -179,6 +179,8 @@ source "$ROOT/tests/scripts/part_llm.sh"
 source "$ROOT/tests/scripts/part_sip.sh"
 # shellcheck source=part_video.sh
 source "$ROOT/tests/scripts/part_video.sh"
+# shellcheck source=part_livedirs.sh
+source "$ROOT/tests/scripts/part_livedirs.sh"
 # shellcheck source=part_img.sh
 source "$ROOT/tests/scripts/part_img.sh"
 # shellcheck source=part_security_reset.sh

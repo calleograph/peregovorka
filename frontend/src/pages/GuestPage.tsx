@@ -3,13 +3,11 @@ import { Link, useParams } from "react-router-dom";
 import { useSite } from "../site";
 import { api, ApiError, setGuestToken, setUnauthorizedHandler, type GuestJoinInfo, type GuestRoomInfo } from "../api";
 import PreJoinCheck from "../components/PreJoinCheck";
+import { type Contact, GuestContactFields, contactBody, emailOk, loadContact, nameOk, saveContact } from "../components/GuestContact";
 import { setPreJoin, type PreJoin } from "../prejoin";
 import type { GuestSession } from "./RoomPage";
 
 const RoomPage = lazy(() => import("./RoomPage"));
-const NAME_KEY = "guest.name";
-const ssGet = (k: string) => { try { return sessionStorage.getItem(k) ?? ""; } catch { return ""; } };
-const ssSet = (k: string, v: string) => { try { sessionStorage.setItem(k, v); } catch { /* не критично */ } };
 
 type Phase = "check" | "room" | "left" | "ended" | "revoked";
 
@@ -21,7 +19,7 @@ export default function GuestPage() {
   const { token = "" } = useParams();
   const [info, setInfo] = useState<GuestRoomInfo | null>(null);
   const [fatal, setFatal] = useState("");
-  const [name, setName] = useState(() => ssGet(NAME_KEY));
+  const [contact, setContact] = useState<Contact>(loadContact);
   const [password, setPassword] = useState("");
   const [needPw, setNeedPw] = useState(false);
   const [error, setError] = useState("");
@@ -54,8 +52,8 @@ export default function GuestPage() {
   const enter = async () => {
     setBusy(true); setError("");
     try {
-      const r = await api.guest.join(token, name.trim(), needPw ? password : undefined, consentDocs.map((d) => d.kind).filter((k) => agreed.has(k)));
-      ssSet(NAME_KEY, name.trim());
+      const r = await api.guest.join(token, contactBody(contact), needPw ? password : undefined, consentDocs.map((d) => d.kind).filter((k) => agreed.has(k)));
+      saveContact(contact);
       setGuestToken(r.guest_token);
       const { micOk: _ok, ...pre } = hw.current; void _ok;
       setPreJoin(pre);
@@ -86,7 +84,7 @@ export default function GuestPage() {
   if (phase === "room" && guestCtx) return <Suspense fallback={<div className="center muted">Загрузка…</div>}><RoomPage guest={guestCtx} /></Suspense>;
 
   if (!info) return <div className="center muted">Загрузка…</div>;
-  const nameOk = name.trim().length >= 2;
+  const ready = nameOk(contact) && emailOk(contact);
   return (
     <section className="prejoin card guest-join">
       <h1>{info.room_name}</h1>
@@ -94,11 +92,7 @@ export default function GuestPage() {
       {info.description && <p className="small">{info.description}</p>}
       {site.guest_text && <div className="alert info" role="note" style={{ whiteSpace: "pre-wrap" }}>{site.guest_text}</div>}
       {!info.meeting_active && <div className="alert info" role="status">Встреча ещё не началась. Дождитесь, пока сотрудник откроет комнату — страница обновится сама.</div>}
-      <label>Ваше имя
-        <input value={name} maxLength={60} autoFocus autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="Например, Иван Иванов"
-               onKeyDown={(e) => { if (e.key === "Enter" && nameOk && info.meeting_active && !busy) void enter(); }} />
-      </label>
-      {name.trim() && <p className="muted small">Участники увидят: <b>{name.trim().replace(/\s+/g, " ")} (гость)</b></p>}
+      <GuestContactFields value={contact} onChange={setContact} preview="Участники увидят" suffix=" (гость)" onEnter={() => { if (ready && consentOk && info.meeting_active && !busy) void enter(); }} />
       {(info.has_password || needPw) && (
         <label>Пароль комнаты
           <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setNeedPw(true); }} autoComplete="off" />
@@ -113,7 +107,7 @@ export default function GuestPage() {
       ))}
       {error && <div className="alert error" role="alert">{error}</div>}
       <div className="row">
-        <button className="btn primary" disabled={busy || !nameOk || !consentOk || !info.meeting_active || ((info.has_password || needPw) && !password)} onClick={() => void enter()}>
+        <button className="btn primary" disabled={busy || !ready || !consentOk || !info.meeting_active || ((info.has_password || needPw) && !password)} onClick={() => void enter()}>
           {busy ? "Входим…" : "Войти в комнату"}
         </button>
       </div>

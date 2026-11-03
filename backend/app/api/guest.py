@@ -25,6 +25,7 @@ from ..security.passwords import verify_room_password
 from ..services import roles
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
+from ..services.mail import valid_email
 from .rooms import room_out
 from .clientcfg import build_client_config
 from ..services import e2ee as e2ee_svc
@@ -38,6 +39,8 @@ PASSWORD_FAILS, PASSWORD_WINDOW = 8, 600   # неверных паролей к�
 
 class GuestJoinIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
+    email: str | None = Field(default=None, max_length=254)                      # необязательно: контакт для организатора; материалы — только с согласием
+    materials_consent: bool = False
     password: str | None = Field(default=None, max_length=256, repr=False)
     accepted_documents: list[str] = Field(default_factory=list, max_length=8)      # подтверждённые гостем документы (если организация требует подтверждения)
 
@@ -69,6 +72,16 @@ def clean_display_name(raw: str) -> str:
     if len(text) < 2:
         raise HTTPException(status_code=422, detail="Введите имя (не короче двух символов)")
     return text[:60]
+
+
+def clean_email(raw: str | None) -> str | None:
+    """Почта гостя или зрителя: пусто — None; неверный адрес — понятный отказ (а не молча выброшенный адрес, которого гость потом ждёт)."""
+    e = (raw or "").strip()
+    if not e:
+        return None
+    if len(e) > 254 or not valid_email(e):
+        raise HTTPException(status_code=422, detail={"code": "email_invalid", "message": "Проверьте адрес электронной почты или оставьте поле пустым."})
+    return e
 
 
 async def _room_by_token(db: AsyncSession, token: str) -> Room:
@@ -140,6 +153,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
     room = await _room_by_token(db, token)
     await _outlook_policy(request, db, room)
     name = clean_display_name(body.display_name)
+    email = clean_email(body.email)
     ip, client = client_ip(request), parse_client(request.headers.get("user-agent"))
     journal = request.app.state.journal
     from .site import required_documents  # noqa: PLC0415
@@ -164,7 +178,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
             raise HTTPException(status_code=403, detail={"code": "room_password_invalid", "message": "Неверный пароль комнаты."})
 
     try:
-        result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client)
+        result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client, email=email, materials_consent=body.materials_consent)
     except JoinError as exc:
         await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,
                         result="denied", actor_type="guest", details={"code": exc.code})

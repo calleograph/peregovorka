@@ -59,12 +59,25 @@ data class CallUi(
     /** Человек хотел включить микрофон/камеру, но разрешения нет: рядом с кнопкой — пояснение и «Разрешить»; после выдачи (в окне запроса или в настройках) включается само. */
     val micWanted: Boolean = false,
     val camWanted: Boolean = false,
+    /** Показ своего экрана (MediaProjection): разрешён ли в этой комнате, идёт ли сейчас, что сказать человеку (отказ системы, остановка). */
+    val canScreen: Boolean = false,
+    val screenOn: Boolean = false,
+    val screenNote: String? = null,
 )
 
 /**
  * Одна идущая конференция на всё приложение. Живёт в процессе, а не в Activity: поворот экрана и сворачивание её не прерывают.
  * Звук в фоне держит [CallService] (служба переднего плана с типом microphone); камера при сворачивании выключается — система всё равно не даёт к ней доступ.
  */
+/** Почему показ экрана не начался — по-человечески. Отдельные производители ограничивают службы переднего плана и захват экрана. */
+fun screenFailText(e: Throwable?): String = when (e) {
+    is SecurityException -> "Android не разрешил показ экрана (ограничение системы или производителя телефона). Разрешите приложению работу в фоне в настройках и повторите."
+    null -> "Показ экрана не начался. Повторите; если не получится — покажите экран с компьютера."
+    else -> if ((e.message ?: "").contains("permission", ignoreCase = true) || (e.message ?: "").contains("denied", ignoreCase = true))
+        "Сервер не разрешил вам показывать экран в этой комнате (права руководителя или предел одновременных показов)."
+    else "Показ экрана не начался: ${e.javaClass.simpleName}. Повторите; если не получится — покажите экран с компьютера."
+}
+
 class CallManager(private val app: Application) {
     companion object {
         private const val RELEASE_DELAY_MS = 1500L
@@ -122,7 +135,7 @@ class CallManager(private val app: Application) {
         val mic = wantMic && canMic && !join.client.muteOnJoin
         _ui.value = CallUi(
             phase = Phase.Connecting, roomName = join.room.name, meetingId = join.meetingId, serverTitle = serverTitle,
-            canMic = canMic, canCamera = canCam, e2ee = join.e2ee != null, welcome = join.client.welcome, startedAt = System.currentTimeMillis(),
+            canMic = canMic, canCamera = canCam, canScreen = "screen_share" in sources, e2ee = join.e2ee != null, welcome = join.client.welcome, startedAt = System.currentTimeMillis(),
             micWanted = intentMic && canMic && !join.client.muteOnJoin, camWanted = intentCamera && canCam,
         )
         // Служба переднего плана нужна, чтобы звук не прерывался в фоне; если система в этот момент её не разрешает (запуск из состояния «не на переднем плане»,
@@ -334,7 +347,7 @@ class CallManager(private val app: Application) {
         if (micNow != _ui.value.micOn) android.util.Log.i("PGCALL", "ui_mic $micNow pub=${me.getTrackPublication(Track.Source.MICROPHONE)?.let { "muted=${it.muted} track=${it.track != null}" }}")
         _ui.update {
             it.copy(
-                tiles = list, micOn = sourceOn(me, Track.Source.MICROPHONE), camOn = sourceOn(me, Track.Source.CAMERA),
+                tiles = list, micOn = sourceOn(me, Track.Source.MICROPHONE), camOn = sourceOn(me, Track.Source.CAMERA), screenOn = sourceOn(me, Track.Source.SCREEN_SHARE),
                 handUp = hands.any { h -> h.identity == myIdentity },
                 audioDevice = (r.audioHandler as? AudioSwitchHandler)?.selectedAudioDevice?.name.orEmpty(),
             )
@@ -371,6 +384,36 @@ class CallManager(private val app: Application) {
         _ui.update { it.copy(camWanted = on) }
         scope.launch { runCatching { r.localParticipant.setCameraEnabled(on) }.onFailure { android.util.Log.w("PGCALL", "camera_toggle_failed ${it.javaClass.simpleName}") }; refresh() }
     }
+    // ── показ своего экрана ───────────────────────────────────────────────────────────────
+    /**
+     * [data] — ответ системного окна MediaProjection («Начать трансляцию»). Захват и служба переднего плана с типом mediaProjection — в LiveKit SDK
+     * (ScreenCaptureService): Android 14+ разрешает её только после согласия человека, а согласие действует на один показ. Показ идёт и в свёрнутом
+     * приложении; остановить можно здесь, из шторки системы или кнопкой «Остановить» Android 15 — тогда приходит onStop.
+     */
+    fun startScreenShare(data: android.content.Intent) {
+        val r = room ?: return
+        _ui.update { it.copy(screenNote = null) }
+        scope.launch {
+            val res = runCatching {
+                r.localParticipant.setScreenShareEnabled(true, io.livekit.android.room.track.screencapture.ScreenCaptureParams(data, onStop = {
+                    scope.launch { refresh(); if (!_ui.value.screenOn) _ui.update { it.copy(screenNote = "Показ экрана остановлен.") } }
+                }))
+            }
+            val ok = res.getOrDefault(false)
+            android.util.Log.i("PGCALL", "screen_share_start ok=$ok ${res.exceptionOrNull()?.javaClass?.simpleName.orEmpty()}")
+            if (!ok) _ui.update { it.copy(screenNote = screenFailText(res.exceptionOrNull())) }
+            val a = api; val mid = _ui.value.meetingId
+            if (a != null && mid.isNotEmpty()) launch { runCatching { a.reportEvent(if (ok) "screen_share_ok" else "screen_share_failed", mid, res.exceptionOrNull()?.javaClass?.simpleName.orEmpty()) } }
+            refresh()
+        }
+    }
+    fun stopScreenShare() {
+        val r = room ?: return
+        scope.launch { runCatching { r.localParticipant.setScreenShareEnabled(false) }; refresh() }
+    }
+    fun screenConsentDenied() { _ui.update { it.copy(screenNote = "Показ экрана отменён: без разрешения Android изображение экрана не передаётся.") } }
+    fun dismissScreenNote() { _ui.update { it.copy(screenNote = null) } }
+
     /** Человек нажал «включить», а разрешения нет: запоминаем намерение — как только доступ выдан, устройство включится само. */
     fun wantMic() { _ui.update { it.copy(micWanted = true) } }
     fun wantCamera() { _ui.update { it.copy(camWanted = true) } }
@@ -410,6 +453,7 @@ class CallManager(private val app: Application) {
             // захват звука и видео ещё работает, а к трекам ещё подключены отрисовщики. Поэтому сначала останавливаем захват, отключаемся и освобождаем ресурсы с паузой,
             // когда интерфейс уже отпустил треки (список участников пуст).
             runCatching { r.localParticipant.setMicrophoneEnabled(false); r.localParticipant.setCameraEnabled(false) }
+            runCatching { r.localParticipant.setScreenShareEnabled(false) }
             runCatching { r.disconnect() }
             delay(RELEASE_DELAY_MS)
             runCatching { r.release() }

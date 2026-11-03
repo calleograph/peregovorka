@@ -84,6 +84,8 @@ class ClientConfig(BaseModel):
     screen_profile: str = "sharp"
     screen_eco_kbps: int = 800      # цель битрейта профиля «Экономный 720p» (500–900 кбит/с)
     screen_share_audio: bool = False
+    screen_max_height: int = 1080   # захват показа экрана: 1440 — в комнате трансляции с качеством эфира 2K (мелкий текст не растягивается из 1080p)
+    broadcast: bool = False         # комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей, без завершения по бездействию
     one_sharer_at_a_time: bool = False
     max_sharers: int = 5            # одновременных показов экрана во встрече (1 — «только один показывающий»); сервер останавливает показ сверх предела
     can_moderate: bool = False      # руководитель комнаты / администратор: может выключать микрофоны участников
@@ -132,6 +134,8 @@ class ParticipantOut(BaseModel):
     joined_at: datetime
     left_at: datetime | None
     online: bool
+    email: str | None = None         # почта гостя — только организатору, руководителям комнаты и администраторам
+    materials_consent: bool = False  # гость согласился получать материалы на эту почту
 
 
 class MeetingOut(BaseModel):

@@ -1,7 +1,8 @@
-// Служебное сочетание Alt+M открывает встроенную мини-игру. Обрабатывается только событие страницы (глобального перехвата клавиатуры ОС нет);
+// Служебное сочетание Alt+M или Ctrl+M (на Mac — Option+M или Control+M) открывает встроенную мини-игру. Обрабатывается только событие страницы (глобального перехвата клавиатуры ОС нет);
 // код игры подгружается отдельным файлом при первом нажатии и на остальную работу приложения не влияет.
 export function isCrystalsKey(e: Pick<KeyboardEvent, "code" | "key" | "altKey" | "ctrlKey" | "shiftKey" | "metaKey" | "isComposing">): boolean {
-  if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey || e.isComposing) return false;
+  // ровно один из Alt и Ctrl: Ctrl+Alt — это AltGr в Windows (ввод символов), его не трогаем
+  if (e.altKey === e.ctrlKey || e.shiftKey || e.metaKey || e.isComposing) return false;
   // Физический код — работает в любой раскладке; если кода нет (виртуальная клавиатура, удалённый рабочий стол) — латинская «m» или русская «ь».
   return e.code === "KeyM" || (!e.code && /^[mь]$/i.test(e.key));
 }

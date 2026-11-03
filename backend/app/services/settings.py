@@ -117,7 +117,11 @@ class AudioStorageSettings(_StorageTarget):
 
 
 FORBIDDEN_EXTENSIONS = frozenset({"exe", "bat", "cmd", "com", "scr", "msi", "dll", "ps1", "vbs", "js", "jar", "sh", "html", "htm", "svg", "xhtml", "php", "lnk"})
-DEFAULT_ATTACHMENT_TYPES = "png,jpg,jpeg,gif,webp,pdf,txt,md,csv,docx,xlsx,pptx,odt,ods,odp,zip,drawio"
+# В чатах — только изображения (в том числе вставленные снимки экрана) и документы, не больше 3 МБ на файл: видео, звук, архивы и исполняемые файлы передают
+# почтой или через файлообменник. Администратор может сузить список и предел, но не расширить. Хранилища записей и материалов встреч живут по своим правилам.
+CHAT_MAX_MB = 3
+CHAT_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "csv", "docx", "xlsx", "pptx", "odt", "ods", "odp", "drawio")
+DEFAULT_ATTACHMENT_TYPES = ",".join(CHAT_TYPES)
 
 
 class ChatFilesSettings(_Group):
@@ -126,9 +130,17 @@ class ChatFilesSettings(_Group):
 
     enabled: bool = True
     profile_id: str = ""
-    max_size_mb: int = Field(default=25, ge=1, le=100)
+    max_size_mb: int = Field(default=CHAT_MAX_MB, ge=1, le=CHAT_MAX_MB)
     max_files_per_message: int = Field(default=5, ge=1, le=20)
     allowed_extensions: str = DEFAULT_ATTACHMENT_TYPES   # через запятую, без точек
+
+    @field_validator("max_size_mb", mode="before")
+    @classmethod
+    def _cap(cls, v):
+        try:
+            return max(1, min(int(v), CHAT_MAX_MB))       # сохранённое до 0.64 значение (по умолчанию было 25 МБ) приводится к пределу, а не ломает настройки
+        except (TypeError, ValueError):
+            return CHAT_MAX_MB
 
     @field_validator("profile_id")
     @classmethod
@@ -148,10 +160,10 @@ class ChatFilesSettings(_Group):
         bad = sorted(set(items) & FORBIDDEN_EXTENSIONS)
         if bad:
             raise ValueError("Эти типы запрещены по соображениям безопасности: " + ", ".join(bad))
-        return ",".join(dict.fromkeys(items))
+        return ",".join(e for e in dict.fromkeys(items) if e in CHAT_TYPES)     # видео, звук, архивы и прочее в чатах не разрешаются (прежние значения отбрасываются)
 
     def extensions(self) -> set[str]:
-        return {e for e in self.allowed_extensions.split(",") if e}
+        return {e for e in self.allowed_extensions.split(",") if e in CHAT_TYPES}
 
 
 class AnonymizerSettings(_Group):
@@ -839,7 +851,7 @@ class LiveSettings(_Group):
     max_concurrent: int = Field(default=1, ge=1, le=10)           # одновременных эфиров на весь сервер: каждый — браузер внутри Egress (≈ 2–4 ядра) и исходящий поток; сначала 1, увеличивать после замеров
     min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе трансляций — эфир не начинается, идущий останавливается
     max_hours: int = Field(default=12, ge=1, le=48)               # предел одного эфира; длиннее — эфир останавливается (чтобы забытая трансляция не шла сутками)
-    default_quality: str = Field(default="720p", pattern="^(720p|1080p)$")
+    default_quality: str = Field(default="1080p", pattern="^(720p|1080p|1440p)$")
     segment_keep_min: int = Field(default=15, ge=3, le=240)       # сегменты HLS старше этого срока во время эфира удаляются: диск не растёт на всё время эфира (перемотки назад нет)
     after_end_keep_min: int = Field(default=30, ge=0, le=1440)    # через сколько минут после конца эфира удаляется весь каталог HLS (запись остаётся в MP4)
     view_link_ttl_s: int = Field(default=900, ge=120, le=7200)    # срок действия подписи, которую получает плеер страницы зрителя; плеер продлевает её сам. Это же — задержка, с которой пароль и отзыв «доходят» до уже смотрящих

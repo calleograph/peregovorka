@@ -17,6 +17,9 @@ BUILTIN_STUN="stun.cloudflare.com:3478,global.stun.twilio.com:3478,stun.l.google
 
 if [ -n "${LIVEKIT_LAN_IP:-}" ]; then
   if ip -o -4 addr show | grep -q " ${LIVEKIT_LAN_IP}/"; then :
+  elif ! ip route get "${LIVEKIT_LAN_IP}" 2>/dev/null | grep -q " via "; then
+    # адрес из подсети самого контейнера (обычно шлюз сети Docker): на интерфейсе он отрезал бы ответы шлюзу — проброшенные порты сбрасывали бы соединения
+    say "ПРЕДУПРЕЖДЕНИЕ: ${LIVEKIT_LAN_IP} — адрес из сети Docker этого контейнера, на интерфейс не добавляется (укажите в LIVEKIT_NODE_IP адрес сервера в локальной сети)"
   else
     dev="$(ip -o -4 route show default | awk '{print $5; exit}')"
     if ip addr add "${LIVEKIT_LAN_IP}/32" dev "${dev:-eth0}" 2>/dev/null; then say "адрес локальной сети ${LIVEKIT_LAN_IP} объявляется клиентам"

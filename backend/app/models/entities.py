@@ -146,7 +146,7 @@ class Room(Base):
     # Трансляция (LiveKit Egress → HLS и внешние площадки, зрители смотрят без подключения к LiveKit). Включается на комнате любого типа; тип «broadcast» включает её по умолчанию.
     live_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     live_start: Mapped[str] = mapped_column(String(8), default="manual", server_default="manual", nullable=False)      # manual | auto (эфир начинается с первым выступающим)
-    live_quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)       # 720p | 1080p
+    live_quality: Mapped[str] = mapped_column(String(8), default="1080p", server_default="1080p", nullable=False)     # 720p | 1080p | 1440p
     live_record: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)    # сохранять MP4-запись эфира в историю
     live_own_hls: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)   # собственный просмотр (страница зрителя и ссылка на поток); иначе только внешние площадки
     live_title: Mapped[str | None] = mapped_column(String(200))                  # название мероприятия на странице зрителя (пусто — название комнаты)
@@ -351,6 +351,10 @@ class GuestParticipant(Base):
     left_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Идентификатор участника в LiveKit, если он выдан не нами (входящий телефонный звонок: sip_<номер>…); иначе выводится из id
     lk_identity: Mapped[str | None] = mapped_column(String(160), index=True)
+    # Почта, которую гость указал при входе: контакт для организаторов и администраторов (другим участникам не показывается); материалы встречи на неё —
+    # только с согласием гостя (materials_consent) и если рассылка включена в настройках комнаты
+    email: Mapped[str | None] = mapped_column(String(254))
+    materials_consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
 
     @property
     def is_phone(self) -> bool:
@@ -1166,6 +1170,36 @@ class Broadcast(Base):
     access_until: Mapped[datetime | None] = mapped_column(UTCDateTime)          # конец доступа к записи по ссылке: фактическое окончание эфира + link_days
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)            # доступ закрыт досрочно (владелец или администратор)
     recording_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                # запись этого эфира (recordings.id); сама запись живёт по общей политике хранения
+
+
+class LiveViewer(Base):
+    """Зритель собственной страницы эфира (/live/<токен>): имя (обязательно), почта и согласие на материалы (необязательно). Не пользователь и не участник LiveKit."""
+
+    __tablename__ = "live_viewers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    broadcast_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("broadcasts.id", ondelete="SET NULL"), index=True)   # эфир, который зритель смотрел последним
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254))
+    materials_consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class LiveQuestion(Base):
+    """Вопрос зрителя к идущему эфиру: привязан к эфиру (удаляется вместе с ним и встречей по срокам хранения). new — новый, done — обработан, hidden — скрыт ведущим."""
+
+    __tablename__ = "live_questions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    broadcast_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("broadcasts.id", ondelete="CASCADE"), index=True, nullable=False)
+    viewer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("live_viewers.id", ondelete="SET NULL"), index=True)
+    author_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(8), default="new", server_default="new", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    handled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    handled_by: Mapped[str | None] = mapped_column(String(200))
 
 
 class LiveDestination(Base):

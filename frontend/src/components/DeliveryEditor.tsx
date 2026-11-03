@@ -13,7 +13,7 @@ export const SOURCE_LABEL: Record<string, string> = { leader: "руководи�
 export const PROBLEM_LABEL: Record<string, string> = { no_email: "в каталоге нет адреса электронной почты", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
-export const MODE_LABEL: Record<PerMode, string> = { none: "Не отправлять", leader: "Руководителям комнаты", owner: "Владельцу комнаты", organizer: "Организатору встречи", all: "Всем участникам встречи", selected: "Выбранным пользователям" };
+export const MODE_LABEL: Record<PerMode, string> = { none: "Не отправлять", leader: "Руководителям комнаты", owner: "Владельцу комнаты", organizer: "Организатору встречи", all: "Всем участникам встречи", selected: "Выбранным пользователям", emails: "Только на свои адреса (ниже)" };
 const noneMaterials = (): Record<string, PerMaterial> => Object.fromEntries(MATERIAL_KINDS.map((m) => [m.kind, { mode: "none" as PerMode, users: [] }]));
 /** Новые настройки: ничего не отправляется, пока руководитель сам не выберет, какой материал кому. */
 export const emptySpec = (): MailDeliverySpec => ({ enabled: false, archive: false, materials: [], per_material: noneMaterials(), recipients: { leaders: false, participants: false, users: [], emails: [] } });

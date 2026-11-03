@@ -105,3 +105,12 @@ describe("eco honesty about what the browser really sends", () => {
     expect(await applyProfileLive(undefined, "eco")).toBe("none");
   });
 });
+
+describe("эфир 2K", () => {
+  it("захват до 1440p и больший битрейт, «Экономный» не меняется", () => {
+    const o = screenShareOptions("sharp", false, 800, 1440);
+    expect(o.capture.resolution).toMatchObject({ width: 2560, height: 1440 });
+    expect(o.publish.screenShareEncoding!.maxBitrate).toBeGreaterThan(screenShareOptions("sharp", false).publish.screenShareEncoding!.maxBitrate);
+    expect(screenShareOptions("eco", false, 800, 1440)).toEqual(screenShareOptions("eco", false, 800));
+  });
+});

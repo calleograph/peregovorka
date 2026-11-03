@@ -37,6 +37,95 @@ def _comp_action(name: str, op: str) -> dict:
             "interrupts_calls": o["calls"], "danger": bool(o.get("danger"))}
 
 
+REPAIR_DIRS = {"kind": "repair", "repair": "data_dirs", "label": "Исправить права каталогов"}
+WEB_STATE_TIMEOUT_S = 3
+WEB_URL = "http://web:8080"          # сервис web в сети compose (deployment/compose.yml)
+
+
+async def web_hls_state(url: str) -> tuple[str, str] | None:
+    """Что сообщает nginx контейнера web о секрете: (состояние, поколение) или None — web не ответил."""
+    import httpx  # noqa: PLC0415
+
+    try:
+        async with httpx.AsyncClient(timeout=WEB_STATE_TIMEOUT_S) as c:
+            r = await c.get(url.rstrip("/") + "/__hls/state")
+        if r.status_code != 200:
+            return None
+        state, _, g = r.text.strip().partition(" ")
+        return state, g.strip()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def secret_checks(live, settings) -> list[dict]:
+    import hashlib  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    from .live import SECRET_GID, SECRET_MODE, hls_secret, nginx_secret_conf  # noqa: PLC0415
+
+    nd = live.live_dir() / "nginx"
+    conf = nd / "secret.conf"
+    why = live.prepare()                       # самовосстановление: создать каталог и секрет, поправить права файла — если backend это может
+    want = nginx_secret_conf(hls_secret(settings))
+    out = []
+    t = "Секрет подписи трансляций: "
+    if not nd.is_dir():
+        out.append(_chk("secret_dir", t + "каталог", "error", f"Каталога {nd} нет. «Исправить права каталогов» создаст его с нужным владельцем.", action=REPAIR_DIRS, doc=DOC_MEDIA))
+        return out + [_skip(i, t + n, "появится каталог") for i, n in (("secret_write", "запись backend"), ("secret_file", "файл"), ("secret_mode", "права"),
+                                                                       ("secret_read", "чтение nginx"), ("secret_test", "проверка nginx -t"), ("secret_applied", "применение в nginx"))]
+    out.append(_chk("secret_dir", t + "каталог", "ok", "Каталог есть."))
+    can_write = os.access(nd, os.W_OK | os.X_OK) and why is None
+    out.append(_chk("secret_write", t + "запись backend", "ok" if can_write else "error",
+                    "Backend может создавать и обновлять секрет." if can_write else f"Backend не может записать секрет: {why or 'нет права записи в каталог'}. Обычно каталог создан Docker от root.",
+                    action=None if can_write else REPAIR_DIRS, doc=None if can_write else DOC_MEDIA))
+    try:
+        st, text = conf.stat(), conf.read_text()
+    except OSError:
+        st, text = None, None
+    if st is None:
+        out.append(_chk("secret_file", t + "файл", "error", "Секрет не создан.", action=REPAIR_DIRS, doc=DOC_MEDIA))
+        return out + [_skip(i, t + n, "секрет будет создан") for i, n in (("secret_mode", "права"), ("secret_read", "чтение nginx"), ("secret_test", "проверка nginx -t"),
+                                                                          ("secret_applied", "применение в nginx"))]
+    out.append(_chk("secret_file", t + "файл", "ok" if text == want else "error", "Создан." if text == want else "Содержимое устарело, а backend не может его обновить.",
+                    action=None if text == want else REPAIR_DIRS))
+    mode_ok = (st.st_mode & 0o777) == SECRET_MODE and st.st_gid == SECRET_GID
+    out.append(_chk("secret_mode", t + "права", "ok" if mode_ok else "error",
+                    f"0{SECRET_MODE:o}, группа {SECRET_GID}: читают только backend и nginx." if mode_ok else
+                    f"Сейчас 0{st.st_mode & 0o777:o}, группа {st.st_gid}; нужно 0{SECRET_MODE:o} и группа {SECRET_GID} (посторонние локальные пользователи не должны читать секрет).",
+                    action=None if mode_ok else REPAIR_DIRS, doc=None if mode_ok else DOC_MEDIA))
+    gen = hashlib.sha256(want.encode()).hexdigest()[:12]
+    ws = await web_hls_state(WEB_URL)
+    if ws is None:
+        return out + [_chk(i, t + n, "info", "Веб-сервер (web) не ответил на запрос состояния — проверить нельзя.") for i, n in
+                      (("secret_read", "чтение nginx"), ("secret_test", "проверка nginx -t"), ("secret_applied", "применение в nginx"))]
+    state, loaded = ws
+    restart = _comp_action("web", "web_restart")
+    if state in ("missing", "unreadable"):
+        out.append(_chk("secret_read", t + "чтение nginx", "error", f"Nginx не видит файл секрета: нет права группы {SECRET_GID} на каталог live/nginx (или том не подключён)." if state == "missing" else
+                        f"Nginx не может прочитать секрет: нет права чтения для группы {SECRET_GID}.", action=REPAIR_DIRS, doc=DOC_MEDIA))
+    else:
+        out.append(_chk("secret_read", t + "чтение nginx", "ok", "Nginx читает секрет."))
+    if state == "test_failed":
+        out.append(_chk("secret_test", t + "проверка nginx -t", "error", "nginx -t отклонил конфигурацию с новым секретом: работает прежняя. Подробности — в журнале контейнера web.",
+                        action=restart, doc=DOC_MEDIA))
+    elif state in ("ok", "reload_failed"):
+        out.append(_chk("secret_test", t + "проверка nginx -t", "ok", "Конфигурация проверена."))
+    else:
+        out.append(_skip("secret_test", t + "проверка nginx -t", "nginx прочитает секрет"))
+    if state == "ok" and loaded == gen:
+        out.append(_chk("secret_applied", t + "применение в nginx", "ok", f"Работающий nginx использует актуальный секрет (поколение {gen})."))
+    elif state == "reload_failed":
+        out.append(_chk("secret_applied", t + "применение в nginx", "error", "Nginx не перечитал конфигурацию: зрители не откроют поток с новыми подписями.", action=restart, doc=DOC_MEDIA))
+    elif state == "ok":
+        fresh = time.time() - st.st_mtime < 30
+        out.append(_chk("secret_applied", t + "применение в nginx", "info" if fresh else "error",
+                        "Секрет только что обновлён: nginx применит его в течение нескольких секунд." if fresh else
+                        f"Nginx использует другой секрет (поколение {loaded or '—'}, ожидается {gen}).", action=None if fresh else restart, doc=None if fresh else DOC_MEDIA))
+    else:
+        out.append(_skip("secret_applied", t + "применение в nginx", "nginx прочитает секрет"))
+    return out
+
+
 def _parse_ts(v: str | None) -> float | None:
     """StartedAt Docker («2026-10-29T20:11:03.123456789Z», всегда UTC) → секунды; до секунд этого достаточно."""
     from datetime import datetime, timezone  # noqa: PLC0415
@@ -108,25 +197,9 @@ async def checks(st, db, purpose: str) -> list[dict]:
     if purpose == "live":
         live = st.live
         base = live.live_dir()
-        # 5. секрет подписи HLS: пишет backend при запуске, nginx (web) читает при своём запуске
-        sec_title = "Секрет подписи трансляций"
-        conf = base / "nginx" / "secret.conf"
-        if not conf.is_file():
-            try:
-                live.prepare()                         # самовосстановление: каталог мог появиться после запуска backend
-            except Exception:  # noqa: BLE001
-                pass
-        if not conf.is_file():
-            out.append(_chk("secret", sec_title, "error", "Не записан: каталог трансляций недоступен для записи. «Исправить автоматически» в разделе «Обновления и версии» восстановит права каталогов.",
-                            action={"kind": "repair", "repair": "data_dirs", "label": "Исправить права каталогов"}, doc=DOC_MEDIA))
-        else:
-            web = (f or {}).get("containers", {}).get("web") if isinstance((f or {}).get("containers"), dict) else None
-            web_started = _parse_ts((web or {}).get("started_at"))
-            if web_started is not None and conf.stat().st_mtime > web_started + 1:
-                out.append(_chk("secret", sec_title, "error", "Записан после запуска веб-сервера: зрители не откроют поток, пока web не перечитает его.",
-                                action=_comp_action("web", "web_restart"), doc=DOC_MEDIA))
-            else:
-                out.append(_chk("secret", sec_title, "ok", "Записан."))
+        # 5. секрет подписи HLS — по этапам: каталог, запись backend, файл, права, чтение nginx, проверка nginx -t, применение. Последние три — по состоянию,
+        # которое сообщает сам web (live-secret.sh): поколение загруженного секрета сверяется с файлом, а не время записи со временем запуска контейнера.
+        out += await secret_checks(live, settings)
         # 6. health-порт Egress (контроль нагрузки) — настройка необязательная
         hp_title = "Контроль нагрузки Egress"
         if not cfg.egress_health_url:

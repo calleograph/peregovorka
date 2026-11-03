@@ -527,6 +527,12 @@ pre.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 .badge.guest { background: var(--accent-soft); color: var(--accent); }
 .guest-shell .topbar .muted { margin-left: 12px; }
 .guest-join { max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
+/* имя, почта и согласие гостя и зрителя эфира (components/GuestContact.tsx) */
+.guest-contact { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.guest-contact label:not(.check) { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
+.guest-contact label:not(.check) .muted { font-weight: 400; }
+.guest-contact p { margin: -2px 0 0; }
+.field-error { color: var(--danger-text); }
 .precheck { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .precheck legend { padding: 0 6px; font-weight: 600; }
 .pc-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
@@ -1032,3 +1038,33 @@ label.field-short { max-width: 280px; }                   /* короткое з
 .screen-stage.max .screen-bar { position: static; opacity: 1; }
 body.screen-max-open { overflow: hidden; }
 @media (max-width: 480px) { .screen-stage.big:not(.max) .sb-title { display: none; } .screen-stage.big:not(.max) .screen-bar { justify-content: flex-end; } }
+
+/* Комната трансляции: верх боковой панели — «Вопросы» / «Транскрибация» (components/TranscriptPanel.tsx), лента вопросов зрителей (LiveQuestionsPanel.tsx) */
+.tp-seg { flex: 0 1 auto; min-width: 0; }
+.tp-seg button { padding: 4px 8px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; min-height: 28px; white-space: nowrap; }
+.tp-seg button[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
+.tp-seg button[aria-selected="true"] .unread-dot { background: #fff; color: var(--accent); }
+.tp-q { min-height: 0; overflow: auto; }
+.unread-dot.q { background: var(--accent); }
+.lq { display: flex; flex-direction: column; gap: 8px; padding: 2px 0; }
+.lq-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.lq-filters .chip { border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 4px; min-height: 28px; transition: border-color .12s, background .12s; }
+.lq-filters .chip:hover { border-color: var(--accent); }
+.lq-filters .chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.lq-n { font-variant-numeric: tabular-nums; opacity: .8; }
+.lq-empty { margin: 4px 2px; }
+.lq-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lq-item { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); padding: 7px 10px; background: var(--surface); display: grid; gap: 4px; }
+.lq-item.done { border-left-color: var(--ok-text); opacity: .8; } .lq-item.hidden { border-left-color: var(--line-strong); opacity: .65; }
+.lq-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.lq-mail { overflow-wrap: anywhere; }
+.lq-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.lq-act { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Комната трансляции: подготовка и выход в эфир (заметная кнопка руководителя в шапке комнаты) */
+.rec-badge.off.prep { background: var(--soft); color: var(--muted); border: 1px dashed var(--line-strong); }
+.btn.onair-go { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 700; gap: 8px; display: inline-flex; align-items: center; }
+.btn.onair-go:disabled { opacity: .6; }
+.btn.onair-go:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.onair-go .rec-dot { background: #fff; }
+.btn.onair-stop { border-color: var(--danger); color: var(--danger-text); }

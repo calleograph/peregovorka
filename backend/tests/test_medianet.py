@@ -240,3 +240,18 @@ def test_builtin_stun_list_is_the_same_everywhere():
     # список повторён там, где импорт невозможен: entrypoint контейнера, compose, модуль правил сети (грузится сценарием хоста), .env.example
     for f in ("deployment/livekit/entrypoint.sh", "deployment/compose.yml", "backend/app/services/netrules.py", ".env.example"):
         assert M.DEFAULT_STUN in (ROOT / f).read_text(encoding="utf-8"), f
+
+
+def test_docker_bridge_addresses_are_not_the_server_lan_address(monkeypatch):
+    # мост Docker (br-*, docker0) стоит на интерфейсе сервера, но клиентам недоступен; на интерфейсе контейнера LiveKit он совпал бы со шлюзом сети
+    spec = importlib.util.spec_from_file_location("medianet_cli", ROOT / "scripts" / "medianet.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    out = {"addr": "1: lo    inet 127.0.0.1/8 scope host lo\n2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0\n"
+                   "3: docker0    inet 172.16.0.1/16 scope global docker0\n4: br-0a1b2c3d4e5f    inet 172.16.48.7/20 scope global br-0a1b2c3d4e5f\n",
+           "route": "1.1.1.1 via 10.0.0.1 dev eth0 src 10.0.0.5 uid 1000\n"}
+    monkeypatch.setattr(cli, "sh", lambda *c, **k: (0, out["addr"] if "addr" in c else out["route"]))
+    ips, src = cli.local_ipv4()
+    assert ips == ["127.0.0.1", "10.0.0.5"] and src == "10.0.0.5"
+    ch, msgs = cli.fix_lan({"LIVEKIT_NODE_IP": "172.16.48.7", "LIVEKIT_PUBLIC_IP": "auto"}, legacy=False)
+    assert ch == {"LIVEKIT_NODE_IP": "10.0.0.5"}, "адрес моста Docker заменяется адресом маршрута по умолчанию"

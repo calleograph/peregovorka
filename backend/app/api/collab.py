@@ -30,7 +30,7 @@ from ..services.livekit import guest_identity, parse_guest_identity, parse_user_
 from ..services.meetings import JoinError
 from ..services.materials import chat_files_map, render_chat
 from ..services.access import can_access_meeting_actor
-from ..services.chat_files import INLINE_IMAGES, AttachmentError, attachment_out, verify_upload
+from ..services.chat_files import INLINE_IMAGES, REJECT_TEXT, AttachmentError, attachment_out, verify_upload
 
 router = APIRouter(prefix="/meetings", tags=["collab"])
 
@@ -371,12 +371,12 @@ async def _read_limited(request: Request, limit: int) -> bytes:
     """Тело запроса не больше limit байт: лишнее отбрасывается сразу, а не после того, как всё лежит в памяти."""
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > limit:
-        raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+        raise HTTPException(status_code=413, detail=REJECT_TEXT)
     buf = bytearray()
     async for chunk in request.stream():
         buf += chunk
         if len(buf) > limit:
-            raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+            raise HTTPException(status_code=413, detail=REJECT_TEXT)
     return bytes(buf)
 
 

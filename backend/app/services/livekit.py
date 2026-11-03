@@ -220,6 +220,16 @@ def webhook_receiver(settings: Settings) -> lkapi.WebhookReceiver:
     return lkapi.WebhookReceiver(lkapi.TokenVerifier(settings.livekit_api_key, settings.livekit_api_secret))
 
 
+async def ensure_room(settings: Settings, room_name: str, *, departure_s: int, empty_s: int) -> None:
+    """Создать комнату LiveKit заранее со своими сроками закрытия (комната трансляции: обрыв связи ведущего не должен закрывать комнату через минуту,
+    иначе вместе с ней заканчиваются эфир и его запись). Комната уже есть — LiveKit возвращает её как есть. Ошибки не критичны: тогда действуют общие сроки."""
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            await lk.room.create_room(lkapi.CreateRoomRequest(name=room_name, departure_timeout=departure_s, empty_timeout=empty_s))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось создать комнату LiveKit заранее", extra={"room": room_name, "error": type(exc).__name__})
+
+
 async def delete_livekit_room(settings: Settings, room_name: str) -> None:
     """Принудительно закрыть комнату (отключить всех). Ошибки не критичны."""
     try:

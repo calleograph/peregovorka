@@ -9,8 +9,9 @@ from sqlalchemy import delete, func, literal_column, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
-from ..models import (MEETING_LITE, GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
+from ..models import (MEETING_LITE, Broadcast, GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
                       TranscriptSegment, User)
+from ..services.live import purge_audience
 from ..services.access import accessible_history, can_access_meeting, release_lease
 from ..services import roles
 from ..services.room_icons import icon_out
@@ -39,7 +40,7 @@ CONTENT_TYPES = {
 }
 
 
-def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestParticipant] | None = None) -> MeetingOut:
+def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestParticipant] | None = None, *, contacts: bool = False) -> MeetingOut:
     # один человек мог заходить несколько раз — показываем по последнему входу
     latest: dict[uuid.UUID, MeetingParticipant] = {}
     for p in sorted(m.participants, key=lambda p: p.joined_at):
@@ -52,7 +53,8 @@ def meeting_out(m: Meeting, counts: dict | None = None, guests: list[GuestPartic
             return "organizer"
         return "leader" if (p.user.ad_guid or "").lower() in leaders else None
     guests = [ParticipantOut(guest_id=g.id, participant_type="phone" if g.is_phone else "guest", display_name=g.label, joined_at=g.joined_at,
-                             left_at=g.left_at, online=g.left_at is None) for g in guests or []]
+                             left_at=g.left_at, online=g.left_at is None, email=g.email if contacts else None,
+                             materials_consent=bool(contacts and g.materials_consent)) for g in guests or []]
     return MeetingOut(
         id=m.id, room_id=m.room_id, room_name=m.room.name, room_icon=icon_out(m.room), started_at=m.started_at, ended_at=m.ended_at,
         end_reason=m.end_reason, transcription_enabled=m.transcription_enabled,
@@ -126,8 +128,9 @@ async def meeting_avatars(meeting_id: uuid.UUID, request: Request, su: SessionUs
 @router.get("/{meeting_id}", response_model=MeetingOut)
 async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
-    out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id))
-    out.can_generate = can_edit_protocol(m, su)           # формировать документы и отправлять материалы: администратор, руководитель комнаты, организатор встречи
+    contacts = can_edit_protocol(m, su)           # почта гостей — тем, кто может отправлять материалы (организатор, руководитель, администратор)
+    out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id), contacts=contacts)
+    out.can_generate = contacts           # формировать документы и отправлять материалы: администратор, руководитель комнаты, организатор встречи
     out.can_send_materials = out.can_generate
     out.can_manage_access = roles.can_manage_room(m.room, su)
     return out
@@ -610,6 +613,8 @@ async def delete_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUse
     await request.app.state.chat_files.delete_for_meetings(db, [meeting_id])
     await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id == meeting_id))
     await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id == meeting_id))
+    await purge_audience(db, [meeting_id])
+    await db.execute(delete(Broadcast).where(Broadcast.meeting_id == meeting_id))
     await db.execute(delete(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="meeting.delete", target_type="meeting",
                       target_id=str(meeting_id), ip=client_ip(request),

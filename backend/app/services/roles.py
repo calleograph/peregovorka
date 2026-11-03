@@ -29,6 +29,11 @@ def is_presentation(room: Room) -> bool:
     return room.room_type == ROOM_PRESENTATION
 
 
+def is_broadcast(room: Room) -> bool:
+    """Комната трансляции: до «Выйти в эфир» — подготовка (без распознавания и записи), простой и обрыв связи не завершают встречу и эфир."""
+    return room.room_type == "broadcast" and bool(room.live_enabled)
+
+
 def is_room_leader(room: Room, su: SessionUser) -> bool:
     """Руководитель этой комнаты (по списку руководителей: группы и люди AD); администратор сервера сюда не входит."""
     return _matches(room.moderators, su)

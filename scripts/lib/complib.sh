@@ -50,7 +50,12 @@ comp_apply_sip_restart() {
   _comp_recreate livekit-sip
 }
 comp_apply_livekit_restart() { info "Пересоздание контейнера livekit (идущие звонки на несколько секунд прервутся)…"; _comp_recreate livekit; }
-comp_apply_web_restart() { info "Пересоздание контейнера web (страницы на несколько секунд недоступны)…"; _comp_recreate web; }
+comp_apply_web_restart() {
+  info "Пересоздание контейнера web (страницы на несколько секунд недоступны)…"
+  _comp_recreate web || return 1
+  local rc=0; live_secret_report 30 || rc=$?        # результат — по факту: nginx загрузил актуальный секрет HLS (нет секрета или web — не ошибка перезапуска)
+  [ "$rc" != 1 ]
+}
 comp_apply_state() { return 0; }
 
 # Ждать, пока контейнер станет healthy (или просто running, если проверки нет): COMP_WAIT_S секунд

@@ -322,7 +322,15 @@ def test_empty_room_ends_the_broadcast_after_the_grace_and_meeting_end_stops_it(
         await db.commit()
     call(lv, empty)
     reconcile(lv)
-    assert lv.fake.stopped == ["EG_test1"] and broadcasts(lv, mid)[0].status == "ending", "выступающие ушли — эфир заканчивается сам"
+    assert lv.fake.stopped == [] and broadcasts(lv, mid)[0].status != "ending", "комната трансляции: обрыв связи ведущего не заканчивает эфир через минуту"
+
+    async def long_empty(db):
+        m = await db.get(Meeting, uuid.UUID(mid))
+        m.empty_since = datetime.now(timezone.utc) - timedelta(seconds=live_mod.BROADCAST_EMPTY_GRACE_S + 30)
+        await db.commit()
+    call(lv, long_empty)
+    reconcile(lv)
+    assert lv.fake.stopped == ["EG_test1"] and broadcasts(lv, mid)[0].status == "ending", "выступающие ушли надолго — эфир заканчивается сам"
     mid2 = _join(lv, "alice", room_live(lv)["id"])["meeting_id"]
     put_settings(lv, "live", max_concurrent=2)
     start(lv, mid2)
@@ -392,9 +400,23 @@ def test_status_goes_waiting_starting_live_ended(lv):
     assert r["status"] == "ended" and r["ended_at"]
 
 
+_VW: dict = {}
+
+
+def vw(client, token: str) -> str:
+    """Зритель представился (имя обязательно) — токен зрителя для этой ссылки."""
+    key = (id(client), token)
+    if key not in _VW:
+        r = client.post(f"/api/v1/live/{token}/viewer", json={"display_name": "Зритель Тестов"})
+        assert r.status_code == 200, r.text
+        _VW[key] = r.json()["viewer"]
+    return _VW[key]
+
+
 def access(client, token, **body):
     client.cookies.clear()
     client.headers.pop("X-CSRF-Token", None)
+    body.setdefault("viewer", vw(client, token))
     return client.post(f"/api/v1/live/{token}/access", json=body)
 
 
@@ -829,7 +851,7 @@ def test_replay_is_off_by_default_and_the_organizer_can_allow_it_for_one_broadca
     b = only_broadcast(lv, mid)
     assert viewer(lv, token).json()["replay"] is False and viewer(lv, b.view_token).json()["replay_state"] == "off"
     lv.cookies.clear()
-    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).status_code == 404, "по умолчанию запись зрителям не показывается"
+    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={"viewer": vw(lv, b.view_token), }).status_code == 404, "по умолчанию запись зрителям не показывается"
     assert patch(lv, room, live_replay=True).json()["replay"] is True
     assert viewer(lv, b.view_token).json()["replay_state"] == "off", "настройки комнаты после эфира не меняют уже прошедший эфир"
     out = bpatch(lv, room, b.id, replay=True).json()
@@ -849,7 +871,7 @@ def test_replay_link_streams_with_ranges_and_dies_with_revocation_and_wrong_sign
     b = only_broadcast(lv, mid)
     token = b.view_token
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
-    j = lv.post(f"/api/v1/live/{token}/replay", json={}).json()
+    j = lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).json()
     assert j["download_url"] is None, "скачивание по умолчанию выключено"
     r = lv.get(j["url"])
     assert r.status_code == 200 and r.content == payload and r.headers["accept-ranges"] == "bytes" and "no-store" in r.headers["cache-control"] and r.headers["content-disposition"].startswith("inline")
@@ -877,7 +899,7 @@ def test_download_is_given_only_when_allowed_and_checked_on_the_file_request(lv)
     b = only_broadcast(lv, mid)
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
     assert viewer(lv, b.view_token).json()["download"] is True
-    j = lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).json()
+    j = lv.post(f"/api/v1/live/{b.view_token}/replay", json={"viewer": vw(lv, b.view_token), }).json()
     r = lv.get(j["download_url"])
     assert r.status_code == 200 and r.headers["content-disposition"].startswith("attachment") and ".mp4" in r.headers["content-disposition"]
     bpatch(lv, room, b.id, download=False)
@@ -904,7 +926,7 @@ def test_link_expires_days_after_the_real_end_and_the_file_itself_stays(lv):
     call(lv, age)
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
     assert viewer(lv, b.view_token).json()["replay_state"] == "expired"
-    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={}).json()["detail"]["code"] == "replay_expired"
+    assert lv.post(f"/api/v1/live/{b.view_token}/replay", json={"viewer": vw(lv, b.view_token), }).json()["detail"]["code"] == "replay_expired"
     assert call(lv, lambda db: db.get(Recording, rid)).status == "ready", "истечение ссылки не удаляет запись"
     out = bpatch(lv, room, b.id, link_days=10).json()
     assert out["broadcasts"][0]["access"] == "open", "организатор продлил срок — доступ снова есть"
@@ -930,7 +952,7 @@ def test_each_broadcast_has_its_own_link_settings_and_recording(lv):
     lv.cookies.clear()
     v1, v2 = viewer(lv, first.view_token).json(), viewer(lv, second.view_token).json()
     assert v1["status"] == "ended" and v1["title"] == "Первый" and v2["status"] in ("starting", "live") and v2["title"] == "Второй эфир"
-    assert lv.post(f"/api/v1/live/{first.view_token}/access", json={}).status_code == 409, "ссылка прошлого эфира не открывает новый эфир комнаты"
+    assert lv.post(f"/api/v1/live/{first.view_token}/access", json={"viewer": vw(lv, first.view_token), }).status_code == 409, "ссылка прошлого эфира не открывает новый эфир комнаты"
 
 
 def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
@@ -943,15 +965,15 @@ def test_replay_follows_the_viewer_password_and_needs_a_ready_recording(lv):
     b = only_broadcast(lv, mid)
     token = b.view_token
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
-    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required", "без пароля наличие записи не раскрывается"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"}).json()["detail"]["code"] == "replay_live", "эфир ещё не закрыт"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).json()["detail"]["code"] == "password_required", "без пароля наличие записи не раскрывается"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "zritel-2026"}).json()["detail"]["code"] == "replay_live", "эфир ещё не закрыт"
     reconcile(lv)
     lv.cookies.clear(); lv.headers.pop("X-CSRF-Token", None)
-    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "не тот"}).json()["detail"]["code"] == "password_invalid"
-    ok = lv.post(f"/api/v1/live/{token}/replay", json={"password": "zritel-2026"})
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).json()["detail"]["code"] == "password_required"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "не тот"}).json()["detail"]["code"] == "password_invalid"
+    ok = lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "zritel-2026"})
     assert ok.status_code == 200 and ok.json()["pass"] and ok.json()["url"].startswith(f"/api/v1/live/{token}/replay.mp4?")
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"pass": ok.json()["pass"]}).status_code == 200, "пропуск после пароля действует"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "pass": ok.json()["pass"]}).status_code == 200, "пропуск после пароля действует"
 
 
 
@@ -965,28 +987,28 @@ def test_password_of_an_ended_broadcast_can_be_set_changed_and_removed_and_old_p
     token = b.view_token
     anon = lambda: (lv.cookies.clear(), lv.headers.pop("X-CSRF-Token", None))  # noqa: E731
     anon()
-    open_url = lv.post(f"/api/v1/live/{token}/replay", json={}).json()["url"]
+    open_url = lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).json()["url"]
     assert lv.get(open_url, headers={"Range": "bytes=0-9"}).status_code == 206, "без пароля запись открыта"
     assert bpatch(lv, room, b.id, password="x").status_code == 422, "короткий пароль отклонён"
     assert bpatch(lv, room, b.id, password="zapis-2026").status_code == 200
     anon()
     assert lv.get(open_url, headers={"Range": "bytes=0-9"}).status_code in (403, 404, 410), "адрес файла, выданный до пароля, сразу не действует (и для докачки)"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={}).json()["detail"]["code"] == "password_required"
-    first = lv.post(f"/api/v1/live/{token}/replay", json={"password": "zapis-2026"}).json()
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).json()["detail"]["code"] == "password_required"
+    first = lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "zapis-2026"}).json()
     assert lv.get(first["download_url"], headers={"Range": "bytes=0-9"}).status_code == 206
     assert bpatch(lv, room, b.id, password="novyi-2026").status_code == 200
     anon()
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"pass": first["pass"]}).json()["detail"]["code"] == "password_required", "пропуск по старому паролю обесценен"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "pass": first["pass"]}).json()["detail"]["code"] == "password_required", "пропуск по старому паролю обесценен"
     assert lv.get(first["download_url"]).status_code in (403, 404, 410), "ссылка на скачивание по старому паролю обесценена"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "zapis-2026"}).json()["detail"]["code"] == "password_invalid"
-    assert lv.post(f"/api/v1/live/{token}/replay", json={"password": "novyi-2026"}).status_code == 200
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "zapis-2026"}).json()["detail"]["code"] == "password_invalid"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "novyi-2026"}).status_code == 200
     assert bpatch(lv, room, b.id, download=False).status_code == 200
     anon()
-    r = lv.post(f"/api/v1/live/{token}/replay", json={"password": "novyi-2026"}).json()
+    r = lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), "password": "novyi-2026"}).json()
     assert not r.get("download_url") and lv.get(r["url"].replace("d=0", "d=1")).status_code in (403, 404), "скачивание выключено отдельно от просмотра"
     assert bpatch(lv, room, b.id, password=None).status_code == 200
     anon()
-    assert lv.post(f"/api/v1/live/{token}/replay", json={}).status_code == 200, "пароль убран"
+    assert lv.post(f"/api/v1/live/{token}/replay", json={"viewer": vw(lv, token), }).status_code == 200, "пароль убран"
     login(lv, "root")
     audit = json.dumps(lv.get("/api/v1/admin/audit?limit=50").json(), ensure_ascii=False)
     assert "zapis-2026" not in audit and "novyi-2026" not in audit and '"protection": "пароль задан"' in audit and '"protection": "пароль убран"' in audit, "в журнале — факт смены, не пароль"
@@ -1067,8 +1089,11 @@ def test_admin_room_list_shows_people_and_connections_and_the_join_carries_the_i
     monkeypatch.setattr("app.api.admin.list_present_identities", live_mod.list_present_identities)        # подделка присутствия из lv
     room, other = room_live(lv), room_live(lv)
     j = _join(lv, "alice", room["id"])
-    assert j["client"]["idle_end"] == "standard", "по умолчанию страница предупреждает о забытой одиночной встрече"
-    assert j["client"]["idle_minutes"] == 30, "по умолчанию — 30 минут (настройка комнаты)"
+    assert j["client"]["idle_end"] == "off" and j["client"]["idle_minutes"] == 0 and j["client"]["broadcast"] is True, \
+        "комната трансляции не завершается по бездействию: ведущие подолгу молчат и ждут выступающих"
+    plain = _join(lv, "carol", make_room(lv, moderators=LEADERS)["id"])["client"]
+    assert plain["idle_end"] == "standard" and plain["idle_minutes"] == 30 and plain["broadcast"] is False, "обычная комната — как раньше: 30 минут"
+    login(lv, "alice")
     lv.present["set"] = {"u-1", "u-1~ab12", "EG_test9"}           # EG_ — служебный рекордер; список присутствия его уже отбрасывает (здесь подделка — считаем как есть)
     login(lv, "root")
     row = next(r for r in lv.get("/api/v1/admin/rooms").json() if r["id"] == room["id"])

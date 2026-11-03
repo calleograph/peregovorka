@@ -45,6 +45,10 @@ repair_detect_data_dirs() {
     elif [ "$(_repair_dir_owner "$base/$d")" != "$BACKEND_UID" ]; then bad+=("$d: чужой владелец"); fi
   done
   for d in updater state; do [ -d "$base/$d" ] || bad+=("$d: нет каталога"); done
+  local lp; lp="$(live_dirs_problems "$base")"; [ -n "$lp" ] && bad+=("$lp")
+  # nginx (web) должен читать секрет подписи HLS: проверяется самим процессом контейнера
+  if repair_docker_up && _ld_st %a "$base/live/nginx/secret.conf" >/dev/null && [ -n "$(dc ps -q web 2>/dev/null | head -1)" ] \
+     && ! dc exec -T web test -r /etc/nginx/live/secret.conf >/dev/null 2>&1; then bad+=("web не может прочитать секрет HLS"); fi
   [ -d "$base/updater" ] && [ "$(_repair_dir_mode "$base/updater")" != 1777 ] && bad+=("updater: неверный режим")
   # главный признак — может ли ПРОЦЕСС сервиса (uid 10001) записать в каталог; владелец на хосте этого не гарантирует (ACL, режим, read-only mount)
   local w=""
@@ -182,9 +186,10 @@ repair_apply_data_dirs() {
   for d in postgres redis models/gigaam recordings live exports backups state updater ca chat-files avatars branding; do
     [ -d "$base/$d" ] || mkdir -p "$base/$d" || { fail "Не удалось создать $base/$d"; rc=1; }
   done
-  for d in recordings live exports ca chat-files avatars branding; do
+  for d in recordings exports ca chat-files avatars branding; do
     chown "$BACKEND_UID:$BACKEND_UID" "$base/$d" || { fail "Не удалось назначить владельца $base/$d"; rc=1; }
   done
+  live_dirs_prepare "$base" || { fail "Каталоги трансляций (live, live/nginx) не исправлены"; rc=1; }
   chmod 1777 "$base/updater" || rc=1
   # содержимое тоже должно принадлежать сервису: каталог мог быть создан от root вместе с файлами внутри
   for d in ca chat-files avatars branding; do chown -R "$BACKEND_UID:$BACKEND_UID" "$base/$d" 2>/dev/null || true; done
@@ -195,9 +200,11 @@ repair_apply_data_dirs() {
     local UPD_SERVICES=(backend); upd_wait_healthy 120 || { fail "Backend не стал healthy после перезапуска"; return 1; }
     # повторная проверка: сертификаты и вход по домену (то, что ломалось)
     "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV_FILE" --no-public || info "Проверка после исправления: см. таблицу выше (интеграции настраиваются в браузере)"
+    # backend при запуске записал секрет HLS; web применяет его сам (nginx -t, перечитывание) — успех только по факту применения
+    if [ -n "$(dc ps -q web 2>/dev/null | head -1)" ]; then live_secret_report 30 || [ "$?" = 2 ] || rc=1; fi
   fi
   if repair_detect_data_dirs; then fail "Права всё ещё неверны: $REPAIR_DETAIL"; return 1; fi
-  return 0
+  return "$rc"
 }
 
 repair_apply_nginx_site() {

@@ -84,7 +84,7 @@ export interface LiveState {
   ends_at?: string | null;
 }
 export interface LiveRoomSettings {
-  enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
+  enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p" | "1440p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
   cdn: boolean; cdn_available: boolean; replay: boolean; download: boolean; link_days: number; link_days_max: number; broadcasts: LiveBroadcast[];
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
@@ -100,7 +100,7 @@ export interface LiveBroadcast {
 export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number }
 export interface LivePatchBody {
   live_download?: boolean; live_link_days?: number;
-  live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p"; live_record?: boolean; live_own_hls?: boolean;
+  live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p" | "1440p"; live_record?: boolean; live_own_hls?: boolean;
   live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
 }
 export interface LiveViewerInfo {
@@ -120,6 +120,10 @@ export interface RoomRef { id: string; slug: string; name: string; canonical: bo
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
   screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean; max_sharers?: number;
+  /** Высота захвата показа экрана (1440 — в комнате трансляции с качеством 2K). */
+  screen_max_height?: number;
+  /** Комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей. */
+  broadcast?: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
   can_moderate?: boolean; mute_on_join?: boolean; welcome_message?: string | null;
   /** Гость (вход по ссылке без AD): без административных функций, без показа экрана и стенограммы. */
@@ -294,7 +298,13 @@ export interface MeetingMedia { mixes: MediaItem[]; participants: MediaItem[]; r
 export interface MeetingRecording { id: string; identity: string | null; size_bytes: number; duration_s: number | null; name: string; export_status: string; export_error: string | null; file_state?: "ok" | "missing" }
 export interface Participant {
   user_id: string | null; guest_id?: string | null; participant_type?: "user" | "guest" | "phone"; role?: "organizer" | "leader" | null; display_name: string; joined_at: string; left_at: string | null; online: boolean;
+  /** Почта гостя — только организатору, руководителям и администраторам. */
+  email?: string | null; materials_consent?: boolean;
 }
+/** Вопрос зрителя эфира. author/email — в ленте ведущих (почта — только руководителям и организатору). */
+export interface LiveQuestion { id: string; text: string; status: "new" | "done" | "hidden"; at: string; handled_at?: string | null; author?: string; email?: string | null; materials_consent?: boolean }
+export interface LiveQuestionFeed { items: LiveQuestion[]; counts: { new: number; done: number; hidden: number }; can_moderate: boolean; contacts: boolean }
+export interface LiveViewerReg { viewer: string; display_name: string; email: string | null; materials_consent: boolean }
 export interface Meeting {
   room_icon?: RoomIconInfo | null;
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
@@ -557,7 +567,7 @@ export interface AccessState {
 }
 export interface RoomJournalEvent { at: string; kind: string; action: string; title: string; actor: string | null; meeting_id: string | null; result: string | null; details: Record<string, unknown> }
 export interface RoomJournal { items: RoomJournalEvent[]; total: number; kinds: Record<string, string> | string[]; meetings: { id: string; started_at: string }[] }
-export type PerMode = "none" | "leader" | "owner" | "organizer" | "all" | "selected";
+export type PerMode = "none" | "leader" | "owner" | "organizer" | "all" | "selected" | "emails";
 export interface PerMaterial { mode: PerMode; users: { ref: string; name: string; email: string }[] }
 export interface MailDeliverySpec {
   per_material?: Record<string, PerMaterial>; converted_from_legacy?: boolean;
@@ -1070,8 +1080,13 @@ export const api = {
   patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean; password?: string | null }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
-  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
-  liveReplay: (token: string, body: { password?: string; pass?: string }) => request<LiveReplay>("POST", `/live/${encodeURIComponent(token)}/replay`, body),
+  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean; viewer?: string }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
+  liveReplay: (token: string, body: { password?: string; pass?: string; viewer?: string }) => request<LiveReplay>("POST", `/live/${encodeURIComponent(token)}/replay`, body),
+  liveViewer: (token: string, body: { display_name: string; email: string | null; materials_consent: boolean }) => request<LiveViewerReg>("POST", `/live/${encodeURIComponent(token)}/viewer`, body),
+  liveAsk: (token: string, body: { viewer: string; text: string; pass?: string }) => request<LiveQuestion>("POST", `/live/${encodeURIComponent(token)}/questions`, body),
+  liveMyQuestions: (token: string, viewer: string) => request<{ items: LiveQuestion[]; open: boolean }>("GET", `/live/${encodeURIComponent(token)}/questions?viewer=${encodeURIComponent(viewer)}`),
+  liveQuestions: (meetingId: string) => request<LiveQuestionFeed>("GET", `/meetings/${meetingId}/live/questions`),
+  liveQuestionSet: (meetingId: string, id: string, status: LiveQuestion["status"]) => request<LiveQuestion>("PATCH", `/meetings/${meetingId}/live/questions/${id}`, { status }),
   livePing: (token: string, vid: string) => request<{ viewers: number }>("POST", `/live/${encodeURIComponent(token)}/ping`, { vid }),
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
@@ -1163,8 +1178,8 @@ export const api = {
 
   guest: {
     room: (token: string) => request<GuestRoomInfo>("GET", `/guest/room/${encodeURIComponent(token)}`),
-    join: (token: string, displayName: string, password?: string, acceptedDocuments: string[] = []) =>
-      request<GuestJoinInfo>("POST", `/guest/room/${encodeURIComponent(token)}/join`, { display_name: displayName, password: password || null, accepted_documents: acceptedDocuments }),
+    join: (token: string, contact: { display_name: string; email: string | null; materials_consent: boolean }, password?: string, acceptedDocuments: string[] = []) =>
+      request<GuestJoinInfo>("POST", `/guest/room/${encodeURIComponent(token)}/join`, { ...contact, password: password || null, accepted_documents: acceptedDocuments }),
     rejoin: () => request<GuestJoinInfo>("POST", "/guest/session/rejoin"),
     leave: () => request<void>("POST", "/guest/session/leave"),
   },
