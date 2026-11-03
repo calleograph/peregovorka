@@ -39,6 +39,7 @@ def _comp_action(name: str, op: str) -> dict:
 
 REPAIR_DIRS = {"kind": "repair", "repair": "data_dirs", "label": "Исправить права каталогов"}
 WEB_STATE_TIMEOUT_S = 3
+WEB_URL = "http://web:8080"          # сервис web в сети compose (deployment/compose.yml)
 
 
 async def web_hls_state(url: str) -> tuple[str, str] | None:
@@ -93,7 +94,7 @@ async def secret_checks(live, settings) -> list[dict]:
                     f"Сейчас 0{st.st_mode & 0o777:o}, группа {st.st_gid}; нужно 0{SECRET_MODE:o} и группа {SECRET_GID} (посторонние локальные пользователи не должны читать секрет).",
                     action=None if mode_ok else REPAIR_DIRS, doc=None if mode_ok else DOC_MEDIA))
     gen = hashlib.sha256(want.encode()).hexdigest()[:12]
-    ws = await web_hls_state(os.environ.get("WEB_INTERNAL_URL") or "http://web:8080")
+    ws = await web_hls_state(WEB_URL)
     if ws is None:
         return out + [_chk(i, t + n, "info", "Веб-сервер (web) не ответил на запрос состояния — проверить нельзя.") for i, n in
                       (("secret_read", "чтение nginx"), ("secret_test", "проверка nginx -t"), ("secret_applied", "применение в nginx"))]

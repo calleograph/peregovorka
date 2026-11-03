@@ -41,7 +41,9 @@ def sh(*cmd: str, timeout: float = 20) -> tuple[int, str]:
 def local_ipv4() -> tuple[list[str], str]:
     """Адреса IPv4 интерфейсов и адрес-источник маршрута по умолчанию (как у установщика)."""
     rc, out = sh("ip", "-o", "-4", "addr", "show")
-    ips = re.findall(r"\sinet\s(\d+\.\d+\.\d+\.\d+)/", out) if rc == 0 else []
+    # мосты Docker (docker0, br-*) и veth — не «адрес сервера в его сети»: клиентам он недоступен, а на интерфейсе контейнера LiveKit совпал бы со шлюзом
+    ips = [m.group(2) for m in re.finditer(r"^\d+:\s+(\S+)\s+inet\s(\d+\.\d+\.\d+\.\d+)/", out, re.M)
+           if not re.match(r"(docker\d*|br-[0-9a-f]+|veth)", m.group(1))] if rc == 0 else []
     rc, out = sh("ip", "route", "get", "1.1.1.1")
     m = re.search(r"\bsrc\s(\d+\.\d+\.\d+\.\d+)", out) if rc == 0 else None
     return ips, (m.group(1) if m else "")
