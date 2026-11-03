@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # topo.sh — испытательная сеть для медиасоединений LiveKit (только Docker, без root на хосте). Адреса — документационные и частные диапазоны.
-#   «интернет»   mn-wan    192.0.2.0/24    : STUN 192.0.2.3, домашний маршрутизатор 192.0.2.60, публичный адрес офиса 192.0.2.2,
+#   «интернет»   mn-wan    192.0.2.0/24    : STUN 192.0.2.3 (192.0.2.4 — «молчащий» STUN), домашний маршрутизатор 192.0.2.60, публичный адрес офиса 192.0.2.2,
 #                                            сервер с публичным адресом на интерфейсе 192.0.2.10 (сценарий direct)
 #   дом          mn-home   192.168.77.0/24 : внешний клиент 192.168.77.20 за NAT домашнего маршрутизатора 192.168.77.2
 #   офис (LAN)   mn-lan    10.77.0.0/24    : маршрутизатор 10.77.0.2 (NAT + проброс портов на сервер), сервер 10.77.0.10, клиент 10.77.0.20
@@ -14,9 +14,12 @@ MN_REPO="$(cd "$MN_DIR/../../.." && pwd)"
 MN_LK_IMAGE="${MN_LK_IMAGE:-mn-livekit}"
 TCP=17881; UDP=17882; SIG=7880
 
+# имена встроенных серверов STUN в модели: Google «молчит» (192.0.2.4 — там никого), Cloudflare и Twilio отвечают (STUN стенда 192.0.2.3)
+MN_HOSTS=(--add-host stun.l.google.com:192.0.2.4 --add-host stun1.l.google.com:192.0.2.4 --add-host stun.cloudflare.com:192.0.2.3
+          --add-host global.stun.twilio.com:192.0.2.3)
 # _c имя сеть адрес образ [команда…]
 _c() { docker run -d --name "$1" --hostname "$1" --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 --sysctl net.ipv4.conf.all.rp_filter=0 \
-  -v "$MN_DIR:/t:ro" --network "$2" --ip "$3" "${@:4}" >/dev/null; }
+  "${MN_HOSTS[@]}" -v "$MN_DIR:/t:ro" --network "$2" --ip "$3" "${@:4}" >/dev/null; }
 _n() { docker network connect --ip "$3" "$2" "$1"; }
 x() { docker exec "$1" sh -c "$2"; }
 ifc() { echo "ifc() { ip -o -4 addr show | awk -v p=\"\$1\" 'index(\$4,p)==1{print \$2; exit}'; }"; }
@@ -68,6 +71,9 @@ mn_up() {
     MN_CLIENTS="mn-ext mn-lan"
   fi
   for c in $MN_CLIENTS; do x "$c" "iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT; iptables -A INPUT -i lo -j ACCEPT; iptables -P INPUT DROP"; done
+  # без выхода в настоящий интернет: встроенные серверы STUN (Cloudflare, Twilio, Google) не должны отвечать ни сервису, ни LiveKit стенда
+  x mn-srv "for ch in OUTPUT FORWARD; do for n in 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 192.0.2.0/24 100.64.0.0/10; do
+    iptables -A \$ch -d \$n -j ACCEPT; done; iptables -A \$ch -j DROP; done"
   # сервер: опубликованные порты → контейнер LiveKit (как Docker), исходящие из сети Docker — с маскарадингом
   x mn-srv "for p in tcp:$TCP udp:$UDP tcp:$SIG; do for ch in PREROUTING OUTPUT; do iptables -t nat -A \$ch -d $SRV_IP -p \${p%:*} --dport \${p#*:} -j DNAT --to-destination 172.31.77.10; done; done
     iptables -t nat -A POSTROUTING -s 172.31.77.0/24 ! -d 172.31.77.0/24 -j MASQUERADE"
@@ -78,7 +84,7 @@ mn_lk() {
   docker rm -f mn-lk >/dev/null 2>&1 || true
   local args=()
   while IFS= read -r -d '' kv; do args+=(-e "$kv"); done < <(python3 -c 'import json,sys; [sys.stdout.write(f"{k}={v}\0") for k,v in json.load(open(sys.argv[1])).items()]' "$1")
-  docker run -d --name mn-lk --hostname mn-lk --cap-add NET_ADMIN --network mn-inner --ip 172.31.77.10 "${args[@]}" \
+  docker run -d --name mn-lk --hostname mn-lk --cap-add NET_ADMIN --init --restart unless-stopped "${MN_HOSTS[@]}" --network mn-inner --ip 172.31.77.10 "${args[@]}" \
     --entrypoint sh "$MN_LK_IMAGE" -c "ip route replace default via 172.31.77.2; exec /usr/local/bin/peregovorka-livekit" >/dev/null
   for _ in $(seq 60); do x mn-lk "wget -q -O /dev/null http://127.0.0.1:$SIG/" 2>/dev/null && return 0; sleep 1; done
   docker logs mn-lk 2>&1 | tail -20; return 1

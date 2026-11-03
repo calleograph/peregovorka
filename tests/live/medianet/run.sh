@@ -70,7 +70,7 @@ print(json.dumps({"scenario": name, "mode": e.get("LIVEKIT_MEDIA_MODE"), "node_i
 PY
 }
 
-# scenario ИМЯ ТОПОЛОГИЯ [nofwd|-] "KEY=VAL …" "ожидания: контейнер:identity:ok|fail[:протокол] …" [udp-blocked] [stun-down]
+# scenario ИМЯ ТОПОЛОГИЯ [nofwd|-] "KEY=VAL …" "ожидания: контейнер:identity:ok|fail[:протокол] …" [udp-blocked] [stun-down] [stale]
 scenario() {
   local name="$1" topo="$2" fwd="$3" kvs="$4" exp="$5" opts="${6:-}" d="$OUT/$1"
   echo; echo "=== $name"
@@ -79,6 +79,9 @@ scenario() {
   # shellcheck disable=SC2086
   mkenv "$d/.env" $kvs
   configure "$d/.env"
+  # stale: .env, записанный прежней версией до смены маршрута — адрес выхода через VPN и список STUN «только Google»; затем перезапуск LiveKit
+  [[ " $opts " == *" stale "* ]] && sed -i -e 's/^LIVEKIT_RTC_NODE_IP=.*/LIVEKIT_RTC_NODE_IP=192.0.2.99/' \
+    -e 's/^LIVEKIT_STUN_SERVERS=.*/LIVEKIT_STUN_SERVERS=stun.l.google.com:19302,stun1.l.google.com:19302/' "$d/.env"
   [[ " $opts " == *" rerun "* ]] && { cp "$d/.env" "$d/.env.first"; configure "$d/.env" >/dev/null
     cmp -s "$d/.env" "$d/.env.first" && echo "  ✓ повторный запуск configure .env не меняет" || { echo "  ✗ повторный запуск изменил .env"; diff "$d/.env.first" "$d/.env" || true; FAILS=$((FAILS+1)); }; }
   lkenv "$d/.env" "$d/livekit-env.json"
@@ -117,7 +120,28 @@ PY
 export RESULTS
 want_mode() { grep -q "\"scenario\": \"$1\", \"mode\": \"$2\"" "$RESULTS" && echo "  ✓ режим $1: $2" || { echo "  ✗ режим $1: ожидался $2"; FAILS=$((FAILS+1)); }; }
 
-ALL="before direct nat nat-tcp manual-stundown stun-down nofwd cgnat legacy"
+ALL="before direct nat nat-tcp manual-stundown stun-down nofwd cgnat legacy reroute"
+lklog() { docker logs mn-lk 2>&1 | grep -c -- "$1" || true; }
+reroute() {   # сервер за маршрутизатором, трафик переведён с VPN на провайдера: первый STUN (как Google) молчит, в .env адрес прежнего
+              # маршрута; затем публичный адрес меняется ещё раз на ходу — LiveKit должен сам перейти на новый
+  scenario reroute nat - "LIVEKIT_STUN_SERVERS=stun.l.google.com:19302,stun1.l.google.com:19302 LIVEKIT_IP_RECHECK=4" "mn-ext:ext:ok:udp mn-lan:lan:ok:udp" stale
+  local d="$OUT/reroute"
+  grep -q "LIVEKIT_STUN_SERVERS=stun.cloudflare.com" "$d/.env.configure.log" && echo "  ✓ обновление заменяет прежний список «только Google» встроенным" \
+    || { echo "  ✗ прежний список STUN не заменён"; FAILS=$((FAILS+1)); }
+  [ "$(lklog "публичный адрес 192.0.2.2 определён через STUN (stun.cloudflare.com:3478)")" -ge 1 ] && echo "  ✓ при запуске: Google молчит — адрес по Cloudflare, прежний 192.0.2.99 не объявлен" \
+    || { echo "  ✗ при запуске адрес не определён по запасному STUN"; FAILS=$((FAILS+1)); }
+  echo "  … маршрутизатор офиса получает новый внешний адрес 192.0.2.5 (192.0.2.2 больше не существует)"
+  x mn-rt "$(ifc); W=\$(ifc 192.0.2.); ip addr add 192.0.2.5/32 dev \$W; ip addr del 192.0.2.2/24 dev \$W; ip route add 192.0.2.0/24 dev \$W src 192.0.2.5"
+  local ok=""
+  for _ in $(seq 90); do [ "$(lklog "публичный адрес 192.0.2.5 определён")" -ge 1 ] && x mn-lk "wget -q -O /dev/null http://127.0.0.1:$SIG/" 2>/dev/null && { ok=1; break; }; sleep 1; done
+  docker logs mn-lk 2>&1 | grep -E "peregovorka-entrypoint" | sed 's/^/  livekit: /' | cut -c1-220
+  [ -n "$ok" ] && echo "  ✓ LiveKit перезапустился сам с новым адресом" || { echo "  ✗ LiveKit не перешёл на новый адрес"; FAILS=$((FAILS+1)); return; }
+  mn_client mn-ext 192.0.2.5 ext-after 15 > "$d/ext-after.json" & local p1=$!
+  mn_client mn-lan 10.77.0.10 lan-after 15 > "$d/lan-after.json"; wait $p1 || true
+  check_client reroute "$d/ext-after.json" ok udp || FAILS=$((FAILS+1))
+  check_client reroute "$d/lan-after.json" ok udp || FAILS=$((FAILS+1))
+  grep -q "192.0.2.5:$UDP" "$d/ext-after.json" && echo "  ✓ внешний клиент соединился через новый адрес 192.0.2.5" || { echo "  ✗ выбранная пара не через 192.0.2.5"; FAILS=$((FAILS+1)); }
+}
 for s in ${*:-$ALL}; do
   case "$s" in
     before)  # как прежняя конфигурация продукта: клиентам объявляется только адрес сервера в офисе (LIVEKIT_NODE_IP)
@@ -138,6 +162,7 @@ for s in ${*:-$ALL}; do
       scenario cgnat cgnat - "" "mn-lan:lan:ok:udp mn-lan:lan2:ok:udp"; want_diag cgnat nat fail ;;
     legacy)  # прежняя рекомендация документации: внешний адрес в LIVEKIT_NODE_IP — обновление переносит его в LIVEKIT_PUBLIC_IP
       scenario legacy nat - "LIVEKIT_NODE_IP=192.0.2.2 LIVEKIT_PUBLIC_IP=" "mn-ext:ext:ok:udp mn-lan:lan:ok:udp" rerun; want_mode legacy nat-manual ;;
+    reroute) reroute ;;
     *) echo "неизвестный сценарий $s"; FAILS=$((FAILS+1)) ;;
   esac
 done

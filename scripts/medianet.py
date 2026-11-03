@@ -98,6 +98,8 @@ def cmd_configure(a: argparse.Namespace) -> int:
         changes["LIVEKIT_PUBLIC_IP"] = a.public_ip.strip().lower() if a.public_ip.strip().lower() in ("auto", "off") else a.public_ip.strip()
     elif not env.get("LIVEKIT_PUBLIC_IP"):
         changes["LIVEKIT_PUBLIC_IP"] = "auto"
+    if (env.get("LIVEKIT_STUN_SERVERS") or "").replace(" ", "") == mn.OLD_DEFAULT_STUN:   # прежний список по умолчанию (только Google)
+        changes["LIVEKIT_STUN_SERVERS"] = mn.DEFAULT_STUN
     env.update(changes)
     lan_ch, msgs = fix_lan(env, legacy) if not a.offline else ({}, [])
     changes.update(lan_ch)
@@ -164,7 +166,8 @@ def host_checks(env: dict[str, str], p: dict[str, object]) -> list[dict[str, str
         out.append(chk("listen", "Порты слушаются на сервере", "ok" if lt and lu else "unknown",
                        f"TCP {tcp}: {'да' if lt else 'не видно'}; UDP {udp}: {'да' if lu else 'не видно'}" +
                        ("" if lt and lu else " (при публикации Docker без userland-proxy порт не виден в ss — смотрите строку про публикацию Docker).")))
-    rc, logs = sh("docker", "logs", "--tail", "400", c, timeout=30)
+    rc, started = sh("docker", "inspect", "-f", "{{.State.StartedAt}}", c)   # только текущий запуск: после перезапуска в журнале и прежние адреса
+    rc, logs = sh("docker", "logs", "--tail", "400", *(["--since", started.strip()] if rc == 0 and started.strip() else []), c, timeout=30)
     adv: list[str] = []
     for line in logs.splitlines():
         m = re.search(r"адрес локальной сети (\S+) объявляется", line)
@@ -179,10 +182,15 @@ def host_checks(env: dict[str, str], p: dict[str, object]) -> list[dict[str, str
                        "Перезапустите LiveKit (scripts/medianet.sh apply) и повторите проверку."))
     else:
         want_adv = set(p["advertised"])
-        ok = want_adv <= set(adv) if p["mode"] != "nat-stun" else p["lan_ip"] in adv and any(mn.classify(x) == "public" for x in adv)
+        # nat-stun: публичный адрес LiveKit определяет сам; если STUN сейчас ответил — объявленный должен с ним совпадать
+        ok = want_adv <= set(adv) if p["mode"] != "nat-stun" or p["public_source"] == "stun" else \
+            p["lan_ip"] in adv and any(mn.classify(x) == "public" for x in adv)
+        moved = p["mode"] == "nat-stun" and p["public_source"] == "stun" and p["public_ip"] not in adv
         out.append(chk("ice", "Адреса, которые LiveKit объявляет клиентам (ICE)", "ok" if ok else "fail",
                        f"по журналу LiveKit: {', '.join(adv)}; ожидается: {', '.join(p['advertised'])} (+ адрес контейнера, клиентам не мешает).",
-                       "" if ok else "Контейнер запущен со старыми настройками: scripts/medianet.sh apply."))
+                       "" if ok else ("Публичный адрес сменился после запуска LiveKit (VPN, провайдер, маршрут): LiveKit перезапустится сам в течение "
+                                      "15 минут, сразу — scripts/medianet.sh apply." if moved else
+                                      "Контейнер запущен со старыми настройками: scripts/medianet.sh apply.")))
     if os.geteuid() == 0:
         rc, du = sh("iptables", "-S", "DOCKER-USER")
         drops = [x for x in du.splitlines() if re.search(r"-j (DROP|REJECT)", x)] if rc == 0 else []

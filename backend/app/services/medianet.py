@@ -25,7 +25,10 @@ import struct
 import time
 from typing import Any
 
-DEFAULT_STUN = "stun.l.google.com:19302,stun1.l.google.com:19302"
+# Несколько независимых STUN: у части провайдеров и VPN какой-то из них не отвечает (так бывает с Google). Тот же список — в
+# deployment/livekit/entrypoint.sh и compose.yml. OLD_DEFAULT_STUN — прежнее значение .env.example: обновление заменяет его этим списком.
+DEFAULT_STUN = "stun.cloudflare.com:3478,global.stun.twilio.com:3478,stun.l.google.com:19302"
+OLD_DEFAULT_STUN = "stun.l.google.com:19302,stun1.l.google.com:19302"
 # ключи .env, которые вычисляет plan(); администратор задаёт LIVEKIT_NODE_IP, LIVEKIT_PUBLIC_IP, LIVEKIT_STUN_SERVERS и порты
 DERIVED = ("LIVEKIT_MEDIA_MODE", "LIVEKIT_RTC_NODE_IP", "LIVEKIT_RTC_USE_EXTERNAL_IP", "LIVEKIT_RTC_ADVERTISE_INTERNAL", "LIVEKIT_RTC_LAN_IP")
 MODE_TEXT = {
@@ -64,10 +67,11 @@ def classify(ip: str) -> str:
 
 
 def stun_servers(env: dict[str, str]) -> list[tuple[str, int]]:
-    out = []
-    for s in (env.get("LIVEKIT_STUN_SERVERS") or DEFAULT_STUN).split(","):
+    """Серверы из LIVEKIT_STUN_SERVERS, затем встроенный список (запасные, если заданные не отвечают), без повторов."""
+    out: list[tuple[str, int]] = []
+    for s in f"{env.get('LIVEKIT_STUN_SERVERS') or ''},{DEFAULT_STUN}".split(","):
         host, _, port = s.strip().rpartition(":")
-        if host and port.isdigit():
+        if host and port.isdigit() and (host, int(port)) not in out:
             out.append((host, int(port)))
     return out
 

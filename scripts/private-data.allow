@@ -53,6 +53,9 @@ vk.ru
 vkvideo.ru
 twitch.tv
 google.com
+# публичные серверы STUN (встроенный список определения адреса сервера звонков за NAT)
+stun.cloudflare.com
+global.stun.twilio.com
 youtube.com
 
 # --- IP: loopback, «неопределённый», документационные диапазоны и числа из тестов

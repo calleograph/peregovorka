@@ -127,6 +127,37 @@ def test_stun_query_against_a_local_stun_responder():
     assert M.stun_query("127.0.0.1", 9, timeout=0.3) is None
 
 
+def test_stun_list_tries_configured_then_builtin_providers_without_repeats():
+    # у провайдера или через VPN Google может не отвечать — должны пробоваться и другие источники
+    assert M.stun_servers({})[:2] == [("stun.cloudflare.com", 3478), ("global.stun.twilio.com", 3478)]
+    got = M.stun_servers({"LIVEKIT_STUN_SERVERS": "stun.example.org:3478, stun.cloudflare.com:3478"})
+    assert got[0] == ("stun.example.org", 3478) and got.count(("stun.cloudflare.com", 3478)) == 1 and ("stun.l.google.com", 19302) in got
+
+
+def test_probe_skips_silent_servers_and_takes_the_first_answering(monkeypatch):
+    seen = []
+
+    def fake(host, port, timeout=2.0, sock=None):
+        seen.append(host)
+        return None if "google" in host else ("192.0.2.77", 40000)
+    monkeypatch.setattr(M, "stun_query", fake)
+    r = M.probe_public({"LIVEKIT_STUN_SERVERS": "stun.l.google.com:19302,stun1.l.google.com:19302"})
+    assert r["ip"] == "192.0.2.77" and seen[:3] == ["stun.l.google.com", "stun1.l.google.com", "stun.cloudflare.com"]
+    assert M.plan({**BASE, "LIVEKIT_NODE_IP": "10.0.0.5", "LIVEKIT_RTC_NODE_IP": "192.0.2.99"}, r)["public_ip"] == "192.0.2.77"
+
+
+def test_host_cli_replaces_only_the_old_google_only_default(tmp_path):
+    def run(stun_line):
+        env = tmp_path / ".env"
+        env.write_text(f"LIVEKIT_NODE_IP=192.0.2.10\nLIVEKIT_PUBLIC_IP=auto\nLIVEKIT_TCP_PORT=17881\nLIVEKIT_UDP_PORT=17882\n{stun_line}\n")
+        r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "medianet.py"), "configure", "--env", str(env), "--write", "--offline"],
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return M.parse_env(env.read_text())["LIVEKIT_STUN_SERVERS"]
+    assert run("LIVEKIT_STUN_SERVERS=stun.l.google.com:19302,stun1.l.google.com:19302") == M.DEFAULT_STUN
+    assert run("LIVEKIT_STUN_SERVERS=stun.example.org:3478") == "stun.example.org:3478"      # выбор администратора сохраняется
+
+
 def test_set_env_keys_replaces_in_place_and_appends_new():
     text = "# c\nLIVEKIT_NODE_IP=10.0.0.5\nLIVEKIT_MEDIA_MODE=\nOTHER=x\n"
     out = M.set_env_keys(text, {"LIVEKIT_MEDIA_MODE": "nat-stun", "LIVEKIT_RTC_LAN_IP": "10.0.0.5"})
@@ -203,3 +234,9 @@ def test_host_cli_moves_old_scheme_only_from_legacy_env(tmp_path):
     ch, _ = cli.fix_lan({"LIVEKIT_NODE_IP": "192.0.2.2", "LIVEKIT_PUBLIC_IP": "auto"}, legacy=False)
     assert ch == {"LIVEKIT_NODE_IP": "10.0.0.5"}
     assert cli.fix_lan({"LIVEKIT_NODE_IP": "10.0.0.5"}, legacy=True) == ({}, [])
+
+
+def test_builtin_stun_list_is_the_same_everywhere():
+    # список повторён там, где импорт невозможен: entrypoint контейнера, compose, модуль правил сети (грузится сценарием хоста), .env.example
+    for f in ("deployment/livekit/entrypoint.sh", "deployment/compose.yml", "backend/app/services/netrules.py", ".env.example"):
+        assert M.DEFAULT_STUN in (ROOT / f).read_text(encoding="utf-8"), f

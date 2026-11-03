@@ -215,13 +215,14 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 - **Медиасоединения за NAT (0.63.0, 2026-11-03):** адреса ICE готовит `backend/app/services/medianet.py`. Режимы:
   - `direct`;
-  - `nat-stun` — `use_external_ip` + `advertise_internal_ip`, адрес локальной сети на интерфейсе контейнера через
-    `deployment/livekit/entrypoint.sh`, без STUN — последний известный адрес;
+  - `nat-stun` — публичный адрес определяет `deployment/livekit/entrypoint.sh` при запуске (STUN по очереди: свой список, затем
+    Cloudflare, Twilio, Google) и передаёт явным `node_ip`; каждые 5 минут перепроверяет и при смене адреса перезапускает LiveKit (0.63.1);
+    `advertise_internal_ip`, адрес локальной сети на интерфейсе контейнера; без STUN — последний известный адрес;
   - `nat-manual`;
   - `lan`.
 
   Вызывают его `setup.sh`, `update.sh`, `scripts/medianet.sh` (`check`/`apply`/`ports`) и «Сетевая доступность → Медиасоединения»,
-  где видны и фактические адреса ICE клиентов. Проверено в модели сети (`tests/live/medianet/run.sh`, 9 сценариев, LiveKit SDK со
+  где видны и фактические адреса ICE клиентов. Проверено в модели сети (`tests/live/medianet/run.sh`, 10 сценариев, LiveKit SDK со
   звуком и видео) и на настоящем Docker. **Не проверено:** настоящие маршрутизаторы и CGNAT оператора, браузеры за NAT в интернете,
   rootless Docker/Podman (`NET_ADMIN`), IPv6.
 - **Массовые трансляции (0.49.0–0.49.2, 2026-10-29):** тип комнаты «Трансляционная» и режим «Трансляция» в любой комнате; один процесс Egress пишет MP4 + HLS + RTMP (внешние площадки RUTUBE/VK/YouTube/Twitch/произвольный RTMP подключаются владельцем комнаты и включаются на лету; проверено на контролируемом приёмнике, настоящие площадки не проверялись); зрители — страница `/live/<код>` (hls.js, в Safari/iOS нативный HLS), HLS раздаёт nginx web с проверкой подписи (`secure_link`), отзыв ссылок и смена пароля действуют мгновенно; пароль выступающего = пароль комнаты, пароль зрителя независим. Проверено на настоящих Egress, nginx, Chromium (49 из 49) и воспроизведением в Playwright WebKit/Chromium/Firefox. **Не проверено:** настоящие iPhone/iPad, живые люди, аудитории в десятки и сотни, несколько эфиров, настоящие CDN-провайдеры и внешние площадки (CDN проверен на кэширующем прокси; защита от перегрузки по нагрузке Egress). Подробности: [docs/BROADCASTS.md](docs/BROADCASTS.md).

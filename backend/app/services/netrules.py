@@ -260,10 +260,10 @@ def build(n: NetInput) -> dict[str, Any]:
                 "затем sudo scripts/medianet.sh apply — правила проброса и проверка: scripts/medianet.sh check.")
             variant.append("медиа только для локальной сети (публичный адрес не объявляется)")
     if n.media_mode == "nat-stun":
-        stun = n.stun or "stun.l.google.com:19302,stun1.l.google.com:19302"
+        stun = n.stun or "stun.cloudflare.com:3478,global.stun.twilio.com:3478,stun.l.google.com:19302"   # = medianet.DEFAULT_STUN (модуль без импортов: его грузит сценарий хоста)
         rules.append(_rule("stun", "out", "internet", "conditional", "UDP", ",".join(sorted({x.rsplit(":", 1)[-1] for x in stun.split(",") if ":" in x})),
                            "LiveKit (STUN)", "Определение публичного адреса сервера за NAT; те же серверы получают клиенты для своих кандидатов ICE.",
-                           f"сервер → {stun}", ["Закрыт — LiveKit объявит последний известный адрес; задать адрес явно: LIVEKIT_PUBLIC_IP."]))
+                           f"сервер → {stun}", ["Серверы пробуются по очереди до первого ответившего (затем встроенные: Cloudflare, Twilio, Google). Закрыты все — LiveKit объявит последний известный адрес; задать адрес явно: LIVEKIT_PUBLIC_IP."]))
     if n.lk_bind and _listen_scope(n.lk_bind) == "local" and (n.lk_tcp or n.lk_udp):
         warnings.append("LIVEKIT_BIND_ADDR привязан к loopback: порты медиа недоступны с других компьютеров, звонки работать не будут.")
 
