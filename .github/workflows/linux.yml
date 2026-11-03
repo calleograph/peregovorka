@@ -129,6 +129,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with: { name: linux-deb-amd64, path: debs }
+      - name: Автопубликация — решения сценария (без сети и ключа)
+        run: scripts/linux-apt/test-autopublish.sh
       - name: Репозиторий из пакета, одноразовый ключ, проверка
         run: |
           export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"

@@ -176,8 +176,10 @@ gpgv --keyring /usr/share/keyrings/peregovorka-archive-keyring.gpg InRelease   #
 
 **Выпуск:** `cd desktop && npm run release -- X.Y.Z --push` (как для Windows) → CI собирает и проверяет пакеты и добавляет их в выпуск → таймер
 `peregovorka-apt-autopublish` на машине с ключом (каждые 10 минут) видит в последнем выпуске пакеты обеих архитектур и `SHA256SUMS-linux.txt`
-и сам запускает `scripts/linux-apt/apt-publish.sh`. Включить таймер — `scripts/linux-apt/apt-autopublish.sh --install`, выключить — `--remove`,
-журнал — `journalctl --user -u peregovorka-apt-autopublish`; вручную — `scripts/linux-apt/apt-publish.sh` (`--dry-run` — всё, кроме отправки).
+и сам запускает `scripts/linux-apt/apt-publish.sh`, если сайт эту версию ещё не отдаёт (версия уже в репозитории сайта, но не на сайте, —
+перезапускает публикацию GitHub Pages). Включить таймер — `scripts/linux-apt/apt-autopublish.sh --install`, выключить — `--remove`,
+журнал — `journalctl --user -u peregovorka-apt-autopublish`; опубликовать заново вручную — `scripts/linux-apt/apt-autopublish.sh --force`
+или `scripts/linux-apt/apt-publish.sh` (`--dry-run` — всё, кроме отправки). Решения сценария проверяет `scripts/linux-apt/test-autopublish.sh` (в CI).
 Ключ в GitHub не передаётся: подпись делается только там, где лежит `.owner-private/`. Публикация: пакеты из выпусков (по 4 последних версии каждой архитектуры) сверяются
 с `SHA256SUMS-linux.txt` → индексы (`apt-ftparchive`, `make-repo.sh`) → подпись (`sign-repo.sh`) → проверка (`verify-repo.py`: подписи, хэши, полнота) →
 установка настоящим apt в чистой Ubuntu → отправка индексов и `pool.lock` в `peregovorka-apt` → GitHub Pages скачивает пакеты, ещё раз всё проверяет
