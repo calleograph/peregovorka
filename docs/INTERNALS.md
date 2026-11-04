@@ -279,7 +279,7 @@ sudo scripts/prereq.sh --check            # все ли системные пр�
 | `./scripts/diag.sh` | диагностический отчёт без секретов |
 | `./scripts/ctl.sh status` | состояние сервисов (также `start`, `stop`, `restart`; журналы — `./scripts/logs.sh`) |
 | `./scripts/backup.sh` / `restore.sh` | резервная копия и восстановление БД |
-| `./scripts/models.sh` | веса моделей (GigaAM Full и локальная LLM `--llm-only`) |
+| `./scripts/models.sh` | веса модели распознавания GigaAM |
 | `./scripts/asr-bench.sh --concurrency 1,2` | замер: сколько параллельных распознаваний выгодно на вашем CPU |
 | `./scripts/tune-kernel.sh` | рекомендации по настройкам ядра (применять — решение администратора) |
 | `./scripts/collect-metrics.sh` | сбор метрик для приёмочного теста |
