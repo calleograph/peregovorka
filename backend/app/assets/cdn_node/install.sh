@@ -37,6 +37,7 @@ facts() {
     local cache_fs_avail; cache_fs_avail=$(df -B1 --output=avail /var/cache 2>/dev/null | tail -1 | tr -d ' ')
     local nginx_present=false; command -v nginx >/dev/null && nginx_present=true
     local installed=""; [ -r $ETC/VERSION ] && installed=$(cat $ETC/VERSION)
+    local distro_nginx=false; dpkg -s nginx-common >/dev/null 2>&1 && distro_nginx=true
     local p80 p443
     p80=$(ss -Hltn 'sport = :80' 2>/dev/null | grep -c . || true); p443=$(ss -Hltn 'sport = :443' 2>/dev/null | grep -c . || true)
     printf '{"os_id":"%s","os_version":"%s","os_name":"%s","codename":"%s","arch":"%s","cpus":%s,"cpu_model":"%s","mem_bytes":%s,' \
@@ -45,7 +46,7 @@ facts() {
     printf '"disks":%s,"filesystems":[%s],"nics":[%s],"root":%s,"systemd":%s,"container":%s,"cache_fs_avail":%s,"nginx_present":%s,"installed":"%s",' \
         "$disks" "$fs" "$links" "$sudo_ok" "$( [ -d /run/systemd/system ] && echo true || echo false)" "$(in_container && echo true || echo false)" \
         "${cache_fs_avail:-0}" "$nginx_present" "$installed"
-    printf '"ports_busy":{"80":%s,"443":%s},"kernel":"%s"}\n' "${p80:-0}" "${p443:-0}" "$(uname -r)"
+    printf '"ports_busy":{"80":%s,"443":%s},"distro_nginx":%s,"kernel":"%s"}\n' "${p80:-0}" "${p443:-0}" "$distro_nginx" "$(uname -r)"
 }
 
 check_os() {

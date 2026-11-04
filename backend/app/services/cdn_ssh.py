@@ -22,7 +22,7 @@ import asyncssh
 
 PKG = Path(__file__).resolve().parent.parent / "assets" / "cdn_node"
 PKG_FILES = ("install.sh", "pgcdn-ctl", "pgcdn-ssh", "pgcdn.js", "nginx.conf.tpl", "VERSION")
-CONNECT_TIMEOUT = 15
+CONNECT_TIMEOUT = 30
 STAGE_RE = re.compile(r"^@@PGCDN (\S+) (start|ok|fail|warn) ?(.*)$")
 
 
@@ -130,7 +130,7 @@ class Session:
     async def facts(self) -> dict:
         d = await self.upload_package()
         try:
-            rc, out, err = await self.run(f"bash {d}/install.sh --facts", root=True, timeout=60)
+            rc, out, err = await self.run(f"bash {d}/install.sh --facts", root=True, timeout=120)
             if rc != 0 and not out.strip():
                 rc2, out2, _ = await self.run(f"bash {d}/install.sh --facts", timeout=60)        # без sudo: сведения неполные, но покажем их
                 out = out2 if rc2 == 0 else out

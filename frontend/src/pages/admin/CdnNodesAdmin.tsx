@@ -134,7 +134,7 @@ function NodePanel({ node, latest, onChanged, onRemoved }: { node: CdnNode; late
       {manual && node.state !== "ready" && (
         <div className="small cdn-manual"><b>Установка скриптом на сервере</b>
           <ol><li><a href="/api/v1/admin/cdn/package.tar.gz">Скачайте пакет узла</a> и <a href={`/api/v1/admin/cdn/nodes/${node.id}/node.json`}>настройки этого узла</a> (секрет — передавайте защищённо).</li>
-            <li>На сервере: <code>tar -xzf peregovorka-cdn-node-*.tar.gz -C pgcdn &amp;&amp; sudo bash pgcdn/install.sh --config pgcdn-{node.public_name}.json</code></li>
+            <li>На сервере: <code>mkdir pgcdn &amp;&amp; tar -xzf peregovorka-cdn-node-*.tar.gz -C pgcdn &amp;&amp; sudo bash pgcdn/install.sh --config pgcdn-{node.public_name}.json</code></li>
             <li>Нажмите «Подключить установленный».</li></ol>
           <button className="btn primary" disabled={!!busy} onClick={() => void act("adopt", async () => { await api.cdn.adopt(node.id); return "Узел подключён."; })}>{busy === "adopt" ? "Проверка…" : "Подключить установленный"}</button></div>)}
       <div className="row cdn-actions">

@@ -81,8 +81,8 @@ def test_assessment_names_blockers_and_the_limiting_resource():
              "cache_fs_avail": 200 * 2**30, "nics": [{"name": "eth0", "speed_mbit": 1000}], "disks": {"blockdevices": []}, "ports_busy": {"80": 0, "443": 0}}
     a = C.assess(facts, 5000)
     assert a["ok"] and a["viewers"] == a["by_link"] == int(1000 * 0.8 / ((5000 + 128) * 1.06 / 1000)), "канал 1 Гбит/с — предел ≈150 зрителей 1080p"
-    bad = C.assess({**facts, "os_id": "centos", "os_version": "9", "sudo": False, "ports_busy": {"443": 2}, "cache_fs_avail": 5 * 2**30}, 5000)
-    assert not bad["ok"] and len(bad["blockers"]) == 4
+    bad = C.assess({**facts, "os_id": "centos", "os_version": "9", "sudo": False, "ports_busy": {"443": 2}, "cache_fs_avail": 5 * 2**30, "distro_nginx": True}, 5000)
+    assert not bad["ok"] and len(bad["blockers"]) == 5
     virt = C.assess({**facts, "nics": [{"name": "eth0", "speed_mbit": -1}]}, 9000)
     assert virt["by_link"] is None and any("провайдер" in n["text"] for n in virt["notes"])
     r = C.recommend(1500, 5000)
@@ -190,7 +190,8 @@ def test_cdn_admin_requires_admin_validates_input_and_confirms_the_host_key(lv, 
     assert hk["fingerprint"].startswith("SHA256:")
     base = {"name": "Узел", "public_name": "cdn3.example.org", "ssh_host": "203.0.113.10", "ssh_user": "admin", "host_key": hk["host_key"], "fingerprint": hk["fingerprint"],
             "password": "x", "tls_mode": "acme"}
-    for bad in ({"public_name": "not a name"}, {"ssh_host": "a b"}, {"ssh_user": "Root;rm"}, {"tls_mode": "plain"}, {"ssh_port": 0}):
+    assert lv.post("/api/v1/admin/cdn/hostkey", json={"ssh_host": "cdn-node1", "ssh_port": 22}).status_code == 200, "внутреннее имя сервера без точки"
+    for bad in ({"public_name": "not a name"}, {"public_name": "single-label"}, {"ssh_host": "a b"}, {"ssh_user": "Root;rm"}, {"tls_mode": "plain"}, {"ssh_port": 0}):
         assert lv.post("/api/v1/admin/cdn/nodes", json={**base, **bad}).status_code == 422, bad
     assert lv.post("/api/v1/admin/cdn/nodes", json={**base, "fingerprint": "SHA256:other"}).json()["detail"]["code"] == "fingerprint_mismatch"
     assert lv.post("/api/v1/admin/cdn/nodes", json={**base, "public_name": "cdn1.example.org"}).status_code == 409, "имя уже занято"
@@ -207,3 +208,21 @@ def test_cdn_admin_requires_admin_validates_input_and_confirms_the_host_key(lv, 
     assert lv.post(f"/api/v1/admin/cdn/nodes/{manual.json()['id']}/install", json={}).status_code == 409, "узел ручной установки не ставится по SSH"
     assert lv.get("/api/v1/admin/cdn/package.tar.gz").headers["content-type"] == "application/gzip"
     assert lv.get("/api/v1/admin/cdn/calc?viewers=0").status_code == 400
+
+
+def test_install_interrupted_by_a_restart_does_not_leave_the_node_installing_forever(lv, nodes):
+    from sqlalchemy import select, update
+
+    from app.models import CdnNode
+
+    async def go(db):
+        await db.execute(update(CdnNode).where(CdnNode.public_name == "cdn2.example.org").values(state="installing"))
+        await db.commit()
+    call(lv, go)
+    state = lv.app_obj.state
+    call(lv, lambda db: state.cdn.poll_all(state.session_maker))
+
+    async def read(db):
+        return (await db.execute(select(CdnNode.state, CdnNode.last_error).where(CdnNode.public_name == "cdn2.example.org"))).one()
+    st, why = call(lv, read)
+    assert st == "error" and "Повторный запуск" in why

@@ -13,7 +13,6 @@ events {
 
 http {
     include /etc/nginx/mime.types;
-    types { application/vnd.apple.mpegurl m3u8; video/mp2t ts; }
     default_type application/octet-stream;
     server_tokens off;
     sendfile on;

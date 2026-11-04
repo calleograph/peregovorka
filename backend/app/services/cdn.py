@@ -33,7 +33,7 @@ import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..models import CdnNode
 from .live import SECRET_GID, SECRET_MODE
@@ -138,6 +138,8 @@ def assess(facts: dict, video_kbps: int = 5000) -> dict[str, Any]:
         blockers.append("Нет systemd.")
     if not facts.get("sudo"):
         blockers.append("Нет прав администратора: учётная запись должна быть root или входить в sudo.")
+    if facts.get("distro_nginx"):
+        blockers.append("Установлен nginx из пакетов системы: узлу нужен nginx с nginx.org. Удалите прежний nginx (apt purge nginx nginx-common) или выберите другой сервер.")
     if facts.get("ports_busy", {}).get("443") and not facts.get("installed"):
         blockers.append("Порт 443 уже занят другой программой: узлу нужен свободный 443 (и 80 для выпуска сертификата).")
     cpus = int(facts.get("cpus") or 0)
@@ -245,7 +247,8 @@ class CdnService:
 
     async def write_origin_keys(self, db) -> str | None:
         """Список ключей узлов для nginx источника (map $http_x_pgcdn_key): узлы в установке и работающие. Права — как у секрета подписи."""
-        rows = (await db.execute(select(CdnNode).where(CdnNode.state.in_(("installing", "ready", "error"))))).scalars()
+        # узел ручной установки (учётная запись pgcdn) получает ключ сразу: его скрипт проверяет связь с источником раньше, чем узел подключат
+        rows = (await db.execute(select(CdnNode).where(or_(CdnNode.state.in_(("installing", "ready", "error")), CdnNode.ssh_user == "pgcdn")))).scalars()
         lines = []
         for n in rows:
             try:
@@ -331,6 +334,8 @@ class CdnService:
             node.stats = self.derive(raw, node.stats)
             node.oks, node.fails = node.oks + 1, 0
             node.last_ok_at = now
+            if (node.last_error or "").startswith("опрос:"):
+                node.last_error = None
             if node.health != "up" and (node.oks >= UP_AFTER or node.health == "unknown"):
                 if node.health == "down" and self._journal:
                     self._journal.emit("live", "cdn_node_up", level="info", message=f"Узел CDN {node.public_name} снова доступен", data={"node": node.public_name})
@@ -347,6 +352,9 @@ class CdnService:
     async def poll_all(self, session_maker) -> None:
         async with session_maker() as db:
             await self.write_origin_keys(db)                 # самовосстановление файла ключей (том пересоздан, ручная правка)
+            for n in (await db.execute(select(CdnNode).where(CdnNode.state == "installing"))).scalars():
+                if not await self._redis.exists(f"cdn:job:{n.id}"):     # процесс с заданием перезапустился: иначе узел навсегда «устанавливается»
+                    n.state, n.last_error = "error", "Установка прервалась (перезапуск основного сервера). Повторный запуск безопасен."
             rows = list((await db.execute(select(CdnNode).where(CdnNode.state == "ready"))).scalars())
             await asyncio.gather(*(self.poll(db, n) for n in rows), return_exceptions=True)
             await db.commit()

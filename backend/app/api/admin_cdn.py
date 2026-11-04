@@ -23,6 +23,7 @@ from ..services.cdn import LIVE_KBPS_DEFAULT, NODE_VERSION, assess, kid_of, new_
 router = APIRouter(prefix="/admin/cdn", tags=["admin"])
 
 NAME_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+HOST_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")
 QUALITY_KBPS = {"720p": 3000, "1080p": 5000, "1440p": 9000}
 
@@ -34,7 +35,7 @@ def _host_ok(v: str) -> str:
         return v
     except ValueError:
         pass
-    if not NAME_RE.match(v) and v != "localhost":
+    if not HOST_RE.match(v):                                # адрес SSH может быть и внутренним именем без точки
         raise ValueError("Адрес сервера: имя или IP-адрес")
     return v
 
