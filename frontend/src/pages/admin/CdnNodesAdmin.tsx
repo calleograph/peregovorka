@@ -73,7 +73,7 @@ export default function CdnNodesAdmin() {
       {loadErr && <div className="alert warn small" role="alert">{loadErr}</div>}
       {ov.nodes.length === 0 ? <p className="muted small">Узлов пока нет. «Подключить сервер» — Ubuntu 22.04/24.04/26.04 или Debian 12/13, доступ по SSH с правами sudo.</p> : (
         <div className="table-wrap"><table className="table small cdn-nodes">
-          <thead><tr><th>Узел</th><th>Состояние</th><th title="Адресов зрителей за последние 40 с">Зрители</th><th>CPU</th><th>RAM</th><th>Отдаёт</th><th title="С этого сервера на узел">С источника</th><th>Кеш</th><th>Запросов/с</th><th>Из кеша</th><th>Проверен</th></tr></thead>
+          <thead><tr><th>Узел</th><th>Состояние</th><th title="Адресов зрителей за последние 40 с">Зрители</th><th>CPU</th><th>RAM</th><th>Отдаёт</th><th title="С этого сервера на узел">Источник</th><th>Кеш</th><th title="Запросов в секунду">Зап./с</th><th title="Доля ответов без обращения к источнику">Из кеша</th><th>Проверен</th></tr></thead>
           <tbody>{ov.nodes.map((n) => {
             const [h, cls] = health(n);
             const st = n.stats || {};

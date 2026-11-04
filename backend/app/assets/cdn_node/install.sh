@@ -183,7 +183,7 @@ system() {
 # Peregovorka CDN: много одновременных соединений зрителей
 net.core.somaxconn = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
-net.ipv4.ip_local_port_range = 10240 65000
+net.ipv4.ip_local_port_range = 10240 65001
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_slow_start_after_idle = 0
 net.core.netdev_max_backlog = 16384

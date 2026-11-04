@@ -51,6 +51,7 @@ render() {
     sed -e "s#@RESOLVER@#$(resolver)#" -e "s#@CACHE_DIR@#/var/cache/pgcdn#" -e "s#@CACHE_MAX@#${max}g#" \
         -e "s#@ORIGIN_HOST@#$host#" -e "s#@ORIGIN_PORT@#$port#" -e "s#@ORIGIN_SCHEME@#$scheme#" -e "s# resolve max_fails# $resolve max_fails#" \
         -e "s#@PUBLIC_NAME@#$name#" -e "s#@TLS_CERT@#$cert#" -e "s#@TLS_KEY@#$key#" "$ETC/nginx.conf.tpl" > "$tmp/nginx.conf"
+    [ -s /proc/net/if_inet6 ] || sed -i '/listen \[::\]/d' "$tmp/nginx.conf"      # IPv6 отключён в ядре: nginx иначе не запустится
     local pull node
     pull=$(json .pull_key); [[ "$pull" =~ ^[A-Za-z0-9_-]{32,128}$ ]] || die "pull_key: недопустимый"
     node=$(json .node_id); [[ "$node" =~ ^[A-Za-z0-9-]{1,64}$ ]] || die "node_id: недопустимый"
@@ -107,7 +108,12 @@ apply_config() {
     trap 'rm -rf "$tmp" "$bak"' RETURN
     if [ -n "$new" ]; then
         jq -e '.node_id and .origin_url and .public_name and .pull_key and .keys' "$new" >/dev/null || die "в настройках нет обязательных полей"
-        [ -e "$ETC/node.json" ] && { prev=$tmp/prev.json; cp -p "$ETC/node.json" "$prev"; }
+        if [ -e "$ETC/node.json" ]; then
+            prev=$tmp/prev.json; cp -p "$ETC/node.json" "$prev"
+            # настройки с основного сервера не знают, где сертификат (Let's Encrypt): пути остаются прежними, иначе узел откатился бы на самоподписанный
+            jq -s '(.[0] | {tls_cert_path, tls_key_path} | with_entries(select(.value != null))) + .[1]' "$prev" "$new" > "$tmp/merged.json" || die "настройки не объединились"
+            new=$tmp/merged.json
+        fi
         install -m 0600 "$new" "$ETC/node.json"
     fi
     if ! render "$tmp/out"; then [ -n "$prev" ] && install -m 0600 "$prev" "$ETC/node.json"; return 1; fi

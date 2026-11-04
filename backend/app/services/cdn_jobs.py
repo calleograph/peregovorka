@@ -160,7 +160,8 @@ class CdnJobs:
             async def on_line(stage: str, status: str, msg: str) -> None:
                 if status == "fail":
                     failed.setdefault(stage, msg)
-                await self._save(node_id, _stage=(stage, status if status != "warn" else "ok", msg))
+                if stage != "done":                         # «Готово» — после проверки управления и раздачи, а не после скрипта
+                    await self._save(node_id, _stage=(stage, status if status != "warn" else "ok", msg))
 
             try:
                 ok, journal = await s.install(config, on_line)
