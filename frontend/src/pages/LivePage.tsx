@@ -149,6 +149,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const baseRef = useRef<string>(access.base ?? "");                 // CDN; при его недоступности плеер сам переходит на сервер-источник (пусто)
   const nodeRef = useRef<string>(access.node ?? "");                 // свой узел CDN, с которого идёт поток
   const originRef = useRef<string>(access.origin_path ?? "");        // запасной путь к серверу-источнику (узлы CDN)
+  const badNodes = useRef(new Set<string>());                        // узлы, не отдавшие поток с начала сбоя: круг по ним заканчивается источником
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(false);
   const [vol, setVol] = useState(1);
@@ -177,8 +178,9 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
   async function failover(): Promise<string> {
     const failed = nodeRef.current;
+    badNodes.current.add(failed);
     const a = await cb.current.renew(failed || undefined).catch(() => null);
-    if (a && a.node && a.node !== failed) { adopt(a); return baseRef.current + prefix.current + "index.m3u8"; }
+    if (a && a.node && !badNodes.current.has(a.node)) { adopt(a); return baseRef.current + prefix.current + "index.m3u8"; }
     const o = a?.origin_path || originRef.current;
     if (!o) return "";
     baseRef.current = ""; nodeRef.current = ""; prefix.current = o.replace(/[^/]+$/, "");
@@ -306,7 +308,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     };
     const on = ["play", "pause", "volumechange", "timeupdate", "progress"] as const;
     on.forEach((e) => el.addEventListener(e, upd));
-    const wait = () => setBuffering(true), ready = () => { setBuffering(false); fails.current = 0; };
+    const wait = () => setBuffering(true), ready = () => { setBuffering(false); fails.current = 0; badNodes.current.clear(); };
     el.addEventListener("waiting", wait); el.addEventListener("playing", ready); el.addEventListener("canplay", ready);
     return () => { on.forEach((e) => el.removeEventListener(e, upd)); el.removeEventListener("waiting", wait); el.removeEventListener("playing", ready); el.removeEventListener("canplay", ready); };
   }, []);
