@@ -11,6 +11,7 @@ pydantic-settings>=2.15.0,<3
 redis>=8.1.0,<9
 ldap3>=2.9.1,<3
 livekit-api==1.2.2  # проверенная версия из deployment/compat.env: меняется только вместе с набором LiveKit
+asyncssh>=2.24
 cryptography>=44
 argon2-cffi>=25.1.0,<26
 httpx>=0.28.1,<1

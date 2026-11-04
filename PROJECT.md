@@ -288,6 +288,10 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
+0zm. **Сервер 0.66.0: свои узлы CDN.** Устройство, решения, замеры — `docs/BROADCAST_CDN.md`; инструкция — вики «Узлы CDN».
+* Код: `backend/app/services/{cdn,cdn_ssh,cdn_jobs}.py`, `backend/app/api/admin_cdn.py`, пакет узла `backend/app/assets/cdn_node/`, `frontend/nginx.conf` (`/cdn-origin/`), `frontend/live-secret.sh`, `frontend/src/pages/LivePage.tsx` (переход между узлами), `frontend/src/pages/admin/CdnNodesAdmin.tsx`; стенд — `tests/live/cdn/`.
+* Не проверено: настоящий Let's Encrypt, настоящие зрители и канал, NVMe, 1500 зрителей 1440p, Safari/iOS с узлом, запуск приложений Windows/Linux/Android с узлом. Геораспределения зрителей нет. kTLS не включён: не измерялся.
+
 0zl. **Сервер 0.65.0: площадки RTMP сохраняются, задержка эфира 11,4 → 7,5 с, экран во весь кадр, страница зрителя в две колонки, цвет значка комнаты.**
 * Где в коде: `frontend/src/components/SubForm.tsx` (вместо вложенных `<form>` в редакторе комнаты; тест `nestedForms.test.ts`), `LiveDestinations.tsx`, `services/live_destinations.py::_ensure_unique`; `services/live.py::KEY_FRAME_S`, `frontend/nginx.conf` (`sub_filter` TARGETDURATION), `pages/LivePage.tsx` (hls.js, `ViewerQuestions`), `recorder/scene.ts` (`solo`); `services/room_icons.py::icon_out`, `api/room_icons.py` (`PUT …/icon/color`), миграция 0059; замер — `tests/live/egress/latency_probe.py`.
 * Проверено на установленном экземпляре (pgdoc): замеры до/после (таблица в `docs/BROADCASTS.md` «Задержка»), площадки из браузера (YouTube, RUTUBE, свой сервер; Enter, тройное нажатие, обрыв сети, перезагрузка, изменение, удаление, повторное добавление), эфир на приёмник mediamtx (верный ключ — поток H.264+AAC, неверный — отклонён), YouTube с тестовым ключом — «ошибка», страница зрителя на 1920/1280/768/390.

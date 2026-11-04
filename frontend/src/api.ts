@@ -116,7 +116,25 @@ export interface LiveDestination {
   id: string; platform: "rutube" | "vk" | "youtube" | "twitch" | "custom"; platform_name: string; name: string; server_url: string; channel: string | null; watch_url: string | null;
   enabled: boolean; has_key: boolean; status: LiveDestStatus; last_ok_at: string | null; last_error: string | null;
 }
-export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string }
+export interface CdnSettings { cdn_nodes_enabled: boolean; cdn_origin_url: string; cdn_origin_tls_verify: boolean; cdn_fallback_origin: boolean; cdn_key_gen: number }
+export interface CdnCalc { viewers: number; video_kbps: number; streams: number; per_viewer_mbit: number; egress_gbps: number; cpu_cores: number; ram_gb: number; disk_gb: number; traffic_tb_per_hour: number; link_viewers?: number; name?: string }
+export interface CdnStage { name: string; title: string; status: "start" | "ok" | "fail"; msg: string; at: string }
+export interface CdnAssessment { ok: boolean; blockers: string[]; notes: { level: string; text: string }[]; viewers: number; by_cpu: number; by_ram: number; by_link: number | null; link_mbit: number | null; video_kbps: number; cache_gb: number }
+export interface CdnStats { conn?: number; viewers?: number; per_stream?: Record<string, number>; cpu_pct?: number; mem_total?: number; mem_avail?: number; out_mbit?: number; origin_mbit?: number;
+  req_rate?: number; hit_ratio?: number | null; hit_ratio_now?: number | null; net_tx_mbit?: number; disk?: { cache_bytes: number; cache_max_gb: number; fs_avail: number } | null; nginx?: string; denied?: Record<string, number> }
+export interface CdnNode {
+  id: string; name: string; public_name: string; region: string | null; weight: number; capacity: number | null; enabled: boolean;
+  state: "new" | "checked" | "installing" | "ready" | "error" | "removing"; health: "unknown" | "up" | "down";
+  ssh: { host: string; port: number; user: string; fingerprint: string }; tls_mode: "acme" | "files" | "selfsigned";
+  facts: Record<string, unknown> | null; assessment: CdnAssessment | null; stages: CdnStage[]; last_error: string | null;
+  last_check_at: string | null; last_ok_at: string | null; installed_at: string | null; version: string | null; generation: string | null; stats: CdnStats; busy: boolean; outdated: boolean;
+}
+export interface CdnOverview { settings: CdnSettings; origin_effective: string; keys: string[]; node_version: string; mode: "origin" | "external" | "nodes" | "fallback"; nodes: CdnNode[]; nodes_up: number; profiles: CdnCalc[] }
+export interface CdnCreds { password?: string; private_key?: string; tls_cert_pem?: string; tls_key_pem?: string }
+export interface CdnNodeIn extends CdnCreds { name: string; public_name: string; region?: string; ssh_host: string; ssh_port: number; ssh_user: string; host_key: string; fingerprint: string;
+  tls_mode: "acme" | "files" | "selfsigned"; acme_email?: string; quality: "720p" | "1080p" | "1440p"; manual?: boolean }
+/** base — адрес CDN (пусто — этот сервер); node — свой узел CDN, origin_path — запасной путь к этому серверу, если узел перестанет отвечать. */
+export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
@@ -1059,6 +1077,26 @@ export const api = {
   deleteAvatar: () => request<Profile>("DELETE", "/profile/avatar"),
   whiteboardFileUrl: (id: string) => `/api/v1/meetings/${id}/whiteboard.drawio`,
   adminLiveCdnCheck: () => request<{ ok: boolean; message: string; ms?: number }>("POST", "/admin/live/cdn/check"),
+  cdn: {
+    overview: () => request<CdnOverview>("GET", "/admin/cdn"),
+    settings: (patch: Partial<CdnSettings>) => request<{ ok: boolean; applied: Record<string, string> | null }>("PUT", "/admin/cdn/settings", patch),
+    hostKey: (ssh_host: string, ssh_port: number) => request<{ host_key: string; fingerprint: string; type: string }>("POST", "/admin/cdn/hostkey", { ssh_host, ssh_port }),
+    add: (body: CdnNodeIn) => request<CdnNode>("POST", "/admin/cdn/nodes", body),
+    node: (id: string) => request<CdnNode & { diag?: string | null }>("GET", `/admin/cdn/nodes/${id}`),
+    patch: (id: string, body: { name?: string; region?: string; weight?: number; enabled?: boolean }) => request<CdnNode>("PATCH", `/admin/cdn/nodes/${id}`, body),
+    preflight: (id: string, creds: CdnCreds) => request<CdnNode>("POST", `/admin/cdn/nodes/${id}/preflight`, creds),
+    install: (id: string, creds: CdnCreds) => request<{ ok: boolean }>("POST", `/admin/cdn/nodes/${id}/install`, creds),
+    adopt: (id: string) => request<CdnNode>("POST", `/admin/cdn/nodes/${id}/adopt`),
+    test: (id: string) => request<{ ok: boolean; message: string }>("POST", `/admin/cdn/nodes/${id}/test`),
+    poll: (id: string) => request<CdnNode>("POST", `/admin/cdn/nodes/${id}/poll`),
+    apply: (id: string) => request<{ ok: boolean; message: string }>("POST", `/admin/cdn/nodes/${id}/apply`),
+    upgrade: (id: string) => request<{ ok: boolean }>("POST", `/admin/cdn/nodes/${id}/upgrade`),
+    logs: (id: string) => request<{ text: string; install?: string; error?: string }>("GET", `/admin/cdn/nodes/${id}/logs`),
+    remove: (id: string, force = false) => request<{ ok: boolean; uninstalled: boolean; message: string }>("DELETE", `/admin/cdn/nodes/${id}${force ? "?force=true" : ""}`),
+    rotate: () => request<{ ok: boolean; kid: string; generation: number; applied: Record<string, string> }>("POST", "/admin/cdn/keys/rotate"),
+    calc: (viewers: number, quality: string, streams: number, link_mbit?: number) =>
+      request<CdnCalc>("GET", `/admin/cdn/calc?viewers=${viewers}&quality=${quality}&streams=${streams}${link_mbit ? `&link_mbit=${link_mbit}` : ""}`),
+  },
   adminLiveStatus: () => request<LiveAdminStatus>("GET", "/admin/live/status"),
   adminVideoStatus: () => request<VideoStatus>("GET", "/admin/video/status"),
   adminComponents: () => request<ComponentsInfo>("GET", "/admin/components"),
@@ -1082,7 +1120,7 @@ export const api = {
   patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean; password?: string | null }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
-  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean; viewer?: string }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
+  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean; viewer?: string; avoid?: string }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
   liveReplay: (token: string, body: { password?: string; pass?: string; viewer?: string }) => request<LiveReplay>("POST", `/live/${encodeURIComponent(token)}/replay`, body),
   liveViewer: (token: string, body: { display_name: string; email: string | null; materials_consent: boolean }) => request<LiveViewerReg>("POST", `/live/${encodeURIComponent(token)}/viewer`, body),
   liveAsk: (token: string, body: { viewer: string; text: string; pass?: string }) => request<LiveQuestion>("POST", `/live/${encodeURIComponent(token)}/questions`, body),

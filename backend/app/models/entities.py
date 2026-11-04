@@ -1224,3 +1224,46 @@ class LiveDestination(Base):
     last_error: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class CdnNode(Base):
+    """Узел CDN Peregovorka: отдельный сервер с nginx, который кеширует и раздаёт HLS эфиров зрителям. Подключается по SSH из администрирования
+    (или ставится скриптом вручную); дальше основной сервер управляет им только ключом pgcdn (принудительная команда pgcdn-ctl).
+    Секреты (ключ управления, токен статистики, ключ доступа к источнику) — зашифрованы SecretBox с привязкой к строке."""
+
+    __tablename__ = "cdn_nodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    public_name: Mapped[str] = mapped_column(String(253), unique=True, nullable=False)      # имя для зрителей: https://<public_name>/hls/…
+    region: Mapped[str | None] = mapped_column(String(60))
+    weight: Mapped[int] = mapped_column(Integer, default=100, server_default="100", nullable=False)     # доля зрителей относительно других узлов
+    capacity: Mapped[int | None] = mapped_column(Integer)                                # зрителей, на которых рассчитан узел (оценка по проверке сервера)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    state: Mapped[str] = mapped_column(String(12), default="new", server_default="new", nullable=False)   # new | checked | installing | ready | error | removing
+    ssh_host: Mapped[str] = mapped_column(String(253), nullable=False)
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22, server_default="22", nullable=False)
+    ssh_user: Mapped[str] = mapped_column(String(64), nullable=False)                    # учётная запись первоначальной установки (для сведения)
+    host_key: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)   # открытый ключ сервера SSH, подтверждённый администратором
+    host_fp: Mapped[str] = mapped_column(String(80), default="", server_default="", nullable=False)
+    mgmt_key_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    api_token_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    pull_key_enc: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    tls_mode: Mapped[str] = mapped_column(String(12), default="acme", server_default="acme", nullable=False)   # acme | files | selfsigned
+    acme_email: Mapped[str | None] = mapped_column(String(200))
+    facts: Mapped[dict | None] = mapped_column(JSONType)                 # сведения о сервере из предварительной проверки
+    assessment: Mapped[dict | None] = mapped_column(JSONType)            # оценка пригодности: зрителей, ограничения, замечания
+    stages: Mapped[list | None] = mapped_column(JSONType)                # этапы последней установки/проверки
+    diag: Mapped[str | None] = mapped_column(Text)                       # журнал последней операции (без секретов)
+    last_error: Mapped[str | None] = mapped_column(String(500))
+    health: Mapped[str] = mapped_column(String(8), default="unknown", server_default="unknown", nullable=False)   # unknown | up | down
+    fails: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    oks: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_check_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_ok_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    stats: Mapped[dict | None] = mapped_column(JSONType)                 # последние показатели узла (с расчётом скоростей)
+    version: Mapped[str | None] = mapped_column(String(20))
+    generation: Mapped[str | None] = mapped_column(String(16))           # поколение применённых настроек (sha256 node.json, 12 знаков)
+    installed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)

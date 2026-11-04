@@ -275,7 +275,7 @@ class LiveBroadcaster:
         out = {"ends_at": ends_at, "enabled": bool(cfg.enabled and room.live_enabled), "available": bool(cfg.enabled), "live": live, "status": b.status if b else "idle",
                "since": b.started_at if live and b else None, "quality": room.live_quality, "record": room.live_record, "own_hls": room.live_own_hls,
                "viewers": await self.viewers(room.id) if live else 0, "error": b.error if b else None, "broadcast_id": str(b.id) if b else None,
-               "hls_ready": self.hls_ready(b), "limit": int(cfg.max_concurrent), "cdn": bool(cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn), "can_start": bool(cfg.enabled and room.live_enabled and not live)}
+               "hls_ready": self.hls_ready(b), "limit": int(cfg.max_concurrent), "cdn": bool(((cfg.cdn_enabled and cfg.cdn_base_url) or cfg.cdn_nodes_enabled) and room.live_cdn), "can_start": bool(cfg.enabled and room.live_enabled and not live)}
         if self.destinations is not None:
             out["destinations"] = await self.destinations.live_state(db, room, b)
         return out

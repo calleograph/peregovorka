@@ -3,6 +3,7 @@ import { api, type LiveAdminStatus } from "../../api";
 import { bytes } from "../../util";
 import InfoTip from "../../components/InfoTip";
 import SettingsForm, { type Field } from "./SettingsForm";
+import CdnNodesAdmin from "./CdnNodesAdmin";
 import { ChecksList, ComponentCard, useComponents, WIKI } from "./ServerComponents";
 
 /** «Трансляции»: служба Egress (общая с видеозаписью, включается из панели), проверки по цепочке, идущие эфиры и зрители, CDN и настройки. */
@@ -39,11 +40,12 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
         )}
       </div>
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="row"><b>CDN</b><InfoTip doc={`${WIKI}CDN-для-массовых-мероприятий`}>CDN забирает файлы с этого сервера по тем же путям (/hls/…) и раздаёт зрителям, кэшируя сегменты и почти не кэшируя плейлист. Порядок: «Адрес доставки CDN» → «Раздавать HLS через CDN» → «Сохранить» → «Проверить CDN»; в комнате — «Раздавать через CDN».</InfoTip>
+        <div className="row"><b>Внешний CDN</b><InfoTip doc={`${WIKI}CDN-для-массовых-мероприятий`}>Сторонний CDN забирает файлы с этого сервера по тем же путям (/hls/…) и раздаёт зрителям, кэшируя сегменты и почти не кэшируя плейлист. Порядок: «Адрес доставки CDN» → «Раздавать HLS через CDN» → «Сохранить» → «Проверить CDN»; в комнате — «Раздавать через CDN».</InfoTip>
           <span className={`badge ${st?.cdn.enabled ? "ok" : ""}`}>{st ? (st.cdn.enabled ? "подключён" : "не подключён") : "…"}</span><div className="spacer" />
           <button className="btn mini" onClick={() => void checkCdn()} disabled={cdnBusy || !st?.cdn.base_url}>{cdnBusy ? "Проверка…" : "Проверить CDN"}</button></div>
         {cdnMsg && <div className={`alert ${cdnMsg.ok ? "ok" : "warn"} small`} role="status">{cdnMsg.text}</div>}
       </div>
+      <CdnNodesAdmin />
       <div id="settings">
         <SettingsForm key="live" group="live" title="Настройки трансляций" fields={fields}
           intro="Зрители смотрят HLS, который nginx раздаёт прямо с этого сервера, без подключения к LiveKit. Эфир включается в комнате: тип «Трансляционная» или вкладка «Трансляция» в настройках комнаты." />

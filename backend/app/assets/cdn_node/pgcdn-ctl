@@ -1,0 +1,182 @@
+#!/bin/bash
+# pgcdn-ctl — управление узлом CDN Peregovorka (запускается от root: напрямую или через sudo из pgcdn-ssh).
+#   apply            JSON настроек узла со стандартного входа → /etc/pgcdn/node.json → конфигурация nginx → nginx -t → перечитывание.
+#                    Ошибка проверки — прежние файлы возвращаются, nginx работает с прежней конфигурацией.
+#   render           собрать конфигурацию из текущего node.json (без перечитывания)
+#   status           JSON: nginx, версии, поколение настроек, сертификат, диск
+#   diskstat         записать /var/lib/pgcdn/disk.json (таймер pgcdn-disk раз в минуту)
+#   restart          перезапустить nginx
+#   upgrade          архив tar.gz пакета узла (base64) со стандартного входа → install.sh --upgrade (обновление nginx/njs и файлов узла)
+#   logs             последние строки журнала ошибок nginx
+#   uninstall        остановить и удалить узел (nginx остаётся установленным, если не задан --purge)
+set -uo pipefail
+umask 027
+ETC=/etc/pgcdn
+LIB=/var/lib/pgcdn
+NGX=/etc/nginx/nginx.conf
+VERSION_FILE=$ETC/VERSION
+
+die() { echo "pgcdn-ctl: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "нужен root"
+
+json() { jq -r "$1 // empty" "$ETC/node.json"; }
+
+resolver() {
+    # адреса DNS для nginx: systemd-resolved слушает 127.0.0.53; иначе — серверы из resolv.conf
+    local r
+    r=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | grep -v ':' | head -3 | tr '\n' ' ')
+    echo "${r:-127.0.0.53}"
+}
+
+render() {
+    local tmp="$1" origin scheme host port verify cert key resolve
+    [ -s "$ETC/node.json" ] || die "нет $ETC/node.json"
+    jq -e . "$ETC/node.json" >/dev/null || die "node.json — не JSON"
+    origin=$(json .origin_url); [ -n "$origin" ] || die "не задан origin_url"
+    scheme=${origin%%://*}; host=${origin#*://}; host=${host%%/*}
+    case "$scheme" in https) port=443 ;; http) port=80 ;; *) die "origin_url: только http:// или https://" ;; esac
+    if [[ "$host" == *:* ]]; then port=${host##*:}; host=${host%:*}; fi
+    [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "origin_url: недопустимое имя"
+    [[ "$port" =~ ^[0-9]+$ ]] || die "origin_url: порт"
+    resolve="resolve"; [[ "$host" =~ ^[0-9.]+$ ]] && resolve=""
+    verify=on; [ "$(json .origin_tls_verify)" = "false" ] && verify=off
+    cert=$(json .tls_cert_path); key=$(json .tls_key_path)
+    [ -n "$cert" ] || cert=$ETC/tls/node.crt; [ -n "$key" ] || key=$ETC/tls/node.key
+    [[ "$cert$key" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "пути сертификата: недопустимые символы"
+    local name max hosthdr
+    name=$(json .public_name); [[ "$name" =~ ^[A-Za-z0-9.-]+$ ]] || die "public_name: недопустимое имя"
+    max=$(json .cache_max_gb); [[ "$max" =~ ^[0-9]+$ ]] || max=20
+    hosthdr=$host; { [ "$scheme" = https ] && [ "$port" = 443 ]; } || { [ "$scheme" = http ] && [ "$port" = 80 ]; } || hosthdr="$host:$port"
+    mkdir -p "$tmp"
+    sed -e "s#@RESOLVER@#$(resolver)#" -e "s#@CACHE_DIR@#/var/cache/pgcdn#" -e "s#@CACHE_MAX@#${max}g#" \
+        -e "s#@ORIGIN_HOST@#$host#" -e "s#@ORIGIN_PORT@#$port#" -e "s#@ORIGIN_SCHEME@#$scheme#" -e "s# resolve max_fails# $resolve max_fails#" \
+        -e "s#@PUBLIC_NAME@#$name#" -e "s#@TLS_CERT@#$cert#" -e "s#@TLS_KEY@#$key#" "$ETC/nginx.conf.tpl" > "$tmp/nginx.conf"
+    [ -s /proc/net/if_inet6 ] || sed -i '/listen \[::\]/d' "$tmp/nginx.conf"      # IPv6 отключён в ядре: nginx иначе не запустится
+    local pull node
+    pull=$(json .pull_key); [[ "$pull" =~ ^[A-Za-z0-9_-]{32,128}$ ]] || die "pull_key: недопустимый"
+    node=$(json .node_id); [[ "$node" =~ ^[A-Za-z0-9-]{1,64}$ ]] || die "node_id: недопустимый"
+    cat > "$tmp/proxy.conf" <<EOF
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+proxy_set_header Host "$hosthdr";
+proxy_set_header X-Pgcdn-Key "$pull";
+proxy_set_header X-Pgcdn-Node "$node";
+proxy_set_header Accept-Encoding "";
+proxy_ssl_server_name on;
+proxy_ssl_name $host;
+proxy_ssl_verify $verify;
+proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+proxy_ssl_session_reuse on;
+proxy_hide_header Cache-Control;
+proxy_hide_header Access-Control-Allow-Origin;
+proxy_hide_header Set-Cookie;
+proxy_hide_header Cross-Origin-Resource-Policy;
+proxy_connect_timeout 3s;
+proxy_read_timeout 10s;
+proxy_send_timeout 10s;
+proxy_next_upstream off;
+add_header Cross-Origin-Resource-Policy "cross-origin" always;
+add_header X-Content-Type-Options "nosniff" always;
+EOF
+    jq '{node_id, version, api_token_sha256, keys}' "$ETC/node.json" > "$tmp/runtime.json" || die "runtime.json"
+}
+
+install_rendered() {
+    local tmp="$1" bak="$2"
+    mkdir -p "$bak"
+    cp -p "$NGX" "$bak/nginx.conf" 2>/dev/null; cp -p "$ETC/proxy.conf" "$bak/proxy.conf" 2>/dev/null; cp -p "$ETC/runtime.json" "$bak/runtime.json" 2>/dev/null
+    install -m 0644 "$tmp/nginx.conf" "$NGX"
+    install -m 0640 -o root -g root "$tmp/proxy.conf" "$ETC/proxy.conf"
+    install -m 0644 "$tmp/runtime.json" "$ETC/runtime.json"
+}
+
+restore() {
+    local bak="$1"
+    [ -e "$bak/nginx.conf" ] && install -m 0644 "$bak/nginx.conf" "$NGX"
+    [ -e "$bak/proxy.conf" ] && install -m 0640 "$bak/proxy.conf" "$ETC/proxy.conf"
+    [ -e "$bak/runtime.json" ] && install -m 0644 "$bak/runtime.json" "$ETC/runtime.json"
+}
+
+reload_nginx() {
+    if systemctl is-active -q nginx; then systemctl reload nginx; else systemctl enable -q nginx 2>/dev/null; systemctl restart nginx; fi
+}
+
+apply_config() {
+    # $1 — файл с новым node.json (или пусто: применить текущий)
+    local new="${1:-}" tmp bak prev=""
+    tmp=$(mktemp -d); bak=$(mktemp -d)
+    trap 'rm -rf "$tmp" "$bak"' RETURN
+    if [ -n "$new" ]; then
+        jq -e '.node_id and .origin_url and .public_name and .pull_key and .keys' "$new" >/dev/null || die "в настройках нет обязательных полей"
+        if [ -e "$ETC/node.json" ]; then
+            prev=$tmp/prev.json; cp -p "$ETC/node.json" "$prev"
+            # настройки с основного сервера не знают, где сертификат (Let's Encrypt): пути остаются прежними, иначе узел откатился бы на самоподписанный
+            jq -s '(.[0] | {tls_cert_path, tls_key_path} | with_entries(select(.value != null))) + .[1]' "$prev" "$new" > "$tmp/merged.json" || die "настройки не объединились"
+            new=$tmp/merged.json
+        fi
+        install -m 0600 "$new" "$ETC/node.json"
+    fi
+    if ! render "$tmp/out"; then [ -n "$prev" ] && install -m 0600 "$prev" "$ETC/node.json"; return 1; fi
+    install_rendered "$tmp/out" "$bak"
+    if ! nginx -t -q 2>"$tmp/err"; then
+        restore "$bak"; [ -n "$prev" ] && install -m 0600 "$prev" "$ETC/node.json"
+        echo "pgcdn-ctl: nginx -t отклонил настройки, работает прежняя конфигурация: $(head -c 600 "$tmp/err")" >&2
+        return 1
+    fi
+    reload_nginx || { restore "$bak"; [ -n "$prev" ] && install -m 0600 "$prev" "$ETC/node.json"; reload_nginx; die "nginx не перечитал настройки"; }
+    sha256sum "$ETC/node.json" | cut -c1-12 > "$LIB/generation"
+    echo "ok $(cat "$LIB/generation")"
+}
+
+diskstat() {
+    local used total avail
+    used=$(du -sb /var/cache/pgcdn 2>/dev/null | cut -f1)
+    read -r total avail < <(df -B1 --output=size,avail /var/cache/pgcdn 2>/dev/null | tail -1)
+    printf '{"cache_bytes":%s,"fs_bytes":%s,"fs_avail":%s,"cache_max_gb":%s,"time":%s}\n' "${used:-0}" "${total:-0}" "${avail:-0}" \
+        "$(jq -r '.cache_max_gb // 20' "$ETC/node.json" 2>/dev/null || echo 20)" "$(date +%s)" > "$LIB/disk.json.tmp" && mv -f "$LIB/disk.json.tmp" "$LIB/disk.json"
+    chmod 0644 "$LIB/disk.json"
+}
+
+status() {
+    local cert notafter=""
+    cert=$(json .tls_cert_path); [ -n "$cert" ] || cert=$ETC/tls/node.crt
+    [ -r "$cert" ] && notafter=$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)
+    jq -n --arg active "$(systemctl is-active nginx 2>/dev/null)" --arg nginx "$(nginx -v 2>&1 | sed 's#.*/##')" \
+        --arg version "$(cat "$VERSION_FILE" 2>/dev/null)" --arg gen "$(cat "$LIB/generation" 2>/dev/null)" --arg cert_until "$notafter" \
+        --arg tls_mode "$(json .tls_mode)" --arg os "$(. /etc/os-release && echo "$PRETTY_NAME")" --arg arch "$(dpkg --print-architecture)" \
+        --argjson disk "$(cat "$LIB/disk.json" 2>/dev/null || echo null)" \
+        '{nginx_active:$active, nginx:$nginx, version:$version, generation:$gen, cert_until:$cert_until, tls_mode:$tls_mode, os:$os, arch:$arch, disk:$disk}'
+}
+
+upgrade() {
+    local d
+    d=$(mktemp -d); trap 'rm -rf "$d"' RETURN
+    base64 -d | tar -xz -C "$d" || die "архив пакета повреждён"
+    [ -x "$d/install.sh" ] || die "в архиве нет install.sh"
+    "$d/install.sh" --upgrade
+}
+
+uninstall() {
+    systemctl disable --now pgcdn-disk.timer 2>/dev/null
+    systemctl stop nginx 2>/dev/null
+    rm -f /etc/systemd/system/pgcdn-disk.* /etc/systemd/system/nginx.service.d/pgcdn.conf /etc/sysctl.d/90-pgcdn.conf /etc/sudoers.d/pgcdn
+    rm -rf /var/cache/pgcdn "$ETC" "$LIB" /usr/local/sbin/pgcdn-ssh
+    [ "${1:-}" = --purge ] && DEBIAN_FRONTEND=noninteractive apt-get purge -y -q nginx nginx-module-njs >/dev/null 2>&1
+    systemctl daemon-reload
+    # учётная запись управления удаляется последней и с задержкой: её сеанс SSH ещё может быть открыт (этот вызов)
+    systemd-run --on-active=15 --unit pgcdn-userdel /bin/sh -c 'userdel -r pgcdn 2>/dev/null; rm -f /usr/local/sbin/pgcdn-ctl' >/dev/null 2>&1 || true
+    echo "ok"
+}
+
+cmd=${1:-}
+case "$cmd" in
+    apply) f=$(mktemp); cat > "$f"; apply_config "$f"; rc=$?; rm -f "$f"; exit $rc ;;
+    render) apply_config "" ;;
+    status) status ;;
+    diskstat) diskstat ;;
+    restart) systemctl restart nginx && echo ok ;;
+    upgrade) upgrade ;;
+    logs) tail -n 200 /var/log/nginx/error.log 2>/dev/null ;;
+    uninstall) uninstall "${2:-}" ;;
+    *) die "команды: apply | render | status | diskstat | restart | upgrade | logs | uninstall [--purge]" ;;
+esac
