@@ -105,12 +105,12 @@ class Session:
     async def can_sudo(self) -> bool:
         if self.user == "root":
             return True
-        rc, _, _ = await self.run("true", root=True, timeout=20)
+        rc, _, _ = await self.run("true", root=True, timeout=60)
         return rc == 0
 
     async def upload_package(self, extra: dict[str, str] | None = None) -> str:
         """Пакет узла во временный каталог (0700) на сервере; возвращает путь. Файлы с секретами — 0600."""
-        rc, out, err = await self.run("mktemp -d /tmp/pgcdn.XXXXXXXX", timeout=20)
+        rc, out, err = await self.run("mktemp -d /tmp/pgcdn.XXXXXXXX", timeout=60)
         d = out.strip()
         if rc != 0 or not d.startswith("/tmp/pgcdn."):
             raise SshError("upload", f"Не удалось создать временный каталог: {err.strip()[:200]}")
@@ -123,7 +123,7 @@ class Session:
                     async with sftp.open(f"{d}/{name}", "w", attrs=asyncssh.SFTPAttrs(permissions=0o600)) as f:
                         await f.write(text)
         except BaseException as exc:  # noqa: BLE001
-            await self.run(f"rm -rf {shlex.quote(d)}", timeout=20)
+            await self.run(f"rm -rf {shlex.quote(d)}", timeout=60)
             raise _explain(exc) from None
         return d
 
@@ -139,7 +139,7 @@ class Session:
             except (ValueError, IndexError):
                 raise SshError("facts", f"Сервер не вернул сведения: {(err or out).strip()[:300]}") from None
         finally:
-            await self.run(f"rm -rf {shlex.quote(d)}", timeout=20)
+            await self.run(f"rm -rf {shlex.quote(d)}", timeout=60)
         facts["sudo"] = await self.can_sudo()
         return facts
 
@@ -169,7 +169,7 @@ class Session:
                 await asyncio.wait_for(proc.wait(), 30)
                 ok = ok and proc.exit_status == 0
         except BaseException as exc:  # noqa: BLE001
-            await self.run(f"rm -rf {shlex.quote(d)}", timeout=20)
+            await self.run(f"rm -rf {shlex.quote(d)}", timeout=60)
             e = _explain(exc)
             log.append(f"[основной сервер] {e.message}")
             await on_line("connection", "fail", e.message)

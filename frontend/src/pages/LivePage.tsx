@@ -149,7 +149,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const baseRef = useRef<string>(access.base ?? "");                 // CDN; при его недоступности плеер сам переходит на сервер-источник (пусто)
   const nodeRef = useRef<string>(access.node ?? "");                 // свой узел CDN, с которого идёт поток
   const originRef = useRef<string>(access.origin_path ?? "");        // запасной путь к серверу-источнику (узлы CDN)
-  const badNodes = useRef(new Set<string>());                        // узлы, не отдавшие поток с начала сбоя: круг по ним заканчивается источником
+  const badNodes = useRef(new Map<string, number>());                // узел → когда не отдал поток: 90 с к нему не возвращаемся (сервер исключает узел через 30 с)
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(false);
   const [vol, setVol] = useState(1);
@@ -168,7 +168,12 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   cb.current = { renew, onGone };
 
   // новая ссылка: узел CDN (или источник) и префикс подписи; адреса сегментов меняются без перезапуска плеера
+  const isBad = (node: string) => Date.now() - (badNodes.current.get(node) ?? 0) < 90_000;
   function adopt(a: LiveAccess) {
+    if (a.node && a.origin_path && isBad(a.node)) {          // продление раньше, чем сервер исключил узел: остаёмся на источнике
+      baseRef.current = ""; nodeRef.current = ""; originRef.current = a.origin_path; prefix.current = a.origin_path.replace(/[^/]+$/, "");
+      return;
+    }
     // свои узлы и источник: решает сервер (узел восстановился — зритель возвращается на него). Внешний CDN (base без node): если плеер
     // уже ушёл на источник, он там и остаётся — как раньше.
     if (a.node || !a.base) { baseRef.current = a.base ?? ""; nodeRef.current = a.node ?? ""; }
@@ -178,9 +183,9 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
   async function failover(): Promise<string> {
     const failed = nodeRef.current;
-    badNodes.current.add(failed);
+    badNodes.current.set(failed, Date.now());
     const a = await cb.current.renew(failed || undefined).catch(() => null);
-    if (a && a.node && !badNodes.current.has(a.node)) { adopt(a); return baseRef.current + prefix.current + "index.m3u8"; }
+    if (a && a.node && !isBad(a.node)) { adopt(a); return baseRef.current + prefix.current + "index.m3u8"; }
     const o = a?.origin_path || originRef.current;
     if (!o) return "";
     baseRef.current = ""; nodeRef.current = ""; prefix.current = o.replace(/[^/]+$/, "");
@@ -195,7 +200,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (!alive || !a) return;
         adopt(a);
         const el = video.current;
-        if (el && native()) { const was = !el.paused; el.src = baseRef.current + a.path; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
+        if (el && native()) { const was = !el.paused; el.src = baseRef.current + prefix.current + "index.m3u8"; if (was) void el.play().catch(() => undefined); }        // нативный HLS подписи не подменяет: источник меняется (редко: подпись для Safari живёт часы)
       }).finally(() => { if (alive) timer = window.setTimeout(tick, Math.max(60, access.refresh_in) * 1000); });
     }, Math.max(60, access.refresh_in) * 1000);
     return () => { alive = false; window.clearTimeout(timer); };
@@ -225,7 +230,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         if (baseRef.current && nodeRef.current && fails.current >= 2) { fails.current = 0; void failover().then((u) => { if (u) { el.src = u; void start(); } }); return; }   // узел CDN не отвечает
         if (baseRef.current && fails.current >= 2) { baseRef.current = ""; fails.current = 0; el.src = access.path; void start(); return; }         // CDN недоступна: источник
         if (fails.current > 5) { setFatal("Не удаётся получить поток эфира. Нажмите «Повторить» или попробуйте позже."); return; }
-        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); adopt(a); el.src = baseRef.current + a.path; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
+        window.setTimeout(() => void renew().then((a) => { if (!a) return onGone(); adopt(a); el.src = baseRef.current + prefix.current + "index.m3u8"; void start(); }), Math.min(15_000, 1000 * 2 ** (fails.current - 1)));
       });
     } else {
       void import("hls.js").then(({ default: Hls }) => {
@@ -308,7 +313,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
     };
     const on = ["play", "pause", "volumechange", "timeupdate", "progress"] as const;
     on.forEach((e) => el.addEventListener(e, upd));
-    const wait = () => setBuffering(true), ready = () => { setBuffering(false); fails.current = 0; badNodes.current.clear(); };
+    const wait = () => setBuffering(true), ready = () => { setBuffering(false); fails.current = 0; };
     el.addEventListener("waiting", wait); el.addEventListener("playing", ready); el.addEventListener("canplay", ready);
     return () => { on.forEach((e) => el.removeEventListener(e, upd)); el.removeEventListener("waiting", wait); el.removeEventListener("playing", ready); el.removeEventListener("canplay", ready); };
   }, []);
