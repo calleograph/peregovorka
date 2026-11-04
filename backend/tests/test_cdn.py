@@ -226,3 +226,12 @@ def test_install_interrupted_by_a_restart_does_not_leave_the_node_installing_for
         return (await db.execute(select(CdnNode.state, CdnNode.last_error).where(CdnNode.public_name == "cdn2.example.org"))).one()
     st, why = call(lv, read)
     assert st == "error" and "Повторный запуск" in why
+
+
+def test_node_certificate_is_checked_also_against_the_ca_catalog_unless_the_node_is_self_signed(lv, tmp_path):
+    import ssl
+    from types import SimpleNamespace as NS
+
+    cdn = lv.app_obj.state.cdn
+    assert cdn.verify(NS(tls_mode="selfsigned")) is False, "стенд"
+    assert isinstance(cdn.verify(NS(tls_mode="acme"), ca_bundle=str(tmp_path / "нет-файла")), ssl.SSLContext), "каталога нет — системные корни"

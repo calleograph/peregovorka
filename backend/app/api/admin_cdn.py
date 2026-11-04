@@ -291,7 +291,7 @@ async def adopt(node_id: uuid.UUID, request: Request, su: SessionUser = Depends(
         await db.commit()
         await cdn.write_origin_keys(db)
         try:
-            rc, out, err = await cdn_ssh.mgmt(node.ssh_host, node.ssh_port, node.host_key, cdn.dec(node, "mgmt_key"), "status", timeout=30)
+            rc, out, err = await cdn_ssh.mgmt(node.ssh_host, node.ssh_port, node.host_key, cdn.dec(node, "mgmt_key"), "status", timeout=120)
         except cdn_ssh.SshError as e:
             node.state, node.last_error = "error", f"Вход ключом pgcdn: {e.message}"
             await db.commit()

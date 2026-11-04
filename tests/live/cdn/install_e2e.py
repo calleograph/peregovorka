@@ -33,7 +33,8 @@ hk.raise_for_status()
 hk = hk.json()
 out["fingerprint"] = hk["fingerprint"]
 r = c.post("/api/v1/admin/cdn/nodes", json={"name": sys.argv[3] if len(sys.argv) > 3 else public, "public_name": public, "ssh_host": ssh_host, "ssh_port": 22, "ssh_user": "cdnadmin",
-                                            "password": open(os.environ["LAB_PW_FILE"]).read().strip(), "host_key": hk["host_key"], "fingerprint": hk["fingerprint"], "tls_mode": "selfsigned", "quality": "1080p"})
+                                            "password": open(os.environ["LAB_PW_FILE"]).read().strip(), "host_key": hk["host_key"], "fingerprint": hk["fingerprint"], "quality": "1080p",
+                                            **({"tls_mode": "files", "tls_cert_pem": open(os.environ["TLS_CERT"]).read(), "tls_key_pem": open(os.environ["TLS_KEY"]).read()} if os.environ.get("TLS_CERT") else {"tls_mode": "selfsigned"})})
 if r.status_code != 201:
     print(json.dumps({**out, "add": r.status_code, "detail": r.json()}, ensure_ascii=False))
     sys.exit(1)

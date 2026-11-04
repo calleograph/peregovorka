@@ -143,7 +143,7 @@ class Session:
         facts["sudo"] = await self.can_sudo()
         return facts
 
-    async def install(self, config: dict, on_line: Callable[[str, str, str], Awaitable[None]], *, timeout: float = 1200) -> tuple[bool, str]:
+    async def install(self, config: dict, on_line: Callable[[str, str, str], Awaitable[None]], *, timeout: float = 1800) -> tuple[bool, str]:
         """install.sh --config: этапы передаются on_line(этап, состояние, текст) по мере выполнения. Возвращает (успех, журнал без секретов)."""
         d = await self.upload_package({"node.json": json.dumps(config)})
         log: list[str] = []

@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import secrets
+import ssl
 import time
 import uuid
 from datetime import datetime, timezone
@@ -186,6 +187,7 @@ class CdnService:
         self._redis = redis
         self._journal = journal
         self._nodes_cache: tuple[float, list[CdnNode]] = (0.0, [])
+        self.ca_bundle = ""                                  # файл каталога CA (app.state.ca.bundle_path)
 
     # секреты узла: шифрование с привязкой к строке и полю
     def enc(self, node_id, field: str, value: str) -> str:
@@ -282,9 +284,18 @@ class CdnService:
         return None
 
     # ---------------------------------------------------------------------- состояние узлов
+    def verify(self, node: CdnNode, ca_bundle: str | None = None) -> bool | ssl.SSLContext:
+        """Проверка сертификата узла: самоподписанный (стенд) не проверяется; свой — ещё и по каталогу CA администрирования (корпоративный центр)."""
+        if node.tls_mode == "selfsigned":
+            return False
+        ctx = ssl.create_default_context()
+        path = ca_bundle or self.ca_bundle
+        if path and Path(path).is_file():
+            ctx.load_verify_locations(path)
+        return ctx
+
     def _client(self, node: CdnNode) -> httpx.AsyncClient:
-        # самоподписанный сертификат (испытательный стенд) не проверяется; ACME и свой сертификат — проверяются
-        return httpx.AsyncClient(timeout=httpx.Timeout(5.0), verify=node.tls_mode != "selfsigned", follow_redirects=False)
+        return httpx.AsyncClient(timeout=httpx.Timeout(5.0), verify=self.verify(node), follow_redirects=False)
 
     async def fetch_stats(self, node: CdnNode) -> dict:
         url = f"https://{node.public_name}/.pgcdn/stats"

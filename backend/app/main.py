@@ -299,6 +299,7 @@ def create_app(
         app.state.mail = mail
         app.state.delivery = delivery
         app.state.ca = ca
+        app.state.cdn.ca_bundle = ca.bundle_path
         app.state.ldap = ldap_service
         from .security.events import SecurityEvents  # noqa: PLC0415
         from .security.loginguard import LoginGuard  # noqa: PLC0415

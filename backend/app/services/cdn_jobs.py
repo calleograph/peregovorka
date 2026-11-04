@@ -27,7 +27,7 @@ from .cdn import NODE_VERSION, UP_AFTER, sign_path
 log = logging.getLogger(__name__)
 
 CRED_TTL = 1800
-JOB_TTL = 1800
+JOB_TTL = 2400
 STAGE_TITLES = {
     "connect": "Подключение по SSH", "check": "Система и права", "packages": "Пакеты nginx и njs", "files": "Файлы узла", "account": "Учётная запись управления",
     "tls": "Сертификат TLS", "system": "Параметры системы", "start": "Запуск nginx", "acme": "Сертификат Let's Encrypt", "selfcheck": "Связь с источником",
@@ -174,7 +174,7 @@ class CdnJobs:
             await self._save(node_id, diag=journal, _stage=("mgmt", "start", "вход ключом pgcdn"))
             node = await self._save(node_id)
             try:
-                rc, out, err = await cdn_ssh.mgmt(host, port, hk, priv, "status", timeout=30)
+                rc, out, err = await cdn_ssh.mgmt(host, port, hk, priv, "status", timeout=120)
                 st = json.loads(out) if rc == 0 else {}
                 if rc != 0:
                     raise cdn_ssh.SshError("mgmt", (err or out).strip()[:300] or f"код {rc}")
@@ -225,7 +225,7 @@ class CdnJobs:
             path, _ = sign_path(self.cdn.master, int(cfg.cdn_key_gen), acc, 300, bucket_s=60)
             prefix = path.rsplit("/", 1)[0] + "/"
             base = f"https://{node.public_name}"
-            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), verify=node.tls_mode != "selfsigned") as c:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), verify=self.cdn.verify(node)) as c:
                 r = await c.get(base + path)
                 if r.status_code != 200 or "seg_0.ts" not in r.text:
                     raise RuntimeError(f"плейлист через узел: {r.status_code} {r.text[:100]!r}")
