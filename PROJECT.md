@@ -288,7 +288,7 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
-**Из ревизии документации 2026-11-04 (продукт не менялся):** порог диска в `install.sh` привести к 30 ГБ как в `preflight.sh`; решить про порт 80 у nginx установщика; предупреждать, что `ctl.sh restart` не применяет `.env`; файлы LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца. Полный прогон 14 шагов на чистой ВМ не выполнялся.
+**Из ревизии документации 2026-11-04 (продукт не менялся):** **отзыв ссылки зрителя не закрывает «Ссылку этого эфира» и переключатель пароля не действует на идущий эфир (по чтению кода, вживую не воспроизводилось)**; устаревшие подсказки «Эта встреча» в `RoomEditor.tsx` и `RoomPage.tsx`; порог диска в `install.sh` привести к 30 ГБ как в `preflight.sh`; решить про порт 80 у nginx установщика; предупреждать, что `ctl.sh restart` не применяет `.env`; файлы LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца. Полный прогон 14 шагов на чистой ВМ не выполнялся.
 
 0zm. **Сервер 0.66.0: свои узлы CDN.** Устройство, решения, замеры — `docs/BROADCAST_CDN.md`; инструкция — вики «Узлы CDN».
 * Код: `backend/app/services/{cdn,cdn_ssh,cdn_jobs}.py`, `backend/app/api/admin_cdn.py`, пакет узла `backend/app/assets/cdn_node/`, `frontend/nginx.conf` (`/cdn-origin/`), `frontend/live-secret.sh`, `frontend/src/pages/LivePage.tsx` (переход между узлами), `frontend/src/pages/admin/CdnNodesAdmin.tsx`; стенд — `tests/live/cdn/`.
