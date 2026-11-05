@@ -11,11 +11,13 @@ from ..services.meetings import MeetingService
 log = logging.getLogger("app.reaper")
 
 
-async def run_reaper(session_maker: async_sessionmaker[AsyncSession], service: MeetingService, interval: float = 10.0, sip=None, outlook_sync=None, manifests=None, video=None, live=None) -> None:
+async def run_reaper(session_maker: async_sessionmaker[AsyncSession], service: MeetingService, interval: float = 10.0, sip=None, outlook_sync=None, manifests=None, finalizer=None, video=None, live=None) -> None:
     while True:
         try:
             async with session_maker() as db:
                 await service.reap_once(db)
+                if finalizer is not None:
+                    await finalizer.finalize_pending(db)
                 if sip is not None:
                     await sip.sweep(db)
                 if outlook_sync is not None:

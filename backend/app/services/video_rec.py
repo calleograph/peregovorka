@@ -37,11 +37,11 @@ log = logging.getLogger("app.video")
 
 LAYOUT = "speaker"                          # экран — основное место, остальные — миниатюры; без экрана — говорящий и сетка
 # Верхний предел видеобитрейта: 720p — 2,5 Мбит/с, 1080p — 4,5 Мбит/с (потолок ≈ 1,2 и ≈ 2,1 ГБ/час с учётом звука). Измерено на настоящем Egress (синтетические камеры и слайд): 0,56 и 0,78 ГБ/час, docs/VIDEO_RECORDING.md
+FINALIZE_LOCK_S = 900                       # дольше таймаута faststart (600 с) и проверки файла
 QUALITY = {"720p": (1280, 720, 2500), "1080p": (1920, 1080, 4500)}
 ACTIVE_LK = {eg.EgressStatus.EGRESS_STARTING, eg.EgressStatus.EGRESS_ACTIVE, eg.EgressStatus.EGRESS_ENDING}
 DONE_OK = eg.EgressStatus.EGRESS_COMPLETE
 STALL_GRACE_S = 45                          # столько секунд после старта рекордер может ещё не быть в комнате (запуск браузера)
-STOP_GRACE_S = 180                          # после остановки ждём итог Egress (webhook) столько; потом сверяем сами
 
 
 class VideoError(Exception):
@@ -162,7 +162,7 @@ def faststart(path: Path) -> bool:
     ff = mixdown.ffmpeg_path()
     if ff is None or moov_first(path) is not False:
         return False
-    tmp = path.with_name(path.name + ".fast.tmp")
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.fast.tmp")      # общее имя у двух запусков означало бы запись в один файл
     try:
         r = subprocess.run([ff, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", str(path), "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)],   # noqa: S603
                            capture_output=True, timeout=600, check=False)
@@ -266,7 +266,7 @@ class VideoRecorder:
                 raise VideoError("room_empty", "В комнате никого нет: пустую комнату не записываем.")
             n = (await db.execute(select(func.count()).select_from(Recording).where(Recording.meeting_id == meeting.id, Recording.kind == "mix_video"))).scalar_one() + 1
             now = datetime.now(timezone.utc)
-            rel = f"{meeting_relpath(meeting.room.name, meeting.started_at.astimezone(await self._tz(db)))}/video-{n}.mp4"
+            rel = f"{meeting_relpath(meeting.room.name, meeting.started_at.astimezone(await self._tz(db)), meeting.id)}/video-{n}.mp4"
             quality = meeting.room.video_quality if meeting.room.video_quality in QUALITY else cfg.default_quality
             installed = _sc.enabled_on_server(self._s, _sc.channel_for(self._s), "video")
             try:
@@ -345,9 +345,19 @@ class VideoRecorder:
 
     # ------------------------------------------------------------------ итог файла
     async def finalize(self, db, rec: Recording, info: eg.EgressInfo | None, *, lost: bool = False) -> None:
-        """Egress закончил (или сверка нашла итог): размер/длительность, статус, выгрузка. Ошибка Egress — запись failed с причиной, файл (если есть) остаётся."""
-        if rec.status not in ("processing", "finishing"):
+        """Egress закончил (или сверка нашла итог): размер/длительность, статус, выгрузка. Ошибка Egress — запись failed с причиной, файл (если есть) остаётся.
+        Webhook и сверка приходят независимо, а статус меняется только после пересборки файла (минуты на больших записях): поэтому замок на запись, на всех процессах."""
+        lock = f"video:finalize:{rec.id}"
+        if not await self._r.set(lock, "1", nx=True, ex=FINALIZE_LOCK_S):
             return
+        try:
+            await db.refresh(rec)                      # пока ждали замок, другой процесс мог уже закончить
+            if rec.status in ("processing", "finishing"):
+                await self._finalize_locked(db, rec, info, lost=lost)
+        finally:
+            await self._r.delete(lock)
+
+    async def _finalize_locked(self, db, rec: Recording, info: eg.EgressInfo | None, *, lost: bool) -> None:
         path = Path(self._s.recordings_path, rec.path)
         size = path.stat().st_size if path.is_file() else 0
         failed = info is not None and info.status in (eg.EgressStatus.EGRESS_FAILED, eg.EgressStatus.EGRESS_ABORTED)

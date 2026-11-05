@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import iterate_in_threadpool
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_user
+from ..db import release
 from ..models import Recording, TranscriptSegment
 from ..services import profanity
 from ..services.segments import segment_to_dict
@@ -175,6 +176,7 @@ async def stream_media(meeting_id: uuid.UUID, recording_id: uuid.UUID, request: 
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="recording.download" if download else "recording.play",
                           target_type="recording", target_id=str(rec.id), ip=client_ip(request), details={"kind": rec.kind, "meeting_id": str(meeting.id)})
         await db.commit()
+    await release(db)                        # соединение с базой не держим, пока файл передаётся: зрителей больше, чем соединений в пуле
     ps = request.app.state.protocols
     await ps.mark_read(rec.id, READ_QUIET_S)                 # пока читают (и 2 минуты после), перенос между хранилищами не удаляет файл-источник — в любом процессе
 

@@ -36,8 +36,21 @@ class FinishedRecording:
     t0: float | None = None   # настенное время начала дорожки (из `<identity>.t0` рекордера) — по нему строится общая запись встречи
 
 
-def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, names: dict[str, str]) -> list[FinishedRecording]:
-    """Блокирующая функция (запускать в потоке). names: identity -> отображаемое имя."""
+def drop_pcm(recordings_dir: str, livekit_room: str, identities) -> None:
+    """Убрать исходные дорожки, когда их строки Recording сохранены в базе. Блокирующая функция."""
+    src_dir = Path(recordings_dir) / safe_component(livekit_room, "meeting")
+    for identity in identities:
+        (src_dir / f"{identity}.pcm").unlink(missing_ok=True)
+        (src_dir / f"{identity}.t0").unlink(missing_ok=True)
+    try:
+        src_dir.rmdir()
+    except OSError:
+        pass
+
+
+def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, names: dict[str, str], known=frozenset()) -> list[FinishedRecording]:
+    """Блокирующая функция (запускать в потоке). names: identity -> отображаемое имя; known — дорожки, уже записанные в базу при прошлой попытке.
+    PCM здесь не удаляется: это делает drop_pcm после сохранения строк, иначе сбой между шагами оставил бы файл, о котором база не знает."""
     src_dir = Path(recordings_dir) / safe_component(livekit_room, "meeting")
     if not src_dir.is_dir():
         return []
@@ -47,6 +60,9 @@ def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, nam
         size = pcm.stat().st_size - (pcm.stat().st_size % 2)
         identity = pcm.stem
         side = pcm.with_suffix(".t0")
+        if identity in known:
+            drop_pcm(recordings_dir, livekit_room, [identity])
+            continue
         t0: float | None = None
         try:
             t0 = float(side.read_text(encoding="ascii").strip())
@@ -73,8 +89,6 @@ def finalize_pcm_files(recordings_dir: str, livekit_room: str, rel_dir: str, nam
                 dst.write(chunk)
                 remaining -= len(chunk)
         os.replace(tmp, target)
-        pcm.unlink(missing_ok=True)
-        side.unlink(missing_ok=True)
         done.append(FinishedRecording(identity, str(target.relative_to(recordings_dir)).replace("\\", "/"),
                                       target.stat().st_size, int(size / BYTES_PER_SEC), t0))
     try:
@@ -102,9 +116,3 @@ def delete_recording_file(recordings_dir: str, rel_path: str) -> bool:
 
 def disk_free_bytes(path: str) -> int:
     return shutil.disk_usage(path).free
-
-
-def local_dir_for(room_name: str, start_local: datetime) -> str:
-    from .storage import meeting_relpath
-
-    return meeting_relpath(room_name, start_local)

@@ -376,7 +376,7 @@ def create_app(
                 return lambda: asyncio.create_task(make(), name=name)
 
             leader.register("legacy-ldap-import", _task("legacy-ldap-import", lambda: legacy.auto_import(bg_sm, redis, directory)))
-            leader.register("meeting-reaper", _task("meeting-reaper", lambda: run_reaper(bg_sm, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync, manifests=app.state.manifests, video=app.state.video, live=app.state.live)))
+            leader.register("meeting-reaper", _task("meeting-reaper", lambda: run_reaper(bg_sm, meetings_svc, sip=app.state.sip_routing, outlook_sync=app.state.outlook_sync, manifests=app.state.manifests, finalizer=protocols, video=app.state.video, live=app.state.live)))
             leader.register("auto-update", _task("auto-update", lambda: run_autoupdate(app.state.autoupdate)))
             leader.register("auto-backup", _task("auto-backup", lambda: run_auto_backup(app.state.auto_backup)))
             leader.register("retention", _task("retention", lambda: run_retention(bg_sm, protocols)))

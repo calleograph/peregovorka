@@ -440,7 +440,7 @@ class DeliveryService:
                     return
                 # один раз на встречу и на всех экземплярах backend: повторное выполнение фонового задания рассылку не дублирует
                 redis = self.redis
-                if redis is not None and not await redis.set(f"mail:auto:{meeting_id}", "1", nx=True, ex=7 * 24 * 3600):
+                if redis is not None and not await redis.set(f"mail:auto:{meeting_id}", "1", nx=True, ex=3600):
                     return
                 need = [k for k in spec["materials"] if k in ("protocol", "summary") and await MATERIALS[k].load(self, db, meeting) is None]
                 want_map = "map" in spec["materials"] and await MATERIALS["map"].load(self, db, meeting) is None

@@ -275,6 +275,11 @@ class Meeting(Base):
     livekit_room: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)  # m-<uuid hex>
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    # Очередь обработки — сама эта строка: «завершена, но не обработана» пишется одной транзакцией с ended_at и переживает перезапуск и сбой Redis
+    finalized_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finalize_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    finalize_after: Mapped[datetime | None] = mapped_column(UTCDateTime)    # следующая попытка не раньше
+    finalize_error: Mapped[str | None] = mapped_column(String(500))
     end_reason: Mapped[str | None] = mapped_column(String(40))
     started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     empty_since: Mapped[datetime | None] = mapped_column(UTCDateTime)

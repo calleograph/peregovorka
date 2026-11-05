@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, _origin_ok, client_ip, get_db, require_user
+from ..db import release
 from ..models import Broadcast, LiveQuestion, LiveViewer, Meeting, Room
 from ..security.passwords import hash_room_password, verify_room_password
 from ..services import roles
@@ -582,6 +583,7 @@ async def viewer_replay_file(token: str, request: Request, r: str, e: int, s: st
                "Content-Disposition": ("attachment" if dl else "inline") + "; filename*=UTF-8''" + quote(name, safe="")}
     if rng:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    await release(db)                        # страница открытая: зрителей записи больше, чем соединений в пуле
     return StreamingResponse(iterate_in_threadpool(reader(start, end)), status_code=206 if rng else 200, media_type=rec.mime or "video/mp4", headers=headers)
 
 

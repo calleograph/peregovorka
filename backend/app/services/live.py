@@ -391,7 +391,7 @@ class LiveBroadcaster:
                 await self.video.stop(db, meeting, by="live")
             n = (await db.execute(select(func.count()).select_from(Recording).where(Recording.meeting_id == meeting.id, Recording.kind == "mix_video"))).scalar_one() + 1
             tz = await self.video._tz(db)  # noqa: SLF001
-            rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz))}/video-{n}.mp4"
+            rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz), meeting.id)}/video-{n}.mp4"
             vcfg = await self._svc.get(db, "video")
             # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
             tpl = vcfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if vcfg.scene_template and self._s.recorder_base_url else "")

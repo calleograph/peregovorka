@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from . import profanity
@@ -35,12 +35,12 @@ from ..privacy.engine import Anonymizer, PrivacyError
 from ..privacy.names import NlpUnavailable
 from ..privacy.policy import PROFILE_TITLES, build_policy, document_privacy, room_privacy
 from ..db import release
-from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
+from ..models import ConversationMap, GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
 from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
 from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_messages, render_chat
 from . import mixdown
-from .recordings import delete_recording_file, finalize_pcm_files
+from .recordings import delete_recording_file, drop_pcm, finalize_pcm_files
 from .segments import author_name
 from .settings import SettingsError, SettingsService
 from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
@@ -48,6 +48,10 @@ from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_
 DELETE_BACKOFF_S = (60, 300, 900, 3600, 6 * 3600)        # пауза перед повтором удаления файла записи (по номеру попытки; дальше — раз в 6 часов)
 log = logging.getLogger("app.protocols")
 
+FINALIZE_LOCK_S = 180                    # замок обработки встречи продлевается, пока процесс жив
+FINALIZE_GRACE_S = 120                   # столько даём обычному запуску после завершения, прежде чем подбирать встречу
+FINALIZE_MAX_ATTEMPTS = 8                # паузы 2, 4, 8, 16 и далее по 30 минут: сбои на время обновления или отказа хранилища переживаются
+FINALIZE_BATCH = 10
 SHARED_JOBS = ("protocol-", "map-")      # задания, состояние которых видят все процессы (реестр в Redis)
 JOB_ALIVE_TTL_S, JOB_BEAT_S = 20, 5
 FILES_BUSY_TTL_S = 6 * 3600              # страховка: признак «файлы обрабатываются» упавшего процесса истекает сам
@@ -478,19 +482,69 @@ class ProtocolService:
             return True
 
     async def finalize(self, meeting_id: uuid.UUID) -> None:
+        """Обработка завершённой встречи. Каждый шаг можно повторить без дублей; пока finalized_at пуст, встречу подбирает finalize_pending после сбоя или перезапуска."""
+        if not await self._finalize_lock(meeting_id):
+            return
         self.hold(meeting_id)
+        renew = asyncio.create_task(self._finalize_renew(meeting_id))
         try:
-            await self._finalize(meeting_id)
+            await self._finalize_result(meeting_id, await self._finalize(meeting_id))
         finally:
+            renew.cancel()
             self.release(meeting_id)
+            if self.redis is not None:
+                with contextlib.suppress(Exception):
+                    await self.redis.delete(f"finalize:{meeting_id}")
 
-    async def _finalize(self, meeting_id: uuid.UUID) -> None:
-        """Выполняется после завершения встречи; каждый шаг изолирован — сбой одного не отменяет остальные."""
+    async def _finalize_lock(self, meeting_id: uuid.UUID) -> bool:
+        if self.redis is None:
+            return True
+        try:
+            return bool(await self.redis.set(f"finalize:{meeting_id}", "1", nx=True, ex=FINALIZE_LOCK_S))
+        except Exception:  # noqa: BLE001 — Redis недоступен: шаги всё равно повторяемы, а ждать его значит оставить встречу без материалов
+            return True
+
+    async def _finalize_renew(self, meeting_id: uuid.UUID) -> None:
+        while True:                                  # протокол формируется десятки минут; умерший процесс перестаёт продлевать, и встречу через минуты забирает другой
+            await asyncio.sleep(FINALIZE_LOCK_S / 3)
+            if self.redis is not None:
+                with contextlib.suppress(Exception):
+                    await self.redis.set(f"finalize:{meeting_id}", "1", ex=FINALIZE_LOCK_S)
+
+    async def _finalize_result(self, meeting_id: uuid.UUID, error: str | None) -> None:
+        async with self._sm() as db:
+            meeting = await db.get(Meeting, meeting_id)
+            if meeting is None or meeting.ended_at is None:
+                return
+            if error is None:
+                meeting.finalized_at, meeting.finalize_error, meeting.finalize_after = utcnow(), None, None
+            else:
+                meeting.finalize_attempts += 1
+                meeting.finalize_error = error[:490]
+                meeting.finalize_after = utcnow() + timedelta(seconds=min(60 * 2 ** meeting.finalize_attempts, 1800))
+            await db.commit()
+            if error is not None and self.journal is not None:
+                final = meeting.finalize_attempts >= FINALIZE_MAX_ATTEMPTS
+                self.journal.emit("storage", "meeting_finalize_failed", level="error" if final else "warn", meeting_id=str(meeting_id),
+                                  message=("Материалы встречи не сформированы, попытки исчерпаны: " if final else "Материалы встречи не сформированы, будет повтор: ") + error[:200])
+
+    async def finalize_pending(self, db: AsyncSession) -> int:
+        """Подобрать завершённые, но не обработанные встречи (сбой, перезапуск, недоступный Redis). Вызывается регулярно на ведущем экземпляре."""
+        now = utcnow()
+        ids = (await db.execute(select(Meeting.id).where(
+            Meeting.ended_at.is_not(None), Meeting.ended_at < now - timedelta(seconds=FINALIZE_GRACE_S), Meeting.finalized_at.is_(None),
+            Meeting.finalize_attempts < FINALIZE_MAX_ATTEMPTS, or_(Meeting.finalize_after.is_(None), Meeting.finalize_after <= now)).limit(FINALIZE_BATCH))).scalars().all()
+        for mid in ids:
+            self.spawn(self.finalize(mid), f"finalize-{mid}")
+        return len(ids)
+
+    async def _finalize(self, meeting_id: uuid.UUID) -> str | None:
+        """Выполняется после завершения встречи; каждый шаг изолирован — сбой одного не отменяет остальные. Ответ — None или причина неудачи (тогда будет повтор)."""
         try:
             async with self._sm() as db:
                 meeting = await db.get(Meeting, meeting_id)
                 if meeting is None or meeting.ended_at is None:
-                    return
+                    return None
                 tz = await self._tz(db)
                 from .attendees import ensure_snapshots  # noqa: PLC0415
 
@@ -500,7 +554,7 @@ class ProtocolService:
                 names = {p.user.livekit_identity: p.user.display_name for p in meeting.participants}
                 for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting_id))).scalars():
                     names[g.livekit_identity] = g.label
-                rel = meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz))
+                rel = meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz), meeting.id)
                 room_slug = meeting.room.slug
 
                 if meeting.record_audio or meeting.room.record_audio:  # запись могли включать и выключать во встрече — файлы собираем, если комната её допускает
@@ -509,7 +563,8 @@ class ProtocolService:
 
                 storage = await self._open(db, "storage", TRANSCRIPTS)
                 dir_rel = None
-                if storage and storage_cfg.export_transcript:  # type: ignore[attr-defined]
+                done = (await db.execute(select(Protocol.id).where(Protocol.meeting_id == meeting_id, Protocol.kind == "transcript", Protocol.status == "ready").limit(1))).first()
+                if storage and storage_cfg.export_transcript and done is None:  # type: ignore[attr-defined]
                     text = await self.transcript_text(db, meeting, tz)
                     rec = Protocol(meeting_id=meeting_id, kind="transcript", status="pending", created_by="system")
                     db.add(rec)
@@ -530,19 +585,29 @@ class ProtocolService:
                 if self.journal is not None:
                     self.journal.emit("llm", "protocol_skipped", meeting_id=str(meeting_id), message="Автоматический протокол не создан: в встрече нет реплик, чата и схемы")
                 return
-            if proto_cfg.auto_generate:  # type: ignore[attr-defined]
+            made = await self._auto_kinds(meeting_id)               # повтор после сбоя не создаёт второй протокол
+            if proto_cfg.auto_generate and "protocol" not in made:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
-            if proto_cfg.auto_summary:  # type: ignore[attr-defined]
+            if proto_cfg.auto_summary and "summary" not in made:  # type: ignore[attr-defined]
                 await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
-            if self.maps is not None:
+            if self.maps is not None and "map" not in made:
                 try:
                     await self.maps.maybe_auto(meeting_id)      # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
                 except Exception:  # noqa: BLE001 — сбой постановки карты в очередь не должен отменять рассылку материалов
                     log.exception("Не удалось поставить карту разговора в очередь", extra={"meeting_id": str(meeting_id)})
             if self.after_finalize is not None:
                 await self.after_finalize(meeting_id)
-        except Exception:  # noqa: BLE001
+            return None
+        except Exception as exc:  # noqa: BLE001
             log.exception("Ошибка финализации встречи", extra={"meeting_id": str(meeting_id)})
+            return f"{type(exc).__name__}: {exc}"
+
+    async def _auto_kinds(self, meeting_id: uuid.UUID) -> set[str]:
+        async with self._sm() as db:
+            kinds = set((await db.execute(select(Protocol.kind).where(Protocol.meeting_id == meeting_id, Protocol.created_by == "auto"))).scalars())
+            if (await db.execute(select(ConversationMap.id).where(ConversationMap.meeting_id == meeting_id).limit(1))).first():
+                kinds.add("map")
+            return kinds
 
     async def _export_collab(self, db: AsyncSession, meeting: Meeting, dir_rel: str, tz: ZoneInfo) -> None:
         """Чат (chat.txt) и схема доски (whiteboard.drawio — её можно открыть и продолжить редактировать) рядом со стенограммой.
@@ -560,7 +625,8 @@ class ProtocolService:
             log.error("Выгрузка чата/схемы не удалась", extra={"meeting_id": str(meeting.id), "error": str(exc)})
 
     async def _register_recordings(self, db: AsyncSession, meeting: Meeting, room_slug: str, rel_dir: str, names: dict[str, str]) -> None:
-        finished = await asyncio.to_thread(finalize_pcm_files, self._s.recordings_path, meeting.livekit_room, rel_dir, names)
+        old = (await db.execute(select(Recording).where(Recording.meeting_id == meeting.id, Recording.kind.in_(("participant", "mix_audio"))))).scalars().all()
+        finished = await asyncio.to_thread(finalize_pcm_files, self._s.recordings_path, meeting.livekit_room, rel_dir, names, {r.participant_identity for r in old})
         from .livekit import parse_user_identity
 
         recs: list[Recording] = []
@@ -573,11 +639,13 @@ class ProtocolService:
             db.add(rec)
             recs.append(rec)
         await db.commit()
+        await asyncio.to_thread(drop_pcm, self._s.recordings_path, meeting.livekit_room, [f.identity for f in finished])
         mode = getattr(meeting.room, "recording_mode", "audio") or "audio"
-        if recs and mode != "off" and self._s.meeting_mix_enabled:
+        participants = [*recs, *(r for r in old if r.kind == "participant")]         # повтор после сбоя: дорожки прошлой попытки тоже идут в общую запись
+        if participants and mode != "off" and self._s.meeting_mix_enabled and not any(r.kind == "mix_audio" for r in old):
             # Общая запись всей встречи — в фоне: завершение встречи и протокол не ждут. Выгрузка файлов участников откладывается до конца сведения (иначе локальные файлы,
             # если копию не хранят, исчезли бы раньше, чем из них соберут общую запись).
-            tracks = [(r.id, f.t0) for r, f in zip(recs, finished)]
+            tracks = [(r.id, r.started_at.timestamp() if r.started_at else None) for r in participants]
             self.hold(meeting.id)                              # снимается по окончании сведения и выгрузки (не по концу финализации)
             task = asyncio.create_task(self._mix_then_export(meeting.id, tracks, mode))
             task.add_done_callback(lambda _t, mid=meeting.id: self.release(mid))
@@ -677,6 +745,8 @@ class ProtocolService:
         """Выгрузка записи (аудио — WAV/M4A, видео — MP4) во внешнее хранилище своей области. Запись НЕ теряется: при сбое остаётся на локальном томе
         в статусе failed и выгружается повторно (retry_pending_exports). Размер в хранилище сверяется всегда; локальный исходник удаляется
         только после совпадения и размера, и SHA-256 копии в хранилище."""
+        if rec.export_status == "exported":     # повторный запуск: локального файла уже может не быть, ошибка затёрла бы удачную выгрузку
+            return
         area = self.area_of_kind(rec.kind)
         enabled, keep_local = await self.export_target(db, area)
         if not enabled:
@@ -689,6 +759,7 @@ class ProtocolService:
         from .transfer import sha256_file, sha256_storage  # noqa: PLC0415
 
         src = Path(self._s.recordings_path, rec.path)
+        drop_local = False
         try:
             if storage is None:
                 raise StorageError("хранилище " + ("видеозаписей" if area == "video" else "записей") + " недоступно или настроено некорректно")
@@ -702,8 +773,7 @@ class ProtocolService:
                 raise StorageError("контрольная сумма копии в хранилище не совпала с исходной")
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
             rec.export_area, rec.sha256, rec.size_bytes = area, digest, size
-            if not keep_local:
-                await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+            drop_local = not keep_local
         except (OSError, StorageError) as exc:
             rec.export_status, rec.export_error = "failed", str(exc)[:480]
             log.error("Выгрузка записи не удалась — файл сохранён локально, будет повтор",
@@ -712,6 +782,11 @@ class ProtocolService:
                 self.journal.emit("storage", "recording_export_failed", level="error", meeting_id=str(rec.meeting_id),
                                   message=str(exc)[:300], data={"recording": str(rec.id), "size_bytes": rec.size_bytes, "area": area})
         await db.commit()
+        if drop_local:                          # только после фиксации в базе: иначе при сбое здесь база считала бы файл локальным, а его уже нет
+            try:
+                await asyncio.to_thread(delete_recording_file, self._s.recordings_path, rec.path)
+            except OSError as exc:
+                log.warning("Копия в хранилище подтверждена, но локальный файл не удалён", extra={"recording": str(rec.id), "error": str(exc)})
         await self._mark_manifest(rec.meeting_id)
 
     async def retry_pending_exports(self, db: AsyncSession) -> int:
@@ -1181,7 +1256,7 @@ class ProtocolService:
         elif meeting:
             tz = await self._tz(db)
             await release(db)
-            dir_rel = await unique_meeting_dir(storage, meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz)))
+            dir_rel = await unique_meeting_dir(storage, meeting_relpath(meeting.room.name, meeting.started_at.astimezone(tz), meeting.id))
         else:
             return
         name = "official-protocol.md" if rec.kind == "protocol" else "summary.md"

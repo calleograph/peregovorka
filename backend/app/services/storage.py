@@ -42,11 +42,13 @@ def safe_component(name: str, fallback: str = "room") -> str:
     return cleaned or fallback
 
 
-def meeting_relpath(room_name: str, start_local: datetime) -> str:
+def meeting_relpath(room_name: str, start_local: datetime, meeting_id: object = None) -> str:
+    """Каталог встречи. Имена комнат не уникальны: две «Планёрки» в одну минуту без идентификатора писали бы в один каталог и заменяли записи друг друга."""
+    tail = f"{start_local:%H-%M}"
     return "/".join([
         safe_component(room_name),
         f"{start_local:%Y-%m-%d}, {WEEKDAYS_RU[start_local.weekday()]}",
-        f"{start_local:%H-%M}",
+        f"{tail} ({str(meeting_id).replace('-', '')[:8]})" if meeting_id else tail,
     ])
 
 
