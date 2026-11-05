@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ctl.sh — штатное управление сервисами ТОЛЬКО этого экземпляра (compose-проекта).
-#   scripts/ctl.sh status|restart|stop|start [сервис …]     сервисы: postgres redis livekit backend asr web
+#   scripts/ctl.sh status|restart|stop|start [сервис …]     сервисы: postgres redis livekit backend asr web livekit-sip livekit-egress
 # stop — останавливает контейнеры (данные, тома, образы НЕ удаляются); start — запускает без пересборки.
 # Чужие контейнеры не затрагиваются; Docker/containerd не перезапускаются.
 set -euo pipefail
@@ -10,14 +10,15 @@ SVC=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
-    postgres|redis|livekit|backend|asr|web|livekit-sip) SVC+=("$1"); shift ;;
+    postgres|redis|livekit|backend|asr|web|livekit-sip|livekit-egress) SVC+=("$1"); shift ;;
     *) die "Неизвестный сервис/аргумент: $1" ;;
   esac
 done
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 case "$ACTION" in
   status)  exec "$REPO_ROOT/scripts/status.sh" --env "$ENV_FILE" ;;
-  restart) dc restart ${SVC[@]+"${SVC[@]}"} ;;
+  # контейнер пересоздаётся: «docker compose restart» не перечитывает .env, и правка как будто не действует
+  restart) if [ "${#SVC[@]}" -gt 0 ]; then dc up -d --no-build --force-recreate --no-deps "${SVC[@]}"; else dc up -d --no-build --force-recreate; fi ;;
   stop)    dc stop ${SVC[@]+"${SVC[@]}"} ;;
   start)   dc up -d --no-build ${SVC[@]+"${SVC[@]}"} ;;
   *) die "Неизвестное действие: $ACTION" ;;

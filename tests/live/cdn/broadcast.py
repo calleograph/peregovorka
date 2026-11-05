@@ -33,7 +33,7 @@ c = admin()
 c.put("/api/v1/admin/settings/live", json={"enabled": True, "max_concurrent": 3}).raise_for_status()
 slug = f"cdn-{quality}-{time.strftime('%H%M%S')}"
 rid = c.post("/api/v1/admin/rooms", json={"name": slug, "slug": slug, "room_type": "broadcast", "transcription_enabled": False, "acl": [], "moderators": []}).json()["id"]
-lv = c.patch(f"/api/v1/rooms/{rid}/live", json={"live_enabled": True, "live_quality": quality, "live_cdn": True}).json()
+lv = c.patch(f"/api/v1/rooms/{rid}/live", json={"live_enabled": True, "live_quality": quality, "live_cdn": os.environ.get("CDN", "1") == "1"}).json()
 token = lv["view_path"].rsplit("/", 1)[-1]
 j = c.post(f"/api/v1/rooms/{rid}/join", json={}).json()
 pub = subprocess.Popen([sys.executable, str(HERE.parent / "egress" / "latency_probe.py"), "publish", "--url", os.environ.get("LK_URL", "ws://127.0.0.1:27880"), "--token", j["token"],

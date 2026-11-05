@@ -1171,6 +1171,35 @@ class Broadcast(Base):
     access_until: Mapped[datetime | None] = mapped_column(UTCDateTime)          # конец доступа к записи по ссылке: фактическое окончание эфира + link_days
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)            # доступ закрыт досрочно (владелец или администратор)
     recording_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)                # запись этого эфира (recordings.id); сама запись живёт по общей политике хранения
+    diag_summary: Mapped[dict | None] = mapped_column(JSONType)                     # итог диагностики эфира (для истории и сравнения): остаётся и после удаления показателей по сроку
+
+
+class LiveDiagEvent(Base):
+    """Журнал эфира: что случилось, когда, в каком компоненте, и показатели в этот момент (`details.snapshot`). Без секретов, адресов с ключами и содержимого разговоров."""
+
+    __tablename__ = "live_diag_events"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    broadcast_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("broadcasts.id", ondelete="CASCADE"), index=True, nullable=False)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    component: Mapped[str] = mapped_column(String(16), nullable=False)          # server | livekit | egress | hls | rtmp | delivery | viewer | source | broadcast | …
+    level: Mapped[str] = mapped_column(String(8), default="info", nullable=False)         # info | warn | error
+    code: Mapped[str] = mapped_column(String(48), nullable=False)
+    message: Mapped[str] = mapped_column(String(400), nullable=False)
+    cause: Mapped[str | None] = mapped_column(String(400))
+    cause_kind: Mapped[str | None] = mapped_column(String(10))                  # confirmed — подтверждено показателями; assumed — предположение; unknown — данных недостаточно
+    details: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class LiveDiagSample(Base):
+    """Показатели эфира раз в 15 с: для графиков, сравнения и отчёта. Хранение ограничено сроком и числом строк (services/live_diag.py)."""
+
+    __tablename__ = "live_diag_samples"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    broadcast_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("broadcasts.id", ondelete="CASCADE"), index=True, nullable=False)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    data: Mapped[dict] = mapped_column(JSONType, nullable=False)
 
 
 class LiveViewer(Base):

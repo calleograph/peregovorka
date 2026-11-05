@@ -240,6 +240,8 @@ services:
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
       - ${DATA_ROOT}/live:/data/live            # HLS прямых эфиров (общий с Egress и nginx web)
+      # счётчики сетевых интерфейсов хоста для диагностики эфира (только чтение, один файл): контейнер видит только свою сеть. Отключается HOST_NETDEV=/dev/null в .env
+      - ${HOST_NETDEV:-/proc/1/net/dev}:/host/netdev:ro
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления
       - ${DATA_ROOT}/updater:/data/updater
     healthcheck:
@@ -367,6 +369,8 @@ services:
           password: ${REDIS_PASSWORD:?}
           db: 1
         health_port: 8082
+        # Метрики для диагностики эфира (нагрузка, память, очереди записи). Порт слушает только внутри сети проекта и наружу не публикуется.
+        prometheus_port: 9090
         log_level: info
         cpu_cost:
           room_composite_cpu_cost: ${VIDEO_CPU_COST:-3.0}
@@ -374,7 +378,8 @@ services:
       - ${DATA_ROOT}/recordings:/out
       - ${DATA_ROOT}/live:/live          # сегменты HLS прямых эфиров: Egress пишет, backend создаёт ссылки доступа и убирает, web (nginx) раздаёт
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
+      # Попутно — счётчик процессора контейнера для диагностики эфира: приложению не выдаётся сокет Docker, другого способа увидеть загрузку этой службы (Chrome и кодировщик) у него нет.
+      test: ["CMD-SHELL", "cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

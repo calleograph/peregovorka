@@ -501,6 +501,35 @@ def test_revoking_the_link_gives_a_new_address_and_removes_the_old_access_at_onc
     assert lv.post(f"/api/v1/rooms/{room['id']}/live/links/all/revoke").status_code == 404
 
 
+def test_revoking_the_viewer_link_also_closes_the_link_of_the_running_broadcast(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    old = broadcasts(lv, mid)[0].view_token
+    assert access(lv, old).status_code == 200
+    login(lv, "carol")
+    assert lv.post(f"/api/v1/rooms/{room['id']}/live/links/view/revoke").status_code == 200
+    assert viewer(lv, old).status_code == 404 and access(lv, old).status_code == 404, "по старой ссылке эфира подпись больше не выдаётся"
+    fresh = broadcasts(lv, mid)[0].view_token
+    assert fresh != old and access(lv, fresh).status_code == 200, "у эфира новая ссылка, организатор видит её в «Трансляции»"
+
+
+def test_password_switch_applies_to_the_running_broadcast_both_ways(lv):
+    room = room_live(lv)
+    login(lv, "carol")
+    assert lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"}).status_code == 200
+    assert patch(lv, room, live_password_enabled=False).status_code == 200
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    token = broadcasts(lv, mid)[0].view_token
+    assert access(lv, token).status_code == 200, "пароль выключен — эфир открыт"
+    assert patch(lv, room, live_password_enabled=True).status_code == 200
+    assert access(lv, token).json()["detail"]["code"] == "password_required", "включение пароля закрывает идущий эфир сразу"
+    assert access(lv, token, password="zritel-2026").status_code == 200
+    assert patch(lv, room, live_password_enabled=False).status_code == 200
+    assert access(lv, token).status_code == 200, "выключение снимает пароль с идущего эфира"
+
+
 def test_viewer_counter_counts_recent_players_only_and_rejects_garbage(lv):
     room = room_live(lv)
     token = get_room(lv, room["id"]).live_token

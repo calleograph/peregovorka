@@ -33,7 +33,7 @@ const clockSince = (iso: string | null) => {
 const STATUS: Record<string, string> = { idle: "Эфир не идёт", starting: "Эфир запускается…", live: "Идёт прямой эфир", ending: "Эфир заканчивается…", ended: "Эфир завершён", failed: "Эфир прерван" };
 
 /** Окно «Трансляция» в меню «Ещё»: запуск и остановка эфира, две ссылки, сведения. Настройки (пароль, качество, площадки) — в «Настройках комнаты → Трансляция». */
-export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings }: { meetingId: string; state: LiveState; onChanged: () => void; onClose: () => void; onSettings?: () => void }) {
+export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, onDiag }: { meetingId: string; state: LiveState; onChanged: () => void; onClose: () => void; onSettings?: () => void; onDiag?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
@@ -101,7 +101,10 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings }:
           </div>)}
         {state.can_control && state.destinations && <LiveDestToggles meetingId={meetingId} items={state.destinations} onChanged={onChanged} />}
         {done && <div className="alert ok" role="status">{done}</div>}
-        {links && onSettings && <div className="row"><button className="btn ghost" onClick={onSettings}>Настройки трансляции…</button></div>}
+        {(onDiag || (links && onSettings)) && <div className="row">
+          {links && onSettings && <button className="btn ghost" onClick={onSettings}>Настройки трансляции…</button>}
+          {onDiag && <button className="btn ghost" onClick={onDiag}><Icon name="gauge" size={16} /> Диагностика эфира</button>}
+        </div>}
       </div>
     </Modal>
   );

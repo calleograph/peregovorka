@@ -22,7 +22,7 @@ import RoundButton from "../components/room/RoundButton";
 import { ConfirmDialog } from "../components/Dialogs";
 import DevicePanel from "../components/DevicePanel";
 import TranscriptPanel from "../components/TranscriptPanel";
-import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
+import { FreezeDetector, JoinTimeline, RateMeter, metricsBody, publisherStats, newInstanceId, reportEvent, reportRoomPhase, reportScreenPhase, sampleRoom, type RoomPhase, type ScreenPhase, type Snapshot, type Stage } from "../diagnostics";
 import { buildRoomOptions } from "../roomOptions";
 import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../micPrefs";
 import { MicGuard, type MicGuardState } from "../micGuard";
@@ -53,6 +53,7 @@ import { desktopState, onDesktopCommand } from "../desktop";
 const RoomManageDialog = lazy(() => import("../components/RoomManageDialog"));
 const MeetingSettingsDialog = lazy(() => import("../components/MeetingSettingsDialog"));
 const PhoneDialog = lazy(() => import("../components/PhoneDialog"));
+const LiveDiagPanel = lazy(() => import("../livediag/LiveDiagPanel"));
 
 type CtlKey = "mic" | "cam" | "screen" | "rec" | "vid" | "tr" | "device" | "audio" | "general";
 type CtlErrors = Partial<Record<CtlKey, string>>;
@@ -125,8 +126,11 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [ended, setEnded] = useState(false);
   const [recording, setRecording] = useState(false);          // идёт запись аудио
   const [video, setVideo] = useState<VideoState | null>(null);   // видеозапись встречи (отдельно от аудио)
+  const liveRef = useRef(false);
   const lv = useLive(guest ? null : join?.meeting_id);       // прямой эфир (трансляция) встречи; гостю запрос закрыт (401 выбросил бы его из встречи как «ссылка отозвана»)
+  liveRef.current = !!lv.state?.live;
   const [liveOpen, setLiveOpen] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
   const [liveFlag, setLiveFlag] = useState(false);               // «идёт эфир» по событию: гости состояние эфира запросить не могут, а метку видят
   const liveRefresh = useRef(lv.refresh);
   liveRefresh.current = lv.refresh;
@@ -893,6 +897,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       setSnapshot(snap);
       if (snap.screenFrozen) { dlog("показ экрана участника «завис»: framesDecoded не растёт"); reportEvent("screen_frozen", { meetingId: meetingRef.current ?? undefined, reason: "framesDecoded_stalled" }); }
       if (++n % 6 === 0 && meetingRef.current) api.clientMetrics(metricsBody(meetingRef.current, snap));
+      if (n % 2 === 0 && meetingRef.current && liveRef.current) void api.liveDiagClient(meetingRef.current, publisherStats(snap)).catch(() => undefined);      // источник эфира — для диагностики; раз в 10 с и только пока идёт эфир
     }, 5000);
     return () => window.clearInterval(t);
   }, [join, stage]);
@@ -1395,6 +1400,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         hint: pr === "eco" ? "1280×720, 10 к/с, до 800 кбит/с: слайды читаются, трафик минимальный. Меняется и во время показа" : undefined, onSelect: () => void chooseProfile(pr) })) },
     { id: "rec", label: `Аудиозапись: ${recording ? "включена" : "выключена"}`, icon: recording ? "recordStop" : "record", hint: recording ? "Нажмите, чтобы остановить запись звука встречи (транскрибация не меняется)" : "Нажмите, чтобы начать запись звука встречи", hidden: !(join.client.recording_allowed && join.client.can_control && !guest), onSelect: () => void toggleRecording() },
     { id: "live", label: lv.state?.live ? "Трансляция: идёт эфир" : "Трансляция…", icon: "broadcast", hint: lv.state?.live ? "Остановить эфир, скопировать ссылки, посмотреть состояние" : "Начать прямой эфир для зрителей и внешних площадок, скопировать ссылки", hidden: !lv.state?.enabled, onSelect: () => setLiveOpen(true) },
+    { id: "livediag", label: "Диагностика эфира", icon: "gauge", hint: "Нагрузка сервера, состояние потока, зрители и журнал эфира", hidden: !lv.state?.can_control || (lv.state.status === "idle" && !lv.state.live), onSelect: () => setDiagOpen(true) },
     { id: "vid", label: `Видеозапись: ${video?.recording ? "включена" : "выключена"}`, icon: video?.recording ? "recordStop" : "video", hint: video?.recording ? "Нажмите, чтобы остановить видеозапись всей встречи (аудиозапись и транскрибация не меняются)" : "Нажмите, чтобы начать видеозапись всей встречи с текущего момента: картинка и звук всех участников, при показе экрана он занимает основное место", hidden: !(video?.can_control && !guest), onSelect: () => void toggleVideo() },
     { id: "tr", label: transcribing ? "Остановить транскрибацию" : "Возобновить транскрибацию", icon: transcribing ? "transcriptOff" : "transcript", hint: transcribing ? `Звонок продолжается${recording ? ", аудиозапись — тоже" : ""}` : "Реплики снова будут попадать в стенограмму", hidden: !(serverTranscript && join.client.can_control && !guest), onSelect: () => void toggleTranscription() },
     { id: "endall", label: "Завершить для всех…", icon: "power", danger: true, hidden: !(mobile && join.client.can_control && !guest), onSelect: () => setConfirmEnd(true) },
@@ -1442,7 +1448,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           {isLeader && (
             <button className="btn mini" aria-label="Настройки" aria-haspopup="menu" title="Эта встреча и настройки комнаты — для руководителя"
                     onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.right - 220, r.bottom + 6, [
-                      { id: "mset", label: "Эта встреча…", icon: "sliders", hint: "Рассылка материалов и языковая модель только для этой встречи", onSelect: () => setMeetingSettingsOpen(true) },
+                      { id: "mset", label: "Эта встреча…", icon: "sliders", hint: "Языковая модель только для этой встречи", onSelect: () => setMeetingSettingsOpen(true) },
                       { id: "rset", label: "Настройки комнаты…", icon: "gear", hint: "Постоянные настройки комнаты: доступ, режим, запись, материалы, телефония", onSelect: () => setManageOpen(true) },
                     ]); }}><Icon name="gear" size={15} /></button>
           )}
@@ -1619,7 +1625,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
       {cardOf && <ParticipantCardDialog meetingId={join.meeting_id} identity={cardOf.identity} name={cardOf.name} role={cardOf.role} localMuted={localMuted.has(cardOf.identity)} onToggleLocalMute={() => toggleLocalMuted(cardOf.identity)} onClose={() => setCardOf(null)} />}
-      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSettings={lv.state.links ? () => { setLiveOpen(false); setManageOpen(true); } : undefined} />}
+      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSettings={lv.state.links ? () => { setLiveOpen(false); setManageOpen(true); } : undefined}
+        onDiag={lv.state.can_control ? () => { setLiveOpen(false); setDiagOpen(true); } : undefined} />}
+      {diagOpen && join && <Suspense fallback={null}><LiveDiagPanel meetingId={join.meeting_id} roomId={room.id} onClose={() => setDiagOpen(false)} /></Suspense>}
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
       {meetingSettingsOpen && <Suspense fallback={null}><MeetingSettingsDialog meetingId={join.meeting_id} roomId={room.id} onClose={() => setMeetingSettingsOpen(false)} /></Suspense>}
       {phoneOpen && <Suspense fallback={null}><PhoneDialog roomId={room.id} onClose={() => setPhoneOpen(false)} /></Suspense>}
