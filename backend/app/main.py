@@ -278,6 +278,11 @@ def create_app(
         protocols.on_document = _document_event
         # SIP-телефония (LiveKit SIP): профили, шлюз к LiveKit API, исходящие звонки и маршрутизация входящих
         app.state.auto_backup = AutoBackup(app)
+
+
+        async def _verify_backup(_target: str) -> str | None:
+            run = await app.state.auto_backup.verify(None, None)
+            return None if run.status == "ok" or "Нет копии" in (run.message or "") or "ключ" in (run.message or "") else run.message
         app.state.autoupdate = AutoUpdater(bg_sm, settings_svc, redis, settings.data_dir, settings.app_version)
         app.state.sip = SipService(settings_svc)
         from .services.manifest import ManifestService  # noqa: PLC0415
@@ -313,6 +318,9 @@ def create_app(
         from .services.transfer import TransferService  # noqa: PLC0415
         app.state.storage_stats = StorageStats(bg_sm, protocols, redis)
         app.state.transfers = TransferService(bg_sm, protocols, journal, _sync_audit)
+        from .services.storage_migration import StorageMigrations  # noqa: PLC0415
+        app.state.migrations = StorageMigrations(bg_sm, protocols.files, settings_svc, protocols, journal, _sync_audit)
+        app.state.migrations.verify_backup = _verify_backup
         from .services.waveforms import WaveformService  # noqa: PLC0415
         protocols.waveforms = app.state.waveforms = WaveformService(bg_sm, protocols)
         app.state.mail = mail
@@ -418,6 +426,7 @@ def create_app(
             leader.register("cdn-health", _task("cdn-health", lambda: app.state.cdn.run(bg_sm)))
             leader.register("live-diag", _task("live-diag", app.state.live_diag.run))
             leader.register("storage-transfer", _task("storage-transfer", lambda: app.state.transfers.run()))
+            leader.register("storage-migration", _task("storage-migration", lambda: app.state.migrations.run()))
             tasks.append(asyncio.create_task(leader.run(), name="background-leader"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
         journal.emit("system", "app_started", message=f"Версия {settings.app_version}, commit {settings.app_git_commit}")

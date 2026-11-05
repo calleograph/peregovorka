@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import release
-from ..models import StorageProfile, utcnow
+from ..models import Recording, StorageProfile, utcnow
 from .settings import SettingsError, SettingsService, _StorageTarget, _first_error
 from .storage import LocalStorage, SmbStorage, StorageBackend, StorageError, build_storage
 from .volumes import Volumes
@@ -92,6 +92,23 @@ class PrefixedStorage:
 
     def volume(self) -> tuple[int, int]:
         return self._base.volume()
+
+    def walk(self, rel: str = ""):
+        cut = len(self._prefix) + 1 if self._prefix else 0
+        for path, size, mtime in self._base.walk(self._p(rel).rstrip("/")):
+            yield path[cut:], size, mtime
+
+    def stat_of(self, rel: str) -> tuple[int, float]:
+        return self._base.stat_of(self._p(rel))
+
+    def write_stream(self, rel: str, chunks, mtime: float | None = None) -> None:
+        self._base.write_stream(self._p(rel), chunks, mtime)
+
+    def location(self, rel: str = "") -> str:
+        return self._base.location(self._p(rel))
+
+    def prune_dirs(self, rel: str) -> None:
+        self._base.prune_dirs(self._p(rel))
 
 
 class FileStore:
@@ -261,6 +278,8 @@ class FileStore:
 
         if (await db.execute(select(ChatAttachment.id).where(ChatAttachment.profile_id == row.id).limit(1))).first():
             raise SettingsError("В этом хранилище лежат вложения чата существующих встреч — удалить его нельзя, пока они не удалены.")
+        if (await db.execute(select(Recording.id).where(Recording.export_profile_id == row.id).limit(1))).first():
+            raise SettingsError("В этом хранилище лежат записи встреч. Перенесите их на другое хранилище, затем удалите это.")
         host = (row.config or {}).get("host_path")
         await db.delete(row)
         await db.commit()
@@ -300,6 +319,25 @@ class FileStore:
         if legacy is None:
             return None
         return PrefixedStorage(legacy, legacy_prefix) if legacy_prefix else legacy
+
+    async def profile_backend(self, db: AsyncSession, profile_id: uuid.UUID | str, folder: str) -> StorageBackend:
+        """Подпапка конкретного профиля: для файлов, которые уже лежат там, независимо от текущего выбора функции."""
+        try:
+            row = await self.row(db, str(profile_id))
+            await release(db)
+            base = await asyncio.to_thread(self.build, row)
+        except SettingsError as exc:
+            raise StorageError(f"Хранилище недоступно: {exc}") from None
+        return PrefixedStorage(base, folder)
+
+    async def current_profile(self, db: AsyncSession, area: str) -> uuid.UUID | None:
+        """Профиль, в который сейчас пишутся записи области audio или video (None — старые настройки без профиля)."""
+        a = await self._svc.get(db, "audio_storage")
+        pid = getattr(a, "profile_id", "") if getattr(a, "enabled", False) else ""
+        if area == "video":
+            v = await self._svc.get(db, "video")
+            pid = v.profile_id if v.storage == "profile" else (pid if v.storage == "audio" else "")  # type: ignore[attr-defined]
+        return uuid.UUID(pid) if pid else None
 
     async def video_backend(self, db: AsyncSession) -> StorageBackend | None:
         """Хранилище видеозаписей или None — только локальный диск. «Как аудиозаписи»: то же хранилище, подпапка Video/ (у старых настроек без профиля —

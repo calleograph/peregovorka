@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, get_db, require_admin
-from ..models import StorageTransfer, StorageTransferItem
+from ..models import StorageMigration, StorageTransfer, StorageTransferItem
+from ..services.storage_migration import CATEGORIES, GROUPS, MigrationError
 from ..services.transfer import TransferError
 
 router = APIRouter(prefix="/admin/storage", tags=["admin"])
@@ -80,3 +81,82 @@ async def resume_transfer(job_id: uuid.UUID, request: Request, su: SessionUser =
     if job is None:
         raise HTTPException(404, "Задание не найдено")
     return await svc.summary(db, job)
+
+
+# ----------------------------------------------------------------------------- перенос между хранилищами
+class MigrationIn(BaseModel):
+    source_id: uuid.UUID
+    target_id: uuid.UUID
+    groups: list[str] | None = None           # пусто — полный перенос
+
+
+class MigrationRetry(BaseModel):
+    overwrite: bool = False
+
+
+class MigrationClean(BaseModel):
+    confirm: str = Field(max_length=200)
+
+
+def _refused(exc: MigrationError) -> HTTPException:
+    return HTTPException(409, str(exc))
+
+
+@router.get("/migrations")
+async def list_migrations(request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(select(StorageMigration).order_by(StorageMigration.created_at.desc()).limit(10))).scalars().all()
+    return {"items": [request.app.state.migrations.view(j) for j in rows], "groups": GROUPS, "categories": CATEGORIES}
+
+
+@router.post("/migrations", status_code=201)
+async def create_migration(body: MigrationIn, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    try:
+        return svc.view(await svc.create(db, str(body.source_id), str(body.target_id), body.groups, actor=su.display_name))
+    except MigrationError as exc:
+        raise _refused(exc) from None
+
+
+@router.get("/migrations/{job_id}")
+async def get_migration(job_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    job = await db.get(StorageMigration, job_id)
+    if job is None:
+        raise HTTPException(404, "Задание не найдено")
+    return {**svc.view(job), "events": list(job.events or [])[-100:], "problems": await svc.problems(db, job_id)}
+
+
+@router.post("/migrations/{job_id}/start")
+async def start_migration(job_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    try:
+        return svc.view(await svc.start(db, job_id, su.display_name))
+    except MigrationError as exc:
+        raise _refused(exc) from None
+
+
+@router.post("/migrations/{job_id}/cancel")
+async def cancel_migration(job_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    try:
+        return svc.view(await svc.cancel(db, job_id, su.display_name))
+    except MigrationError as exc:
+        raise _refused(exc) from None
+
+
+@router.post("/migrations/{job_id}/retry")
+async def retry_migration(job_id: uuid.UUID, body: MigrationRetry, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    try:
+        return svc.view(await svc.retry(db, job_id, overwrite=body.overwrite, actor=su.display_name))
+    except MigrationError as exc:
+        raise _refused(exc) from None
+
+
+@router.post("/migrations/{job_id}/clean")
+async def clean_migration(job_id: uuid.UUID, body: MigrationClean, request: Request, su: SessionUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    svc = request.app.state.migrations
+    try:
+        return svc.view(await svc.clean(db, job_id, body.confirm, su.display_name))
+    except MigrationError as exc:
+        raise _refused(exc) from None

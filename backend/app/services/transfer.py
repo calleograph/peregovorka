@@ -29,7 +29,7 @@ from pathlib import Path
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import Meeting, Recording, StorageTransfer, StorageTransferItem, utcnow
+from ..models import Meeting, Recording, StorageMigration, StorageTransfer, StorageTransferItem, utcnow
 from .recordings import delete_recording_file
 from .storage import CHUNK, LocalStorage, StorageError, StorageNotFound
 
@@ -91,6 +91,8 @@ class TransferService:
         if not areas:
             raise TransferError("Внешнее хранилище записей не настроено: выберите хранилище из раздела «Файловые хранилища» в «Аудиозаписи» или «Видеозапись».")
         busy = (await db.execute(select(StorageTransfer.id).where(StorageTransfer.state.in_(("queued", "running"))).limit(1))).first()
+        if not busy and (await db.execute(select(StorageMigration.id).where(StorageMigration.state.in_(("copying", "verifying", "switching", "cleaning", "waiting"))).limit(1))).first():
+            raise TransferError("Идёт перенос данных между хранилищами — дождитесь его завершения.")
         if busy:
             raise TransferError("Уже выполняется другой перенос — дождитесь его завершения или остановите.")
         stmt = select(Recording.id, Recording.size_bytes).where(Recording.status == "ready")

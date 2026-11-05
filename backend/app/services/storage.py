@@ -31,6 +31,10 @@ class StorageError(Exception):
     pass
 
 
+class StreamStopped(Exception):
+    """Источник кусков для write_stream прерван намеренно: файл не дописан, это не ошибка хранилища."""
+
+
 class StorageNotFound(StorageError):
     """Файла нет в хранилище (а само хранилище отвечает) — в отличие от «хранилище недоступно»."""
 
@@ -68,6 +72,11 @@ class StorageBackend(Protocol):
     def copy_in(self, rel: str, src_path: str) -> str: ...                              # локальный файл → хранилище (через временное имя, затем переименование)
     def copy_out(self, rel: str, dst_path: str) -> None: ...                            # хранилище → локальный файл
     def volume(self) -> tuple[int, int]: ...                                            # (всего, свободно) байт тома хранилища
+    def walk(self, rel: str = "") -> Iterator[tuple[str, int, float]]: ...              # все файлы внутри rel: (путь, размер, время изменения)
+    def stat_of(self, rel: str) -> tuple[int, float]: ...                               # (размер, время изменения)
+    def write_stream(self, rel: str, chunks, mtime: float | None = None) -> None: ...   # поток кусков → файл (через временное имя); локальный диск не нужен
+    def location(self, rel: str = "") -> str: ...                                       # адрес для показа: тот же, что возвращают write_bytes и copy_in
+    def prune_dirs(self, rel: str) -> None: ...                                         # убрать пустые каталоги внутри rel
 
 
 def _check_rel(rel: str) -> PurePosixPath:
@@ -218,6 +227,62 @@ class LocalStorage:
         except OSError as exc:
             raise StorageError(f"Не удалось узнать свободное место: {exc.strerror or exc}") from None
         return u.total, u.free
+
+    def location(self, rel: str = "") -> str:
+        return str(self._root / rel) if rel else str(self._root)
+
+    def walk(self, rel: str = "") -> Iterator[tuple[str, int, float]]:
+        self._require_marker()
+        top = self._full(rel) if rel else self._root.resolve()
+        base = self._root.resolve()
+        for folder, dirs, names in os.walk(top):
+            dirs.sort()
+            for name in sorted(names):
+                full = Path(folder) / name
+                try:
+                    st = full.lstat()
+                except OSError:
+                    continue                           # файл исчез во время обхода
+                if full.is_symlink() or not full.is_file():
+                    continue
+                yield str(full.relative_to(base)).replace("\\", "/"), st.st_size, st.st_mtime
+
+    def stat_of(self, rel: str) -> tuple[int, float]:
+        try:
+            st = self._full(rel).stat()
+        except FileNotFoundError:
+            raise StorageNotFound("Файл не найден в хранилище") from None
+        except OSError as exc:
+            raise StorageError(f"Не удалось прочитать {self._root}: {exc.strerror or exc}") from None
+        return st.st_size, st.st_mtime
+
+    def write_stream(self, rel: str, chunks, mtime: float | None = None) -> None:
+        self._require_marker()
+        full = self._full(rel)
+        tmp = full.with_name(full.name + f".{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            full.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "wb") as fh:
+                for chunk in chunks:
+                    fh.write(chunk)
+                fh.flush()
+                os.fsync(fh.fileno())
+            if mtime is not None:
+                os.utime(tmp, (mtime, mtime))
+            os.replace(tmp, full)
+        except OSError as exc:
+            raise StorageError(f"Не удалось записать в {self._root}: {exc.strerror or exc}") from None
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def prune_dirs(self, rel: str) -> None:
+        self._require_marker()
+        top = self._full(rel)
+        for folder, _dirs, _names in os.walk(top, topdown=False):
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass                                   # не пустой или уже убран
 
     def rename(self, src: str, dst: str) -> None:
         try:
@@ -433,6 +498,80 @@ class SmbStorage:
             raise
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"SMB: ресурс недоступен ({type(exc).__name__})") from None
+
+    def location(self, rel: str = "") -> str:
+        return self._unc(rel or None)
+
+    def walk(self, rel: str = "") -> Iterator[tuple[str, int, float]]:
+        smb = self._session()
+
+        def scan(path: str, prefix: str):
+            for e in sorted(smb.scandir(path), key=lambda x: x.name):
+                child = f"{prefix}/{e.name}" if prefix else e.name
+                if e.is_dir():
+                    yield from scan(path + "\\" + e.name, child)
+                elif e.is_file():
+                    st = e.stat()
+                    yield child, int(st.st_size), float(st.st_mtime)
+
+        try:
+            root = self._unc(rel or None)
+            if smb.path.isdir(root):
+                yield from scan(root, rel)
+        except StorageError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"SMB: не удалось прочитать каталог ({type(exc).__name__})") from None
+
+    def stat_of(self, rel: str) -> tuple[int, float]:
+        smb = self._session()
+        try:
+            st = smb.stat(self._unc(rel))
+            return int(st.st_size), float(st.st_mtime)
+        except Exception as exc:  # noqa: BLE001
+            raise self._read_error(exc) from None
+
+    def write_stream(self, rel: str, chunks, mtime: float | None = None) -> None:
+        smb = self._session()
+        path = self._unc(rel)
+        tmp = path + f".{uuid.uuid4().hex[:8]}.tmp"
+        try:
+            self._mkdirs(smb, path.rsplit("\\", 1)[0])
+            with smb.open_file(tmp, mode="wb") as dst:
+                for chunk in chunks:
+                    dst.write(chunk)
+            if mtime is not None:
+                try:
+                    smb.utime(tmp, times=(mtime, mtime))
+                except Exception:  # noqa: BLE001 — время файла важно, но не настолько, чтобы отказать в переносе
+                    log.warning("Сервер SMB не принял время изменения файла", extra={"file": rel})
+            self._replace(smb, tmp, path)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                if smb.path.exists(tmp):
+                    smb.remove(tmp)
+            except Exception:  # noqa: BLE001
+                pass
+            if isinstance(exc, (StorageError, StreamStopped)):
+                raise
+            raise StorageError(f"SMB: не удалось записать файл ({type(exc).__name__})") from None
+
+    def prune_dirs(self, rel: str) -> None:
+        smb = self._session()
+
+        def prune(path: str) -> None:
+            for name in smb.listdir(path):
+                child = path + "\\" + name
+                if smb.path.isdir(child):
+                    prune(child)
+            if not smb.listdir(path):
+                smb.rmdir(path)
+
+        try:
+            if smb.path.isdir(self._unc(rel)):
+                prune(self._unc(rel))
+        except Exception:  # noqa: BLE001 — лишний пустой каталог не повод для ошибки
+            log.warning("Пустые каталоги не убраны", extra={"dir": rel})
 
     def rename(self, src: str, dst: str) -> None:
         smb = self._session()

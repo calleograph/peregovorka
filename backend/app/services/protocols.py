@@ -37,7 +37,7 @@ from ..privacy.policy import PROFILE_TITLES, build_policy, document_privacy, roo
 from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
-from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
+from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, VIDEO, FileStore
 from .materials import SOURCES_PROMPT, build_materials, chat_files_map, chat_messages, render_chat
 from . import mixdown
 from .recordings import delete_recording_file, drop_pcm, finalize_pcm_files
@@ -720,6 +720,12 @@ class ProtocolService:
     async def storage_for(self, db: AsyncSession, rec: Recording | None = None, *, area: str | None = None):
         """Внешнее хранилище записи (аудио — раздел «Хранилища → Аудиозаписи», видео — «Видеозапись»); None — недоступно или не настроено."""
         area = area or (self.area_of(rec) if rec is not None else "audio")
+        if rec is not None and rec.export_profile_id:      # файл там, где его выгрузили, даже если функция уже переключена на другое хранилище
+            try:
+                return await self.files.profile_backend(db, rec.export_profile_id, VIDEO if area == "video" else AUDIO)
+            except StorageError as exc:
+                log.error("Хранилище записи недоступно", extra={"error": str(exc), "recording": str(rec.id)})
+                return None
         if area != "video":
             return await self._audio_storage(db)
         try:
@@ -773,6 +779,7 @@ class ProtocolService:
                 raise StorageError("контрольная сумма копии в хранилище не совпала с исходной")
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
             rec.export_area, rec.sha256, rec.size_bytes = area, digest, size
+            rec.export_profile_id = await self.files.current_profile(db, area)
             drop_local = not keep_local
         except (OSError, StorageError) as exc:
             rec.export_status, rec.export_error = "failed", str(exc)[:480]

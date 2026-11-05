@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -500,6 +501,7 @@ class Recording(Base):
     exported_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # в каком хранилище лежит выгруженный файл: audio — хранилище аудиозаписей, video — видеозаписей (раздел «Видеозапись»); у записей до 0.52.0 — audio
     export_area: Mapped[str | None] = mapped_column(String(10))
+    export_profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)   # профиль, где лежит выгруженный файл; пусто — старая запись, ищется по текущей настройке
     # ok — файл есть (по последней сверке); missing — удалён из хранилища/с диска вне приложения: ссылка не отдаётся
     file_state: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok", nullable=False)   # ok | missing | deleting (удаление не завершено)
     file_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -793,6 +795,58 @@ class StorageTransferItem(Base):
     bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
     # Файл-источник удаляется не сразу после переключения, а после «отсрочки» (пока не оборвутся уже идущие воспроизведения) и только если копия на месте
     cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class StorageMigration(Base):
+    """Перенос данных между двумя профилями хранилищ: оценка → копирование с проверкой → переключение → отдельно подтверждаемая очистка источника.
+    Состояние в базе: после перезапуска задание продолжается с оставшихся файлов."""
+
+    __tablename__ = "storage_migrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    source_name: Mapped[str] = mapped_column(String(120), default="", server_default="", nullable=False)
+    target_name: Mapped[str] = mapped_column(String(120), default="", server_default="", nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), default="full", server_default="full", nullable=False)     # full | selected
+    groups: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)     # что переносится: audio, video, documents, chat_files, journal, backups, other
+    state: Mapped[str] = mapped_column(String(14), default="scanning", server_default="scanning", index=True, nullable=False)
+    resume_state: Mapped[str | None] = mapped_column(String(14))                     # куда вернуться из waiting
+    total: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    done: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    failed: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    bytes_total: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    bytes_done: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    estimate: Mapped[dict | None] = mapped_column(JSONType)                          # разбивка, свободное место, ожидаемая длительность
+    switched: Mapped[dict | None] = mapped_column(JSONType)                          # что было до переключения: для отката и отчёта
+    report: Mapped[dict | None] = mapped_column(JSONType)
+    events: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)     # журнал задания, последние записи
+    error: Mapped[str | None] = mapped_column(String(500))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True, nullable=False)
+    copy_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    switched_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class StorageMigrationItem(Base):
+    """Один файл переноса."""
+
+    __tablename__ = "storage_migration_items"
+    __table_args__ = (Index("ix_storage_migration_items_state", "migration_id", "state"), UniqueConstraint("migration_id", "path", name="uq_storage_migration_item_path"))
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    migration_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("storage_migrations.id", ondelete="CASCADE"), nullable=False)
+    path: Mapped[str] = mapped_column(String(1500), nullable=False)                  # относительно корня профиля, раскладка на обоих хранилищах одинакова
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    mtime: Mapped[float] = mapped_column(Float, default=0.0, server_default="0", nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending", nullable=False)   # pending | done | failed | gone | cleaned | kept
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overwrite: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    error: Mapped[str | None] = mapped_column(String(500))
 
 
 class StorageSyncRun(Base):
