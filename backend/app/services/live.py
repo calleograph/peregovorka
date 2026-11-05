@@ -149,7 +149,7 @@ class LiveBroadcaster:
         Применяет секрет в nginx сам web (live-secret.sh: nginx -t и перечитывание). Возвращает None или причину отказа (для диагностики)."""
         base = self.live_dir()
         try:
-            for sub in ("b", "acc", "nginx"):
+            for sub in ("b", "acc", "nginx", "diag"):
                 (base / sub).mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             log.warning("Каталог трансляций недоступен для записи: HLS работать не будет", extra={"path": str(base)})
@@ -221,15 +221,18 @@ class LiveBroadcaster:
         return (await db.execute(q)).scalars().first()
 
     async def revoke(self, db, room: Room, which: str) -> None:
-        """Отзыв: новый идентификатор доступа и (для страницы) новый токен; ссылка со старым идентификатором удаляется — адреса перестают открываться сразу."""
+        """Отзыв: новый идентификатор доступа и (для страницы) новый токен; ссылка со старым идентификатором удаляется — адреса перестают открываться сразу.
+        Отзыв ссылки зрителя закрывает и «Ссылку этого эфира» идущего эфира: иначе по ней плеер получил бы подпись к новому идентификатору доступа."""
+        cur = await self.current(db, room.id)
         if which in ("view", "all"):
             self.unlink_access(room.live_view_access)
             room.live_view_access, room.live_token = new_access(), new_token()
+            if cur is not None:
+                cur.view_token = new_token()
         if which in ("stream", "all"):
             self.unlink_access(room.live_stream_access)
             room.live_stream_access = new_access()
         await db.commit()
-        cur = await self.current(db, room.id)
         if cur is not None:
             self.link_access(room.live_view_access if which in ("view", "all") else None, cur.hls_dir)
             self.link_access(room.live_stream_access if which in ("stream", "all") else None, cur.hls_dir)

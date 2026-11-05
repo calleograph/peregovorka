@@ -288,7 +288,12 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 ## 8. Незавершённые задачи
 
-**Из ревизии документации 2026-11-04 (продукт не менялся):** **отзыв ссылки зрителя не закрывает «Ссылку этого эфира» и переключатель пароля не действует на идущий эфир (по чтению кода, вживую не воспроизводилось)**; устаревшие подсказки «Эта встреча» в `RoomEditor.tsx` и `RoomPage.tsx`; порог диска в `install.sh` привести к 30 ГБ как в `preflight.sh`; решить про порт 80 у nginx установщика; предупреждать, что `ctl.sh restart` не применяет `.env`; файлы LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца. Полный прогон 14 шагов на чистой ВМ не выполнялся.
+**Из ревизии документации 2026-11-04:** отзыв ссылки эфира, переключатель пароля, подсказки «Эта встреча», порог диска и `ctl.sh restart` исправлены в 0.67.0. Открыто: nginx установщика не слушает порт 80 (менять только с проверкой на настоящем nginx хоста под root: чужой процесс на порту 80 сломает перезагрузку nginx); LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца.
+
+0zn. **Сервер 0.67.0: панель диагностики эфира.** Устройство — `docs/BROADCASTS.md`, раздел «Диагностика эфира»; инструкция — вики «Панель диагностики эфира».
+* Код: `backend/app/services/live_diag.py`, `backend/app/api/live_diag.py`, `frontend/src/livediag/`; пульс зрителя — `api/live.py::viewer_ping`; порты 9090 (Egress) и 8081 (nginx), файл `HOST_NETDEV`, счётчик Egress из его проверки здоровья — `deployment/compose.yml`.
+* Испытание: `tests/live/egress/run_diag.py`.
+* Не проверено: настоящие зрители и интернет-канал, упор в канал сервера (локальные зрители идут мимо внешнего интерфейса, правило покрыто тестом), Safari и iPhone, приложения Windows и Linux, 1000+ отчётов зрителей, панель в комнате при настоящем браузере выступающего (испытан синтетический выступающий: отчёт браузера только в автотесте). Приложение Android панели не имеет: видны только его дорожки на сервере.
 
 0zm. **Сервер 0.66.0: свои узлы CDN.** Устройство, решения, замеры — `docs/BROADCAST_CDN.md`; инструкция — вики «Узлы CDN».
 * Код: `backend/app/services/{cdn,cdn_ssh,cdn_jobs}.py`, `backend/app/api/admin_cdn.py`, пакет узла `backend/app/assets/cdn_node/`, `frontend/nginx.conf` (`/cdn-origin/`), `frontend/live-secret.sh`, `frontend/src/pages/LivePage.tsx` (переход между узлами), `frontend/src/pages/admin/CdnNodesAdmin.tsx`; стенд — `tests/live/cdn/`.

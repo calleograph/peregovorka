@@ -6,6 +6,7 @@ import SettingsForm, { type Field } from "./SettingsForm";
 import CdnNodesAdmin from "./CdnNodesAdmin";
 import { ChecksList, ComponentCard, useComponents, WIKI } from "./ServerComponents";
 
+import { DiagHistory } from "../../livediag/LiveDiagPanel";
 /** «Трансляции»: служба Egress (общая с видеозаписью, включается из панели), проверки по цепочке, идущие эфиры и зрители, CDN и настройки. */
 export default function LiveAdmin({ fields }: { fields: Field[] }) {
   const [st, setSt] = useState<LiveAdminStatus | null>(null);
@@ -46,6 +47,7 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
         {cdnMsg && <div className={`alert ${cdnMsg.ok ? "ok" : "warn"} small`} role="status">{cdnMsg.text}</div>}
       </div>
       <CdnNodesAdmin />
+      <div className="card" style={{ marginBottom: 12 }}><h3 style={{ marginTop: 0 }}>Диагностика эфиров</h3><DiagHistory load={api.adminLiveDiagHistory} /></div>
       <div id="settings">
         <SettingsForm key="live" group="live" title="Настройки трансляций" fields={fields}
           intro="Зрители смотрят HLS, который nginx раздаёт прямо с этого сервера, без подключения к LiveKit. Эфир включается в комнате: тип «Трансляционная» или вкладка «Трансляция» в настройках комнаты." />

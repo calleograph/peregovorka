@@ -27,6 +27,8 @@ from .entities import (
     LiveDestination,
     CdnNode,
     LiveQuestion,
+    LiveDiagEvent,
+    LiveDiagSample,
     LiveViewer,
     RecordingWaveform,
     LdapProfile,
@@ -62,7 +64,7 @@ from .signing import SigningAgent, SigningCert, SigningJob
 __all__ = [
     "AllowedNetwork",
     "SecurityEvent",
-    "Base", "utcnow", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "UserBackupCode", "StorageKey", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording", "Broadcast", "LiveDestination", "CdnNode", "LiveQuestion", "LiveViewer",
+    "Base", "utcnow", "LiveDiagEvent", "LiveDiagSample", "LegalConsent", "LegalDocument", "LegalRevision", "CaCertificate", "ConversationMap", "LdapProfile", "MailMessage", "MailTemplate", "MailProfile", "StorageSyncRun", "ConfigBackupRun", "UserBackupCode", "StorageKey", "StorageTransfer", "StorageTransferItem", "ApiProfile", "ApiIdempotency", "ApiJob", "WebhookDelivery", "WebhookEndpoint", "ApiClient", "ApiKey", "ApiRequestLog", "ChatAttachment", "StorageProfile", "AppSetting", "AuditLog", "EventLog", "GuestParticipant", "Meeting", "MeetingChatMessage", "MeetingGrant", "MeetingParticipant", "MeetingWhiteboard", "Protocol", "ProtocolTemplate", "Recording", "Broadcast", "LiveDestination", "CdnNode", "LiveQuestion", "LiveViewer",
     "Room", "RoomAcl", "RoomInvitee", "RoomModerator", "SipProfile", "SipCall", "TranscriptSegment", "User",
     "Chat", "ChatFile", "ChatFolder", "ChatMember", "ChatMessage", "ChatReaction", "MeetingChatReaction",
     "SigningAgent", "SigningCert", "SigningJob", "CalendarLink", "RestoreJob",

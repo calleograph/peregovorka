@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.66.0",
- "reviewed_at": "2026-11-04",
+ "release": "0.67.0",
+ "reviewed_at": "2026-11-05",
  "components": [
   {
    "key": "livekit_server",
@@ -678,7 +678,7 @@
    "group": "Backend",
    "pinned": "2.14.1",
    "tested": "2.14.1",
-   "reviewed_latest": "2.14.2",
+   "reviewed_latest": "2.14.3",
    "source": {
     "type": "pypi",
     "name": "pydantic"
@@ -701,10 +701,10 @@
     "python_package": "pydantic"
    },
    "deferred": {
-    "version": "2.14.2",
+    "version": "2.14.3",
     "reason": "Патч вышел во время выпуска 0.50.0 (после ревизии компонентов того же дня); выпуск посвящён документации и скриптам эксплуатации, работа backend и ASR с новой версией не проверялась.",
     "issue": "DEP-17",
-    "recheck": "2026-11-12",
+    "recheck": "2026-11-20",
     "plan": "Обновить закрепление в обоих constraints (backend и ASR) при очередной ревизии и прогнать backend- и ASR-тесты."
    }
   },
@@ -1348,7 +1348,7 @@
    "group": "Frontend",
    "pinned": "8.3.5",
    "tested": "8.3.5",
-   "reviewed_latest": "8.3.5",
+   "reviewed_latest": "8.3.6",
    "source": {
     "type": "npm",
     "name": "vite"
@@ -1360,7 +1360,14 @@
      "name": "vite"
     }
    ],
-   "changelog": "https://www.npmjs.com/package/vite?activeTab=versions"
+   "changelog": "https://www.npmjs.com/package/vite?activeTab=versions",
+   "deferred": {
+    "version": "8.3.6",
+    "reason": "Патч сборщика вышел к выпуску 0.67.0, который посвящён диагностике эфира и проверен на сборке с 8.3.5. Менять сборщик вместе с крупным изменением интерфейса незачем.",
+    "issue": "DEP-21",
+    "recheck": "2026-11-20",
+    "plan": "Обновить в ближайшей ревизии, прогнать сборку, типы и frontend-тесты."
+   }
   },
   {
    "key": "vitest",
@@ -1552,7 +1559,7 @@
    "group": "Frontend",
    "pinned": "v32.5.5",
    "tested": "v32.5.5",
-   "reviewed_latest": "v32.6.9",
+   "reviewed_latest": "v32.6.10",
    "source": {
     "type": "github-release",
     "repo": "jgraph/drawio"
@@ -1575,10 +1582,10 @@
     "regex": "v(\\d+\\.\\d+\\.\\d+)"
    },
    "deferred": {
-    "version": "v32.6.9",
+    "version": "v32.6.10",
     "reason": "Новые функции и ускорения редактора, исправлений безопасности в списке изменений нет. Доска проверяется отдельным живым сценарием с настоящим draw.io; выпуск 0.54.0 посвящён трансляциям и срокам хранения — смешивать не стоит.",
     "issue": "DEP-8",
-    "recheck": "2026-11-06",
+    "recheck": "2026-11-20",
     "plan": "Собрать статику v32.6.x (frontend/drawio/prune.sh), пройти живые сценарии доски и выгрузки, сборку образа web (CI web-image), обновить DRAWIO_VERSION."
    }
   },
@@ -1811,7 +1818,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-11-04",
+  "checked_at": "2026-11-05",
   "source": "osv.dev",
   "advisories": {
    "hydra-core==1.3.7": [

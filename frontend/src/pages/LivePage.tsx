@@ -1,9 +1,12 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, type ApiError, type LiveAccess, type LiveQuestion, type LiveViewerInfo } from "../api";
 import { Icon } from "../components/Icons";
 import { type Contact, GuestContactFields, contactBody, emailOk, loadContact, nameOk, saveContact } from "../components/GuestContact";
+import { ViewerStats } from "../livediag/viewerStats";
 import "../live.css";
+
+const LiveDiagPanel = lazy(() => import("../livediag/LiveDiagPanel"));
 
 /**
  * Страница зрителя прямого эфира /live/<токен>: без входа в систему, без подключения к LiveKit. Зритель получает от приложения только короткую подписанную ссылку
@@ -142,7 +145,7 @@ function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string;
 }
 
 /** Плеер: нативный HLS (Safari, iPhone, iPad) или hls.js (остальные). Свои кнопки: пауза, звук, возврат к эфиру, полный экран. */
-function Player({ token, access, renew, onGone }: { token: string; access: LiveAccess; renew: (avoid?: string) => Promise<LiveAccess | null>; onGone: () => void }) {
+function Player({ token, access, renew, onGone, skew }: { token: string; access: LiveAccess; renew: (avoid?: string) => Promise<LiveAccess | null>; onGone: () => void; skew: number }) {
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const prefix = useRef<string>(access.path.replace(/[^/]+$/, ""));
@@ -166,6 +169,11 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   const userPaused = useRef(false);
   const cb = useRef({ renew, onGone });
   cb.current = { renew, onGone };
+  const stats = useRef(new ViewerStats());       // показатели этого зрителя: уходят с пульсом, на экране — по кнопке «Статистика»
+  const [diag, setDiag] = useState(false);
+  const [diagMeeting, setDiagMeeting] = useState<string | null>(null);
+  stats.current.skew = skew;
+  stats.current.node = nodeRef.current;
 
   // новая ссылка: узел CDN (или источник) и префикс подписи; адреса сегментов меняются без перезапуска плеера
   const isBad = (node: string) => Date.now() - (badNodes.current.get(node) ?? 0) < 90_000;
@@ -208,10 +216,13 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
 
   // счётчик зрителей: «пульс» раз в полминуты, пока вкладка видима
   useEffect(() => {
-    const ping = () => { if (document.visibilityState === "visible") void api.livePing(token, access.vid).catch(() => undefined); };
+    const ping = () => { if (document.visibilityState === "visible") void api.livePing(token, access.vid, stats.current.tick()).catch(() => undefined); };
     ping();
     const t = window.setInterval(ping, 30_000);
-    return () => window.clearInterval(t);
+    // проблема у зрителя видна организатору сразу, а не через полминуты; не чаще раза в 10 с
+    let last = 0;
+    stats.current.onProblem = () => { const now = Date.now(); if (now - last > 10_000) { last = now; window.setTimeout(ping, 1500); } };
+    return () => { window.clearInterval(t); stats.current.onProblem = null; };
   }, [token, access.vid]);
 
   useEffect(() => {
@@ -245,6 +256,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
           xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, baseRef.current + prefix.current), true); },
         });
         hlsRef.current = hls as never;
+        stats.current.attachHls(hls as never, Hls.Events);
         hls.loadSource(url);
         hls.attachMedia(el);
         hls.on(Hls.Events.MANIFEST_PARSED, () => void start());
@@ -278,7 +290,8 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         });
       }).catch(() => setFatal("Не удалось загрузить плеер."));
     }
-    return () => { cancelled = true; hlsRef.current?.destroy(); hlsRef.current = null; el.removeAttribute("src"); el.load(); };
+    const offStats = stats.current.attachVideo(el, native());
+    return () => { cancelled = true; offStats(); hlsRef.current?.destroy(); hlsRef.current = null; el.removeAttribute("src"); el.load(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access.path.split("/")[2], attempt]);          // источник пересоздаётся при смене идентификатора доступа (не при продлении подписи) и при переподключении
 
@@ -294,10 +307,11 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
       since = Date.now();
       tries += 1;
       if (tries > 5) { setFatal("Эфир не воспроизводится: поток не поступает. Проверьте подключение к интернету и нажмите «Повторить»."); return; }
+      stats.current.reconnect();
       void cb.current.renew().then((a) => { if (!a) return cb.current.onGone(); adopt(a); fails.current = 0; setAttempt((n) => n + 1); });
     }, 5000);
     const off = () => setOffline(true);
-    const on = () => { setOffline(false); setFatal(""); fails.current = 0; setAttempt((n) => n + 1); };
+    const on = () => { setOffline(false); setFatal(""); fails.current = 0; stats.current.reconnect(); setAttempt((n) => n + 1); };
     window.addEventListener("offline", off); window.addEventListener("online", on);
     return () => { window.clearInterval(t); window.removeEventListener("offline", off); window.removeEventListener("online", on); };
   }, []);
@@ -333,7 +347,7 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
   if (fatal) return <div className="live-stage live-msg"><Icon name="info" size={26} /><p>{fatal}</p>
     <button className="btn primary" onClick={() => { setFatal(""); fails.current = 0; void renew().then((a) => { if (!a) return onGone(); adopt(a); setAttempt((n) => n + 1); }); }}>Повторить</button></div>;
   return (
-    <div className={`live-stage ${ui || paused ? "ui" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
+    <div className={`live-stage ${ui || paused ? "ui" : ""} ${diag ? "diag" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
       <video ref={video} playsInline autoPlay aria-label="Прямой эфир" onClick={toggle} />
       {buffering && <div className="live-spin" role="status" aria-label="Загрузка" />}
       {offline && <p className="live-net" role="status">Нет подключения к сети. Эфир продолжится автоматически, когда связь восстановится.</p>}
@@ -345,8 +359,10 @@ function Player({ token, access, renew, onGone }: { token: string; access: LiveA
         <span className={`live-tag ${behind > 8 ? "late" : "on"}`} title={behind > 8 ? `Вы отстаёте от эфира на ${Math.round(behind)} с` : "Вы смотрите прямой эфир"}><i aria-hidden />{behind > 8 ? `−${Math.round(behind)} с` : "ЭФИР"}</span>
         {behind > 8 && <button className="btn mini" onClick={goLive}>К прямому эфиру</button>}
         <span className="spacer" />
+        <button className="iconbtn" onClick={() => { if (!diag) void api.liveDiagAccess(token).then((r) => setDiagMeeting(r.allowed ? r.meeting_id ?? null : null)).catch(() => undefined); setDiag(!diag); }} aria-label="Статистика воспроизведения" aria-pressed={diag} title="Статистика воспроизведения"><Icon name="gauge" size={22} /></button>
         <button className="iconbtn" onClick={fullscreen} aria-label="Во весь экран"><Icon name="expand" size={22} /></button>
       </div>
+      {diag && <Suspense fallback={null}><LiveDiagPanel viewer={stats.current} meetingId={diagMeeting} onClose={() => setDiag(false)} /></Suspense>}
     </div>
   );
 }
@@ -475,7 +491,7 @@ export default function LivePage() {
         {info.status === "ended" && <span className="badge">Эфир завершён</span>}
       </header>
       {!info.available && <div className="alert warn">Трансляции отключены администратором сервера.</div>}
-      {showPlayer && access && <div className="live-main"><Player token={token} access={access} renew={renew} onGone={() => { setAccess(null); void load(); }} /></div>}
+      {showPlayer && access && <div className="live-main"><Player token={token} access={access} renew={renew} skew={skew} onGone={() => { setAccess(null); void load(); }} /></div>}
       {showPlayer && viewer && <ViewerQuestions token={token} viewer={viewer} pass={() => pass.current} onViewerLost={lostViewer} />}
       {!showPlayer && info.status === "live" && needPw && info.own_hls && (
         <div className="live-stage live-msg"><PasswordForm onSubmit={(pw) => void submitPassword(pw)} busy={busy} error={pwErr} /></div>)}

@@ -134,6 +134,24 @@ export interface CdnCreds { password?: string; private_key?: string; tls_cert_pe
 export interface CdnNodeIn extends CdnCreds { name: string; public_name: string; region?: string; ssh_host: string; ssh_port: number; ssh_user: string; host_key: string; fingerprint: string;
   tls_mode: "acme" | "files" | "selfsigned"; acme_email?: string; quality: "720p" | "1080p" | "1440p"; manual?: boolean }
 /** base — адрес CDN (пусто — этот сервер); node — свой узел CDN, origin_path — запасной путь к этому серверу, если узел перестанет отвечать. */
+export interface DiagFinding { code: string; level: number; component: string; stage: string; text: string; cause: string; kind: string; since: number }
+export interface DiagService { st?: string; ms?: number | null; err?: string | null; cpu?: number | null; cores?: number | null; mem?: number | null; lag_ms?: number | null; conns?: number; ops?: number; queue?: number | null; load?: number | null; jobs?: number | null; accept?: boolean | null; upload_ms?: number | null; in_kbps?: number | null; out_kbps?: number | null; loss_in?: number | null; loss_out?: number | null; nack_s?: number | null; pli_s?: number | null }
+export interface DiagNow {
+  t: number; status: string; quality: string; egress_status?: string; viewer_count?: number; findings?: DiagFinding[]; stages?: { id: string; name: string; lv: -1 | 0 | 1 | 2; val: string | null }[];
+  host?: { cpu?: number | null; cores?: number[]; cpus?: number; load?: number[] | null; mem?: { total?: number; avail?: number; free?: number; used_pct?: number | null; avail_pct?: number | null };
+    disk?: { free?: number; total?: number; used_pct?: number | null; rd_bps?: number; wr_bps?: number; util?: number; await_ms?: number }; net?: { scope?: string; if?: string; rx_bps?: number; tx_bps?: number; err_s?: number; drop_s?: number; peak_bps?: number; cap_bps?: number | null } };
+  svc?: Record<string, DiagService>; media?: { res?: string; fps?: number; vkbps?: number; akbps?: number | null; av_ms?: number; gaps?: number; vcodec?: string; acodec?: string };
+  hls?: { dur_s?: number | null; interval_s?: number | null; ready_s?: number | null; age_s?: number | null; bytes?: number; kbps?: number | null } | null; rtmp?: { id: string; name: string; status: string; error?: string | null; retries?: number | null; flips?: number }[];
+  source?: { known?: boolean; list?: { id: string; name: string; tracks: { kind: string; src: string; w?: number | null; h?: number | null; muted?: boolean }[] }[] };
+  cdn?: { name: string; state: string; viewers?: number | null; mbit?: number | null; hit?: number | null }[];
+  viewers?: { reporting?: number; bad?: number; stalls?: number; lat?: number | null; lat_p95?: number | null; seg_ms?: number | null; seg_ms_p95?: number | null; buf?: number | null; est?: number | null;
+    worst: { id: string; lv: number; why: string; ua?: string | null; seg_ms?: number | null; buf?: number | null }[]; publishers?: { src?: string; res?: string; fps?: number | null; kbps?: number | null; loss?: number | null; limit?: string }[] };
+}
+export type DiagSample = (number | null)[];
+export interface DiagState { bid: string | null; status: string; quality?: string; enabled: boolean; started_at?: string; ended_at?: string | null; now: DiagNow | null; ring: DiagSample[]; keys: string[]; events?: DiagEvent[] }
+export interface DiagEvent { id: number; at: string; component: string; level: string; code: string; message: string; cause?: string | null; kind?: string | null; details?: Record<string, unknown> | null }
+export interface DiagSummary { version?: string; res?: string | null; mode?: { hls?: boolean; rtmp?: number; cdn?: boolean }; cpu?: { avg: number; max: number } | null; tx_mbit?: { avg: number; max: number } | null; egress_cores?: { avg: number; max: number } | null; video_kbps?: { avg: number; max: number } | null; seg_ready_s?: { avg: number; max: number } | null; latency_s?: { avg: number; max: number } | null; stalls?: number; events?: Record<string, number> }
+export interface DiagHistoryItem { id: string; room: string; title: string | null; status: string; quality: string; started_at: string; ended_at: string | null; peak_viewers: number; summary: DiagSummary | null }
 export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
@@ -1127,7 +1145,15 @@ export const api = {
   liveMyQuestions: (token: string, viewer: string) => request<{ items: LiveQuestion[]; open: boolean }>("GET", `/live/${encodeURIComponent(token)}/questions?viewer=${encodeURIComponent(viewer)}`),
   liveQuestions: (meetingId: string) => request<LiveQuestionFeed>("GET", `/meetings/${meetingId}/live/questions`),
   liveQuestionSet: (meetingId: string, id: string, status: LiveQuestion["status"]) => request<LiveQuestion>("PATCH", `/meetings/${meetingId}/live/questions/${id}`, { status }),
-  livePing: (token: string, vid: string) => request<{ viewers: number }>("POST", `/live/${encodeURIComponent(token)}/ping`, { vid }),
+  livePing: (token: string, vid: string, stats?: unknown) => request<{ viewers: number }>("POST", `/live/${encodeURIComponent(token)}/ping`, { vid, ...(stats ? { stats } : {}) }),
+  liveDiag: (meetingId: string, o: { ring: boolean; events: boolean }) => request<DiagState>("GET", `/meetings/${meetingId}/live/diag?ring=${o.ring}&events=${o.events}`),
+  liveDiagClient: (meetingId: string, stats: unknown) => request<void>("POST", `/meetings/${meetingId}/live/diag/client`, { stats }),
+  liveDiagAccess: (token: string) => request<{ allowed: boolean; meeting_id?: string | null }>("GET", `/live/${encodeURIComponent(token)}/diag`),
+  liveDiagEvents: (bid: string, q: { level?: string; component?: string }) => request<{ items: DiagEvent[] }>("GET", `/live-diag/${bid}/events?limit=300${q.level ? `&level=${q.level}` : ""}${q.component ? `&component=${q.component}` : ""}`),
+  liveDiagSeries: (bid: string) => request<{ keys: string[]; points: DiagSample[] }>("GET", `/live-diag/${bid}/series`),
+  liveDiagHistory: (roomId: string) => request<{ items: DiagHistoryItem[] }>("GET", `/rooms/${roomId}/live/diag/history`),
+  adminLiveDiagHistory: () => request<{ items: DiagHistoryItem[] }>("GET", "/admin/live/diag/history"),
+  liveDiagExportUrl: (bid: string, format: "txt" | "json" | "report") => `/api/v1/live-diag/${bid}/export?format=${format}`,
   setRecording: (meetingId: string, enabled: boolean) => request<{ enabled: boolean }>("POST", `/meetings/${meetingId}/recording`, { enabled }),
   /** «Остановить / возобновить транскрибацию»: звонок и запись аудио не затрагиваются. */
   micOwner: (meetingId: string, identity: string) => request<void>("POST", `/meetings/${meetingId}/mic-owner`, { identity }),

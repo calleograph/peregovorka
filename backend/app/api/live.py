@@ -23,6 +23,7 @@ from ..security.passwords import hash_room_password, verify_room_password
 from ..services import roles
 from ..services import events
 from ..services.audit import audit_now, write_audit
+from ..services.journal import parse_client
 from ..services.live import LiveError, hls_path, hls_secret, new_token
 from ..services.live_destinations import PLATFORMS, DestinationError
 from .guest import _throttle, clean_display_name, clean_email
@@ -191,6 +192,9 @@ async def patch_live(room_id: uuid.UUID, body: LivePatch, request: Request, su: 
     if changed:
         await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="room.live_settings", target_type="room", target_id=str(room.id),
                           details={"changed": sorted(changed), "room": room.slug})
+    cur = await live.current(db, room.id) if "live_password_enabled" in changed else None
+    if cur is not None and cur.status in ("starting", "live"):
+        cur.password_hash = room.live_password_hash if room.live_password_enabled else None      # идущий эфир — сразу по новому правилу; прошедшие эфиры — по своим параметрам
     await db.commit()
     if "live_password_enabled" in changed:
         await live.rotate_view_access(db, room)          # включили или выключили пароль: прежние подписи и пропуска больше не действуют
@@ -584,11 +588,14 @@ async def viewer_replay_file(token: str, request: Request, r: str, e: int, s: st
 @public_router.post("/{token}/ping")
 async def viewer_ping(token: str, request: Request, body: dict = Body(default={}), db: AsyncSession = Depends(get_db)):
     await _throttle(request, "live:ping", VIEW_IP_LIMIT // 4, 60)
-    room = (await _view(request, db, token)).room
+    v = await _view(request, db, token)
+    room = v.room
     vid = str(body.get("vid") or "")[:40]
     if not vid or not vid.isalnum():
         raise HTTPException(status_code=422, detail="vid")
     n = await request.app.state.live.viewer_ping(room.id, vid)
+    if v.b is not None and v.b.status in ("starting", "live") and body.get("stats") is not None:
+        await request.app.state.live_diag.report_client(v.b.id, f"v:{vid}", body["stats"], parse_client(request.headers.get("user-agent")))       # диагностика со стороны зрителя: тем же пульсом, без отдельных запросов
     return {"viewers": n}
 
 

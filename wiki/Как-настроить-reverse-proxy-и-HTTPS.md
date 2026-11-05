@@ -66,7 +66,7 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-We
    ALLOWED_ORIGINS=https://meet.example.org,https://192.0.2.10
    ```
 
-3. Примените изменения: `./scripts/ctl.sh start backend` (команда `restart` правки `.env` не применяет).
+3. Примените изменения: `./scripts/ctl.sh restart backend`.
 
 Проверка Origin и CSRF остаются включёнными; список лишь расширяет разрешённые адреса. Подстановок `*` нет. Заголовки `X-Forwarded-Host` и `X-Forwarded-Proto` в проверке Origin не доверяются. Cookie привязаны к хосту: у каждого адреса вход свой; при `COOKIE_SECURE=true` каждый адрес должен открываться по HTTPS.
 

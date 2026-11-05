@@ -324,7 +324,7 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
       {tab === "autosend" && (
         <div role="tabpanel">
           <DeliveryEditor roomId={roomId} spec={form.mail_delivery} onChange={(sp) => set("mail_delivery", sp)} />
-          <p className="muted small">Значения действуют для каждой встречи комнаты; для конкретной встречи руководитель меняет их кнопкой «Эта встреча»<InfoTip>Сохраняются кнопкой «Сохранить» и записываются в журнал аудита (кто и что изменил).</InfoTip></p>
+          <p className="muted small">Значения действуют для каждой встречи комнаты<InfoTip>Сохраняются кнопкой «Сохранить» и записываются в журнал аудита (кто и что изменил).</InfoTip></p>
         </div>
       )}
 

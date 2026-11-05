@@ -190,6 +190,14 @@ export async function sampleRoom(room: LkRoom, meter: RateMeter, freeze?: Freeze
   return snap;
 }
 
+/** Отчёт браузера участника для диагностики эфира: что он реально отправляет (экран важнее камеры) и почему браузер мог снизить качество. */
+export function publisherStats(snap: Snapshot): Record<string, unknown> {
+  const m = snap.screenOut ?? snap.camera;
+  const limit = m?.limitReason;
+  return { eng: "webrtc", src: snap.screenOut ? "screen" : snap.camera ? "camera" : undefined, res: m?.width && m.height ? `${m.width}x${m.height}` : undefined, fps: m?.fps, rtt: snap.rttMs, loss: snap.lossPct,
+    out_kbps: snap.outKbps, in_kbps: snap.inKbps, limit: limit === "none" || limit === "cpu" || limit === "bandwidth" ? limit : limit ? "other" : undefined };
+}
+
 /** Тело для /client/metrics: только числа и короткие метки. */
 export function metricsBody(meetingId: string, snap: Snapshot | null, join?: Record<string, number | undefined>): Record<string, unknown> {
   const s = snap?.screenOut ?? snap?.screenIn;
