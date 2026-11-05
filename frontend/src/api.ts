@@ -421,6 +421,15 @@ export interface TransferJob {
   total: number; done: number; skipped: number; failed: number; pending: number; cleanup_pending: number; bytes_total: number; bytes_done: number; error: string | null;
   created_by: string; created_at: string; started_at: string | null; finished_at: string | null;
 }
+export interface StorageMigration {
+  id: string; state: "scanning" | "ready" | "copying" | "attention" | "verifying" | "switching" | "switched" | "cleaning" | "cleaned" | "waiting" | "failed" | "cancelled";
+  source: string; target: string; source_id: string; target_id: string; mode: "full" | "selected"; groups: string[]; total: number; done: number; failed: number;
+  bytes_total: number; bytes_done: number; percent: number; speed_bps: number | null; error: string | null; switched_at: string | null; created_at: string; finished_at: string | null;
+  created_by: string; resume_state: string | null;
+  estimate: { categories: { key: string; title: string; files: number; bytes: number }[]; target_free: number | null; speed_bps: number | null; seconds: number | null; not_in_profiles: string } | null;
+  report: { moved_files: number; moved_bytes: number; freed_bytes: number; removed_files: number; gone_files: number; kept: { reason: string; files: number }[] } | null;
+}
+export interface StorageMigrationDetail extends StorageMigration { events: { t: string; level: string; text: string }[]; problems: { path: string; state: string; error: string | null }[] }
 export interface TransferDetail extends TransferJob { problems: { recording_id: string; state: string; error: string | null }[] }
 /** Настройки комнаты для её руководителя («Настройки комнаты»): без системных полей (хранилища, LLM, сроки хранения). */
 export interface RoomManage {
@@ -1436,6 +1445,13 @@ export const api = {
     configRecheck: () => request<{ checks: ConfigCheck[]; summary: ConfigReport["summary"] }>("POST", "/admin/config/checks"),
     storageStats: () => request<StorageStats>("GET", "/admin/storage/stats"),
     storageStatsRefresh: () => request<{ started: boolean }>("POST", "/admin/storage/stats/refresh"),
+    migrations: () => request<{ items: StorageMigration[]; groups: Record<string, string> }>("GET", "/admin/storage/migrations"),
+    createMigration: (body: { source_id: string; target_id: string; groups: string[] | null }) => request<StorageMigration>("POST", "/admin/storage/migrations", body),
+    migration: (id: string) => request<StorageMigrationDetail>("GET", `/admin/storage/migrations/${id}`),
+    startMigration: (id: string) => request<StorageMigration>("POST", `/admin/storage/migrations/${id}/start`),
+    cancelMigration: (id: string) => request<StorageMigration>("POST", `/admin/storage/migrations/${id}/cancel`),
+    retryMigration: (id: string, overwrite: boolean) => request<StorageMigration>("POST", `/admin/storage/migrations/${id}/retry`, { overwrite }),
+    cleanMigration: (id: string, confirm: string) => request<StorageMigration>("POST", `/admin/storage/migrations/${id}/clean`, { confirm }),
     transfers: () => request<TransferJob[]>("GET", "/admin/storage/transfers"),
     startTransfer: (body: { direction: TransferJob["direction"]; meeting_id?: string }) => request<TransferJob>("POST", "/admin/storage/transfers", body),
     transfer: (id: string) => request<TransferDetail>("GET", `/admin/storage/transfers/${id}`),

@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, type ApiError, type StorageProfile, type TestResult } from "../../api";
+import StorageMigrationAdmin from "./StorageMigrationAdmin";
 import StorageTransferAdmin from "./StorageTransferAdmin";
 import { useFocusOnMount } from "../../useInitialFocus";
 import InfoTip from "../../components/InfoTip";
@@ -147,6 +148,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
         </table>
       )}</div>
       {onOpen && items.length > 0 && <p className="muted small">Выбрать хранилище: «Хранилище документов встреч», «Хранилище аудиозаписей», «Видеозапись», «Хранилище вложений чата», «Хранение журнала».</p>}
+      {items.length > 0 && <StorageMigrationAdmin profiles={items} />}
       {items.length > 0 && <StorageTransferAdmin />}
     </section>
   );
