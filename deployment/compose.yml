@@ -35,7 +35,7 @@ x-app-env: &app-env
 
 services:
   postgres:
-    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    image: postgres:16-alpine@sha256:e0e53cfa0884f3cc216a621033e4f38dceb49e52218ac77facc8e48f02973093
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?}
