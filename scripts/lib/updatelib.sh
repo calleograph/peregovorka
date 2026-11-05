@@ -237,16 +237,20 @@ upd_ensure_updater_dir() {
 LIVE_UID=10001; LIVE_GID=10001
 _ld_run() { "$@" 2>/dev/null || sudo -n "$@" 2>/dev/null; }
 _ld_st() { _ld_run stat -c "$1" "$2"; }             # live/nginx (2750) закрыт для посторонних: не от root — смотреть через sudo -n
+# Все пути здесь принадлежат приложению, поэтому владелец и режим меняются только через safefs.py: chown и chmod следуют за ссылкой, которую мог подложить взломанный backend.
+_LD_SAFEFS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/safefs.py"
+_ld_fix() { _ld_run python3 -I "$_LD_SAFEFS" fix "$1" "$2" "$LIVE_UID" "$LIVE_GID" "$3" "$4"; }   # БАЗА ПУТЬ РЕЖИМ|- dir|file
 live_dirs_prepare() {
-  local b="$1/live" d rc=0
-  for d in "$b" "$b/b" "$b/acc" "$b/nginx"; do
+  local base="$1" r d rc=0
+  for r in live live/b live/acc live/nginx; do
+    d="$base/$r"
+    [ -L "$d" ] && { warn "$d — символьная ссылка, а должен быть каталог: не трогаю, удалите её вручную"; rc=1; continue; }
     [ -d "$d" ] || _ld_run mkdir -p "$d" || { warn "Не удалось создать $d"; rc=1; continue; }
-    [ "$(stat -c '%u:%g' "$d" 2>/dev/null)" = "$LIVE_UID:$LIVE_GID" ] || _ld_run chown "$LIVE_UID:$LIVE_GID" "$d" || { warn "Не удалось назначить владельца $d ($LIVE_UID:$LIVE_GID)"; rc=1; }
+    _ld_fix "$base" "$r" - dir || { warn "Не удалось назначить владельца $d ($LIVE_UID:$LIVE_GID)"; rc=1; }
   done
-  [ "$(stat -c '%a' "$b/nginx" 2>/dev/null)" = 2750 ] || _ld_run chmod 2750 "$b/nginx" || { warn "Не удалось задать права $b/nginx (2750)"; rc=1; }
-  if _ld_st %a "$b/nginx/secret.conf" >/dev/null; then
-    [ "$(_ld_st '%u:%g %a' "$b/nginx/secret.conf")" = "$LIVE_UID:$LIVE_GID 640" ] \
-      || { _ld_run chown "$LIVE_UID:$LIVE_GID" "$b/nginx/secret.conf" && _ld_run chmod 640 "$b/nginx/secret.conf"; } || { warn "Не удалось исправить права секрета $b/nginx/secret.conf"; rc=1; }
+  _ld_fix "$base" live/nginx 2750 dir || { warn "Не удалось задать права $base/live/nginx (2750)"; rc=1; }
+  if _ld_st %a "$base/live/nginx/secret.conf" >/dev/null; then
+    _ld_fix "$base" live/nginx/secret.conf 640 file || { warn "Не удалось исправить права секрета $base/live/nginx/secret.conf"; rc=1; }
   fi
   return "$rc"
 }
@@ -254,10 +258,11 @@ live_dirs_prepare() {
 live_dirs_problems() {
   local b="$1/live" d out=()
   for d in "$b" "$b/b" "$b/acc" "$b/nginx"; do
-    if [ ! -d "$d" ]; then out+=("${d#"$1/"}: нет каталога")
+    if [ -L "$d" ]; then out+=("${d#"$1/"}: символьная ссылка вместо каталога")
+    elif [ ! -d "$d" ]; then out+=("${d#"$1/"}: нет каталога")
     elif [ "$(stat -c '%u:%g' "$d" 2>/dev/null)" != "$LIVE_UID:$LIVE_GID" ]; then out+=("${d#"$1/"}: владелец $(stat -c '%u:%g' "$d" 2>/dev/null), нужен $LIVE_UID:$LIVE_GID"); fi
   done
-  [ -d "$b/nginx" ] && [ "$(stat -c '%a' "$b/nginx" 2>/dev/null)" != 2750 ] && out+=("live/nginx: режим $(stat -c '%a' "$b/nginx" 2>/dev/null), нужен 2750")
+  [ -d "$b/nginx" ] && [ ! -L "$b/nginx" ] && [ "$(stat -c '%a' "$b/nginx" 2>/dev/null)" != 2750 ] && out+=("live/nginx: режим $(stat -c '%a' "$b/nginx" 2>/dev/null), нужен 2750")
   local sm; sm="$(_ld_st '%u:%g %a' "$b/nginx/secret.conf")"
   [ -n "$sm" ] && [ "$sm" != "$LIVE_UID:$LIVE_GID 640" ] && out+=("секрет HLS: $sm, нужно $LIVE_UID:$LIVE_GID 640")
   [ "${#out[@]}" -gt 0 ] && (IFS=,; printf '%s' "${out[*]}")

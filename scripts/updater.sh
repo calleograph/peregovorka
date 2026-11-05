@@ -75,7 +75,9 @@ atomic_write() { # atomic_write ФАЙЛ  (содержимое — со stdin).
   tmp="$(mktemp "$CH/.w.XXXXXXXX")" || return 1
   cat > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
-reset_log() { rm -f "$LOG"; ( set -C; umask 022; : > "$LOG" ) 2>/dev/null || :; }
+reset_log() {     # noclobber = O_EXCL: файл создаётся заново, ссылка на этом имени не примет запись. Если приложение успело занять имя, удаляем и повторяем.
+  local i; for i in 1 2 3; do rm -f "$LOG"; ( set -C; umask 022; : > "$LOG" ) 2>/dev/null && return 0; done; :
+}
 
 # Окружение дочерних команд: только нужное для работы; всё остальное (в том числе случайные ASR_*, NGINX_*, LIVEKIT_*) отбрасывается.
 # Тесты и нестандартные установки могут добавить имена через UPDATER_PASS_ENV.

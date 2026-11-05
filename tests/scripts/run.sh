@@ -149,6 +149,8 @@ t "ports.sh: неизвестный формат — код 2" bash -c '"$1/scri
 
 # shellcheck source=part_docker.sh
 source "$ROOT/tests/scripts/part_docker.sh"
+# shellcheck source=part_safefs.sh
+source "$ROOT/tests/scripts/part_safefs.sh"
 # shellcheck source=part_diag.sh
 source "$ROOT/tests/scripts/part_diag.sh"
 # shellcheck source=part_build.sh

@@ -11,6 +11,6 @@ deps_postcheck() {
   out="$DATA_ROOT/updater/components-report.json"
   DEPS_COMPOSE_JSON="$("$py" -c 'import json,sys;print(json.dumps(sys.argv[1:]))' docker "${COMPOSE_ARGS[@]}")" "$py" "$REPO_ROOT/scripts/deps.py" postcheck --env "$ENV_FILE" --out "$out"
   rc=$?
-  chmod 644 "$out" 2>/dev/null || true
+  [ -L "$out" ] || chmod 644 "$out" 2>/dev/null || true
   return "$rc"
 }

@@ -35,5 +35,16 @@ if sudo -n true 2>/dev/null; then
     t "live: nginx (uid 101 с группой 10001) читает секрет" run --user 101:101 --group-add 10001 "$IMG" -c 'grep -q "new" /s/secret.conf'
     t "live: процесс без группы 10001 секрет не читает" bash -c '! "$@"' _ run --user 101:101 "$IMG" -c 'cat /s/secret.conf'
   fi
+
+  # 4. взломанное приложение подменило пути ссылками: root не меняет цель, а сообщает о проблеме
+  mkdir -p "$LD/c/live" "$LD/outside/dir"; lib live_dirs_prepare "$LD/c"
+  printf x > "$LD/outside/victim"; chmod 644 "$LD/outside/victim"; chmod 755 "$LD/outside/dir"
+  sudo -n ln -sfn "$LD/outside/victim" "$LD/c/live/nginx/secret.conf"
+  t "live: ссылка вместо секрета — отказ" bash -c '! "$@"' _ lib live_dirs_prepare "$LD/c"
+  t "live: цель ссылки на секрет не изменилась" eq "$(own "$LD/outside/victim")" "$(id -u):$(id -g) 644"
+  sudo -n rm -f "$LD/c/live/nginx/secret.conf"; sudo -n rm -rf "$LD/c/live/nginx"; sudo -n ln -sfn "$LD/outside/dir" "$LD/c/live/nginx"
+  t "live: ссылка вместо live/nginx — отказ" bash -c '! "$@"' _ lib live_dirs_prepare "$LD/c"
+  t "live: каталог по ссылке не тронут" eq "$(own "$LD/outside/dir")" "$(id -u):$(id -g) 755"
+  t "live: ссылка видна как проблема" bash -c 'p="$("$@")"; [[ "$p" == *"символьная ссылка"* ]]' _ lib live_dirs_problems "$LD/c"
   sudo -n rm -rf "$LD"
 fi

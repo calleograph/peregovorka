@@ -96,7 +96,7 @@ except Exception:
 
 # upd_report_write ИТОГ ПРИЧИНА РЕКОМЕНДАЦИЯ — пишет report.txt и report.json в каталог обмена с веб-интерфейсом (всё маскируется)
 upd_report_write() {
-  local result="$1" cause="${2:-}" advice="${3:-}" dir="${DATA_ROOT}/updater" txt json s st b running oldv newv
+  local result="$1" cause="${2:-}" advice="${3:-}" dir="${DATA_ROOT}/updater" txt json s st b running oldv newv tmp
   mkdir -p "$dir" 2>/dev/null || return 0
   txt="$dir/report.txt"; json="$dir/report.json"
   oldv="$(git -C "$REPO_ROOT" show "$(upd_state_get previous_git_commit 2>/dev/null || echo HEAD):VERSION" 2>/dev/null | tr -d '[:space:]')"
@@ -127,8 +127,9 @@ upd_report_write() {
     [ -n "$advice" ] && { echo; echo "Что сделать: $advice"; }
     echo
     echo "Подробные журналы: ${DATA_ROOT}/updater/update.log (из веб-интерфейса), ${DATA_ROOT}/state/build-<компонент>.log, ${DATA_ROOT}/state/last-update.state"
-  } 2>/dev/null | mask_stream > "$txt.tmp" && mv -f "$txt.tmp" "$txt" && chmod 644 "$txt" 2>/dev/null
-  python3 - "$txt" "$json" "$result" <<'PY' 2>/dev/null || true
+  } 2>/dev/null | { tmp="$(mktemp "$dir/.r.XXXXXXXX")" && mask_stream > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$txt"; }   # случайное имя: каталог открыт на запись всем
+  tmp="$(mktemp "$dir/.r.XXXXXXXX")" || return 0
+  python3 - "$txt" "$tmp" "$result" <<'PY' 2>/dev/null && chmod 644 "$tmp" && mv -f "$tmp" "$json" || rm -f "$tmp"
 import json, sys
 txt, out, result = sys.argv[1:4]
 lines = open(txt, encoding="utf-8").read().splitlines()
@@ -152,5 +153,4 @@ json.dump({"result": result, "ok": result == "успешно", "cause": after("�
            "actions": block("Автоматические действия:"), "build": block("Сборка компонентов:"), "services": block("Состояние сервисов:"),
            "sources": block("Источники сборки"), "text": "\n".join(lines)}, open(out, "w", encoding="utf-8"), ensure_ascii=False)
 PY
-  chmod 644 "$json" 2>/dev/null || true
 }

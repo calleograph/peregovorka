@@ -35,6 +35,8 @@ vol_path_error() { # vol_path_error ПУТЬ → пусто или причин�
   real="$(readlink -f "$p")"
   [ "$real" = "$p" ] || { echo "Путь содержит символьную ссылку: укажите настоящий путь ($real)"; return; }
   case "$p/" in "$DATA_ROOT"/*|"$REPO_ROOT"/*) echo "Этот каталог уже принадлежит приложению"; return ;; esac
+  case "$DATA_ROOT/" in "$p"/*) echo "Каталог содержит данные приложения: укажите отдельный каталог"; return ;; esac      # родитель открыл бы .env и ключи
+  case "$REPO_ROOT/" in "$p"/*) echo "Каталог содержит программу сервера: укажите отдельный каталог"; return ;; esac
   while IFS= read -r r; do
     [ -n "$r" ] || continue
     [ "$p" != "$r" ] && [[ "$p" == "$r"/* ]] && ok=1
@@ -76,6 +78,10 @@ vol_state_json() { # всё, что нужно веб-интерфейсу: back
 
 vol_publish() { [ -d "$DATA_ROOT/updater" ] && vol_state_json | atomic_write "$DATA_ROOT/updater/volumes.json"; }
 
+# Проверка пути и монтирование разделены: если каталог лежит на томе, куда пишет приложение, его могут заменить ссылкой на / между ними. safefs.py заново проходит путь без ссылок
+# и монтирует уже открытый каталог, поэтому подмена после проверки не работает.
+vol_bind() { timeout -k 1 20 python3 -I "$REPO_ROOT/scripts/safefs.py" bind "$1" "$2"; }
+
 vol_mountpoint() { # пустая точка подключения: пока том не подключён, приложение не может писать в неё
   local mp="$1"
   mkdir -p "$(vol_dir)" "$mp" && chown root:root "$mp" && chmod 0555 "$mp"
@@ -91,7 +97,7 @@ vol_attach() { # vol_attach ПУТЬ: 0 — подключён; иначе пр�
   err="$(vol_write_error "$p")"; [ -z "$err" ] || { VOL_ERROR="$err"; return 1; }
   if ! vol_bound "$mp"; then
     vol_mountpoint "$mp" || { VOL_ERROR="Не удалось подготовить каталог $mp"; return 1; }
-    mount --bind "$p" "$mp" || { VOL_ERROR="Не удалось подключить $p к приложению"; return 1; }
+    vol_bind "$p" "$mp" || { VOL_ERROR="Не удалось подключить $p к приложению"; return 1; }
   fi
   [ -f "$(vol_list)" ] && grep -v "^$id"$'\t' "$(vol_list)" > "$(vol_list).tmp"; touch "$(vol_list).tmp"
   printf '%s\t%s\t%s\t%s\n' "$id" "$p" "$fstype" "$source" >> "$(vol_list).tmp"
@@ -126,7 +132,8 @@ vol_reconcile() { # запуск и раз в 15 с: том подключён �
         umount -l "$mp" 2>/dev/null; changed=1
       fi
     elif [ "$same" = 1 ] && [ -d "$path" ]; then
-      vol_mountpoint "$mp" && mount --bind "$path" "$mp" && { info "Том $path подключён заново"; changed=1; }
+      if [ -n "$(vol_path_error "$path")" ]; then warn "Том $path не подключён заново: путь больше не проходит проверку ($(vol_path_error "$path"))"
+      else vol_mountpoint "$mp" && vol_bind "$path" "$mp" && { info "Том $path подключён заново"; changed=1; }; fi
     else
       vol_mountpoint "$mp"
     fi
