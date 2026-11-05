@@ -40,7 +40,7 @@ upd_git_fetch_repair() {
 }
 
 upd_saved_dir() { # новый каталог для сохранения локальных изменений
-  local d="${BACKUP_DIR:-$DATA_ROOT/backups}/local-changes-$(date +%Y%m%d-%H%M%S)"
+  local d; d="${BACKUP_DIR:-$DATA_ROOT/backups}/local-changes-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$d" 2>/dev/null || { d="$DATA_ROOT/state/local-changes-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$d"; }
   chmod 700 "$d" 2>/dev/null
   printf '%s\n' "$d"

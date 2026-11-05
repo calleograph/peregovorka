@@ -194,7 +194,7 @@ svc_extra() { case "$1" in
   *) echo "${IMAGE_TAG:-}" ;; esac; }
 
 src_fingerprint() { # хэш исходников контекста сборки + параметров образа
-  local dir="$REPO_ROOT/$(svc_context "$1")"
+  local dir; dir="$REPO_ROOT/$(svc_context "$1")"
   ( cd "$dir" && find . -type f -not -path './node_modules/*' -not -path './dist/*' -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 \
       | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null; printf '%s\n' "$(svc_extra "$1")" ) | sha256sum | cut -c1-24
 }

@@ -51,13 +51,16 @@ upd_env_classify() {
 upd_env_set_key() { # ENV NAME VALUE
   local env="$1" name="$2" val="$3" q tmp
   q="$(dotenv_quote "$val")" || { fail "Значение $name не может быть записано в .env безопасно"; return 1; }
-  tmp="$(mktemp)"
+  # Временный файл рядом с оригиналом и замена через mv: при нехватке места или любом сбое прежний .env остаётся целым (там APP_MASTER_KEY и пароли)
+  tmp="$(mktemp "$env.XXXXXX")" || { fail "Не удалось создать временный файл рядом с $env"; return 1; }
   if grep -qE "^$name=" "$env"; then
     NEWVAL="$q" awk -v n="$name" 'BEGIN{FS=OFS="="} $1==n && !d {print n "=" ENVIRON["NEWVAL"]; d=1; next} {print}' "$env" > "$tmp"
   else
-    { cat "$env"; printf '%s=%s\n' "$name" "$q"; } > "$tmp"
-  fi
-  cat "$tmp" > "$env"; rm -f "$tmp"
+    { cat "$env" && printf '%s=%s\n' "$name" "$q"; } > "$tmp"
+  fi || { rm -f "$tmp"; fail "Не удалось записать $name: $env не изменён"; return 1; }
+  [ "$(wc -l < "$tmp")" -ge "$(wc -l < "$env")" ] && grep -q "^$name=" "$tmp" || { rm -f "$tmp"; fail "Проверка новой копии $env не пройдена: файл не изменён"; return 1; }
+  chmod --reference="$env" "$tmp" 2>/dev/null; chown --reference="$env" "$tmp" 2>/dev/null
+  mv -f "$tmp" "$env" || { rm -f "$tmp"; fail "Не удалось заменить $env: файл не изменён"; return 1; }
 }
 
 # Дописать безопасные новые параметры (значения по умолчанию из .env.example) блоком в конец .env.

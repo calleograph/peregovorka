@@ -88,7 +88,12 @@ upd_autorecover() {
       SCHEMA_CHANGED=0; alembic_verify run >/dev/null 2>&1; upd_state_set alembic_after "${ALEMBIC_CUR:-}"   # ревизия восстановленной базы — в отчёт
     else warn "Автовосстановление: схема БД изменена, а точной копии до миграции нет — прежний код поверх новой схемы не запускается (см. отчёт)"; fi
   fi
-  [ "$prev" != "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ] || return 0
+  if [ "$prev" = "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" ]; then       # код не менялся (починка незавершённого обновления): остаётся только вернуть приложение
+    if [ "$(upd_state_get app_stopped)" = 1 ]; then
+      if [ "${SCHEMA_CHANGED:-0}" = 1 ]; then upd_app_start_any; else upd_app_start_old; fi
+    fi
+    return 0
+  fi
   if [ "$DEPLOY_STARTED" -eq 0 ] && [ "${SCHEMA_CHANGED:-0}" = 0 ]; then
     # 2) контейнеры прежней версии не пересоздавались: вернуть код и, если приложение останавливалось, запустить прежние контейнеры
     upd_git_unlock
@@ -112,6 +117,10 @@ upd_autorecover() {
       upd_action "откат на ${prev:0:12} не выполнен (см. журнал)"
       warn "Автовосстановление: откат невозможен (нет образов прежней версии или сервисы не запустились) — см. отчёт и docs/INSTALL_AND_UPDATE.md (Rollback)"
     fi
+  elif [ "$(upd_state_get app_stopped)" = 1 ] || [ "$DEPLOY_STARTED" -ne 0 ]; then
+    # 4) схема новая, вернуть её нельзя: прежний код не запускаем, но и сервер выключенным не оставляем
+    warn "Автовосстановление: схема БД новая, поднимаю приложение на текущем коде"
+    upd_app_start_any || warn "Приложение не поднялось на текущем коде — см. отчёт и scripts/logs.sh backend"
   fi
 }
 

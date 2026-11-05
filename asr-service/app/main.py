@@ -100,7 +100,7 @@ async def amain() -> None:
             "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
             "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "livekit_sdk": _livekit_sdk(), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(), "pipeline": HEALTH.snapshot(),
             **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
-            "active_meetings": manager.active_meetings, "dictation": {"active": len(dictation.active), **dictation.stats}, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
+            "redis_ok": manager.commands_ok, "commands_error": manager.commands_error, "active_meetings": manager.active_meetings, "dictation": {"active": len(dictation.active), **dictation.stats}, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
         }
 
     async def selftest() -> dict:

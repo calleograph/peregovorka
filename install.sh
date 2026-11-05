@@ -34,6 +34,7 @@ ok()   { printf '%s[ok]%s %s\n' "$G" "$O" "$*"; }
 warn() { printf '%s[!]%s %s\n' "$Y" "$O" "$*" >&2; }
 die()  { printf '%s[ОШИБКА]%s %s\n' "$R" "$O" "$*" >&2; exit 1; }
 
+ARGS=("$@")                # цикл ниже разбирает параметры сдвигом: для перезапуска через sudo нужна их копия
 while [ $# -gt 0 ]; do
   case "$1" in
     --host) HOST="${2:?}"; shift 2 ;;
@@ -52,7 +53,7 @@ done
 if [ "$(id -u)" -ne 0 ]; then
   command -v sudo >/dev/null 2>&1 || die "Запустите от root: sudo ./install.sh (команда sudo не найдена — войдите под root)"
   say "Нужны права администратора сервера — перезапускаю через sudo…"
-  exec sudo -E bash "$0" "$@"
+  exec sudo -E bash "$0" "${ARGS[@]}"
 fi
 
 step "Проверка сервера"

@@ -40,6 +40,9 @@ class SessionManager:
         self._s, self._r, self._queue, self._pub, self._vad = settings, redis, queue, publisher, vad_factory
         self._worker_cls = worker_cls
         self.workers: dict[str, RoomWorker] = {}
+        self.commands_ok = True          # чтение команд из Redis работает: без него новые встречи молча остаются без стенограммы
+        self.commands_error: str | None = None
+        self._last_id: str | None = None
 
     @property
     def active_meetings(self) -> int:
@@ -64,9 +67,25 @@ class SessionManager:
             await self.stop_session(mid)
 
     async def run(self) -> None:
-        # Запоминаем позицию стрима ДО чтения hash — команды, пришедшие между, не теряются (идемпотентность).
-        last = await self._r.xrevrange(CONTROL_STREAM, count=1)
-        last_id = last[0][0] if last else "0-0"
+        """Цикл команд не должен умирать молча: сбой Redis — пауза и продолжение с той же позиции, а готовность службы честно показывает проблему."""
+        pause = 1.0
+        while True:
+            try:
+                await self._run_commands()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.commands_ok, self.commands_error = False, f"{type(exc).__name__}: {exc}"[:200]
+                log.warning("Сбой чтения команд Redis, повтор", extra={"error": type(exc).__name__, "pause_s": pause})
+                await asyncio.sleep(pause)
+                pause = min(pause * 2, 30.0)
+
+    async def _run_commands(self) -> None:
+        # Запоминаем позицию стрима ДО чтения hash — команды, пришедшие между, не теряются (идемпотентность). После сбоя продолжаем с запомненной: команды паузы не теряются.
+        if self._last_id is None:
+            last = await self._r.xrevrange(CONTROL_STREAM, count=1)
+            self._last_id = last[0][0] if last else "0-0"
         for mid, raw in (await self._r.hgetall(SESSIONS_HASH)).items():
             info = parse_session(mid, raw)
             if info:
@@ -74,11 +93,17 @@ class SessionManager:
         recheck = asyncio.create_task(self._recheck_loop())
         try:
             while True:
-                resp = await self._r.xread({CONTROL_STREAM: last_id}, block=2000, count=50)
+                resp = await self._r.xread({CONTROL_STREAM: self._last_id}, block=2000, count=50)
+                self.commands_ok, self.commands_error = True, None
                 for _stream, messages in resp or []:
                     for msg_id, f in messages:
-                        last_id = msg_id
-                        await self._handle(f)
+                        self._last_id = msg_id
+                        try:
+                            await self._handle(f)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:  # noqa: BLE001 — одна неудачная команда не останавливает остальные встречи
+                            log.exception("Команда не выполнена", extra={"meeting": f.get("meeting_id", "")})
         finally:
             recheck.cancel()
 

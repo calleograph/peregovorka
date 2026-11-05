@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
-        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core libkrb5-dev gcc
+        run: bash .github/apt-install.sh ffmpeg fonts-dejavu-core libkrb5-dev gcc
       # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt
       - run: pytest -q --junitxml=junit.xml
@@ -80,14 +80,16 @@ jobs:
       - name: Синтаксис всех скриптов (bash -n)
         run: |
           rc=0
-          for f in scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh; do
+          for f in scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh install.sh deployment/livekit/entrypoint.sh frontend/live-secret.sh; do
             if ! out="$(bash -n "$f" 2>&1)"; then echo "::error file=$f,title=синтаксис bash::${out//$'\n'/ | }"; rc=1; fi
           done
           exit $rc
       - run: bash tests/scripts/run.sh
       - name: Сборка в сети хоста на настоящем Docker (BUILD_NETWORK=host)
         run: bash tests/scripts/host_build_real.sh
-      - run: sudo apt-get install -y shellcheck && shellcheck -S warning scripts/*.sh scripts/lib/*.sh || true
+      - run: bash .github/apt-install.sh shellcheck
+      - name: shellcheck     # SC2034: переменные-результаты функций читают другие файлы, это не ошибка
+        run: shellcheck -S warning -e SC2034 scripts/*.sh scripts/lib/*.sh install.sh deployment/livekit/entrypoint.sh frontend/live-secret.sh
       - name: compose config
         run: |
           cp .env.example .env
@@ -162,7 +164,7 @@ jobs:
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
-        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libkrb5-dev gcc      # gssapi и krb5 собираются из исходников
+        run: bash .github/apt-install.sh libkrb5-dev gcc      # gssapi и krb5 собираются из исходников
       - run: pip install -r backend/requirements.txt -c backend/constraints.txt
       - run: bash tests/ps/run.sh python3
 
@@ -187,7 +189,7 @@ jobs:
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
-        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libkrb5-dev gcc
+        run: bash .github/apt-install.sh libkrb5-dev gcc
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt psutil aiohttp
       - name: Сервер и нагрузка
         env:

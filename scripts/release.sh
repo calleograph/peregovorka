@@ -117,7 +117,11 @@ cmd_push() {
   local v tag
   v="$(version_file_read "$VF")"; tag="v$v"
   g rev-parse -q --verify "refs/tags/$tag" >/dev/null || die "тега $tag нет — сначала ./scripts/release.sh patch"
-  g push origin HEAD "$tag" || die "push не удался"
+  # Серверы обновляются по новейшему тегу: тег уходит только после зелёного CI этого коммита, иначе красная версия дошла бы до них раньше проверки.
+  g push origin HEAD || die "push ветки не удался"
+  say "Ветка отправлена, жду CI коммита $(g rev-parse --short=12 HEAD) (тег $tag пока не отправлен)…"
+  python3 "$REPO_ROOT/scripts/ci_wait.py" "$(g rev-parse "$tag^{commit}")" "$(g remote get-url origin)" || die "CI не зелёный: тег $tag не отправлен, серверы версию не получат. Исправьте или перезапустите CI, затем снова ./scripts/release.sh push"
+  g push origin "$tag" || die "push тега не удался"
   say "Отправлено: ветка и тег $tag. Релиз появится на GitHub после выполнения workflow «Release»."
 }
 

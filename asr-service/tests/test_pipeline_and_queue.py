@@ -206,3 +206,42 @@ def test_selftest_endpoint_is_separate_from_health_and_needs_loaded_model():
     state["model_loaded"] = True
     assert client.post("/selftest").json() == {"ok": True, "ms": 5}
     assert client.get("/healthz").status_code == 200  # healthcheck инференс не запускает
+
+
+async def test_command_loop_survives_a_redis_failure_and_reports_it():
+    """Сбой Redis завершал задачу навсегда, а /readyz оставался зелёным."""
+    class Flaky(FakeRedis):
+        def __init__(self):
+            super().__init__()
+            self.calls, self.seen = 0, []
+
+        async def xrevrange(self, *a, **k):
+            return []
+
+        async def hgetall(self, *a):
+            return {}
+
+        async def xread(self, streams, block=0, count=0):
+            self.calls += 1
+            self.seen.append(next(iter(streams.values())))
+            if self.calls == 1:
+                return [("s", [("5-0", {"type": "noop"})])]
+            if self.calls == 2:
+                raise ConnectionError("redis недоступен")
+            await asyncio.sleep(0.01)
+            return []
+
+    r = Flaky()
+    mgr = SessionManager(AsrSettings(), r, None, None, EnergyVad, worker_cls=_FakeWorker)  # type: ignore[arg-type]
+    task = asyncio.create_task(mgr.run())
+    states = []
+
+    async def watch():
+        while r.calls < 4:
+            states.append(mgr.commands_ok)
+            await asyncio.sleep(0.05)
+    await asyncio.wait_for(watch(), 10)
+    assert not task.done()
+    task.cancel()
+    assert False in states and mgr.commands_ok is True and mgr.commands_error is None, "сбой виден, после восстановления состояние снова хорошее"
+    assert r.seen[2] == "5-0", "после сбоя чтение продолжается с запомненной позиции"

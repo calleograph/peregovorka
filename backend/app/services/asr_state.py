@@ -8,7 +8,7 @@ def model_ready(hb: dict | None) -> bool:
 
 
 def pipeline_error(hb: dict | None) -> str | None:
-    return ((hb or {}).get("pipeline") or {}).get("error") or None
+    return ((hb or {}).get("pipeline") or {}).get("error") or (hb or {}).get("commands_error") or None
 
 
 def transcription_ready(hb: dict | None) -> bool:

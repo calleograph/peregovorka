@@ -82,3 +82,16 @@ if [ -n "${PYJ:-}" ]; then
   t "check: в remote.json версии установленной и опубликованной редакции" bash -c '"$1/cl/scripts/updater.sh" check --env "$1/cl/.env" >/dev/null 2>&1 && [ "$(jget "$2/remote.json" "d[\"current_version\"]")" = 0.1.0 ] && [ "$(jget "$2/remote.json" "d[\"remote_version\"]")" = 0.1.1 ]' _ "$TMP" "$TMP/upd-data/updater"
   t "check: «что нового» — только разделы новее установленной версии; кавычки и слэши не ломают JSON" bash -c 'c="$(jget "$1/remote.json" "d[\"changelog\"]")"; grep -q "^## 0.1.1" <<<"$c" && grep -q "Добавлен \"чат\" и \\\\ слэш" <<<"$c" && ! grep -q "Первое" <<<"$c"' _ "$TMP/upd-data/updater"
 fi
+
+# release.sh push: тег уходит только после зелёного CI. Серверы обновляются по тегу, поэтому красная версия не должна его получить.
+RP="$TMP/relpush"; mkdir -p "$RP"; git init -q --bare "$RP/remote.git" -b main
+git clone -q "$RP/remote.git" "$RP/w" 2>/dev/null
+( cd "$RP/w" || exit 1; git config user.email t@example.org; git config user.name t; mkdir -p scripts/lib; cp "$ROOT/scripts/release.sh" scripts/; cp "$ROOT/scripts/lib/versionlib.sh" scripts/lib/
+  echo 1.0.0 > VERSION; printf '# Changelog\n\n## 1.0.0\n- Первое.\n' > CHANGELOG.md; git add -A; git commit -qm "Релиз 1.0.0"; git tag v1.0.0 )
+rel_push() { printf 'import sys\nsys.exit(%s)\n' "$1" > "$RP/w/scripts/ci_wait.py"; ( cd "$RP/w" && REPO_ROOT="$RP/w" bash scripts/release.sh push ); }
+export -f rel_push; export RP
+t "release push: красный CI — отказ" bash -c '! rel_push 1'
+t "release push: ветка отправлена, тег нет" bash -c '[ -n "$(git -C "$RP/remote.git" rev-parse -q --verify refs/heads/main)" ] && [ -z "$(git -C "$RP/remote.git" tag -l v1.0.0)" ]'
+t "release push: зелёный CI — тег отправлен" bash -c 'rel_push 0 && [ -n "$(git -C "$RP/remote.git" tag -l v1.0.0)" ]'
+t "ci_wait: идущий запуск не считается зелёным" python3 -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import ci_wait as c; assert c.verdict([{'name': 'CI', 'status': 'in_progress'}]) is None and c.verdict([]) is None"
+t "ci_wait: красный и зелёный" python3 -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import ci_wait as c; assert c.verdict([{'name': 'CI', 'status': 'completed', 'conclusion': 'failure'}]) == 'red' and c.verdict([{'name': 'CI', 'status': 'completed', 'conclusion': 'success'}, {'name': 'Other', 'status': 'in_progress'}]) == 'green'"

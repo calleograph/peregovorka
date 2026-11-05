@@ -49,9 +49,10 @@ declare -A EXPECT=(); KEYS=()
 set_var() { # set_var KEY VALUE — единая безопасная запись (квотирование по dotenv_quote), без eval
   local k="$1" v="$2" q tmp
   q="$(dotenv_quote "$v")" || die "Значение $k содержит символы, которые нельзя безопасно записать в .env (перевод строки или сочетание ' \" \$ \\ \`). Измените значение."
-  tmp="$(mktemp)"
+  tmp="$(mktemp "$ENV.XXXXXX")" || die "Не удалось создать временный файл рядом с $ENV"
   K="$k" Q="$q" awk 'BEGIN{k=ENVIRON["K"]; q=ENVIRON["Q"]; done=0}
-    $0 ~ "^"k"=" && !done {print k"="q; done=1; next} {print} END{if(!done) print k"="q}' "$ENV" > "$tmp" && cat "$tmp" > "$ENV"; rm -f "$tmp"
+    $0 ~ "^"k"=" && !done {print k"="q; done=1; next} {print} END{if(!done) print k"="q}' "$ENV" > "$tmp" || { rm -f "$tmp"; die "Не удалось записать $k: $ENV не изменён"; }
+  chmod --reference="$ENV" "$tmp" 2>/dev/null; mv -f "$tmp" "$ENV" || { rm -f "$tmp"; die "Не удалось заменить $ENV: файл не изменён"; }
   EXPECT[$k]="$v"; KEYS+=("$k")
 }
 ask() { # ask "вопрос" "по умолчанию" -> REPLY
@@ -199,7 +200,8 @@ log; log "== План установки =="
 ask_yn "Применить установку? Затрагиваются только объекты проекта (см. план выше) [y/N] " N || { info "Отменено. Повторный запуск безопасен."; exit 0; }
 # Признак незавершённой установки: корневой install.sh не считает её готовой, пока не пройдены ВСЕ проверки и не создан администратор.
 if [ "$AUTO" -eq 1 ]; then mkdir -p "$DATA_ROOT/state"; : > "$DATA_ROOT/state/install-pending"; rm -f "$DATA_ROOT/state/install-complete"; fi
-"$REPO_ROOT/scripts/install.sh" --profile "$PROFILE" --env "$ENV" --skip-admin $([ "$SKIP_MODELS" -eq 1 ] && echo --skip-models)
+SKIP_MODELS_ARG=""; [ "$SKIP_MODELS" -eq 1 ] && SKIP_MODELS_ARG=--skip-models
+"$REPO_ROOT/scripts/install.sh" --profile "$PROFILE" --env "$ENV" --skip-admin ${SKIP_MODELS_ARG:+"$SKIP_MODELS_ARG"}
 
 SMOKE_LOG="$(mktemp)"; trap 'rm -f "$SMOKE_LOG"' EXIT
 "$REPO_ROOT/scripts/smoke-test.sh" --env "$ENV" 2>&1 | tee "$SMOKE_LOG"; SMRC=${PIPESTATUS[0]}

@@ -22,6 +22,13 @@ upd_app_stop() {
   upd_state_set app_stopped 1; upd_action "приложение остановлено перед резервной копией БД и миграцией"
 }
 
+upd_app_start_any() { # схема БД уже новая: прежний код поверх неё нельзя, поднимаем то, что соответствует текущему коду
+  dc up -d --no-build "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1 || dc start "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1
+  local UPD_SERVICES=("${UPD_APP_SERVICES[@]}")
+  if upd_wait_healthy "${WAIT:-180}"; then upd_state_set app_stopped 0; upd_action "приложение запущено снова на текущей схеме БД"; return 0; fi
+  upd_action "приложение на текущей схеме БД не стало работоспособным: ${UPD_UNHEALTHY[*]:-?}"; return 1
+}
+
 upd_app_start_old() { # запустить прежние (остановленные) контейнеры приложения
   dc start "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1 || dc up -d --no-build "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1
   local UPD_SERVICES=("${UPD_APP_SERVICES[@]}")
@@ -31,25 +38,103 @@ upd_app_start_old() { # запустить прежние (остановлен�
 
 _pgq() { dc exec -T postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
 
-# Точное возвращение БД к копии: текущая база переименовывается (сохраняется), создаётся новая, в неё восстанавливается копия.
-# Если восстановление не удалось — новая база удаляется, прежняя получает своё имя обратно (состояние как до попытки).
-upd_db_restore_exact() { # upd_db_restore_exact ДАМП
-  local bk="$1" db="$POSTGRES_DB" keep
-  [ -s "$bk" ] || { warn "Резервная копия $bk не найдена — восстановление БД невозможно"; return 1; }
-  keep="${db}_failed_$(date +%Y%m%d%H%M%S)"
-  dc stop "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1
+# Восстановление БД без риска для рабочей базы: копия разворачивается в отдельную базу, проверяется, и только затем базы меняются именами. Рабочая база до этого момента не тронута,
+# а после него остаётся под именем DB_KEPT до приёмки. Приложение должно быть остановлено. Код: 0 — переключено; 1 — ничего не изменилось.
+_db_count() { dc exec -T postgres psql -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
+db_restore_verify() { # db_restore_verify БАЗА ДАМП → пусто, код 0; иначе причина на stdout
+  local db="$1" bk="$2" toc tables fks rev
+  toc="$(dc exec -T postgres pg_restore --list < "$bk")" || { echo "оглавление дампа не читается"; return 1; }
+  tables="$(_db_count "$db" "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" || { echo "база не отвечает"; return 1; }
+  [ "$tables" = "$(printf '%s\n' "$toc" | grep -c ' TABLE public ')" ] || { echo "таблиц $tables, в дампе $(printf '%s\n' "$toc" | grep -c ' TABLE public ')"; return 1; }
+  fks="$(_db_count "$db" "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = 'public' AND c.contype = 'f'")"
+  [ "$fks" = "$(printf '%s\n' "$toc" | grep -c ' FK CONSTRAINT public ')" ] || { echo "внешних ключей $fks, в дампе $(printf '%s\n' "$toc" | grep -c ' FK CONSTRAINT public ')"; return 1; }
+  rev="$(_db_count "$db" "SELECT version_num FROM alembic_version")" || { echo "нет отметки версии схемы"; return 1; }
+  [ -n "$rev" ] || { echo "пустая отметка версии схемы"; return 1; }
+}
+db_restore_swap() { # db_restore_swap ДАМП ОТМЕТКА — DB_KEPT: имя отложенной рабочей базы, DB_RESTORE_ERROR: причина отказа
+  local bk="$1" db="$POSTGRES_DB" side="${POSTGRES_DB}_restoring" why
+  DB_KEPT=""; DB_RESTORE_ERROR=""
+  _pgq "DROP DATABASE IF EXISTS \"$side\" WITH (FORCE)" >/dev/null && _pgq "CREATE DATABASE \"$side\" OWNER \"$POSTGRES_USER\"" >/dev/null || { DB_RESTORE_ERROR="не удалось создать базу $side"; return 1; }
+  if ! dc exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$side" --no-owner --exit-on-error < "$bk"; then
+    _pgq "DROP DATABASE IF EXISTS \"$side\" WITH (FORCE)" >/dev/null 2>&1; DB_RESTORE_ERROR="pg_restore завершился с ошибкой: дамп повреждён или места недостаточно"; return 1
+  fi
+  if ! why="$(db_restore_verify "$side" "$bk")"; then
+    _pgq "DROP DATABASE IF EXISTS \"$side\" WITH (FORCE)" >/dev/null 2>&1; DB_RESTORE_ERROR="проверка восстановленной базы: $why"; return 1
+  fi
+  local keep; keep="${db}_$2_$(date +%Y%m%d%H%M%S)"
   _pgq "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid()" >/dev/null 2>&1
-  _pgq "ALTER DATABASE \"$db\" RENAME TO \"$keep\"" >/dev/null || { warn "Не удалось отложить текущую базу (переименование) — восстановление не начато"; return 1; }
-  if _pgq "CREATE DATABASE \"$db\" OWNER \"$POSTGRES_USER\"" >/dev/null \
-     && dc exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$db" --no-owner --exit-on-error < "$bk"; then
-    upd_action "БД возвращена к резервной копии $(basename "$bk") (база с результатом неудачной миграции сохранена как $keep)"
-    ok "БД возвращена к состоянию до обновления; база после неудачной миграции сохранена как $keep (удалить: после разбора, вручную)"
+  _pgq "ALTER DATABASE \"$db\" RENAME TO \"$keep\"" >/dev/null || { _pgq "DROP DATABASE IF EXISTS \"$side\" WITH (FORCE)" >/dev/null 2>&1; DB_RESTORE_ERROR="не удалось отложить рабочую базу"; return 1; }
+  if ! _pgq "ALTER DATABASE \"$side\" RENAME TO \"$db\"" >/dev/null; then
+    _pgq "ALTER DATABASE \"$keep\" RENAME TO \"$db\"" >/dev/null; DB_RESTORE_ERROR="не удалось переключить базу"; return 1
+  fi
+  DB_KEPT="$keep"
+}
+db_restore_back() { # вернуть отложенную базу на место, восстановленную убрать: приёмка не пройдена
+  local bad; bad="${POSTGRES_DB}_rejected_$(date +%Y%m%d%H%M%S)"
+  [ -n "${DB_KEPT:-}" ] || return 1
+  _pgq "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = '$POSTGRES_DB' AND pid <> pg_backend_pid()" >/dev/null 2>&1
+  _pgq "ALTER DATABASE \"$POSTGRES_DB\" RENAME TO \"$bad\"" >/dev/null && _pgq "ALTER DATABASE \"$DB_KEPT\" RENAME TO \"$POSTGRES_DB\"" >/dev/null \
+    && { _pgq "DROP DATABASE IF EXISTS \"$bad\" WITH (FORCE)" >/dev/null 2>&1; DB_KEPT=""; }
+}
+
+# scripts/restore.sh. Логика здесь, чтобы её можно было проверить на настоящем PostgreSQL без Docker Compose (tests/scripts/part_restore.sh).
+restore_preflight() { # restore_preflight ДАМП: места хватает, дамп читается
+  local need free
+  RESTORE_ERROR=""
+  dc exec -T postgres pg_restore --list < "$1" >/dev/null 2>&1 || { RESTORE_ERROR="Дамп не читается: файл повреждён или это не дамп backup.sh"; return 1; }
+  need="$(_pgq "SELECT pg_database_size(current_database())" 2>/dev/null)"
+  free="$(df -B1 --output=avail "${DATA_ROOT:-/}/postgres" 2>/dev/null | tail -1 | tr -d ' ')"
+  if [ -n "$need" ] && [ -n "$free" ] && [ "$free" -lt "$need" ]; then RESTORE_ERROR="На диске базы данных свободно меньше ($free байт), чем занимает база ($need байт): копия не поместится рядом"; return 1; fi
+}
+restore_from_dump() { # restore_from_dump ДАМП: приложение остановлено. Код 0 — приложение работает на восстановленной базе; иначе оно поднято на прежней, RESTORE_ERROR — причина
+  local bk="$1" before after UPD_SERVICES=(backend asr web)
+  RESTORE_ERROR=""
+  before="$(_db_count "$POSTGRES_DB" "SELECT version_num FROM alembic_version" 2>/dev/null)"
+  info "Копия разворачивается в отдельную базу…"
+  db_restore_swap "$bk" before_restore || { RESTORE_ERROR="$DB_RESTORE_ERROR. Рабочая база не изменена."; dc up -d --no-build backend asr web >/dev/null 2>&1; return 1; }
+  after="$(_db_count "$POSTGRES_DB" "SELECT version_num FROM alembic_version" 2>/dev/null)"
+  info "Запуск сервисов на восстановленной базе…"
+  dc up -d --no-build backend asr web >/dev/null 2>&1
+  upd_wait_healthy "${WAIT:-180}" && return 0
+  if [ "$before" != "$after" ]; then
+    warn "Схема копии ($after) отличается от прежней ($before): приложение этой версии может не работать на ней. Нужный код: scripts/rollback.sh или scripts/update.sh. Прежняя база: $DB_KEPT"
     return 0
   fi
-  _pgq "DROP DATABASE IF EXISTS \"$db\"" >/dev/null 2>&1
-  _pgq "ALTER DATABASE \"$keep\" RENAME TO \"$db\"" >/dev/null 2>&1
-  upd_action "восстановить БД из копии не удалось — база оставлена в состоянии после миграции"
-  warn "Восстановить БД из копии не удалось — база оставлена как была после миграции"
+  warn "Приложение не заработало на восстановленной базе: возвращаю прежнюю"
+  dc stop web backend asr >/dev/null 2>&1
+  db_restore_back || { RESTORE_ERROR="Вернуть прежнюю базу не удалось, она сохранена как $DB_KEPT"; return 1; }
+  dc up -d --no-build backend asr web >/dev/null 2>&1
+  RESTORE_ERROR="Приложение не заработало на восстановленной базе. Прежняя база возвращена на место."
+  return 1
+}
+restore_files() { # restore_files АРХИВ: распаковка рядом, замена каталогов только после полной распаковки. Прежнее откладывается с отметкой времени, удаляет его администратор
+  local arc="$1" tmp d ts
+  RESTORE_ERROR=""; ts="$(date +%Y%m%d%H%M%S)"
+  tmp="$(mktemp -d "$DATA_ROOT/.restore.XXXXXX")" || { RESTORE_ERROR="Не удалось создать временный каталог в $DATA_ROOT"; return 1; }
+  if ! tar --no-same-owner -xzf "$arc" -C "$tmp"; then rm -rf -- "${tmp:?}"; RESTORE_ERROR="Архив файлов не распакован: он повреждён или не хватает места"; return 1; fi
+  for d in "$tmp"/*; do
+    [ -d "$d" ] || continue
+    d="${d##*/}"
+    case "$d" in recordings|exports|chat-files|avatars|branding|ca|tls) ;; *) continue ;; esac
+    [ ! -e "$DATA_ROOT/$d" ] || mv "$DATA_ROOT/$d" "$DATA_ROOT/$d.before-restore-$ts" || { RESTORE_ERROR="Не удалось отложить каталог $d"; rm -rf -- "${tmp:?}"; return 1; }
+    mv "$tmp/$d" "$DATA_ROOT/$d" || { RESTORE_ERROR="Не удалось поставить каталог $d на место"; rm -rf -- "${tmp:?}"; return 1; }
+  done
+  rm -rf -- "${tmp:?}"
+  upd_ensure_data_dirs >/dev/null 2>&1 || true
+}
+
+# Точное возвращение БД к копии при неудачном обновлении (та же безопасная замена): если не удалось, база остаётся как была после миграции.
+upd_db_restore_exact() { # upd_db_restore_exact ДАМП
+  local bk="$1"
+  [ -s "$bk" ] || { warn "Резервная копия $bk не найдена — восстановление БД невозможно"; return 1; }
+  dc stop "${UPD_APP_SERVICES[@]}" >/dev/null 2>&1
+  if db_restore_swap "$bk" failed; then
+    upd_action "БД возвращена к резервной копии $(basename "$bk") (база с результатом неудачной миграции сохранена как $DB_KEPT)"
+    ok "БД возвращена к состоянию до обновления; база после неудачной миграции сохранена как $DB_KEPT (удалить: после разбора, вручную)"
+    return 0
+  fi
+  upd_action "восстановить БД из копии не удалось (${DB_RESTORE_ERROR}) — база оставлена в состоянии после миграции"
+  warn "Восстановить БД из копии не удалось (${DB_RESTORE_ERROR}) — база оставлена как была после миграции"
   return 1
 }
 

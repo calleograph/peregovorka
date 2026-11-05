@@ -82,7 +82,8 @@ reset_log() {     # noclobber = O_EXCL: файл создаётся заново
 # Окружение дочерних команд: только нужное для работы; всё остальное (в том числе случайные ASR_*, NGINX_*, LIVEKIT_*) отбрасывается.
 # Тесты и нестандартные установки могут добавить имена через UPDATER_PASS_ENV.
 clean_exec() {
-  local v pass=(PATH HOME LANG LC_ALL TZ DOCKER_HOST DOCKER_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 ${UPDATER_PASS_ENV:-}) args=()
+  local v pass=(PATH HOME LANG LC_ALL TZ DOCKER_HOST DOCKER_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0) args=() extra=()
+  read -r -a extra <<<"${UPDATER_PASS_ENV:-}"; pass+=("${extra[@]}")
   for v in "${pass[@]}"; do [ -n "${!v+x}" ] && args+=("$v=${!v}"); done
   args+=("ENV_FILE=$ENV_FILE")
   env -i "${args[@]}" "$@"

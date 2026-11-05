@@ -1,38 +1,45 @@
 #!/usr/bin/env bash
 # restore.sh — восстановление PostgreSQL ТЕКУЩЕГО экземпляра из дампа backup.sh.
-#   scripts/restore.sh DUMP_FILE [--env FILE] [--yes]
+#   scripts/restore.sh DUMP_FILE [--files АРХИВ] [--env FILE] [--yes]
 #
-# ОПАСНО: заменяет содержимое БД проекта. Без --yes требуется ввести имя проекта.
-# Перед восстановлением автоматически делается страховочный дамп текущего состояния.
-# Останавливаются и затем запускаются только backend/asr/web ЭТОГО проекта.
+# Копия разворачивается в ОТДЕЛЬНУЮ базу и проверяется (таблицы, внешние ключи, версия схемы); рабочая база до этого не тронута. Затем базы меняются именами.
+# Прежняя база остаётся рядом до приёмки. Если приложение не заработало на восстановленной базе той же версии схемы — прежняя возвращается автоматически.
+# Без --yes требуется ввести имя проекта. Перед восстановлением делается страховочный дамп. Останавливаются и запускаются только backend/asr/web ЭТОГО проекта.
+# --files  архив файлов (backup.sh --full): распаковка рядом и замена каталогов, прежние остаются как <каталог>.before-restore-<время>.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-FILE=""; YES=0
+FILE=""; YES=0; FILES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) ENV_FILE="$2"; shift 2 ;;
+    --files) FILES="$2"; shift 2 ;;
     --yes) YES=1; shift ;;
     -*) die "Неизвестный аргумент: $1" ;;
     *) FILE="$1"; shift ;;
   esac
 done
 [ -n "$FILE" ] && [ -f "$FILE" ] || die "Укажите существующий файл дампа"
+[ -z "$FILES" ] || [ -f "$FILES" ] || die "Архив файлов не найден: $FILES"
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 require_vars POSTGRES_DB POSTGRES_USER
 
-warn "Будет ПЕРЕЗАПИСАНА база '${POSTGRES_DB}' проекта '${COMPOSE_PROJECT_NAME}' из файла: $FILE"
+warn "База '${POSTGRES_DB}' проекта '${COMPOSE_PROJECT_NAME}' будет заменена копией из файла: $FILE"
+[ -z "$FILES" ] || warn "Файлы встреч в ${DATA_ROOT:-?} будут заменены содержимым архива: $FILES"
 if [ "$YES" -ne 1 ]; then
   read -r -p "Для подтверждения введите имя проекта (${COMPOSE_PROJECT_NAME}): " ans
   [ "$ans" = "$COMPOSE_PROJECT_NAME" ] || die "Подтверждение не получено — отмена."
 fi
 
+restore_preflight "$FILE" || die "$RESTORE_ERROR"
 "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label pre-restore --keep 50
+# Рабочая база до переключения не тронута, но приложение на это время остановлено: при любом выходе оно должно подняться снова.
+app_back() { local rc=$?; if [ "$rc" -ne 0 ]; then warn "Восстановление не выполнено, запускаю приложение"; dc up -d --no-build backend asr web >/dev/null 2>&1 || true; fi; }
+trap app_back EXIT
 info "Остановка backend/asr/web проекта…"
 dc stop web backend asr
-info "pg_restore…"
-dc exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error < "$FILE" \
-  || die "pg_restore завершился с ошибкой. Страховочный дамп 'pre-restore' сохранён в каталоге резервных копий."
-info "Запуск сервисов…"
-dc up -d --no-build backend asr web
-ok "Восстановление завершено. Проверьте: scripts/status.sh && scripts/smoke-test.sh"
+restore_from_dump "$FILE" || die "$RESTORE_ERROR"
+[ -z "$FILES" ] || restore_files "$FILES" || warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"
+trap - EXIT
+ok "Восстановление завершено. Прежняя база сохранена как $DB_KEPT. После проверки удалите её: docker compose exec postgres dropdb -U $POSTGRES_USER $DB_KEPT"
+ok "Проверка: scripts/status.sh && scripts/smoke-test.sh"
