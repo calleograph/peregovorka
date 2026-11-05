@@ -166,15 +166,17 @@ class Channel:
         """Фактическое состояние дополнительных компонентов (components.json пишет исполнитель, scripts/lib/complib.sh)."""
         return self._json("components.json")
 
-    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False, repair: str | None = None, op: str | None = None) -> str:
-        if action not in ("check", "update", "scan", "repair", "ping", "component"):
+    def request(self, action: str, *, by: str, force_build: bool = False, pull: bool = False, repair: str | None = None, op: str | None = None, arg: str | None = None) -> str:
+        if action not in ("check", "update", "scan", "repair", "ping", "component", "volume"):
             raise ValueError("action")
+        if action == "volume" and (op not in ("attach", "detach") or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", arg or "")):
+            raise ValueError("volume")
         if action == "repair" and repair not in REPAIR_IDS:
             raise ValueError("repair")
         if action == "component" and op not in COMPONENT_OPS:
             raise ValueError("op")
         rid = uuid.uuid4().hex[:16]
-        extra = [f"repair={repair}"] if action == "repair" else [f"op={op}"] if action == "component" else []
+        extra = [f"repair={repair}"] if action == "repair" else [f"op={op}"] if action == "component" else [f"op={op}", f"arg={arg}"] if action == "volume" else []
         body = "\n".join([f"id={rid}", f"action={action}", f"force_build={int(force_build)}", f"pull={int(pull)}", *extra,
                           f"by={_SAFE.sub('_', by)[:60]}", f"at={int(time.time())}"]) + "\n"
         tmp = self.dir / f".request.{rid}.tmp"

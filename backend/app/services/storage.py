@@ -94,9 +94,11 @@ class LocalStorage:
     def _require_marker(self) -> None:
         if not self._marker:
             return
-        if self._mount:
-            from . import mounts  # noqa: PLC0415
+        from . import mounts  # noqa: PLC0415
 
+        if not mounts.alive(str(self._root)):
+            raise StorageError(f"Том хранилища {self._root} не отвечает: сетевой ресурс недоступен. Операция остановлена, данные на месте; после восстановления связи всё продолжится.")
+        if self._mount:
             if not mounts.same_mount(self._mount, mounts.describe(str(self._root))):
                 raise StorageError(f"Том хранилища {self._root} не смонтирован: по этому пути сейчас другая файловая система (ожидалась {self._mount.get('fstype')} "
                                    f"в {self._mount.get('mountpoint')}). Запись остановлена, чтобы не заполнять локальный диск.")
@@ -143,6 +145,7 @@ class LocalStorage:
         return str(full)
 
     def read_bytes(self, rel: str) -> bytes:
+        self._require_marker()
         try:
             return self._full(rel).read_bytes()
         except FileNotFoundError:

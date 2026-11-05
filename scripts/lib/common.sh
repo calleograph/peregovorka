@@ -117,6 +117,7 @@ validate_project_name() {
 
 # Массив аргументов compose для текущего экземпляра.
 compose_args() {
+  EXT_PROPAGATION="$(ext_propagation)"; export EXT_PROPAGATION
   resolve_image_tag
   COMPOSE_ARGS=(compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$REPO_ROOT/deployment"
                 --env-file "$ENV_FILE" -f "$COMPOSE_FILE_MAIN")
@@ -127,6 +128,8 @@ compose_args() {
   if declare -F video_active >/dev/null 2>&1 && video_active; then COMPOSE_ARGS=("${COMPOSE_ARGS[0]}" --profile video "${COMPOSE_ARGS[@]:1}"); fi
 }
 
+# Том внешних хранилищ: rslave — новые тома появляются в работающем контейнере сами. На сервере без общих монтирований Docker отказал бы в запуске контейнера, поэтому там rprivate.
+ext_propagation() { if findmnt -no PROPAGATION -T "${DATA_ROOT:-/}" 2>/dev/null | grep -Eq 'shared|slave'; then echo rslave; else echo rprivate; fi; }
 dc() { compose_args; docker "${COMPOSE_ARGS[@]}" "$@"; }
 
 # Выполняет команду либо только печатает её в режиме DRY_RUN=1.

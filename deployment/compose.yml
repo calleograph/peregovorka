@@ -240,6 +240,13 @@ services:
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/recordings:/data/recordings
       - ${DATA_ROOT}/live:/data/live            # HLS прямых эфиров (общий с Egress и nginx web)
+      # Внешние тома: помощник на хосте подключает смонтированный каталог в ext/ИД, и он сразу виден здесь как /data/ext/ИД, без пересоздания контейнера (scripts/lib/vollib.sh).
+      - type: bind
+        source: ${DATA_ROOT}/ext
+        target: /data/ext
+        bind:
+          propagation: ${EXT_PROPAGATION:-rslave}
+          create_host_path: true
       # счётчики сетевых интерфейсов хоста для диагностики эфира (только чтение, один файл): контейнер видит только свою сеть. Отключается HOST_NETDEV=/dev/null в .env
       - ${HOST_NETDEV:-/proc/1/net/dev}:/host/netdev:ro
       # обмен с исполнителем обновлений на хосте (scripts/updater.sh): запросы из веб-интерфейса и вывод обновления

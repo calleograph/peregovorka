@@ -30,6 +30,7 @@ from ..db import release
 from ..models import StorageProfile, utcnow
 from .settings import SettingsError, SettingsService, _StorageTarget, _first_error
 from .storage import LocalStorage, SmbStorage, StorageBackend, StorageError, build_storage
+from .volumes import Volumes
 
 log = logging.getLogger("app.filestore")
 
@@ -38,7 +39,7 @@ FOLDERS = (AUDIO, TRANSCRIPTS, PROTOCOLS, CHAT, BOARDS, LOGS, VIDEO)
 # какая группа настроек выбирает профиль
 FUNCTION_GROUPS = {"audio_storage": "Аудиозаписи", "video": "Видеозаписи", "storage": "Протоколы и материалы встречи", "chat_files": "Вложения чата", "journal": "Журнал"}
 _CONFIG_KEYS = ("local_path", "smb_server", "smb_share", "smb_base_path", "smb_username", "smb_domain")
-_EXTRA_KEYS = ("external_volume",)          # отметка администратора: каталог — смонтированный внешний том (сетевая папка, диск): включает защиту от записи на системный диск при отключении
+_EXTRA_KEYS = ("external_volume", "host_path")          # host_path — путь на сервере: помощник открывает его приложению как /data/ext/ИД (services/volumes.py). external_volume — отметка администратора: каталог — смонтированный внешний том (сетевая папка, диск): включает защиту от записи на системный диск при отключении
 
 
 class PrefixedStorage:
@@ -95,6 +96,7 @@ class PrefixedStorage:
 
 class FileStore:
     def __init__(self, svc: SettingsService, data_dir: str):
+        self.volumes = Volumes(data_dir)       # внешние тома: каталог сервера открывает помощник на хосте
         self._svc = svc
         self._data_dir = data_dir
 
@@ -137,15 +139,16 @@ class FileStore:
         return backend
 
     def _public(self, row: StorageProfile, usage: list[str]) -> dict:
-        cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS}
+        cfg = {k: v for k, v in (row.config or {}).items() if k in _CONFIG_KEYS or k == "host_path"}
         return {"id": str(row.id), "name": row.name, "kind": row.kind, "config": cfg, "secret_set": bool(row.secret_enc), "used_by": usage,
                 "address": self.address(row.kind, cfg), "volume_marked": bool((row.config or {}).get("volume_marker")),
-                "external_volume": bool((row.config or {}).get("external_volume")), "volume_mount": (row.config or {}).get("volume_mount")}
+                "external_volume": bool((row.config or {}).get("external_volume")), "volume_mount": (row.config or {}).get("volume_mount"),
+                "host_path": (row.config or {}).get("host_path") or None, "volume": self.volumes.info((row.config or {}).get("host_path"))}
 
     @staticmethod
     def address(kind: str, cfg: dict) -> str:
         if kind == "local":
-            return str(cfg.get("local_path", ""))
+            return str(cfg.get("host_path") or cfg.get("local_path", ""))
         base = "\\".join(p for p in str(cfg.get("smb_base_path", "")).replace("/", "\\").split("\\") if p)
         return "\\\\" + str(cfg.get("smb_server", "")) + "\\" + str(cfg.get("smb_share", "")) + ("\\" + base if base else "")
 
@@ -189,6 +192,7 @@ class FileStore:
             raise SettingsError("Название хранилища: 1–120 символов")
         if (await db.execute(select(StorageProfile).where(StorageProfile.name == name))).scalars().first():
             raise SettingsError("Хранилище с таким названием уже есть")
+        config = await self._connect(kind, config)
         self._check(kind, config, secret)
         pid = uuid.uuid4()
         row = StorageProfile(id=pid, name=name, kind=kind, config={k: v for k, v in config.items() if k in _CONFIG_KEYS or k in _EXTRA_KEYS},
@@ -196,6 +200,13 @@ class FileStore:
         db.add(row)
         await db.commit()
         return self._public(row, [])
+
+    async def _connect(self, kind: str, config: dict) -> dict:
+        """Внешний том по пути на сервере: помощник проверяет каталог и открывает его приложению, профиль хранит оба пути. Путь внутри контейнера (/data/…) работает как раньше."""
+        host = str(config.get("host_path") or "").strip().rstrip("/")
+        if kind != "local" or not config.get("external_volume") or not host:
+            return {k: v for k, v in config.items() if k != "host_path"}
+        return {**config, "host_path": host, "local_path": await self.volumes.attach(host)}
 
     def _check(self, kind: str, config: dict, secret: str) -> None:
         cfg = self._target(kind, config, secret)
@@ -224,6 +235,11 @@ class FileStore:
         secret = self._decrypt(row)
         if patch.get("secret") is not None:    # None = не менять, "" = очистить
             secret = str(patch["secret"])
+        old_host = (row.config or {}).get("host_path")
+        cfg = await self._connect(row.kind, cfg)
+        if cfg.get("host_path") != old_host:
+            cfg.pop("volume_marker", None)                                # другой том — другая метка (ставится при «Проверить»)
+            cfg.pop("volume_mount", None)
         self._check(row.kind, cfg, secret)
         if name is not None:
             row.name = name
@@ -232,6 +248,8 @@ class FileStore:
             row.secret_enc = self._encrypt(row.id, secret)
         row.updated_at = utcnow()
         await db.commit()
+        if old_host and old_host != cfg.get("host_path"):
+            await self._release(db, old_host)
         return self._public(row, (await self._usage(db)).get(str(row.id), []))
 
     async def delete(self, db: AsyncSession, profile_id: str) -> None:
@@ -243,8 +261,17 @@ class FileStore:
 
         if (await db.execute(select(ChatAttachment.id).where(ChatAttachment.profile_id == row.id).limit(1))).first():
             raise SettingsError("В этом хранилище лежат вложения чата существующих встреч — удалить его нельзя, пока они не удалены.")
+        host = (row.config or {}).get("host_path")
         await db.delete(row)
         await db.commit()
+        if host:
+            await self._release(db, host)
+
+    async def _release(self, db: AsyncSession, host: str) -> None:
+        """Том больше никем не используется — снять подключение. Данные на ресурсе остаются; сбой не мешает: том просто останется подключённым."""
+        rows = (await db.execute(select(StorageProfile))).scalars().all()
+        if not any((r.config or {}).get("host_path") == host for r in rows):
+            await self.volumes.detach(host)
 
     async def validate_choice(self, db: AsyncSession, patch: dict) -> None:
         """Выбранный функцией профиль должен существовать."""
@@ -325,9 +352,17 @@ class FileStore:
     async def test_profile(self, db: AsyncSession, profile_id: str) -> str:
         """Пробная запись и создание подпапок (Audio/, Protocols/ …) — так права и пути проверяются сразу, а не при первой выгрузке."""
         row = await self.row(db, profile_id)
+        c = row.config or {}
+        if row.kind == "local" and c.get("host_path"):
+            # том мог быть не подключён: новый сервер после восстановления настроек, ресурс появился позже. Проверка подключает его заново.
+            await self.volumes.attach(c["host_path"])
+            from . import mounts  # noqa: PLC0415
+
+            info = await asyncio.to_thread(mounts.describe, str(c.get("local_path", "")))
+            if info is not None and info["mountpoint"] != c.get("local_path"):
+                raise SettingsError(f"Том {c['host_path']} подключён на сервере, но не виден приложению. Перезапустите приложение (scripts/ctl.sh restart backend) и повторите проверку.")
         backend = await asyncio.to_thread(self.build, row)
         note = ""
-        c = row.config or {}
         if row.kind == "local" and isinstance(backend, LocalStorage) and c.get("external_volume") and not c.get("volume_marker"):
             # Защита включается только для папок, которые администратор отметил как внешний том (смонтированная сетевая папка, внешний диск): обычная локальная папка на диске
             # сервера работает как раньше. Метку нельзя ставить «вслепую»: если том не смонтирован, метка легла бы в пустой каталог на системном диске и защита потеряла бы смысл.
@@ -350,6 +385,10 @@ class FileStore:
                 probe = f"{folder}/.peregovorka-write-test-{uuid.uuid4().hex[:8]}"
                 backend.write_bytes(probe, b"ok")
                 backend.delete(probe)
-            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}" + note
+            where = ""
+            if c.get("host_path") and row.kind == "local":
+                total, free = backend.volume()
+                where = f" Том {c['host_path']}: свободно {free / 1024**3:.1f} из {total / 1024**3:.1f} ГБ."
+            return f"Запись возможна, подпапки созданы: {', '.join(FOLDERS)}." + where + note
 
         return await asyncio.to_thread(run)
