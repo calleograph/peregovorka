@@ -49,7 +49,7 @@ export default function GenerationInfo({ item }: { item: ProtocolItem }) {
   if (g?.model) rows.push(["Модель", `${g.model_title || g.model}${g.model_title && g.model !== g.model_title ? ` (${g.model})` : ""} · API: ${g.api_type ?? "?"}${g.llm_profile ? `, подключение «${g.llm_profile}»` : ""}`]);
   if (g?.anonymized !== undefined && g?.anonymized !== null) rows.push(["Обезличивание", g.anonymized
     ? `${g.anonymizer_profile ? `профиль «${g.anonymizer_profile}»` : "включено"}${g.anonymized_replaced ? ` · замен: ${g.anonymized_replaced}` : ""}${g.anonymized_categories ? ` (${Object.entries(g.anonymized_categories).map(([k, n]) => `${CATEGORY_RU[k] ?? k} ${n}`).join(", ")})` : ""}`
-    : "выключено в переговорке (пароли и ключи скрываются всегда)"]);
+    : `${g.anonymize_choice === "off" ? "выключено для этого документа" : "выключено в настройках"} (пароли и ключи скрываются всегда)`]);
   if (g?.llm_source) rows.push(["Почему эта модель", SOURCE[g.llm_source] ?? g.llm_source]);
   if (g?.input_chars) rows.push(["Стенограмма → документ", `${g.input_chars.toLocaleString("ru-RU")} знаков → ${g.chunks ?? 1} ${(g.chunks ?? 1) === 1 ? "часть" : "частей"} → ${(g.llm_calls ?? 0)} обращений к модели${g.retries ? `, повторов: ${g.retries}` : ""} → ${(g.output_chars ?? 0).toLocaleString("ru-RU")} знаков`]);
   if (g?.finish && Object.keys(g.finish).length) rows.push(["Причины остановки модели", Object.entries(g.finish).map(([k, n]) => `${FINISH[k] ?? k}: ${n}`).join("; ") + (g.max_tokens ? ` · предел ответа ${g.max_tokens} токенов${g.limit_note ? ` (${g.limit_note})` : ""}` : "")]);

@@ -88,12 +88,23 @@ def word_cases(word: str) -> set[str]:
     return set() if "Fixd" in str(morph().parse(word)[0].tag) else cases
 
 
+_PATR_END = re.compile(r"(?:ович|евич|ьич|ична|овна|евна)$", re.I)
+
+
+def _trusted(p, role: str, word: str) -> bool:
+    """Имя и отчество определяют пол человека, поэтому берутся только из словаря. Для незнакомого слова словарь лишь угадывает по окончанию: редкая фамилия на «-ин» похожа на
+    родительный падеж женского имени на «-ина» (звательный разбор и вовсе служебный), и мужчина с отчеством на «-ич» становился женщиной с отчеством на «-на»."""
+    if role == "Surn":
+        return True
+    return "voct" not in p.tag and (p.is_known or (role == "Patr" and bool(_PATR_END.search(word))))
+
+
 def _role(word: str, gender: str = ""):
     """(роль, разбор) — самый вероятный разбор слова как имени, фамилии или отчества в единственном числе; None — не похоже на часть имени."""
     best = None
     for p in morph().parse(word):
         g = next((r for r in ROLES if r in p.tag), None)
-        if g and "sing" in p.tag and (not gender or p.tag.gender in (gender, None)):
+        if g and "sing" in p.tag and _trusted(p, g, word) and (not gender or p.tag.gender in (gender, None)):
             if best is None or p.score > best[1].score:
                 best = (g, p)
     return best

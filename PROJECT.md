@@ -290,6 +290,10 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 **Из ревизии документации 2026-11-04:** отзыв ссылки эфира, переключатель пароля, подсказки «Эта встреча», порог диска и `ctl.sh restart` исправлены в 0.67.0. Открыто: nginx установщика не слушает порт 80 (менять только с проверкой на настоящем nginx хоста под root: чужой процесс на порту 80 сломает перезагрузку nginx); LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца.
 
+0zo. **Сервер 0.68.0: материалы встречи.** Получатели независимы от правила рассылки и обезличивания; режим обезличивания одного документа; карта на обезличенной стенограмме; имя и отчество только из словаря.
+* Код: `api/delivery.py`, `services/mail_delivery.py::resolve`, `privacy/names.py::_role`, `privacy/policy.py`, `services/protocols.py::mask_session`, `services/conv_map.py::mask_lines`, `frontend/src/components/AnonChoice.tsx`.
+* Не проверено: настоящая языковая модель, настоящий почтовый сервер, приложения. Проверки рода фамилии в тексте модели нет.
+
 0zn. **Сервер 0.67.0: панель диагностики эфира.** Устройство — `docs/BROADCASTS.md`, раздел «Диагностика эфира»; инструкция — вики «Панель диагностики эфира».
 * Код: `backend/app/services/live_diag.py`, `backend/app/api/live_diag.py`, `frontend/src/livediag/`; пульс зрителя — `api/live.py::viewer_ping`; порты 9090 (Egress) и 8081 (nginx), файл `HOST_NETDEV`, счётчик Egress из его проверки здоровья — `deployment/compose.yml`.
 * Испытание: `tests/live/egress/run_diag.py`.

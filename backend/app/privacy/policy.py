@@ -16,6 +16,21 @@ def build_policy(cfg, profile: str) -> Policy:
     return Policy.from_profile(profile if profile in PROFILES else "basic", **common)
 
 
+def document_privacy(cfg, room, choice: str | None) -> tuple[bool, str]:
+    """Режим одного документа: «on»/«off» — выбор организатора только для него, пусто — по настройкам комнаты и сервера. Права проверяет `choice_refused`."""
+    on, profile = room_privacy(cfg, room)
+    return {"on": True, "off": False}.get(choice or "", on), profile
+
+
+def choice_refused(cfg, choice: str | None, *, is_admin: bool) -> str | None:
+    """Причина отказа в выбранном режиме; None — разрешено. Обязательное обезличивание снимает для документа только администратор сервера."""
+    if choice == "off" and cfg.required and not is_admin:
+        return "Обезличивание обязательно на этом сервере: сформировать документ без него может только администратор."
+    if choice == "on" and not (cfg.enabled or cfg.required):
+        return "Обезличивание выключено администратором сервера."
+    return None
+
+
 def room_privacy(cfg, room) -> tuple[bool, str]:
     """(обезличивать ли материалы этой комнаты, профиль). Обязательное у администратора сильнее выбора комнаты; профиль комнаты — только из разрешённых."""
     on = bool(cfg.required) or (bool(cfg.enabled) and getattr(room, "anonymize_mode", "off") == "on")

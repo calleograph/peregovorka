@@ -17,7 +17,8 @@ import hashlib
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -29,6 +30,7 @@ from ..db import release
 from ..models import ConversationMap, GuestParticipant, Meeting, Protocol, TranscriptSegment, utcnow
 from .extraction import Item, Line, _stems, merge_items, norm, parse_transcript, to_structured
 from .fact_engine import Extraction, FactsCache, diagnostics, extract, load_facts
+from ..privacy.engine import PrivacyError
 from .llm_choice import limit_report, parse_once, resolve_llm
 from .segments import author_name
 from .topic_categories import CAT_IDS, CAT_LABEL, CATEGORIES  # noqa: F401
@@ -96,6 +98,16 @@ def build_lines(rows: list[TranscriptSegment], started: datetime, tz, mask: bool
         who = author_name(r) or "Неизвестный участник"
         out.append(MapLine(Line(len(out), clock(abs_s), abs_s, who, text), rel, end, r.id, who))
     return out
+
+
+def mask_lines(anon, header: list[str], lines: list[MapLine]) -> tuple[list[str], list[MapLine], Any]:
+    """Реплики карты → обезличенные одним проходом, как стенограмма протокола: одна сессия замен, автор и текст строки меняются, порядок, время и ссылка на реплику остаются.
+    Строк стало меньше или больше — сопоставить нельзя, это отказ: в модель ничего не уходит."""
+    res = anon.process("\n".join([*header, *(m.line.render() for m in lines)]))
+    head, parsed = parse_transcript(res.text)
+    if len(parsed) != len(lines):
+        raise PrivacyError("anonymizer_failed", "Обезличивание карты не выполнено: не удалось сопоставить реплики. Карта не построена, текст в модель не отправлялся.")
+    return head, [replace(m, line=replace(m.line, speaker=p.speaker, text=p.text), user_key=p.speaker) for m, p in zip(lines, parsed)], res
 
 
 def speaker_seconds(lines: list[MapLine]) -> dict[str, int]:
@@ -442,7 +454,7 @@ class MapService:
     async def get(self, db: AsyncSession, meeting_id: uuid.UUID) -> ConversationMap | None:
         return (await db.execute(select(ConversationMap).where(ConversationMap.meeting_id == meeting_id))).scalars().first()
 
-    async def request(self, db: AsyncSession, meeting_id: uuid.UUID, actor: str, once: str | None = None) -> ConversationMap:
+    async def request(self, db: AsyncSession, meeting_id: uuid.UUID, actor: str, once: str | None = None, anonymize: str | None = None) -> ConversationMap:
         """Создаёт (или сбрасывает) запись «в очереди». Пользовательские правки и ПРЕЖНЯЯ готовая карта сохраняются: пока строится новая, видна старая,
         а при сбое остаётся она (`_fail`). `once` — модель на один раз (local:… | profile:…), выбранная руководителем. Запуск — start()."""
         rec = await self.get(db, meeting_id)
@@ -453,9 +465,9 @@ class MapService:
         else:
             keep = self._keep(rec)
             rec.status, rec.error, rec.created_by = "pending", None, actor
-            rec.meta = {"requested_at": now.isoformat(), **({"keep": keep} if keep else {}), **({"llm_once": once} if once else {})}
+            rec.meta = {"requested_at": now.isoformat(), **({"keep": keep} if keep else {}), **({"llm_once": once} if once else {}), **({"anonymize_choice": anonymize} if anonymize else {})}
             return await self._commit_request(db, meeting_id, rec)
-        rec.meta = {"requested_at": now.isoformat(), **({"llm_once": once} if once else {})}
+        rec.meta = {"requested_at": now.isoformat(), **({"llm_once": once} if once else {}), **({"anonymize_choice": anonymize} if anonymize else {})}
         return await self._commit_request(db, meeting_id, rec)
 
     @staticmethod
@@ -539,7 +551,7 @@ class MapService:
             if rec is None:
                 return
             requested = rec.meta.get("requested_at") if rec.meta else None
-            carry = {k: rec.meta[k] for k in ("keep", "llm_once") if rec.meta and rec.meta.get(k)}      # прежняя карта и модель «на один раз» переживают смену статусов
+            carry = {k: rec.meta[k] for k in ("keep", "llm_once", "anonymize_choice") if rec.meta and rec.meta.get(k)}      # прежняя карта и модель «на один раз» переживают смену статусов
             await release(db)
         async with self._sem:                                    # очередь: одна карта за раз
             started = datetime.now(timezone.utc)
@@ -554,9 +566,9 @@ class MapService:
             info: dict = {}
             try:
                 async with self.ps._sm() as db:                  # этап чтения: всё нужное — в обычные объекты, затем сессия закрывается
-                    prep = await self._prepare(db, meeting_id, info, carry.get("llm_once"))
+                    prep = await self._prepare(db, meeting_id, info, carry.get("llm_once"), carry.get("anonymize_choice"))
                 data, meta = await self._compute(prep, info)    # LLM: ни одной транзакции PostgreSQL
-                meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat(), llm_once=carry.get("llm_once"))
+                meta.update(requested_at=requested, started_at=started.isoformat(), finished_at=utcnow().isoformat(), llm_once=carry.get("llm_once"), anonymize_choice=carry.get("anonymize_choice"))
                 meta["duration_s"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
                 async with self.ps._sm() as db:
                     rec = await db.get(ConversationMap, map_id)
@@ -588,7 +600,7 @@ class MapService:
 
     @staticmethod
     def _base_meta(requested: str | None, started: datetime, info: dict) -> dict:
-        m = {k: info[k] for k in ("model", "model_title", "llm_profile") if k in info}
+        m = {k: info[k] for k in ("model", "model_title", "llm_profile", "anonymized") if k in info}
         return {**m, "requested_at": requested, "started_at": started.isoformat(), "finished_at": utcnow().isoformat(),
                 "duration_s": round((datetime.now(timezone.utc) - started).total_seconds(), 1)}
 
@@ -596,7 +608,7 @@ class MapService:
         if self.journal is not None:
             self.journal.emit("llm", event, level=level, meeting_id=str(rec.meeting_id), message=message or event, data={"kind": "map", **(data or {})})
 
-    async def _prepare(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict, once: str | None = None) -> dict:
+    async def _prepare(self, db: AsyncSession, meeting_id: uuid.UUID, info: dict, once: str | None = None, anonymize: str | None = None) -> dict:
         """Чтение из базы для построения карты: возвращает обычные данные (без привязки к сессии). После возврата сессия закрывается, соединение свободно."""
         ps = self.ps
         meeting = await db.get(Meeting, meeting_id)
@@ -607,11 +619,6 @@ class MapService:
             raise LlmError("unavailable", choice.reason or "")
         eff = ps.llm.effective(choice.settings)
         info.update(model=eff.model, model_title=choice.name, llm_profile=choice.name)
-        # Включено обезличивание: карта строится по именам участников и репликам — пока не поддерживается (fail closed: в модель ничего не уходит).
-        from ..privacy.policy import room_privacy  # noqa: PLC0415
-
-        if room_privacy(await ps._svc.get(db, "anonymizer"), meeting.room)[0]:
-            raise MapError("Для этой комнаты включено обезличивание, а карта разговора пока строится только без него. Протокол и резюме формируются с обезличиванием.")
         rows = (await db.execute(select(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id)
                                  .order_by(TranscriptSegment.started_at, TranscriptSegment.id))).scalars().unique().all()
         tz = await ps._tz(db)
@@ -625,6 +632,20 @@ class MapService:
 
         names = await ps.participant_names(db, meeting)
         header, _ = parse_transcript(render_transcript(meeting.room.name, meeting.started_at, meeting.ended_at, names, [], tz))
+        # Тот же этап обезличивания, что у протокола и резюме. Дальше анализ идёт как обычно: ему важны реплики, их порядок и авторы, а не настоящие имена.
+        from ..privacy.policy import PROFILE_TITLES, document_privacy  # noqa: PLC0415
+
+        an_cfg = await ps._svc.get(db, "anonymizer")
+        do_anonymize, an_profile = document_privacy(an_cfg, meeting.room, anonymize)
+        privacy: dict = {"anonymized": do_anonymize}
+        info["anonymized"] = do_anonymize
+        if do_anonymize:
+            await release(db)
+            try:
+                header, lines, res = await ps.mask_session(an_cfg, an_profile, names, lambda anon: mask_lines(anon, header, lines))
+            except PrivacyError as exc:
+                raise MapError(exc.message) from None
+            privacy.update(anonymizer_profile=PROFILE_TITLES.get(an_profile), anonymized_replaced=len(res.replacements), anonymized_categories=res.stats() or None, warnings=res.warnings)
         pr_cfg = await ps._svc.get(db, "protocol")
         limit = pr_cfg.max_input_chars       # type: ignore[attr-defined]
         out_cap, _note = eff.output_limit("map")
@@ -636,7 +657,7 @@ class MapService:
         _ = meeting.room, meeting.started_at                         # подгрузить связанное до закрытия сессии
         await release(db)
         return {"meeting": meeting, "choice": choice, "eff": eff, "lines": lines, "tz": tz, "clock_offset": clock_offset, "llm": llm, "header": header,
-                "limit": frag_limit, "cache": cache, "cap": out_cap}
+                "limit": frag_limit, "cache": cache, "cap": out_cap, "privacy": privacy}
 
     async def _compute(self, prep: dict, info: dict) -> tuple[dict, dict]:
         """Обращение к модели и сборка карты — без базы данных."""
@@ -660,4 +681,7 @@ class MapService:
                 "prompt_tokens": res.prompt_tokens, "completion_tokens": res.completion_tokens, "tokens_per_s": diag["tokens_per_s"], "llm_s": info["llm_s"],
                 "topics": len(data["topics"]), "warnings": run.warnings, "rejected": run.rejected_reasons, "coverage_pct": diag["coverage_pct"], "cache_hits": cache.hits,
                 "diag": diag, "facts": res.facts or None}
+        privacy = dict(prep["privacy"])
+        meta["warnings"] = list(privacy.pop("warnings", None) or []) + meta["warnings"]
+        meta.update(privacy)
         return data, meta

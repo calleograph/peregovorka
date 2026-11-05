@@ -213,7 +213,7 @@ export interface Timing {
   queue_s: number | null; prepare_s: number | null; llm_s: number | null; total_s: number | null;
 }
 export interface Generation {
-  model: string | null; model_title: string | null; api_type: string | null; anonymized?: boolean | null; anonymizer_profile?: string | null; anonymized_replaced?: number | null; anonymized_categories?: Record<string, number> | null; llm_profile: string | null; llm_source: string | null;
+  model: string | null; model_title: string | null; api_type: string | null; anonymized?: boolean | null; anonymize_choice?: string | null; anonymizer_profile?: string | null; anonymized_replaced?: number | null; anonymized_categories?: Record<string, number> | null; llm_profile: string | null; llm_source: string | null;
   llm_once: string | null; chunks: number | null; llm_calls: number | null; retries: number | null; length_hits: number | null; finish: Record<string, number> | null;
   max_tokens: number | null; limit_note: string | null; input_chars: number | null; output_chars: number | null; prompt_tokens: number | null;
   completion_tokens: number | null; structured: boolean | null; failed: boolean | null; error_code: string | null;
@@ -358,7 +358,7 @@ export interface Segment {
 export interface MapState {
   status: "none" | "pending" | "running" | "ready" | "failed";
   finished: boolean; can_edit: boolean; can_generate?: boolean;
-  plan: { ready: boolean; reason: string | null; model: string | null; profile: string; local: boolean; source: string };
+  plan: { ready: boolean; reason: string | null; model: string | null; profile: string; local: boolean; source: string; anonymize_default?: boolean; anonymize_required?: boolean; anonymize_can_off?: boolean; anonymize_available?: boolean; anonymize_last?: "" | "on" | "off" };
   categories: { id: string; label: string }[];
   data?: unknown; meta?: Record<string, unknown> | null; error?: string | null; created_by?: string | null; updated_at?: string;
   /** Идёт пересоздание, показана прежняя карта. */
@@ -375,6 +375,8 @@ export interface Forecast { low_s: number; high_s: number; text: string; basis: 
 export interface LlmChoiceOnce { key: string; label: string }
 export interface ProtocolPlan {
   llm_ready: boolean; llm_profile: string; anonymize: boolean; anonymizer_profile: string | null; anonymizer_ready: boolean;
+  /** Режим этого документа: anonymize_default — по настройкам комнаты и сервера; anonymize_last — выбор для прошлого документа этого вида; can_off — можно ли снять обезличивание. */
+  anonymize_default?: boolean; anonymize_required?: boolean; anonymize_available?: boolean; anonymize_can_off?: boolean; anonymize_last?: "" | "on" | "off";
   forecast?: Forecast; max_output_tokens?: number | null; max_output_note?: string; job_limit_s?: number; llm_api_type?: string; llm_source?: string; once?: boolean;
   /** anonymize — материалы будут обезличены (профиль anonymizer_profile); пароли и ключи скрываются всегда. warnings — что помешает формированию. */
   llm_model?: string | null; warnings?: string[]; input_chars?: number | null;
@@ -614,7 +616,7 @@ export interface MailDeliverySpec {
 export interface DeliveryRecipient { email: string; name: string; source: string; problem: string | null }
 export interface DeliveryMaterialInfo { kind: string; label: string; describe?: string; available?: boolean; reason?: string | null }
 export interface DeliveryPlan {
-  materials: DeliveryMaterialInfo[]; recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; max_attachment_mb?: number;
+  materials: DeliveryMaterialInfo[]; recipients: DeliveryRecipient[]; mail_configured: boolean; allowed_domains: string[]; max_attachment_mb?: number; preselected?: string[] | null;
   available_kinds?: DeliveryMaterialInfo[]; selected?: string[]; attach_format?: string;
   templates?: DeliveryTemplate[]; template_id?: string | null; formats?: string[]; selected_formats?: string[];
 }
@@ -1025,7 +1027,7 @@ export const api = {
   meeting: (id: string) => request<Meeting>("GET", `/meetings/${id}`),
   transcript: (id: string, afterId = 0) =>
     request<{ meeting_id: string; segments: Segment[]; has_more: boolean }>("GET", `/meetings/${id}/transcript?after_id=${afterId}&limit=2000`),
-  transcriptExportUrl: (id: string, fmt: ExportFormat) => `/api/v1/meetings/${id}/transcript/export?format=${fmt}`,
+  transcriptExportUrl: (id: string, fmt: ExportFormat, masked = false) => `/api/v1/meetings/${id}/transcript/export?format=${fmt}${masked ? "&anonymize=on" : ""}`,
   version: () => request<{ version: string; commit: string }>("GET", "/version"),
   chat: (id: string, q: { beforeId?: number; afterId?: number; limit?: number } = {}) =>
     request<{ messages: ChatMessage[]; has_more: boolean; me?: string; reactions?: string[] }>("GET", `/meetings/${id}/chat?limit=${q.limit ?? 100}${q.beforeId ? `&before_id=${q.beforeId}` : ""}${q.afterId ? `&after_id=${q.afterId}` : ""}`),
@@ -1190,7 +1192,7 @@ export const api = {
   roomJournal: (roomId: string, p: Record<string, string>) => request<RoomJournal>("GET", `/rooms/${roomId}/journal?${new URLSearchParams(p).toString()}`),
   delivery: {
     preview: (meetingId: string) => request<DeliveryPlan>("GET", `/meetings/${meetingId}/delivery`),
-    send: (meetingId: string, kinds: string[], emails: string[], extra: { template_id?: string | null; subject?: string; body?: string; formats?: string[] } = {}) =>
+    send: (meetingId: string, kinds: string[], emails: string[], extra: { template_id?: string | null; subject?: string; body?: string; formats?: string[]; names?: Record<string, string> } = {}) =>
       request<{ batch_id: string; queued: number; skipped: { name: string; email: string; reason: string }[]; kinds: string[]; unavailable: string[] }>("POST", `/meetings/${meetingId}/delivery/send`, { kinds, emails, ...extra }),
     log: (meetingId: string) => request<DeliveryLogRow[]>("GET", `/meetings/${meetingId}/delivery/log`),
   },
@@ -1203,7 +1205,7 @@ export const api = {
   },
 
   conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),
-  createMap: (meetingId: string, llmOnce?: string) => request<{ status: string }>("POST", `/meetings/${meetingId}/map`, llmOnce ? { llm_once: llmOnce } : undefined),
+  createMap: (meetingId: string, llmOnce?: string, anonymize?: "on" | "off") => request<{ status: string }>("POST", `/meetings/${meetingId}/map`, llmOnce || anonymize ? { ...(llmOnce ? { llm_once: llmOnce } : {}), ...(anonymize ? { anonymize } : {}) } : undefined),
   restoreMap: (meetingId: string) => request<MapState>("POST", `/meetings/${meetingId}/map/restore`),
   editMapTopic: (meetingId: string, topicId: string, patch: MapTopicEdit) => request<MapState>("PATCH", `/meetings/${meetingId}/map/topics/${encodeURIComponent(topicId)}`, patch),
   logBoardExport: (meetingId: string, format: string, pages: number) => request<void>("POST", `/meetings/${meetingId}/whiteboard/export`, { format, pages }),
@@ -1211,11 +1213,11 @@ export const api = {
 
   protocols: (meetingId: string) => request<ProtocolItem[]>("GET", `/meetings/${meetingId}/protocols`),
   protocol: (meetingId: string, id: string) => request<ProtocolItem>("GET", `/meetings/${meetingId}/protocols/${id}`),
-  defaultInstruction: (meetingId: string, kind: ProtocolKind, llm = "") =>
+  defaultInstruction: (meetingId: string, kind: ProtocolKind, llm = "", anonymize = "") =>
     request<{ kind: string; instruction: string; builtin?: boolean; plan?: ProtocolPlan; can_override?: boolean; llm_choices?: LlmChoiceOnce[] }>(
-      "GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}${llm ? `&llm=${encodeURIComponent(llm)}` : ""}`),
-  createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string, llmOnce = "") =>
-    request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction, ...(llmOnce ? { llm_once: llmOnce } : {}) }),
+      "GET", `/meetings/${meetingId}/protocols/default-instruction?kind=${kind}${llm ? `&llm=${encodeURIComponent(llm)}` : ""}${anonymize ? `&anonymize=${anonymize}` : ""}`),
+  createProtocol: (meetingId: string, kind: ProtocolKind, instruction: string, llmOnce = "", anonymize = "") =>
+    request<{ protocol_id: string }>("POST", `/meetings/${meetingId}/protocols`, { kind, instruction, ...(llmOnce ? { llm_once: llmOnce } : {}), ...(anonymize ? { anonymize } : {}) }),
   cancelProtocol: (meetingId: string, id: string) => request<{ protocol_id: string; status: string }>("POST", `/meetings/${meetingId}/protocols/${id}/cancel`),
   editProtocol: (meetingId: string, id: string, body: { content?: string; title?: string }) =>
     request<ProtocolItem>("PATCH", `/meetings/${meetingId}/protocols/${id}`, body),

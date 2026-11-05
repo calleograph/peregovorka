@@ -16,6 +16,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
   const [formats, setFormats] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [extra, setExtra] = useState("");
+  const [added, setAdded] = useState<Record<string, string>>({});       // адреса, указанные вручную у участников без почты: только для этого письма
   const [tid, setTid] = useState<string>("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -33,14 +34,17 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
       setPlan(p);
       setKinds((p.selected ?? []).filter((k) => p.materials.find((m) => m.kind === k)?.available));
       setFormats(p.selected_formats ?? (p.attach_format ? [p.attach_format] : ["docx"]));
-      setSelected(new Set(p.recipients.filter((r) => !r.problem && r.email).map((r) => r.email.toLowerCase())));
+      // заранее отмечены получатели по правилу рассылки комнаты; правило никого не называет — все, у кого есть адрес
+      const ready = p.recipients.filter((r) => !r.problem && r.email).map((r) => r.email.toLowerCase());
+      setSelected(new Set(p.preselected?.length ? ready.filter((e) => p.preselected?.includes(e)) : ready));
       applyTemplate(p, p.template_id ?? "");
     }).catch((e) => setError((e as ApiError).message));
   }, [meetingId]);
 
   const extraList = extra.split(/[\s,;]+/).filter(Boolean);
   const badExtra = extraList.filter((t) => !EMAIL.test(t));
-  const uniq = Array.from(new Set([...selected, ...extraList.filter((t) => EMAIL.test(t)).map((t) => t.toLowerCase())]));
+  const addedOk = Object.entries(added).map(([n, e]) => [n, e.trim()] as const).filter(([, e]) => EMAIL.test(e));
+  const uniq = Array.from(new Set([...selected, ...extraList.filter((t) => EMAIL.test(t)).map((t) => t.toLowerCase()), ...addedOk.map(([, e]) => e.toLowerCase())]));
   const toggle = (e: string) => setSelected((s) => { const n = new Set(s); if (n.has(e)) n.delete(e); else n.add(e); return n; });
   const toggleKind = (k: string) => setKinds((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
   const toggleFmt = (f: string) => setFormats((c) => (c.includes(f) ? c.filter((x) => x !== f) : [...c, f]));
@@ -50,7 +54,8 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
     setBusy(true); setError("");
     try {
       const orig = new Map(plan?.recipients.map((r) => [r.email.toLowerCase(), r.email]) ?? []);
-      setResult(await api.delivery.send(meetingId, kinds, uniq.map((e) => orig.get(e) ?? e), { template_id: tid || null, subject, body, formats }));
+      const names = Object.fromEntries(addedOk.map(([n, e]) => [e.toLowerCase(), n.replace(/ \(гость\)$/, "")]));
+      setResult(await api.delivery.send(meetingId, kinds, uniq.map((e) => orig.get(e) ?? e), { template_id: tid || null, subject, body, formats, names }));
     } catch (e) { setError((e as ApiError).message); }
     setBusy(false);
   };
@@ -70,7 +75,7 @@ export default function SendMaterialsDialog({ meetingId, onClose }: { meetingId:
         <div className="stack">
           {!plan.mail_configured && <div className="alert error">Исходящая почта не настроена. Обратитесь к администратору системы: отправка невозможна.</div>}
           <fieldset className="group"><legend>Кому ({uniq.length})</legend>
-            <RecipientTable rows={plan.recipients} selected={selected} onToggle={toggle} />
+            <RecipientTable rows={plan.recipients} selected={selected} onToggle={toggle} added={added} onAdd={(n, e) => setAdded((a) => ({ ...a, [n]: e }))} />
             <label>Ещё адреса <span className="muted small">(необязательно)</span>
               <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="user1@example.local, partner@example.org" spellCheck={false} aria-invalid={badExtra.length > 0} />
               {badExtra.length > 0 && <span className="field-err" role="alert">Некорректный адрес: {badExtra[0]}</span>}</label>

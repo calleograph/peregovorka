@@ -12,6 +12,7 @@ from ..auth.throttle import within_limit
 from ..services import roles
 from ..services.audit import write_audit
 from ..services.conv_map import CATEGORIES, apply_edits, clean_edit
+from ..privacy.policy import choice_refused, room_privacy
 from ..services.llm_choice import once_options, parse_once, resolve_llm
 from .meetings import get_meeting_for_user
 
@@ -21,15 +22,17 @@ router = APIRouter(prefix="/meetings/{meeting_id}/map", tags=["maps"])
 async def _plan(request: Request, db: AsyncSession, meeting, once: str | None = None) -> dict:
     """Какая модель будет строить карту и готова ли она (`once` — выбранная на один раз)."""
     ps = request.app.state.protocols
+    an_cfg = await request.app.state.settings_svc.get(db, "anonymizer")
     ch = await resolve_llm(ps.profiles, ps.llm, db, meeting.room, meeting, "map", once=parse_once(once))
     eff = ps.llm.effective(ch.settings)
     ready, reason = bool(eff.enabled) and ch.available, ch.reason
     return {"ready": ready, "reason": None if ready else (reason or "Языковая модель для карты разговора не настроена"),
-            "model": eff.model if eff.enabled else None, "profile": ch.name, "source": ch.source}
+            "model": eff.model if eff.enabled else None, "profile": ch.name, "source": ch.source,
+            "anonymize_default": room_privacy(an_cfg, meeting.room)[0], "anonymize_required": bool(an_cfg.required), "anonymize_available": bool(an_cfg.enabled or an_cfg.required)}
 
 
 # Что из сведений о формировании отдаётся всем, кто видит карту: состояние и предупреждения о неполноте. Остальное (токены, повторы, ответы модели по фрагментам) — только администратору.
-META_USER = ("requested_at", "started_at", "finished_at", "duration_s", "warnings", "coverage_pct", "failed", "interrupted", "regen_failed")
+META_USER = ("requested_at", "started_at", "finished_at", "duration_s", "warnings", "coverage_pct", "failed", "interrupted", "regen_failed", "anonymize_choice", "anonymized", "anonymizer_profile", "anonymized_replaced")
 
 
 def _state(rec, meeting, plan: dict, can_edit: bool, admin: bool = False) -> dict:
@@ -54,6 +57,8 @@ async def get_map(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
 
     st = _state(rec, meeting, await _plan(request, db, meeting), roles.can_manage_room(meeting.room, su), su.is_admin)
     st["can_generate"] = can_edit_protocol(meeting, su)
+    st["plan"]["anonymize_can_off"] = not (st["plan"]["anonymize_required"] and not su.is_admin)
+    st["plan"]["anonymize_last"] = ((rec.meta or {}).get("anonymize_choice") or "") if rec else ""
     if st["can_generate"] and roles.can_manage_room(meeting.room, su):
         ps = request.app.state.protocols
         st["llm_choices"] = await once_options(ps.profiles, db)      # модели для выбора при (пере)формировании: только уже настроенные и разрешённые
@@ -88,6 +93,12 @@ async def create_map(meeting_id: uuid.UUID, request: Request, body: dict[str, An
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if not plan["ready"]:
         raise HTTPException(status_code=409, detail=plan["reason"])
+    choice = (body or {}).get("anonymize") or None
+    if choice not in (None, "on", "off"):
+        raise HTTPException(status_code=422, detail="anonymize: on | off")
+    refused = choice_refused(await request.app.state.settings_svc.get(db, "anonymizer"), choice, is_admin=su.is_admin)
+    if refused:
+        raise HTTPException(status_code=403, detail=refused)
     maps = request.app.state.maps
     cur = await maps.refresh(db, await maps.get(db, meeting_id))
     if cur is not None and cur.status in ("pending", "running"):
@@ -95,9 +106,9 @@ async def create_map(meeting_id: uuid.UUID, request: Request, body: dict[str, An
     if not await within_limit(request.app.state.redis, f"rl:map:{su.user_id}", 12, 3600):
         raise HTTPException(status_code=429, detail="Слишком много запросов на построение карт за час. Повторите позже.", headers={"Retry-After": "600"})
     again = cur is not None
-    rec = await maps.request(db, meeting_id, su.display_name, once)
+    rec = await maps.request(db, meeting_id, su.display_name, once, choice)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="map.recreate" if again else "map.create", target_type="meeting",
-                      target_id=str(meeting_id), ip=client_ip(request), details={"model": plan["model"], "model_source": plan["source"], "llm_once": once})
+                      target_id=str(meeting_id), ip=client_ip(request), details={"model": plan["model"], "model_source": plan["source"], "llm_once": once, "anonymize_choice": choice})
     await db.commit()
     await maps.start(rec.id)
     return {"status": "pending"}

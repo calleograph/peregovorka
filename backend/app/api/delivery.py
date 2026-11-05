@@ -56,15 +56,18 @@ async def preview(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
     spec = _spec(meeting)
     if not spec["materials"]:
         spec["materials"] = ["protocol", "summary"]
-    plan = await request.app.state.delivery.plan(db, meeting, spec)
     delivery = request.app.state.delivery
+    # Правило рассылки комнаты решает, кому письма уходят автоматически, но не сужает ручную отправку: организатор всегда видит всех людей встречи и выбирает сам.
+    # Адреса берутся из учётных записей и контактов гостей, а не из документов: обезличивание материалов на список получателей не влияет.
+    rule = await delivery.rule_emails(db, meeting, spec)
+    plan = await delivery.plan(db, meeting, {k: v for k, v in spec.items() if k != "per_material"} | {"recipients": {**spec["recipients"], "leaders": True, "participants": True, "all_guests": True}})
+    plan["preselected"] = rule or None
     plan["available_kinds"] = []
     for k, d in MATERIALS.items():      # готовность каждого вида: неготовый материал отметить нельзя, причина показана
         ok = await d.load(delivery, db, meeting) is not None
         plan["available_kinds"].append({"kind": k, "label": d.label, "describe": d.describe, "available": ok, "reason": None if ok else not_ready_reason(k)})
     plan["selected"] = spec["materials"]
     # шаблоны писем с уже подставленными данными этой встречи: пользователь правит тему и текст только для этого письма, шаблон не меняется
-    delivery = request.app.state.delivery
     tz = await delivery.protocols._tz(db)  # noqa: SLF001
     ctx = await mt.meeting_context(db, meeting, tz)
     templates = []
@@ -113,6 +116,7 @@ async def send_materials(meeting_id: uuid.UUID, request: Request, body: dict[str
     seen: set[str] = set()
     pol = await delivery.policy(db)
     domains = pol.domains()
+    names = body.get("names") if isinstance(body.get("names"), dict) else {}         # адрес, добавленный вручную к участнику без почты: письмо обращается к нему по имени
     for raw in body.get("emails") or []:
         e = str(raw).strip()
         if not valid_email(e):
@@ -122,7 +126,7 @@ async def send_materials(meeting_id: uuid.UUID, request: Request, body: dict[str
         seen.add(e.lower())
         known = full.get(e.lower())
         problem = "domain_not_allowed" if domains and e.rsplit("@", 1)[-1].lower() not in domains else None
-        chosen.append(Recipient(e, known.name if known else e, known.source if known else "manual", problem))
+        chosen.append(Recipient(e, known.name if known else str(names.get(e) or e)[:300], known.source if known else "manual", problem))
     if not chosen:
         raise HTTPException(status_code=422, detail="Выберите хотя бы одного получателя.")
     if len(chosen) > 300:

@@ -78,8 +78,17 @@ async def _summary(svc, db, meeting):
 
 
 async def _transcript(svc, db, meeting):
+    """Стенограмма в письме следует настройке комнаты, как протокол рядом с ней: письмо покидает сервер. Обезличить не удалось — материал не отправляется."""
+    from ..privacy.engine import PrivacyError  # noqa: PLC0415
+    from ..privacy.policy import room_privacy  # noqa: PLC0415
+
     ps = svc.protocols
     text = await ps.transcript_text(db, meeting, await ps._tz(db))   # noqa: SLF001
+    if len([ln for ln in text.splitlines() if ln.strip()]) > 5 and room_privacy(await svc._svc.get(db, "anonymizer"), meeting.room)[0]:     # noqa: SLF001
+        try:
+            text = await ps.masked_transcript(db, meeting)
+        except PrivacyError:
+            return None
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) <= 5:      # одна шапка без реплик — отправлять нечего
         return None
@@ -231,13 +240,13 @@ class Recipient:
     email: str
     name: str
     source: str            # leader | owner | organizer | participant | guest | viewer | user | manual
-    problem: str | None = None   # no_email | invalid_email | domain_not_allowed
+    problem: str | None = None   # no_email | no_consent | invalid_email | domain_not_allowed
 
     def public(self) -> dict:
         return {"email": self.email, "name": self.name, "source": self.source, "problem": self.problem}
 
 
-PROBLEM_TEXT = {"no_email": "в каталоге не указан адрес электронной почты", "invalid_email": "адрес в каталоге некорректен",
+PROBLEM_TEXT = {"no_email": "в каталоге не указан адрес электронной почты", "no_consent": "гость не дал согласия получать материалы", "invalid_email": "адрес в каталоге некорректен",
                 "domain_not_allowed": "домен адреса не разрешён политикой отправки"}
 
 
@@ -313,10 +322,16 @@ class DeliveryService:
                     continue
                 seen.add(p.user_id)
                 add(p.user.email, p.user.display_name, "participant")
-            # гости и зрители эфира этой встречи — только те, кто сам указал почту и согласился получать материалы
-            for g in (await db.execute(select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id, GuestParticipant.materials_consent.is_(True),
-                                                                      GuestParticipant.email.is_not(None)).order_by(GuestParticipant.joined_at))).scalars():
-                add(g.email, f"{g.display_name} (гость)", "guest")
+            # гости и зрители эфира этой встречи — письмо только тем, кто сам указал почту и согласился получать материалы
+            guests = select(GuestParticipant).where(GuestParticipant.meeting_id == meeting.id).order_by(GuestParticipant.joined_at)
+            if not r.get("all_guests"):
+                guests = guests.where(GuestParticipant.materials_consent.is_(True), GuestParticipant.email.is_not(None))
+            for g in (await db.execute(guests)).scalars():
+                name = f"{g.display_name} (гость)"
+                if g.email and g.materials_consent:
+                    add(g.email, name, "guest")
+                else:                                # ручная отправка: организатор видит гостя и может указать адрес сам; адрес без согласия не показывается
+                    out.setdefault(f"!guest:{g.display_name}", Recipient("", name, "guest", "no_consent" if g.email else "no_email"))
             for v in (await db.execute(select(LiveViewer).join(Broadcast, Broadcast.id == LiveViewer.broadcast_id).where(
                     Broadcast.meeting_id == meeting.id, LiveViewer.materials_consent.is_(True), LiveViewer.email.is_not(None)).order_by(LiveViewer.created_at))).scalars():
                 add(v.email, f"{v.display_name} (зритель эфира)", "viewer")
@@ -326,6 +341,15 @@ class DeliveryService:
         for e in r["emails"]:
             add(e, e, "manual")
         return list(out.values())[: MAX_RECIPIENTS + 50]
+
+    async def rule_emails(self, db: AsyncSession, meeting: Meeting, spec: dict) -> list[str]:
+        """Адреса по правилу рассылки комнаты (как при автоматической отправке): их окно ручной отправки отмечает заранее. Пусто — правило никого не называет."""
+        view = view_spec(spec)
+        specs = [recipients_spec(view, k) for k in view["materials"]] if view.get("per_material") else [view]
+        out: list[str] = []
+        for s in specs:
+            out += [r.email.lower() for r in await self.resolve(db, meeting.room, meeting, s) if r.email and not r.problem]
+        return list(dict.fromkeys(out))
 
     # ------------------------------------------------------------------------------------------------ план
     async def plan(self, db: AsyncSession, meeting: Meeting, spec: dict, kinds: list[str] | None = None) -> dict:
