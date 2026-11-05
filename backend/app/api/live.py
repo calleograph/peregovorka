@@ -427,7 +427,7 @@ async def viewer_info(token: str, request: Request, db: AsyncSession = Depends(g
     cfg = await request.app.state.settings_svc.get(db, "live")
     rstate, _rec = await _replay_state(db, b) if status == "ended" else ("off" if b is None or not b.replay else "live", None)
     return {"kind": v.kind, "title": (b.title if b is not None and b.title else None) or room.live_title or room.name, "starts_at": _utc(room.live_starts_at) if v.kind == "room" else None,
-            "status": status, "password_required": bool(_pw_hash(v)), "own_hls": room.live_own_hls, "ended_at": _utc(b.ended_at) if b is not None and status == "ended" else None,
+            "status": status, "password_required": bool(room.live_password_hash and room.live_password_enabled) if status == "waiting" else bool(_pw_hash(v)), "own_hls": room.live_own_hls, "ended_at": _utc(b.ended_at) if b is not None and status == "ended" else None,
             "quality": b.quality if b is not None else room.live_quality, "available": bool(cfg.enabled), "now": datetime.now(timezone.utc).isoformat(),
             "replay": rstate == "ready", "replay_state": rstate, "download": bool(b is not None and b.download and rstate == "ready"),
             "access_until": _utc(b.access_until) if b is not None and b.replay else None}
@@ -470,8 +470,8 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     await _throttle(request, "live:access", VIEW_IP_LIMIT // 4, 600)
     v = await _view(request, db, token)
     room = v.room
-    if v.kind == "broadcast" and v.b.status not in ("starting", "live"):
-        raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Эфир сейчас не идёт."})      # ссылка прошлого эфира не открывает новый эфир комнаты
+    if v.b is None or v.b.status not in ("starting", "live"):
+        raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Эфир сейчас не идёт."})      # подпись выдаётся только на идущий эфир: _gate проверяет пароль именно этого эфира
     secret = hls_secret(request.app.state.settings)
     new_pass = await _gate(request, db, v, body)
     viewer = await _viewer_row(request, db, v, body.viewer)

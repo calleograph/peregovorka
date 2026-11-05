@@ -52,9 +52,9 @@ async def can_access_meeting(db: AsyncSession, redis: Redis, meeting: Meeting, s
         return True
     if "participants" in inspect(meeting).unloaded:      # частые запросы (чат, стенограмма) не грузят всех участников — во встрече их бывают сотни
         participated = (await db.execute(select(MeetingParticipant.id).where(
-            MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == su.user_id).limit(1))).first() is not None
+            MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == su.user_id, MeetingParticipant.removed_at.is_(None)).limit(1))).first() is not None
     else:
-        participated = any(p.user_id == su.user_id for p in meeting.participants)
+        participated = any(p.user_id == su.user_id and p.removed_at is None for p in meeting.participants)
     if meeting.ended_at is None:
         return participated
     if await redis.exists(lease_key(meeting.id, su.user_id)):

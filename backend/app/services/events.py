@@ -49,13 +49,16 @@ async def publish_users(redis: Redis, user_ids, event: dict) -> None:
 class Subscriber:
     """Получатель событий (один WebSocket). `queue.get()` возвращает текст сообщения; `None` — получатель отключён хабом (переполнение)."""
 
-    __slots__ = ("queue", "leader_channels", "channels", "dropped")
+    __slots__ = ("queue", "leader_channels", "channels", "dropped", "owner", "guest", "revoked")
 
-    def __init__(self, maxsize: int = QUEUE_MAX) -> None:
+    def __init__(self, maxsize: int = QUEUE_MAX, *, owner: str | None = None, guest: bool = False) -> None:
         self.queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=maxsize + 1)       # +1: место под метку «отключён» при переполнении
         self.leader_channels: set[str] = set()          # каналы, где получатель — руководитель (ему отдаются события `leaders_only`)
         self.channels: set[str] = set()
         self.dropped = False
+        self.owner = owner                              # кто слушает: идентификатор сотрудника или гостя
+        self.guest = guest                              # гостю не отдаются события `members_only` (стенограмма): проверка здесь, а не на странице
+        self.revoked: set[str] = set()                  # каналы, откуда получатель удалён руководителем
 
 
 class EventHub:
@@ -85,8 +88,8 @@ class EventHub:
             self._pubsub = None
 
     # ------------------------------------------------------------------------------------------ подписки
-    def new_subscriber(self) -> Subscriber:
-        return Subscriber(self._queue_max)
+    def new_subscriber(self, *, owner: str | None = None, guest: bool = False) -> Subscriber:
+        return Subscriber(self._queue_max, owner=owner, guest=guest)
 
     async def subscribe(self, sub: Subscriber, ch: str, *, leader: bool = False) -> None:
         if leader:
@@ -120,15 +123,21 @@ class EventHub:
         group = self._subs.get(ch)
         if not group:
             return
-        leaders_only = False
-        if "leaders_only" in text:           # закрытая доска: схема и её изменения не уходят никому, кроме руководителей
+        leaders_only = members_only = False
+        removed = None
+        if "leaders_only" in text or "members_only" in text or '"removed"' in text:
             try:
-                leaders_only = bool(json.loads(text).get("leaders_only"))
+                ev = json.loads(text)
             except ValueError:
-                pass
+                ev = {}
+            leaders_only = bool(ev.get("leaders_only"))         # закрытая доска: схема и её изменения не уходят никому, кроме руководителей
+            members_only = bool(ev.get("members_only"))
+            removed = (ev.get("user_id") or ev.get("guest_id")) if ev.get("removed") else None
         for sub in list(group):
-            if sub.dropped or (leaders_only and ch not in sub.leader_channels):
+            if sub.dropped or ch in sub.revoked or (leaders_only and ch not in sub.leader_channels) or (members_only and sub.guest):
                 continue
+            if removed is not None and sub.owner == removed:   # это событие получатель ещё видит (страница закрывает встречу), следующие — нет, на всех вкладках и экземплярах
+                sub.revoked.add(ch)
             if sub.queue.qsize() >= self._queue_max:
                 # получатель не успевает: очередь очищается, остаётся метка «отключён»; WebSocket закроется, клиент догрузит состояние сам
                 sub.dropped = True

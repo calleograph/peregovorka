@@ -131,5 +131,5 @@ async def ingest_segment(db: AsyncSession, redis: Redis, fields: dict[str, str])
         await db.rollback()
         return IngestResult.DUPLICATE
     await db.refresh(seg)
-    await events.publish(redis, meeting_id, {"type": "segment", "segment": segment_to_dict(seg, user.display_name if user else (guest.label if guest else None), mask=meeting.room.mask_profanity)})
+    await events.publish(redis, meeting_id, {"type": "segment", "members_only": True, "segment": segment_to_dict(seg, user.display_name if user else (guest.label if guest else None), mask=meeting.room.mask_profanity)})
     return IngestResult.STORED

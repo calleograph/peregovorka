@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import random
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -102,7 +103,7 @@ async def ws_endpoint(ws: WebSocket):
         await ws.accept()
 
     hub = app.state.event_hub
-    sub = hub.new_subscriber()
+    sub = hub.new_subscriber(owner=guest.guest_id if guest is not None else str(su.user_id), guest=guest is not None)
     subscribed: dict[str, uuid.UUID] = {}
     presence_ok: tuple[bool, float] | None = None          # (можно ли показывать «в сети», когда проверено)
 
@@ -114,17 +115,30 @@ async def ws_endpoint(ws: WebSocket):
                 return
             await ws.send_text(text)
 
+    async def alive() -> bool:
+        if guest is not None:
+            return await _guest_alive(app, guest_token) is not None
+        return await app.state.sessions.get(sid, touch=False) is not None and not await app.state.redis.exists(f"user:inactive:{su.user_id}")
+
     reader = asyncio.create_task(forward())
+    clock = asyncio.get_running_loop().time
+    # Срок считается по часам, а не по тишине в сокете: клиент пингует чаще, и таймаут чтения не наступал бы никогда. Разброс — чтобы тысячи сокетов не проверялись разом.
+    next_check = clock() + SESSION_RECHECK_SECONDS * (0.5 + random.random() / 2)
     try:
         while True:
-            try:
-                raw = await asyncio.wait_for(ws.receive_text(), timeout=SESSION_RECHECK_SECONDS)
-            except asyncio.TimeoutError:
-                alive = (await _guest_alive(app, guest_token)) is not None if guest is not None else \
-                    await app.state.sessions.get(sid, touch=False) is not None
-                if not alive:
+            if clock() >= next_check:
+                next_check = clock() + SESSION_RECHECK_SECONDS
+                if not await alive():
                     await ws.close(code=4401)
                     return
+                for ch, mid in list(subscribed.items()):
+                    if not (await _can_subscribe(app, su, guest, mid))[0]:
+                        await hub.unsubscribe(sub, ch)
+                        subscribed.pop(ch, None)
+                        await ws.send_text(json.dumps({"type": "error", "message": "forbidden", "meeting_id": str(mid)}))
+            try:
+                raw = await asyncio.wait_for(ws.receive_text(), timeout=max(0.05, next_check - clock()))
+            except asyncio.TimeoutError:
                 continue
             try:
                 msg = json.loads(raw)

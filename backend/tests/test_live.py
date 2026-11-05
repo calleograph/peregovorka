@@ -413,6 +413,11 @@ def vw(client, token: str) -> str:
     return _VW[key]
 
 
+def go_live(client, room):
+    """Подпись выдаётся только на идущий эфир."""
+    assert start(client, _join(client, "carol", room["id"])["meeting_id"]).status_code == 200
+
+
 def access(client, token, **body):
     client.cookies.clear()
     client.headers.pop("X-CSRF-Token", None)
@@ -422,6 +427,7 @@ def access(client, token, **body):
 
 def test_access_without_password_returns_a_signed_playlist_path(lv):
     room = room_live(lv)
+    go_live(lv, room)
     rm = get_room(lv, room["id"])
     r = access(lv, rm.live_token)
     assert r.status_code == 200
@@ -434,10 +440,11 @@ def test_access_without_password_returns_a_signed_playlist_path(lv):
 
 def test_viewer_password_protects_the_stream_link_not_only_the_page(lv):
     room = room_live(lv)
+    go_live(lv, room)
     login(lv, "carol")
     assert lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "short"}).status_code == 422
     r = lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"})
-    assert r.status_code == 200 and r.json()["password_enabled"] and "password" not in str(r.json()).replace("password_enabled", "").replace("has_password", "").replace("speaker_password_set", "")
+    assert r.status_code == 200 and r.json()["password_enabled"] and "zritel" not in str(r.json())
     rm = get_room(lv, room["id"])
     assert rm.live_password_hash and "zritel" not in rm.live_password_hash and viewer(lv, rm.live_token).json()["password_required"] is True
     assert access(lv, rm.live_token).json()["detail"]["code"] == "password_required", "без пароля подписанной ссылки на видео нет"
@@ -459,6 +466,7 @@ def test_viewer_password_protects_the_stream_link_not_only_the_page(lv):
 
 def test_wrong_viewer_passwords_are_throttled_and_logged_without_the_password(lv):
     room = room_live(lv)
+    go_live(lv, room)
     login(lv, "carol")
     lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"})
     token = get_room(lv, room["id"]).live_token
@@ -803,6 +811,7 @@ def test_cdn_settings_are_validated_and_the_player_gets_the_cdn_base_only_when_e
     for bad in ("http://cdn.example.org", "https://cdn.example.org/path", "https://cdn example.org", "ftp://x"):
         assert lv.put("/api/v1/admin/settings/live", json={"cdn_base_url": bad}).status_code == 422, bad
     room = room_live(lv)
+    go_live(lv, room)
     token = get_room(lv, room["id"]).live_token
     assert patch(lv, room, live_cdn=True).json()["detail"]["code"] == "cdn_off", "владелец не может включить CDN, пока его нет у администратора"
     assert access(lv, token).json()["base"] == ""

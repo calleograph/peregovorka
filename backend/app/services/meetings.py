@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,6 +124,8 @@ class MeetingService:
             raise JoinError("removed_from_meeting", "Руководитель встречи удалил вас из комнаты. Попробуйте войти позже.", 403)
         meeting = await self._active_meeting(db, room.id)
         created = False
+        if meeting is not None and await self.was_removed(db, meeting.id, su.user_id):
+            raise JoinError("removed_from_meeting", "Руководитель удалил вас из этой встречи.", 403)
         if meeting is None:
             # Транскрибация идёт с первой секунды (если комната её допускает); запись аудио — сразу только при «автоматической записи».
             # Комната трансляции: до «Выйти в эфир» — подготовка, без распознавания и записи (их включает начало эфира, set_broadcast_media)
@@ -355,6 +357,11 @@ class MeetingService:
         if not await self._r.srem(key, leaving):                         # устройство неизвестно (например, пользователь перелогинился): если оно единственное — как раньше, иначе другие остаются
             return await self._r.scard(key) > 1
         return bool(await self._r.scard(key))
+
+    @staticmethod
+    async def was_removed(db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        return (await db.execute(select(MeetingParticipant.id).where(MeetingParticipant.meeting_id == meeting_id, MeetingParticipant.user_id == user_id,
+                                                                     MeetingParticipant.removed_at.is_not(None)).limit(1))).first() is not None
 
     async def _close_participant(self, db: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await self._r.delete(f"mdev:{meeting_id}:{user_id}", f"mprim:{meeting_id}:{user_id}")
@@ -747,12 +754,13 @@ class MeetingService:
         return granted
 
     async def kick_participant(self, db: AsyncSession, meeting: Meeting, identity: str) -> str:
-        """Удалить участника из идущей встречи (руководитель). Сотрудник не может вернуться ~10 минут; гость отключается насовсем."""
+        """Удалить участника из идущей встречи (руководитель): все устройства человека сразу, вернуться в эту встречу нельзя, права на её материалы снимаются."""
         if meeting.ended_at is not None:
             raise JoinError("meeting_ended", "Встреча уже завершена.", 409)
         kind, ref = await self._member_check(db, meeting, identity)
         if await self.is_privileged(meeting.id, identity):
             raise JoinError("privileged", "Руководителя комнаты удалить нельзя.", 409)
+        devices = {identity}
         if kind == "guest":
             g = await db.get(GuestParticipant, ref)
             await self._r.set(f"guest:revoked:{ref}", "1", ex=GUEST_REVOKE_TTL)
@@ -761,10 +769,13 @@ class MeetingService:
                 await db.commit()
         else:
             await self._r.set(self._kick_key(meeting.room_id, ref), "1", ex=KICK_BLOCK_SECONDS)
+            devices |= set(await self._r.smembers(f"mdev:{meeting.id}:{ref}"))       # _close_participant стирает этот список: читаем до него
+            await db.execute(update(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.user_id == ref).values(removed_at=utcnow()))
             await self._close_participant(db, meeting.id, ref)
-        await leave_reasons.mark(self._r, meeting.id, identity, "removed")
-        await remove_participant(self._s, meeting.livekit_room, identity)
-        await self._r.srem(self._floor_key(meeting.id), identity)
+        for dev in devices:
+            await leave_reasons.mark(self._r, meeting.id, dev, "removed")
+            await remove_participant(self._s, meeting.livekit_room, dev)
+            await self._r.srem(self._floor_key(meeting.id), dev)
         await events.publish(self._r, meeting.id, {"type": "participant_left", "identity": identity, "removed": True,
                                                    **({"guest_id": str(ref), "participant_type": "guest"} if kind == "guest" else {"user_id": str(ref)})})
         await self._update_emptiness(db, meeting.id)

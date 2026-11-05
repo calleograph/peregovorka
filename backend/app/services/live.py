@@ -123,7 +123,9 @@ def build_live_request(room_name: str, quality: str, *, mp4_path: str | None, hl
         outs.append(eg.Output(file=eg.FileOutput(file_type=eg.EncodedFileType.MP4, filepath=mp4_path, disable_manifest=True)))
     if hls_prefix:
         outs.append(eg.Output(segments=eg.SegmentedFileOutput(protocol=eg.SegmentedFileProtocol.HLS_PROTOCOL, filename_prefix=f"{hls_prefix}/seg", playlist_name=f"{hls_prefix}/event.m3u8",
-                                                              live_playlist_name=f"{hls_prefix}/index.m3u8", segment_duration=int(KEY_FRAME_S), disable_manifest=True)))
+                                                              live_playlist_name=f"{hls_prefix}/index.m3u8", segment_duration=int(KEY_FRAME_S),
+                                                              # метка времени вместо номера: у постоянной «потоковой ссылки» и в кеше CDN сегмент прошлого эфира не совпадёт по имени с новым
+                                                              filename_suffix=eg.SegmentedFileSuffix.TIMESTAMP, disable_manifest=True)))
     outs.append(eg.Output(stream=eg.StreamOutput(protocol=eg.StreamProtocol.RTMP, urls=urls)))
     return eg.StartEgressRequest(room_name=room_name, template=tpl, advanced=enc, outputs=outs)
 
@@ -379,6 +381,8 @@ class LiveBroadcaster:
                 raise LiveError("room_empty", "В комнате никого нет: начинать эфир не с кого.")
             await self._record_guard(db)
             await self.ensure_links(db, room)
+            self.unlink_access(room.live_view_access)      # подпись зрителя живёт дольше эфира: новый идентификатор на каждый эфир, чтобы прошлая подпись не открыла следующий
+            room.live_view_access = new_access()
             hls_dir = new_access() if room.live_own_hls else None
             quality = room.live_quality if room.live_quality in LIVE_QUALITY else cfg.default_quality
             # Запись каждого эфира обязательна и входит в этот же процесс Egress (MP4 рядом с HLS и площадками): отдельную видеозапись комнаты закрываем,
