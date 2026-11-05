@@ -401,7 +401,7 @@ export interface StorageProfile {
   id: string; name: string; kind: "local" | "smb"; config: Record<string, string>; secret_set: boolean; used_by: string[]; address: string;
   /** Для хранилища-папки: на том поставлена метка (запись в отключённый том блокируется). */
   volume_marked?: boolean;
-  external_volume?: boolean;
+  external_volume?: boolean; host_path?: string | null; volume?: { state: "attached" | "unreachable" | "detached"; free?: number | null; total?: number | null; fstype?: string } | null;
   volume_mount?: { mountpoint: string; fstype: string; source: string } | null;
 }
 export interface StorageVolume {

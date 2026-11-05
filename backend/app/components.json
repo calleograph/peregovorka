@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.68.0",
+ "release": "0.69.0",
  "reviewed_at": "2026-11-05",
  "components": [
   {
@@ -519,7 +519,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e",
+   "digest": "sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -1204,7 +1204,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e",
+   "digest": "sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
@@ -1629,7 +1629,7 @@
     "repo": "library/postgres",
     "suffix": "-alpine"
    },
-   "digest": "sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab",
+   "digest": "sha256:e0e53cfa0884f3cc216a621033e4f38dceb49e52218ac77facc8e48f02973093",
    "deferred": {
     "version": "18",
     "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",

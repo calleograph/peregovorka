@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import time
 from dataclasses import dataclass
 
 # типы файловых систем, которые точно являются сетевыми/удалёнными
@@ -68,7 +70,26 @@ def describe(path: str, text: str | None = None) -> dict | None:
 
 
 def same_mount(expected: dict, current: dict | None) -> bool:
-    """Тот же ли том смонтирован: совпадают точка монтирования и тип, и это не корневая файловая система."""
+    """Тот же ли том смонтирован: совпадают точка монтирования, тип и источник, и это не корневая файловая система."""
     if current is None:
         return True                                                  # определить нельзя (нет /proc) — полагаемся на метку
-    return not current["on_root"] and current["mountpoint"] == expected.get("mountpoint") and current["fstype"] == expected.get("fstype")
+    want = expected.get("source")
+    return (not current["on_root"] and current["mountpoint"] == expected.get("mountpoint") and current["fstype"] == expected.get("fstype")
+            and (not want or current.get("source") == want))
+
+
+def alive(path: str, timeout: float = 5.0) -> bool:
+    """Отвечает ли файловая система. Обращение к недоступному NFS может зависнуть навсегда и заберёт поток приложения, поэтому проверяет отдельный процесс: не ответил вовремя — том недоступен,
+    а зависший процесс остаётся ядру (ожидать его нельзя)."""
+    try:
+        p = subprocess.Popen(["stat", "-f", "-c", "%T", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return True                                                  # нет утилиты stat (разработка на Windows): остаётся проверка метки
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        rc = p.poll()
+        if rc is not None:
+            return rc == 0
+        time.sleep(0.02)
+    p.kill()
+    return False

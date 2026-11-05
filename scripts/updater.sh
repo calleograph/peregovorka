@@ -14,7 +14,8 @@
 # каталоги, ни обновить свой nginx-site) — выполняет ТОЛЬКО фиксированный набор действий:
 #   check   — сверка с GitHub;      update — штатный scripts/update.sh --yes (флаги из белого списка);
 #   repair  — одно исправление из белого списка scripts/lib/repairlib.sh («Исправить автоматически»);   scan — обнаружить проблемы;
-#   component — одно действие с дополнительным компонентом из белого списка scripts/lib/complib.sh (включить видеоподсистему, перезапустить Egress…).
+#   component — одно действие с дополнительным компонентом из белого списка scripts/lib/complib.sh (включить видеоподсистему, перезапустить Egress…);
+#   volume — подключить или снять внешний том (scripts/lib/vollib.sh): путь проверяется по белому списку корней, команда mount собирается здесь.
 # Произвольные команды и пути из веб-интерфейса выполнить нельзя: запрос — простые строки key=value, каждое значение проверяется.
 # Дочерние команды запускаются в СТЕРИЛЬНОМ окружении (env -i): настройки берутся только из .env, а не из унаследованных ASR_*/NGINX_*/LIVEKIT_*.
 #
@@ -25,6 +26,7 @@ SD_RESULT="${SERVICE_RESULT:-}"; SD_EXIT_CODE="${EXIT_CODE:-}"; SD_EXIT_STATUS="
 # run: сигнал остановки до установки обработчика в cmd_run (загрузка библиотек, в том числе сразу после самоперезапуска exec) не убивает процесс молча — запоминается
 [ "${1:-run}" = run ] && trap 'STOP_EARLY=1' INT TERM
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/vollib.sh"
 
 CMD="${1:-run}"; [ $# -gt 0 ] && shift
 INTERVAL=3; CHECK_EVERY="${UPDATER_CHECK_EVERY:-1800}"; YES=0; QUIET=0; FORCE=0
@@ -243,6 +245,17 @@ do_component() { # do_component ID — одно действие с компон
   return "$rc"
 }
 
+do_volume() { # do_volume ЗАПРОС attach|detach АРГУМЕНТ — итог в volume-result.json; аргумент проверяет vollib.sh, как и значение из любого другого источника
+  local rid="$1" vop="$2" arg="$3" rc=1 VOL_ERROR="" VOL_ID="" VOL_NOTE=""
+  case "$vop" in
+    attach) vol_attach "$arg" && rc=0 ;;
+    detach) vol_detach "$arg" && rc=0 ;;
+    *) VOL_ERROR="Неизвестная операция" ;;
+  esac
+  vol_publish
+  printf '{"request_id":"%s","ok":%s,"id":"%s","error":"%s"}\n' "$rid" "$([ "$rc" -eq 0 ] && echo true || echo false)" "$VOL_ID" "$(jesc "$VOL_ERROR")" | atomic_write "$CH/volume-result.json"
+}
+
 do_repair() { # do_repair ID — одно исправление из белого списка; проверка ID ещё раз здесь, а не только в веб-интерфейсе
   local id="$1" rc
   repair_id_valid "$id" || { warn "Исправление «$id» не из белого списка — отклонено"; return 2; }
@@ -272,7 +285,7 @@ handle_request() {
   if [ -L "$f" ] || ! [[ "$owner" =~ ^(0|$(id -u)|${BACKEND_UID:-10001})$ ]]; then
     warn "Запрос отклонён: файл — символьная ссылка или создан посторонним пользователем (uid $owner)"; rm -f "$f"; return 0
   fi
-  rid="$(req_get id)"; action="$(req_get action)"; force="$(req_get force_build)"; pull="$(req_get pull)"; by="$(req_get by)"; at="$(req_get at)"; repair="$(req_get repair)"; op="$(req_get op)"
+  rid="$(req_get id)"; action="$(req_get action)"; force="$(req_get force_build)"; pull="$(req_get pull)"; by="$(req_get by)"; at="$(req_get at)"; repair="$(req_get repair)"; op="$(req_get op)"; local arg; arg="$(req_get arg)"
   rm -f "$f"   # запрос выполняется один раз (rm удаляет и symlink, не следуя за ним)
   [[ "$rid" =~ ^[a-f0-9]{8,32}$ ]] || { warn "Запрос отклонён: некорректный id"; return 0; }
   [[ "$at" =~ ^[0-9]+$ ]] || { warn "Запрос отклонён: нет времени"; return 0; }
@@ -292,6 +305,7 @@ handle_request() {
             else warn "Запрос $rid: исправление «$repair» не из белого списка — отклонён"; fi ;;
     component) if [[ "$op" =~ ^[a-z_]{3,30}$ ]] && comp_op_valid "$op"; then info "Компонент: «$op» по запросу ($by)"; do_component "$op" || warn "Действие «$op» не выполнено — см. $LOG"
                else warn "Запрос $rid: действие «$op» не из белого списка — отклонён"; fi ;;
+    volume) info "Внешний том: $op по запросу ($by)"; do_volume "$rid" "$op" "$arg" ;;
     *) warn "Неизвестное действие запроса: $action" ;;
   esac
 }
@@ -299,7 +313,7 @@ handle_request() {
 # После обновления файл этого скрипта мог измениться (git merge): запущенный процесс помнит старый код, поэтому перезапускаем себя новой версией
 # (иначе новые исправления и проверки заработали бы только после перезапуска службы). Блокировка снимается перед exec.
 SELF_SUM=""
-self_sum() { sha256sum "${BASH_SOURCE[0]}" "$REPO_ROOT/scripts/lib/repairlib.sh" "$REPO_ROOT/scripts/lib/prereqlib.sh" "$REPO_ROOT/scripts/lib/complib.sh" 2>/dev/null | cut -d' ' -f1 | tr -d '\n'; }
+self_sum() { sha256sum "${BASH_SOURCE[0]}" "$REPO_ROOT/scripts/lib/repairlib.sh" "$REPO_ROOT/scripts/lib/prereqlib.sh" "$REPO_ROOT/scripts/lib/complib.sh" "$REPO_ROOT/scripts/lib/vollib.sh" 2>/dev/null | cut -d' ' -f1 | tr -d '\n'; }
 reload_if_changed() {
   [ -n "$SELF_SUM" ] || return 0
   [ "$(self_sum)" = "$SELF_SUM" ] && return 0
@@ -324,15 +338,17 @@ cmd_run() {
   info "Исполнитель обновлений запущен: проект $COMPOSE_PROJECT_NAME, каталог обмена $CH, процесс $$ (uid $(id -u)${INVOCATION_ID:+, служба systemd}). Остановка — Ctrl+C."
   trap 'STATE="stopped"; write_status; stop_pulse final; exit 0' INT TERM
   [ -n "${STOP_EARLY:-}" ] && { STATE="stopped"; write_status; stop_pulse final; exit 0; }
-  local last_check=0 last_scan=0 now
+  local last_check=0 last_scan=0 last_vol=0 now
   start_pulse
   STATE="idle"; write_status
   do_scan || true; last_scan="$(date +%s)"
+  ( fresh_env; vol_reconcile ) || true; last_vol="$(date +%s)"             # после перезагрузки сервера: сетевой ресурс мог появиться позже, следующие проверки подхватят его
   while :; do
     now="$(date +%s)"
     if [ -f "$CH/request.txt" ]; then handle_request; last_check="$(date +%s)"; reload_if_changed
     elif [ $((now - last_check)) -ge "$CHECK_EVERY" ]; then do_check || true; last_check="$(date +%s)"
     elif [ $((now - last_scan)) -ge "${REPAIR_SCAN_EVERY:-300}" ]; then do_scan || true; last_scan="$(date +%s)"
+    elif [ $((now - last_vol)) -ge "${VOLUME_CHECK_S:-15}" ]; then ( fresh_env; vol_reconcile quiet ) || true; last_vol="$(date +%s)"
     else write_status; fi
     sleep "$INTERVAL"
   done

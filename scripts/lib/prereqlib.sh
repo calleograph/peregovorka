@@ -23,12 +23,12 @@ declare -A PREREQ_PKG=(
   [ss]=iproute2 [ip]=iproute2
   # текст и файлы
   [awk]=gawk [sed]=sed [grep]=grep [find]=findutils [xargs]=findutils [diff]=diffutils [cmp]=diffutils [tar]=tar
-  [cat]=coreutils [cp]=coreutils [mv]=coreutils [rm]=coreutils [mkdir]=coreutils [ln]=coreutils [chmod]=coreutils [chown]=coreutils [mktemp]=coreutils
+  [paste]=coreutils [cat]=coreutils [cp]=coreutils [mv]=coreutils [rm]=coreutils [mkdir]=coreutils [ln]=coreutils [chmod]=coreutils [chown]=coreutils [mktemp]=coreutils
   [stat]=coreutils [df]=coreutils [du]=coreutils [head]=coreutils [tail]=coreutils [sort]=coreutils [uniq]=coreutils [cut]=coreutils [tr]=coreutils
   [wc]=coreutils [ls]=coreutils [seq]=coreutils [tac]=coreutils [tee]=coreutils [date]=coreutils [sleep]=coreutils [basename]=coreutils [dirname]=coreutils [readlink]=coreutils
   [base64]=coreutils [sha256sum]=coreutils [nproc]=coreutils [id]=coreutils [uname]=coreutils [env]=coreutils [timeout]=coreutils [install]=coreutils [od]=coreutils [readlink]=coreutils
   # система
-  [flock]=util-linux [findmnt]=util-linux [mountpoint]=util-linux [swapon]=util-linux [dmesg]=util-linux [getent]=libc-bin
+  [flock]=util-linux [findmnt]=util-linux [setpriv]=util-linux [mount]=mount [umount]=mount [mountpoint]=util-linux [swapon]=util-linux [dmesg]=util-linux [getent]=libc-bin
   [free]=procps [ps]=procps [pgrep]=procps [sysctl]=procps
   [dpkg]=dpkg [hostname]=hostname [python3]=python3
   # приложения

@@ -6,14 +6,14 @@ import InfoTip from "../../components/InfoTip";
 
 interface Form {
   id?: string; name: string; kind: "local" | "smb"; local_path: string; smb_server: string; smb_share: string; smb_base_path: string;
-  smb_domain: string; smb_username: string; secret: string; secret_set: boolean; external_volume: boolean;
+  smb_domain: string; smb_username: string; secret: string; secret_set: boolean; external_volume: boolean; host_path: string;
 }
 
-const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false, external_volume: false };
+const empty: Form = { name: "", kind: "smb", local_path: "/data/exports", smb_server: "", smb_share: "", smb_base_path: "", smb_domain: "", smb_username: "", secret: "", secret_set: false, external_volume: false, host_path: "" };
 
 const toForm = (p: StorageProfile): Form => ({
   id: p.id, name: p.name, kind: p.kind, local_path: p.config.local_path ?? "/data/exports", smb_server: p.config.smb_server ?? "", smb_share: p.config.smb_share ?? "",
-  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set, external_volume: !!p.external_volume,
+  smb_base_path: p.config.smb_base_path ?? "", smb_domain: p.config.smb_domain ?? "", smb_username: p.config.smb_username ?? "", secret: "", secret_set: p.secret_set, external_volume: !!p.external_volume, host_path: p.host_path ?? "",
 });
 
 const FOLDER_HELP: [string, string][] = [
@@ -43,7 +43,7 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
     if (!form) return;
     setError(""); setNote("");
     if (!form.name.trim()) { setError("Укажите название хранилища, например «Файловый сервер №1»."); return; }
-    const config: Record<string, string | boolean> = form.kind === "local" ? { local_path: form.local_path, external_volume: form.external_volume } : {
+    const config: Record<string, string | boolean> = form.kind === "local" ? { local_path: form.local_path, external_volume: form.external_volume, host_path: form.external_volume ? form.host_path.trim() : "" } : {
       smb_server: form.smb_server.trim(), smb_share: form.smb_share.trim(), smb_base_path: form.smb_base_path.trim(), smb_domain: form.smb_domain.trim(), smb_username: form.smb_username.trim() };
     setBusy(true);
     try {
@@ -85,13 +85,18 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
               <option value="local">Локальный каталог на сервере приложения</option>
             </select>
             </label>
-          {form.kind === "local" ? (
+          {form.kind === "local" && !form.external_volume ? (
             <label><span className="field-title">Каталог внутри контейнера<InfoTip>Абсолютный путь внутри контейнера приложения (лежит в разделе DATA_ROOT на сервере). Не путь Windows.</InfoTip></span><input value={form.local_path} onChange={(e) => set("local_path", e.target.value)} placeholder="/data/exports" />
               </label>
           ) : null}
+          {form.kind === "local" && form.external_volume ? (
+            <label><span className="field-title">Путь на сервере<InfoTip>Каталог на самом сервере, куда системный администратор уже смонтировал ресурс или диск. Приложение проверит его и подключит само: редактировать Docker и .env не нужно. Разрешены каталоги внутри /mnt, /media и /srv; другие корни задаются на сервере в .env (VOLUME_ALLOWED_ROOTS).</InfoTip></span>
+              <input value={form.host_path} onChange={(e) => set("host_path", e.target.value)} placeholder="/mnt/qnap-nfs" spellCheck={false} />
+              <span className="example">Пример: <code>/mnt/qnap-nfs</code></span></label>
+          ) : null}
           {form.kind === "local" ? (
             <label className="check"><input type="checkbox" checked={form.external_volume} onChange={(e) => set("external_volume", e.target.checked)} />
-              <span className="check-body">Внешний том: смонтированная сетевая папка или диск<InfoTip>Включает защиту: кнопка «Проверить» ставит на том метку и запоминает, что он смонтирован, — если том отключится, запись, выгрузка и перенос в него остановятся, а не заполнят системный диск. Отмечайте, когда том сейчас подключён (проверка откажет, если каталог лежит на системном диске). Для переноса записей в папку отметка обязательна; обычная папка на диске сервера работает без неё.</InfoTip></span></label>
+              <span className="check-body">Внешний том: смонтированная сетевая папка или диск<InfoTip>Включает защиту: кнопка «Проверить» ставит на том метку и запоминает, что он смонтирован, — если том отключится, запись, выгрузка и перенос в него остановятся, а не заполнят системный диск. Для переноса записей в папку отметка обязательна; обычная папка на диске сервера работает без неё.</InfoTip></span></label>
           ) : (
             <fieldset className="group"><legend>Сетевой ресурс SMB</legend>
               <div className="cols">
@@ -125,7 +130,9 @@ export default function StoragesAdmin({ onOpen }: { onOpen?: (id: string) => voi
               return (
                 <tr key={p.id}>
                   <td>{p.name}<div className="muted small">{p.kind === "smb" ? `SMB${p.config.smb_username ? ` · ${p.config.smb_domain ? `${p.config.smb_domain}\\` : ""}${p.config.smb_username}` : ""}` : "локальный каталог"}</div></td>
-                  <td className="small"><code>{p.address}</code></td>
+                  <td className="small"><code>{p.address}</code>{p.volume && <div className="small">
+                    {p.volume.state === "attached" ? <span className="badge ok">подключён{p.volume.free != null ? `, свободно ${Math.round(p.volume.free / 1024 ** 3)} ГБ` : ""}</span>
+                      : p.volume.state === "unreachable" ? <span className="badge warn">не отвечает: запись остановлена</span> : <span className="badge warn">не подключён: запись остановлена</span>}</div>}</td>
                   <td className="small">{p.used_by.length ? p.used_by.join(", ") : <span className="muted">пока никем</span>}
                     {t && t !== "run" && <div className={t.ok ? "ok-text" : "err"} role="status">{t.ok ? "✓ " : "✗ "}{t.message}{!t.ok && <> <a href="https://github.com/calleograph/peregovorka/wiki/Решение-проблем-файловых-хранилищ" target="_blank" rel="noopener noreferrer">Как решить</a></>}</div>}</td>
                   <td className="actions">

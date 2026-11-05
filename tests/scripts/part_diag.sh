@@ -121,3 +121,9 @@ t "ASR_CPU_THREADS=0 — предупреждение «все ядра»" bash 
 t "LiveKit v1.9.0 — предупреждение про 404 на /rtc/v1; v1.13.7 и новее — нет" bash -c 'chk(){ env NPROC_OVERRIDE=8 ASR_CPU_THREADS=4 LIVEKIT_IMAGE_TAG="$1" bash -c '"'"'source "$1/scripts/lib/envlib.sh"; REPO_ROOT="$1"; w=""; kw(){ w+="$*"; }; realtime_config_check : kw; printf "%s" "$w"'"'"' _ "$2"; }; chk v1.9.0 "$1" | grep -q "404 на /rtc/v1" && [ -z "$(chk v1.13.7 "$1")" ] && [ -z "$(chk v1.14.0 "$1")" ]' _ "$ROOT"
 t "semver_lt сравнивает числа, а не строки (v1.9.0 < v1.13.7)" bash -c 'source "$1/scripts/lib/envlib.sh"; semver_lt v1.9.0 v1.13.7 && ! semver_lt v1.13.7 v1.9.0 && ! semver_lt v1.13.7 v1.13.7' _ "$ROOT"
 t "собственный nginx-site без realtime-директив распознаётся" bash -c 'source "$1/scripts/lib/envlib.sh"; printf "location /livekit/ {}\n" > "$2/old.conf"; ! site_realtime_ok "$2/old.conf" && site_realtime_ok "$1/deployment/nginx/site.http.conf.tpl"' _ "$ROOT" "$TMP"
+
+# ---- внешние тома: приложение передаёт помощнику только операцию и путь
+t "vollib: путь вне разрешённых корней отклоняется" bash -c 'DATA_ROOT=/tmp/x REPO_ROOT=/tmp/y; source "$1/scripts/lib/vollib.sh"; vol_path_error /etc | grep -q "Разрешены"' _ "$ROOT"
+t "vollib: подстановка команд в пути отклоняется" bash -c 'DATA_ROOT=/tmp/x REPO_ROOT=/tmp/y; source "$1/scripts/lib/vollib.sh"; vol_path_error "/mnt/\$(id)" | grep -q "латиница"' _ "$ROOT"
+t "compose: внешние тома подключены с распространением, порядок подстановки задаёт dc" bash -c 'grep -q "propagation: \${EXT_PROPAGATION:-rslave}" "$1/deployment/compose.yml"; grep -q "ext_propagation" "$1/scripts/lib/common.sh"' _ "$ROOT"
+t "updater: запрос volume не выполняет произвольных команд" bash -c '! grep -nE "eval|bash -c \"\\\$arg" "$1/scripts/lib/vollib.sh"' _ "$ROOT"
