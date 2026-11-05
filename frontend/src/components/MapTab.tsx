@@ -3,6 +3,7 @@ import { api, type ApiError, type MapState, type MapTopicEdit } from "../api";
 import { buildStandaloneHtml } from "../mapExport";
 import { downloadText, fileBase } from "../util";
 import { Modal } from "./Dialogs";
+import AnonChoice, { type AnonMode } from "./AnonChoice";
 import ModelChoice from "./ModelChoice";
 
 interface Props {
@@ -36,6 +37,8 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
   const [height, setHeight] = useState(900);
   const [pick, setPick] = useState(false);          // окно «Модель и параметры»
   const [llmKey, setLlmKey] = useState("");
+  const [anon, setAnon] = useState<AnonMode>("");     // обезличивание только для этой карты; "" — по настройкам комнаты и сервера
+  const anonTouched = useRef(false);
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const timer = useRef<number | undefined>(undefined);
@@ -52,6 +55,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
   }, [meetingId]);
 
   useEffect(() => { void load(); return () => window.clearTimeout(timer.current); }, [load]);
+  useEffect(() => { const last = st?.plan.anonymize_last; if (last && !anonTouched.current) { anonTouched.current = true; setAnon(last); } }, [st?.plan.anonymize_last]);      // повторное формирование — с прошлым выбором
 
   const send = useCallback(() => {
     const s = stRef.current, w = frame.current?.contentWindow;
@@ -79,7 +83,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
 
   const generate = async (key = "") => {
     setBusy(true); setError("");
-    try { await api.createMap(meetingId, key || undefined); setPick(false); setLlmKey(""); await load(); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
+    try { await api.createMap(meetingId, key || undefined, anon || undefined); setPick(false); setLlmKey(""); await load(); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
   };
   const restore = async () => {
     setBusy(true); setError("");
@@ -114,7 +118,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
           <span style={{ flex: 1 }} />
           {st.status === "ready" && <button className="btn" onClick={download} title="Один файл: открывается без сервера, внутри данные карты, стили и скрипт">Скачать HTML</button>}
           {st.can_restore && !working && <button className="btn" onClick={() => void restore()} disabled={busy} title="Поменять местами текущую и предыдущую версии карты">Вернуть прежнюю карту</button>}
-          {(st.can_generate ?? true) && choices.length > 0 && <button className="btn" disabled={!canGen} onClick={() => setPick(true)} title="Выбрать другую модель для этого формирования">Модель…</button>}
+          {(st.can_generate ?? true) && <button className="btn" disabled={!canGen} onClick={() => setPick(true)} title="Модель и обезличивание для этого формирования">Параметры…</button>}
           {(st.can_generate ?? true) && <button className="btn primary" disabled={!canGen} onClick={() => void generate()}
                   title={!st.finished ? "Карта формируется после завершения встречи" : !hasMaterials ? "В стенограмме нет реплик" : !st.plan.ready ? st.plan.reason ?? "" : ""}>
             {working ? "Формируется…" : genWord}</button>}
@@ -134,6 +138,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
           <details className="tech-details"><summary>Диагностика формирования</summary>
             <table className="table small"><tbody>
               <tr><th>Модель</th><td>{String(meta.model_title ?? meta.model ?? "—")}{meta.llm_profile ? ` · ${String(meta.llm_profile)}` : ""}{meta.llm_once ? " · выбрана на один раз" : ""}</td></tr>
+              {meta.anonymized !== undefined && meta.anonymized !== null && <tr><th>Обезличивание</th><td>{meta.anonymized ? `включено${meta.anonymizer_profile ? `, профиль «${String(meta.anonymizer_profile)}»` : ""}` : "выключено"}{meta.anonymize_choice ? " · выбрано для этой карты" : ""}</td></tr>}
               <tr><th>Время</th><td>{secs("duration_s") !== null ? humanSeconds(secs("duration_s") as number) : "—"}{typeof meta.started_at === "string" ? ` · начато ${new Date(meta.started_at).toLocaleTimeString("ru-RU")}` : ""}</td></tr>
               <tr><th>Обращений к модели</th><td>{String(meta.llm_calls ?? "—")} · фрагментов {String(meta.chunks ?? "—")} · повторов {String(meta.retries ?? 0)}{meta.length_hits ? ` · обрывов по длине ${String(meta.length_hits)}` : ""}</td></tr>
               <tr><th>Токены</th><td>{meta.prompt_tokens ? `вход ${String(meta.prompt_tokens)}, ` : ""}ответ {String(meta.completion_tokens ?? "—")}{meta.tokens_per_s ? ` (${String(meta.tokens_per_s)}/с)` : ""}</td></tr>
@@ -149,7 +154,8 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
       {pick && (
         <Modal title="Модель и параметры" onClose={() => setPick(false)} noAutofocus>
           <p style={{ margin: 0 }}>Сейчас карту строит <b>{st.plan.profile || st.plan.model || "модель по умолчанию"}</b>{st.plan.model ? ` (${st.plan.model})` : ""}{st.plan.local ? " · локально, текст не покидает сервер" : ""}.</p>
-          <ModelChoice choices={choices} value={llmKey} onChange={setLlmKey} currentName={st.plan.profile} disabled={busy} what="построения карты" />
+          {choices.length > 0 && <ModelChoice choices={choices} value={llmKey} onChange={setLlmKey} currentName={st.plan.profile} disabled={busy} what="построения карты" />}
+          <AnonChoice plan={st.plan} value={anon} onChange={(v) => { anonTouched.current = true; setAnon(v); }} disabled={busy} />
           {st.status === "ready" && <p className="muted small" style={{ margin: "6px 0 0" }}>Текущая карта не удаляется, пока не построена новая; при неудаче она останется, а после замены её можно вернуть.</p>}
           <div className="row" style={{ marginTop: 10 }}>
             <button className="btn primary" disabled={busy || !st.plan.ready} onClick={() => void generate(llmKey)}>{genWord}</button>

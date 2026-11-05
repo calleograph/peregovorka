@@ -9,7 +9,7 @@ export default function ModelChoice({ choices, value, onChange, currentName, onc
         <option value="">Не менять: как настроено ({currentName && !once ? currentName : "по настройкам"})</option>
         {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
       </select>
-      <span className="help">Настройки переговорки и системы не меняются. В списке только настроенные и включённые модели. Для внешней модели действует обезличивание по правилам переговорки; факт выбора записывается в журнал.</span>
+      <span className="help">Настройки переговорки и системы не меняются. В списке только настроенные и включённые модели. Для внешней модели действует выбранный режим обезличивания; факт выбора записывается в журнал.</span>
     </label>
   );
 }

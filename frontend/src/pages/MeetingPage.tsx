@@ -179,6 +179,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
         <Menu label="Ещё" title="Скачать стенограмму, действия администратора">
           <span className="menu-h">Скачать стенограмму</span>
           {FORMATS.map(([f, l]) => <a key={f} href={api.transcriptExportUrl(meetingId, f)} download>{l}</a>)}
+          {FORMATS.map(([f, l]) => <a key={`m${f}`} href={api.transcriptExportUrl(meetingId, f, true)} download>{l}, обезличенная</a>)}
           <button onClick={() => downloadText(text, `${fileBase(meeting.room_name, meeting.started_at)}.txt`)} disabled={!segments.length}>Как на этой странице (.txt)</button>
           {isAdmin && <><span className="menu-h">Администратор</span>{adminActs.items}</>}
         </Menu>

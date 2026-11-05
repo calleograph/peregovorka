@@ -17,6 +17,8 @@ from ..services import roles
 from ..services.room_icons import icon_out
 from ..services import leave_reasons
 from ..services.audit import audit_now, write_audit
+from ..privacy.engine import PrivacyError
+from ..privacy.policy import choice_refused
 from ..services.video_rec import VideoError
 from ..services.export_docs import md_to_plain, to_docx, to_html, to_pdf
 from ..services.doc_render import with_incomplete_notice
@@ -225,27 +227,36 @@ def _render(fmt: str, markdown: str, title: str, kind: str = "protocol") -> byte
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
-@router.get("/{meeting_id}/transcript.txt", response_class=PlainTextResponse)
-async def transcript_txt(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """Полный протокол по времени и участникам (шапка «Участвовали: …» и реплики)."""
-    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+async def _transcript_for(request: Request, db: AsyncSession, meeting: Meeting, anonymize: str) -> str:
+    """Исходная стенограмма или обезличенная. Сбой обезличивания — отказ, а не исходный текст вместо обезличенного."""
     ps = request.app.state.protocols
-    text = await ps.transcript_text(db, meeting, await ps._tz(db))  # noqa: SLF001
+    if not anonymize:
+        return await ps.transcript_text(db, meeting, await ps._tz(db))  # noqa: SLF001
+    try:
+        return await ps.masked_transcript(db, meeting)
+    except PrivacyError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from None
+
+
+@router.get("/{meeting_id}/transcript.txt", response_class=PlainTextResponse)
+async def transcript_txt(meeting_id: uuid.UUID, request: Request, anonymize: str = Query("", pattern="^(|on)$"), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    """Полный протокол по времени и участникам (шапка «Участвовали: …» и реплики). anonymize=on — с обезличенными участниками и данными."""
+    meeting = await get_meeting_for_user(request, db, meeting_id, su)
+    text = await _transcript_for(request, db, meeting, anonymize)
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="transcript.download", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
-                    details={"format": "txt"})
+                    details={"format": "txt", "anonymized": bool(anonymize)})
     return PlainTextResponse(text, headers={"Content-Disposition": f'attachment; filename="transcript-{str(meeting_id)[:8]}.txt"'})
 
 
 @router.get("/{meeting_id}/transcript/export")
-async def transcript_export(meeting_id: uuid.UUID, request: Request, format: str = Query("docx", pattern="^(txt|md|docx|pdf)$"),
+async def transcript_export(meeting_id: uuid.UUID, request: Request, format: str = Query("docx", pattern="^(txt|md|docx|pdf)$"), anonymize: str = Query("", pattern="^(|on)$"),
                             su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
-    ps = request.app.state.protocols
-    text = await ps.transcript_text(db, meeting, await ps._tz(db))  # noqa: SLF001
+    text = await _transcript_for(request, db, meeting, anonymize)
     md = "\n\n".join(line for line in text.splitlines() if line.strip())  # каждая строка стенограммы — отдельный абзац
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="transcript.download", target_type="meeting", target_id=str(meeting_id), ip=client_ip(request),
-                    details={"format": format})
-    return _file_response(_render(format, md, f"Стенограмма: {meeting.room.name}"), format, f"transcript-{str(meeting_id)[:8]}")
+                    details={"format": format, "anonymized": bool(anonymize)})
+    return _file_response(_render(format, md, f"Стенограмма: {meeting.room.name}"), format, f"transcript-{str(meeting_id)[:8]}{'-anon' if anonymize else ''}")
 
 
 # ------------------------------------------------------------------------------------- запись вкл/выкл
@@ -336,7 +347,7 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
          "export_files": (p.meta or {}).get("export_files"),
          "timing": {k: (p.meta or {}).get(k) for k in ("requested_at", "started_at", "llm_started_at", "llm_finished_at", "finished_at", "queue_s", "prepare_s", "llm_s", "total_s")},
          # как создан документ: модель, тип API, обезличивание (включено ли, профиль, сколько замен по категориям — без значений), части и повторы, причины остановки
-         "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "api_type", "anonymized", "anonymizer_profile", "anonymized_replaced", "anonymized_categories", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
+         "generation": {k: (p.meta or {}).get(k) for k in ("model", "model_title", "api_type", "anonymized", "anonymize_choice", "anonymizer_profile", "anonymized_replaced", "anonymized_categories", "llm_profile", "llm_source", "llm_once", "chunks", "llm_calls", "retries",
                                                                "length_hits", "finish", "max_tokens", "limit_requested", "limit_applied", "limit_note", "input_chars", "output_chars", "prompt_tokens",
                                                                "completion_tokens", "structured", "failed", "error_code")}}
     # привязка времён документа к стенограмме: секунды суток начала встречи в часовом поясе, в котором записаны метки [ЧЧ:ММ:СС] (переход от пункта к реплике)
@@ -361,7 +372,7 @@ async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUse
 
 @router.get("/{meeting_id}/protocols/default-instruction")
 async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str = Query("protocol", pattern="^(summary|protocol)$"),
-                              llm: str = Query("", max_length=80), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+                              llm: str = Query("", max_length=80), anonymize: str = Query("", pattern="^(|on|off)$"), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Инструкция по умолчанию для окна «Сформировать протокол» (общая + дополнения переговорки), план (какая модель, прогноз времени) и,
     для руководителей, список моделей для разового выбора (`llm` — выбранная модель: прогноз пересчитывается под неё)."""
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
@@ -370,9 +381,11 @@ async def default_instruction(meeting_id: uuid.UUID, request: Request, kind: str
     ps = request.app.state.protocols
     can_override = roles.can_manage_room(meeting.room, su)
     try:
-        plan = await ps.plan(db, meeting, kind, once=llm if can_override else None)
+        plan = await ps.plan(db, meeting, kind, once=llm if can_override else None, anonymize=anonymize or None)
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    plan["anonymize_can_off"] = not (plan["anonymize_required"] and not su.is_admin)
+    plan["anonymize_last"] = await ps.last_choice(db, meeting_id, kind)
     out = {"kind": kind, "instruction": await ps.default_instruction(db, meeting, kind), "builtin": False,
            "plan": plan, "can_override": can_override}
     if can_override:
@@ -403,20 +416,26 @@ async def create_protocol(meeting_id: uuid.UUID, request: Request, body: dict[st
             raise HTTPException(status_code=422, detail="llm_once: строка profile:<подключение>")
         if not roles.can_manage_room(meeting.room, su):
             raise HTTPException(status_code=403, detail="Другую модель на один раз выбирают руководители комнаты и администраторы")
+    choice = body.get("anonymize") or None
+    if choice not in (None, "on", "off"):
+        raise HTTPException(status_code=422, detail="anonymize: on | off")
+    refused = choice_refused(await request.app.state.settings_svc.get(db, "anonymizer"), choice, is_admin=su.is_admin)
+    if refused:
+        raise HTTPException(status_code=403, detail=refused)
     try:
-        plan = await ps.plan(db, meeting, kind, once=llm_once)
+        plan = await ps.plan(db, meeting, kind, once=llm_once, anonymize=choice)
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if not plan["llm_ready"]:
         raise HTTPException(status_code=409, detail="Языковая модель (LLM) не настроена администратором")
     if not plan["anonymizer_ready"]:
-        raise HTTPException(status_code=409, detail="Для этой переговорки включено обезличивание, но сервис обезличивания не настроен")
+        raise HTTPException(status_code=409, detail="Обезличивание включено, но модели распознавания имён не установлены на сервере")
     if not await ps.has_materials(meeting_id):
         raise HTTPException(status_code=409, detail="В встрече нет реплик, чата и схемы — формировать протокол не из чего")
-    pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction, llm_once)
+    pid = await ps.create_protocol_row(meeting_id, kind, su.display_name, instruction, llm_once, choice)
     ps.start_protocol(pid)
     await write_audit(db, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.create",
-                      target_type="meeting", target_id=str(meeting_id), details={"protocol_id": str(pid), "kind": kind, "llm_once": llm_once,
+                      target_type="meeting", target_id=str(meeting_id), details={"protocol_id": str(pid), "kind": kind, "llm_once": llm_once, "anonymize_choice": choice, "anonymized": plan["anonymize"],
                                                                                     "model": plan.get("llm_model"), "model_source": plan.get("llm_source")})
     await db.commit()
     return {"protocol_id": str(pid), "status": "pending"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.privacy import names as nm
 from app.privacy.engine import Anonymizer, Policy
 
 from .privacy_corpus import HOLDOUT_PEOPLE, PARTICIPANTS, build, evaluate, holdout, summary
@@ -79,3 +80,44 @@ def test_lab_shows_evidence_disputed_candidates_and_rechecks_with_an_exception(c
     assert disputed.get("Угу") == "междометие" and all(text[c["start"]:c["end"]] == c["original"] for c in out["candidates"])
     again = client.post("/api/v1/admin/privacy/lab", json={"text": text, "profile": "strict", "participants": PARTICIPANTS, "draft": {"exceptions": ["Кузнецов"]}}).json()
     assert "Кузнецов придёт" in again["text"] and "Кузнецову передам" in again["text"], "исключение действует во всех формах слова"
+
+
+# ------------------------------------------------------------------------------------------------ фамилии, которых нет в словаре
+# Вымышленные редкие фамилии: словарь знает их только по окончанию. Разбор принимал такую фамилию за родительный падеж женского имени на «-ина»,
+# отчество «Петрович» превращалось в «Петровна», а участник — в женщину с другой фамилией.
+RARE_MALE = ("Мишунин", "Брюшинин", "Кукушин", "Тимошунин", "Лапшунин")
+
+
+@pytest.mark.parametrize("surname", RARE_MALE)
+def test_rare_surname_keeps_parts_and_gender(surname):
+    full = nm.parse_name([surname, "Алексей", "Петрович"])
+    assert (full.surname, full.first, full.patronymic, full.gender) == (surname.lower(), "алексей", "петрович", "masc")
+    assert nm.parse_name([surname]).first == "", "одна фамилия — не имя"
+    assert nm.parse_name(["Алексей", surname]).first == "алексей"
+
+
+@pytest.mark.parametrize("surname", RARE_MALE)
+@pytest.mark.parametrize("profile", ["basic", "strict"])
+def test_rare_surname_is_one_person_in_every_form(surname, profile):
+    a = Anonymizer(Policy.from_profile(profile), [f"{surname} Алексей Петрович", "Сидорова Анна"])
+    text = (f"Участники: {surname} Алексей Петрович, Сидорова Анна.\n{surname}: добрый день. {surname} сказал, что {surname}у нужно подготовить отчёт. "
+            f"У {surname}а есть вопрос. С {surname}ым договорились. О {surname}е написала Анна.")
+    out = a.process(text).text
+    assert surname[:-2] not in out, out
+    assert not [r for r in a.roster.people if not r.participant], "все упоминания — один участник, а не новые лица"
+    if profile == "basic":
+        first = a._short_alias(a.roster.people[0])                # noqa: SLF001
+        assert first[0] == "Алексей" and first[1].startswith(surname[0]), first
+    else:
+        assert "Участник 1" in out and "Лицо" not in out, out
+
+
+def test_female_participant_with_rare_surname_stays_female():
+    p = nm.parse_name(["Мишунина", "Анна", "Петровна"])
+    assert (p.first, p.patronymic, p.gender) == ("анна", "петровна", "femn") and nm.surname_key(p.surname) == "мишунин"
+
+
+def test_unknown_gender_is_not_invented():
+    assert nm.parse_name(["Мишунин"]).gender == "", "по одной фамилии пол не определяется"
+    a = Anonymizer(Policy.from_profile("basic"), ["Мишунин"])
+    assert a.process("Мишунин доложил о работе.").text.startswith("Участник 1"), "без имени — нейтральное обозначение"

@@ -33,7 +33,7 @@ from .job_budget import MAX_S, Budget, JobTimeout
 from .llm_gateway import LlmGateway
 from ..privacy.engine import Anonymizer, PrivacyError
 from ..privacy.names import NlpUnavailable
-from ..privacy.policy import PROFILE_TITLES, build_policy, room_privacy
+from ..privacy.policy import PROFILE_TITLES, build_policy, document_privacy, room_privacy
 from ..db import release
 from ..models import GuestParticipant, Meeting, MeetingWhiteboard, Protocol, Recording, TranscriptSegment, User, utcnow
 from .api_profiles import ProfileService
@@ -63,7 +63,9 @@ EXTERNAL_FRAGMENT_CHARS = 12000      # размер фрагмента для с
 class NothingToProcess(SettingsError):
     """В встрече нет ни реплик, ни чата, ни схемы: это штатный случай (пустая встреча), а не сбой — в журнал ошибкой не пишется."""
 
-_BASE_PROMPT = "Ты — секретарь совещания. Пиши по-русски, строго по тексту стенограммы, ничего не выдумывай."
+NAMES_RULE = ("Имена и фамилии участников пиши точно как в списке участников и в подписях реплик; род глаголов при человеке бери из стенограммы, а если он неясен — пиши нейтрально "
+              "(«выступил(а)» не нужно: «выступление», «доклад»). Пол людей не угадывай.")
+_BASE_PROMPT = "Ты — секретарь совещания. Пиши по-русски, строго по тексту стенограммы, ничего не выдумывай. " + NAMES_RULE
 _ANON_HINT = ("В стенограмме персональные и конфиденциальные данные заменены обозначениями (например, «Участник 1», «Иван И.», «Организация 2», «[секрет удалён]») — "
               "сохраняй обозначения как есть и не пытайся их раскрыть.")
 
@@ -81,7 +83,7 @@ SYSTEM_PROMPT_WITH_SOURCES = system_prompt(True, True)
 # выполняли дословным пересказом стенограммы и упирались в лимит длины (проверено на Qwen3 0.6B — вся середина встречи терялась).
 NOTES_PROMPT = ("Ты — секретарь совещания. Из фрагмента стенограммы выпиши КРАТКИЙ список: (1) принятые решения; (2) задачи: кто ответственный, что сделать, срок "
                 "(если срок не назван — «не указан»); (3) открытые вопросы. Каждый пункт — одна короткая строка своими словами. "
-                "НЕ копируй реплики из стенограммы. Ничего не выдумывай (в частности, адреса, версии и числа, которых нет в тексте). Если пунктов нет — напиши «нет».")
+                "НЕ копируй реплики из стенограммы. Ничего не выдумывай (в частности, адреса, версии и числа, которых нет в тексте). Если пунктов нет — напиши «нет». " + NAMES_RULE)
 NOTES_ANON_HINT = " Обозначения вроде «Участник 1» или «Иван И.» сохраняй как есть."
 NOTES_MAX_EXTERNAL = 8000   # потолок конспекта фрагмента у внешней модели: ≈ 1/12 знаков фрагмента
 NOTES_MAX_TOKENS = 600     # хороший список короткий; если модель вместо списка начинает переписывать текст, это видно по обрезке и не тратит минуты на CPU
@@ -347,6 +349,15 @@ class ProtocolService:
         return render_transcript(
             meeting.room.name, meeting.started_at, meeting.ended_at, names,
             [(r.started_at, author_name(r) or "Неизвестный участник", one(profanity.maybe(r.text, meeting.room.mask_profanity))) for r in rows], tz)
+
+    async def masked_transcript(self, db: AsyncSession, meeting: Meeting) -> str:
+        """Стенограмма с теми же обозначениями участников, что в обезличенных документах этой встречи. Пароли и ключи в ней тоже скрыты."""
+        cfg = await self._svc.get(db, "anonymizer")
+        profile = room_privacy(cfg, meeting.room)[1]
+        text = await self.transcript_text(db, meeting, await self._tz(db))
+        names = await self.participant_names(db, meeting)
+        await release(db)
+        return await self.mask_session(cfg, profile, names, lambda anon: anon.process(text).text)
 
     async def has_materials(self, meeting_id: uuid.UUID) -> bool:
         """Есть ли что обрабатывать: реплики, сообщения чата или схема на доске."""
@@ -800,12 +811,12 @@ class ProtocolService:
         extra = (meeting.room.protocol_instructions or "").strip()
         return base + (f"\n\nДополнительно для этой переговорки: {extra}" if extra else "")
 
-    async def create_protocol_row(self, meeting_id: uuid.UUID, kind: str, actor: str, instruction: str | None, llm_once: str | None = None) -> uuid.UUID:
+    async def create_protocol_row(self, meeting_id: uuid.UUID, kind: str, actor: str, instruction: str | None, llm_once: str | None = None, anonymize: str | None = None) -> uuid.UUID:
         async with self._sm() as db:
             meeting = await db.get(Meeting, meeting_id)
             instr = (instruction or "").strip() or (await self.default_instruction(db, meeting, kind) if meeting else None)
             rec = Protocol(meeting_id=meeting_id, kind=kind, status="pending", created_by=actor, instruction=instr,
-                           meta={"llm_once": llm_once} if llm_once else None)
+                           meta={k: v for k, v in (("llm_once", llm_once), ("anonymize_choice", anonymize)) if v} or None)
             db.add(rec)
             await db.commit()
             return rec.id
@@ -823,6 +834,7 @@ class ProtocolService:
             await release(db)                              # очередь «heavy» может ждать минутами: за это время соединение не держим
             started = datetime.now(timezone.utc)
             once = (rec.meta or {}).get("llm_once")
+            choice = (rec.meta or {}).get("anonymize_choice")
             info: dict = {"requested": rec.created_at, "started": started}      # времена этапов и сведения о модели (заполняет _generate)
             try:
                 async with self.heavy("protocol", defer_at="overloaded", max_defer=600):      # «в очереди»: при перегрузке ждёт до 10 минут и затем всё равно запускается
@@ -836,7 +848,7 @@ class ProtocolService:
                     self._live[protocol_id] = budget
                     try:
                         async with asyncio.timeout(budget.max_s):
-                            text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info, budget=budget)
+                            text, meta = await self._generate(db, rec.meeting_id, rec.kind, rec.instruction or "", once=once, info=info, budget=budget, anonymize=choice)
                     except TimeoutError:
                         if budget.elapsed() < budget.max_s - 1:
                             raise                                    # TimeoutError изнутри (не наш предел): обычная ошибка, а не «превышено время»
@@ -979,22 +991,11 @@ class ProtocolService:
         return m
 
     @staticmethod
-    async def _anonymize(cfg, profile: str, text: str, att: dict, instruction: str = "") -> tuple[str, dict, dict, str]:
-        """Материалы, список участников и инструкция пользователя → обезличенные (одна сессия замен на встречу: участник везде обозначен одинаково, в том числе
-        в разделе «Присутствовали» и в инструкции). Таблица замен живёт только здесь и нигде не сохраняется. Сбой — PrivacyError: в модель ничего не уходит."""
-        people = [p.get("name") or "" for p in att.get("people", [])] + [g.get("name") or "" for g in att.get("guests", [])]
-
-        def work():
-            anon = Anonymizer(build_policy(cfg, profile), [p for p in people if p])
-            res = anon.process(text)
-            alias = lambda v: anon.process(v).text if v else v          # noqa: E731 — те же замены, что в тексте
-            safe = {"people": [{"name": alias(p.get("name") or ""), "title": p.get("title") or "", "department": alias(p.get("department") or ""),
-                                "email": "", "phone": ""} for p in att.get("people", [])],
-                    "guests": [{"name": alias(g.get("name") or ""), "status": g.get("status") or ""} for g in att.get("guests", [])]}
-            return res, safe, alias(instruction)
-
+    async def mask_session(cfg, profile: str, people: list[str], work):
+        """Единый этап обезличивания перед анализом: протокол, резюме, карта и стенограмма проходят его одинаково. `work(anon)` выполняется в потоке с одной сессией замен на встречу:
+        участник везде обозначен одинаково. Таблица замен живёт только здесь и нигде не сохраняется. Сбой — PrivacyError: в модель ничего не уходит."""
         try:
-            res, safe, instruction = await asyncio.to_thread(work)
+            return await asyncio.to_thread(lambda: work(Anonymizer(build_policy(cfg, profile), [p for p in people if p])))
         except NlpUnavailable as exc:
             raise PrivacyError("nlp_unavailable", "Обезличивание не выполнено: " + str(exc) + ". Документ не сформирован, текст в модель не отправлялся.") from None
         except PrivacyError:
@@ -1003,10 +1004,25 @@ class ProtocolService:
             log.error("Сбой обезличивания", extra={"error": type(exc).__name__})
             raise PrivacyError("anonymizer_failed", f"Обезличивание не выполнено (внутренняя ошибка {type(exc).__name__}). Документ не сформирован, "
                                                     "текст в модель не отправлялся.") from None
+
+    @classmethod
+    async def _anonymize(cls, cfg, profile: str, text: str, att: dict, instruction: str = "") -> tuple[str, dict, dict, str]:
+        """Материалы, список участников и инструкция пользователя → обезличенные: в том числе раздел «Присутствовали» и инструкция."""
+        people = [p.get("name") or "" for p in att.get("people", [])] + [g.get("name") or "" for g in att.get("guests", [])]
+
+        def work(anon):
+            res = anon.process(text)
+            alias = lambda v: anon.process(v).text if v else v          # noqa: E731 — те же замены, что в тексте
+            safe = {"people": [{"name": alias(p.get("name") or ""), "title": p.get("title") or "", "department": alias(p.get("department") or ""),
+                                "email": "", "phone": ""} for p in att.get("people", [])],
+                    "guests": [{"name": alias(g.get("name") or ""), "status": g.get("status") or ""} for g in att.get("guests", [])]}
+            return res, safe, alias(instruction)
+
+        res, safe, instruction = await cls.mask_session(cfg, profile, people, work)
         log.info("Материалы обезличены", extra={"replaced": len(res.replacements), "categories": res.stats()})      # только числа: без значений и таблицы замен
         return res.text, safe, {"replaced": len(res.replacements), "categories": res.stats(), "warnings": res.warnings}, instruction
 
-    async def plan(self, db: AsyncSession, meeting: Meeting, kind: str = "protocol", once: str | None = None) -> dict:
+    async def plan(self, db: AsyncSession, meeting: Meeting, kind: str = "protocol", once: str | None = None, anonymize: str | None = None) -> dict:
         """Что произойдёт при создании протокола в этой комнате: готова ли LLM и будет ли текст обезличен (для окна подтверждения)."""
         room = meeting.room
         purpose = "summary" if kind == "summary" else "protocol"
@@ -1018,13 +1034,15 @@ class ProtocolService:
         llm.settings = await discover_window(llm.settings, ca_file=self._ca(), transport=self._transports.get("llm"))       # type: ignore[arg-type]
         eff = self.llm.effective(llm.settings)
         an_cfg = await self._svc.get(db, "anonymizer")
-        anonymize, profile = room_privacy(an_cfg, room)
+        room_default = room_privacy(an_cfg, room)[0]
+        do_anonymize, profile = document_privacy(an_cfg, room, anonymize)
         from ..privacy import fetch_models  # noqa: PLC0415
         from ..privacy.names import NLP_DIR  # noqa: PLC0415
 
-        nlp_ok = (not anonymize) or await asyncio.to_thread(fetch_models.ready, NLP_DIR)
+        nlp_ok = (not do_anonymize) or await asyncio.to_thread(fetch_models.ready, NLP_DIR)
         out = {"llm_ready": bool(eff.enabled) and llm.available, "llm_profile": llm.name, "llm_source": llm.source, "llm_note": llm.note, "llm_reason": llm.reason,
-               "anonymize": anonymize, "anonymizer_profile": PROFILE_TITLES.get(profile) if anonymize else None, "anonymizer_ready": nlp_ok,
+               "anonymize": do_anonymize, "anonymize_default": room_default, "anonymize_choice": anonymize or "", "anonymize_required": bool(an_cfg.required),
+               "anonymize_available": bool(an_cfg.enabled or an_cfg.required), "anonymizer_profile": PROFILE_TITLES.get(profile) if do_anonymize else None, "anonymizer_ready": nlp_ok,
                "llm_model": eff.model if eff.enabled else None, "warnings": [], "input_chars": None, "once": bool(once_choice), "llm_api_type": eff.type}
         if not nlp_ok:
             out["warnings"].append("Обезличивание включено, но модели распознавания имён не установлены на сервере: документ не будет сформирован. "
@@ -1049,8 +1067,13 @@ class ProtocolService:
         self.journal.emit(category, event, level=level, meeting_id=str(rec.meeting_id), message=message or f"{rec.kind}: {ms} мс",
                           data={"kind": rec.kind, "duration_ms": ms, "created_by": rec.created_by, **(data or {})})
 
+    async def last_choice(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str) -> str:
+        """Режим обезличивания, выбранный для последнего документа этого вида этой встречи: окно формирования открывается с ним."""
+        rec = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, Protocol.kind == kind).order_by(Protocol.created_at.desc()).limit(1))).scalars().first()
+        return str((rec.meta or {}).get("anonymize_choice") or "") if rec else ""
+
     async def _generate(self, db: AsyncSession, meeting_id: uuid.UUID, kind: str, instruction: str, *, once: str | None = None,
-                        info: dict | None = None, budget: Budget | None = None) -> tuple[str, dict]:
+                        info: dict | None = None, budget: Budget | None = None, anonymize: str | None = None) -> tuple[str, dict]:
         info = info if info is not None else {}
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None:
@@ -1085,13 +1108,13 @@ class ProtocolService:
         instruction = instruction.strip() or await self.default_instruction(db, meeting, kind)
         # 1. Обезличивание — по настройке комнаты (обязательное у администратора сильнее). Включено → сбой = отказ (fail closed): в модель ничего не уходит.
         an_cfg = await self._svc.get(db, "anonymizer")
-        do_anonymize, an_profile = room_privacy(an_cfg, room)
+        do_anonymize, an_profile = document_privacy(an_cfg, room, anonymize)       # выбор для этого документа; настройки комнаты и сервера не меняются
         await release(db)                                  # дальше — тяжёлая обработка и сетевые обращения: транзакция PostgreSQL не должна жить во время них
         stats: dict = {}
         if do_anonymize:
             text, att, stats, instruction = await self._anonymize(an_cfg, an_profile, text, att, instruction)
         else:
-            log.info("Обезличивание выключено для комнаты — имена передаются в модель без замены (пароли и ключи маскируются всегда)",
+            log.info("Обезличивание для этого документа выключено — имена передаются в модель без замены (пароли и ключи маскируются всегда)",
                      extra={"meeting_id": str(meeting_id)})
 
         # 2. LLM получает только обезличенный текст. Инструкция — та, что подтвердил пользователь (при обезличивании — с теми же заменами, что в тексте).
@@ -1128,7 +1151,7 @@ class ProtocolService:
         meta = {"model": eff_cfg.model, "llm_type": eff_cfg.type, "warnings": warnings, "truncated": pipe.truncated,  # type: ignore[attr-defined]
                 "llm_calls": pipe.calls, "parts": pipe.parts, "structured": pipe.structured or None,
                 "prompt_tokens": pipe.prompt_tokens, "completion_tokens": pipe.completion_tokens,
-                "anonymized_replaced": stats.get("replaced"), "anonymized_categories": stats.get("categories") or None, "anonymized": do_anonymize,
+                "anonymized_replaced": stats.get("replaced"), "anonymized_categories": stats.get("categories") or None, "anonymized": do_anonymize, "anonymize_choice": anonymize or None,
                 "llm_profile": llm_res.name, "llm_source": llm_res.source, "llm_note": llm_res.note,
                 "anonymizer_profile": PROFILE_TITLES.get(an_profile) if do_anonymize else None, "generated_at": utcnow().isoformat(),
                 "sources": materials.meta(), "time_base": time_base, "facts": pipe.facts or None, "diag": {**pipe.diag, "cache_hits": cache.hits} if pipe.diag else None}

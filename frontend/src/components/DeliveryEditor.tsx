@@ -9,8 +9,8 @@ export const MATERIAL_KINDS: { kind: string; label: string; help: string }[] = [
   { kind: "map", label: "Карта разговора", help: "Отправляется отдельным HTML-файлом независимо от выбранных форматов документов; при необходимости карта формируется перед отправкой." },
 ];
 export const FORMAT_LABEL: Record<string, string> = { docx: "Word (.docx)", pdf: "PDF", html: "HTML", txt: "Текст (.txt)", md: "Markdown" };
-export const SOURCE_LABEL: Record<string, string> = { leader: "руководитель", owner: "владелец комнаты", organizer: "организатор встречи", participant: "участник", user: "выбран вручную", manual: "свой адрес" };
-export const PROBLEM_LABEL: Record<string, string> = { no_email: "в каталоге нет адреса электронной почты", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
+export const SOURCE_LABEL: Record<string, string> = { leader: "руководитель", owner: "владелец комнаты", organizer: "организатор встречи", participant: "участник", guest: "гость", viewer: "зритель эфира", user: "выбран вручную", manual: "свой адрес" };
+export const PROBLEM_LABEL: Record<string, string> = { no_email: "нет адреса электронной почты", no_consent: "гость не дал согласия получать материалы", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
 const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
 export const MODE_LABEL: Record<PerMode, string> = { none: "Не отправлять", leader: "Руководителям комнаты", owner: "Владельцу комнаты", organizer: "Организатору встречи", all: "Всем участникам встречи", selected: "Выбранным пользователям", emails: "Только на свои адреса (ниже)" };
@@ -19,7 +19,7 @@ const noneMaterials = (): Record<string, PerMaterial> => Object.fromEntries(MATE
 export const emptySpec = (): MailDeliverySpec => ({ enabled: false, archive: false, materials: [], per_material: noneMaterials(), recipients: { leaders: false, participants: false, users: [], emails: [] } });
 
 /** Таблица получателей с пометками: у кого нет адреса или он запрещён политикой — видно сразу, а не «молчаливой ошибкой». */
-export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRecipient[]; selected?: Set<string>; onToggle?: (email: string) => void }) {
+export function RecipientTable({ rows, selected, onToggle, added, onAdd }: { rows: DeliveryRecipient[]; selected?: Set<string>; onToggle?: (email: string) => void; added?: Record<string, string>; onAdd?: (name: string, email: string) => void }) {
   if (!rows.length) return <div className="muted small">Получателей пока нет.</div>;
   return (
     <table className="table recipients">
@@ -27,8 +27,10 @@ export function RecipientTable({ rows, selected, onToggle }: { rows: DeliveryRec
         <tr key={`${r.email}-${i}`} className={r.problem ? "has-problem" : ""}>
           {onToggle && <td style={{ width: 28 }}>{r.problem ? null : <input type="checkbox" checked={selected?.has(r.email.toLowerCase()) ?? false} onChange={() => onToggle(r.email.toLowerCase())} aria-label={`Отправить ${r.email}`} />}</td>}
           <td>{r.name || "—"}<div className="muted small">{SOURCE_LABEL[r.source] ?? r.source}</div></td>
-          <td>{r.email || <span className="muted">—</span>}</td>
-          <td>{r.problem ? <span className="badge warn" title={PROBLEM_LABEL[r.problem]}>{PROBLEM_LABEL[r.problem] ?? r.problem}</span> : <span className="badge ok">будет отправлено</span>}</td>
+          <td>{r.email || (onAdd && (r.problem === "no_email" || r.problem === "no_consent")
+            ? <input type="email" value={added?.[r.name] ?? ""} placeholder="добавить адрес" aria-label={`Адрес: ${r.name}`} spellCheck={false} onChange={(e) => onAdd(r.name, e.target.value)} />
+            : <span className="muted">—</span>)}</td>
+          <td>{r.problem && !EMAIL.test((added?.[r.name] ?? "").trim()) ? <span className="badge warn" title={PROBLEM_LABEL[r.problem]}>{PROBLEM_LABEL[r.problem] ?? r.problem}</span> : <span className="badge ok">будет отправлено</span>}</td>
         </tr>))}</tbody>
     </table>
   );

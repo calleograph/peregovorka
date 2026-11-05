@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AnonChoice, { type AnonMode } from "./AnonChoice";
 import ModelChoice from "./ModelChoice";
 import { api, type ApiError, type LlmChoiceOnce, type ProtocolKind, type ProtocolPlan, type ProtocolTemplate } from "../api";
 import { Modal } from "./Dialogs";
@@ -32,6 +33,8 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   const [choices, setChoices] = useState<LlmChoiceOnce[]>([]);
   const [canOverride, setCanOverride] = useState(false);
   const [llmKey, setLlmKey] = useState("");     // "" — модель по настройкам; иначе модель только для этого формирования
+  const [anon, setAnon] = useState<AnonMode>("");       // обезличивание: "" — по настройкам комнаты и сервера; иначе только для этого документа
+  const anonTouched = useRef(false);
 
   const loadTemplates = useCallback(() => api.templates().then(setTemplates).catch(() => undefined), []);
   useEffect(() => { void loadTemplates(); }, [loadTemplates]);
@@ -39,8 +42,10 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.defaultInstruction(meetingId, kind, llmKey).then((r) => {
+    api.defaultInstruction(meetingId, kind, llmKey, anon).then((r) => {
       if (cancelled) return;
+      const last = r.plan?.anonymize_last ?? "";               // окно открывается с режимом прошлого документа этого вида, если он всё ещё разрешён
+      if (!anonTouched.current && last && last !== anon && (last === "on" ? r.plan?.anonymize_available : r.plan?.anonymize_can_off)) { anonTouched.current = true; setAnon(last); return; }
       setDefaultText(r.instruction);
       setPlan(r.plan ?? null);
       setChoices(r.llm_choices ?? []);
@@ -50,7 +55,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
     }).catch((e) => { if (!cancelled) setErr((e as ApiError).message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId, kind, llmKey]);
+  }, [meetingId, kind, llmKey, anon]);
 
   const visible = useMemo(() => templates.filter((t) => t.kind === "any" || t.kind === kind), [templates, kind]);
   const chosen = templates.find((t) => t.id === tplId);
@@ -70,7 +75,7 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
   };
   const start = async () => {
     setBusy(true); setErr("");
-    try { const r = await api.createProtocol(meetingId, kind, instruction.trim(), llmKey); onStarted(r.protocol_id); onClose(); }
+    try { const r = await api.createProtocol(meetingId, kind, instruction.trim(), llmKey, anon); onStarted(r.protocol_id); onClose(); }
     catch (e) { setErr((e as ApiError).message); setBusy(false); }
   };
 
@@ -103,12 +108,13 @@ export default function ProtocolDialog({ meetingId, kind: kind0, isAdmin, initia
           ) : null}
         </fieldset>
       )}
+      {plan && <AnonChoice plan={plan} value={anon} onChange={(v) => { anonTouched.current = true; setAnon(v); }} disabled={busy} />}
       {plan?.warnings?.map((w) => <div key={w} className="alert info" role="status">⚠ {w}</div>)}
       <label>Инструкция для модели
         <textarea rows={9} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={loading} maxLength={20000}
                   placeholder="Опишите, какой документ нужно получить" />
         <span className="help">Эту инструкцию вы подтверждаете перед отправкой. {plan && !plan.anonymize
-          ? "Обезличивание для этой переговорки выключено: стенограмма с именами и данными участников вместе с инструкцией уходит в языковую модель; пароли, токены и ключи скрываются всегда. Ничего, кроме инструкции и материалов встречи, не отправляется."
+          ? "Обезличивание для этого документа выключено: стенограмма с именами и данными участников вместе с инструкцией уходит в языковую модель; пароли, токены и ключи скрываются всегда. Ничего, кроме инструкции и материалов встречи, не отправляется."
           : `Материалы сначала обезличиваются на этом сервере${plan?.anonymizer_profile ? ` (профиль «${plan.anonymizer_profile}»)` : ""}: участники обозначаются, например, «Иван И.», серверы, контакты, суммы и пароли заменяются. Затем вместе с инструкцией уходят в языковую модель.`}
           {plan?.llm_profile ? ` Модель: ${plan.llm_profile}.` : ""}</span>
         <span className="example">Пример: <code>Составь протокол: тема, участники, решения, поручения (кто, что, срок). Ничего не выдумывай.</code></span>
