@@ -33,6 +33,7 @@ class SessionData:
     must_totp: bool = False        # политика требует 2FA, а пользователь её ещё не настроил: до настройки доступны только /auth/totp/*
     device: str = ""               # «Chrome 130 · Windows 10/11 (компьютер)» — подпись в списке «Активные устройства»
     ip: str = ""                   # адрес входа (для списка устройств)
+    trust_born: float = 0.0        # сессия из токена устройства: время входа паролем. Срок доверия считается от него, а не от продления
     pub: str = ""                  # публичный номер сессии: по нему сессию показывают и завершают; сам идентификатор сессии (cookie) наружу не отдаётся
 
 
@@ -85,7 +86,7 @@ class SessionStore:
 
     async def create(self, *, user_id: str, ad_guid: str, sam: str, display_name: str,
                      is_admin: bool, groups: list[str], local: bool = False, must_change: bool = False, must_totp: bool = False,
-                     device: str = "", ip: str = "", limit: int = 0, free: str | None = None) -> tuple[str, SessionData]:
+                     device: str = "", ip: str = "", limit: int = 0, free: str | None = None, trust_born: float = 0.0) -> tuple[str, SessionData]:
         """Новая сессия. `limit` — сколько сессий допустимо одновременно (0 — без ограничения). Если места нет, существующие сессии не трогаются: SessionLimit; завершить одну из них
         можно заранее (`free` — публичный номер сессии этого же пользователя) — только после подтверждения личности (пароль и 2FA уже проверены вызывающим)."""
         uid = str(user_id)
@@ -95,7 +96,7 @@ class SessionStore:
         now = time.time()
         k = _key(sid)
         data = SessionData(user_id, ad_guid, sam, display_name, is_admin, groups,
-                           secrets.token_urlsafe(24), now, now, local=local, must_change=must_change, must_totp=must_totp, device=device[:120], ip=ip[:64], pub=pub_of(k))
+                           secrets.token_urlsafe(24), now, now, local=local, must_change=must_change, must_totp=must_totp, trust_born=trust_born, device=device[:120], ip=ip[:64], pub=pub_of(k))
         await self._r.set(k, json.dumps(asdict(data), ensure_ascii=False), ex=self._s.session_idle_timeout_seconds)
         await self._r.zadd(self._idx(uid), {k: now})
         await self._r.expire(self._idx(uid), self._s.session_absolute_timeout_seconds)

@@ -63,7 +63,7 @@ async def trust(request: Request, su: SessionUser = Depends(require_user), db: A
     user = await db.get(User, su.user_id)
     pwd = await request.app.state.auth.trust_pwd(user) if user is not None else None
     tok, exp = await store.trust_issue(str(su.user_id), data.pub, days=days, params={"is_admin": su.is_admin, "groups": sorted(su.groups), "local": su.local},
-                                       born=data.created_at, pwd=pwd)
+                                       born=data.trust_born or data.created_at, pwd=pwd)
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="auth.desktop_trust", target_type="user", target_id=str(su.user_id),
                     ip=client_ip(request), details={"days": days})
     return JSONResponse({"token": tok, "expires_at": exp}, headers=_NO_STORE)

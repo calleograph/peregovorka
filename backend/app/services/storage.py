@@ -132,6 +132,7 @@ class LocalStorage:
         return full
 
     def exists(self, rel: str) -> bool:
+        self._require_marker()                 # на отключённом томе «нет файла» неотличимо от «том не подключён»: лучше честная ошибка
         return self._full(rel).exists()
 
     def write_bytes(self, rel: str, data: bytes) -> str:
@@ -225,6 +226,7 @@ class LocalStorage:
             raise StorageError(f"Не удалось переименовать файл: {exc.strerror or exc}") from None
 
     def delete(self, rel: str) -> None:
+        self._require_marker()                 # иначе удаление на отключённом томе считалось бы удачным, а файл оставался на томе навсегда
         try:
             self._full(rel).unlink(missing_ok=True)
         except OSError as exc:

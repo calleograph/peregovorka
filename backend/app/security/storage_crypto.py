@@ -59,6 +59,10 @@ class Keyring:
         self._keys: dict[int, AESGCM] = {}
         self.active: int | None = None
 
+    def signature(self) -> tuple[int | None, int | None]:
+        with self._lock:
+            return (max(self._keys) if self._keys else None), self.active
+
     def load(self, items: list[tuple[int, bytes, bool]]) -> None:
         """items: (номер, ключ, активный). Заменяет содержимое целиком."""
         with self._lock:

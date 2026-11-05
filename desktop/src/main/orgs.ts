@@ -10,8 +10,9 @@ import type { ServerInfo } from "../common/version";
 import type { Ctx } from "./ctx";
 import { request } from "./http";
 import { readJson, writeJson } from "./store";
+import { mediaAccess } from "../common/files";
 
-export type OrgRecord = { id: string; name: string; origin: string; managed: boolean; icon?: string | null };
+export type OrgRecord = { id: string; name: string; origin: string; managed: boolean; icon?: string | null; mediaOk?: boolean };
 export type OrgStatus = "connecting" | "online" | "signed-out" | "offline" | "error";
 export type PageState = { unread: number; inCall: boolean; sharing: boolean; mic: boolean; theme: "light" | "dark" | null; ws: string | null; title: string | null };
 
@@ -22,6 +23,7 @@ export interface Host {
   pickScreen(org: Org, req: DisplayMediaRequestHandlerHandlerRequest, cb: (s: Streams | null) => void): void;
   notify(org: Org, n: { tag: string; title: string; body?: string; route?: string; kind: string }): void;
   confirmReloadInCall(): boolean;
+  confirmMedia(org: Org): Promise<boolean>;
   download(org: Org, item: Electron.DownloadItem, wc: WebContents): void;
   contextMenu(wc: WebContents, p: Electron.ContextMenuParams): void;
   childWindowOptions(org: Org): Electron.BrowserWindowConstructorOptions;
@@ -38,6 +40,9 @@ export class Org {
   user: string | null = null;
   attempt = 0;
   retryAt = 0;
+  starting = false;                                      // подключение идёт: второй запуск отправил бы тот же одноразовый токен и получил отказ
+  mediaDenied = false;                                   // человек отказал в этом запуске: не спрашивать снова при каждом обращении страницы
+  mediaAsk: Promise<boolean> | null = null;              // одно окно на все одновременные запросы
   private retryTimer: NodeJS.Timeout | null = null;
   private crashes: number[] = [];
   readonly pages = new Map<number, PageState>();        // по webContents: главное представление и окна, открытые из страницы
@@ -100,7 +105,7 @@ export class Orgs {
       if (r.managed || recs.some((x) => x.origin === r.origin && x.id === r.id)) continue;
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(r.id) || typeof r.origin !== "string") continue;
       if (!domainAllowed(new URL(r.origin).hostname, this.ctx.policy.allowedDomains)) continue;     // политика сузила список доменов — подключение скрыто (данные остаются)
-      recs.push({ id: r.id, name: String(r.name || "").slice(0, 60) || new URL(r.origin).hostname, origin: r.origin, managed: false, icon: r.icon ?? null });
+      recs.push({ id: r.id, name: String(r.name || "").slice(0, 60) || new URL(r.origin).hostname, origin: r.origin, managed: false, icon: r.icon ?? null, mediaOk: !!r.mediaOk });
     }
     this.list = recs.map((r) => new Org(r));
     const want = this.ctx.settings.get().activeOrg;
@@ -173,6 +178,12 @@ export class Orgs {
 
   /** Подключение: действующий сеанс → страница; иначе сохранённый вход (токен устройства) → новый сеанс; иначе страница входа этой организации. */
   async start(o: Org): Promise<void> {
+    if (o.starting) return;
+    o.starting = true;
+    try { await this.connect(o); } finally { o.starting = false; }
+  }
+
+  private async connect(o: Org): Promise<void> {
     o.clearRetry();
     o.status = "connecting";
     this.ctx.emit();
@@ -390,7 +401,8 @@ export class Orgs {
     ses.setPermissionRequestHandler((wc, perm, cb, d) => {
       const ok = ALLOW.has(perm) && own(d.requestingUrl) && this.byContents(wc) === o;
       if (!ok) this.ctx.log.info("perm.denied", { org: o.rec.id, perm });
-      cb(ok);
+      if (!ok || perm !== "media") { cb(ok); return; }
+      void this.mediaAllowed(o).then(cb);
     });
     ses.setPermissionCheckHandler((wc, perm, origin) => ALLOW.has(perm) && own(origin) && (!wc || this.byContents(wc) === o));
     ses.setDevicePermissionHandler(() => false);
@@ -430,6 +442,18 @@ export class Orgs {
       if (removed || !o.info || c.name !== o.info.cookie) return;
       setTimeout(() => void this.enroll(o), 1500);
     });
+  }
+
+  private async mediaAllowed(o: Org): Promise<boolean> {
+    const d = mediaAccess(o.rec, o.mediaDenied);
+    if (d !== "ask") return d === "allow";
+    o.mediaAsk ??= this.host.confirmMedia(o).then((yes) => {
+      o.mediaAsk = null;
+      if (yes) { o.rec.mediaOk = true; this.save(); } else o.mediaDenied = true;
+      this.ctx.log.info("perm.media_answer", { org: o.rec.id, allowed: yes });
+      return yes;
+    });
+    return o.mediaAsk;
   }
 
   async applyProxy(ses: Session): Promise<void> {

@@ -189,15 +189,16 @@ class ChatFilesService:
             self._fail("chat_file_read_failed", exc, getattr(att, "meeting_id", None) or getattr(att, "chat_id", None), {"attachment": str(att.id)})
             raise AttachmentError("Файл сейчас недоступен: хранилище не отвечает.", 503) from None
 
-    async def remove_files(self, db: AsyncSession, atts: list[ChatAttachment]) -> int:
-        """Удаляет файлы вложений из хранилища (сбой одного не мешает остальным и пишется в журнал). Строки в базе удаляет вызывающий."""
-        failed = 0
+    async def remove_files(self, db: AsyncSession, atts: list[ChatAttachment]) -> set[uuid.UUID]:
+        """Удаляет файлы вложений из хранилища (сбой одного не мешает остальным и пишется в журнал). Строки удаляет вызывающий, но только для удалённых файлов:
+        иначе файл на отключённом томе остался бы навсегда без записи о нём. Ответ — вложения, файлы которых удалить не удалось."""
+        failed: set[uuid.UUID] = set()
         for att in atts:
             try:
                 backend = await self._files.chat_backend_for(db, att.profile_id)
                 await asyncio.to_thread(backend.delete, att.storage_key)
             except StorageError as exc:
-                failed += 1
+                failed.add(att.id)
                 self._fail("chat_file_delete_failed", exc, getattr(att, "meeting_id", None) or getattr(att, "chat_id", None), {"attachment": str(att.id)})
         return failed
 
@@ -205,9 +206,11 @@ class ChatFilesService:
         atts = list((await db.execute(select(ChatAttachment).where(ChatAttachment.meeting_id.in_(meeting_ids)))).scalars().all()) if meeting_ids else []
         if not atts:
             return 0
-        await self.remove_files(db, atts)
-        await db.execute(delete(ChatAttachment).where(ChatAttachment.id.in_([a.id for a in atts])))
-        return len(atts)
+        failed = await self.remove_files(db, atts)
+        gone = [a.id for a in atts if a.id not in failed]
+        if gone:
+            await db.execute(delete(ChatAttachment).where(ChatAttachment.id.in_(gone)))
+        return len(gone)
 
     async def purge_orphans(self, db: AsyncSession) -> int:
         """Загружено, но так и не отправлено (закрыли вкладку, убрали превью): удаляем файл и строку — и в чатах встреч, и в корпоративных чатах."""
@@ -215,9 +218,11 @@ class ChatFilesService:
         for model in (ChatAttachment, ChatFile):
             old = list((await db.execute(select(model).where(model.message_id.is_(None), model.created_at < utcnow() - PENDING_TTL))).scalars().all())
             if old:
-                await self.remove_files(db, old)
-                await db.execute(delete(model).where(model.id.in_([a.id for a in old])))
-                n += len(old)
+                failed = await self.remove_files(db, old)
+                gone = [a.id for a in old if a.id not in failed]
+                if gone:
+                    await db.execute(delete(model).where(model.id.in_(gone)))
+                n += len(gone)
         return n
 
 

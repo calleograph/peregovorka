@@ -17,7 +17,7 @@ from ..config import origin_allowed
 from ..security.gate import login_gate
 from ..services.audit import audit_now
 from ..models import User
-from ..security.passwords import verify_room_password
+from ..security.passwords import check_password
 from ..services import local_admin as la
 from ..services.audit import write_audit
 from ..services.journal import parse_client
@@ -196,7 +196,7 @@ async def change_password(request: Request, body: dict = Body(...), su: SessionU
         raise HTTPException(status_code=403, detail="Пароль доменной учётной записи меняется в домене.")
     user = await db.get(User, su.user_id)
     cur, new = str(body.get("current_password") or ""), str(body.get("new_password") or "")
-    if user is None or not user.password_hash or not verify_room_password(user.password_hash, cur):
+    if user is None or not user.password_hash or not await check_password(user.password_hash, cur):
         raise HTTPException(status_code=403, detail="Текущий пароль указан неверно.")
     try:
         la.validate_new_password(new, user.sam_account_name, old=cur)

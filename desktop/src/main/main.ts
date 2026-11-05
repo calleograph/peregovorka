@@ -129,6 +129,12 @@ async function boot(): Promise<void> {
     notify: (o, n) => notifier.show(o, n, orgs.list.length > 1),
     confirmReloadInCall: () => dialog.showMessageBoxSync(main.win, { type: "warning", buttons: ["Обновить страницу", "Отмена"], defaultId: 1, cancelId: 1, title: "Peregovorka",
       message: "Вы участвуете во встрече", detail: "Обновление страницы прервёт подключение к встрече." }) === 0,
+    confirmMedia: async (o) => {
+      main.win.show();
+      const r = await dialog.showMessageBox(main.win, { type: "question", buttons: ["Разрешить", "Запретить"], defaultId: 1, cancelId: 1, title: "Peregovorka",
+        message: `Разрешить серверу ${new URL(o.rec.origin).host} доступ к микрофону и камере?`, detail: "Разрешение запоминается для этого сервера. Отозвать его можно, удалив подключение." });
+      return r.response === 0;
+    },
     download: (o, item) => handleDownload(ctx, item, (name, path, ok) => {
       notifier.show(o, { tag: `dl:${path}:${Date.now()}`, title: ok ? "Загрузка завершена" : "Загрузка прервана", body: ok ? `${name} — нажмите, чтобы открыть` : name, kind: "info",
         open: ok ? () => openDownloaded(path) : undefined }, false);

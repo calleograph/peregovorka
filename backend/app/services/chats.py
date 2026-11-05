@@ -700,11 +700,14 @@ async def purge_expired(db: AsyncSession, files_svc, days: int, *, batch: int = 
         if not ids:
             break
         old = list((await db.execute(select(ChatFile).where(ChatFile.message_id.in_(ids)))).scalars())
-        if old:
-            await files_svc.remove_files(db, old)
-        await db.execute(delete(ChatMessage).where(ChatMessage.id.in_(ids)))
+        failed = await files_svc.remove_files(db, old) if old else set()
+        keep = {f.message_id for f in old if f.id in failed}             # файл на недоступном томе: сообщение подождёт следующего прохода
+        gone = [i for i in ids if i not in keep]
+        if not gone:
+            break
+        await db.execute(delete(ChatMessage).where(ChatMessage.id.in_(gone)))
         await db.commit()
-        total += len(ids)
+        total += len(gone)
     return total
 
 

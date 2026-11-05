@@ -21,7 +21,7 @@ from ..services.audit import audit_now
 from ..auth.deps import _origin_ok, client_ip, get_db
 from ..auth.guests import GUEST_HEADER, Actor, require_actor
 from ..models import GuestParticipant, Room
-from ..security.passwords import verify_room_password
+from ..security.passwords import check_password
 from ..services import roles
 from ..services.journal import parse_client
 from ..services.meetings import JoinError
@@ -168,7 +168,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
         await _throttle(request, "guest:pwfail", PASSWORD_FAILS, PASSWORD_WINDOW, hit=False)
         if not body.password:
             raise HTTPException(status_code=403, detail={"code": "room_password_required", "message": "Требуется пароль комнаты."})
-        if not verify_room_password(room.password_hash, body.password):
+        if not await check_password(room.password_hash, body.password):
             await _throttle(request, "guest:pwfail", PASSWORD_FAILS, PASSWORD_WINDOW)
             await captcha.note_failure(request, "guest")
             await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,

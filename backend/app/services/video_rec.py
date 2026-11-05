@@ -250,7 +250,7 @@ class VideoRecorder:
 
     # ------------------------------------------------------------------ старт / остановка
     async def start(self, db, meeting: Meeting, *, by: str = "") -> Recording:
-        lock = await self._r.set(f"video:start:{meeting.id}", "1", nx=True, ex=30)
+        lock = await self._r.set(f"video:start:{meeting.id}", "1", nx=True, ex=150)
         if not lock:
             raise VideoError("video_starting", "Запись уже запускается.")
         try:

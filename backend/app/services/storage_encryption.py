@@ -68,6 +68,16 @@ async def rotate(db: AsyncSession) -> int:
     return kid
 
 
+async def reload_if_changed(db: AsyncSession) -> None:
+    """Ключи живут в памяти процесса: после смены ключа в другом процессе новые строки здесь не расшифровывались бы."""
+    if _kek is None:
+        return
+    newest = (await db.execute(select(func.max(StorageKey.id)))).scalar_one_or_none()
+    active = (await db.execute(select(StorageKey.id).where(StorageKey.active.is_(True)))).scalars().first()
+    if (newest, active) != sc.keyring.signature():
+        await _load(db)
+
+
 def ready() -> bool:
     return sc.keyring.ready
 

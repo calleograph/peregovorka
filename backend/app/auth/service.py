@@ -15,7 +15,7 @@ from ..config import Settings
 from ..models import User, UserBackupCode, utcnow
 from ..profiles.manual import apply_manual
 from ..profiles.service import record_ad
-from ..security.passwords import verify_room_password
+from ..security.passwords import check_password
 from .directory import DirectoryClient, DirectoryError, DirectoryIdentity, parse_login
 from .devices import device_label
 from .sessions import SessionData, SessionLimit, SessionStore
@@ -24,6 +24,8 @@ from ..services import totp
 
 CHALLENGE_TTL_S = 300
 CHALLENGE_ATTEMPTS = 5
+TOTP_USER_FAILS = 15                      # неверных кодов на запись за окно, сколько бы раз ни вводился пароль
+TOTP_USER_WINDOW_S = 1800
 
 log = logging.getLogger("app.auth")
 
@@ -257,11 +259,17 @@ class AuthService:
         if attempts > CHALLENGE_ATTEMPTS:
             await r.delete(key)
             raise AuthError("totp_expired", "Слишком много неверных кодов. Войдите заново.", 429)
+        # Вход паролем обнуляет счётчики и выдаёт новый вызов: без своего счётчика на запись украденный пароль давал бесконечные попытки кода
+        fails = int(await r.get(f"totp:userfail:{user.id}") or 0)
+        if fails >= TOTP_USER_FAILS:
+            raise AuthError("totp_locked", "Слишком много неверных кодов. Повторите позже.", 429)
         ok, used_backup = await self.check_code(db, user, code)
         if not ok:
             await self._throttle.record_failure(norm, ip)
+            if await r.incr(f"totp:userfail:{user.id}") == 1:
+                await r.expire(f"totp:userfail:{user.id}", TOTP_USER_WINDOW_S)
             raise AuthError("invalid_code", "Неверный код. Проверьте время на телефоне или используйте резервный код.", 401)
-        await r.delete(key, f"totp:att:{_th(token)}")
+        await r.delete(key, f"totp:att:{_th(token)}", f"totp:userfail:{user.id}")
         await self._throttle.record_success(norm, ip)
         user.last_login_at = utcnow()
         await db.commit()
@@ -338,6 +346,7 @@ class AuthService:
         cfg = await self._totp_cfg(db)
         on = cfg is not None and cfg.totp_policy != "off"
         params["must_totp"] = bool(on and totp_required(cfg, is_admin=params["is_admin"], groups=params["groups"]) and not user.totp_enabled)
+        params["trust_born"] = float(rec.get("born") or 0)
         sid, data = await self._create_session(user, cfg, params, ip=ip, ua=ua, free=rec.get("pub") or None)
         days = int(getattr(cfg, "desktop_trust_days", 30)) if cfg is not None else 30
         new = None
@@ -392,7 +401,7 @@ class AuthService:
         ok = False
         if user is not None and user.is_active:
             if user.auth_source == "local":
-                ok = bool(user.password_hash) and verify_room_password(user.password_hash, password)
+                ok = bool(user.password_hash) and await check_password(user.password_hash, password)
             else:
                 try:
                     ident = await asyncio.to_thread(self._dir.authenticate, norm, password)
@@ -428,7 +437,7 @@ class AuthService:
         row = (await db.execute(select(User).where(User.auth_source == "local", func.lower(User.sam_account_name) == norm.lower()))).scalar_one_or_none()
         if row is None or not row.password_hash:
             return None
-        if not verify_room_password(row.password_hash, password):
+        if not await check_password(row.password_hash, password):
             return _LOCAL_BAD   # возможно, это одноимённый доменный пользователь — пусть решает каталог (неудачу записывает login())
         if not row.is_active:
             raise AuthError("account_disabled_local", "Учётная запись отключена администратором системы.", 403)

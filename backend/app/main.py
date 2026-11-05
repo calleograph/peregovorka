@@ -143,6 +143,23 @@ class RequestContext:
                                     "ms": int((time.perf_counter() - started) * 1000), "request_id_echo": rid})
 
 
+async def _config_sync(session_maker, directory, every: float = 30.0) -> None:
+    """Настройки, которые каждый процесс держит в памяти, меняет только процесс, принявший запрос. Здесь остальные их догоняют."""
+    from .services import storage_encryption  # noqa: PLC0415
+
+    while True:
+        await asyncio.sleep(every)
+        try:
+            async with session_maker() as db:
+                if hasattr(directory, "reload_if_changed"):
+                    await directory.reload_if_changed(db)
+                await storage_encryption.reload_if_changed(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — следующий проход повторит
+            log.exception("Не удалось сверить настройки с базой")
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -348,6 +365,7 @@ def create_app(
         if start_workers:                                       # в тестах фоновые циклы не запускаются (конкурируют за SQLite): снимки обновляются при записи настроек и по явному вызову
             tasks.append(asyncio.create_task(app.state.netcfg.run(settings_svc, session_maker), name="netcfg"))        # настройки определения адреса клиента (security/netcfg.py)
             tasks.append(asyncio.create_task(app.state.allownets.run(settings_svc, session_maker), name="allownets"))  # доверенные подсети (security/allownets.py)
+            tasks.append(asyncio.create_task(_config_sync(bg_sm, directory), name="config-sync"))                       # каталог и ключи шифрования: изменения других процессов
             tasks.append(asyncio.create_task(app.state.policies.run(settings_svc, session_maker, redis), name="waf-policies"))  # WAF и список заблокированных адресов (security/wafcfg.py)
         if start_workers:
             app.state.secevents.start()                                                                              # запись событий безопасности пачками

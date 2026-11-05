@@ -46,6 +46,7 @@ LIVE_QUALITY = {"720p": (1280, 720, 3000), "1080p": (1920, 1080, 5000), "1440p":
 KEY_FRAME_S = 1.0
 EMPTY_GRACE_S = 90                     # комната пуста дольше — эфир заканчивается (выступающие ушли)
 BROADCAST_EMPTY_GRACE_S = 900          # комната трансляции: обрыв связи ведущего или перезапуск приложения — эфир и запись ждут его 15 минут
+START_LOCK_S = 150                     # дольше таймаута запроса к Egress (60 с) и подготовки: иначе второй запуск проходит мимо замка
 STOP_GRACE_S = 180                     # после остановки столько ждём итог Egress; потом закрываем сами
 SECRET_GID = 10001                     # общая группа backend (пишет секрет подписи HLS) и web (nginx читает): group_add в deployment/compose.yml
 SECRET_MODE = 0o640
@@ -363,7 +364,7 @@ class LiveBroadcaster:
                 "link_days": max(1, min(int(days or 5), int(cfg.replay_days_max)))}
 
     async def start(self, db, meeting: Meeting, *, by: str = "", opts: dict | None = None) -> Broadcast:
-        lock = await self._r.set(f"live:start:{meeting.id}", "1", nx=True, ex=30)
+        lock = await self._r.set(f"live:start:{meeting.id}", "1", nx=True, ex=START_LOCK_S)
         if not lock:
             raise LiveError("live_starting", "Эфир уже запускается.")
         try:
@@ -508,10 +509,12 @@ class LiveBroadcaster:
                 b.error = "Достигнут предел длительности эфира."
         b.peak_viewers = max(b.peak_viewers, await self.viewers(b.room_id))
         await db.commit()
-        if self.destinations is not None:
+        # новый эфир мог начаться, пока этот завершался: тогда его площадки и объявление не трогаем
+        running = await self.current(db, b.room_id)
+        if self.destinations is not None and running is None:
             await self.destinations.finish_all(db, b.room_id)
         meeting = await db.get(Meeting, b.meeting_id)
-        if meeting is not None:
+        if meeting is not None and running is None:
             await self._air(db, meeting, False)
             await self._announce(meeting, False, "egress")
             if b.status == "failed":
@@ -566,15 +569,15 @@ class LiveBroadcaster:
                     closed += 1
                     continue
                 reason = ""
-                if meeting is None or meeting.ended_at is not None:
+                if b.status == "ending" and not await self._r.get(f"live:ending:{b.id}"):
+                    reason = "stuck"                  # первым: у завершённой встречи причина «meeting_end» заслонила бы её, и эфир висел бы вечно
+                elif meeting is None or meeting.ended_at is not None:
                     reason = "meeting_end"
                 elif cfg is not None and age > (cfg.max_hours + await self._extra_h(b.id)) * 3600:
                     reason = "limit"
                 elif meeting.empty_since is not None and (datetime.now(timezone.utc) - meeting.empty_since).total_seconds() > (
                         BROADCAST_EMPTY_GRACE_S if roles.is_broadcast(meeting.room) else EMPTY_GRACE_S):
                     reason = "empty"
-                elif b.status == "ending" and not await self._r.get(f"live:ending:{b.id}"):
-                    reason = "stuck"
                 if reason and b.status != "ending":
                     try:
                         await self.stop(db, meeting, by=reason, room_id=b.room_id)

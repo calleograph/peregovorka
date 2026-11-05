@@ -210,6 +210,16 @@ class ProfileDirectory:
         self._service = service
         self._dirs: list[tuple[LdapConfig, LdapDirectory]] = []
         self.errors: dict[str, str] = {}
+        self._sign: tuple | None = None
+
+    async def reload_if_changed(self, db: AsyncSession) -> None:
+        """Каталог живёт в памяти процесса, а настройку меняет один процесс: остальные сверяются с базой, иначе выключенное подключение продолжало бы пускать людей."""
+        rows = (await db.execute(select(LdapProfile).order_by(LdapProfile.id))).scalars().all()
+        sign = tuple(tuple(str(getattr(r, c.key)) for c in LdapProfile.__table__.columns) for r in rows)
+        if sign != self._sign:
+            if self._sign is not None:
+                await self.reload(db)
+            self._sign = sign
 
     async def reload(self, db: AsyncSession) -> None:
         rows = (await db.execute(select(LdapProfile).where(LdapProfile.enabled.is_(True)).order_by(LdapProfile.position, LdapProfile.created_at))).scalars().all()

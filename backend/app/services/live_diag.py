@@ -544,7 +544,7 @@ def summarize(samples: list[dict], events: list[Any], b: Broadcast, *, version: 
             "viewers": stat("viewer_count"), "peak_viewers": b.peak_viewers, "cpu": stat("host", "cpu"), "mem_used_pct": stat("host", "mem", "used_pct"), "tx_mbit": {k: round(v / 1e6, 1) for k, v in (stat("host", "net", "tx_bps") or {}).items()} or None,
             "disk_util": stat("host", "disk", "util"), "egress_load": stat("svc", "egress", "load"), "egress_cores": stat("svc", "egress", "cores"), "seg_ready_s": stat("hls", "ready_s"), "seg_interval_s": stat("hls", "interval_s"),
             "video_kbps": stat("media", "vkbps"), "audio_kbps": stat("media", "akbps"), "fps": stat("media", "fps"), "latency_s": stat("viewers", "lat"), "seg_ms": stat("viewers", "seg_ms"),
-            "stalls": int(sum(col("viewers", "stalls"))), "reconnects": int(sum(col("viewers", "reconn"))), "events": levels}
+            "stalls": int((col("viewers", "stalls_total") or [0])[-1]), "reconnects": int((col("viewers", "reconn_total") or [0])[-1]), "events": levels}
 
 
 # ------------------------------------------------------------------------------------------------ сборщик
@@ -973,6 +973,11 @@ class LiveDiag:
         need = (s["media"].get("vkbps") or 0) + (s["media"].get("akbps") or 0) or (s["hls"] or {}).get("kbps") or LIVE_QUALITY.get(b.quality, (0, 0, 3000))[2]
         s["viewers"] = await self._clients(b.id, st, (s["hls"] or {}).get("dur_s") or 1.5, need, now)
         v = s["viewers"]
+        # в базу попадает каждый третий снимок: итог эфира считается здесь нарастающим, сумма сохранённых снимков занижала его втрое
+        total = st.setdefault("total", {"stalls": 0, "reconn": 0})
+        for k in total:
+            total[k] += v.get(k) or 0
+        v["stalls_total"], v["reconn_total"] = total["stalls"], total["reconn"]
         acc = st.setdefault("trouble", {"stalls": 0, "reconn": 0, "errs": 0})
         for k in acc:
             acc[k] += v.get(k) or 0
@@ -1114,6 +1119,7 @@ class LiveDiag:
                 await self.finish(bid)
         if not rows or not cfg.get("diag_enabled", True):
             self._cores, self._disk, self._net = {}, None, None       # после простоя скорости считаются заново, а не за всё время простоя
+            self._starts = {}                                         # служба, перезапущенная в простое, не должна выглядеть сбоем следующего эфира
             return IDLE_S
         ldir = self.live.live_dir()
         host = await asyncio.to_thread(self.sample_host, now, ldir, cfg)

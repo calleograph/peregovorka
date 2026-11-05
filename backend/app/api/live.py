@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser, _origin_ok, client_ip, get_db, require_user
 from ..db import release
 from ..models import Broadcast, LiveQuestion, LiveViewer, Meeting, Room
-from ..security.passwords import hash_room_password, verify_room_password
+from ..security.passwords import hash_room_password, check_password
 from ..services import roles
 from ..services import events
 from ..services.audit import audit_now, write_audit
@@ -41,7 +41,8 @@ Q_EVERY_S = 10                              # не чаще одного воп�
 Q_PER_HOUR = 20                             # вопросов от зрителя за час
 Q_PER_BROADCAST = 5000                      # всего вопросов на эфир (защита от массовой отправки)
 PASS_TTL_S = 12 * 3600                      # «пропуск» зрителя после ввода пароля: продление ссылки без повторного пароля
-PW_FAILS, PW_WINDOW = 8, 600                # неверных паролей зрителя с одного адреса за окно
+PW_FAILS, PW_WINDOW = 8, 600                # неверных паролей одного зрителя за окно: сотрудники за общим адресом не блокируют друг друга
+PW_IP_FAILS = 200                           # потолок на адрес: зритель создаётся свободно, без него подбор шёл бы от новых зрителей
 MIN_PASSWORD = 6
 
 
@@ -209,7 +210,7 @@ async def set_viewer_password(room_id: uuid.UUID, request: Request, body: dict =
     pw = body.get("password")
     if pw is not None and (not isinstance(pw, str) or len(pw) < MIN_PASSWORD or len(pw) > 128):
         raise HTTPException(status_code=422, detail={"code": "weak_password", "message": f"Пароль зрителя — от {MIN_PASSWORD} до 128 знаков."})
-    if pw and room.password_hash and verify_room_password(room.password_hash, pw):
+    if pw and room.password_hash and await check_password(room.password_hash, pw):
         raise HTTPException(status_code=422, detail={"code": "same_as_speaker", "message": "Пароль зрителя не должен совпадать с паролем выступающего."})
     room.live_password_hash = hash_room_password(pw) if pw else None
     room.live_password_enabled = bool(pw)
@@ -255,7 +256,7 @@ async def patch_broadcast(room_id: uuid.UUID, bid: uuid.UUID, body: BroadcastPat
         pw = fields.pop("password") or ""
         if pw and len(pw) < MIN_PASSWORD:
             raise HTTPException(status_code=422, detail={"code": "weak_password", "message": f"Пароль зрителя — от {MIN_PASSWORD} до 128 знаков."})
-        if pw and room.password_hash and verify_room_password(room.password_hash, pw):
+        if pw and room.password_hash and await check_password(room.password_hash, pw):
             raise HTTPException(status_code=422, detail={"code": "same_as_speaker", "message": "Пароль зрителя не должен совпадать с паролем выступающего."})
         b.password_hash = hash_room_password(pw) if pw else None          # подпись пропусков и адресов файла включает пароль: выданные ранее сразу перестают действовать
         fields["protection"] = "пароль задан" if pw else "пароль убран"      # в журнал — только факт (ключи со словом password журнал маскирует)
@@ -451,15 +452,19 @@ async def _gate(request: Request, db: AsyncSession, v: _View, body: "AccessIn") 
     if not h or _pass_ok(secret, _scope(v), body.pass_):
         return None
     room = v.room
-    await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW, hit=False)
+    who = hashlib.sha256((body.viewer or "").encode()).hexdigest()[:16]
+    await _throttle(request, f"live:pwfail:{room.id}:{who}", PW_FAILS, PW_WINDOW, hit=False)
     if not body.password:
         raise HTTPException(status_code=403, detail={"code": "password_required", "message": "Эта трансляция защищена паролем."})
-    if not verify_room_password(h, body.password):
-        await _throttle(request, f"live:pwfail:{room.id}", PW_FAILS, PW_WINDOW)
+    # счёт до проверки: argon2 медленный, а параллельные попытки иначе проходили бы мимо предела
+    await _throttle(request, f"live:pwfail:{room.id}:{who}", PW_FAILS, PW_WINDOW)
+    await _throttle(request, f"live:pwip:{room.id}", PW_IP_FAILS, PW_WINDOW)
+    if not await check_password(h, body.password):
         await audit_now(request.app, actor_user_id=None, actor_name="зритель", action="live.view_denied", target_type="room", target_id=str(room.id), ip=ip,
                         result="denied", actor_type="guest", details={"code": "password_invalid"})
         request.app.state.journal.emit("room", "live_view_denied", level="warn", user="viewer", room=room.name, ip=ip, message="Неверный пароль зрителя трансляции", data={"code": "password_invalid"})
         raise HTTPException(status_code=403, detail={"code": "password_invalid", "message": "Неверный пароль."})
+    await request.app.state.redis.delete(f"live:pwfail:{room.id}:{who}:{ip}")
     return _pass_make(secret, _scope(v))
 
 
@@ -515,7 +520,7 @@ async def viewer_replay(token: str, body: AccessIn, request: Request, db: AsyncS
     """Ссылка на запись эфира: только если организатор разрешил показ, доступ не закрыт и не истёк; пароль эфира действует так же, как на просмотр."""
     if not _origin_ok(request):
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
-    await _throttle(request, "live:replay", 60, 600)
+    await _throttle(request, "live:replay", VIEW_IP_LIMIT // 10, 600)      # запись смотрят сотни сотрудников за одним адресом; страница запрашивает её при открытии
     v = await _view(request, db, token)
     new_pass = await _gate(request, db, v, body)                 # сначала пароль: без него даже наличие записи не раскрывается
     await _viewer_row(request, db, v, body.viewer)

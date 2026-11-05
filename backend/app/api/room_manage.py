@@ -27,7 +27,7 @@ from .schemas import MAX_ROOM_PARTICIPANTS, RoomIconOut
 from ..services.room_icons import icon_out
 from ..services.llm_choice import clean_choice, describe, llm_options, resolve_llm, room_choice
 from ..services.sip import normalize_number
-from ..security.passwords import hash_room_password, verify_room_password
+from ..security.passwords import hash_room_password, check_password
 from ..services import roles
 from ..services import storage_encryption as se
 from ..services.audit import write_audit
@@ -312,7 +312,7 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             setattr(room, name, fields[name])
     if "password" in fields:
         pw = fields["password"]
-        if pw and room.live_password_hash and verify_room_password(room.live_password_hash, pw):
+        if pw and room.live_password_hash and await check_password(room.live_password_hash, pw):
             raise HTTPException(status_code=422, detail="Пароль выступающего не должен совпадать с паролем зрителя трансляции")
         room.password_hash = hash_room_password(pw) if pw else None
         changed["password"] = "set" if pw else "cleared"

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.deps import SessionUser
 from ..config import Settings
 from ..models import MEETING_LITE, GuestParticipant, Meeting, MeetingParticipant, Room, User, utcnow
-from ..security.passwords import verify_room_password
+from ..security.passwords import check_password
 from . import events, leave_reasons, roles, temp_rooms
 from . import e2ee as e2ee_svc
 from . import outlook as outlook_svc
@@ -323,10 +323,12 @@ class MeetingService:
                             retry_after=max(1, await self._r.ttl(key)))
         if not password:  # запрос без пароля — не попытка подбора, в счётчик не входит
             raise JoinError("room_password_required", "Требуется пароль комнаты.", 403)
-        if not verify_room_password(room.password_hash or "", password):
-            n = await self._r.incr(key)
-            if n == 1:
-                await self._r.expire(key, self._s.room_password_failure_window_seconds)
+        n = await self._r.incr(key)                 # счёт до проверки: параллельные попытки не проходят мимо предела
+        if n == 1:
+            await self._r.expire(key, self._s.room_password_failure_window_seconds)
+        if n > self._s.room_password_max_failures:
+            raise JoinError("throttled", "Слишком много неверных паролей. Повторите позже.", 429, retry_after=max(1, await self._r.ttl(key)))
+        if not await check_password(room.password_hash or "", password):
             raise JoinError("room_password_invalid", "Неверный пароль комнаты.", 403)
         await self._r.delete(key)
 

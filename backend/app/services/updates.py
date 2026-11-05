@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -45,6 +46,11 @@ STARTED_AT = time.time()          # запуск процесса: сведен�
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 REPO = "calleograph/peregovorka"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+STALE_REQUEST_S = 120          # помощник забирает запрос за секунды: столь старый запрос означает, что он не работает
+
+
+class ChannelBusy(OSError):
+    """Предыдущий запрос ещё не забран помощником. Это OSError: вызывающие уже показывают такие ошибки как недоступность помощника."""
 
 
 class Channel:
@@ -179,9 +185,18 @@ class Channel:
         extra = [f"repair={repair}"] if action == "repair" else [f"op={op}"] if action == "component" else [f"op={op}", f"arg={arg}"] if action == "volume" else []
         body = "\n".join([f"id={rid}", f"action={action}", f"force_build={int(force_build)}", f"pull={int(pull)}", *extra,
                           f"by={_SAFE.sub('_', by)[:60]}", f"at={int(time.time())}"]) + "\n"
-        tmp = self.dir / f".request.{rid}.tmp"
+        tmp, target = self.dir / f".request.{rid}.tmp", self.dir / "request.txt"
         tmp.write_text(body, encoding="utf-8")
-        tmp.replace(self.dir / "request.txt")
+        try:
+            # ссылка не заменяет существующий файл: ожидающий запрос (например, обновление) иначе молча затирался бы следующим
+            try:
+                os.link(tmp, target)
+            except FileExistsError:
+                if time.time() - target.stat().st_mtime < STALE_REQUEST_S:
+                    raise ChannelBusy("Помощник ещё выполняет предыдущий запрос. Повторите через несколько секунд.") from None
+                tmp.replace(target)                 # помощник не забирал запрос минуты: он не работает, и запрос всё равно устарел
+        finally:
+            tmp.unlink(missing_ok=True)
         return rid
 
 

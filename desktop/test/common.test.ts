@@ -10,7 +10,7 @@ import { compat, cmpVersion } from "../src/common/version";
 import { describeNetError, backoffMs } from "../src/common/neterr";
 import { Dedupe, shapeNotification } from "../src/common/dedupe";
 import { verifyManifest, newer, canRestartNow } from "../src/main/updateCore";
-import { openableAfterDownload } from "../src/common/files";
+import { mediaAccess, openableAfterDownload } from "../src/common/files";
 
 test("адрес сервера: только HTTPS, без учётных данных и пути, ввод без схемы", () => {
   assert.deepEqual(normalizeServerUrl("meet.example.org"), { origin: "https://meet.example.org" });
@@ -243,4 +243,15 @@ test("автозапуск: у нового профиля по умолчани
   assert.equal(new SettingsStore(onlyOrgs).get().autostart, "off", "есть список организаций — профиль не новый");
 
   assert.equal(effective(new SettingsStore(dir()).get(), { servers: [], autostart: "off" }).autostart, "off", "политика администратора сильнее");
+});
+
+test("микрофон: чужой сервер спрашивает один раз, сервер из политики не спрашивает", () => {
+  assert.equal(mediaAccess({ managed: false }, false), "ask");
+  assert.equal(mediaAccess({ managed: false }, true), "deny", "отказ действует до перезапуска: окно не появляется на каждую попытку страницы");
+  assert.equal(mediaAccess({ managed: false, mediaOk: true }, false), "allow");
+  assert.equal(mediaAccess({ managed: true }, false), "allow");
+});
+
+test("открывается по уведомлению только известный безопасный тип", () => {
+  for (const bad of ["a.msc", "a.wsc", "a.xll", "a.vb", "a.pyw", "a.appinstaller", "неизвестное.xyz"]) assert.ok(!openableAfterDownload(bad), bad);
 });
