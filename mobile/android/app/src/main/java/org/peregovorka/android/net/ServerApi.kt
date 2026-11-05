@@ -156,12 +156,11 @@ class ServerApi(val server: Server, private val store: Sessions, private val use
             if (it.code == 401) { store.setTrust(server.id, null); return false }
             if (!it.isSuccessful) return false
             val cookie = setCookieValue(it, cookieName) ?: return false
-            store.setCookie(server.id, cookie)
-            runCatching {
-                val csrf = AppJson.parseToJsonElement(withContext(Dispatchers.IO) { it.body?.string().orEmpty() }).jsonObject["csrf_token"]?.jsonPrimitive?.contentOrNull
-                if (csrf != null) store.setCsrf(server.id, csrf)
-            }
-            return true
+            // Токен одноразовый: сервер уже забрал его и прислал следующий (null — срок кончился, дальше только вход паролем). Не сохранить его значит потерять вход.
+            val next = runCatching { AppJson.parseToJsonElement(withContext(Dispatchers.IO) { it.body?.string().orEmpty() }).jsonObject }.getOrNull()
+            if (next != null && "token" in next) store.setTrust(server.id, next["token"]?.jsonPrimitive?.contentOrNull)
+            // CSRF новой сессии в этом ответе нет, он приходит только из /auth/me; без него следующий POST получил бы 403
+            return runCatching { adoptCookie(cookie) }.getOrDefault(false)
         }
     }
 

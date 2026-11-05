@@ -88,15 +88,29 @@ class ServerApiTest {
     @Test fun `при 401 сессия обновляется по токену доверенного устройства и запрос повторяется`() = runTest {
         st.setCookie("s1", "old"); st.setTrust("s1", "trust-1")
         web.enqueue(json("""{"detail":"Требуется вход"}""", 401))
-        web.enqueue(json("""{"csrf_token":"new-csrf","user":{"id":"u"}}""").addHeader("Set-Cookie", "vm_session=fresh; Path=/; HttpOnly"))
+        // ответ сервера как есть: следующий одноразовый токен, CSRF в нём нет
+        web.enqueue(json("""{"token":"trust-2","expires_at":1893456000,"user":{"id":"u","display_name":"Иван"},"must_enroll_totp":false}""").addHeader("Set-Cookie", "vm_session=fresh; Path=/; HttpOnly"))
+        web.enqueue(json("""{"user":{"id":"u","display_name":"Иван"},"csrf_token":"new-csrf"}"""))
         web.enqueue(json("""[{"id":"r1","name":"Комната"}]"""))
         val rooms = api.rooms()
         assertEquals(1, rooms.size)
         assertEquals("fresh", st.cookie("s1")); assertEquals("new-csrf", st.csrf("s1"))
+        assertEquals("trust-2", st.trust("s1"), "следующий вход идёт по новому токену")
         web.takeRequest()
         val resume = web.takeRequest()
         assertEquals("/api/v1/desktop/resume", resume.path); assertEquals("1", resume.getHeader("X-Peregovorka-Desktop"))
+        assertEquals("/api/v1/auth/me", web.takeRequest().path)
         assertEquals("vm_session=fresh", web.takeRequest().getHeader("Cookie"))
+    }
+
+    @Test fun `срок доверенного устройства кончился - токен забывается`() = runTest {
+        st.setCookie("s1", "old"); st.setTrust("s1", "trust-1")
+        web.enqueue(json("""{"detail":"Требуется вход"}""", 401))
+        web.enqueue(json("""{"token":null,"expires_at":null,"user":{"id":"u","display_name":"Иван"},"must_enroll_totp":false}""").addHeader("Set-Cookie", "vm_session=fresh; Path=/; HttpOnly"))
+        web.enqueue(json("""{"user":{"id":"u","display_name":"Иван"},"csrf_token":"c"}"""))
+        web.enqueue(json("""[]"""))
+        api.rooms()
+        assertEquals(null, st.trust("s1"))
     }
 
     @Test fun `отозванный токен стирается и приводит к повторному входу`() = runTest {

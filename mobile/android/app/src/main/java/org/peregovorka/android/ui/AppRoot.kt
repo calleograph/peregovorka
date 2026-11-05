@@ -1,7 +1,6 @@
 package org.peregovorka.android.ui
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -72,7 +71,7 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
             LinkResult.Invalid -> toast = "Ссылка не похожа на ссылку Peregovorka."
             is LinkResult.UnknownServer -> unknownServer = r.origin
             is LinkResult.Room -> pendingRef = r.ref
-            is LinkResult.External -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(r.url)))
+            is LinkResult.External -> openExternal(ctx, Uri.parse(r.url))
         }
     }
     LaunchedEffect(incomingLink) { if (incomingLink != null) { handleLink(incomingLink); onLinkHandled() } }
@@ -89,7 +88,7 @@ fun AppRoot(vm: AppViewModel, calls: CallManager, store: Store, incomingLink: St
             Step.Login -> s.server?.let { sv -> LoginScreen(sv, store.cookieName(sv.id), onCookie = { vm.adoptCookie(it) }, onBack = { if (s.servers.size > 1) vm.selectTab(Tab.Profile).also { vm.startAdd() } else vm.startAdd() }) }
             Step.Main -> MainScaffold(s, vm, store, onConference = { path ->
                 val ref = roomRefOf(path)
-                if (ref != null) pendingRef = ref else s.server?.let { sv -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sv.url + path))) }
+                if (ref != null) pendingRef = ref else s.server?.let { sv -> openExternal(ctx, Uri.parse(sv.url + path)) }
             }, onJoinRoom = { r -> vm.openJoin(JoinTarget(r.id, r.name, r.hasPassword, r.cameraAllowed)) },
                 onJoinUpcoming = { u -> vm.openJoin(JoinTarget(u.id, u.name, u.hasPassword, true)) },
                 onLink = { linkDialog = true }, onSwitch = { sv -> if (vm.canSwitchWithoutAsking()) vm.switchTo(sv) else switchTo = sv })

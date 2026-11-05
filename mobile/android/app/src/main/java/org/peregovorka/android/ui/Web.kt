@@ -1,12 +1,15 @@
 package org.peregovorka.android.ui
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -28,6 +31,18 @@ private val EXTERNAL_CONFERENCE_PATH = Regex("^/(m|p|guest)/[A-Za-z0-9_-]{4,200}
 
 fun roomRefOf(path: String): String? = ROOM_PATH.find(path.trimEnd('/'))?.groupValues?.get(1)
 fun isConferencePath(path: String): Boolean = roomRefOf(path) != null || EXTERNAL_CONFERENCE_PATH.matches(path.trimEnd('/'))
+
+private val EXTERNAL_SCHEMES = setOf("http", "https", "mailto", "tel")
+
+/** Ссылка наружу. На устройстве может не быть почты или звонилки: без перехвата исключение завершало бы приложение вместе с идущим звонком. Странице доступны только обычные схемы. */
+fun openExternal(ctx: Context, uri: Uri) {
+    if (uri.scheme?.lowercase() !in EXTERNAL_SCHEMES) return
+    try {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(ctx, "На устройстве нет приложения для этой ссылки", Toast.LENGTH_LONG).show()
+    }
+}
 
 @SuppressLint("SetJavaScriptEnabled")
 private fun secureWebView(
@@ -92,7 +107,7 @@ fun LoginScreen(server: Server, cookieName: String, onCookie: suspend (String) -
         }
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { c -> secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }).also { w -> web = w; w.loadUrl(server.url + "/") } },
+            factory = { c -> secureWebView(c, server.url, { openExternal(ctx, it) }).also { w -> web = w; w.loadUrl(server.url + "/") } },
             onRelease = { it.destroy() },
         )
     }
@@ -146,7 +161,7 @@ fun SectionWebView(server: Server, store: Store, path: String, modifier: Modifie
             cm.removeAllCookies(null)
             store.cookie(server.id)?.let { cm.setCookie(server.url, "${store.cookieName(server.id)}=$it; Path=/; Secure; HttpOnly; SameSite=Lax") }
             cm.flush()
-            secureWebView(c, server.url, { ctx.startActivity(Intent(Intent.ACTION_VIEW, it)) }, onConference, chrome).also { w -> web = w; w.tag = path; w.loadUrl(server.url + path) }
+            secureWebView(c, server.url, { openExternal(ctx, it) }, onConference, chrome).also { w -> web = w; w.tag = path; w.loadUrl(server.url + path) }
         },
         update = { w -> if (w.tag != path) { w.tag = path; if (w.url == null || !w.url!!.endsWith(path)) w.loadUrl(server.url + path) } },
         onRelease = { it.destroy() },
