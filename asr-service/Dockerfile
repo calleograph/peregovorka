@@ -1,4 +1,4 @@
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e
 FROM ${PYTHON_IMAGE}
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu

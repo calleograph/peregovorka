@@ -519,7 +519,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30",
+   "digest": "sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314): ASR на 3.15 не соберётся, а образы backend и ASR держим на одной версии.",
@@ -1204,7 +1204,7 @@
     "repo": "library/python",
     "suffix": "-slim"
    },
-   "digest": "sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30",
+   "digest": "sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e",
    "deferred": {
     "version": "3.15",
     "reason": "Для torch 2.14.1 нет колёс под Python 3.15 (в PyPI только cp310–cp314).",
