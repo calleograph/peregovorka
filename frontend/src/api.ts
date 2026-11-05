@@ -794,7 +794,6 @@ export const setCsrf = (t: string) => { csrfToken = t; };
 // затёр бы сессию AD в том же браузере).
 let guestToken = "";
 export const setGuestToken = (t: string) => { guestToken = t; };
-export const hasGuestToken = () => guestToken !== "";
 
 // Сессия истекла/прекращена админом: App переключает на экран входа вместо «молчаливых» ошибок.
 let onUnauthorized: (() => void) | null = null;

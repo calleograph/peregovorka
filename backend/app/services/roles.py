@@ -44,14 +44,6 @@ def can_manage_room(room: Room, su: SessionUser) -> bool:
     return su.is_admin or is_room_leader(room, su)
 
 
-def room_role(room: Room, su: SessionUser, *, has_floor: bool = False) -> str:
-    if su.is_admin:
-        return ROLE_ADMIN
-    if is_room_leader(room, su):
-        return ROLE_LEADER
-    return ROLE_PRESENTER if has_floor else ROLE_PARTICIPANT
-
-
 def _participant_sources(room: Room, *, guest: bool) -> list[str]:
     src = ["microphone"]
     if room.camera_allowed:

@@ -15,7 +15,6 @@ import logging
 import re
 import uuid
 from datetime import timedelta
-from pathlib import PurePosixPath
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -229,7 +228,3 @@ class ChatFilesService:
 def attachment_out(a: ChatAttachment) -> dict:
     return {"id": str(a.id), "name": a.name, "mime": a.mime, "size": a.size, "kind": a.kind, "missing": a.file_state == "missing"}
 
-
-def safe_key(key: str) -> bool:
-    p = PurePosixPath(key)
-    return not p.is_absolute() and ".." not in p.parts

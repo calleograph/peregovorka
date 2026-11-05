@@ -157,6 +157,5 @@ export function applySite(s: Site, doc: Document = document): void {
 }
 
 /** Название для вкладки и подписей. */
-export const brandName = (s: Site) => s.name || "Peregovorka";
 
 applyUserThemeEarly();       // в конце модуля: к этому моменту объявлены все константы

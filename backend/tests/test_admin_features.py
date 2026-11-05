@@ -183,7 +183,7 @@ def test_finished_meeting_is_exported_with_structure_and_participants_header(tmp
         files = list((tmp_path / "out").rglob("protocol.txt"))
         assert len(files) == 1
         rel = files[0].relative_to(tmp_path / "out").parts
-        assert rel[0] == "Переговорка Север" and ", " in rel[1] and len(rel[2]) == 5 and rel[2][2] == "-"  # комната/дата, день/ЧЧ-ММ
+        assert rel[0] == "Переговорка Север" and ", " in rel[1] and rel[2][2] == "-" and "(" in rel[2]  # комната/дата, день/ЧЧ-ММ (идентификатор встречи)
         text = files[0].read_text(encoding="utf-8")
         lines = text.splitlines()
         assert lines[0] == "Переговорка: Переговорка Север" and any(l == "Участвовали: Alice A, Bob B" for l in lines)

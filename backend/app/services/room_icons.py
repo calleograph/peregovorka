@@ -14,6 +14,8 @@ import os
 import uuid
 from pathlib import Path
 
+from .avatars import sniff
+
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024     # то, что присылает браузер после кадрирования, — обычно 10–40 КБ; запас на прямой вызов API
 MAX_SIDE = 8000                        # исходная картинка больше по стороне — отказ (защита от «бомб» декодирования)
 MAX_PIXELS = 40_000_000
@@ -32,16 +34,6 @@ def library_keys() -> frozenset[str]:
         return frozenset(json.loads(_ASSET.read_text(encoding="utf-8"))["keys"])
     except (OSError, ValueError, KeyError):                    # без файла библиотеки выбор значков из неё отключён, остальное работает
         return frozenset()
-
-
-def sniff(data: bytes) -> str | None:
-    if data.startswith(b"\xff\xd8\xff"):
-        return "jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "webp"
-    return None
 
 
 def process(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:

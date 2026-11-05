@@ -22,9 +22,9 @@ import re
 from dataclasses import dataclass, field
 
 from ..integrations.llm import LlmClient, LlmError
-from .deadlines import is_deadline_phrase, meeting_date, resolve
+from .deadlines import is_deadline_phrase, resolve
 from .doc_render import build_document, document_to_markdown
-from .job_budget import SUMMARY_MIN_S, TAIL_RESERVE_S, Budget, JobTimeout
+from .job_budget import SUMMARY_MIN_S, Budget
 from .topic_categories import CAT_LABEL
 
 log = logging.getLogger("app.extraction")
@@ -240,19 +240,6 @@ def chunk_lines(lines: list[Line], limit: int) -> list[list[Line]]:
 
 def _arr(props: dict, req: list[str]) -> dict:
     return {"type": "array", "items": {"type": "object", "properties": props, "required": req}}
-
-
-def schema_for(kind: str, ids: list[str]) -> dict:
-    s = {"type": "string"}
-    if kind == "topics":
-        body = {"topics": _arr({"title": s, "summary": s, "ts": s}, ["title", "summary", "ts"])}
-    elif kind == "decisions":
-        body = {"items": _arr({"status": {"type": "string", "enum": ["decision", "proposal"]}, "text": s, "ts": s}, ["status", "text", "ts"])}
-    elif kind == "tasks":
-        body = {"tasks": _arr({"assignee": {"type": "string", "enum": ids + [NONE_ID]}, "task": s, "deadline": s, "ts": s}, ["assignee", "task", "deadline", "ts"])}
-    else:
-        body = {"questions": _arr({"text": s, "ts": s}, ["text", "ts"])}
-    return {"type": "object", "properties": body, "required": list(body)}
 
 
 def system_for(people: list[Person]) -> str:
@@ -643,15 +630,6 @@ def merge_items(items: list[Item]) -> list[Item]:
 # --------------------------------------------------------------------------------------------- вывод
 def _cell(s: str) -> str:
     return " ".join(str(s).replace("|", "/").split())
-
-
-def _src(it: Item) -> str:
-    s = it.sources[0]
-    who = f" {s['speaker']}" if s.get("speaker") else ""
-    tag = f" ({s['section']})" if s.get("section") else ""
-    quote = f" «{s['quote'][:110].rstrip()}{'…' if len(s['quote']) > 110 else ''}»" if s.get("quote") else ""
-    more = f" (+{len(it.sources) - 1})" if len(it.sources) > 1 else ""
-    return _cell(f"[{s['ts']}]{who}{tag}{quote}{more}")
 
 
 def to_structured(items: list[Item]) -> dict:

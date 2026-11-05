@@ -176,6 +176,7 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
             journal.emit("room", "guest_join_denied", level="warn", user=f"guest:{name}", room=room.name, ip=ip, client=client,
                          message="Неверный пароль комнаты", data={"code": "room_password_invalid"})
             raise HTTPException(status_code=403, detail={"code": "room_password_invalid", "message": "Неверный пароль комнаты."})
+        await captcha.note_success(request, "guest")      # верный пароль: офис за общим адресом не должен видеть CAPTCHA до конца окна из-за чужой ошибки
 
     try:
         result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client, email=email, materials_consent=body.materials_consent)

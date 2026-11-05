@@ -51,10 +51,6 @@ async def api_config(request: Request, db: AsyncSession):
     return cfg
 
 
-def invalidate_config(app) -> None:
-    app.state.api_cfg_cache = None
-
-
 async def _rate(request: Request, cfg, p: Principal, cls: str) -> None:
     limit = int(getattr(cfg, f"rate_{cls}"))
     window = 60

@@ -45,19 +45,6 @@ def format_range(low_s: float, high_s: float) -> str:
     return f"примерно {lo}–{hi} {plural_min(hi)}"
 
 
-def human_duration(seconds: float | None) -> str:
-    if seconds is None:
-        return ""
-    s = int(round(seconds))
-    if s < 60:
-        return f"{s} с"
-    m, s = divmod(s, 60)
-    if m < 60:
-        return f"{m} мин {s} с" if s else f"{m} мин"
-    h, m = divmod(m, 60)
-    return f"{h} ч {m} мин"
-
-
 def group_key(meta: dict) -> tuple[str, bool, str]:
     """Что считается «одной моделью»: идентификатор модели, локальная ли, профиль API (у внешних — один и тот же model может быть у разных шлюзов)."""
     local = bool(meta.get("llm_local"))

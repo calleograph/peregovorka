@@ -77,7 +77,6 @@ export async function pngsToPdf(pngDataUrls: string[]): Promise<Blob> {
   return new Blob([buildPdfPages(pages) as BlobPart], { type: "application/pdf" });
 }
 
-export const pngToPdf = (pngDataUrl: string): Promise<Blob> => pngsToPdf([pngDataUrl]);
 
 const CRC = (() => {
   const t = new Uint32Array(256);

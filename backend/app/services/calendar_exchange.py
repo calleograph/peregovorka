@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -518,9 +518,3 @@ def make_calendar_client(cfg: Any, transport: httpx.AsyncBaseTransport | None = 
                            access=getattr(cfg, "ews_access", "auto"), realm=getattr(cfg, "ews_kerberos_realm", ""), kdc=getattr(cfg, "ews_kdc", ""), verify=osync._default_verify())
     raise CalendarError("Календарь не настроен: включите серверную сверку (Graph или EWS).")
 
-
-def day_bounds(day: datetime, tz: str) -> tuple[datetime, datetime]:
-    """Начало и конец суток в поясе пользователя в UTC (для запросов «день»)."""
-    z = ZoneInfo(tz)
-    s = day.astimezone(z).replace(hour=0, minute=0, second=0, microsecond=0)
-    return s.astimezone(timezone.utc), (s + timedelta(days=1)).astimezone(timezone.utc)

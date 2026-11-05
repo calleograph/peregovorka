@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isEmail } from "../emails";
 import { PeoplePicker } from "../chat/ChatDialogs";
 import type { Person } from "../chat/chatApi";
 import { personKey, type AttendeeRow } from "../calendarView";
@@ -14,7 +15,7 @@ export function Who({ list, onChange, onError }: { list: AttendeeRow[]; onChange
   };
   const addMail = () => {
     const m = mail.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(m)) { onError("Введите адрес почты внешнего участника, например name@example.org."); return; }
+    if (!isEmail(m)) { onError("Введите адрес почты внешнего участника, например name@example.org."); return; }
     onError("");
     if (!list.some((y) => y.email === m)) onChange([...list, { id: null, ref: null, login: null, name: m, email: m }]);
     setMail("");

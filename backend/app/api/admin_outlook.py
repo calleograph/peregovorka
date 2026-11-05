@@ -6,11 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
-import ssl
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -20,21 +18,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin
-from ..models import Meeting, Room, utcnow
+from ..models import Meeting, Room
 from ..services import outlook as ol
 from ..services import ews_auth
 from ..services import outlook_diag as od
-from ..services import tls_chain, tls_check
+from ..services import tls_chain
 from ..services import outlook_sync as osync
 from ..services.audit import write_audit
 from ..services.outlook_package import build_package
 
 router = APIRouter(prefix="/admin/outlook", tags=["admin-outlook"])
 ASSETS = ("/outlook/taskpane.html", "/outlook/taskpane.js", "/outlook/commands.html", "/outlook/commands.js", "/outlook/auth.html", "/outlook/icon-64.png")
-
-
-def tls_probe(host: str, port: int, timeout: float = 6.0) -> dict:
-    return tls_check.probe(host, port, timeout)
 
 
 async def _internal_api(request: Request) -> dict:

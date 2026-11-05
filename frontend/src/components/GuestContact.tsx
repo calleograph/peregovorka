@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useId } from "react";
+import { isEmail } from "../emails";
 import { useFocusOnMount } from "../useInitialFocus";
 
 /** Как гость или зритель представляется: имя обязательно, почта — по желанию (для протокола и материалов встречи), согласие — отдельной галочкой.
@@ -18,7 +19,7 @@ export function saveContact(c: Contact): void {
 }
 export const nameOk = (c: Contact) => c.name.trim().replace(/\s+/g, " ").length >= 2;
 /** Простая проверка вида адреса; точная — на сервере. Пустая почта допустима. */
-export const emailOk = (c: Contact) => !c.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@.]+$/.test(c.email.trim());
+export const emailOk = (c: Contact) => !c.email.trim() || isEmail(c.email);
 export const contactBody = (c: Contact) => ({ display_name: c.name.trim(), email: c.email.trim() || null, materials_consent: !!c.email.trim() && c.consent });
 
 export function GuestContactFields({ value, onChange, onEnter, preview, suffix = "" }: {

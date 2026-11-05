@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
+import { EMAIL } from "../emails";
 import { api, type ApiError, type DeliveryPlan } from "../api";
 import { Modal } from "./Dialogs";
 import { FORMAT_LABEL, MATERIAL_KINDS, RecipientTable } from "./DeliveryEditor";
 import InfoTip from "./InfoTip";
 
-const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
 /**
  * «Отправить материалы» из истории встречи: получатели → документы и форматы → шаблон письма → предпросмотр темы и текста (их можно поправить только для этого письма,

@@ -40,11 +40,3 @@ class Budget:
         """До цели (может быть отрицательным: цель пропущена, но предел ещё не наступил)."""
         return self.target_s - self.elapsed()
 
-
-def pass_cap(budget: Budget, tokens_per_s: float | None, passes_left: int, *, default: int = 450, lo: int = 120, hi: int = 600) -> int:
-    """Потолок ответа очередного прохода: оставшееся до цели время (за вычетом хвоста на сборку), поделённое между оставшимися проходами,
-    на измеренной скорости модели. Пока скорость неизвестна — `default`. Нижняя граница не даёт ответу стать бесполезно коротким."""
-    if not tokens_per_s or tokens_per_s <= 0:
-        return default
-    secs = max(budget.soft_left() - TAIL_RESERVE_S, 0.0)
-    return int(max(lo, min(hi, secs * tokens_per_s * 0.85 / max(passes_left, 1))))

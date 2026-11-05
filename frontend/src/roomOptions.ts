@@ -1,8 +1,7 @@
-import { ScreenSharePresets, VideoPresets, type AudioCaptureOptions, type RoomOptions } from "livekit-client";
+import { ScreenSharePresets, VideoPresets, type RoomOptions } from "livekit-client";
 import { captureOptions, loadMicPrefs, type MicPrefs } from "./micPrefs";
 
 /** Захват микрофона: подавление эха/шума и автоусиление — для речи; то же самое используется при предварительном getUserMedia. */
-export const MIC_CAPTURE: AudioCaptureOptions = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 /**
  * Настройки Room: камера и показ экрана настраиваются РАЗНО.

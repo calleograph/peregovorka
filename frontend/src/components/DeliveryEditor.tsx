@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { EMAIL } from "../emails";
 import { api, type ApiError, type DeliveryRecipient, type DirHit, type MailDeliverySpec, type PerMaterial, type PerMode } from "../api";
 import InfoTip from "./InfoTip";
 
@@ -11,7 +12,6 @@ export const MATERIAL_KINDS: { kind: string; label: string; help: string }[] = [
 export const FORMAT_LABEL: Record<string, string> = { docx: "Word (.docx)", pdf: "PDF", html: "HTML", txt: "Текст (.txt)", md: "Markdown" };
 export const SOURCE_LABEL: Record<string, string> = { leader: "руководитель", owner: "владелец комнаты", organizer: "организатор встречи", participant: "участник", guest: "гость", viewer: "зритель эфира", user: "выбран вручную", manual: "свой адрес" };
 export const PROBLEM_LABEL: Record<string, string> = { no_email: "нет адреса электронной почты", no_consent: "гость не дал согласия получать материалы", invalid_email: "адрес в каталоге некорректен", domain_not_allowed: "домен запрещён политикой отправки" };
-const EMAIL = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]+$/;
 
 export const MODE_LABEL: Record<PerMode, string> = { none: "Не отправлять", leader: "Руководителям комнаты", owner: "Владельцу комнаты", organizer: "Организатору встречи", all: "Всем участникам встречи", selected: "Выбранным пользователям", emails: "Только на свои адреса (ниже)" };
 const noneMaterials = (): Record<string, PerMaterial> => Object.fromEntries(MATERIAL_KINDS.map((m) => [m.kind, { mode: "none" as PerMode, users: [] }]));

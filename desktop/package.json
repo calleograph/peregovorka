@@ -23,7 +23,6 @@
     "downloadPage": "https://github.com/calleograph/peregovorka/releases?q=desktop-v"
   },
   "devDependencies": {
-    "@electron/fuses": "2.1.3",
     "@types/node": "24.19.2",
     "electron": "44.10.0",
     "electron-builder": "26.17.0",

@@ -324,22 +324,6 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-def _runs_html(runs: list[Run]) -> str:
-    out = []
-    for r in runs:
-        t = _esc(r.text)
-        if r.code:
-            t = f"<code>{t}</code>"
-        if r.bold:
-            t = f"<strong>{t}</strong>"
-        if r.italic:
-            t = f"<em>{t}</em>"
-        if r.href:
-            t = f'<a href="{_esc(r.href)}" rel="noopener noreferrer">{t}</a>'
-        out.append(t)
-    return "".join(out)
-
-
 def to_html(md: str, title: str | None = None, *, kind: str = "protocol") -> str:
     """Самостоятельная страница документа в оформлении «Peregovorka Glass Documents» (светлая тема «Стекло»; services/glass_html.py). Текст модели экранируется."""
     from .glass_html import to_html as render  # noqa: PLC0415

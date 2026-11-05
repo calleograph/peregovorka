@@ -126,18 +126,6 @@ async def secret_checks(live, settings) -> list[dict]:
     return out
 
 
-def _parse_ts(v: str | None) -> float | None:
-    """StartedAt Docker («2026-10-29T20:11:03.123456789Z», всегда UTC) → секунды; до секунд этого достаточно."""
-    from datetime import datetime, timezone  # noqa: PLC0415
-
-    if not v or v.startswith("0001-"):
-        return None
-    try:
-        return datetime.strptime(v[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-    except ValueError:
-        return None
-
-
 async def checks(st, db, purpose: str) -> list[dict]:
     """purpose: video | live"""
     settings = st.settings

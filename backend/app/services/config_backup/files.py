@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,10 +25,6 @@ class Staged:
 @dataclass
 class Promotion:
     done: list[tuple[Path, Path | None]] = field(default_factory=list)       # (боевой файл, его резервная копия или None, если раньше не было)
-
-
-def tmp_name(final: Path) -> Path:
-    return final.with_name(f"{final.name}.import-{uuid.uuid4().hex[:8]}.tmp")
 
 
 def discard(staged: list[Staged]) -> None:

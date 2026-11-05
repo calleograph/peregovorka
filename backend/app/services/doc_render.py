@@ -184,11 +184,6 @@ def document_to_markdown(doc: dict, *, disclaimer: bool = True) -> str:
     return "\n".join(L).rstrip() + "\n"
 
 
-def summary_document(doc: dict) -> str:
-    """Краткое резюме (вид «резюме»): один абзац итога, при его отсутствии — перечень проверенных пунктов."""
-    return doc.get("summary") or ""
-
-
 _ACCENT = (("решени", "ok"), ("задач", "info"), ("поручени", "info"), ("открыт", "warn"), ("предложени", "muted"))
 
 

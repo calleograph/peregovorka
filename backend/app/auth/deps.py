@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hmac
-import ipaddress
 import logging
 import re
 import uuid
@@ -41,26 +40,9 @@ class SessionUser:
                    data.is_admin, frozenset(data.groups), data.csrf, data.local, data.must_change, data.must_totp)
 
 
-def get_settings_dep(request: Request) -> Settings:
-    return request.app.state.settings
-
-
 async def get_db(request: Request):
     async with request.app.state.session_maker() as session:
         yield session
-
-
-def parse_networks(raw: str) -> list:
-    out = []
-    for item in (raw or "").split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            out.append(ipaddress.ip_network(item, strict=False))
-        except ValueError:
-            continue  # некорректная запись в настройке не должна ронять запросы
-    return out
 
 
 def resolve_ip(request):
