@@ -242,7 +242,7 @@ _ld_run() { "$@" 2>/dev/null || sudo -n "$@" 2>/dev/null; }
 _ld_st() { _ld_run stat -c "$1" "$2"; }             # live/nginx (2750) закрыт для посторонних: не от root — смотреть через sudo -n
 # Все пути здесь принадлежат приложению, поэтому владелец и режим меняются только через safefs.py: chown и chmod следуют за ссылкой, которую мог подложить взломанный backend.
 _LD_SAFEFS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/safefs.py"
-_ld_fix() { _ld_run python3 -I "$_LD_SAFEFS" fix "$1" "$2" "$LIVE_UID" "$LIVE_GID" "$3" "$4"; }   # БАЗА ПУТЬ РЕЖИМ|- dir|file
+_ld_fix() { _ld_run python3 -I "$_LD_SAFEFS" fix "$1" "$2" "$LIVE_UID" "$LIVE_GID" "$3" "$4"; }   # база, путь, режим или «-», тип объекта
 live_dirs_prepare() {
   local base="$1" r d rc=0
   for r in live live/b live/acc live/nginx; do
