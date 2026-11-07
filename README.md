@@ -40,6 +40,7 @@ Peregovorka заменяет внешние сервисы видеосвязи,
 | ⏺ **Запись** | общая аудиозапись и видеозапись MP4 по кнопке или автоматически |
 | 📡 **Массовые трансляции** | зрители смотрят по ссылке без входа; 1080p и 2K; вопросы ведущему; параллельно на RUTUBE, VK Видео, YouTube, Twitch; запись эфира; пароли и отзыв ссылок; панель диагностики всей цепочки от выступающего до зрителя |
 | 🌐 **Свои узлы CDN** | отдельный сервер подключается из администрирования по SSH и сам настраивается; основной сервер отдаёт один поток при любом числе зрителей |
+| 🗄 **Файловые хранилища** | записи и документы на локальном диске и общих папках SMB; перенос данных между хранилищами с проверкой копий |
 | 💬 **Корпоративные чаты** | переписка, файлы, диктовка |
 | 📅 **Outlook и Exchange** | встречи из календаря и надстройка Outlook |
 | 🏢 **Active Directory, Bitrix24, SIP** | вход доменной учётной записью, доступ по группам, профили, звонки через АТС |
@@ -68,11 +69,11 @@ Peregovorka заменяет внешние сервисы видеосвязи,
 ### Windows и Linux
 
 <!-- desktop-release:start -->
-**Версия 1.5.0** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.5.0) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/SHA256SUMS.txt)
+**Версия 1.5.1** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.5.1) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/SHA256SUMS.txt)
 
-- **[Peregovorka-Setup-1.5.0.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/Peregovorka-Setup-1.5.0.exe)** — установка для себя, без прав администратора
-- **[Peregovorka-1.5.0-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/Peregovorka-1.5.0-x64.msi)** — для развёртывания в организации (групповые политики)
-- **Linux** (Ubuntu 22.04/24.04, Debian 12/13): [репозиторий APT](https://calleograph.github.io/peregovorka-apt/) — `curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh`, обновления через `apt upgrade`; или пакет [peregovorka_1.5.0_amd64.deb](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/peregovorka_1.5.0_amd64.deb)
+- **[Peregovorka-Setup-1.5.1.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/Peregovorka-Setup-1.5.1.exe)** — установка для себя, без прав администратора
+- **[Peregovorka-1.5.1-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/Peregovorka-1.5.1-x64.msi)** — для развёртывания в организации (групповые политики)
+- **Linux** (Ubuntu 22.04/24.04, Debian 12/13): [репозиторий APT](https://calleograph.github.io/peregovorka-apt/) — `curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh`, обновления через `apt upgrade`; или пакет [peregovorka_1.5.1_amd64.deb](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/peregovorka_1.5.1_amd64.deb)
 
 Несколько серверов организаций в одном окне, трей и уведомления, оформление «Стекло». Для Windows установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае». Для Linux пакеты ставятся и обновляются через APT, подпись репозитория проверяет сам apt ([docs/LINUX.md](docs/LINUX.md)).
 <!-- desktop-release:end -->
@@ -80,11 +81,11 @@ Peregovorka заменяет внешние сервисы видеосвязи,
 ### Android
 
 <!-- android-release:start -->
-**Версия 0.1.8** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/android-v0.1.8) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.8/SHA256SUMS.txt)
+**Версия 0.1.9** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/android-v0.1.9) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.9/SHA256SUMS.txt)
 
-- **[Peregovorka-0.1.8-android.apk](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.8/Peregovorka-0.1.8-android.apk)** — установка вручную (Android 8.0 и новее; для аккуратного вида разделов нужен сервер 0.49.6 или новее)
+- **[Peregovorka-0.1.9-android.apk](https://github.com/calleograph/peregovorka/releases/download/android-v0.1.9/Peregovorka-0.1.9-android.apk)** — установка вручную (Android 8.0 и новее; для аккуратного вида разделов нужен сервер 0.49.6 или новее)
 
-Приложение подключается к серверу вашей организации (адрес сообщает администратор), вход выполняет сам сервер. APK подписан постоянным ключом организации: следующие версии ставятся поверх с сохранением данных (0.1.8 ставится поверх 0.1.7, 0.1.6, 0.1.5 и 0.1.4; переход с 0.1.3 и ранее — один раз через удаление прежней версии). Проверено на эмуляторах Android 10, 14 и 16 в CI (клавиатура, вход в конференцию с настоящим LiveKit, фон и возврат, плавающее окно встречи, показ своего экрана) и автотестами клиента; **звонок с камерой и микрофоном на настоящем телефоне и работа с живым сервером ещё не проверены**. Версии для iPhone и iPad нет.
+Приложение подключается к серверу вашей организации (адрес сообщает администратор), вход выполняет сам сервер. APK подписан постоянным ключом организации: следующие версии ставятся поверх с сохранением данных (0.1.9 ставится поверх 0.1.7, 0.1.6, 0.1.5 и 0.1.4; переход с 0.1.3 и ранее — один раз через удаление прежней версии). Проверено на эмуляторах Android 10, 14 и 16 в CI (клавиатура, вход в конференцию с настоящим LiveKit, фон и возврат, плавающее окно встречи, показ своего экрана) и автотестами клиента; **звонок с камерой и микрофоном на настоящем телефоне и работа с живым сервером ещё не проверены**. Версии для iPhone и iPad нет.
 <!-- android-release:end -->
 
 ## Безопасность и конфиденциальность
@@ -152,7 +153,7 @@ sudo ./install.sh
 
 ## Резервирование и восстановление
 
-`scripts/backup.sh` делает дамп базы, ключевой файл `.env` с главным ключом храните отдельно. Что копировать, как часто и что делать при каждом виде отказа: [Резервирование и восстановление](https://github.com/calleograph/peregovorka/wiki/Архитектура-Резервирование-и-восстановление).
+`scripts/backup.sh --full` сохраняет базу, `.env` с главным ключом и файлы встреч, `scripts/restore.sh --files` возвращает всё это, в том числе на чистый сервер. Копию `.env` храните отдельно от сервера. Что копировать, как часто и что делать при каждом виде отказа: [Резервирование и восстановление](https://github.com/calleograph/peregovorka/wiki/Архитектура-Резервирование-и-восстановление).
 
 ## Администрирование и диагностика
 
