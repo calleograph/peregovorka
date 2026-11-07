@@ -17,6 +17,7 @@ path = sys.argv[1]
 root = path.rsplit("/", 1)[0] + "/"
 stat = {"ok": 0, "err": 0, "bytes": 0}
 waits: list[float] = []
+codes: dict = {}
 
 
 async def viewer(c: httpx.AsyncClient, i: int, end: float):
@@ -40,6 +41,8 @@ async def viewer(c: httpx.AsyncClient, i: int, end: float):
         r = await get(var + (f"?_HLS_msn={msn}&_HLS_part={part}" if msn is not None else ""))
         if r.status_code != 200:
             stat["err"] += 1
+            codes[r.status_code] = codes.get(r.status_code, 0) + 1
+            msn = None                      # отстали от края: начинаем с текущего плейлиста, как hls.js
             await asyncio.sleep(0.5)
             continue
         waits.append(time.perf_counter() - t0)
@@ -67,7 +70,7 @@ async def main():
         res = await task
     bad = [r for r in res if isinstance(r, Exception)]
     w = sorted(waits)
-    print(f"зрителей {VIEWERS}: ответов {stat['ok']}, ошибок {stat['err']}, сбоев клиента {len(bad)}, {stat['bytes'] >> 20} МБ; плейлист p50 {statistics.median(w) * 1000:.0f} мс, p95 {w[int(len(w) * .95)] * 1000:.0f} мс" if w else f"нет ответов {stat} {bad[:2]}")
+    print(f"зрителей {VIEWERS}: ответов {stat['ok']}, ошибок {stat['err']}, сбоев клиента {len(bad)} {codes}, {stat['bytes'] >> 20} МБ; плейлист p50 {statistics.median(w) * 1000:.0f} мс, p95 {w[int(len(w) * .95)] * 1000:.0f} мс" if w else f"нет ответов {stat} {bad[:2]}")
 
 
 asyncio.run(main())
