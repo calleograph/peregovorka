@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import time
 from pathlib import Path
@@ -24,6 +25,20 @@ WIKI = sc.WIKI
 DOC_MEDIA = WIKI + "Решение-проблем-видеозаписи-и-трансляций"
 PROBE_S = 4.0                  # дольше служба уже считается недоступной: страница состояния не должна ждать её
 DOC_STORAGE = WIKI + "Решение-проблем-файловых-хранилищ"
+
+
+def dir_size(path, cap_s: float = 2.0) -> int:
+    """Сколько занимает каталог (обход ограничен по времени: на большом томе не задерживает ответ)."""
+    total, t0 = 0, time.monotonic()
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.stat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+        if time.monotonic() - t0 > cap_s:
+            break
+    return total
 
 
 def _chk(cid: str, title: str, status: str, message: str, *, action: dict | None = None, doc: str | None = None) -> dict:

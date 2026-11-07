@@ -42,7 +42,7 @@ def sh(*a):
 
 
 def eg_state() -> dict:
-    out = sh("docker", "exec", EG, "sh", "-c", 'ps -eo comm | sort | uniq -c; echo TMP $(find /home/egress/tmp -mindepth 2 2>/dev/null | wc -l); echo KB $(du -sk /home/egress | cut -f1); echo SHM $(du -sk /dev/shm | cut -f1)')
+    out = sh("docker", "exec", EG, "sh", "-c", 'ps -eo comm | sort | uniq -c; echo TMP $(find /live/tmp -mindepth 2 2>/dev/null | wc -l); echo KB $(du -sk /home/egress | cut -f1); echo SHM $(du -sk /dev/shm | cut -f1)')
     d = {"chrome": 0, "Xvfb": 0, "egress": 0}
     for ln in out.splitlines():
         p = ln.split()

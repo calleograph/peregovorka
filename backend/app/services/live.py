@@ -29,10 +29,10 @@ from sqlalchemy import func, select
 
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
-from . import events, rec_scene, roles
+from . import events, media_checks, rec_scene, roles
 from .livekit import list_present_identities, remove_viewers
 from .storage import meeting_relpath
-from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoRecorder
+from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoError, VideoRecorder
 
 log = logging.getLogger("app.live")
 
@@ -55,6 +55,7 @@ STOP_GRACE_S = 180                     # после остановки стол�
 SECRET_GID = 10001                     # общая группа backend (пишет секрет подписи HLS) и web (nginx читает): group_add в deployment/compose.yml
 SECRET_MODE = 0o640
 HLS_FILES = ("index.m3u8",)            # единственный плейлист, который отдаётся зрителям (event.m3u8 — полный, внутренний)
+TMP_RESERVE = 1024**3                  # запас сверх копии файла: Egress пишет запись на том трансляций и только в конце копирует на том записей
 SWEEP_EVERY_S = 60                     # уборка сегментов не чаще раза в минуту
 
 
@@ -711,10 +712,39 @@ class LiveBroadcaster:
         await self._sweep(db)
         return closed
 
+    def tmp_low(self) -> bool:
+        """Хватит ли места закончить записи. Egress при нехватке падает, и файл пропадает целиком; остановка заранее оставляет место на его копию."""
+        base = self.live_dir()
+        return (base / "tmp").is_dir() and shutil.disk_usage(base).free < media_checks.dir_size(base / "tmp") + TMP_RESERVE
+
+    async def _disk_guard(self, db) -> None:
+        if not await asyncio.to_thread(self.tmp_low):
+            return
+        text = "На диске сервера заканчивается место: запись остановлена заранее, чтобы файл сохранился."
+        log.error(text)
+        for b in list((await db.execute(select(Broadcast).where(Broadcast.status.in_(("starting", "live"))))).scalars()):
+            meeting = await db.get(Meeting, b.meeting_id)
+            if meeting is not None:
+                b.error = text
+                try:
+                    await self.stop(db, meeting, by="disk", manual=True)
+                    self._emit("live_failed", meeting, level="error", error=text)
+                except LiveError as exc:
+                    log.warning("Не удалось остановить эфир", extra={"meeting_id": str(meeting.id), "error": str(exc)[:300]})
+        for rec in await self.video.active_rows(db):
+            meeting = await db.get(Meeting, rec.meeting_id)
+            if meeting is not None:
+                try:
+                    await self.video.stop(db, meeting, by="disk")
+                    self.video._emit("video_failed", meeting, level="error", error=text)
+                except VideoError as exc:
+                    log.warning("Не удалось остановить запись", extra={"meeting_id": str(meeting.id), "error": exc.message[:300]})
+
     async def _sweep(self, db) -> None:
         """Диск: старые сегменты идущего эфира, каталоги завершённых эфиров, ссылки доступа. Не чаще раза в минуту."""
         if not await self._r.set("live:sweep", "1", nx=True, ex=SWEEP_EVERY_S):
             return
+        await self._disk_guard(db)
         cfg = await self.cfg(db)
         now = time.time()
         base = self.live_dir() / "b"

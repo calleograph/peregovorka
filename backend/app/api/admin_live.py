@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 from ..services import server_components as _sc
 from datetime import datetime, timezone
@@ -20,22 +19,6 @@ from ..services import media_checks
 from ..services.live import LIVE_ACTIVE
 
 router = APIRouter(prefix="/admin/live", tags=["admin"])
-
-
-def _dir_size(path, cap_s: float = 2.0) -> int:
-    """Сколько занимает каталог HLS (обход ограничен по времени: на большом томе не задерживает ответ)."""
-    import time  # noqa: PLC0415
-
-    total, t0 = 0, time.monotonic()
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                total += os.stat(os.path.join(root, f)).st_size
-            except OSError:
-                pass
-        if time.monotonic() - t0 > cap_s:
-            break
-    return total
 
 
 @router.get("/status")
@@ -62,7 +45,7 @@ async def live_status(request: Request, su: SessionUser = Depends(require_admin)
             left = shutil.disk_usage(base if base.exists() else base.parent).free
         except OSError:
             left = None
-        return left, (base / "nginx" / "secret.conf").is_file(), _dir_size(base / "b") if (base / "b").is_dir() else 0
+        return left, (base / "nginx" / "secret.conf").is_file(), media_checks.dir_size(base / "b") if (base / "b").is_dir() else 0
 
     async def cpu() -> int | None:
         try:

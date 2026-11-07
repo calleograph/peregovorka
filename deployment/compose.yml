@@ -362,6 +362,9 @@ services:
     # Запуск от того же uid, что backend и ASR (10001): иначе Egress создаёт каталоги встречи от uid 1001 с правами 755, и backend не сможет удалить видеофайл, а звук
     # не сможет писаться в уже созданную папку встречи (проверено на настоящем Egress). Домашний каталог — в памяти, образ Egress ждёт там пользователя egress.
     user: "10001:0"
+    # Egress держит в /home/egress/tmp весь файл записи до конца задания, путь зашит в нём (tmp_dir перезаписывается). В памяти этот файл убивал эфир 1080p на 52-й минуте
+    # и пропадал. Поэтому каталог уводится на том трансляций: локальный диск, том записей не годится (на SMB нет сокета IPC). entrypoint.sh образа чистит его при запуске.
+    entrypoint: ["/tini", "--", "sh", "-c", "mkdir -p /live/tmp && ln -sfn /live/tmp /home/egress/tmp && exec /entrypoint.sh"]
     tmpfs:
       - /home/egress:uid=10001,gid=0,mode=0770,size=2g
     cap_add:
@@ -391,8 +394,8 @@ services:
       - ${DATA_ROOT}/live:/live          # сегменты HLS прямых эфиров: Egress пишет, backend создаёт ссылки доступа и убирает, web (nginx) раздаёт
     healthcheck:
       # Попутно — счётчик процессора контейнера для диагностики эфира: приложению не выдаётся сокет Docker, другого способа увидеть загрузку этой службы (Chrome и кодировщик) у него нет.
-      # Там же уборка: Egress оставляет пустой каталог на каждое задание и блокировку Xvfb, а домашний каталог живёт в памяти (срок больше предела эфира в 48 часов).
-      test: ["CMD-SHELL", "find /home/egress/tmp -mindepth 1 -maxdepth 1 -type d -mmin +120 -empty -delete 2>/dev/null; find /tmp -maxdepth 1 -name '.X*-lock' -mmin +2880 -delete 2>/dev/null; cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
+      # Там же уборка: Egress оставляет пустой каталог на каждое задание и блокировку Xvfb, а после аварии и файлы. Срок файлов больше предела эфира в 48 часов.
+      test: ["CMD-SHELL", "find /live/tmp -mindepth 2 ! -type d -mmin +2900 -delete 2>/dev/null; find /live/tmp -mindepth 1 -type d -empty -mmin +120 -delete 2>/dev/null; find /tmp -maxdepth 1 -name '.X*-lock' -mmin +2880 -delete 2>/dev/null; cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -9,6 +9,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from livekit.protocol import egress as eg
@@ -337,6 +338,22 @@ def test_empty_room_ends_the_broadcast_after_the_grace_and_meeting_end_stops_it(
     login(lv, "root")
     assert lv.post(f"/api/v1/meetings/{mid2}/end").status_code in (200, 204)
     assert "EG_test2" in lv.fake.stopped, "завершение встречи останавливает эфир"
+
+
+def test_recording_stops_before_the_disk_is_full_and_leaves_room_for_the_copy(lv, monkeypatch):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    (lv.dir / "tmp" / "EG_test1").mkdir(parents=True)
+    (lv.dir / "tmp" / "EG_test1" / "video-1.mp4").write_bytes(b"x" * 1000)
+    free = {"n": live_mod.TMP_RESERVE + 1000}
+    monkeypatch.setattr(live_mod.shutil, "disk_usage", lambda p: SimpleNamespace(free=free["n"]))
+    call(lv, lambda db: lv.app_obj.state.live._disk_guard(db))
+    assert lv.fake.stopped == [], "места хватает на файл и запас"
+    free["n"] -= 1
+    call(lv, lambda db: lv.app_obj.state.live._disk_guard(db))
+    b = broadcasts(lv, mid)[0]
+    assert lv.fake.stopped == ["EG_test1"] and b.status == "ending" and "заканчивается место" in b.error
 
 
 def test_janitor_removes_old_segments_of_a_running_broadcast_and_ended_directories(lv):

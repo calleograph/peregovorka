@@ -45,7 +45,7 @@ def watch(stop: threading.Event, res: list) -> None:
     """Раз в минуту: процессор и память служб, число процессов браузера. По сдвигу между началом и концом видна утечка."""
     while not stop.wait(60):
         r = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{.Name}} {{.CPUPerc}} {{.MemUsage}}", "pgdoc-livekit-egress-1", "pgdoc-mediamtx-1", "pgdoc-backend-1"], capture_output=True, text=True).stdout
-        n = subprocess.run(["docker", "exec", "pgdoc-livekit-egress-1", "sh", "-c", "ps -eo comm | grep -c chrome; du -sk /home/egress /dev/shm | cut -f1 | tr '\\n' ' '"], capture_output=True, text=True).stdout
+        n = subprocess.run(["docker", "exec", "pgdoc-livekit-egress-1", "sh", "-c", "ps -eo comm | grep -c chrome; du -sk /home/egress /live/tmp /dev/shm | cut -f1 | tr '\\n' ' '"], capture_output=True, text=True).stdout
         res.append({"t": int(time.time()), "службы": [" ".join(x.split()[:3]) for x in r.strip().splitlines()], "chrome_диск": " ".join(n.split())})
 
 
