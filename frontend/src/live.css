@@ -70,14 +70,15 @@
 .live-foot { align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 /* эфиры комнаты (организатор): плотный список, действия в одну строку, переносятся на узком экране */
 .lv-rec { display: grid; gap: 6px; }
-.lv-days { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lv-panel .lv-days { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; flex-wrap: wrap; }
+.lv-key { display: flex; gap: 8px; align-items: center; } .lv-key input { flex: 1 1 auto; min-width: 0; }
 .lv-days input { width: 80px; }
 .lv-bcast-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .lv-bcast { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; }
 .lv-bcast-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .lv-bcast-acts { gap: 8px; flex-wrap: wrap; align-items: center; }
 .lv-bcast-acts .check { margin: 0; }
-.lv-opts { display: grid; gap: 6px; } .lv-opt-row { gap: 12px; flex-wrap: wrap; align-items: center; } .lv-opts input[type=number] { width: 72px; }
+.lv-opts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; } .lv-opts select, .lv-opts input:not([type=checkbox]) { max-width: 100%; min-width: 0; } .lv-opt-row { gap: 12px; flex-wrap: wrap; align-items: center; } .lv-opts input[type=number] { width: 72px; }
 .live-stage > .live-net { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); margin: 0; padding: 8px 14px; border-radius: 10px; background: rgba(0, 0, 0, .7); color: #fff; font-size: 14px; max-width: calc(100% - 28px); text-align: center; }
 .live-msg .btn { margin-top: 12px; }
 

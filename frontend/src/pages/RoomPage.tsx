@@ -1435,6 +1435,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                       title="Начать эфир: зрители увидят изображение и звук, начнутся запись и транскрибация, откроется приём вопросов"
                       onClick={() => { setAirBusy(true); api.setLive(join.meeting_id, true).then(lv.refresh, (e) => setNotice({ kind: "warn", text: `Эфир не начат: ${(e as ApiError).message}` })).finally(() => setAirBusy(false)); }}>
                 <span className="rec-dot" aria-hidden /> {airBusy || lv.state.status === "starting" ? "Запуск…" : "Выйти в эфир"}</button>)}
+          {join.client.broadcast && lv.state?.can_control && !ended && <button type="button" className="btn mini" onClick={() => setLiveOpen(true)} title="Качество, площадки, ключи, ссылки и пароли этого эфира">Настройки эфира</button>}
           {video?.recording && <span className="rec-badge on video" title="Идёт видеозапись встречи: изображение и звук всех участников"><span className="rec-dot" aria-hidden /> ВИДЕОЗАПИСЬ</span>}
           {serverTranscript && !transcribing && !(join.client.broadcast && lv.state && !lv.state.live) && (
             <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
@@ -1625,7 +1626,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
       {cardOf && <ParticipantCardDialog meetingId={join.meeting_id} identity={cardOf.identity} name={cardOf.name} role={cardOf.role} localMuted={localMuted.has(cardOf.identity)} onToggleLocalMute={() => toggleLocalMuted(cardOf.identity)} onClose={() => setCardOf(null)} />}
-      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSettings={lv.state.links ? () => { setLiveOpen(false); setManageOpen(true); } : undefined}
+      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} room={room} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSpeakerPassword={async (pw) => { await api.manage.patch(room.id, { password: pw }); }}
         onDiag={lv.state.can_control ? () => { setLiveOpen(false); setDiagOpen(true); } : undefined} />}
       {diagOpen && join && <Suspense fallback={null}><LiveDiagPanel meetingId={join.meeting_id} roomId={room.id} onClose={() => setDiagOpen(false)} /></Suspense>}
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ApiError, type LiveStartOptions, type LiveState } from "../api";
+import { api, type ApiError, type LiveRoomSettings, type LiveStartOptions, type LiveState } from "../api";
 import InfoTip from "./InfoTip";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
 import { Modal } from "./Dialogs";
-import { LiveDestToggles } from "./LiveDestinations";
+import LiveDestinations, { LiveDestToggles } from "./LiveDestinations";
+import LiveSettings, { QualitySelect } from "./LiveSettings";
 import "../live.css";
 
 /** Состояние прямого эфира встречи: читается при входе, по событию `live_changed` и раз в 20 с (событие могло потеряться). */
@@ -32,8 +33,8 @@ const clockSince = (iso: string | null) => {
 };
 const STATUS: Record<string, string> = { idle: "Эфир не идёт", starting: "Эфир запускается…", live: "Идёт прямой эфир", ending: "Эфир заканчивается…", ended: "Эфир завершён", failed: "Эфир прерван" };
 
-/** Окно «Трансляция» в меню «Ещё»: запуск и остановка эфира, две ссылки, сведения. Настройки (пароль, качество, площадки) — в «Настройках комнаты → Трансляция». */
-export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, onDiag }: { meetingId: string; state: LiveState; onChanged: () => void; onClose: () => void; onSettings?: () => void; onDiag?: () => void }) {
+/** Окно «Трансляция» в меню «Ещё»: всё для эфира в самой комнате — запуск и остановка, качество, площадки с ключами, ссылки, пароли. Те же блоки, что в «Настройках комнаты → Трансляция». */
+export function LiveDialog({ meetingId, room, state, onChanged, onClose, onDiag, onSpeakerPassword }: { meetingId: string; room: { id: string; slug: string; room_type?: string; has_password?: boolean }; state: LiveState; onChanged: () => void; onClose: () => void; onDiag?: () => void; onSpeakerPassword: (pw: string | null) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
@@ -41,6 +42,11 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, o
   // параметры именно этого эфира: по умолчанию — из настроек комнаты, ведущий может поменять их перед запуском (после запуска они фиксируются у эфира)
   const [opts, setOpts] = useState<LiveStartOptions>(() => ({ title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5 }));
   const current = links?.broadcasts.find((b) => b.status === "live");
+  useEffect(() => {          // статусы площадок меняются сами: окно не должно показывать «идёт» у площадки, которая уже отказала
+    if (!state.live) return undefined;
+    const t = window.setInterval(onChanged, 4000);
+    return () => window.clearInterval(t);
+  }, [state.live, onChanged]);
   const toggle = async () => {
     setBusy(true); setErr("");
     try { await api.setLive(meetingId, !state.live, state.live ? undefined : opts); onChanged(); }
@@ -54,12 +60,17 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, o
     window.setTimeout(() => setDone(""), 3000);
   };
   const warnBig = links && state.viewers >= links.global.direct_viewers_warn;
+  const setQuality = async (q: LiveRoomSettings["quality"]) => {
+    setErr("");
+    try { await api.patchLive(room.id, { live_quality: q }); onChanged(); }
+    catch (e) { setErr((e as ApiError).message || "Не удалось сохранить качество."); }
+  };
   return (
-    <Modal title="Трансляция" onClose={onClose}>
+    <Modal title="Трансляция" onClose={onClose} wide>
       <div className="lv-panel">
         <div className="lv-state">
           {state.live ? <span className="live-tag on big"><i aria-hidden />Прямой эфир</span> : <span className="badge">{STATUS[state.status] ?? state.status}</span>}
-          {state.live && <span className="muted">идёт {clockSince(state.since)} · зрителей: {state.viewers}</span>}
+          {state.live && <span className="muted">идёт {clockSince(state.since)} · зрителей: {state.viewers}{links ? ` · ${links.quality}` : ""}</span>}
         </div>
         {state.status === "failed" && state.error && <div className="alert error" role="alert">{state.error}</div>}
         {err && <div className="alert error" role="alert">{err}</div>}
@@ -73,6 +84,7 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, o
         {!state.live && state.can_control && links && (
           <fieldset className="group lv-opts"><legend>Этот эфир<InfoTip>Значения подставлены из настроек комнаты. Здесь их можно поменять только для этого эфира: после запуска они сохраняются у эфира и не меняются от последующих изменений настроек комнаты.</InfoTip></legend>
             <label>Название для зрителей <input value={opts.title ?? ""} maxLength={200} onChange={(e) => setOpts({ ...opts, title: e.target.value })} placeholder="Название мероприятия" /></label>
+            <QualitySelect value={links.quality} disabled={busy} onChange={(q) => void setQuality(q)} />
             <label className="check"><input type="checkbox" checked={!!opts.replay} onChange={(e) => setOpts({ ...opts, replay: e.target.checked })} /> Показывать запись по ссылке после эфира</label>
             {opts.replay && <div className="row lv-opt-row">
               <label className="check"><input type="checkbox" checked={!!opts.download} onChange={(e) => setOpts({ ...opts, download: e.target.checked })} /> Разрешить скачивание</label>
@@ -99,12 +111,14 @@ export function LiveDialog({ meetingId, state, onChanged, onClose, onSettings, o
             </div>
             {links.password_enabled && <p className="lv-note">Просмотр защищён паролем зрителя. Ссылка на поток пароль не спрашивает: делитесь ею осторожно, её можно отозвать в настройках комнаты.</p>}
           </div>)}
-        {state.can_control && state.destinations && <LiveDestToggles meetingId={meetingId} items={state.destinations} onChanged={onChanged} />}
+        {links
+          ? <LiveDestinations roomId={room.id} cfg={{ ...links, destinations: state.destinations ?? links.destinations }} onChange={onChanged} meetingId={state.live ? meetingId : undefined} onRefresh={onChanged} />
+          : state.can_control && state.destinations && <LiveDestToggles meetingId={meetingId} items={state.destinations} onChanged={onChanged} />}
+        {links && <details className="lv-sect"><summary>Пароли, ссылки и другие настройки</summary>
+          <LiveSettings roomId={room.id} roomSlug={room.slug} isBroadcastType={room.room_type === "broadcast"} hasSpeakerPassword={!!room.has_password} onSpeakerPassword={onSpeakerPassword} embedded />
+        </details>}
         {done && <div className="alert ok" role="status">{done}</div>}
-        {(onDiag || (links && onSettings)) && <div className="row">
-          {links && onSettings && <button className="btn ghost" onClick={onSettings}>Настройки трансляции…</button>}
-          {onDiag && <button className="btn ghost" onClick={onDiag}><Icon name="gauge" size={16} /> Диагностика эфира</button>}
-        </div>}
+        {onDiag && <div className="row"><button className="btn ghost" onClick={onDiag}><Icon name="gauge" size={16} /> Диагностика эфира</button></div>}
       </div>
     </Modal>
   );

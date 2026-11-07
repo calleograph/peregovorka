@@ -15,8 +15,21 @@ import InfoTip from "./InfoTip";
  */
 const origin = () => window.location.origin;
 
-export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpeakerPassword, onSpeakerPassword }: {
+/** Качество эфира: комната запоминает его для всех следующих эфиров. Значения входят в рекомендации площадок (H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с). */
+export function QualitySelect({ value, disabled, onChange }: { value: LiveRoomSettings["quality"]; disabled: boolean; onChange: (q: LiveRoomSettings["quality"]) => void }) {
+  return (
+    <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток: H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с.</InfoTip></span>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as LiveRoomSettings["quality"])}>
+        <option value="720p">720p: 3 Мбит/с, запись до ≈ 1,4 ГБ/час</option>
+        <option value="1080p">1080p (Full HD), по умолчанию: 5 Мбит/с, запись до ≈ 2,3 ГБ/час</option>
+        <option value="1440p">1440p (2K): 9 Мбит/с, запись до ≈ 4 ГБ/час; часть площадок принимает не больше 1080p</option>
+      </select></label>
+  );
+}
+
+export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpeakerPassword, onSpeakerPassword, embedded }: {
   roomId: string; roomSlug: string; isBroadcastType: boolean; hasSpeakerPassword: boolean; onSpeakerPassword: (pw: string | null) => Promise<void>;
+  embedded?: boolean;              // внутри окна «Трансляция» в комнате: качество и площадки там показаны отдельно, история эфиров не нужна
 }) {
   const [cfg, setCfg] = useState<LiveRoomSettings | null>(null);
   const [err, setErr] = useState("");
@@ -51,7 +64,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
   const setSpeaker = () => { if (speakerPw.length >= 4) void run(async () => { await onSpeakerPassword(speakerPw); setSpeakerPw(""); load(); }, "Пароль выступающего сохранён"); };
 
   return (
-    <div role="tabpanel" className="lv-panel">
+    <div role={embedded ? undefined : "tabpanel"} className="lv-panel">
       {!cfg.global.enabled && <div className="alert warn">Трансляции пока отключены администратором сервера (Администрирование → Трансляции). Настройки можно подготовить заранее.</div>}
       <label className="check"><input type="checkbox" checked={cfg.enabled} disabled={busy || (live && cfg.enabled)} onChange={(e) => void patch({ live_enabled: e.target.checked }, e.target.checked ? "Трансляция в комнате включена" : "Трансляция в комнате выключена")} />
         <span className="check-body">Разрешить трансляции в этой комнате<InfoTip>{isBroadcastType ? "Комната создана как трансляционная: выступающие общаются в конференции, зрители смотрят эфир по ссылке." : "Эфир можно вести и в обычной или презентационной комнате: зрители смотрят по ссылке, не подключаясь к конференции."}</InfoTip></span></label>
@@ -102,6 +115,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
             <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} onBlur={() => { if (title !== cfg.title) void patch({ live_title: title }, "Название сохранено"); }} placeholder="Например: Квартальный отчёт" /></label>
           <label>Начало <span className="muted small">(страница ожидания покажет время и отсчёт)</span>
             <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} onBlur={() => { const iso = startsAt ? new Date(startsAt).toISOString() : null; const cur = cfg.starts_at ? new Date(cfg.starts_at).toISOString() : null; if (iso !== cur) void patch(iso ? { live_starts_at: iso } : { clear_starts_at: true }, "Время начала сохранено"); }} /></label>
+          {!embedded && <QualitySelect value={cfg.quality} disabled={busy || live} onChange={(q) => void patch({ live_quality: q }, "Качество сохранено")} />}
           <label>Запуск эфира
             <select value={cfg.start} disabled={busy} onChange={(e) => void patch({ live_start: e.target.value as "manual" | "auto" }, "Режим запуска сохранён")}>
               <option value="manual">Вручную: руководитель нажимает «Начать эфир»</option>
@@ -120,21 +134,16 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
           </div>
         </fieldset>
 
-        <LiveDestinations roomId={roomId} cfg={cfg} onChange={apply} />
-
-        {cfg.broadcasts.length > 0 && <LiveBroadcasts roomId={roomId} cfg={cfg} busy={busy} run={run} />}
+        {!embedded && <LiveDestinations roomId={roomId} cfg={cfg} onChange={apply} />}
 
         <details className="lv-sect"><summary>Дополнительно</summary>
-          <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток.</InfoTip></span><select value={cfg.quality} disabled={busy || live} onChange={(e) => void patch({ live_quality: e.target.value as "720p" | "1080p" | "1440p" }, "Качество сохранено")}>
-              <option value="720p">720p — экономичное (≈ 0,6 ГБ/час записи)</option>
-              <option value="1080p">1080p (Full HD) — по умолчанию: презентации с мелким текстом (запись до ≈ 2,3 ГБ/час)</option>
-              <option value="1440p">1440p (2K) — для больших экранов (запись до ≈ 4 ГБ/час; до 9 Мбит/с на зрителя, часть площадок принимает не больше 1080p)</option>
-            </select></label>
           <label className="check"><input type="checkbox" checked={cfg.cdn} disabled={busy || !cfg.cdn_available} onChange={(e) => void patch({ live_cdn: e.target.checked }, e.target.checked ? "Эфир этой комнаты раздаётся через CDN" : "Раздача через CDN выключена")} />
             <span className="check-body">Раздавать через CDN<InfoTip>{cfg.cdn_available ? "Плеер зрителя и ссылка на поток берут видео прямо с CDN администратора, а не с этого сервера — так можно показывать эфир сотням и тысячам зрителей." : "CDN не подключён администратором сервера (Администрирование → Трансляции). Без CDN каждый зритель получает отдельный поток с основного сервера."}</InfoTip></span></label>
           <label className="check"><input type="checkbox" checked={cfg.own_hls} disabled={busy || live} onChange={(e) => void patch({ live_own_hls: e.target.checked }, "Сохранено")} />
             <span className="check-body">Собственный просмотр в Peregovorka (страница зрителя и ссылка на поток)<InfoTip>Выключите, если эфир нужен только внешним площадкам: сервер не будет хранить и раздавать сегменты.</InfoTip></span></label>
         </details>
+
+        {!embedded && cfg.broadcasts.length > 0 && <LiveBroadcasts roomId={roomId} cfg={cfg} busy={busy} run={run} />}
       </>)}
       {msg && <div className="alert ok" role="status">{msg}</div>}
       {err && <div className="alert error" role="alert">{err}</div>}
@@ -148,6 +157,7 @@ const ACCESS: Record<LiveBroadcast["access"], string> = { off: "запись з�
 /** Эфиры комнаты: у каждого своя ссылка, параметры доступа к записи и срок. Организатор и администратор меняют их здесь; запись — в материалах встречи. */
 function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveRoomSettings; busy: boolean; run: (fn: () => Promise<LiveRoomSettings | void>, ok?: string) => Promise<void> }) {
   const [copied, setCopied] = useState("");
+  const [all, setAll] = useState(false);
   const focusOnMount = useFocusOnMount();
   const [pwFor, setPwFor] = useState<{ id: string; value: string } | null>(null);       // ввод пароля у одного эфира
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
@@ -155,7 +165,7 @@ function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveR
   return (
     <fieldset className="group lv-bcasts"><legend>Эфиры<InfoTip>Для каждого эфира создаётся своя ссылка зрителя: пока эфир идёт — прямой эфир, после окончания — его запись (если показ разрешён) до конца срока. Повторный эфир из этой комнаты — новая ссылка; старые ссылки остаются привязаны к своим записям.</InfoTip></legend>
       <ul className="lv-bcast-list">
-        {cfg.broadcasts.map((b) => {
+        {(all ? cfg.broadcasts : cfg.broadcasts.slice(0, 5)).map((b) => {
           const rec = b.recording;
           const recText = !rec ? "записи нет" : rec.file_state === "missing" ? "запись удалена" : rec.status === "ready" ? "запись готова" : rec.status === "failed" ? "запись не сохранилась" : "запись готовится";
           return (
@@ -192,6 +202,7 @@ function LiveBroadcasts({ roomId, cfg, busy, run }: { roomId: string; cfg: LiveR
             </li>);
         })}
       </ul>
+      {!all && cfg.broadcasts.length > 5 && <button type="button" className="btn ghost" onClick={() => setAll(true)}>Показать все ({cfg.broadcasts.length})</button>}
     </fieldset>
   );
 }

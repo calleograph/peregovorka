@@ -811,6 +811,12 @@ async def create_destination(room_id: uuid.UUID, request: Request, body: dict = 
         raise _err(exc) from None
     await _audit_dest(db, su, "room.live_destination_added", room, row)
     await db.commit()
+    cur = await request.app.state.live.current(db, room.id)
+    if cur is not None and row.enabled:                                 # площадка добавлена во время эфира: поток идёт на неё сразу
+        try:
+            await request.app.state.destinations.set_live(db, cur, row, True)
+        except DestinationError:
+            pass                                                        # причина уже в строке площадки
     return await _out(request, db, room, su)
 
 
@@ -818,12 +824,20 @@ async def create_destination(room_id: uuid.UUID, request: Request, body: dict = 
 async def update_destination(room_id: uuid.UUID, did: uuid.UUID, request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     room = await _room_for_manager(request, db, room_id, su)
     row = await _dest(request, db, room, did)
+    dests = request.app.state.destinations
+    old_url, on_air = dests.live_url(row), row.enabled and row.status in ("live", "connecting")
     try:
-        await request.app.state.destinations.update(db, row, body)
+        await dests.update(db, row, body)
     except DestinationError as exc:
         raise _err(exc) from None
     await _audit_dest(db, su, "room.live_destination_changed", room, row, key_replaced=bool(body.get("key")), fields=sorted(k for k in body if k != "key"))
     await db.commit()
+    cur = await request.app.state.live.current(db, room.id)
+    if cur is not None and on_air and dests.live_url(row) != old_url:
+        try:
+            await dests.reconnect(db, cur, row, old_url)
+        except DestinationError:
+            pass                                                        # причина уже в строке площадки
     return await _out(request, db, room, su)
 
 

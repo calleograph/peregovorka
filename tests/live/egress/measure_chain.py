@@ -95,7 +95,7 @@ async def player(token: str, viewer: str, seconds: float) -> dict:
 
 async def main() -> None:
     c = admin()
-    c.put("/api/v1/admin/settings/live", json={"enabled": True, "max_concurrent": 3, "allow_private_destinations": True, "rtc_viewers_max": 50 if MODE.startswith("rtc") else 0}).raise_for_status()
+    c.put("/api/v1/admin/settings/live", json={"enabled": True, "max_concurrent": 3, "allow_private_destinations": True, "rtc_viewers_max": 50 if MODE.startswith("rtc") else 0, "ll_hls": os.environ.get("LL", "1") == "1"}).raise_for_status()
     slug = f"m-{time.strftime('%H%M%S')}"
     rid = c.post("/api/v1/admin/rooms", json={"name": slug, "slug": slug, "room_type": "broadcast", "transcription_enabled": False, "acl": [], "moderators": []}).json()["id"]
     lv = c.patch(f"/api/v1/rooms/{rid}/live", json={"live_enabled": True, "live_quality": QUALITY, "live_cdn": False}).json()

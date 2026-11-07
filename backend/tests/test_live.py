@@ -112,9 +112,9 @@ def test_request_has_mp4_hls_and_rtmp_without_urls_in_one_process():
     got = kinds(req)
     assert got == ["file", "segments", "stream"], "MP4 + HLS + RTMP — один запрос, один браузер"
     seg = req.outputs[1].segments
-    assert seg.filename_prefix == "/live/b/abc/seg" and seg.live_playlist_name == "/live/b/abc/index.m3u8" and seg.segment_duration == 1, "сегмент 1 с: меньше задержка зрителя"
+    assert seg.filename_prefix == "/live/b/abc/seg" and seg.live_playlist_name == "/live/b/abc/index.m3u8" and seg.segment_duration == 2, "сегмент 2 с: столько просят площадки"
     assert req.outputs[2].stream.protocol == eg.StreamProtocol.RTMP and list(req.outputs[2].stream.urls) == []
-    assert req.advanced.key_frame_interval == 1.0 and (req.advanced.width, req.advanced.height) == (1280, 720)
+    assert req.advanced.key_frame_interval == 2.0 and (req.advanced.width, req.advanced.height) == (1280, 720)
     assert req.advanced.video_bitrate == 3000, "не ниже минимума YouTube для 720p"
     only = build_live_request("r", "1080p", mp4_path=None, hls_prefix=None, urls=["rtmp://a/b/c"])
     assert kinds(only) == ["stream"] and list(only.outputs[0].stream.urls) == ["rtmp://a/b/c"] and only.advanced.width == 1920 and only.advanced.video_bitrate == 5000
@@ -708,6 +708,23 @@ def test_destinations_of_another_room_and_other_people_are_not_reachable(lv, pub
     assert lv.delete(f"/api/v1/rooms/{b['id']}/live/destinations/{did}").status_code == 404
     login(lv, "bob")
     assert lv.get(f"/api/v1/rooms/{a['id']}/live").status_code == 404 and lv.post(f"/api/v1/rooms/{a['id']}/live/destinations/{did}/probe").status_code == 404
+
+
+def test_platform_added_or_rekeyed_during_the_broadcast_starts_working_at_once(lv, public_dns):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    egress = lv.fake.started[-1][0] if isinstance(lv.fake.started[-1], tuple) else "EG_test1"
+    r = dest(lv, room, server_url=EXAMPLE + "/", key="old-key?sinfo=1")
+    assert r.status_code == 201, r.text
+    d = r.json()["destinations"][0]
+    old, new = f"{EXAMPLE}/old-key?sinfo=1", f"{EXAMPLE}/new-key"
+    assert lv.fake.updates == [(egress, [old], [])], "площадка из настроек подключается сразу, без отдельного включения"
+    assert d["status"] == "connecting"
+    assert lv.patch(f"/api/v1/rooms/{room['id']}/live/destinations/{d['id']}", json={"key": "new-key"}).status_code == 200
+    assert lv.fake.updates[1:] == [(egress, [], [old]), (egress, [new], [])], "новый ключ работает в этом же эфире"
+    assert lv.patch(f"/api/v1/rooms/{room['id']}/live/destinations/{d['id']}", json={"name": "Другое имя"}).status_code == 200
+    assert len(lv.fake.updates) == 3, "смена названия поток не трогает"
 
 
 def test_enabled_destinations_go_into_the_egress_request_and_a_dead_one_does_not_stop_the_rest(lv, public_dns):

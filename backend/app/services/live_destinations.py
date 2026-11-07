@@ -275,6 +275,17 @@ class Destinations:
             raise DestinationError("egress", f"Не удалось изменить площадку: {row.last_error}", 503) from None
         await db.commit()
 
+    def live_url(self, row: LiveDestination) -> str:
+        return full_url(row.server_url, self._decrypt(row) or "")
+
+    async def reconnect(self, db, broadcast: Broadcast, row: LiveDestination, old_url: str) -> None:
+        """Ключ или адрес сменили во время эфира: прежний выход закрывается, поток идёт по новому. Иначе новый ключ начал бы работать только со следующего эфира."""
+        try:
+            await self.api.update_stream(broadcast.egress_id, remove=[old_url])
+        except Exception:  # noqa: BLE001 — прежний выход мог уже упасть: новый всё равно подключаем
+            pass
+        await self.set_live(db, broadcast, row, True)
+
     @staticmethod
     def _match(sr_url: str, row: LiveDestination, key: str) -> bool:
         """Egress скрывает ключ в адресах результатов: `rtmp://хост:порт/приложение/{начало...конец}`; порядок результатов произвольный (проверено на настоящем Egress:

@@ -62,7 +62,7 @@ function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean, onManagePeer?: (i
     { id: "guest", label: "Скопировать гостевую ссылку", icon: "copy", hidden: !r.guest_token, onSelect: () => void copy(guestUrl(r), "Гостевая ссылка") },
     { id: "peer", label: "Управление ссылкой…", icon: "gear", hidden: r.room_type !== "peer" || !onManagePeer, onSelect: () => onManagePeer?.(r.id) },
     { id: "tab", label: "Открыть в новой вкладке", icon: "arrowR", onSelect: () => { window.open(roomUrl(r), "_blank", "noopener"); } },
-    { id: "settings", label: "Настройки комнаты", icon: "gear", hidden: !isAdmin, onSelect: () => { try { sessionStorage.setItem("adminTab", "rooms"); } catch { /* вкладка не запомнится */ } navigate("/admin"); } },
+    { id: "settings", label: "Настройки комнаты", icon: "gear", hidden: !isAdmin, onSelect: () => { try { sessionStorage.setItem("adminTab", "rooms"); sessionStorage.setItem("adminRoom", r.id); } catch { /* вкладка не запомнится */ } navigate("/admin"); } },
   ];
   /** Кнопка «⋯»: то же меню, что и по правой кнопке, у самой кнопки (доступно с клавиатуры и на сенсорных экранах). */
   const openFrom = (el: HTMLElement) => { const b = el.getBoundingClientRect(); openAt(Math.round(b.right), Math.round(b.bottom + 4), items()); };

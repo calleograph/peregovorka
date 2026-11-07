@@ -6,9 +6,9 @@ import { useDirty } from "../dirtyGuard";
 import "../live.css";
 
 /** Подсказки по площадкам: адреса и ключи берутся из кабинета самой площадки — в приложении они не зашиты, здесь только порядок действий. */
-const HINTS: Record<string, { title: string; steps: string; server: string }> = {
-  rutube: { title: "RUTUBE", steps: "В студии RUTUBE создайте трансляцию (для закрытого показа — доступ по прямой ссылке) и скопируйте «Сервер» и «Ключ потока». Ключ действует до 24 часов с начала трансляции.", server: "Сервер из студии RUTUBE" },
-  vk: { title: "VK Видео", steps: "В VK Видео нажмите «Начать трансляцию» и в «Настройке программы для трансляции» скопируйте URL и ключ. Ключ никому не передавайте.", server: "URL из настроек трансляции VK" },
+const HINTS: Record<string, { title: string; steps: string; server: string; after?: string }> = {
+  rutube: { title: "RUTUBE", steps: "В студии RUTUBE создайте трансляцию (для закрытого показа — доступ по прямой ссылке) и скопируйте «Сервер» и «Ключ потока». Ключ действует до 24 часов с начала трансляции.", after: "Запустите трансляцию в студии RUTUBE: до этого зрители её не видят.", server: "Сервер из студии RUTUBE" },
+  vk: { title: "VK Видео", steps: "В студии VK Видео скопируйте сервер и ключ трансляции. Ключ никому не передавайте.", after: "Нажмите «Опубликовать» в студии VK: до этого зрители видят «Стример не в сети».", server: "Сервер из студии VK" },
   youtube: { title: "YouTube", steps: "В YouTube Studio откройте настройки потока: URL трансляции (значок замка даёт rtmps://) и ключ трансляции. Прямые эфиры на канале должны быть активированы.", server: "URL трансляции из YouTube Studio" },
   twitch: { title: "Twitch", steps: "В панели автора Twitch скопируйте ключ потока и адрес ближайшего сервера приёма вида rtmp://<сервер>/app.", server: "rtmp://<сервер приёма>/app" },
   custom: { title: "Другой RTMP/RTMPS-сервер", steps: "Адрес сервера вещания (rtmp:// или rtmps://) и ключ потока выдаёт администратор этого сервера.", server: "rtmps://сервер/приложение" },
@@ -21,12 +21,13 @@ function StatusBadge({ d }: { d: LiveDestination }) {
 }
 
 /** «Внешние площадки» в настройках комнаты: список со статусами, добавление (мастер ручного подключения через RTMP-ключ), замена ключа, проверка, удаление. */
-export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: string; cfg: LiveRoomSettings; onChange: (c: LiveRoomSettings) => void }) {
+export default function LiveDestinations({ roomId, cfg, onChange, meetingId, onRefresh }: { roomId: string; cfg: LiveRoomSettings; onChange: (c: LiveRoomSettings) => void; meetingId?: string; onRefresh?: () => void }) {
   const [edit, setEdit] = useState<{ id: string | null; platform: string } | null>(null);
   const [f, setF] = useState({ name: "", server_url: "", key: "", channel: "", watch_url: "" });
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showKey, setShowKey] = useState(false);
   const inflight = useRef(false);            // второе нажатие до ответа сервера не отправляет второй запрос (состояние busy обновляется не мгновенно)
   // несохранённая площадка: браузер предупредит при закрытии вкладки; после сохранения или «Отмены» — нет
   useDirty(`площадка ${roomId}`, !!edit && !!(f.server_url.trim() || f.key || (edit.id && (f.name || f.channel || f.watch_url))));
@@ -39,7 +40,7 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
     finally { inflight.current = false; setBusy(false); }
   };
   const open = (platform: string, d?: LiveDestination) => {
-    setErr("");
+    setErr(""); setShowKey(false);
     setEdit({ id: d?.id ?? null, platform });
     setF({ name: d?.name ?? HINTS[platform]?.title ?? "", server_url: d?.server_url ?? "", key: "", channel: d?.channel ?? "", watch_url: d?.watch_url ?? "" });
   };
@@ -67,7 +68,10 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
         {cfg.destinations.map((d) => (
           <li key={d.id} className="lv-link">
             <div><b>{d.name}</b> <StatusBadge d={d} /><code>{d.platform_name}{d.channel ? ` · ${d.channel}` : ""} · {d.server_url} · {d.has_key ? "ключ задан ••••••" : "ключа нет"}</code>
-              {d.last_error && d.status === "failed" && <span className="lv-err" role="alert">{d.last_error}</span>}</div>
+              {d.last_error && d.status === "failed" && <span className="lv-err" role="alert">{d.last_error}</span>}
+              {d.status === "live" && HINTS[d.platform]?.after && <span className="lv-note">{HINTS[d.platform].after}</span>}
+              {meetingId && d.watch_url && <a href={d.watch_url} target="_blank" rel="noopener noreferrer">Открыть на площадке</a>}</div>
+            {meetingId && <label className="check small"><input type="checkbox" checked={d.enabled} disabled={busy} onChange={() => void run(async () => { await api.toggleLiveDestination(meetingId, d.id, !d.enabled); onRefresh?.(); })} /> в эфире</label>}
             <button type="button" className="btn mini" disabled={busy} onClick={() => open(d.platform, d)}>Изменить</button>
             <button type="button" className="btn mini ghost" disabled={busy} onClick={() => { if (window.confirm(`Удалить площадку «${d.name}» вместе с ключом?`)) void run(() => api.deleteLiveDestination(roomId, d.id), "Площадка удалена"); }}>Удалить</button>
           </li>))}
@@ -80,11 +84,12 @@ export default function LiveDestinations({ roomId, cfg, onChange }: { roomId: st
       {edit && hint && (
         <SubForm className="lv-form" onSubmit={() => void submit()} aria-label="Площадка">
           <h4 style={{ margin: "4px 0" }}>{edit.id ? "Изменение площадки" : `Новая площадка: ${hint.title}`}</h4>
-          <p className="lv-note">{hint.steps}</p>
+          <p className="lv-note">{hint.steps}{hint.after && ` После начала эфира: ${hint.after.charAt(0).toLowerCase()}${hint.after.slice(1)}`}</p>
           <label>Название в списке<input value={f.name} maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
           <label>Адрес сервера вещания<input value={f.server_url} onChange={(e) => setF({ ...f, server_url: e.target.value })} placeholder={hint.server} autoComplete="off" spellCheck={false} required={!edit.id} /></label>
           <label>Ключ потока {edit.id && <span className="muted small">(задан; новый заменит прежний, пусто — не менять)</span>}
-            <input type="password" value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} autoComplete="new-password" required={!edit.id} placeholder="хранится зашифрованно, обратно не показывается" /></label>
+            <span className="lv-key"><input type={showKey ? "text" : "password"} value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} autoComplete="new-password" spellCheck={false} required={!edit.id} placeholder="хранится зашифрованно, обратно не показывается" />
+              <button type="button" className="btn ghost" aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? "Скрыть" : "Показать"}</button></span></label>
           <div className="cols">
             <label>Канал на площадке <span className="muted small">(необязательно)</span><input value={f.channel} maxLength={160} onChange={(e) => setF({ ...f, channel: e.target.value })} /></label>
             <label>Ссылка для зрителей на площадке <span className="muted small">(необязательно)</span><input value={f.watch_url} onChange={(e) => setF({ ...f, watch_url: e.target.value })} placeholder="https://…" /></label>

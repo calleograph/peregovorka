@@ -28,6 +28,9 @@ export default function RoomsAdmin() {
   useEffect(() => { void load(); }, [load]);
 
   const open = (id?: string) => { setEditing({ id, key: Date.now() }); setError(""); setNote(""); };
+  useEffect(() => {          // пришли из меню карточки «Настройки комнаты»: сразу эта комната
+    try { const id = sessionStorage.getItem("adminRoom"); sessionStorage.removeItem("adminRoom"); if (id) open(id); } catch { /* откроется общий список */ }
+  }, []);
   const remove = async (r: RoomAdmin) => {
     if (!window.confirm(`Удалить комнату «${r.name}» вместе с историей встреч?`)) return;
     try { await api.admin.deleteRoom(r.id); await load(); } catch (err) { setError((err as ApiError).message); }

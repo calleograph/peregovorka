@@ -42,10 +42,9 @@ LIVE_ACTIVE = ("starting", "live", "ending")
 # 4K не предлагается: браузер-компоновщик Egress на 3840×2160 требует нескольких ядер на эфир и 20+ Мбит/с на зрителя, а источники (камеры, показ экрана
 # с 1080p-мониторов) такой чёткости не дают — замеры в docs/LIVE_BROADCAST.md.
 LIVE_QUALITY = {"720p": (1280, 720, 3000), "1080p": (1920, 1080, 5000), "1440p": (2560, 1440, 9000)}
-# Длина сегмента HLS 1 с (было 2 с: зритель отставал на 11 с — см. docs/BROADCASTS.md «Задержка»). При выходе HLS Egress v1.15 сам интервал ключевого
-# кадра не использует (обнуляет), а запрашивает ключевой кадр на границе сегмента: фактически сегменты и ключевые кадры RTMP идут раз в ≈1,53 с — площадкам
-# (ключевой кадр не реже раза в 2 с) это подходит. Меньше 1 нельзя: Egress берёт int() и при 0 падает (деление на ноль в sink/segments.go).
-KEY_FRAME_S = 1.0
+# Ключевой кадр раз в 2 с: столько просят VK, Twitch и YouTube. При выходе HLS Egress v1.15 запрашивает ключевой кадр на границе сегмента, поэтому интервал задаётся длиной
+# сегмента (целое число секунд: Egress берёт int()). При 1 с выходило 1,53 с, и VK показывал «Неверные настройки». Задержку LL-HLS это не меняет (2,86 с), обычный HLS отстаёт чуть больше.
+KEY_FRAME_S = 2.0
 EMPTY_GRACE_S = 90                     # комната пуста дольше — эфир заканчивается (выступающие ушли)
 BROADCAST_EMPTY_GRACE_S = 900          # комната трансляции: обрыв связи ведущего или перезапуск приложения — эфир и запись ждут его 15 минут
 START_LOCK_S = 150                     # дольше таймаута запроса к Egress (60 с) и подготовки: иначе второй запуск проходит мимо замка
@@ -642,7 +641,7 @@ class LiveBroadcaster:
             return
         if self.destinations is not None:
             await self.destinations.on_info(db, b, info)
-        if info.status == eg.EgressStatus.EGRESS_ACTIVE and await self._r.set(f"live:stage:{b.egress_id}", "1", nx=True, ex=3600):
+        if info.status == eg.EgressStatus.EGRESS_ACTIVE and await self._r.set(f"live:stage:{b.egress_id}", "1", nx=True, ex=172800):      # столько живёт эфир: площадка, добавленная через час, не даёт второй этап
             await self.stage(b, "active", "Браузер и кодировщик работают", (datetime.now(timezone.utc) - b.started_at).total_seconds())
         if event.event == "egress_ended" or info.status not in ACTIVE_LK:
             await self.finalize(db, b, info)
