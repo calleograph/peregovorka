@@ -34,6 +34,19 @@ export default function RecorderTemplate() {
   const slot = useRef<HTMLDivElement>(null);
   const [rect, setRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
+  // --- зритель эфира на странице /live: та же сцена прямо из комнаты, без кодирования. Страница эфира следит за этими сообщениями и при сбое возвращается к HLS.
+  useEffect(() => {
+    if (q.get("view") !== "1") return;
+    const tell = (type: string) => window.parent.postMessage({ type }, window.location.origin);
+    const onMsg = (e: MessageEvent) => { if (e.origin === window.location.origin && e.data?.type === "rtc-sound") void room.startAudio(); };
+    const onAudio = () => tell(room.canPlaybackAudio ? "rtc-sound-on" : "rtc-muted");
+    const onTrack = () => { tell("rtc-ok"); onAudio(); };
+    const onGone = () => tell("rtc-fail");
+    window.addEventListener("message", onMsg);
+    room.on(RoomEvent.TrackSubscribed, onTrack).on(RoomEvent.AudioPlaybackStatusChanged, onAudio).on(RoomEvent.Disconnected, onGone);
+    return () => { window.removeEventListener("message", onMsg); room.off(RoomEvent.TrackSubscribed, onTrack).off(RoomEvent.AudioPlaybackStatusChanged, onAudio).off(RoomEvent.Disconnected, onGone); };
+  }, [room, q]);
+
   // --- комната: подключение, звук, события
   useEffect(() => {
     document.title = "Запись встречи";

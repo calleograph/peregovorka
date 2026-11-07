@@ -376,6 +376,9 @@ export const liveFields: Field[] = [
   { name: "allow_youtube", label: "Разрешить площадку YouTube", type: "bool" },
   { name: "allow_twitch", label: "Разрешить площадку Twitch", type: "bool" },
   { name: "allow_custom", label: "Разрешить произвольный RTMP/RTMPS-сервер", type: "bool" },
+  { name: "ll_hls", label: "Низкая задержка для зрителей (LL-HLS)", type: "bool", help: "Около 3 секунд от выступающего до зрителя вместо 7–8. Работает для зрителей с этого сервера; узлы CDN и Safari используют обычный HLS." },
+  { name: "ll_viewers_max", label: "Зрителей с низкой задержкой, не больше", type: "number", min: 0, max: 5000, example: "300", help: "Остальные смотрят обычный HLS: он дешевле для сервера." },
+  { name: "rtc_viewers_max", label: "Зрителей по WebRTC, не больше", type: "number", min: 0, max: 1000, example: "0", help: "Задержка меньше секунды. 0 — выключено. Зрителю нужен доступ к серверу звонков; если соединения нет, он сам перейдёт на HLS." },
   { name: "direct_viewers_warn", label: "Предупреждать о нагрузке при зрителях", type: "number", min: 10, max: 100000, example: "150", help: "Прямая раздача с этого сервера рассчитана на небольшие аудитории; для больших нужен CDN. Сервер сам предел не вводит — он показывает предупреждение." },
 ]
 

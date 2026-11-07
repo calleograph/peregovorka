@@ -99,7 +99,7 @@ function Server({ d }: { d: DiagState }) {
 }
 
 function Flow({ d }: { d: DiagState }) {
-  const n = d.now, lk = n?.svc?.livekit, eg = n?.svc?.egress, m = n?.media, hls = n?.hls, src = n?.source, pubs = n?.viewers?.publishers ?? [];
+  const n = d.now, lk = n?.svc?.livekit, eg = n?.svc?.egress, m = n?.media, hls = n?.hls, src = n?.source, pubs = n?.viewers?.publishers ?? [], stages = d.stages ?? [];
   return <>
     <section className="ld-sec"><h3>1. Источник<Tip>Что публикуют участники. Разрешение, кадры и причина снижения качества приходят из браузера выступающего, если в нём открыта комната.</Tip></h3>
       {(src?.list ?? []).length === 0 && <p className="ld-empty">Участников с дорожками нет</p>}
@@ -115,8 +115,11 @@ function Flow({ d }: { d: DiagState }) {
     <section className="ld-sec"><h3>4. Поток на выходе<Tip>Разбор последнего сегмента раз в 30 с: реальные разрешение, кадры и битрейт, а не заказанные значения. Сдвиг звука — разница начала дорожек внутри сегмента: насколько расходятся звук и изображение в самом начале сегмента, рассинхронизацию у источника он не показывает.</Tip></h3>
       <div className="ld-grid2"><Row k="Заказано" v={n?.quality} /><Row k="Разрешение" v={m?.res?.replace("x", "×")} /><Row k="Кадров/с" v={num(m?.fps, 1)} /><Row k="Пропуски кадров" v={num(m?.gaps, 0)} /><Row k="Видео" v={kbps(m?.vkbps)} /><Row k="Звук" v={kbps(m?.akbps)} /><Row k="Сдвиг звука" v={m?.av_ms == null ? null : `${m.av_ms} мс`} /><Row k="Кодеки" v={m?.vcodec ? `${m.vcodec} + ${m.acodec ?? "—"}` : null} /></div>
     </section>
+    {stages.length > 0 && <section className="ld-sec"><h3>Запуск<Tip>Этапы запуска этого эфира и время от нажатия кнопки. Повтор означает, что браузер службы не поднялся за 20 с и запуск прошёл заново.</Tip></h3>
+      {stages.map((e) => <Row key={e.id} k={e.message.split(" за ")[0]} v={e.message.includes(" за ") ? e.message.split(" за ").pop() : "—"} />)}
+    </section>}
     {hls && <section className="ld-sec"><h3>HLS</h3>
-      <div className="ld-grid2"><Row k="Длина сегмента" v={hls.dur_s == null ? null : `${num(hls.dur_s, 2)} с`} /><Row k="Интервал" v={hls.interval_s == null ? null : `${num(hls.interval_s, 2)} с`} tip="Как часто появляются новые сегменты. Больше длины сегмента — поток запаздывает." /><Row k="Сегмент готов" v={hls.ready_s == null ? null : `${num(hls.ready_s, 2)} с`} /><Row k="Последний" v={hls.age_s == null ? null : `${num(hls.age_s)} с назад`} /><Row k="Размер" v={bytes(hls.bytes)} /><Row k="Поток" v={kbps(hls.kbps)} /></div>
+      <div className="ld-grid2">{hls.ll !== undefined && <Row k="Низкая задержка" v={hls.ll ? "работает" : "нет, зрители на обычном HLS"} tip="Поток LL-HLS. Отказ этой службы не трогает запись и площадки." />}<Row k="Длина сегмента" v={hls.dur_s == null ? null : `${num(hls.dur_s, 2)} с`} /><Row k="Интервал" v={hls.interval_s == null ? null : `${num(hls.interval_s, 2)} с`} tip="Как часто появляются новые сегменты. Больше длины сегмента — поток запаздывает." /><Row k="Сегмент готов" v={hls.ready_s == null ? null : `${num(hls.ready_s, 2)} с`} /><Row k="Последний" v={hls.age_s == null ? null : `${num(hls.age_s)} с назад`} /><Row k="Размер" v={bytes(hls.bytes)} /><Row k="Поток" v={kbps(hls.kbps)} /></div>
     </section>}
     {(n?.rtmp ?? []).length > 0 && <section className="ld-sec"><h3>RTMP<Tip>Состояние по ответу Egress. Скорость отдельно по площадкам Egress не сообщает: у всех один поток кодировщика (битрейт — в разделе выше). Ключи потоков не показываются и не записываются.</Tip></h3>
       <div className="ld-scroll"><table className="ld-table"><thead><tr><th>Площадка</th><th>Состояние</th><th>Повторы</th><th>Смена состояний</th></tr></thead><tbody>

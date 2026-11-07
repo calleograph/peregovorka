@@ -22,10 +22,11 @@ from ..db import release
 from ..models import Broadcast, LiveQuestion, LiveViewer, Meeting, Room
 from ..security.passwords import hash_room_password, check_password
 from ..services import roles
-from ..services import events
+from ..services import events, rec_scene
 from ..services.audit import audit_now, write_audit
 from ..services.journal import parse_client
 from ..services.live import LiveError, hls_path, hls_secret, new_token
+from ..services.livekit import issue_viewer_token
 from ..services.live_destinations import PLATFORMS, DestinationError
 from .guest import _throttle, clean_display_name, clean_email
 from .meetings import get_meeting_for_user
@@ -492,6 +493,10 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=bucket)
     out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16],
            "base": cfg.cdn_base_url if (cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn) else ""}       # CDN: плеер берёт поток прямо с него, а не с этого сервера
+    if cfg.rtc_viewers_max and v.b.meeting_id and await request.app.state.live.viewers(room.id) < cfg.rtc_viewers_max:
+        settings = request.app.state.settings
+        meeting = await db.get(Meeting, v.b.meeting_id)
+        out["rtc"] = {"url": settings.livekit_public_url, "token": issue_viewer_token(settings, viewer_id=viewer.id, livekit_room=meeting.livekit_room), "rt": rec_scene.make_token(settings, meeting.id)}
     if cfg.ll_hls and not body.long and not out["base"] and not room.live_cdn and await request.app.state.live.viewers(room.id) < cfg.ll_viewers_max:
         # Низкая задержка: тот же идентификатор и та же подпись, раздаёт MediaMTX. Обычный HLS остаётся запасным путём плеера. CDN и нативный плеер (long) идут обычным HLS.
         if await request.app.state.live.ll_ready(room.live_view_access):

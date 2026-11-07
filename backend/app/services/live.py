@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
 from . import events, rec_scene, roles
-from .livekit import list_present_identities
+from .livekit import list_present_identities, remove_viewers
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoRecorder
 
@@ -477,12 +477,22 @@ class LiveBroadcaster:
 
     async def _switch_ll(self, b: Broadcast | None, old: str | None, new: str | None) -> None:
         """Отзыв ссылки или смена пароля во время эфира: поток LL-HLS переезжает на новое имя, прежние подписи перестают открывать его. Запись и площадки это не затрагивает."""
-        if b is None or not b.egress_id or not b.hls_dir or not old or not new or not (await self.cfg_ll()):
+        if b is None:
+            return
+        meeting = await self._livekit_room(b)
+        if meeting:
+            await remove_viewers(self._s, meeting)
+        if not b.egress_id or not b.hls_dir or not old or not new or not (await self.cfg_ll()):
             return
         try:
             await self.api.update_stream(b.egress_id, add=[self.ll_url(new)], remove=[self.ll_url(old)])
         except Exception as exc:  # noqa: BLE001 — зритель останется на обычном HLS, эфир важнее
             log.warning("Поток низкой задержки не переключён", extra={"broadcast": str(b.id), "error": type(exc).__name__})
+
+    async def _livekit_room(self, b: Broadcast) -> str | None:
+        async with self._sm() as db:
+            m = await db.get(Meeting, b.meeting_id)
+            return m.livekit_room if m is not None else None
 
     async def cfg_ll(self) -> bool:
         async with self._sm() as db:

@@ -273,7 +273,7 @@ def test_exports_have_ids_events_and_no_secrets(lv):  # noqa: F811
     j = lv.get(f"/api/v1/live-diag/{bid}/export?format=json")
     assert j.status_code == 200 and "attachment" in j.headers["content-disposition"]
     d = j.json()
-    assert d["broadcast"]["broadcast_id"] == str(bid) and len(d["events"]) == 2 and len(d["samples"]) == 1 and d["samples"][0]["host"]["cpu"] == 30.0
+    assert d["broadcast"]["broadcast_id"] == str(bid) and len([e for e in d["events"] if not e["code"].startswith("stage_")]) == 2 and len(d["samples"]) == 1 and d["samples"][0]["host"]["cpu"] == 30.0
     txt = lv.get(f"/api/v1/live-diag/{bid}/export?format=txt")
     rep = lv.get(f"/api/v1/live-diag/{bid}/export?format=report")
     assert "Нагрузка узла Egress 92 %" in txt.text and "предположение" in txt.text and "ДИАГНОСТИЧЕСКИЙ ОТЧЁТ" in rep.text and "ПРОБЛЕМЫ (1)" in rep.text

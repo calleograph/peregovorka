@@ -704,7 +704,8 @@ def test_enabled_destinations_go_into_the_egress_request_and_a_dead_one_does_not
     mid = _join(lv, "alice", room["id"])["meeting_id"]
     assert start(lv, mid).status_code == 200
     urls = list(lv.fake.started[0].outputs[-1].stream.urls)
-    assert urls == [f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"], "включённые — по порядку, выключенная не передаётся"
+    assert urls[:2] == [f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"], "включённые — по порядку, выключенная не передаётся"
+    assert urls[2].startswith("rtmp://mediamtx:1935/live/") and len(urls) == 3, "последний выход — внутренний поток низкой задержки"
     def mask(k):                                   # так Egress скрывает ключ в адресах результатов
         return "{" + k[:3] + "..." + k[-3:] + "}"
     info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
@@ -1186,3 +1187,77 @@ def test_forgotten_meeting_is_ended_by_its_last_person_only_when_nobody_else_is_
     assert m.ended_at is not None and m.end_reason == "idle"
     login(lv, "bob")
     assert lv.post(f"/api/v1/meetings/{mid}/idle-end").status_code in (403, 404), "посторонний не завершает чужую встречу"
+
+
+# --------------------------------------------------------------------------------------------- низкая задержка и надёжность запуска
+def test_internal_low_latency_output_uses_the_view_access_and_follows_a_revoke(lv):
+    room = room_live(lv)
+    go_live(lv, room)
+    rm = get_room(lv, room["id"])
+    assert list(lv.fake.started[0].outputs[-1].stream.urls)[-1].endswith("/" + rm.live_view_access)
+    login(lv, "carol")
+    assert lv.post(f"/api/v1/rooms/{room['id']}/live/links/view/revoke").status_code == 200
+    new = get_room(lv, room["id"]).live_view_access
+    add = [u for _, a, _r in lv.fake.updates for u in a]
+    remove = [u for _, _a, r in lv.fake.updates for u in r]
+    assert add and add[-1].endswith("/" + new) and remove[-1].endswith("/" + rm.live_view_access), "прежние подписи перестают открывать поток низкой задержки"
+
+
+def test_viewer_gets_low_latency_only_when_ready_and_never_for_native_players(lv, monkeypatch):
+    room = room_live(lv)
+    go_live(lv, room)
+    token = get_room(lv, room["id"]).live_token
+    ready = [False]
+
+    async def ll_ready(access):
+        return ready[0]
+    monkeypatch.setattr(lv.app_obj.state.live, "ll_ready", ll_ready)
+    a = access(lv, token).json()
+    assert a["path"].startswith("/hls/") and a["ll_soon"] is True, "пока готовится — обычный HLS"
+    ready[0] = True
+    a = access(lv, token).json()
+    assert a["path"].startswith("/llhls/") and a["origin_path"].startswith("/hls/") and a["path"].split("/")[2:] == a["origin_path"].split("/")[2:], "та же подпись, обычный HLS — запасной"
+    assert access(lv, token, long=True).json()["path"].startswith("/hls/"), "Safari и iPhone остаются на обычном HLS"
+    put_settings(lv, "live", ll_viewers_max=0)
+    assert access(lv, token).json()["path"].startswith("/hls/"), "сверх предела зрителей — обычный HLS"
+
+
+def test_webrtc_viewing_is_off_by_default_and_gives_a_receive_only_hidden_token(lv):
+    import jwt
+    room = room_live(lv)
+    go_live(lv, room)
+    token = get_room(lv, room["id"]).live_token
+    assert "rtc" not in access(lv, token).json()
+    put_settings(lv, "live", rtc_viewers_max=10)
+    grant = jwt.decode(access(lv, token).json()["rtc"]["token"], options={"verify_signature": False})["video"]
+    assert grant["hidden"] is True and grant["canSubscribe"] is True and grant["canPublish"] is False
+
+
+def test_chrome_launch_failure_is_retried_and_keeps_the_recording(lv):
+    room = room_live(lv)
+    mid = _join(lv, "carol", room["id"])["meeting_id"]
+    assert start(lv, mid).status_code == 200
+    b = broadcasts(lv, mid)[-1]
+    first = b.egress_id
+    n = len(lv.fake.started)
+    bad = eg.EgressInfo(egress_id=first, status=eg.EgressStatus.EGRESS_FAILED, error="page load error: websocket url timeout reached")
+    live_mod.RETRY_PAUSE_S = 0
+
+    async def fail(db):
+        row = await db.get(Broadcast, b.id)
+        await lv.app_obj.state.live.finalize(db, row, bad)
+    call(lv, fail)
+    b2 = broadcasts(lv, mid)[-1]
+    assert b2.id == b.id and b2.status == "starting" and b2.egress_id != first and len(lv.fake.started) == n + 1
+
+    # попытки кончились — эфир закрывается с понятной причиной, а не с текстом Egress
+    for _ in range(3):
+        bad = eg.EgressInfo(egress_id=broadcasts(lv, mid)[-1].egress_id, status=eg.EgressStatus.EGRESS_FAILED, error="failed to launch chrome: websocket url timeout reached")
+        call(lv, fail)
+    b3 = broadcasts(lv, mid)[-1]
+    assert b3.status == "failed" and "Браузер службы" in b3.error and "websocket" not in b3.error
+
+
+def test_rtmp_addresses_never_reach_the_error_text():
+    text = live_mod.explain_error("stream failed: rtmp://a.example.org/live/SECRETKEY123")
+    assert "SECRETKEY123" not in text and "rtmp://…" in text

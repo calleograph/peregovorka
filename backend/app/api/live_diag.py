@@ -61,6 +61,7 @@ async def _state(request: Request, db: AsyncSession, b: Broadcast | None, *, rin
         return {"bid": None, "status": "idle", "enabled": bool(cfg.diag_enabled), "now": None, "ring": [], "keys": RING_KEYS, "events": []}
     out = await request.app.state.live_diag.current(b.id, ring=ring)
     out.update(bid=str(b.id), status=b.status, quality=b.quality, started_at=b.started_at.isoformat(), ended_at=b.ended_at.isoformat() if b.ended_at else None, enabled=bool(cfg.diag_enabled), error=b.error)
+    out["stages"] = [_event_out(e) for e in (await db.execute(select(LiveDiagEvent).where(LiveDiagEvent.broadcast_id == b.id, LiveDiagEvent.code.startswith("stage_")).order_by(LiveDiagEvent.id).limit(12))).scalars()]
     if events:
         rows = (await db.execute(select(LiveDiagEvent).where(LiveDiagEvent.broadcast_id == b.id).order_by(LiveDiagEvent.id.desc()).limit(60))).scalars()
         out["events"] = [_event_out(e) for e in rows]

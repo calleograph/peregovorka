@@ -908,6 +908,8 @@ class LiveDiag:
         if hdir is not None:
             s["hls"] = await asyncio.to_thread(hls_stats, hdir)
             h = s["hls"]
+            if h and room is not None and room.live_view_access and cfg.get("ll_hls", True):
+                h["ll"] = await self.live.ll_ready(room.live_view_access)     # зрители с низкой задержкой: если служба встала, они уже ушли на обычный HLS, и это надо видеть
             if h and h.get("name") and now - st.get("last_probe", 0) >= PROBE_S:
                 st["last_probe"] = now
                 probed = await probe_segment(hdir / h["name"])

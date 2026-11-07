@@ -147,6 +147,36 @@ function ViewerQuestions({ token, viewer, pass, onViewerLost }: { token: string;
 }
 
 /** Плеер: нативный HLS (Safari, iPhone, iPad) или hls.js (остальные). Свои кнопки: пауза, звук, возврат к эфиру, полный экран. */
+/** Просмотр по WebRTC: та же сцена, что идёт в эфир, из комнаты напрямую (задержка меньше секунды). Нет дорожки за 8 с или соединение оборвалось — зритель уходит на HLS. */
+function RtcView({ token, rtc, vid, onFail }: { token: string; rtc: NonNullable<LiveAccess["rtc"]>; vid: string; onFail: () => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [muted, setMuted] = useState(false);
+  const fail = useRef(onFail);
+  fail.current = onFail;
+  useEffect(() => {
+    const timer = window.setTimeout(() => fail.current(), 8000);
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin || e.source !== frame.current?.contentWindow) return;
+      if (e.data?.type === "rtc-ok") window.clearTimeout(timer);
+      if (e.data?.type === "rtc-fail") fail.current();
+      if (e.data?.type === "rtc-muted") setMuted(true);
+      if (e.data?.type === "rtc-sound-on") setMuted(false);
+    };
+    window.addEventListener("message", onMsg);
+    const ping = () => { if (document.visibilityState === "visible") void api.livePing(token, vid).catch(() => undefined); };
+    ping();
+    const t = window.setInterval(ping, 30_000);
+    return () => { window.clearTimeout(timer); window.clearInterval(t); window.removeEventListener("message", onMsg); };
+  }, [token, vid]);
+  const src = `/rec/template?view=1&url=${encodeURIComponent(rtc.url)}&token=${encodeURIComponent(rtc.token)}&rt=${encodeURIComponent(rtc.rt)}`;
+  return (
+    <div className="live-stage ui">
+      <iframe ref={frame} src={src} title="Прямой эфир" allow="autoplay; fullscreen" className="live-rtc" />
+      {muted && <button className="btn primary live-sound" onClick={() => frame.current?.contentWindow?.postMessage({ type: "rtc-sound" }, window.location.origin)}>Включить звук</button>}
+    </div>
+  );
+}
+
 function Player({ token, access, renew, onGone, skew }: { token: string; access: LiveAccess; renew: (avoid?: string) => Promise<LiveAccess | null>; onGone: () => void; skew: number }) {
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -418,6 +448,7 @@ export default function LivePage() {
   const pass = useRef<string>("");
   const infoRef = useRef<LiveViewerInfo | null>(null);
   const [viewer, setViewerState] = useState(() => ssGet(VIEWER_KEY(token)));
+  const [rtcOff, setRtcOff] = useState(false);
   const viewerRef = useRef(viewer);
   const setViewer = useCallback((v: string) => { viewerRef.current = v; ssSet(VIEWER_KEY(token), v); setViewerState(v); }, [token]);
   const lostViewer = useCallback(() => setViewer(""), [setViewer]);
@@ -516,7 +547,9 @@ export default function LivePage() {
         {info.status === "ended" && <span className="badge">Эфир завершён</span>}
       </header>
       {!info.available && <div className="alert warn">Трансляции отключены администратором сервера.</div>}
-      {showPlayer && access && <div className="live-main"><Player token={token} access={access} renew={renew} skew={skew} onGone={() => { setAccess(null); void load(); }} /></div>}
+      {showPlayer && access && <div className="live-main">{access.rtc && !rtcOff
+        ? <RtcView token={token} rtc={access.rtc} vid={access.vid} onFail={() => setRtcOff(true)} />
+        : <Player token={token} access={access} renew={renew} skew={skew} onGone={() => { setAccess(null); void load(); }} />}</div>}
       {showPlayer && viewer && <ViewerQuestions token={token} viewer={viewer} pass={() => pass.current} onViewerLost={lostViewer} />}
       {!showPlayer && info.status === "live" && needPw && info.own_hls && (
         <div className="live-stage live-msg"><PasswordForm onSubmit={(pw) => void submitPassword(pw)} busy={busy} error={pwErr} /></div>)}

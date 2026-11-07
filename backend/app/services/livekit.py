@@ -25,7 +25,8 @@ PHONE_IDENTITY_PREFIX = "p-"      # исходящий звонок из ком�
 SIP_IDENTITY_PREFIX = "sip_"      # входящий звонок (identity выдаёт LiveKit SIP)
 SERVICE_IDENTITY_PREFIX = "asr-"
 EGRESS_IDENTITY_PREFIX = "EG_"          # скрытый участник-«рекордер» LiveKit Egress: не человек, в присутствии и подсчётах не учитывается
-SERVICE_IDENTITY_PREFIXES = (SERVICE_IDENTITY_PREFIX, EGRESS_IDENTITY_PREFIX)
+VIEWER_PREFIX = "viewer-"
+SERVICE_IDENTITY_PREFIXES = (VIEWER_PREFIX, SERVICE_IDENTITY_PREFIX, EGRESS_IDENTITY_PREFIX)
 
 
 _DEVICE_RE = re.compile(r"^[0-9a-f]{4,12}$")
@@ -119,7 +120,24 @@ def issue_guest_token(settings: Settings, *, guest_id: uuid.UUID, display_name: 
                         sources=publish_sources(camera=camera_allowed, screen_share=False) if sources is None else sources)
 
 
-def _issue_token(settings: Settings, *, identity: str, display_name: str, livekit_room: str, sources: list[str]) -> str:
+def issue_viewer_token(settings: Settings, *, viewer_id: uuid.UUID, livekit_room: str) -> str:
+    """Зритель эфира по WebRTC: только приём, в списке участников не виден."""
+    return _issue_token(settings, identity=f"{VIEWER_PREFIX}{viewer_id.hex}", display_name="Зритель", livekit_room=livekit_room, sources=[], hidden=True)
+
+
+async def remove_viewers(settings: Settings, room_name: str) -> None:
+    """Отозвана ссылка или сменён пароль: токен проверяется только при входе, поэтому подключённых зрителей отключаем сами. Те, у кого есть доступ, вернутся через страницу эфира."""
+    try:
+        async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
+            resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
+            for p in resp.participants:
+                if p.identity.startswith(VIEWER_PREFIX):
+                    await lk.room.remove_participant(lkapi.RoomParticipantIdentity(room=room_name, identity=p.identity))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось отключить зрителей WebRTC", extra={"error": type(exc).__name__})
+
+
+def _issue_token(settings: Settings, *, identity: str, display_name: str, livekit_room: str, sources: list[str], hidden: bool = False) -> str:
     if not settings.livekit_api_key or not settings.livekit_api_secret:
         raise RuntimeError("LIVEKIT_API_KEY/LIVEKIT_API_SECRET не заданы")
     grants = lkapi.VideoGrants(
@@ -130,7 +148,7 @@ def _issue_token(settings: Settings, *, identity: str, display_name: str, liveki
         can_publish_data=False,
         can_publish_sources=list(sources),
         can_update_own_metadata=False,
-        hidden=False,
+        hidden=hidden,
     )
     return (
         lkapi.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
