@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import time
 import uuid
+from pathlib import Path
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -141,6 +143,18 @@ class RequestContext:
         if path.startswith("/api/") and not path.startswith("/api/v1/health"):
             log.info("http", extra={"method": scope["method"], "path": path, "status": status,
                                     "ms": int((time.perf_counter() - started) * 1000), "request_id_echo": rid})
+
+
+def start_reason(stat: str | None = None, uptime: float | None = None, ticks: int = 0) -> tuple[str, str, str]:
+    """Что на самом деле случилось при старте процесса: запуск контейнера и замена одного рабочего процесса выглядят для людей одинаково, а причины у них разные."""
+    try:
+        started_s = int((stat or Path("/proc/1/stat").read_text()).rsplit(")", 1)[1].split()[19]) / (ticks or os.sysconf("SC_CLK_TCK"))
+        age = (uptime if uptime is not None else float(Path("/proc/uptime").read_text().split()[0])) - started_s
+    except (OSError, ValueError, IndexError):
+        return "app_started", "info", "Приложение запущено."
+    if os.getpid() != 1 and age > 60:
+        return "app_worker_restarted", "warn", f"Рабочий процесс приложения заменён внутри работающего контейнера (контейнер работает {int(age // 60)} мин): прежний процесс завершился или не отвечал. Соединения этого процесса переподключились."
+    return "app_started", "info", "Контейнер приложения запущен."
 
 
 async def _config_sync(session_maker, directory, every: float = 30.0) -> None:
@@ -430,7 +444,8 @@ def create_app(
             leader.register("storage-migration", _task("storage-migration", lambda: app.state.migrations.run()))
             tasks.append(asyncio.create_task(leader.run(), name="background-leader"))
         log.info("Приложение запущено", extra={"version": settings.app_version, "commit": settings.app_git_commit})
-        journal.emit("system", "app_started", message=f"Версия {settings.app_version}, commit {settings.app_git_commit}")
+        code, level, text = start_reason()
+        journal.emit("system", code, level=level, message=f"{text} Версия {settings.app_version}, commit {settings.app_git_commit}.")
         try:
             yield
         finally:

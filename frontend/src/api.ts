@@ -141,7 +141,7 @@ export interface DiagNow {
   host?: { cpu?: number | null; cores?: number[]; cpus?: number; load?: number[] | null; mem?: { total?: number; avail?: number; free?: number; used_pct?: number | null; avail_pct?: number | null };
     disk?: { free?: number; total?: number; used_pct?: number | null; rd_bps?: number; wr_bps?: number; util?: number; await_ms?: number }; net?: { scope?: string; if?: string; rx_bps?: number; tx_bps?: number; err_s?: number; drop_s?: number; peak_bps?: number; cap_bps?: number | null } };
   svc?: Record<string, DiagService>; media?: { res?: string; fps?: number; vkbps?: number; akbps?: number | null; av_ms?: number; gaps?: number; vcodec?: string; acodec?: string };
-  hls?: { dur_s?: number | null; interval_s?: number | null; ready_s?: number | null; age_s?: number | null; bytes?: number; kbps?: number | null } | null; rtmp?: { id: string; name: string; status: string; error?: string | null; retries?: number | null; flips?: number }[];
+  hls?: { ll?: boolean; dur_s?: number | null; interval_s?: number | null; ready_s?: number | null; age_s?: number | null; bytes?: number; kbps?: number | null } | null; rtmp?: { id: string; name: string; status: string; error?: string | null; retries?: number | null; flips?: number }[];
   source?: { known?: boolean; list?: { id: string; name: string; tracks: { kind: string; src: string; w?: number | null; h?: number | null; muted?: boolean }[] }[] };
   cdn?: { name: string; state: string; viewers?: number | null; mbit?: number | null; hit?: number | null }[];
   viewers?: { reporting?: number; bad?: number; stalls?: number; lat?: number | null; lat_p95?: number | null; seg_ms?: number | null; seg_ms_p95?: number | null; buf?: number | null; est?: number | null;

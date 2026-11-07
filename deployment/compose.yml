@@ -199,6 +199,7 @@ services:
       NET_SIP_BIND_ADDR: ${SIP_BIND_ADDR:-0.0.0.0}
       # Масштабирование (docs/DB_AND_SCALING.md): число процессов uvicorn и размеры пулов; пусто/0 — по числу ядер. Фоновые задачи выполняет один «ведущий» процесс (Redis).
       UVICORN_WORKERS: ${BACKEND_WORKERS:-1}
+      UVICORN_TIMEOUT_WORKER_HEALTHCHECK: "30"      # 5 с по умолчанию: при кратком дефиците процессора здоровый процесс убивался, а вместе с ним соединения его пользователей
       POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-300}     # пулы всех процессов ужимаются под этот предел (иначе отказы «too many clients»)
       DB_POOL_SIZE: ${DB_POOL_SIZE:-0}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-0}
@@ -390,7 +391,8 @@ services:
       - ${DATA_ROOT}/live:/live          # сегменты HLS прямых эфиров: Egress пишет, backend создаёт ссылки доступа и убирает, web (nginx) раздаёт
     healthcheck:
       # Попутно — счётчик процессора контейнера для диагностики эфира: приложению не выдаётся сокет Docker, другого способа увидеть загрузку этой службы (Chrome и кодировщик) у него нет.
-      test: ["CMD-SHELL", "cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
+      # Там же уборка: Egress оставляет пустой каталог на каждое задание и блокировку Xvfb, а домашний каталог живёт в памяти (срок больше предела эфира в 48 часов).
+      test: ["CMD-SHELL", "find /home/egress/tmp -mindepth 1 -maxdepth 1 -type d -mmin +120 -empty -delete 2>/dev/null; find /tmp -maxdepth 1 -name '.X*-lock' -mmin +2880 -delete 2>/dev/null; cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -403,7 +405,7 @@ services:
   # Низкая задержка эфира: Egress отдаёт сюда внутренний RTMP, MediaMTX делает из него LL-HLS без перекодирования (замер: 2,9 с до плеера против 7,5 с у сегментов Egress).
   # Падение службы не трогает запись и площадки: плеер уходит на обычный HLS. Наружу портов нет, зрители идут через nginx с подписью.
   mediamtx:
-    profiles: ["video"]
+    profiles: ["lowlat"]
     image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c}
     restart: unless-stopped
     environment:

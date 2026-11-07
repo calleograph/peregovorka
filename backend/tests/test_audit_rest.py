@@ -207,3 +207,12 @@ def test_hung_service_does_not_hold_the_database_or_the_page(lv, monkeypatch):  
     r = lv.get("/api/v1/admin/live/status")
     assert r.status_code == 200 and time.time() - t < 3 and r.json()["livekit_ok"] is False
     assert not any(c["id"] == "egress" and c["status"] == "ok" for c in r.json()["checks"])
+
+
+def test_journal_tells_a_container_start_from_a_replaced_worker():
+    from app import main
+    stat = "1 (uvicorn) S " + " ".join(["0"] * 18) + " 1000 0 0"          # 22-е поле: время запуска, тики от загрузки
+    assert main.start_reason(stat, uptime=20.0, ticks=100)[0] == "app_started"
+    code, level, text = main.start_reason(stat, uptime=4000.0, ticks=100)
+    assert code == "app_worker_restarted" and level == "warn" and "66 мин" in text
+    assert main.start_reason("мусор", uptime=1.0, ticks=100)[0] == "app_started"

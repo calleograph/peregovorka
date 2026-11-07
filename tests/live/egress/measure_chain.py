@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,6 +39,14 @@ def admin() -> httpx.Client:
     c.cookies.clear()
     c.headers["X-CSRF-Token"] = r.json()["csrf_token"]
     return c
+
+
+def watch(stop: threading.Event, res: list) -> None:
+    """Раз в минуту: процессор и память служб, число процессов браузера. По сдвигу между началом и концом видна утечка."""
+    while not stop.wait(60):
+        r = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{.Name}} {{.CPUPerc}} {{.MemUsage}}", "pgdoc-livekit-egress-1", "pgdoc-mediamtx-1", "pgdoc-backend-1"], capture_output=True, text=True).stdout
+        n = subprocess.run(["docker", "exec", "pgdoc-livekit-egress-1", "sh", "-c", "ps -eo comm | grep -c chrome; du -sk /home/egress /dev/shm | cut -f1 | tr '\\n' ' '"], capture_output=True, text=True).stdout
+        res.append({"t": int(time.time()), "службы": [" ".join(x.split()[:3]) for x in r.strip().splitlines()], "chrome_диск": " ".join(n.split())})
 
 
 class Viewer(S.Client):
@@ -106,7 +115,12 @@ async def main() -> None:
         tmp = os.path.expanduser("~/pg-work/diag")
         hls = subprocess.Popen([sys.executable, str(HERE / "latency_probe.py"), "hls", "--playlist", BASE + path, "--seconds", str(SECONDS), "--tmp", tmp], stdout=subprocess.PIPE, text=True) if MODE == "hls" else None
         rt = subprocess.Popen([sys.executable, str(HERE / "latency_probe.py"), "rtmp", "--url", f"{RTMP_LOCAL}/live/{slug}", "--seconds", str(SECONDS)], stdout=subprocess.PIPE, text=True)
+        stop = threading.Event()
+        res: list = []
+        threading.Thread(target=watch, args=(stop, res), daemon=True).start()
         out["плеер"] = await player(token, viewer, SECONDS)
+        stop.set()
+        out["ресурсы"] = {"начало": res[:1], "конец": res[-1:], "замеров": len(res)}
         for name, proc in (("hls", hls), ("rtmp", rt)):
             if proc is not None:
                 o = proc.communicate(timeout=SECONDS + 60)[0].strip().splitlines()

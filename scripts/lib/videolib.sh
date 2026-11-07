@@ -9,6 +9,11 @@ _VM_VIDEOLIB_LOADED=1
 
 VIDEO_DEFAULT_IMAGE="livekit/egress:v1.15.0@sha256:ac244a40268ce1dd1510fbff6eb529609ec68aceff1602343f79be8ca08c355b"
 
+MEDIAMTX_DEFAULT_IMAGE="bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c"
+mediamtx_image() { printf '%s' "${MEDIAMTX_IMAGE:-$MEDIAMTX_DEFAULT_IMAGE}"; }
+# Служба низкой задержки необязательна: без образа эфир идёт обычным HLS, поэтому её профиль включается, только когда образ уже на сервере
+mediamtx_ready() { command -v docker >/dev/null 2>&1 && docker image inspect "$(mediamtx_image)" >/dev/null 2>&1; }
+
 video_enabled() { [ "${VIDEO_ENABLED:-no}" = "yes" ]; }
 video_image()   { printf '%s' "${VIDEO_IMAGE:-$VIDEO_DEFAULT_IMAGE}"; }
 
@@ -35,6 +40,7 @@ video_prepare() { # video_prepare [soft]
       video_refresh; [ "$soft" = soft ] && { warn "Видеозапись заработает после загрузки образа: повторите действие в панели («Повторить установку») или обновление."; return 0; } || return 1
     fi
   fi
+  [ "${DRY_RUN:-0}" = "1" ] || ! command -v docker >/dev/null 2>&1 || img_ensure mediamtx MEDIAMTX_IMAGE "$MEDIAMTX_DEFAULT_IMAGE" soft || warn "Образ службы низкой задержки не загружен: зрители будут смотреть обычный HLS"
   video_refresh
   return 0
 }

@@ -147,6 +147,47 @@
    "note": "Необязательная служба видеозаписи. Образ закреплён, но на стенде разработчика не запускался (нет места под образ ≈ 1,3 ГБ): «проверено с» относится к логике приложения на подставной реализации."
   },
   {
+   "key": "mediamtx",
+   "title": "MediaMTX (LL-HLS для зрителей эфира)",
+   "group": "Видеосвязь и телефония",
+   "pinned": "1.21.3",
+   "tested": "1.21.3",
+   "reviewed_latest": "1.21.3",
+   "source": {
+    "type": "docker",
+    "registry": "hub",
+    "repo": "bluenviron/mediamtx",
+    "track": "^v?(\\d+\\.\\d+\\.\\d+)$"
+   },
+   "locations": [
+    {
+     "type": "image-ref",
+     "file": "deployment/compose.yml",
+     "regex": "\\$\\{MEDIAMTX_IMAGE:-bluenviron/mediamtx:(\\S+?)\\}",
+     "with_digest": true
+    },
+    {
+     "type": "image-ref",
+     "file": "scripts/lib/videolib.sh",
+     "regex": "MEDIAMTX_DEFAULT_IMAGE=\"bluenviron/mediamtx:([^\"]+)\"",
+     "with_digest": true
+    },
+    {
+     "type": "image-ref",
+     "file": ".env.example",
+     "regex": "^# MEDIAMTX_IMAGE=bluenviron/mediamtx:(\\S+)",
+     "with_digest": true
+    }
+   ],
+   "changelog": "https://github.com/bluenviron/mediamtx/releases",
+   "image": {
+    "registry": "hub",
+    "repo": "bluenviron/mediamtx"
+   },
+   "digest": "sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c",
+   "note": "Необязательная служба видеозаписи. Образ закреплён, но на стенде разработчика не запускался (нет места под образ ≈ 1,3 ГБ): «проверено с» относится к логике приложения на подставной реализации."
+  },
+  {
    "key": "livekit_client_js",
    "title": "livekit-client (браузер)",
    "group": "Frontend",
