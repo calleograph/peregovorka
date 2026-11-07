@@ -153,8 +153,6 @@ prereq_install_all() {
 prereq_verify() {
   local profile="${1:-standalone}" bad=0 m
   while IFS= read -r m; do [ -n "$m" ] && { printf 'нет команды: %s\n' "$m"; bad=1; }; done < <(prereq_missing_bins "$profile")
-  if [ "$profile" = standalone ]; then
-    while IFS= read -r m; do [ -n "$m" ] && { printf 'Docker: не хватает %s\n' "$m"; bad=1; }; done < <(prereq_docker_missing)
-  fi
+  while IFS= read -r m; do [ -n "$m" ] && { printf 'Docker: не хватает %s\n' "$m"; bad=1; }; done < <(prereq_docker_missing)
   return "$bad"
 }

@@ -1273,10 +1273,12 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       </section>
     );
   }
+  // руководителя трансляционной комнаты сервер пускает без пароля выступающих (MeetingService.join)
+  const askPassword = !!roomInfo?.has_password && !(roomInfo.room_type === "broadcast" && roomInfo.can_manage);
   if (!join) {
     return (
-      <PreJoin mode={joinMode(roomInfo)} onHw={joinMode(roomInfo) === "viewer" ? undefined : onHw} room={roomInfo} needPassword={needPassword || !!roomInfo?.has_password} password={password} onPassword={setPassword} error={error} busy={busy}
-               onJoin={() => void connect(needPassword || roomInfo?.has_password ? password : undefined)} onBack={() => navigate("/")}
+      <PreJoin mode={joinMode(roomInfo)} onHw={joinMode(roomInfo) === "viewer" ? undefined : onHw} room={roomInfo} needPassword={needPassword || askPassword} password={password} onPassword={setPassword} error={error} busy={busy}
+               onJoin={() => void connect(needPassword || askPassword ? password : undefined)} onBack={() => navigate("/")}
                progress={busy ? <ConnectProgress stage="prepare" elapsedMs={tl.stageMs("prepare")} done={done} /> : null} />
     );
   }

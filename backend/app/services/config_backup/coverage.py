@@ -90,7 +90,7 @@ def all_problems() -> list[str]:
             + env_read_problems(Path(__file__).resolve().parents[2]))
 
 
-_MOUNT = re.compile(r"\$\{DATA_ROOT(?::\?[^}]*)?\}/([A-Za-z0-9_\-]+)(?:/[A-Za-z0-9_\-]+)?:")
+_MOUNT = re.compile(r"\$\{DATA_ROOT(?::\?[^}]*)?\}/([A-Za-z0-9_\-]+)(?:/[A-Za-z0-9_\-]+)?(?::|\s*$)", re.M)      # короткая форма «путь:цель» и длинная «source: путь»
 
 
 def volume_problems(compose: Path) -> list[str]:

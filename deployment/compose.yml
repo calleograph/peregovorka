@@ -122,7 +122,7 @@ services:
             - http://backend:8000/internal/v1/livekit/webhook
     # Приоритет звонка при нехватке процессора: вес (не лимит!) выше обычного — при свободном процессоре ничего не меняется, а при конкуренции с распознаванием
     # речи и языковой моделью LiveKit получает долю в первую очередь. Много открытых соединений зрителей: запас дескрипторов файлов.
-    cpu_shares: 2048
+    cpu_shares: 8192            # наравне с Egress: идущие разговоры не уступают эфиру процессор
     ulimits:
       nofile:
         soft: 65536
@@ -213,7 +213,7 @@ services:
       SESSION_ABSOLUTE_TIMEOUT_SECONDS: ${SESSION_ABSOLUTE_TIMEOUT_SECONDS:-86400}
       DEFAULT_TEXT_RETENTION_DAYS: ${DEFAULT_TEXT_RETENTION_DAYS:-365}
       DEFAULT_AUDIO_RETENTION_DAYS: ${DEFAULT_AUDIO_RETENTION_DAYS:-30}
-      MEETING_END_GRACE_SECONDS: ${MEETING_END_GRACE_SECONDS:-30}
+      MEETING_END_GRACE_SECONDS: ${MEETING_END_GRACE_SECONDS:-60}
       HEAVY_CONCURRENCY: ${HEAVY_CONCURRENCY:-2}
       HEAVY_MAX_DEFER_SECONDS: ${HEAVY_MAX_DEFER_SECONDS:-1800}
       LIVEKIT_METRICS_URL: ${LIVEKIT_METRICS_URL:-}
@@ -418,7 +418,7 @@ services:
       start_period: 30s
     stop_grace_period: 60s      # активные записи при остановке службы дописываются и закрываются
     shm_size: "1gb"             # Chrome без достаточной общей памяти падает на тяжёлых страницах
-    cpu_shares: 8192            # эфир важнее фоновых задач: распознавание и языковая модель не должны лишать браузер процессора, он обязан подняться за 20 с
+    cpu_shares: 8192            # наравне с LiveKit: распознавание и языковая модель не должны лишать браузер процессора, он обязан подняться за 20 с
     logging: *default-logging
 
   # Низкая задержка эфира: Egress отдаёт сюда внутренний RTMP, MediaMTX делает из него LL-HLS без перекодирования (замер: 2,9 с до плеера против 7,5 с у сегментов Egress).

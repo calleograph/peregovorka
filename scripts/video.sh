@@ -51,7 +51,7 @@ case "$CMD" in
   disable)
     need_root
     [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; read -r -p "Выключить видеозапись (идущие записи будут закрыты)? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }
-    dc stop -t 60 livekit-egress >/dev/null 2>&1 || true; dc rm -f livekit-egress >/dev/null 2>&1 || true
+    dc stop -t 60 livekit-egress mediamtx >/dev/null 2>&1 || true; dc rm -f livekit-egress mediamtx >/dev/null 2>&1 || true
     upd_env_set_key "$ENV_FILE" VIDEO_ENABLED no
     # общая шина Redis остаётся, если нужна телефонии
     if [ "${SIP_ENABLED:-no}" != "yes" ]; then upd_env_set_key "$ENV_FILE" LIVEKIT_REDIS_LINE ""; fi
