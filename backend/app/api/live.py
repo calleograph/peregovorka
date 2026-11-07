@@ -492,6 +492,12 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=bucket)
     out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16],
            "base": cfg.cdn_base_url if (cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn) else ""}       # CDN: плеер берёт поток прямо с него, а не с этого сервера
+    if cfg.ll_hls and not body.long and not out["base"] and not room.live_cdn and await request.app.state.live.viewers(room.id) < cfg.ll_viewers_max:
+        # Низкая задержка: тот же идентификатор и та же подпись, раздаёт MediaMTX. Обычный HLS остаётся запасным путём плеера. CDN и нативный плеер (long) идут обычным HLS.
+        if await request.app.state.live.ll_ready(room.live_view_access):
+            out.update(path=path.replace("/hls/", "/llhls/", 1), origin_path=path)
+        else:
+            out["ll_soon"] = True
     if room.live_cdn and cfg.cdn_nodes_enabled:
         # свои узлы CDN: ссылка на узел зрителя (подпись ES256 — её проверяет узел); путь к этому серверу — запасной, если узел перестанет отвечать
         node = await request.app.state.cdn.viewer_link(db, cfg, room.live_view_access, ttl, bucket, str(viewer.id), avoid=body.avoid)

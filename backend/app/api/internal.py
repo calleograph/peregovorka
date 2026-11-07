@@ -49,9 +49,9 @@ async def livekit_webhook(request: Request):
         video, live = getattr(request.app.state, "video", None), getattr(request.app.state, "live", None)
         if video is not None:
             async with request.app.state.session_maker() as db:
-                await video.on_egress_event(db, event)
                 if live is not None:
-                    await live.on_egress_event(db, event)
+                    await live.on_egress_event(db, event)      # первым: при повторе запуска у записи уже новое задание, и закрывать её нельзя
+                await video.on_egress_event(db, event)
         return {"ok": True}
     meeting_id = parse_meeting_room_name(event.room.name) if event.room and event.room.name else None
     user_id = parse_user_identity(event.participant.identity) if event.participant and event.participant.identity else None

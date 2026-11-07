@@ -17,7 +17,9 @@ const SEEN_KEY = (t: string) => `pg:live:${t}`;
 const VIEWER_KEY = (t: string) => `pg:live:viewer:${t}`;
 const ssGet = (k: string) => { try { return sessionStorage.getItem(k) ?? ""; } catch { return ""; } };
 const ssSet = (k: string, v: string) => { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch { /* только на эту вкладку */ } };
-const HLS_PREFIX = /^(?:https?:\/\/[^/]+)?\/hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;       // адрес с узлом (CDN) или без него
+const HLS_PREFIX = /^(?:https?:\/\/[^/]+)?\/(?:ll)?hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;       // адрес с узлом (CDN) или без него
+
+const isLl = (path: string) => path.includes("/llhls/");
 
 /** Нативный HLS — в Safari и на iPhone/iPad (там он надёжнее и экономит заряд; на iOS все браузеры — WebKit). Остальным (в том числе новому Chrome, который тоже отвечает «maybe») — hls.js:
  *  одинаковое поведение, продление подписи без перезапуска. Нативный путь остаётся запасным, если у браузера нет MediaSource. */
@@ -151,6 +153,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
   const prefix = useRef<string>(access.path.replace(/[^/]+$/, ""));
   const baseRef = useRef<string>(access.base ?? "");                 // CDN; при его недоступности плеер сам переходит на сервер-источник (пусто)
   const nodeRef = useRef<string>(access.node ?? "");                 // свой узел CDN, с которого идёт поток
+  const llOff = useRef(false);                                       // низкая задержка не работает у этого зрителя: остаёмся на обычном HLS до конца просмотра
   const originRef = useRef<string>(access.origin_path ?? "");        // запасной путь к серверу-источнику (узлы CDN)
   const badNodes = useRef(new Map<string, number>());                // узел → когда не отдал поток: 90 с к нему не возвращаемся (сервер исключает узел через 30 с)
   const [paused, setPaused] = useState(true);
@@ -186,7 +189,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     // уже ушёл на источник, он там и остаётся — как раньше.
     if (a.node || !a.base) { baseRef.current = a.base ?? ""; nodeRef.current = a.node ?? ""; }
     originRef.current = a.origin_path ?? "";
-    prefix.current = a.path.replace(/[^/]+$/, "");
+    prefix.current = (llOff.current && a.origin_path ? a.origin_path : a.path).replace(/[^/]+$/, "");
   }
   // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
   async function failover(): Promise<string> {
@@ -251,7 +254,8 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
           // сегменты ≈1,5 с (без частей LL-HLS — Egress их не выпускает): держимся в 2,5 с от края эфира — в секундах, а не в сегментах, потому что
           // TARGETDURATION плейлиста 2 (см. nginx.conf); отставание догоняем ускорением до 1,1×, а не прыжком; дальше 7 с — прыжок к краю.
           // Было 3 сегмента по 2 с — зритель отставал на 11 с.
-          enableWorker: false, lowLatencyMode: false, liveSyncDuration: 2.5, liveMaxLatencyDuration: 7, maxLiveSyncPlaybackRate: 1.1, maxBufferLength: 10, backBufferLength: 10,
+          // LL-HLS (путь /llhls/): части сегмента по 0,2 с, держимся в секунде от края. Замер — 2,9 с от выступающего до зрителя.
+          enableWorker: false, lowLatencyMode: isLl(url), liveSyncDuration: isLl(url) ? 1 : 2.5, liveMaxLatencyDuration: isLl(url) ? 4 : 7, maxLiveSyncPlaybackRate: isLl(url) ? 1.2 : 1.1, maxBufferLength: 10, backBufferLength: 10,
           manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 4000 } } },
           xhrSetup: (xhr: XMLHttpRequest, u: string) => { xhr.open("GET", u.replace(HLS_PREFIX, baseRef.current + prefix.current), true); },
         });
@@ -260,10 +264,31 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
         hls.loadSource(url);
         hls.attachMedia(el);
         hls.on(Hls.Events.MANIFEST_PARSED, () => void start());
+        // низкая задержка готовится первые секунды эфира: как только сервер её предложит, плеер переходит на неё сам
+        let tries = access.ll_soon ? 12 : 0;
+        const upgrade = () => {
+          if (cancelled || tries-- <= 0) return;
+          void cb.current.renew().then((a) => {
+            if (cancelled) return;
+            if (!a || !isLl(a.path)) { window.setTimeout(upgrade, 3000); return; }
+            adopt(a);
+            hls.config.lowLatencyMode = true; hls.config.liveSyncDuration = 1; hls.config.liveMaxLatencyDuration = 4; hls.config.maxLiveSyncPlaybackRate = 1.2;
+            hls.loadSource(a.path);
+          });
+        };
+        window.setTimeout(upgrade, 3000);
         hls.on(Hls.Events.ERROR, (_e, d) => {
           if (!d.fatal) return;
           const code = (d as { response?: { code?: number } }).response?.code;
           if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            if (isLl(prefix.current) && originRef.current && fails.current >= 1) {
+              // служба низкой задержки недоступна: тот же эфир обычным HLS, зритель потеряет пару секунд, но не поток
+              llOff.current = true;
+              prefix.current = originRef.current.replace(/[^/]+$/, ""); fails.current = 0;
+              hls.config.lowLatencyMode = false; hls.config.liveSyncDuration = 2.5; hls.config.liveMaxLatencyDuration = 7;
+              hls.loadSource(originRef.current);
+              return;
+            }
             // повторы с нарастающей паузой и пределом: сломанный адрес не должен превращаться в шквал запросов к приложению
             if (baseRef.current && nodeRef.current && (!code || code >= 500 || code === 429) && fails.current >= 1) {
               // свой узел CDN не отвечает: другой узел или сервер-источник; зритель увидит короткую паузу

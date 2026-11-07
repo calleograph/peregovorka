@@ -118,6 +118,8 @@ class Settings(BaseSettings):
     app_master_key: str = ""
     # Адрес приложения, по которому служба Egress (в той же сети compose) открывает страницу-рекордер общей сцены; снаружи он не нужен
     recorder_base_url: str = "http://web:8080"
+    lowlatency_rtmp_url: str = "rtmp://mediamtx:1935/live"     # приёмник MediaMTX внутри сети проекта: из того же потока делает LL-HLS для зрителей
+    lowlatency_hls_url: str = "http://mediamtx:8888/live"
     internal_api_token: str = ""
 
     # --- встречи и хранение

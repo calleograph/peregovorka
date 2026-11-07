@@ -152,7 +152,7 @@ export interface DiagState { bid: string | null; status: string; quality?: strin
 export interface DiagEvent { id: number; at: string; component: string; level: string; code: string; message: string; cause?: string | null; kind?: string | null; details?: Record<string, unknown> | null }
 export interface DiagSummary { version?: string; res?: string | null; mode?: { hls?: boolean; rtmp?: number; cdn?: boolean }; cpu?: { avg: number; max: number } | null; tx_mbit?: { avg: number; max: number } | null; egress_cores?: { avg: number; max: number } | null; video_kbps?: { avg: number; max: number } | null; seg_ready_s?: { avg: number; max: number } | null; latency_s?: { avg: number; max: number } | null; stalls?: number; events?: Record<string, number> }
 export interface DiagHistoryItem { id: string; room: string; title: string | null; status: string; quality: string; started_at: string; ended_at: string | null; peak_viewers: number; summary: DiagSummary | null }
-export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string }
+export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string; ll_soon?: boolean }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {

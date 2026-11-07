@@ -24,10 +24,10 @@ async def run_reaper(session_maker: async_sessionmaker[AsyncSession], service: M
                     await outlook_sync.tick(db)
                 if manifests is not None:
                     await manifests.tick(db)
+                if live is not None:
+                    await live.reconcile(db)                   # первым: повтор запуска эфира перевешивает запись на новое задание
                 if video is not None:
                     await video.reconcile(db)
-                if live is not None:
-                    await live.reconcile(db)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

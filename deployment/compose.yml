@@ -381,6 +381,10 @@ services:
         log_level: info
         cpu_cost:
           room_composite_cpu_cost: ${VIDEO_CPU_COST:-3.0}
+        latency:                # замерено на настоящем Egress: 7 мс расхождения звука и изображения вместо 90; pipeline меньше 1,5 с даёт сбой GStreamer «clock problem»
+          jitter_buffer_latency: 1s
+          audio_mixer_latency: 1s
+          pipeline_latency: 1500ms
     volumes:
       - ${DATA_ROOT}/recordings:/out
       - ${DATA_ROOT}/live:/live          # сегменты HLS прямых эфиров: Egress пишет, backend создаёт ссылки доступа и убирает, web (nginx) раздаёт
@@ -393,6 +397,25 @@ services:
       start_period: 30s
     stop_grace_period: 60s      # активные записи при остановке службы дописываются и закрываются
     shm_size: "1gb"             # Chrome без достаточной общей памяти падает на тяжёлых страницах
+    cpu_shares: 8192            # эфир важнее фоновых задач: распознавание и языковая модель не должны лишать браузер процессора, он обязан подняться за 20 с
+    logging: *default-logging
+
+  # Низкая задержка эфира: Egress отдаёт сюда внутренний RTMP, MediaMTX делает из него LL-HLS без перекодирования (замер: 2,9 с до плеера против 7,5 с у сегментов Egress).
+  # Падение службы не трогает запись и площадки: плеер уходит на обычный HLS. Наружу портов нет, зрители идут через nginx с подписью.
+  mediamtx:
+    profiles: ["video"]
+    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c}
+    restart: unless-stopped
+    environment:
+      MTX_HLSVARIANT: lowLatency
+      MTX_HLSSEGMENTDURATION: 1s
+      MTX_HLSPARTDURATION: 200ms
+      MTX_HLSSEGMENTCOUNT: "7"
+      MTX_HLSALWAYSREMUX: "yes"
+      MTX_RTSP: "no"
+      MTX_WEBRTC: "no"
+      MTX_SRT: "no"
+      MTX_LOGLEVEL: warn
     logging: *default-logging
 
   web:

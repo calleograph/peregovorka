@@ -2,6 +2,7 @@
 Состояние и управление службой Egress — /admin/components (помощник на хосте видит контейнер, backend — нет)."""
 from __future__ import annotations
 
+import asyncio
 import shutil
 from ..services import server_components as _sc
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..db import release
 from ..auth.deps import SessionUser, get_db, require_admin
 from ..models import Recording
 from ..services import media_checks
@@ -29,12 +31,9 @@ async def video_status(request: Request, su: SessionUser = Depends(require_admin
         free = shutil.disk_usage(root if root.exists() else root.parent).free
     except OSError:
         free = None
-    livekit_ok, livekit_error = True, None
-    try:
-        await st.video.api.probe_livekit()
-    except Exception as exc:  # noqa: BLE001
-        livekit_ok, livekit_error = False, type(exc).__name__
-    items = await media_checks.checks(st, db, "video")
+    await release(db)
+    err, items = await asyncio.gather(media_checks.probe(st.video.api.probe_livekit()), media_checks.checks(st, db, "video"))
+    livekit_ok, livekit_error = err is None, type(err).__name__ if err else None
     running = by.get("processing", (0, 0))[0] + by.get("finishing", (0, 0))[0]
     return {
         "enabled": bool(cfg.enabled), "service_installed": _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "video"), "livekit_ok": livekit_ok, "livekit_error": livekit_error,

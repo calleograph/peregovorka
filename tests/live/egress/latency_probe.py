@@ -27,6 +27,14 @@ BITS, DATA = 40, 36
 TONE_EVERY_MS, TONE_MS = 5000, 150
 
 
+def stat(xs: list[float]) -> dict | None:
+    """Среднее, p50, p95, максимум, мс."""
+    if not xs:
+        return None
+    v = sorted(xs)
+    return {"n": len(v), "среднее": round(statistics.mean(v)), "p50": round(v[len(v) // 2]), "p95": round(v[int(len(v) * 0.95)]), "макс": round(v[-1])}
+
+
 def encode(ms: int, flash: bool) -> list[int]:
     v = ms % (1 << DATA)
     bits = [(v >> (DATA - 1 - i)) & 1 for i in range(DATA)] + [1 if flash else 0]
@@ -179,7 +187,7 @@ def hls(a) -> None:
         first = False
         time.sleep(0.1)
     rep = {"сегменты": len(segdur), "длительность_сегмента_с": round(statistics.mean(segdur), 2) if segdur else None, "разрешение": sorted(sizes),
-           "готовность_сегмента_мс": {"медиана": round(statistics.median(lags)) if lags else None, "мин": round(min(lags)) if lags else None, "макс": round(max(lags)) if lags else None},
+           "готовность_сегмента_мс": stat(lags),
            "звук_минус_изображение_мс": [round(x) for x in sync]}
     print(json.dumps(rep, ensure_ascii=False))
 
@@ -199,7 +207,7 @@ def rtmp(a) -> None:
             lags.append(time.time() * 1000 - d[0])
     p.kill()
     lags = lags[len(lags) // 5:]                       # начало чтения — догоняет накопленное
-    print(json.dumps({"разрешение": size, "задержка_мс": {"медиана": round(statistics.median(lags)) if lags else None, "мин": round(min(lags)) if lags else None}}, ensure_ascii=False))
+    print(json.dumps({"разрешение": size, "задержка_мс": stat(lags)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -246,6 +246,7 @@ def create_app(
         app.state.cdn = CdnService(settings, settings_svc, redis, journal=journal)          # свои узлы CDN (раздача HLS)
         app.state.cdn_jobs = CdnJobs(app)
         app.state.live_diag = LiveDiag(settings, bg_sm, redis, settings_svc, live=app.state.live, perf=app.state.perf, journal=journal, cdn=app.state.cdn)     # диагностика эфиров
+        app.state.live.diag = app.state.live_diag
         app.state.live.prepare()
         app.state.live.on_air = meetings_svc.set_broadcast_media        # комната трансляции: распознавание и запись — с начала эфира
         protocols.gate = app.state.perf.gate

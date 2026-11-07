@@ -188,3 +188,22 @@ def test_idle_restart_is_not_blamed_on_the_next_broadcast():
     d._starts = {}                        # простой
     d._restart_check("egress", 5000.0, fresh)
     assert fresh == []
+
+
+def test_hung_service_does_not_hold_the_database_or_the_page(lv, monkeypatch):  # noqa: F811
+    """Опрос служб шёл по очереди внутри транзакции: зависшая служба держала соединение почти 30 секунд."""
+    from app.services import media_checks
+    monkeypatch.setattr(media_checks, "PROBE_S", 0.2)
+    held = []
+
+    async def hang():
+        pool = lv.app_obj.state.engine.sync_engine.pool
+        held.append(pool.checkedout() if hasattr(pool, "checkedout") else 0)
+        await asyncio.sleep(30)
+    lv.fake.probe = hang
+    lv.fake.probe_livekit = hang
+    login(lv, "root")
+    t = time.time()
+    r = lv.get("/api/v1/admin/live/status")
+    assert r.status_code == 200 and time.time() - t < 3 and r.json()["livekit_ok"] is False
+    assert not any(c["id"] == "egress" and c["status"] == "ok" for c in r.json()["checks"])

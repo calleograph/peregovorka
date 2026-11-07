@@ -2,6 +2,7 @@
 Настройки — общая форма группы `live`; включение и перезапуск службы Egress — /admin/components."""
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 from ..services import server_components as _sc
@@ -13,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, get_db, require_admin
+from ..db import release
 from ..models import Broadcast, LiveDestination, Recording, Room
 from ..services import media_checks
 from ..services.live import LIVE_ACTIVE
@@ -42,15 +44,6 @@ async def live_status(request: Request, su: SessionUser = Depends(require_admin)
     cfg = await st.settings_svc.get(db, "live")
     live = st.live
     base = live.live_dir()
-    try:
-        free = shutil.disk_usage(base if base.exists() else base.parent).free
-    except OSError:
-        free = None
-    livekit_ok, livekit_error = True, None
-    try:
-        await st.video.api.probe_livekit()
-    except Exception as exc:  # noqa: BLE001
-        livekit_ok, livekit_error = False, type(exc).__name__
     rows = list((await db.execute(select(Broadcast, Room.name).join(Room, Room.id == Broadcast.room_id).where(Broadcast.status.in_(LIVE_ACTIVE)).order_by(Broadcast.started_at))).all())
     active, total_viewers = [], 0
     for b, name in rows:
@@ -58,14 +51,28 @@ async def live_status(request: Request, su: SessionUser = Depends(require_admin)
         total_viewers += v
         active.append({"room": name, "status": b.status, "since": b.started_at, "quality": b.quality, "viewers": v, "hls": bool(b.hls_dir), "hls_ready": live.hls_ready(b), "by": b.started_by})
     failed = (await db.execute(select(Broadcast, Room.name).join(Room, Room.id == Broadcast.room_id).where(Broadcast.status == "failed").order_by(Broadcast.started_at.desc()).limit(5))).all()
-    secret_ok = (base / "nginx" / "secret.conf").is_file()
-    load = await st.video.api.cpu_load(cfg.egress_health_url) if cfg.egress_health_url else None
     dest_rows = (await db.execute(select(LiveDestination.status, func.count()).group_by(LiveDestination.status))).all()
     dests = {k: int(v) for k, v in dest_rows}
     rec_rows = (await db.execute(select(Recording.room_id, Recording.status).where(Recording.kind == "mix_video", Recording.status.in_(("processing", "finishing"))))).all()
     installed = _sc.enabled_on_server(st.settings, _sc.channel_for(st.settings), "video")
-    hls_bytes = _dir_size(base / "b") if (base / "b").is_dir() else 0
-    items = await media_checks.checks(st, db, "live")
+    await release(db)                          # база прочитана; дальше опрос служб и диска, он может длиться секунды и не должен занимать соединение
+
+    def disk() -> tuple[int | None, bool, int]:
+        try:
+            left = shutil.disk_usage(base if base.exists() else base.parent).free
+        except OSError:
+            left = None
+        return left, (base / "nginx" / "secret.conf").is_file(), _dir_size(base / "b") if (base / "b").is_dir() else 0
+
+    async def cpu() -> int | None:
+        try:
+            return await asyncio.wait_for(st.video.api.cpu_load(cfg.egress_health_url), media_checks.PROBE_S) if cfg.egress_health_url else None
+        except asyncio.TimeoutError:
+            return None
+
+    (free, secret_ok, hls_bytes), lk_err, load, items = await asyncio.gather(
+        asyncio.to_thread(disk), media_checks.probe(st.video.api.probe_livekit()), cpu(), media_checks.checks(st, db, "live"))
+    livekit_ok, livekit_error = lk_err is None, type(lk_err).__name__ if lk_err else None
     warnings = media_checks.warnings_of(items) + [w for w in (
         f"Площадок с ошибкой: {dests.get('failed', 0)} (подробности — в настройках комнат)." if dests.get("failed") and active else None,
         f"Зрителей сейчас {total_viewers}: с основного сервера раздаётся по потоку каждому. Для больших аудиторий подключите CDN." if total_viewers >= cfg.direct_viewers_warn else None,

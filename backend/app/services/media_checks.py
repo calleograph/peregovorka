@@ -11,15 +11,18 @@
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import time
 from pathlib import Path
 from typing import Any
 
+from ..db import release
 from . import server_components as sc
 
 WIKI = sc.WIKI
 DOC_MEDIA = WIKI + "Решение-проблем-видеозаписи-и-трансляций"
+PROBE_S = 4.0                  # дольше служба уже считается недоступной: страница состояния не должна ждать её
 DOC_STORAGE = WIKI + "Решение-проблем-файловых-хранилищ"
 
 
@@ -126,6 +129,15 @@ async def secret_checks(live, settings) -> list[dict]:
     return out
 
 
+async def probe(coro) -> Exception | None:
+    """Опрос службы с пределом времени. Без предела зависшая служба держала бы запрос десятки секунд; ответ — ошибка или None."""
+    try:
+        await asyncio.wait_for(coro, PROBE_S)
+    except Exception as exc:  # noqa: BLE001
+        return exc
+    return None
+
+
 async def checks(st, db, purpose: str) -> list[dict]:
     """purpose: video | live"""
     settings = st.settings
@@ -133,7 +145,10 @@ async def checks(st, db, purpose: str) -> list[dict]:
     f = sc.facts(ch)
     comp = sc.describe("video", f, settings)
     cfg = await st.settings_svc.get(db, purpose)
+    await release(db)                          # дальше только сеть и файлы: соединение с базой на время опроса служб не держим
     out: list[dict] = []
+    server_up = comp["state"] in ("ok", "unknown") and (comp["state"] == "ok" or comp.get("enabled"))
+    lk_err, eg_err = await asyncio.gather(probe(st.video.api.probe_livekit()), probe(st.video.api.probe()) if server_up else asyncio.sleep(0))
 
     # 1. видеоподсистема на сервере — от неё зависит всё остальное
     srv_title = "Видеоподсистема на сервере"
@@ -148,7 +163,7 @@ async def checks(st, db, purpose: str) -> list[dict]:
         out.append(_chk("server", srv_title, "info", comp["message"], doc=WIKI + "Решение-проблем-обновления"))
     else:
         out.append(_chk("server", srv_title, "ok", "Служба LiveKit Egress установлена и работает."))
-    server_ok = comp["state"] in ("ok", "unknown") and (comp["state"] == "ok" or comp.get("enabled"))
+    server_ok = server_up
 
     # 2. функция в приложении
     app_title = "Видеозапись в приложении" if purpose == "video" else "Трансляции в приложении"
@@ -159,13 +174,11 @@ async def checks(st, db, purpose: str) -> list[dict]:
         out.append(_chk("app", app_title, "ok", "Включена." if purpose == "video" else "Включены."))
 
     # 3. сервер звонков — сам по себе, без Egress
-    lk_ok = True
-    try:
-        await st.video.api.probe_livekit()
+    lk_ok = lk_err is None
+    if lk_ok:
         out.append(_chk("livekit", "Сервер звонков (LiveKit)", "ok", "Отвечает."))
-    except Exception as exc:  # noqa: BLE001
-        lk_ok = False
-        out.append(_chk("livekit", "Сервер звонков (LiveKit)", "error", f"Не отвечает ({type(exc).__name__}): встречи и запись недоступны.",
+    else:
+        out.append(_chk("livekit", "Сервер звонков (LiveKit)", "error", f"Не отвечает ({type(lk_err).__name__}): встречи и запись недоступны.",
                         action=_comp_action("livekit", "livekit_restart") if f is not None else None, doc=WIKI + "Решение-проблем-звонков-и-сети"))
 
     # 4. служба Egress подключена к LiveKit (задания на запись доходят)
@@ -174,13 +187,11 @@ async def checks(st, db, purpose: str) -> list[dict]:
         out.append(_skip("egress", eg_title, "заработает видеоподсистема"))
     elif not lk_ok:
         out.append(_skip("egress", eg_title, "ответит сервер звонков"))
+    elif eg_err is None:
+        out.append(_chk("egress", eg_title, "ok", "LiveKit принимает задания на запись."))
     else:
-        try:
-            await st.video.api.probe()
-            out.append(_chk("egress", eg_title, "ok", "LiveKit принимает задания на запись."))
-        except Exception as exc:  # noqa: BLE001
-            out.append(_chk("egress", eg_title, "error", f"LiveKit не видит службу записи ({type(exc).__name__}). Обычно помогает перезапуск службы; если нет — «Восстановить настройки».",
-                            action=_comp_action("video", "video_restart") if f is not None else None, doc=DOC_MEDIA))
+        out.append(_chk("egress", eg_title, "error", f"LiveKit не видит службу записи ({type(eg_err).__name__}). Обычно помогает перезапуск службы; если нет — «Восстановить настройки».",
+                        action=_comp_action("video", "video_restart") if f is not None else None, doc=DOC_MEDIA))
 
     if purpose == "live":
         live = st.live
@@ -195,7 +206,10 @@ async def checks(st, db, purpose: str) -> list[dict]:
         elif not server_ok:
             out.append(_skip("health", hp_title, "заработает видеоподсистема"))
         else:
-            load = await st.video.api.cpu_load(cfg.egress_health_url)
+            try:
+                load = await asyncio.wait_for(st.video.api.cpu_load(cfg.egress_health_url), PROBE_S)
+            except asyncio.TimeoutError:
+                load = None
             if load is None:
                 out.append(_chk("health", hp_title, "error", "Health-порт не отвечает: проверьте адрес в настройках ниже (обычно http://livekit-egress:8082/).", doc=DOC_MEDIA))
             else:

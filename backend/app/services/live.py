@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import shutil
 import time
@@ -21,6 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 from livekit.protocol import egress as eg
 from livekit.protocol import models as lkm
 from sqlalchemy import func, select
@@ -47,6 +49,8 @@ KEY_FRAME_S = 1.0
 EMPTY_GRACE_S = 90                     # комната пуста дольше — эфир заканчивается (выступающие ушли)
 BROADCAST_EMPTY_GRACE_S = 900          # комната трансляции: обрыв связи ведущего или перезапуск приложения — эфир и запись ждут его 15 минут
 START_LOCK_S = 150                     # дольше таймаута запроса к Egress (60 с) и подготовки: иначе второй запуск проходит мимо замка
+START_RETRIES = 2                      # столько раз запуск повторяется сам, если браузер Egress не поднялся: обычно это мгновенный дефицит процессора
+RETRY_PAUSE_S = 4.0
 STOP_GRACE_S = 180                     # после остановки столько ждём итог Egress; потом закрываем сами
 SECRET_GID = 10001                     # общая группа backend (пишет секрет подписи HLS) и web (nginx читает): group_add в deployment/compose.yml
 SECRET_MODE = 0o640
@@ -110,6 +114,30 @@ def nginx_secret_conf(secret: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ запрос к Egress
+# Сообщения Egress — для разработчика. Здесь то, что администратор может проверить и сделать; исходный текст остаётся в журнале эфира.
+LAUNCH_FAILED = ("websocket url timeout", "failed to launch chrome", "page load error", "start signal not received", "chrome")
+EXPLAIN = (
+    (LAUNCH_FAILED[:3], "Браузер службы трансляций не запустился вовремя: у службы не хватило процессора или памяти. Проверьте нагрузку сервера и повторите запуск."),
+    (("pipeline frozen",), "Кодирование эфира остановилось: службе не хватало процессора. Снизьте качество эфира или разгрузите сервер."),
+    (("start signal not received",), "Страница эфира не начала запись вовремя: проверьте, что сервер звонков доступен службе трансляций."),
+    (("deadlineexceeded", "handler_ipc"), "Служба трансляций перестала отвечать: сервер перегружен или процесс завершился аварийно."),
+)
+
+
+def launch_failed(error: str | None) -> bool:
+    e = (error or "").lower()
+    return any(m in e for m in LAUNCH_FAILED[:4])
+
+
+def explain_error(error: str | None) -> str:
+    """Понятная причина. Сырой текст ошибки Egress может содержать адреса с ключами площадок: наружу идёт только наша формулировка, а неизвестная ошибка — обезличенной."""
+    e = (error or "").lower()
+    for marks, text in EXPLAIN:
+        if any(m in e for m in marks):
+            return text
+    return re.sub(r"rtmps?://\S+", "rtmp://…", error or "Эфир прерван службой Egress")[:290]
+
+
 def build_live_request(room_name: str, quality: str, *, mp4_path: str | None, hls_prefix: str | None, urls: list[str], template_url: str = "") -> eg.StartEgressRequest:
     """Один запрос — три выхода. RTMP начинается без адресов: площадки добавляются и убираются на лету (`update_stream`), не прерывая эфир (проверено на настоящем Egress)."""
     from .video_rec import LAYOUT  # noqa: PLC0415
@@ -136,6 +164,7 @@ class LiveBroadcaster:
         self._s, self._sm, self._r, self._svc = settings, session_maker, redis, settings_svc
         self.api, self.video, self.journal = api, video, journal
         self.destinations = destinations           # services.live_destinations.Destinations (внешние площадки); задаётся при запуске приложения
+        self.diag = None                           # services.live_diag.LiveDiag: журнал этапов и причин; задаётся при запуске приложения
         self.on_air = None                         # (db, meeting, идёт ли эфир) → распознавание и запись комнаты трансляции; задаётся при запуске приложения
         video.live_owner = self.owns_egress
 
@@ -228,10 +257,12 @@ class LiveBroadcaster:
         Отзыв ссылки зрителя закрывает и «Ссылку этого эфира» идущего эфира: иначе по ней плеер получил бы подпись к новому идентификатору доступа."""
         cur = await self.current(db, room.id)
         if which in ("view", "all"):
+            old_view = room.live_view_access
             self.unlink_access(room.live_view_access)
             room.live_view_access, room.live_token = new_access(), new_token()
             if cur is not None:
                 cur.view_token = new_token()
+            await self._switch_ll(cur, old_view, room.live_view_access)
         if which in ("stream", "all"):
             self.unlink_access(room.live_stream_access)
             room.live_stream_access = new_access()
@@ -242,12 +273,14 @@ class LiveBroadcaster:
 
     async def rotate_view_access(self, db, room: Room) -> None:
         """Смена пароля зрителя: страница остаётся той же, но выданные подписи и «пропуска» перестают действовать (новый идентификатор доступа)."""
+        old = room.live_view_access
         self.unlink_access(room.live_view_access)
         room.live_view_access = new_access()
         await db.commit()
         cur = await self.current(db, room.id)
         if cur is not None:
             self.link_access(room.live_view_access, cur.hls_dir)
+            await self._switch_ll(cur, old, room.live_view_access)
 
     # ------------------------------------------------------------------ зрители
     async def viewer_ping(self, room_id: uuid.UUID, vid: str) -> int:
@@ -375,6 +408,7 @@ class LiveBroadcaster:
             cfg = await self.cfg(db)
             urls, _ids = await self.destinations.start_urls(db, room) if self.destinations is not None else ([], [])
             await self._guards(db, meeting, cfg, urls)
+            t0 = time.monotonic()
             present = await list_present_identities(self._s, meeting.livekit_room)
             if present is None:
                 raise LiveError("livekit_unavailable", "Сервер звонков недоступен: эфир не начат.", 503)
@@ -395,9 +429,7 @@ class LiveBroadcaster:
             rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz), meeting.id)}/video-{n}.mp4"
             vcfg = await self._svc.get(db, "video")
             # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
-            tpl = vcfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if vcfg.scene_template and self._s.recorder_base_url else "")
-            req = build_live_request(meeting.livekit_room, quality, mp4_path=f"{self.video.out_dir()}/{rel}",
-                                     hls_prefix=f"{self.egress_dir()}/b/{hls_dir}" if hls_dir else None, urls=urls, template_url=tpl)
+            req = await self._request(meeting, room, quality, rel, hls_dir, urls, cfg, vcfg)
             try:
                 info = await self.api.start(req)
             except Exception as exc:  # noqa: BLE001
@@ -417,12 +449,78 @@ class LiveBroadcaster:
             await db.commit()
             self.link_access(room.live_view_access, hls_dir)
             self.link_access(room.live_stream_access, hls_dir)
+            await self.stage(b, "accepted", "Служба трансляций приняла задание", time.monotonic() - t0)
             await self._announce(meeting, True, by)
             self._emit("live_started", meeting, by=by, egress=info.egress_id, quality=quality, urls=len(urls), hls=bool(hls_dir), record=True)
             await self._air(db, meeting, True)
             return b
         finally:
             await self._r.delete(f"live:start:{meeting.id}")
+
+    async def _request(self, meeting: Meeting, room: Room, quality: str, rel: str, hls_dir: str | None, urls: list[str], cfg, vcfg) -> eg.StartEgressRequest:
+        # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
+        tpl = vcfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if vcfg.scene_template and self._s.recorder_base_url else "")
+        out = [*urls, self.ll_url(room.live_view_access)] if hls_dir and cfg.ll_hls else urls
+        return build_live_request(meeting.livekit_room, quality, mp4_path=f"{self.video.out_dir()}/{rel}", hls_prefix=f"{self.egress_dir()}/b/{hls_dir}" if hls_dir else None, urls=out, template_url=tpl)
+
+    def ll_url(self, access: str) -> str:
+        """Внутренний выход для LL-HLS. Имя потока — идентификатор доступа: так подпись зрителя и отзыв работают как у обычного HLS."""
+        return f"{self._s.lowlatency_rtmp_url.rstrip('/')}/{access}"
+
+    async def ll_ready(self, access: str) -> bool:
+        """LL-HLS отвечает только после семи сегментов (около 10 с от начала эфира). До этого зритель смотрит обычный HLS, а плеер потом переходит сам."""
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1.0)) as c:
+                return (await c.get(f"{self._s.lowlatency_hls_url.rstrip('/')}/{access}/index.m3u8?cookieCheck=1", headers={"Cookie": "cookieCheck=1"})).status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    async def _switch_ll(self, b: Broadcast | None, old: str | None, new: str | None) -> None:
+        """Отзыв ссылки или смена пароля во время эфира: поток LL-HLS переезжает на новое имя, прежние подписи перестают открывать его. Запись и площадки это не затрагивает."""
+        if b is None or not b.egress_id or not b.hls_dir or not old or not new or not (await self.cfg_ll()):
+            return
+        try:
+            await self.api.update_stream(b.egress_id, add=[self.ll_url(new)], remove=[self.ll_url(old)])
+        except Exception as exc:  # noqa: BLE001 — зритель останется на обычном HLS, эфир важнее
+            log.warning("Поток низкой задержки не переключён", extra={"broadcast": str(b.id), "error": type(exc).__name__})
+
+    async def cfg_ll(self) -> bool:
+        async with self._sm() as db:
+            return bool((await self.cfg(db)).ll_hls)
+
+    def _first_segment_s(self, b: Broadcast) -> float | None:
+        """Сверка идёт раз в 10 с, поэтому время появления берётся по самому файлу."""
+        try:
+            first = min(f.stat().st_mtime for f in (self.live_dir() / "b" / b.hls_dir).glob("seg_*.ts")) if b.hls_dir else None
+        except (OSError, ValueError):
+            return None
+        return first - b.started_at.timestamp() if first else None
+
+    async def stage(self, b: Broadcast | uuid.UUID, name: str, text: str, seconds: float | None = None, *, level: str = "info") -> None:
+        """Этап запуска в журнал эфира: панель диагностики показывает их лентой со временем."""
+        if self.diag is not None:
+            await self.diag.event(b, "broadcast", level, f"stage_{name}", text + (f" за {seconds:.1f} с" if seconds is not None else ""), details={"s": round(seconds, 2)} if seconds is not None else None)
+
+    async def _retry_launch(self, db, b: Broadcast, info: eg.EgressInfo | None) -> bool:
+        """Браузер Egress не поднялся за 20 с: при кратком дефиците процессора следующая попытка удаётся. Зритель и ведущий видят «запускается», запись продолжает ту же строку."""
+        if info is None or b.status != "starting" or not launch_failed(info.error):
+            return False
+        n = await self._r.incr(f"live:retry:{b.id}")
+        await self._r.expire(f"live:retry:{b.id}", 600)
+        meeting, room, rec = await db.get(Meeting, b.meeting_id), await db.get(Room, b.room_id), await db.get(Recording, b.recording_id) if b.recording_id else None
+        if n > START_RETRIES or meeting is None or room is None or rec is None or meeting.ended_at is not None:
+            return False
+        await self.stage(b, "retry", f"Браузер службы не запустился, попытка {n + 1} из {START_RETRIES + 1}. Причина: {explain_error(info.error)}", level="warn")
+        await asyncio.sleep(RETRY_PAUSE_S)
+        urls, _ids = await self.destinations.start_urls(db, room) if self.destinations is not None else ([], [])
+        try:
+            new = await self.api.start(await self._request(meeting, room, b.quality, rec.path, b.hls_dir, urls, await self.cfg(db), await self._svc.get(db, "video")))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Повторный запуск эфира не удался", extra={"broadcast": str(b.id), "error": str(exc)[:200]})
+            return False
+        rec.egress_id = b.egress_id = new.egress_id
+        await db.commit()
+        return True
 
     async def stop(self, db, meeting: Meeting | None, *, by: str = "", room_id: uuid.UUID | None = None, manual: bool = False) -> int:
         """Остановка эфира. Egress дописывает файл и закрывает HLS (ENDLIST); итог приходит событием или сверкой."""
@@ -497,12 +595,16 @@ class LiveBroadcaster:
         if b.status in ("ended", "failed"):
             return
         failed = info is not None and info.status in (eg.EgressStatus.EGRESS_FAILED, eg.EgressStatus.EGRESS_ABORTED)
+        if failed and await self._retry_launch(db, b, info):
+            return
+        if failed and self.diag is not None:
+            await self.diag.event(b, "egress", "error", "egress_failed", explain_error(info.error), details={"raw": re.sub(r"rtmps?://\S+", "rtmp://…", info.error or "")[:400]}, kind="confirmed")
         b.ended_at = datetime.now(timezone.utc)
         b.access_until = b.ended_at + timedelta(days=max(1, int(b.link_days or 5)))       # срок ссылки на запись — от фактического окончания эфира
         if lost:
             b.status, b.error = "failed", "Служба трансляций перестала отвечать во время эфира."
         elif failed:
-            b.status, b.error = "failed", ((info.error if info is not None and info.error else "") or "Эфир прерван службой Egress")[:290]
+            b.status, b.error = "failed", explain_error(info.error if info is not None else None)
         else:
             b.status = "ended"
             if info is not None and info.status == eg.EgressStatus.EGRESS_LIMIT_REACHED:
@@ -529,6 +631,8 @@ class LiveBroadcaster:
             return
         if self.destinations is not None:
             await self.destinations.on_info(db, b, info)
+        if info.status == eg.EgressStatus.EGRESS_ACTIVE and await self._r.set(f"live:stage:{b.egress_id}", "1", nx=True, ex=3600):
+            await self.stage(b, "active", "Браузер и кодировщик работают", (datetime.now(timezone.utc) - b.started_at).total_seconds())
         if event.event == "egress_ended" or info.status not in ACTIVE_LK:
             await self.finalize(db, b, info)
 
@@ -554,6 +658,7 @@ class LiveBroadcaster:
                 if b.status == "starting" and (self.hls_ready(b) or (not b.hls_dir and info.status == eg.EgressStatus.EGRESS_ACTIVE)):
                     b.status, b.live_at = "live", datetime.now(timezone.utc)
                     await db.commit()
+                    await self.stage(b, "live", "Первый сегмент готов, эфир виден зрителям", self._first_segment_s(b))
                     if meeting is not None:
                         await self._announce(meeting, True, "egress")
                 if self.destinations is not None:

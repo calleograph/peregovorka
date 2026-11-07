@@ -75,7 +75,7 @@ comp_wait() { # comp_wait СЕРВИС
 # Какие службы должны заработать после действия (проверка результата)
 comp_expect() {
   case "$1" in
-    video_enable|video_restart) echo "livekit livekit-egress" ;;
+    video_enable|video_restart) echo "livekit livekit-egress mediamtx" ;;
     sip_enable|sip_restart) echo "livekit livekit-sip" ;;
     livekit_restart|video_disable|sip_disable) echo "livekit" ;;
     web_restart) echo "web" ;;

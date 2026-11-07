@@ -864,6 +864,8 @@ class LiveSettings(_Group):
     allow_twitch: bool = True
     allow_custom: bool = True
     max_cpu_load: int = Field(default=85, ge=10, le=100)          # нагрузка Egress (по его health-порту), при которой новые эфиры не начинаются: обычные конференции важнее
+    ll_hls: bool = True                                           # низкая задержка (LL-HLS через MediaMTX) для зрителей с этого сервера; CDN и Safari остаются на обычном HLS
+    ll_viewers_max: int = Field(default=300, ge=0, le=5000)       # сверх этого числа новые зрители идут на обычный HLS: каждый зритель LL-HLS — несколько запросов в секунду
     egress_health_url: str = Field(default="http://livekit-egress:8082/", max_length=300)     # адрес health-порта Egress внутри сети проекта (нагрузка процессора); пусто — не проверять
     cdn_enabled: bool = False                                     # раздавать HLS через CDN: плеер берёт поток прямо с CDN, а не с этого сервера
     cdn_base_url: str = Field(default="", max_length=300)         # публичный адрес доставки CDN, https://cdn.example.org (CDN забирает файлы с этого сервера по тем же путям /hls/…)
