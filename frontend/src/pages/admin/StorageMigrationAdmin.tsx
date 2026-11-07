@@ -26,7 +26,7 @@ function NewMigration({ profiles, groups, onDone, onClose }: { profiles: Storage
         {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
       <label className="field">Куда<select value={target} onChange={(e) => setTarget(e.target.value)}><option value="">Выберите хранилище</option>
         {profiles.filter((p) => p.id !== source).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <fieldset className="field"><legend>Что переносить</legend>
+      <fieldset className="field plain-set"><legend>Что переносить</legend>
         <label className="check"><input type="radio" name="mig-mode" checked={mode === "full"} onChange={() => setMode("full")} /> Всё, что лежит в этом хранилище</label>
         <label className="check"><input type="radio" name="mig-mode" checked={mode === "selected"} onChange={() => setMode("selected")} /> Выбрать данные</label>
         {mode === "selected" && Object.entries(groups).map(([k, title]) => <label className="check" key={k}><input type="checkbox" checked={chosen.includes(k)} onChange={() => toggle(k)} /> {title}</label>)}
@@ -59,6 +59,7 @@ function Report({ j }: { j: StorageMigration }) {
     <div className="small" role="status">
       <div>Перенесено файлов: {r.moved_files} ({bytes(r.moved_bytes)}). Освобождено на «{j.source}»: {bytes(r.freed_bytes)}.</div>
       {r.gone_files > 0 && <div>Исчезли с источника до копирования: {r.gone_files}.</div>}
+      <div className="muted">Если на сервере хранения включена корзина, место освободится после её очистки.</div>
       {r.kept.length > 0 && <div>Оставлено на источнике: {r.kept.map((k) => `${k.reason}: ${k.files}`).join("; ")}.</div>}
     </div>
   );

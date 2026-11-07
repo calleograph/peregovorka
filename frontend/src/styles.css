@@ -1068,3 +1068,4 @@ body.screen-max-open { overflow: hidden; }
 .btn.onair-go:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.onair-go .rec-dot { background: #fff; }
 .btn.onair-stop { border-color: var(--danger); color: var(--danger-text); }
+fieldset.plain-set { border: 0; padding: 0; margin: 0; min-width: 0; } fieldset.plain-set legend { padding: 0; margin-bottom: 4px; }

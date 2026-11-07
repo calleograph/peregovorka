@@ -391,6 +391,11 @@ def test_folder_categories():
     assert sm.category_of("Что-то/ещё.bin") == "other" and not sm.scanned(".peregovorka-volume") and not sm.scanned("Audio/a.partial")
 
 
+@pytest.mark.parametrize("path", [".deleted/Audio/a.wav", "@Recycle/x.bin", "#recycle/a", "$RECYCLE.BIN/S-1/a", "System Volume Information/a", ".snapshot/daily/Audio/a.wav", "Audio/@eaDir/a.wav", "Audio/Thumbs.db"])
+def test_recycle_bins_and_snapshots_of_the_file_server_stay_out(path):
+    assert not sm.scanned(path)
+
+
 def test_events_are_kept_for_the_journal(b):
     b.file("Audio/a.wav")
     b.create(["audio"])

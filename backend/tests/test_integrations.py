@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.integrations.llm import LlmClient, LlmError
-from app.services.recordings import BYTES_PER_SEC, finalize_pcm_files
+from app.services.recordings import BYTES_PER_SEC, drop_pcm, finalize_pcm_files
 from app.services.settings import LlmSettings
 from app.services.storage import LocalStorage, SmbStorage, StorageError, meeting_relpath, safe_component
 
@@ -112,4 +112,6 @@ def test_pcm_becomes_valid_wav_in_structured_dir_and_short_files_are_dropped(tmp
     assert wav_path.parent.name == "14-05" and "/" not in wav_path.name
     with wave.open(str(wav_path)) as w:
         assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 16000) and w.getnframes() == 80000
+    assert (room_dir / "u-alice.pcm").exists(), "исходник живёт, пока строка записи не сохранена в базе"
+    drop_pcm(str(tmp_path), "m-abc", ["u-alice"])
     assert not room_dir.exists(), "исходный PCM удалён"

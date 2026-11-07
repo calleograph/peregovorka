@@ -269,6 +269,8 @@ class Meeting(Base):
         # не более одной активной встречи на комнату
         Index("uq_meetings_one_active_per_room", "room_id", unique=True,
               postgresql_where=text("ended_at IS NULL"), sqlite_where=text("ended_at IS NULL")),
+        Index("ix_meetings_finalize_pending", "ended_at", postgresql_where=text("ended_at IS NOT NULL AND finalized_at IS NULL"),
+              sqlite_where=text("ended_at IS NOT NULL AND finalized_at IS NULL")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)

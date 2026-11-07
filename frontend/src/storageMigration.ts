@@ -15,7 +15,12 @@ export function duration(seconds: number | null | undefined): string {
   return h ? `${h} ч ${m} мин` : `${m} мин`;
 }
 
-/** Осталось по текущей скорости; до первых замеров — неизвестно. */
-export const remaining = (j: StorageMigration): number | null => (j.speed_bps ? Math.max(0, (j.bytes_total - j.bytes_done) / j.speed_bps) : null);
+const SETTLED = 64 << 20;
+
+/** Осталось времени. В начале идут мелкие файлы, и скорость по ним ничего не значит: пока скопировано мало, берём замер скорости из оценки. */
+export function remaining(j: StorageMigration): number | null {
+  const speed = j.bytes_done < SETTLED ? (j.estimate?.speed_bps ?? j.speed_bps) : j.speed_bps;
+  return speed ? Math.max(0, (j.bytes_total - j.bytes_done) / speed) : null;
+}
 
 export const enoughSpace = (j: StorageMigration): boolean => j.estimate?.target_free == null || j.estimate.target_free >= j.bytes_total;

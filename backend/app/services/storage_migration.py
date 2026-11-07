@@ -62,6 +62,11 @@ MAX_EVENTS = 300
 DELTA_PASSES = 4
 
 
+# корзины и снимки Samba, QNAP, Synology, Windows, NetApp
+SERVICE_DIRS = {".deleted", ".recycle", "@recycle", "#recycle", "$recycle.bin", "system volume information", ".snapshot", ".snapshots", "@eadir", ".trash", ".trashes", "lost+found", ".streams"}
+SERVICE_FILES = {"thumbs.db", ".ds_store", "desktop.ini"}
+
+
 class MigrationError(Exception):
     """Понятный отказ администратору."""
 
@@ -86,8 +91,11 @@ def category_of(path: str) -> str:
 
 
 def scanned(path: str) -> bool:
-    """Служебные файлы не переносятся: метка тома у каждого хранилища своя, временные — остатки прерванных записей."""
-    name = path.rsplit("/", 1)[-1]
+    """Служебные файлы не переносятся: метка тома у каждого хранилища своя, временные — остатки прерванных записей, а корзины и снимки принадлежат серверу хранения, не приложению."""
+    parts = path.split("/")
+    name = parts[-1]
+    if SERVICE_DIRS & {p.lower() for p in parts[:-1]} or name.lower() in SERVICE_FILES:
+        return False
     return name != MARKER and not name.endswith((".tmp", ".partial")) and not name.startswith(".peregovorka-write-test")
 
 
@@ -376,7 +384,7 @@ class StorageMigrations:
             free = None
         speed = await asyncio.to_thread(speed_sample, dst)
         est = {"categories": [{"key": k, "title": CATEGORIES[k], **v} for k, v in sorted(by.items(), key=lambda kv: -kv[1]["bytes"])], "target_free": free, "speed_bps": int(speed) if speed else None,
-               "seconds": int(size / speed) + total // 20 if speed else None, "not_in_profiles": "Сегменты идущего эфира и записи, ещё не выгруженные с диска сервера, в хранилищах не лежат и здесь не переносятся."}
+               "seconds": int(size / speed) + total // 20 if speed else None, "not_in_profiles": "Сегменты идущего эфира и записи, ещё не выгруженные с диска сервера, в хранилищах не лежат и здесь не переносятся. Корзины и снимки сервера хранения не переносятся."}
         await self._set(job_id, state="ready", total=total, bytes_total=size, estimate=est, note=f"Оценка готова: {total} файлов, {size} байт")
 
     async def _cancelled(self, job_id: uuid.UUID) -> None:

@@ -331,3 +331,12 @@ def test_export_saves_the_result_before_removing_the_source(client, monkeypatch,
     client.portal.call(run)
     assert order[:2] == ["commit", "delete"]
     assert call(client, lambda db: db.get(Recording, rec_id)).export_status == "exported"
+
+
+def test_streaming_routes_release_the_database_connection_first():
+    """Поток записи длится минуты: соединение, не отданное до него, занимало пул на всё время просмотра."""
+    import inspect
+    from app.api import live, media
+    for fn in (live.viewer_replay_file, media.stream_media):
+        src = inspect.getsource(fn)
+        assert src.rindex("await release(db)") > src.index("parse_range(") and "await release(db)" in src

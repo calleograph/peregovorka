@@ -12,7 +12,8 @@ describe("перенос между хранилищами", () => {
     expect(duration(3900)).toBe("1 ч 5 мин");
   });
   it("остаток считается по скорости, без замера — неизвестен", () => {
-    expect(remaining(job({}))).toBe(6);
+    expect(remaining(job({ bytes_total: 200 << 20, bytes_done: 100 << 20, speed_bps: 1 << 20 }))).toBe(100);
+    expect(remaining(job({ bytes_total: 1000, bytes_done: 10, speed_bps: 1, estimate: { categories: [], target_free: null, speed_bps: 495, seconds: null, not_in_profiles: "" } }))).toBe(2);
     expect(remaining(job({ speed_bps: null }))).toBeNull();
   });
   it("нехватка места видна до начала", () => {

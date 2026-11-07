@@ -24,7 +24,8 @@ def upgrade() -> None:
     op.add_column('meetings', sa.Column('finalize_error', sa.String(500), nullable=True))
     # старые встречи уже обработаны прежней версией: иначе обновление запустило бы их заново
     op.execute("UPDATE meetings SET finalized_at = ended_at WHERE ended_at IS NOT NULL")
-    op.create_index('ix_meetings_finalize_pending', 'meetings', ['ended_at'], postgresql_where=sa.text('ended_at IS NOT NULL AND finalized_at IS NULL'))
+    op.create_index('ix_meetings_finalize_pending', 'meetings', ['ended_at'], postgresql_where=sa.text('ended_at IS NOT NULL AND finalized_at IS NULL'),
+                    sqlite_where=sa.text('ended_at IS NOT NULL AND finalized_at IS NULL'))
 
 
 def downgrade() -> None:

@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 from app.services import cdn as C
 from .conftest import login, put_settings
-from .test_live import access, call, get_room, lv, patch, room_live  # noqa: F401 — фикстура lv
+from .test_live import go_live, access, call, get_room, lv, patch, room_live  # noqa: F401 — фикстура lv
 
 MASTER = "test-master-key-for-cdn"
 
@@ -130,6 +130,7 @@ def test_viewer_gets_a_node_link_with_an_origin_fallback_and_falls_back_to_origi
     assert patch(lv, room, live_cdn=True).json()["detail"]["code"] == "cdn_off"
     put_settings(lv, "live", cdn_nodes_enabled=True)
     assert patch(lv, room, live_cdn=True).json()["cdn"] is True, "свои узлы — тоже CDN для комнаты"
+    go_live(lv, room)
     a = access(lv, token).json()
     assert a["node"] in ("cdn1.example.org", "cdn2.example.org") and a["base"] == f"https://{a['node']}"
     keys = C.public_keys(C.master_of(lv.app_obj.state.settings), 1)
