@@ -44,7 +44,7 @@ LiveKit сообщает клиентам адреса сервера в кан�
 | Режим (`LIVEKIT_MEDIA_MODE`) | Когда | LiveKit | Клиенты получают |
 | --- | --- | --- | --- |
 | `direct` | публичный адрес прямо на интерфейсе (`LIVEKIT_NODE_IP`) | `node_ip` = этот адрес | его |
-| `nat-stun` | частный адрес, `LIVEKIT_PUBLIC_IP=auto`, STUN ответил | `use_external_ip: true` (STUN при каждом запуске), `advertise_internal_ip: true`, адрес сервера в локальной сети добавлен на интерфейс контейнера | публичный адрес **и** `LIVEKIT_NODE_IP` |
+| `nat-stun` | частный адрес, `LIVEKIT_PUBLIC_IP=auto`, STUN ответил | адрес определяет `entrypoint.sh` через STUN при каждом запуске и передаёт явным `node_ip`, `advertise_internal_ip: true`, адрес сервера в локальной сети добавлен на интерфейс контейнера | публичный адрес **и** `LIVEKIT_NODE_IP` |
 | `nat-manual` | `LIVEKIT_PUBLIC_IP=<IPv4>` | `node_ip` = заданный, `advertise_internal_ip: true` | заданный **и** `LIVEKIT_NODE_IP` |
 | `lan` | `LIVEKIT_PUBLIC_IP=off` или публичный адрес не определён | `node_ip` = `LIVEKIT_NODE_IP` | только `LIVEKIT_NODE_IP` |
 

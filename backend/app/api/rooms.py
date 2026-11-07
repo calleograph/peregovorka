@@ -110,7 +110,7 @@ async def temporary_policy(request: Request, su: SessionUser = Depends(require_u
 
 @router.post("/temporary", response_model=RoomOut, status_code=201)
 async def create_temporary_room(request: Request, body: dict = Body(...), su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
-    """«Создать временную переговорку»: только обычный авторизованный пользователь (гость по ссылке сюда не попадает — у него нет сессии).
+    """«Временная переговорка»: только обычный авторизованный пользователь (гость по ссылке сюда не попадает — у него нет сессии).
     Создатель становится руководителем; остальные параметры — значения по умолчанию. Комната живёт, пока идёт встреча, и закрывается сама."""
     await captcha.guard(request, "temp_room")
     cfg = await request.app.state.settings_svc.get(db, "general")

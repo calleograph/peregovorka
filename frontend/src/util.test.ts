@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { shortCommit, versionLabel } from "./util";
+import { keepsPathAfterLogin, shortCommit, versionLabel } from "./util";
+
+describe("возврат после входа", () => {
+  it("ссылка на комнату не теряется, остальное ведёт на главную", () => {
+    expect(keepsPathAfterLogin("/rooms/planning")).toBe(true);
+    expect(keepsPathAfterLogin("/p/abc")).toBe(true);
+    expect(keepsPathAfterLogin("/history")).toBe(false);
+    expect(keepsPathAfterLogin("/")).toBe(false);
+  });
+});
 
 describe("версия в интерфейсе", () => {
   it("версия и короткий commit (7 символов)", () => {

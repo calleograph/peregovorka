@@ -5,9 +5,10 @@
   * идущая встреча — тем, кто в ней участвовал (есть запись участия);
   * завершённая встреча — только если выполнено одно из:
       1. «аренда» (lease): участник был в комнате в момент завершения и ещё не покинул страницу встречи
-         (действует до явного выхода со страницы или до истечения post_meeting_access_minutes);
+         (действует до явного выхода со страницы или до истечения post_meeting_access_minutes; обновление страницы её не снимает);
       2. политика комнаты history_access = 'participants' и пользователь участвовал во встрече;
-      3. явное разрешение администратора (meeting_grants).
+      3. пользователь — организатор встречи (тот, кто её начал) и не был из неё удалён: документы и рассылка остаются за ним;
+      4. явное разрешение администратора (meeting_grants).
 Обычный пользователь, покинувший страницу завершённой встречи, доступа не сохраняет.
 """
 from __future__ import annotations
@@ -22,6 +23,9 @@ from ..auth.deps import SessionUser
 from ..models import Meeting, MeetingGrant, MeetingParticipant, Room, RoomModerator
 
 
+RELOAD_GRACE_S = 30      # столько живёт доступ после скрытия страницы: хватает, чтобы обновлённая страница успела вернуться
+
+
 def lease_key(meeting_id: uuid.UUID | str, user_id: uuid.UUID | str) -> str:
     return f"mtgview:{meeting_id}:{user_id}"
 
@@ -32,7 +36,24 @@ async def grant_leases(redis: Redis, meeting_id: uuid.UUID, user_ids: list[uuid.
 
 
 async def release_lease(redis: Redis, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    await redis.delete(lease_key(meeting_id, user_id))
+    key = lease_key(meeting_id, user_id)
+    await redis.delete(key, f"{key}:left")
+
+
+async def hide_lease(redis: Redis, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Страница скрыта. Так выглядят и закрытие вкладки, и F5, а отличить их можно только по возврату: доступ живёт ещё RELOAD_GRACE_S, вернувшаяся страница получает прежний срок."""
+    key = lease_key(meeting_id, user_id)
+    ttl = await redis.ttl(key)
+    if ttl > RELOAD_GRACE_S:
+        await redis.set(f"{key}:left", ttl, ex=RELOAD_GRACE_S)
+        await redis.expire(key, RELOAD_GRACE_S)
+
+
+async def resume_lease(redis: Redis, meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    key = lease_key(meeting_id, user_id)
+    if ttl := await redis.get(f"{key}:left"):
+        await redis.delete(f"{key}:left")
+        await redis.expire(key, int(ttl))
 
 
 async def can_access_meeting_actor(db: AsyncSession, redis: Redis, meeting: Meeting, actor) -> bool:
@@ -44,6 +65,13 @@ async def can_access_meeting_actor(db: AsyncSession, redis: Redis, meeting: Meet
 
 
 async def can_access_meeting(db: AsyncSession, redis: Redis, meeting: Meeting, su: SessionUser) -> bool:
+    if await has_lasting_access(db, meeting, su):
+        return True
+    return meeting.ended_at is not None and bool(await redis.exists(lease_key(meeting.id, su.user_id)))
+
+
+async def has_lasting_access(db: AsyncSession, meeting: Meeting, su: SessionUser) -> bool:
+    """Всё, кроме «аренды»: этот доступ не зависит от того, открыта ли страница встречи."""
     if su.is_admin:
         return True
     from . import roles  # noqa: PLC0415 — руководитель комнаты видит встречи своей комнаты (материалы, протоколы, рассылка)
@@ -57,9 +85,7 @@ async def can_access_meeting(db: AsyncSession, redis: Redis, meeting: Meeting, s
         participated = any(p.user_id == su.user_id and p.removed_at is None for p in meeting.participants)
     if meeting.ended_at is None:
         return participated
-    if await redis.exists(lease_key(meeting.id, su.user_id)):
-        return True
-    if participated and meeting.room.history_access == "participants":
+    if participated and (meeting.room.history_access == "participants" or meeting.started_by_user_id == su.user_id):
         return True
     grant = (await db.execute(select(MeetingGrant.id).where(
         MeetingGrant.meeting_id == meeting.id, MeetingGrant.user_id == su.user_id))).first()
@@ -83,7 +109,7 @@ async def accessible_history(db: AsyncSession, redis: Redis, su: SessionUser, *,
     cond = Meeting.id.in_(mine) | Meeting.id.in_(granted_q)
     if led:
         cond = cond | Meeting.room_id.in_(led)
-    stmt = select(Meeting.id, Meeting.room_id, Meeting.ended_at, Room.history_access).join(Room, Room.id == Meeting.room_id).where(cond)
+    stmt = select(Meeting.id, Meeting.room_id, Meeting.ended_at, Meeting.started_by_user_id, Room.history_access).join(Room, Room.id == Meeting.room_id).where(cond)
     if room_id:
         stmt = stmt.where(Meeting.room_id == room_id)
     cand = (await db.execute(stmt.order_by(Meeting.started_at.desc()).limit(cap))).all()
@@ -91,7 +117,7 @@ async def accessible_history(db: AsyncSession, redis: Redis, su: SessionUser, *,
         return []
     ids = [c.id for c in cand]
     participated = set((await db.execute(select(MeetingParticipant.meeting_id).where(
-        MeetingParticipant.user_id == su.user_id, MeetingParticipant.meeting_id.in_(ids)))).scalars())
+        MeetingParticipant.user_id == su.user_id, MeetingParticipant.meeting_id.in_(ids), MeetingParticipant.removed_at.is_(None)))).scalars())
     grants = set((await db.execute(select(MeetingGrant.meeting_id).where(MeetingGrant.user_id == su.user_id, MeetingGrant.meeting_id.in_(ids)))).scalars())
     ok: dict[uuid.UUID, bool] = {}
     need_lease = []
@@ -101,7 +127,7 @@ async def accessible_history(db: AsyncSession, redis: Redis, su: SessionUser, *,
             ok[c.id] = True
         elif c.ended_at is None:
             ok[c.id] = p
-        elif (p and c.history_access == "participants") or c.id in grants:
+        elif (p and (c.history_access == "participants" or c.started_by_user_id == su.user_id)) or c.id in grants:
             ok[c.id] = True
         else:
             need_lease.append(c.id)

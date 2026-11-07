@@ -21,7 +21,7 @@ from ..integrations.llm import LlmClient
 from ..models import Meeting, MeetingGrant, MeetingParticipant, Protocol, Recording, Room, TranscriptSegment, User
 from ..services import diagnostics, timings
 from ..services.audit import write_audit
-from ..services.settings import GROUPS, SettingsError
+from ..services.settings import CHAT_TYPES, FORBIDDEN_EXTENSIONS, GROUPS, SettingsError
 from ..services.storage import StorageError, build_storage
 from .meetings import meeting_counts, meeting_guests, meeting_out
 from .schemas import MeetingOut
@@ -54,6 +54,11 @@ async def put_settings(group: str, request: Request, body: dict[str, Any] = Body
     if group == "access":    # для аудита: какие группы добавлены и убраны (только DN групп — не секреты)
         _a = await svc.get(db, "access")
         before_acl = {"admin_groups": list(_a.admin_groups), "user_groups": list(_a.user_groups)}   # type: ignore[attr-defined]
+    if group == "chat_files":                # сохранённые значения прежних версий модель настроек очищает молча, а новый ввод должен получить ответ
+        names = [e.lstrip(".") for e in re.split(r"[,\s;]+", str(body.get("allowed_extensions") or "").lower())]
+        unknown = [e for e in names if e and e not in CHAT_TYPES and e not in FORBIDDEN_EXTENSIONS]         # запрещённые типы отклоняет сама модель настроек
+        if unknown:
+            raise HTTPException(status_code=422, detail="В чате нельзя разрешить эти типы файлов: " + ", ".join(unknown) + ". Допустимы: " + ", ".join(CHAT_TYPES) + ".")
     try:
         if group in ("storage", "audio_storage", "journal", "chat_files"):  # ошибки каталога видны сразу, а не при первой выгрузке
             new = await svc.preview(db, group, body)
@@ -211,7 +216,7 @@ async def directory_search(request: Request, kind: str = Query(pattern="^(group|
     try:
         return await asyncio.to_thread(request.app.state.directory.search, kind, q, 20)
     except DirectoryError as exc:
-        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «LDAP и доступ»." if exc.code == "not_configured"
+        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «Каталог: подключения LDAP/AD»." if exc.code == "not_configured"
                             else f"Каталог недоступен ({exc.code})") from None
 
 

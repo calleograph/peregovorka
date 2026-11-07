@@ -50,6 +50,8 @@ for s in "${SERVICES[@]}"; do
     printf '%-10s %s\n' "$s" "не запущен"
   fi
 done
+cid="$(dc ps -q mediamtx 2>/dev/null | head -1)"      # необязательная служба: показывается, на итог не влияет
+printf '%-10s %s\n' mediamtx "$([ -n "$cid" ] && docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo 'не запущен') (необязательная: низкая задержка эфира)"
 log
 v="$(dc exec -T backend python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/version',timeout=4).read().decode())" 2>/dev/null || true)"
 [ -n "$v" ] && log "Версия backend: $v"

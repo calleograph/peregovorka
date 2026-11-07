@@ -386,6 +386,18 @@ def test_presentation_room_gets_auto_video_when_enabled_and_not_when_encrypted(v
     assert set_room(video, enc, name="Зашифрованная").json()["video_mode"] == "off", "с шифрованием видео не включается само"
 
 
+def test_turning_a_room_into_a_presentation_from_the_editor_enables_auto_video(video):
+    enable(video)
+    login(video, "root")
+    room = make_room(video, moderators=LEADERS)
+    assert set_room(video, room, room_type="presentation", video_mode="off").json()["video_mode"] == "auto", "редактор всегда присылает video_mode"
+    plain = make_room(video, moderators=LEADERS)
+    r = set_room(video, plain, room_type="presentation", video_mode="off", e2ee_mode="full")
+    assert r.status_code == 200 and r.json()["video_mode"] == "off", "шифрование в той же правке отменяет автозапись, а не приводит к отказу"
+    done = make_room(video, moderators=LEADERS, room_type="presentation")
+    assert set_room(video, done, video_mode="off").json()["video_mode"] == "off", "в уже готовой презентации выключение остаётся за руководителем"
+
+
 def test_recording_longer_than_the_limit_is_closed_and_auto_mode_starts_the_next_fragment(video):
     room = make_room(video, moderators=LEADERS)
     mid = live(video, room, mode="auto", max_hours=1)

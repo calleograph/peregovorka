@@ -396,11 +396,36 @@ def test_restored_isolated_meeting_is_listed_for_admins_with_its_origin(tmp_path
         rep = job["result"]["report"][0]
         assert rep["outcome"] == "isolated" and any("изолированную" in x for x in rep["lines"])
         login(c, "root")
+        docs = c.get(f"/api/v1/meetings/{rep['meeting_id']}/protocols").json()
+        assert [d["kind"] for d in docs] == ["transcript"], "восстановленная стенограмма видна на странице встречи"
+        assert c.get(f"/api/v1/meetings/{rep['meeting_id']}/protocols/{docs[0]['id']}").json()["content"] == "Старый разговор\n"
+        assert c.get(f"/api/v1/meetings/{rep['meeting_id']}").json()["protocols"] == 1
+        room = next(r for r in c.get("/api/v1/admin/rooms").json() if r["slug"] == rs.ISOLATED_SLUG)
+        assert "вручную" not in room["description"], "подсказка не обещает переноса, которого нет"
         titles = [p["title"] for p in _protocols(c)]
         assert "Восстановлено: Бухгалтерия/2026-09-01, Вторник/09-00" in titles
         again = _apply(c, _scan(c))
         assert _count(c, Meeting, Meeting.end_reason == "restored_unverified") == 1, "повтор по той же папке вторую встречу не создаёт"
         assert again["result"]["counts"]["isolated"] == 1
+
+
+def test_video_kept_only_on_the_server_disk_is_found_and_plays_after_restore(tmp_path, directory):
+    s = make_settings(tmp_path, data_dir=str(tmp_path / "data"))
+    with running_app(s, directory) as c:
+        _users(c)
+        login(c, "root")
+        put_settings(c, "video", storage="local")
+        rec = Path(s.recordings_path)
+        data = _put(rec, "", "Бухгалтерия/2026-09-01, Вторник/09-00/video-1.mp4", b"\x00" * 64)
+        _put(rec, "", "Бухгалтерия/2026-09-01, Вторник/09-00/Пётр.wav", b"RIFF" + b"\x00" * 64)
+        scan = _scan(c)
+        files = [f["name"] for i in scan["result"]["items"] for f in i["files"]]
+        assert files == ["video-1.mp4"], "рядом лежащие локальные копии аудио область видео не забирает"
+        rep = _apply(c, scan)["result"]["report"][0]
+        assert rep["files"] == ["video-1.mp4"]
+        login(c, "root")
+        mix = c.get(f"/api/v1/meetings/{rep['meeting_id']}/media").json()["mixes"][0]
+        assert c.get(f"/api/v1/meetings/{rep['meeting_id']}/media/{mix['id']}/stream").content == data
 
 
 def _protocols(c):

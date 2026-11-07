@@ -489,6 +489,25 @@ def test_empty_meeting_does_not_create_auto_protocols_or_error_events(tmp_path, 
         assert [r["event"] for r in rows] == ["protocol_skipped"] and rows[0]["level"] == "info"
 
 
+def test_empty_meeting_still_reaches_the_mailing_step(tmp_path, directory):
+    from .test_admin_features import anon_ok
+
+    with running_app(make_settings(tmp_path), directory, transports={"anonymizer": httpx.MockTransport(anon_ok)}) as c:
+        configure(c)
+        put_settings(c, "protocol", auto_generate=True, auto_summary=True)
+        seen: list = []
+
+        async def after(mid):
+            seen.append(str(mid))
+
+        c.app_obj.state.protocols.after_finalize = after
+        a = _join(c, "alice", make_room(c)["id"])
+        login(c, "alice")
+        c.post(f"/api/v1/meetings/{a['meeting_id']}/end")
+        _drain(c)
+        assert seen == [a["meeting_id"]], "рассылка сама решает и пишет в журнал, что не готово; без неё пустая встреча пропадала молча"
+
+
 def test_room_chat_reactions_from_employees_and_guests(client):
     """Реакции в чате встречи: сотрудник и гость, одна на участника (повтор снимает, другая заменяет), только из набора, событие всем участникам,
     свой идентификатор и набор реакций приходят с лентой; посторонний сотрудник реакцию не поставит."""

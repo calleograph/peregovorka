@@ -355,7 +355,7 @@
     }
     [itemBlock("Решения", t.decisions, "d"), itemBlock("Задачи", t.tasks, "tasks"), itemBlock("Открытые вопросы", t.questions, "q")].forEach(function (b) { if (b) sec.appendChild(b); });
     if (!t.decisions.length && !t.tasks.length && !t.questions.length) {
-      sec.appendChild(el("p", "note", d.items_from_protocol ? "Решений, задач и открытых вопросов по этой теме в протоколе нет." : "Решения и задачи подтягиваются из протокола. Сформируйте протокол локальной моделью — они появятся здесь вместе с цитатами-основаниями."));
+      sec.appendChild(el("p", "note", d.items_from_protocol ? "Решений, задач и открытых вопросов по этой теме в протоколе нет." : "Решения и задачи подтягиваются из протокола. Сформируйте протокол — они появятся здесь вместе с цитатами-основаниями."));
     }
     if (t.sources && t.sources.length) {
       var so = el("div", "blk"); so.appendChild(el("h4", "", "Подтверждающие реплики"));

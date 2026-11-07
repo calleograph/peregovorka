@@ -1,7 +1,8 @@
 """Фоновая очистка просроченных данных. Сроки текста и аудио раздельные, задаются в комнате.
 
- * текст: реплики, сообщения чата, доска (схема) и протоколы (стенограмма/краткий) встречи, завершённой раньше срока; сама встреча
-   (метаданные: комната, время, участники) остаётся в истории;
+ * текст: реплики, сообщения чата, доска (схема), протоколы (стенограмма/краткий), карта разговора и их копии в хранилище документов у встречи, завершённой раньше срока;
+   сама встреча (метаданные: комната, время, участники) остаётся в истории. Если хранилище недоступно, текст в базе всё равно удаляется, а от копий остаётся строка status="deleting"
+   только с путём к каталогу: следующая очистка повторяет удаление, и каждая такая очистка пишет предупреждение в журнал;
  * аудио: файлы записей и строки recordings старше срока (по дате создания записи);
  * срок 0 = удалить после обработки (встреча завершена не менее RETENTION_GRACE назад — успеть выгрузить);
  * пустой срок (NULL) = бессрочно.
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import LiveViewer
 from ..services.live import purge_audience
-from ..models import Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
+from ..models import ConversationMap, Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
 from ..services import retention_policy
 from ..services.protocols import ProtocolService
 
@@ -31,6 +32,7 @@ MIX_STALE = timedelta(hours=6)
 async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService) -> dict[str, int]:
     now = utcnow()
     stats = {"segments": 0, "protocols": 0, "recordings": 0, "chat": 0, "whiteboards": 0}
+    deferred: dict[tuple, str] = {}
     async with session_maker() as db:
         try:
             await protocols.retry_pending_exports(db)  # повтор выгрузки записей, не дошедших до внешнего хранилища
@@ -61,10 +63,18 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
                 if ids:
                     if protocols.chat_files is not None:
                         await protocols.chat_files.delete_for_meetings(db, list(ids))   # файлы вложений уходят вместе с перепиской
+                    copies, failed = await protocols.purge_text_copies(db, list(ids))     # сначала файлы: пути к ним лежат в строках протоколов
                     r1 = await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id.in_(ids)))
-                    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol"))))
+                    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol", "transcript"))))
+                    for (mid, directory), why in failed.items():                          # вид transcript не показывается в списках документов и не мешает сверке
+                        db.add(Protocol(meeting_id=mid, kind="transcript", status="deleting", created_by="system", error=why, meta={"dir": directory}))
+                    deferred.update(failed)
                     stats["segments"] += r1.rowcount or 0
                     stats["protocols"] += r2.rowcount or 0
+                    if maps := (await db.execute(delete(ConversationMap).where(ConversationMap.meeting_id.in_(ids)))).rowcount:
+                        stats["maps"] = stats.get("maps", 0) + maps
+                    if copies:
+                        stats["text_copies"] = stats.get("text_copies", 0) + copies
                     stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
                     stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
                     if q := await purge_audience(db, list(ids)):        # вопросы зрителей и почта гостей — по сроку текстов
@@ -98,6 +108,12 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
             days = (await settings_svc.get(db, "chats")).retention_days       # срок хранения корпоративной переписки (0 — без срока)
             if days:
                 stats["chat_messages"] = await chats.purge_expired(db, protocols.chat_files, days)
+    if deferred:
+        stats["text_copies_deferred"] = len(deferred)
+        why = next(iter(deferred.values()))
+        log.warning("Копии текстов не удалены из хранилища документов, повтор при следующей очистке", extra={"meetings": len(deferred), "error": why})
+        if protocols.journal is not None:
+            protocols.journal.emit("storage", "retention_copies_deferred", level="warn", message=f"Копии текстов не удалены из хранилища документов: {why}", data={"folders": len(deferred)})
     if any(stats.values()):
         log.info("Очистка по срокам хранения", extra=stats)
     return stats

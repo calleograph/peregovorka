@@ -25,7 +25,7 @@ const daysText = (d: number | null | undefined) => (d == null ? "бессроч�
 type RetKind = "text" | "audio" | "video";
 /** Сроки хранения материалов: по каждому — общий срок сервера или свой у комнаты (пусто — бессрочно; 0 — удалять сразу после обработки). */
 const RET_KINDS: [RetKind, string, string][] = [
-  ["text", "Текст", "Стенограммы, протоколы, чат и доска. Общий срок сервера — Администрирование → Общие → «Сроки хранения материалов»."],
+  ["text", "Текст", "Стенограммы, протоколы, чат, доска и карта разговора, вместе с их копиями в хранилище документов. Общий срок сервера — Администрирование → Общие → «Сроки хранения материалов»."],
   ["audio", "Аудиозаписи", "Файлы участников и общая аудиозапись. Удаляются и локальные файлы, и копии во внешнем хранилище (SMB)."],
   ["video", "Видеозаписи", "Видеозаписи встреч и записи эфиров. Срок ссылки зрителя на запись эфира — отдельный (вкладка «Трансляция»): истечение ссылки файл не удаляет."],
 ];
@@ -166,7 +166,7 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
 
   return (
     <form className="form room-form" onSubmit={save} noValidate>
-      {temporary && <p className="muted small" style={{ marginTop: 0 }}>Временная переговорка: модель, телефония и рассылка материалов берутся из системных настроек.</p>}
+      {temporary && <p className="muted small" style={{ marginTop: 0 }}>Временная переговорка: языковая модель берётся из системных настроек. Телефонии и автоматической рассылки в ней нет; материалы можно отправить вручную со страницы встречи.</p>}
       <div className="tabs" role="tablist" aria-label="Разделы настроек комнаты">
         {tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}
       </div>
@@ -221,9 +221,9 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
           <fieldset className="group"><legend>Видеозапись</legend>
             {opts?.video_enabled === false && <p className="help" style={{ marginTop: 0 }}>Видеозапись выключена администратором сервера (Администрирование → Видеозапись). Режим можно выбрать заранее.</p>}
             <div className="cols">
-              <F title="Режим" tip={<>Один MP4 со всей встречей: сетка участников, при показе экрана он на основном месте. Не зависит от аудиозаписи. Пустая комната не записывается. Недоступна при сквозном шифровании и шифровании хранилища.{form.room_type === "presentation" && form.video_mode === "off" && " Для презентации обычно выбирают «Автоматически»."}</>}>
+              <F title="Режим" tip={<>Один MP4 со всей встречей: сетка участников, при показе экрана он на основном месте. Не зависит от аудиозаписи. Пустая комната не записывается. Вручную запись включает руководитель комнаты, а если руководителей нет, любой участник. Недоступна при сквозном шифровании и шифровании хранилища.{form.room_type === "presentation" && form.video_mode === "off" && " Для презентации обычно выбирают «Автоматически»."}</>}>
                 <select value={form.video_mode} onChange={(e) => set("video_mode", e.target.value as RoomForm["video_mode"])}>
-                  <option value="off">Выключена</option><option value="manual">Вручную (руководитель)</option><option value="auto">Автоматически, пока есть участники</option>
+                  <option value="off">Выключена</option><option value="manual">Вручную</option><option value="auto">Автоматически, пока есть участники</option>
                 </select></F>
               {form.video_mode !== "off" && (
                 <F title="Качество" tip="720p ≈ 1,2 ГБ в час, 1080p ≈ 2 ГБ в час (расчётно); в 1080p мелкий текст на экране читается лучше.">

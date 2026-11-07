@@ -286,3 +286,12 @@ def test_admin_detect_endpoint_needs_admin_and_never_needs_credentials(client, t
     assert r.status_code == 200 and r.json()["recommended"] == "ntlm" and r.json()["servers"][0]["schemes"] == ["negotiate", "ntlm"]
     assert all("authorization" not in q.headers for q in fx.seen)             # без учётных данных
     assert client.post("/api/v1/admin/outlook/ews-detect", json={"url": "http://insecure.example.org"}).status_code == 422
+
+
+def test_several_ews_addresses_survive_saving_and_http_is_still_refused():
+    from app.services.settings import OutlookSettings
+
+    many = OutlookSettings(ews_url="mail.example.org\nhttps://cas2.example.org/EWS/Exchange.asmx").ews_url
+    assert many == "https://mail.example.org/EWS/Exchange.asmx\nhttps://cas2.example.org/EWS/Exchange.asmx"
+    with pytest.raises(ValueError, match="только HTTPS"):
+        OutlookSettings(ews_url="http://mail.example.org")

@@ -27,8 +27,15 @@ case "$MODE" in
   list) for c in $(printf '%s\n' "${!PREREQ_PKG[@]}" | sort); do printf '%-24s %s\n' "$c" "${PREREQ_PKG[$c]}"; done ;;
   check)
     prereq_os_detect && ok "ОС: ${PREREQ_ID} ${PREREQ_VERSION} (${PREREQ_FAMILY})" || warn "ОС: ${PREREQ_ID:-?} ${PREREQ_VERSION:-}: ${PREREQ_WHY}"
-    if out="$(prereq_verify "$PROFILE_ARG")"; then ok "Все системные зависимости на месте (профиль $PROFILE_ARG)."
-    else printf '%s\n' "$out" | sed 's/^/  - /'; fail "Не хватает зависимостей. Установить: sudo scripts/prereq.sh --install --profile $PROFILE_ARG"; exit 1; fi ;;
+    if out="$(prereq_verify "$PROFILE_ARG")"; then
+      ok "Все системные зависимости на месте (профиль $PROFILE_ARG)."
+      [ "$PROFILE_ARG" = shared-host ] && ! docker buildx version >/dev/null 2>&1 && warn "Buildx не установлен: сборка пойдёт запасным сборщиком, медленнее."
+    else
+      printf '%s\n' "$out" | sed 's/^/  - /'
+      if [ "$PROFILE_ARG" = shared-host ]; then fail "Не хватает зависимостей. Docker и nginx на общем сервере ставит его администратор: --install их не ставит. Остальное: sudo scripts/prereq.sh --install --profile shared-host"
+      else fail "Не хватает зависимостей. Установить: sudo scripts/prereq.sh --install --profile $PROFILE_ARG"; fi
+      exit 1
+    fi ;;
   install)
     prereq_install_all "$PROFILE_ARG" || die "Установка зависимостей не завершена"
     if out="$(prereq_verify "$PROFILE_ARG")"; then ok "Все системные зависимости установлены."

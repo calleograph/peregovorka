@@ -449,7 +449,7 @@ async def list_documents(meeting_id: str, p: Principal = Depends(Access(None)), 
     if not kinds:
         raise ApiError(403, "insufficient_scope", "Не хватает права «protocols:read» (или summaries:read / transcripts:read).", extra={"required_scope": "protocols:read"})
     m = await load_meeting(db, p, meeting_id)
-    rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == m.id, Protocol.kind.in_(kinds)).order_by(Protocol.created_at, Protocol.id))).scalars().all()
+    rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == m.id, Protocol.kind.in_(kinds), Protocol.status != "deleting").order_by(Protocol.created_at, Protocol.id))).scalars().all()
     return DocList(items=[_doc(r) for r in rows])
 
 

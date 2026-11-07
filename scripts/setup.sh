@@ -97,7 +97,7 @@ if [ ! -f "$ENV" ]; then
     ask_valid "Публичный адрес для звонков из интернета" "${A_PUBLIC:-auto}" v_pub; A_PUBLIC="$REPLY"
   fi
   info "DATA_ROOT — ЛОКАЛЬНЫЙ каталог Linux для БД, моделей, записей и бэкапов (не сетевой путь)."
-  info "Сетевое SMB-хранилище готовых протоколов настраивается ПОСЛЕ установки: админка → «Хранилище»."
+  info "Сетевое SMB-хранилище готовых протоколов настраивается ПОСЛЕ установки: админка → «Файловые хранилища»."
   ask_valid "Каталог постоянных данных (вне репозитория)" "${A_DATA:-/srv/${NAME}-data}" v_data; DATA="$REPLY"
   ask_valid "Сколько прокси стоит перед сервисом (nginx сервера = 1; внешний proxy + nginx = 2)" "$([ "$AUTO" -eq 1 ] && echo 1 || echo 2)" v_hops; HOPS="$REPLY"
   WEB="$(find_port tcp 18480)"; LKH="$(find_port tcp 17880)"; LKT="$(find_port tcp 17881)"; LKU="$(find_port udp 17882)"; NGP="$(find_port tcp 18400)"

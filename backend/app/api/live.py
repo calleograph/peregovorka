@@ -287,7 +287,8 @@ async def meeting_live_state(meeting_id: uuid.UUID, request: Request, su: Sessio
     st = await request.app.state.live.state(db, meeting.room, meeting)
     can = bool(st["enabled"] and roles.can_control_meeting(meeting.room, su))
     st["can_control"] = can
-    if can or roles.can_manage_room(meeting.room, su):
+    st["can_edit"] = roles.can_manage_room(meeting.room, su)       # настройки комнаты; в комнате без руководителей участник управляет эфиром, но не ими
+    if can or st["can_edit"]:
         st["links"] = await _out(request, db, meeting.room, su)
     else:
         st.pop("destinations", None)

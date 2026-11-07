@@ -161,7 +161,7 @@ class LdapDirectory:
         if not settings.ldap_uri_list:
             raise DirectoryError("config_error", "Адрес LDAP не задан")
         if not settings.ldap_ca_file:
-            raise DirectoryError("config_error", "Нет CA-сертификата: проверка сертификата обязательна (загрузите CA в разделе «LDAP и доступ»)")
+            raise DirectoryError("config_error", "Нет CA-сертификата: проверка сертификата обязательна (загрузите CA в разделе «Каталог: подключения LDAP/AD»)")
         self._s = settings
 
     # ------------------------------------------------------------ соединения

@@ -12,7 +12,8 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
@@ -114,7 +115,7 @@ class MeetingService:
         except RoomNotFound:
             raise JoinError("room_not_found", "Комната не найдена или недоступна.", 404) from None
         if outlook_svc.is_too_early(room):            # запланированная конференция из Outlook: вход открывается за N минут до начала
-            raise JoinError("too_early", outlook_svc.gate_message(room), 425)
+            raise JoinError("too_early", await self._gate_message(db, room), 425)
 
         if room.password_hash and not (room.room_type == "broadcast" and roles.can_manage_room(room, su)):
             # трансляционная комната: пароль выступающего нужен остальным; владелец, руководители и администраторы входят по своим правам (пароль им не выдаётся и не заменяет права)
@@ -222,17 +223,31 @@ class MeetingService:
         return (await db.execute(select(func.count()).select_from(GuestParticipant).where(
             GuestParticipant.meeting_id == meeting_id, GuestParticipant.left_at.is_(None)))).scalar_one()
 
+    @staticmethod
+    def _guest_marks(meeting_id: uuid.UUID, ip: str | None, name: str, device: str) -> list[str]:
+        """По чему узнать удалённого гостя: учётной записи нет, а ссылка у всех одна. Вкладка браузера (X-Client-Id) и пара «адрес + имя»; один адрес не годится: за адресом офиса сидят и другие гости."""
+        return [f"guest:removed:{meeting_id}:{ip}:{name.casefold()}"] + ([f"guest:removed:{meeting_id}:{device}"] if device else [])
+
+    async def _gate_message(self, db: AsyncSession, room: Room) -> str:
+        try:
+            tz = ZoneInfo((await self.settings_svc.get(db, "general")).timezone)
+        except Exception:  # noqa: BLE001 — нет службы настроек или базы часовых поясов: время в UTC
+            tz = timezone.utc
+        return outlook_svc.gate_message(room, tz)
+
     async def join_guest(self, db: AsyncSession, room: Room, display_name: str, *, ip: str | None, client: str | None, email: str | None = None,
-                         materials_consent: bool = False) -> JoinResult:
+                         materials_consent: bool = False, device: str = "") -> JoinResult:
         """Вход гостя по гостевой ссылке. Гость НЕ начинает встречу: она должна быть уже активна (иначе незнакомый человек
         запускал бы запись и ASR в пустой комнате). Права минимальные: без демонстрации экрана и без управления."""
         if room.lifecycle == "closed":
             raise JoinError("room_closed", "Эта временная переговорка закрыта.", 410)
         if outlook_svc.is_too_early(room):
-            raise JoinError("too_early", outlook_svc.gate_message(room), 425)
+            raise JoinError("too_early", await self._gate_message(db, room), 425)
         meeting = await self._active_meeting(db, room.id)
         if meeting is None:
             raise JoinError("meeting_not_active", "Встреча ещё не началась. Дождитесь, пока её откроет сотрудник.", 409)
+        if await self._r.exists(*self._guest_marks(meeting.id, ip, display_name, device)):
+            raise JoinError("removed_from_meeting", "Руководитель удалил вас из этой встречи.", 403)
         users = (await db.execute(select(func.count(func.distinct(MeetingParticipant.user_id))).where(
             MeetingParticipant.meeting_id == meeting.id, MeetingParticipant.left_at.is_(None)))).scalar_one()
         if users + await self._open_guests(db, meeting.id) >= room.max_participants:
@@ -243,6 +258,8 @@ class MeetingService:
         db.add(guest)
         meeting.empty_since = None
         await db.commit()
+        if device:
+            await self._r.set(f"guest:device:{guest.id}", device, ex=GUEST_REVOKE_TTL)
         await self._sync_room(db, room, meeting)
         if not roles.is_presentation(room):
             await events.publish(self._r, meeting.id, {"type": "participant_joined", "guest_id": str(guest.id),
@@ -769,6 +786,8 @@ class MeetingService:
             if g is not None:
                 g.left_at = utcnow()
                 await db.commit()
+                for mark in self._guest_marks(meeting.id, g.ip, g.display_name, await self._r.get(f"guest:device:{ref}") or ""):
+                    await self._r.set(mark, "1", ex=GUEST_REVOKE_TTL)
         else:
             await self._r.set(self._kick_key(meeting.room_id, ref), "1", ex=KICK_BLOCK_SECONDS)
             devices |= set(await self._r.smembers(f"mdev:{meeting.id}:{ref}"))       # _close_participant стирает этот список: читаем до него

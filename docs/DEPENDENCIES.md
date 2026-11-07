@@ -11,7 +11,7 @@ Peregovorka собрана из чужих компонентов (LiveKit, PyTo
 | Диапазоны допустимых версий Python | `requirements.txt` | разработчик |
 | npm-зависимости | `frontend/package.json` + `package-lock.json` | `npm install`/`npm update` |
 | Базовые образы (Python, Node, nginx, Alpine, PostgreSQL, Redis) | тег **и digest** в `ARG …_IMAGE` Dockerfile и в `deployment/compose.yml` | `scripts/deps.py pin-images` + `apply` |
-| LiveKit Server, SIP-служба | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
+| LiveKit Server, SIP-служба, Egress, MediaMTX | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
 | PyTorch, torchaudio, GigaAM | `TORCH_VERSION`/`TORCHAUDIO_VERSION` в `asr-service/Dockerfile`, `GIGAAM_GIT_COMMIT` в `.env.example` | `scripts/deps.py apply` |
 | draw.io | `ARG DRAWIO_VERSION` в `frontend/Dockerfile` | `scripts/deps.py apply` |
 | Приложение для Windows (Electron, electron-builder, esbuild, WiX) | точные версии в `desktop/package.json` + `desktop/package-lock.json`, WiX — в `.github/workflows/desktop.yml` | разработчик при выпуске клиента (`desktop-vX.Y.Z`): `npm outdated` в `desktop/`, Electron — последний патч поддерживаемой ветки (исправления безопасности Chromium), запись в `desktop/CHANGELOG.md`. В манифест сервера (`components.json`) не входит: это отдельный продукт со своей версией |
@@ -51,7 +51,7 @@ python3 scripts/deps.py report          # «Было → Стало» для о�
 * **Patch** — предлагается и проверяется при каждом релизе; после зелёных тестов входит в релиз.
 * **Minor** — читается changelog, проверяется совместимость (для 0.x минор считается мажором), обновляется после профильных проверок.
 * **Major** — отдельная оценка совместимости, миграций и API; для PostgreSQL и Redis — отдельная процедура (ниже).
-* **Комплект LiveKit** (сервер, SIP, `livekit-client`, Python SDK `livekit` и `livekit-api`) проверяется **вместе**: поле `bundle: livekit` в манифесте, `deployment/compat.env` повторяет эти версии (совпадение проверяет `verify`).
+* **Комплект LiveKit** (сервер, SIP, `livekit-client`, Python SDK `livekit` и `livekit-api`) проверяется **вместе**: поле `bundle: livekit` в манифесте, `deployment/compat.env` повторяет версии сервера и SDK, без SIP (совпадение проверяет `verify`).
 
 Профильные проверки: LiveKit — вход участников, звук, видео, показ экрана, переподключение, адаптивное качество, E2EE (`tests/live/`); SIP — запуск службы с LiveKit и Redis, транки, правила, вызов, `OPTIONS`; ASR — тесты, импорт, прогрев и **настоящая** расшифровка тестового аудио моделью GigaAM; backend — полный набор тестов и миграции; frontend — типы, тесты, сборка, живые сценарии; PostgreSQL/Redis — запуск и сохранность данных; Outlook — манифест и серверные API. Что нельзя проверить без внешней инфраструктуры (реальная АТС, Exchange), помечается в отчёте как не проверенное.
 

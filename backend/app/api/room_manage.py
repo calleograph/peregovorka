@@ -294,11 +294,11 @@ async def patch_manage(room_id: uuid.UUID, body: RoomManagePatch, request: Reque
             raise HTTPException(409, "Видеозапись недоступна при сквозном шифровании: у сервера нет ключа, чтобы собрать картинку. Отключите шифрование или видеозапись.")
         if fields.get("encrypt_storage") or (room.encrypt_storage and fields.get("encrypt_storage") is not False):
             raise HTTPException(409, "Видеозапись пока не поддерживается вместе с шифрованием хранилища комнаты.")
-    if fields.get("room_type") == "presentation" and room.room_type != "presentation" and "video_mode" not in fields and room.video_mode == "off" \
-            and (await request.app.state.settings_svc.get(db, "video")).enabled and room.e2ee_mode == "off" and not room.encrypt_storage:
-        fields["video_mode"] = "auto"      # презентационная комната записывается автоматически, если администратор разрешил видеозапись
+    if fields.get("room_type") == "presentation" and room.room_type != "presentation" and fields.get("video_mode", "off") == "off" and room.video_mode == "off" \
+            and (await request.app.state.settings_svc.get(db, "video")).enabled and (fields.get("e2ee_mode") or room.e2ee_mode) == "off" and not fields.get("encrypt_storage", room.encrypt_storage):
+        fields["video_mode"] = "auto"      # презентационная комната записывается автоматически, если администратор разрешил видеозапись; редактор всегда шлёт video_mode, «off» значит «не менял»
     if (fields.get("e2ee_mode") not in (None, "off") or fields.get("encrypt_storage")) and (fields.get("video_mode") or room.video_mode) != "off":
-        raise HTTPException(409, "В комнате включена видеозапись, а она несовместима с шифрованием. Сначала отключите видеозапись (Настройки комнаты → Запись).")
+        raise HTTPException(409, "В комнате включена видеозапись, а она несовместима с шифрованием. Сначала отключите видеозапись (Настройки комнаты → Встреча и запись).")
     if fields.get("e2ee_mode") not in (None, "off") and room.sip_mode != "off":
         raise HTTPException(409, "Телефонные участники (SIP) не поддерживают сквозное шифрование: отключите телефонию в этой комнате или оставьте E2EE выключенным.")
     if fields.get("encrypt_storage") and not room.encrypt_storage and not await se.ensure_ready(request.app):
@@ -452,7 +452,7 @@ async def directory(room_id: uuid.UUID, request: Request, kind: str = Query(patt
     try:
         return await asyncio.to_thread(request.app.state.directory.search, kind, q, 20)
     except DirectoryError as exc:
-        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «LDAP и доступ»." if exc.code == "not_configured"
+        raise HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «Каталог: подключения LDAP/AD»." if exc.code == "not_configured"
                             else f"Каталог недоступен ({exc.code})") from None
 
 

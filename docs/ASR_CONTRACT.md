@@ -1,6 +1,6 @@
 # Контракт backend ⇄ ASR (Redis)
 
-Backend не импортирует код ASR, ASR не обращается к PostgreSQL. Обмен — только
+Backend не импортирует код ASR, ASR не обращается к PostgreSQL. Управление моделями backend выполняет по HTTP, порт 8090 (`api/admin_asr.py`: `models`, `active`, `test`, `compare`). Обмен стенограммой — только
 через Redis (пароль из `REDIS_PASSWORD`, сеть проекта).
 
 ## Управление: backend → ASR

@@ -213,7 +213,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/videolib.sh"
 # shellcheck source=complib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/complib.sh"
 
-# Процессов backend по числу vCPU (отправная точка): 4 процесса выдерживают 2000 активных пользователей на 8 vCPU вместе с PostgreSQL (docs/DB_AND_SCALING.md);
+# Процессов backend по числу vCPU: отправная точка, а не обещание вместимости (замеры и их условия: docs/DB_AND_SCALING.md);
 # на общем сервере ядра делят распознавание речи и языковая модель — процессов меньше. Каждый процесс — около 300 МБ памяти.
 backend_workers() {
   local cpus="${1:-4}" profile="${2:-standalone}" w

@@ -153,6 +153,9 @@ prereq_install_all() {
 prereq_verify() {
   local profile="${1:-standalone}" bad=0 m
   while IFS= read -r m; do [ -n "$m" ] && { printf 'нет команды: %s\n' "$m"; bad=1; }; done < <(prereq_missing_bins "$profile")
-  while IFS= read -r m; do [ -n "$m" ] && { printf 'Docker: не хватает %s\n' "$m"; bad=1; }; done < <(prereq_docker_missing)
+  while IFS= read -r m; do
+    [ "$m" = buildx ] && [ "$profile" = shared-host ] && continue     # на общем сервере сборка обходится без Buildx (dockerlib.sh: запасной сборщик); предупреждает prereq.sh
+    [ -n "$m" ] && { printf 'Docker: не хватает %s\n' "$m"; bad=1; }
+  done < <(prereq_docker_missing)
   return "$bad"
 }

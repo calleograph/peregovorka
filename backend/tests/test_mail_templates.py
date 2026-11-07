@@ -77,8 +77,8 @@ def test_manual_send_uses_template_edited_subject_and_text_several_formats_and_i
     log = client.get(f"/api/v1/meetings/{mid}/delivery/log").json()
     assert len(log) == 1 and log[0]["trigger"] == "manual" and log[0]["state"] == "sent" and log[0]["template"] == "Стандартный" and log[0]["formats"] == ["docx", "html"]
     assert log[0]["by"] and log[0]["recipient"] == "alice@corp.test" and "Smtp-Pass" not in str(log)
-    login(client, "alice")
-    assert client.get(f"/api/v1/meetings/{mid}/delivery/log").status_code in (403, 404), "журнал отправок — только руководителям и администраторам"
+    login(client, "bob")
+    assert client.get(f"/api/v1/meetings/{mid}/delivery/log").status_code in (403, 404), "журнал отправок — только тем, кто может отправлять: не рядовому участнику"
 
 
 def test_map_is_attached_as_standalone_html_next_to_the_documents(client, fake_smtp):  # noqa: F811

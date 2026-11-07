@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import Meeting, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, RestoreJob, Room, RoomAcl, RoomModerator, User, utcnow
 from . import manifest as mf
-from .storage import StorageBackend, StorageError, StorageNotFound
+from .storage import LocalStorage, StorageBackend, StorageError, StorageNotFound
 
 log = logging.getLogger("app.restore")
 LOCK = "lock:restore"
@@ -44,6 +44,7 @@ MAX_TEXT = 4 * 1024 * 1024               # текстовый материал �
 STALE_AFTER = timedelta(minutes=10)
 ISOLATED_SLUG = "restored-materials"
 ISOLATED_NAME = "Восстановленные материалы (проверьте права)"
+ISOLATED_NOTE = "Материалы, права на которые не удалось подтвердить. Видны только администратору; другим людям доступ выдаётся на странице встречи кнопкой «Управление доступом». Перенести встречу в другую комнату нельзя."
 AREAS = (("Audio", "audio_storage", "audio"), ("Video", "video", "video"), ("Transcripts", "storage", ""), ("Protocols", "storage", ""), ("Chat", "storage", ""), ("Boards", "storage", ""))
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DATE_DIR = re.compile(r"^(\d{4})-(\d{2})-(\d{2}), ")
@@ -142,6 +143,8 @@ class RestoreService:
         for folder, group, legacy in AREAS:
             try:
                 st = await (self._files.video_backend(db) if group == "video" else self._files.backend(db, group, folder, legacy_prefix=legacy))
+                if st is None and group == "video":             # «Только на диске сервера»: внешнего хранилища нет, видео лежит в каталоге записей
+                    st = LocalStorage(self._rec_path)
             except StorageError:
                 st = None
             if st is not None:
@@ -203,6 +206,10 @@ class RestoreService:
         for folder, storage in areas:
             found = await asyncio.to_thread(self._walk, storage, sub, budget, on_dir)
             for d, names in found:
+                if isinstance(storage, LocalStorage):            # в каталоге записей рядом с видео лежат локальные копии аудио: их находит область Audio
+                    names = [n for n in names if n == mf.FILENAME or (mf.classify(n) or ("",))[0] == "video_mix"]
+                    if names in ([], [mf.FILENAME]):
+                        continue
                 it = by_dir.setdefault(d, {"dir": d, "areas": {}, "manifest": None, "manifest_area": None})
                 it["areas"][folder] = {"names": names}
                 if mf.FILENAME in names and it["manifest"] is None:
@@ -396,8 +403,10 @@ class RestoreService:
 
     async def _isolated_room(self, db: AsyncSession) -> Room:
         room = (await db.execute(select(Room).where(Room.slug == ISOLATED_SLUG))).scalars().first()
-        if room is None:
-            room = Room(slug=ISOLATED_SLUG, name=ISOLATED_NAME, description="Материалы, права на которые не удалось подтвердить. Видны только администратору; перенесите встречу в нужную комнату вручную.",
+        if room is not None:
+            room.description = ISOLATED_NOTE        # комнаты, созданные раньше, хранят прежнюю подсказку
+        else:
+            room = Room(slug=ISOLATED_SLUG, name=ISOLATED_NAME, description=ISOLATED_NOTE,
                         lifetime="permanent", lifecycle="active", is_enabled=False, history_access="admin")
             db.add(room)
             await db.flush()
@@ -559,9 +568,9 @@ class RestoreService:
             elif kind == "video_mix":
                 if rel in have_paths:
                     continue
+                where = {"export_status": "local"} if isinstance(storage, LocalStorage) else {"export_status": "exported", "export_location": f"{area}/{rel}", "export_area": "video" if area == "Video" else "audio"}
                 db.add(Recording(meeting_id=meeting.id, room_id=meeting.room_id, participant_identity="meeting", path=rel, size_bytes=size, kind="mix_video", mime="video/mp4",
-                                 has_video=True, status="ready", export_status="exported", export_location=f"{area}/{rel}", export_area="video" if area == "Video" else "audio",
-                                 file_state="ok", sha256=digest, created_at=utcnow()))
+                                 has_video=True, status="ready", file_state="ok", sha256=digest, created_at=utcnow(), **where))
                 added.append(name)
             elif kind in ("transcript", "protocol", "summary"):
                 if (kind, d) in protos:

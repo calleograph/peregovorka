@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.services.access import RELOAD_GRACE_S, lease_key
 from app.services.export_docs import find_fonts, md_to_plain, parse_markdown, to_docx, to_pdf
 
 from .conftest import held_connections, login, make_room, make_settings, put_settings, running_app
@@ -100,11 +101,52 @@ def test_admin_sees_everything_and_websocket_follows_the_same_rules(client):
     end_by_alice(client, mid)
     login(client, "root")
     assert client.get(f"/api/v1/meetings/{mid}/transcript").status_code == 200
-    login(client, "alice")
+    login(client, "bob")
     client.post(f"/api/v1/meetings/{mid}/release")
     with client.websocket_connect("/api/v1/ws") as ws:
         ws.send_json({"type": "subscribe", "meeting_id": mid})
         assert ws.receive_json()["type"] == "error"
+
+
+def test_organizer_keeps_the_meeting_and_its_mail_log_and_only_a_page_bound_user_is_warned(client):
+    _room, mid = meeting_with_two(client)
+    end_by_alice(client, mid)
+    assert client.get(f"/api/v1/meetings/{mid}").json()["access_temporary"] is False, "alice начала встречу: доступ не зависит от страницы"
+    assert client.post(f"/api/v1/meetings/{mid}/release").status_code == 204
+    assert [m["id"] for m in client.get("/api/v1/meetings").json()] == [mid]
+    assert client.get(f"/api/v1/meetings/{mid}/delivery/log").status_code == 200 and client.get(f"/api/v1/meetings/{mid}").status_code == 200
+    login(client, "bob")
+    assert client.get(f"/api/v1/meetings/{mid}").json()["access_temporary"] is True
+    assert client.get(f"/api/v1/meetings/{mid}/delivery/log").status_code == 404
+
+
+def test_removed_organizer_does_not_keep_the_meeting(client):
+    from .test_roles_floor import LEADERS
+
+    room = make_room(client, moderators=LEADERS)
+    a = _join(client, "alice", room["id"])
+    _join(client, "carol", room["id"])
+    login(client, "carol")
+    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/moderation/kick", json={"identity": a["identity"]}).status_code == 200
+    assert client.post(f"/api/v1/meetings/{a['meeting_id']}/end").status_code == 204
+    assert not can_read(client, "alice", a["meeting_id"])
+    assert client.get("/api/v1/meetings").json() == []
+
+
+def test_page_reload_keeps_temporary_access_and_closing_it_does_not(client):
+    _room, mid = meeting_with_two(client)
+    end_by_alice(client, mid)
+    redis = client.app_obj.state.redis
+    login(client, "bob")
+    bob = client.get("/api/v1/auth/me").json()["user"]["id"]
+    key = lease_key(mid, bob)
+    assert client.post(f"/api/v1/meetings/{mid}/release?grace=1").status_code == 204        # F5: браузер шлёт то же, что и при закрытии вкладки
+    ttl = client.portal.call(lambda: redis.ttl(key))
+    assert 0 < ttl <= RELOAD_GRACE_S, "закрытая вкладка теряет доступ сама, повторного запроса не будет"
+    assert client.get(f"/api/v1/meetings/{mid}").status_code == 200                         # страница вернулась
+    assert client.portal.call(lambda: redis.ttl(key)) > RELOAD_GRACE_S, "прежний срок восстановлен"
+    assert client.post(f"/api/v1/meetings/{mid}/release").status_code == 204                # переход внутри приложения закрывает доступ сразу
+    assert client.get(f"/api/v1/meetings/{mid}").status_code == 404
 
 
 # ==================================================================================== протоколы

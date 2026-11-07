@@ -83,7 +83,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
             <button type="button" className="btn" disabled={busy || speakerPw.length < 4} onClick={setSpeaker}>{cfg.speaker_password_set ? "Изменить пароль" : "Задать пароль"}</button>
             {cfg.speaker_password_set && <button type="button" className="btn ghost" disabled={busy} onClick={() => void run(async () => { await onSpeakerPassword(null); load(); }, "Пароль выступающего сброшен")}>Сбросить</button>}
           </SubForm>
-          <p className="lv-note">Пароль нужен тем, кто входит как выступающий. Он не даёт прав руководителя: запись, участники и эфир управляются по вашим ролям. Владелец, руководители и администраторы входят без пароля.</p>
+          <p className="lv-note">Пароль нужен тем, кто входит как выступающий. Он не даёт прав руководителя: запись, участники и эфир управляются по вашим ролям.{isBroadcastType && " Владелец, руководители и администраторы входят без пароля."}</p>
 
           <h4 style={{ margin: "10px 0 2px" }}>Зрители</h4>
           <div className="lv-link">
@@ -118,7 +118,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
           {!embedded && <QualitySelect value={cfg.quality} disabled={busy || live} onChange={(q) => void patch({ live_quality: q }, "Качество сохранено")} />}
           <label>Запуск эфира
             <select value={cfg.start} disabled={busy} onChange={(e) => void patch({ live_start: e.target.value as "manual" | "auto" }, "Режим запуска сохранён")}>
-              <option value="manual">Вручную: руководитель нажимает «Начать эфир»</option>
+              <option value="manual">Вручную: руководитель нажимает «{isBroadcastType ? "Выйти в эфир" : "Начать эфир"}»</option>
               <option value="auto">Автоматически: эфир начинается, когда подключился первый выступающий</option>
             </select></label>
           <div className="lv-rec">

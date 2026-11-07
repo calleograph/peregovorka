@@ -94,6 +94,14 @@ def test_forbidden_extensions_cannot_be_enabled_by_admin(client):
     assert r.status_code == 422 and "html" in r.text
 
 
+def test_unsupported_type_is_refused_by_name_instead_of_being_dropped_silently(client):
+    login(client, "root")
+    r = client.put("/api/v1/admin/settings/chat_files", json={"allowed_extensions": "pdf, ZIP .mp4"})
+    assert r.status_code == 422 and "zip" in r.json()["detail"] and "mp4" in r.json()["detail"] and "pdf," in r.json()["detail"]
+    assert client.get("/api/v1/admin/settings/chat_files").json()["allowed_extensions"] != "pdf"
+    assert client.put("/api/v1/admin/settings/chat_files", json={"allowed_extensions": "pdf, .PNG"}).status_code == 200
+
+
 def test_attachment_access_rules(client):
     room = make_room(client)
     mid = _join(client, "alice", room["id"])["meeting_id"]

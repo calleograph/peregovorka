@@ -37,7 +37,7 @@ async def _meeting(db: AsyncSession, meeting_id: uuid.UUID, su: SessionUser) -> 
 
 
 def _directory_error(exc: DirectoryError) -> HTTPException:
-    return HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «LDAP и доступ»." if exc.code == "not_configured"
+    return HTTPException(status_code=503, detail="Каталог не подключён. Администратор добавляет подключение в разделе «Каталог: подключения LDAP/AD»." if exc.code == "not_configured"
                          else f"Каталог недоступен ({exc.code})")
 
 

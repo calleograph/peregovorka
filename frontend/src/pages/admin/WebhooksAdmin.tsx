@@ -44,7 +44,7 @@ export default function WebhooksAdmin() {
   const toggleRoom = (id: string) => edit && setEdit({ ...edit, v: { ...edit.v, rooms: (edit.v.rooms ?? []).includes(id) ? (edit.v.rooms ?? []).filter((x) => x !== id) : [...(edit.v.rooms ?? []), id] } });
   const test = (w: WebhookEndpointItem) => guard(async () => {
     const r = await api.admin.webhookTest(w.id);
-    setNote({ ok: r.ok, text: r.ok ? `«${w.name}»: проверочное событие доставлено (HTTP ${r.status})` : `«${w.name}»: не доставлено — ${r.error ?? "ошибка"}` });
+    setNote({ ok: r.ok, text: r.ok ? `«${w.name}»: проверочное событие доставлено (HTTP ${r.status}).${r.warning ? ` ${r.warning}` : ""}` : `«${w.name}»: не доставлено — ${r.error ?? "ошибка"}` });
     await load();
   });
   const history = (w: WebhookEndpointItem) => guard(async () => setHist({ ep: w, rows: await api.admin.webhookDeliveries(w.id) }));

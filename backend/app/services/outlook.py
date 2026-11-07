@@ -14,7 +14,7 @@ import json
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from xml.sax.saxutils import escape
 
 from sqlalchemy import func, select
@@ -307,8 +307,8 @@ def state(room: Room, now: datetime | None = None, *, meeting_active: bool = Fal
     return "open"
 
 
-def gate_message(room: Room) -> str:
-    opens = aware(room.join_opens_at).strftime("%d.%m.%Y %H:%M UTC") if room.join_opens_at else ""
+def gate_message(room: Room, tz: tzinfo = timezone.utc) -> str:
+    opens = aware(room.join_opens_at).astimezone(tz).strftime("%d.%m.%Y %H:%M %Z") if room.join_opens_at else ""
     return f"Конференция ещё не открыта: подключиться можно с {opens}. Откройте ссылку позже — страница покажет обратный отсчёт."
 
 
@@ -351,11 +351,11 @@ def invite_texts(room: Room, base: str, cfg: OutlookSettings, *, guest_url: str 
 
 
 def public_view(room: Room, st: str, *, now: datetime, cfg: OutlookSettings) -> dict:
-    """Сведения для страницы обратного отсчёта (без входа в систему): название, время, состояние; гостевой токен — только когда вход уже открыт."""
+    """Сведения для страницы обратного отсчёта (без входа в систему): название, время, состояние. Гостевого токена здесь нет и быть не должно: код страницы не меняется и лежит в каждом
+    приглашении, поэтому любой, у кого он есть, получил бы и новую ссылку после «Выпустить новую». Гость входит только по своей ссылке."""
     guest_ok = bool(room.guest_access_enabled and room.guest_token and cfg.guest_links)
     return {"name": room.name, "state": st, "start": room.scheduled_start, "end": room.scheduled_end, "opens_at": room.join_opens_at, "recurring": room.recurring,
-            "early_minutes": cfg.early_minutes, "server_time": aware(now), "slug": room.slug, "guests": guest_ok,
-            "guest_token": room.guest_token if guest_ok and st in ("open", "live") else None}
+            "early_minutes": cfg.early_minutes, "server_time": aware(now), "slug": room.slug, "guests": guest_ok}
 
 
 # ------------------------------------------------------------------------------------------------ манифест

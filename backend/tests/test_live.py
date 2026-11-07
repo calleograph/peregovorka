@@ -166,6 +166,16 @@ def test_e2ee_and_encrypted_storage_refuse_live_and_quality_is_fixed_while_live(
 
 
 # --------------------------------------------------------------------------------------------- запуск и остановка
+def test_participant_of_a_leaderless_room_runs_the_broadcast_but_is_not_offered_room_settings(lv):
+    room = make_room(lv, room_type="broadcast")
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    login(lv, "alice")
+    st = lv.get(f"/api/v1/meetings/{mid}/live").json()
+    assert st["can_control"] is True and st["can_edit"] is False, "правки комнаты дали бы участнику «нет прав»"
+    login(lv, "root")
+    assert lv.get(f"/api/v1/meetings/{mid}/live").json()["can_edit"] is True
+
+
 def test_start_explains_each_refusal_and_does_not_touch_the_conference(lv):
     room = room_live(lv)
     mid = _join(lv, "alice", room["id"])["meeting_id"]
@@ -216,7 +226,7 @@ def test_second_broadcast_is_refused_by_the_server_limit_while_conferences_go_on
     mb = _join(lv, "alice", b["id"])["meeting_id"]
     assert start(lv, ma).status_code == 200
     r = start(lv, mb)
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "live_busy" and "Обычные конференции" in r.json()["detail"]["message"]
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "live_busy" and "Повторите позже" in r.json()["detail"]["message"]
     put_settings(lv, "live", max_concurrent=2)
     assert start(lv, mb).status_code == 200
 

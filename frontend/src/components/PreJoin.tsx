@@ -37,7 +37,7 @@ export default function PreJoin({ room, needPassword, password, onPassword, erro
   const [micOn, setMicOn] = useState(() => initialMic(mode, room?.mute_on_join));
   const lastHw = useRef<(PreJoinHw & { micOk: boolean }) | null>(null);
   useEffect(() => { if (lastHw.current && onHw) onHw({ ...lastHw.current, micOn }); }, [micOn]);       // eslint-disable-line react-hooks/exhaustive-deps
-  const facts: [Parameters<typeof Icon>[0]["name"], string, string][] = micFacts(mode, micOn).map((f) => [f.icon, f.title, f.text]);
+  const facts: [Parameters<typeof Icon>[0]["name"], string, string][] = micFacts(mode, mode === "regular" ? !room?.mute_on_join : micOn).map((f) => [f.icon, f.title, f.text]);
   if (room?.transcription_enabled !== false) facts.push(["transcript", "Ведётся стенограмма", "Реплики попадут в протокол встречи."]);
   if (room?.lifetime === "temporary") facts.push(["sparkle", "Временная комната", "Закроется после встречи; материалы останутся в «Истории»."]);
   const rec = room?.auto_record ? "Запись звука начнётся сразу. Отметка «Идёт запись» видна всем участникам." : room?.record_audio ? "Руководитель может включить запись звука — об этом появится заметная отметка." : "";

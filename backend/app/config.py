@@ -124,8 +124,8 @@ class Settings(BaseSettings):
 
     # --- встречи и хранение
     meeting_end_grace_seconds: int = Field(default=60, ge=0)
-    default_text_retention_days: int | None = 365
-    default_audio_retention_days: int | None = 30
+    default_text_retention_days: int | None = None     # те же значения, что в настройках general: новая комната следует общим срокам сервера, а её поля срока лишь запоминают их
+    default_audio_retention_days: int | None = 60
     segment_consumer_block_ms: int = Field(default=2000, ge=10, le=10000)
     room_password_max_failures: int = 5
     room_password_failure_window_seconds: int = 300

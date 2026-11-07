@@ -29,13 +29,13 @@ video_active() {
   return 0
 }
 
-# Образ Egress (≈ 1,3 ГБ): мягко — нет интернета или места, остальная система работает, видеозапись заработает после загрузки образа
+# Образ Egress (≈ 3,8 ГБ): мягко — нет интернета или места, остальная система работает, видеозапись заработает после загрузки образа
 video_prepare() { # video_prepare [soft]
   local soft="${1:-}"
   video_enabled || return 0
   if [ "${DRY_RUN:-0}" = "1" ]; then info "[dry-run] Видеозапись включена: образ $(video_image)"; return 0; fi
   if command -v docker >/dev/null 2>&1; then
-    info "Образ LiveKit Egress (≈ 1,3 ГБ)"
+    info "Образ LiveKit Egress (≈ 3,8 ГБ)"
     if ! img_ensure egress VIDEO_IMAGE "$VIDEO_DEFAULT_IMAGE"; then
       video_refresh; [ "$soft" = soft ] && { warn "Видеозапись заработает после загрузки образа: повторите действие в панели («Повторить установку») или обновление."; return 0; } || return 1
     fi

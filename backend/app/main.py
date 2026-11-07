@@ -364,7 +364,7 @@ def create_app(
                     await ca.rebuild(boot_db)
                 except Exception as exc:  # noqa: BLE001
                     app.state.boot_errors["ca"] = describe_error(exc)
-                    log.error("Не удалось собрать набор CA: %s (проверьте права на каталог данных; администратору: Администрирование → Состояние системы → «Исправить автоматически»)",
+                    log.error("Не удалось собрать набор CA: %s (проверьте права на каталог данных; администратору: Администрирование → Обзор → «Исправить автоматически»)",
                               app.state.boot_errors["ca"], extra={"error": "boot_ca_failed"})
                 try:
                     if hasattr(directory, "reload"):

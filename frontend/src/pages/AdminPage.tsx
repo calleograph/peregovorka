@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ADMIN_DOCS, helpUrl } from "../help/docs";
 import { useLocation } from "react-router-dom";
 import { tabFromSearch } from "../navMenu";
 import { focusAnchor } from "../focusAnchor";
@@ -147,7 +148,7 @@ const GROUPS: Group[] = [
     { id: "screen", label: "Демонстрация экрана", render: () => <SettingsForm key="screen" group="screen" title="Демонстрация экрана" fields={screenFields} intro="Качество и поведение показа экрана для всех комнат, где он разрешён." /> },
     { id: "mail_policy", label: "Почта: правила рассылки", render: () => (
       <SettingsForm key="mail_policy" group="mail_policy" title="Правила рассылки материалов встреч" fields={mailPolicyFields}
-        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Материалы после встречи»); адреса сервера и пароль ему не показываются." />) },
+        intro="Глобальные ограничения. Руководитель комнаты выбирает только, какие материалы и кому отправлять (в «Настройки комнаты» → «Автоотправка»); адреса сервера и пароль ему не показываются." />) },
     { id: "mail_templates", label: "Почта: шаблоны писем", render: () => <MailTemplatesAdmin /> },
   ] },
 ];
@@ -254,7 +255,10 @@ export default function AdminPage({ version }: { version: string }) {
             );
           })}
         </nav>
-        <div style={{ minWidth: 0 }}>{page?.render(pick)}</div>
+        <div style={{ minWidth: 0 }}>
+          {ADMIN_DOCS[tab] && <p className="admin-doc"><a href={helpUrl(ADMIN_DOCS[tab])} target="_blank" rel="noopener noreferrer">Инструкция к этому разделу</a></p>}
+          {page?.render(pick)}
+        </div>
       </div>
     </section>
   );

@@ -58,6 +58,12 @@ export function fileBase(name: string, iso: string): string {
 }
 
 /** Короткий commit для показа (как `git log --oneline`). */
+/** Страницы, которые после входа открываются там же, а не на главной: ссылка на комнату не должна теряться. */
+export const keepsPathAfterLogin = (pathname: string): boolean => /^\/(p|rooms)\//.test(pathname);
+
+/** Ссылка на временную комнату открывается только тем, кто в её доступе: при создании там лишь создатель. */
+export const TEMP_LINK_HINT = "Коллега войдёт, только когда вы добавите его: «Настройки комнаты» → «Доступ и гости» → «＋ В доступ». Людям без учётной записи нужна гостевая ссылка.";
+
 export const shortCommit = (c: string | null | undefined): string => (c && c !== "unknown" ? c.slice(0, 7) : "");
 
 /** «0.1.4 · 6123022» — версия проекта и commit сборки (commit неизвестен — только версия). */

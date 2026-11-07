@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # video.sh — видеозапись встреч (LiveKit Egress): включить / выключить на сервере, состояние. Нужен root (кроме status).
 #
-#   sudo scripts/video.sh enable  [--env FILE] [--yes]    включить: LiveKit подключается к Redis (общая шина), запускается контейнер livekit-egress (≈ 1,3 ГБ образ)
+#   sudo scripts/video.sh enable  [--env FILE] [--yes]    включить: LiveKit подключается к Redis (общая шина), запускается контейнер livekit-egress (≈ 3,8 ГБ образ)
 #   sudo scripts/video.sh disable [--env FILE] [--yes]    выключить: контейнер livekit-egress останавливается (готовые записи и настройки комнат сохраняются)
 #   scripts/video.sh status [--env FILE]                  включена ли видеозапись на сервере, работает ли служба, хватает ли места и процессора
 #
@@ -11,6 +11,7 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
+case "${1:-}" in -h|--help) sed -n '2,11p' "$0"; exit 0 ;; esac
 CMD="${1:-status}"; [ $# -gt 0 ] && shift
 YES=0
 while [ $# -gt 0 ]; do
@@ -37,7 +38,7 @@ case "$CMD" in
     fi ;;
   enable)
     need_root
-    [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; log "Будет скачан образ ≈ 1,3 ГБ (свободно $(free_gb) ГБ), LiveKit будет перезапущен — идущие звонки на секунды прервутся."; read -r -p "Включить видеозапись? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }
+    [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; log "Будет скачан образ ≈ 3,8 ГБ (свободно $(free_gb) ГБ), LiveKit будет перезапущен — идущие звонки на секунды прервутся."; read -r -p "Включить видеозапись? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }
     command -v docker >/dev/null 2>&1 || die "Docker не найден"
     fg="$(free_gb)"; [ -n "$fg" ] && [ "$fg" -lt 8 ] && die "Мало места на томе данных ($fg ГБ): для образа Egress и записей нужно не менее 8 ГБ."
     upd_env_set_key "$ENV_FILE" VIDEO_ENABLED yes || die "Не удалось записать VIDEO_ENABLED в .env"

@@ -1069,3 +1069,10 @@ body.screen-max-open { overflow: hidden; }
 .btn.onair-go .rec-dot { background: #fff; }
 .btn.onair-stop { border-color: var(--danger); color: var(--danger-text); }
 fieldset.plain-set { border: 0; padding: 0; margin: 0; min-width: 0; } fieldset.plain-set legend { padding: 0; margin-bottom: 4px; }
+
+.help-page { max-width: 720px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 16px; }
+.help-page > input { width: 100%; }
+.help-filters { gap: 16px; flex-wrap: wrap; }
+.help-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.help-list li { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.admin-doc { margin: 0 0 8px; text-align: right; font-size: 14px; }

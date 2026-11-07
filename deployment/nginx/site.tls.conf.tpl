@@ -51,6 +51,20 @@ server {
         tcp_nodelay on;
     }
 
+    # эфир с низкой задержкой: плейлист отвечает, когда готова новая часть, поэтому буферизация здесь добавила бы задержку
+    location /llhls/ {
+        proxy_pass http://127.0.0.1:@@WEB_PORT@@;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_read_timeout 15s;
+        access_log off;        # в пути лежит подпись
+    }
+
     location / {
         proxy_pass http://127.0.0.1:@@WEB_PORT@@;
         proxy_http_version 1.1;

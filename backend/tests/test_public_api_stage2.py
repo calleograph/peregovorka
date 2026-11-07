@@ -456,6 +456,17 @@ def test_secret_rotation_signs_with_both_secrets_during_the_window_then_only_the
         assert [a["action"] for a in c.get("/api/v1/admin/audit").json()].count("webhook.rotate_secret") == 2
 
 
+def test_manual_test_warns_when_the_api_is_off_and_real_events_are_not_created(tmp_path, directory):
+    hook = Hook()
+    with hook_app(tmp_path, directory, hook) as c:
+        prepare(c)
+        enable(c)
+        wh = add_hook(c)
+        put_settings(c, "api", enabled=False)
+        res = c.post(f"/api/v1/admin/public-api/webhooks/{wh['id']}/test").json()
+        assert res["ok"] is True and "настоящие события не создаются" in res["warning"], "иначе удачная проверка выглядит как работающая подписка"
+
+
 def test_manual_test_event_and_delivery_history_with_paging(tmp_path, directory):
     hook = Hook()
     with hook_app(tmp_path, directory, hook) as c:
@@ -464,6 +475,7 @@ def test_manual_test_event_and_delivery_history_with_paging(tmp_path, directory)
         wh = add_hook(c)
         login(c, "root")
         res = c.post(f"/api/v1/admin/public-api/webhooks/{wh['id']}/test").json()
+        assert res["warning"] is None
         assert res["ok"] is True and res["status"] == 200 and hook.calls[0].headers["x-peregovorka-event"] == "webhook.test"
         hook.status = 500
         bad = c.post(f"/api/v1/admin/public-api/webhooks/{wh['id']}/test").json()

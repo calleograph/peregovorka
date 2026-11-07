@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -92,6 +93,14 @@ def main() -> int:
     footer = (WIKI / "_Footer.md").read_text(encoding="utf8") if (WIKI / "_Footer.md").exists() else ""
     if version not in footer:
         warns.append(f"_Footer: версия {version} не указана")
+    # контекстная справка приложения и её индекс не отстают от статей
+    docs = ROOT / "frontend" / "src" / "help" / "docs.ts"
+    if docs.exists():
+        for page in re.findall(r': "([^"]+)"', docs.read_text(encoding="utf8")):
+            if page not in ps:
+                errs.append(f"frontend/src/help/docs.ts: нет статьи «{page}»")
+        if subprocess.run([sys.executable, str(ROOT / "scripts" / "build_help_index.py"), "--check"], capture_output=True).returncode:
+            errs.append("индекс справки устарел: выполните python3 scripts/build_help_index.py")
     side = (WIKI / "_Sidebar.md").read_text(encoding="utf8") if (WIKI / "_Sidebar.md").exists() else ""
     for name in ps:
         if name in SERVICE or name == "Home":

@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, TrackEvent, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
-import { LiveDialog, useLive } from "../components/LiveControl";
+import { LiveDialog, showLiveQuestions, useLive } from "../components/LiveControl";
 import { api, ApiError, leaveOnUnload, renewClientId, type GuestJoinInfo, type HandInfo, type JoinInfo, type Room, type VideoState } from "../api";
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
@@ -38,7 +38,7 @@ import ProtectionBadge from "../components/ProtectionBadge";
 import { collectAll } from "../clientInfo";
 import type { LiveEvent, SocketStatus } from "../liveSocket";
 import { LiveBus, backoffDelay } from "../liveSocket";
-import { copyText, fileBase as fileBaseName } from "../util";
+import { copyText, fileBase as fileBaseName, TEMP_LINK_HINT } from "../util";
 import { tileName } from "../phone";
 import { setActiveMeeting } from "../activeMeeting";
 import { setPreJoin, takePreJoin, type PreJoin as PreJoinHw } from "../prejoin";
@@ -127,7 +127,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const [recording, setRecording] = useState(false);          // идёт запись аудио
   const [video, setVideo] = useState<VideoState | null>(null);   // видеозапись встречи (отдельно от аудио)
   const liveRef = useRef(false);
+  const wasLive = useRef(false);                             // панель вопросов остаётся и после эфира: ведущий успевает дочитать
   const lv = useLive(guest ? null : join?.meeting_id);       // прямой эфир (трансляция) встречи; гостю запрос закрыт (401 выбросил бы его из встречи как «ссылка отозвана»)
+  if (lv.state?.live) wasLive.current = true;
   liveRef.current = !!lv.state?.live;
   const [liveOpen, setLiveOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
@@ -1435,7 +1437,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             ? <button type="button" className="btn mini onair-stop" onClick={() => setConfirmOffAir(true)} title="Закончить эфир для зрителей: запись сохранится, комната останется открытой">Завершить эфир</button>
             : <button type="button" className="btn onair-go" disabled={airBusy || !lv.state.can_start || lv.state.status === "starting"}
                       title="Начать эфир: зрители увидят изображение и звук, начнутся запись и транскрибация, откроется приём вопросов"
-                      onClick={() => { setAirBusy(true); api.setLive(join.meeting_id, true).then(lv.refresh, (e) => setNotice({ kind: "warn", text: `Эфир не начат: ${(e as ApiError).message}` })).finally(() => setAirBusy(false)); }}>
+                      onClick={() => { setAirBusy(true); lv.start().catch((e) => setNotice({ kind: "warn", text: `Эфир не начат: ${(e as ApiError).message}` })).finally(() => setAirBusy(false)); }}>
                 <span className="rec-dot" aria-hidden /> {airBusy || lv.state.status === "starting" ? "Запуск…" : "Выйти в эфир"}</button>)}
           {join.client.broadcast && lv.state?.can_control && !ended && <button type="button" className="btn mini" onClick={() => setLiveOpen(true)} title="Качество, площадки, ключи, ссылки и пароли этого эфира">Настройки эфира</button>}
           {video?.recording && <span className="rec-badge on video" title="Идёт видеозапись встречи: изображение и звук всех участников"><span className="rec-dot" aria-hidden /> ВИДЕОЗАПИСЬ</span>}
@@ -1444,8 +1446,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           )}
           <div className="spacer" />
           {room.lifetime === "temporary" && !guest && (
-            <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`)}
-                    title="Адрес комнаты: коллеги, которым вы дали доступ («Настройки комнаты» → доступ), смогут войти по нему">Скопировать ссылку</button>
+            <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`).then((ok) => setNotice(ok ? { kind: "info", text: `Ссылка скопирована. ${TEMP_LINK_HINT}` } : { kind: "warn", text: "Не удалось скопировать ссылку." }))}
+                    title={`Адрес комнаты. ${TEMP_LINK_HINT}`}>Скопировать ссылку</button>
           )}
           {isLeader && <button className="btn mini" onClick={() => setPhoneOpen(true)} aria-label="Позвонить на телефон" title="Позвонить на телефон через SIP: абонент подключится к встрече"><Icon name="phone" size={15} /></button>}
           {isLeader && (
@@ -1628,7 +1630,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Изменить ширину транскрипции (стрелки влево/вправо)" tabIndex={0}
            onPointerDown={tCollapsed ? undefined : onSplitDown} onKeyDown={tCollapsed ? undefined : onSplitKey} hidden={tCollapsed} />
       {cardOf && <ParticipantCardDialog meetingId={join.meeting_id} identity={cardOf.identity} name={cardOf.name} role={cardOf.role} localMuted={localMuted.has(cardOf.identity)} onToggleLocalMute={() => toggleLocalMuted(cardOf.identity)} onClose={() => setCardOf(null)} />}
-      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} room={room} state={lv.state} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSpeakerPassword={async (pw) => { await api.manage.patch(room.id, { password: pw }); }}
+      {liveOpen && lv.state && join && <LiveDialog meetingId={join.meeting_id} room={room} state={lv.state} startOpts={lv.startOpts} onStartOpts={lv.setStartOpts} onStart={lv.start} onChanged={lv.refresh} onClose={() => setLiveOpen(false)} onSpeakerPassword={async (pw) => { await api.manage.patch(room.id, { password: pw }); }}
         onDiag={lv.state.can_control ? () => { setLiveOpen(false); setDiagOpen(true); } : undefined} />}
       {diagOpen && join && <Suspense fallback={null}><LiveDiagPanel meetingId={join.meeting_id} roomId={room.id} onClose={() => setDiagOpen(false)} /></Suspense>}
       {manageOpen && <Suspense fallback={null}><RoomManageDialog roomId={room.id} onClose={() => setManageOpen(false)} /></Suspense>}
@@ -1637,7 +1639,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       <TranscriptPanel meetingId={join.meeting_id} enabled={serverTranscript} paused={!transcribing} recording={recording} canAttach={join.client.attachments !== false} asrReady={asrReady} asrLost={asrLost} collapsed={tCollapsed}
                        onToggleCollapsed={toggleCollapsed} onMeetingEnded={onMeetingEnded} onEvent={onLive} onStatus={onSocketStatus}
                        bus={bus} guestToken={guest ? guest.info.guest_token : null} selfName={guest ? `${guest.info.display_name} (гость)` : selfName} openChatSignal={chatSignal}
-                       questions={!!join.client.broadcast} prep={!!join.client.broadcast && !!lv.state && !lv.state.live} />
+                       questions={showLiveQuestions({ broadcastRoom: !!join.client.broadcast, canControl: !!lv.state?.can_control, wasLive: wasLive.current })} prep={!!join.client.broadcast && !!lv.state && !lv.state.live} />
       {pipPortal}
     </div>
   );

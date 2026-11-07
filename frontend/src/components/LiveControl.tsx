@@ -11,6 +11,7 @@ import "../live.css";
 /** Состояние прямого эфира встречи: читается при входе, по событию `live_changed` и раз в 20 с (событие могло потеряться). */
 export function useLive(meetingId: string | null | undefined) {
   const [state, setState] = useState<LiveState | null>(null);
+  const [startOpts, setStartOpts] = useState<LiveStartOptions | null>(null);      // блок «Этот эфир»: общий для окна «Трансляция» и красной кнопки; null — значения комнаты
   const alive = useRef(true);
   const refresh = useCallback(() => {
     if (!meetingId) return;
@@ -22,8 +23,16 @@ export function useLive(meetingId: string | null | undefined) {
     const t = window.setInterval(refresh, 20_000);
     return () => { alive.current = false; window.clearInterval(t); };
   }, [refresh]);
-  return { state, refresh };
+  const start = useCallback(async () => {
+    await api.setLive(meetingId as string, true, startOpts ?? undefined);
+    setStartOpts(null);
+    refresh();
+  }, [meetingId, startOpts, refresh]);
+  return { state, refresh, start, startOpts, setStartOpts };
 }
+
+/** Панель вопросов в комнате: всем в трансляционной комнате; в обычной и презентационной — ведущим, пока идёт эфир и после него (зрители спрашивают там же, а участников могут быть сотни). */
+export const showLiveQuestions = (o: { broadcastRoom: boolean; canControl: boolean; wasLive: boolean }): boolean => o.broadcastRoom || (o.canControl && o.wasLive);
 
 const origin = () => window.location.origin;
 const clockSince = (iso: string | null) => {
@@ -34,13 +43,14 @@ const clockSince = (iso: string | null) => {
 const STATUS: Record<string, string> = { idle: "Эфир не идёт", starting: "Эфир запускается…", live: "Идёт прямой эфир", ending: "Эфир заканчивается…", ended: "Эфир завершён", failed: "Эфир прерван" };
 
 /** Окно «Трансляция» в меню «Ещё»: всё для эфира в самой комнате — запуск и остановка, качество, площадки с ключами, ссылки, пароли. Те же блоки, что в «Настройках комнаты → Трансляция». */
-export function LiveDialog({ meetingId, room, state, onChanged, onClose, onDiag, onSpeakerPassword }: { meetingId: string; room: { id: string; slug: string; room_type?: string; has_password?: boolean }; state: LiveState; onChanged: () => void; onClose: () => void; onDiag?: () => void; onSpeakerPassword: (pw: string | null) => Promise<void> }) {
+export function LiveDialog({ meetingId, room, state, startOpts, onStartOpts, onStart, onChanged, onClose, onDiag, onSpeakerPassword }: { meetingId: string; startOpts: LiveStartOptions | null; onStartOpts: (o: LiveStartOptions) => void; onStart: () => Promise<void>; room: { id: string; slug: string; room_type?: string; has_password?: boolean }; state: LiveState; onChanged: () => void; onClose: () => void; onDiag?: () => void; onSpeakerPassword: (pw: string | null) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
   const links = state.links;
   // параметры именно этого эфира: по умолчанию — из настроек комнаты, ведущий может поменять их перед запуском (после запуска они фиксируются у эфира)
-  const [opts, setOpts] = useState<LiveStartOptions>(() => ({ title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5 }));
+  const opts: LiveStartOptions = startOpts ?? { title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5 };
+  const setOpts = onStartOpts;
   const current = links?.broadcasts.find((b) => b.status === "live");
   useEffect(() => {          // статусы площадок меняются сами: окно не должно показывать «идёт» у площадки, которая уже отказала
     if (!state.live) return undefined;
@@ -49,7 +59,9 @@ export function LiveDialog({ meetingId, room, state, onChanged, onClose, onDiag,
   }, [state.live, onChanged]);
   const toggle = async () => {
     setBusy(true); setErr("");
-    try { await api.setLive(meetingId, !state.live, state.live ? undefined : opts); onChanged(); }
+    try {
+      if (state.live) { await api.setLive(meetingId, false); onChanged(); } else await onStart();
+    }
     catch (e) { setErr((e as ApiError).message || "Не удалось переключить эфир."); }
     finally { setBusy(false); }
   };
@@ -81,10 +93,10 @@ export function LiveDialog({ meetingId, room, state, onChanged, onClose, onDiag,
               <Icon name={state.live ? "stop" : "broadcast"} size={18} /> {busy ? "Подождите…" : state.live ? "Остановить эфир" : "Начать эфир"}
             </button>
           </div>)}
+        {!state.live && state.can_control && links && state.can_edit && <QualitySelect value={links.quality} disabled={busy} onChange={(q) => void setQuality(q)} />}
         {!state.live && state.can_control && links && (
-          <fieldset className="group lv-opts"><legend>Этот эфир<InfoTip>Значения подставлены из настроек комнаты. Здесь их можно поменять только для этого эфира: после запуска они сохраняются у эфира и не меняются от последующих изменений настроек комнаты.</InfoTip></legend>
+          <fieldset className="group lv-opts"><legend>Этот эфир<InfoTip>Значения подставлены из настроек комнаты. Здесь их можно поменять только для этого эфира: после запуска они сохраняются у эфира и не меняются от последующих изменений настроек комнаты. Кнопка «Выйти в эфир» запускает эфир с этими же значениями. Качество — настройка комнаты, оно задаётся выше.</InfoTip></legend>
             <label>Название для зрителей <input value={opts.title ?? ""} maxLength={200} onChange={(e) => setOpts({ ...opts, title: e.target.value })} placeholder="Название мероприятия" /></label>
-            <QualitySelect value={links.quality} disabled={busy} onChange={(q) => void setQuality(q)} />
             <label className="check"><input type="checkbox" checked={!!opts.replay} onChange={(e) => setOpts({ ...opts, replay: e.target.checked })} /> Показывать запись по ссылке после эфира</label>
             {opts.replay && <div className="row lv-opt-row">
               <label className="check"><input type="checkbox" checked={!!opts.download} onChange={(e) => setOpts({ ...opts, download: e.target.checked })} /> Разрешить скачивание</label>
@@ -111,10 +123,10 @@ export function LiveDialog({ meetingId, room, state, onChanged, onClose, onDiag,
             </div>
             {links.password_enabled && <p className="lv-note">Просмотр защищён паролем зрителя. Ссылка на поток пароль не спрашивает: делитесь ею осторожно, её можно отозвать в настройках комнаты.</p>}
           </div>)}
-        {links
+        {links && state.can_edit
           ? <LiveDestinations roomId={room.id} cfg={{ ...links, destinations: state.destinations ?? links.destinations }} onChange={onChanged} meetingId={state.live ? meetingId : undefined} onRefresh={onChanged} />
           : state.can_control && state.destinations && <LiveDestToggles meetingId={meetingId} items={state.destinations} onChanged={onChanged} />}
-        {links && <details className="lv-sect"><summary>Пароли, ссылки и другие настройки</summary>
+        {links && state.can_edit && <details className="lv-sect"><summary>Пароли, ссылки и другие настройки</summary>
           <LiveSettings roomId={room.id} roomSlug={room.slug} isBroadcastType={room.room_type === "broadcast"} hasSpeakerPassword={!!room.has_password} onSpeakerPassword={onSpeakerPassword} embedded />
         </details>}
         {done && <div className="alert ok" role="status">{done}</div>}

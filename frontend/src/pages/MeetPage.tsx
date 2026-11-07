@@ -15,7 +15,7 @@ export function countdown(ms: number): string {
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "full", timeStyle: "short" }) : "");
 const fmtShort = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" }) : "");
 
-/** Страница конференции из календаря (`/m/<код>`): без входа показывает название, время и обратный отсчёт; когда вход открыт — ведёт в комнату (или предлагает войти / войти гостем). */
+/** Страница конференции из календаря (`/m/<код>`): без входа показывает название, время и обратный отсчёт; когда вход открыт — ведёт в комнату или предлагает войти. */
 export default function MeetPage() {
   const { code = "" } = useParams();
   const navigate = useNavigate();
@@ -74,9 +74,9 @@ export default function MeetPage() {
               {open && authed === false && (
                 <div className="row">
                   <Link className="btn primary" to={`/?next=${encodeURIComponent(`/m/${code}`)}`}>Войти по учётной записи</Link>
-                  {info.guests && info.guest_token && <Link className="btn" to={`/guest/${info.guest_token}`}>Войти гостем</Link>}
                 </div>
               )}
+              {open && authed === false && info.guests && <p className="small muted">Нет учётной записи? Войдите по гостевой ссылке из приглашения или попросите её у организатора.</p>}
               {open && authed && <p className="muted">Открываем комнату…</p>}
               {info.state !== "cancelled" && info.state !== "ended" && offerApp() && (
                 <p className="small muted">Установлено приложение Peregovorka для Windows? <a href={appLink()}>Открыть в приложении</a></p>

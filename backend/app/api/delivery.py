@@ -86,7 +86,7 @@ async def preview(meeting_id: uuid.UUID, request: Request, su: SessionUser = Dep
 async def delivery_log(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     """Что и кому отправляли по этой встрече: когда, кем (человек или автоматически), шаблон, материалы, результат и ошибка. Тела писем и реквизиты SMTP не отдаются."""
     meeting = await db.get(Meeting, meeting_id)
-    if meeting is None or not roles.can_manage_room(meeting.room, su):
+    if meeting is None or not (roles.can_manage_room(meeting.room, su) or meeting.started_by_user_id == su.user_id):      # журнал видит тот, кто может отправлять
         raise HTTPException(status_code=404, detail="Встреча не найдена или доступ закрыт")
     rows = (await db.execute(select(MailMessage).where(MailMessage.meeting_id == meeting_id).order_by(MailMessage.created_at.desc()).limit(300))).scalars().all()
     return [{"id": str(r.id), "batch_id": str(r.batch_id) if r.batch_id else None, "at": r.created_at.isoformat(), "sent_at": r.sent_at.isoformat() if r.sent_at else None,

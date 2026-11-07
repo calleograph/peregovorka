@@ -50,7 +50,7 @@ while [ $# -gt 0 ]; do
 done
 export DRY_RUN
 
-STEP=0; STEPS=18; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
+STEP=0; STEPS=19; CUR_STAGE="init"; UPD_STARTED="$(date +%s)"
 step() { STEP=$((STEP + 1)); CUR_STAGE="$1"; [ "$DRY_RUN" = "1" ] || upd_state_set stage "$1" 2>/dev/null; log; log "[$STEP/$STEPS] $1"; }
 DEPLOY_STARTED=0
 stop_update() { # stop_update сообщение — остановка с понятным указанием, что делать дальше
@@ -409,6 +409,7 @@ phase2() {
   INITIAL_NOTE=""
   if [ "$VF" -ne 0 ] || [ "$SMRC" -eq 1 ]; then
     INITIAL_NOTE="первая проверка после запуска: verify — ошибок ${VF}, smoke — ${SM}${SMCRIT:+ ($SMCRIT)}"
+    STEPS=$((STEPS + 1))                 # необязательный шаг: только когда первая проверка не прошла
     step "Автоматическое исправление безопасных причин и повторная проверка"
     upd_action "$INITIAL_NOTE"
     upd_self_heal

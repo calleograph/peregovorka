@@ -23,7 +23,7 @@ import { useToast } from "../components/Toast";
 import { bytes, copyText, downloadText, duration, fileBase, fmt } from "../util";
 
 const FORMATS: [ExportFormat, string][] = [["docx", "Word (.docx)"], ["pdf", "PDF (.pdf)"], ["md", "Markdown (.md)"], ["txt", "Обычный текст (.txt)"]];
-const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summary: "Резюме" };
+const KIND_TITLE: Record<string, string> = { protocol: "Протокол", summary: "Резюме", transcript: "Стенограмма" };
 
 // Доступ участника к завершённой встрече действует, пока открыта её страница. Уход со страницы освобождает доступ;
 // «задержка» нужна, чтобы повторная инициализация эффекта (StrictMode, быстрый возврат) не сняла доступ ошибочно.
@@ -32,7 +32,7 @@ function useReleaseOnLeave(meetingId: string) {
   useEffect(() => {
     window.clearTimeout(pendingRelease.get(meetingId));
     pendingRelease.delete(meetingId);
-    const onHide = () => releaseOnUnload(meetingId);
+    const onHide = () => releaseOnUnload(meetingId, true);
     window.addEventListener("pagehide", onHide);
     return () => {
       window.removeEventListener("pagehide", onHide);
@@ -167,7 +167,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
       )}
       {error && <div className="alert error" role="alert">{error}</div>}
       {notice && <div className="alert ok" role="status">{notice}</div>}
-      {finished && !isAdmin && <div className="alert warn" role="note"><b>Не закрывайте эту страницу, пока не сохранили нужное.</b> После выхода доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
+      {finished && meeting.access_temporary && <div className="alert warn" role="note"><b>Не закрывайте эту страницу, пока не сохранили нужное.</b> После выхода доступ к материалам встречи закрывается (если администратор не разрешил иначе).</div>}
       {finished && isAdmin && <div className="alert info small">Участники видят материалы, пока открыта эта страница; после выхода доступ закрывается (если не разрешено иначе). Вы как администратор видите всё всегда.</div>}
 
       <div className="row" style={{ margin: "10px 0" }}>
@@ -214,7 +214,7 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
           <div style={{ minWidth: 0 }}>
             {opened ? <ProtocolViewer key={opened.id} meetingId={meetingId} item={opened} isAdmin={isAdmin}
                 onChanged={(p) => { setOpened(p); void loadProtocols(); }} onDeleted={afterDelete}
-                canGenerate={canGen} onGoto={gotoSource} onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
+                canGenerate={canGen && opened.kind !== "transcript"} onGoto={gotoSource} onRegenerate={(p) => setDialog({ kind: (p.kind === "summary" ? "summary" : "protocol"), instruction: p.instruction ?? undefined })} />
               : <div className="card muted">Выберите документ слева.</div>}
           </div>
         </div>

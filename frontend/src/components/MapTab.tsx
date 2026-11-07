@@ -127,7 +127,7 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
           Темы встречи, их порядок и длительность, участники и ссылки на реплики.{choices.length > 0 && st.plan.model ? <> Карту строит <b>{st.plan.model}</b>{st.plan.local ? " (локально, текст не покидает сервер)" : ""}.</> : ""} Правки хранятся отдельно и при переформировании не теряются.
         </p>
         {!st.plan.ready && <div className="alert info small" style={{ marginTop: 8 }}>{st.plan.reason}</div>}
-        {failedRegen && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Новую карту построить не удалось{failedRegen.model ? ` (модель ${failedRegen.model})` : ""}: {(failedRegen.error ?? "").replace(/[.\s]+$/, "")}. Показана прежняя карта; можно выбрать другую модель («Модель…») и повторить.</div>}
+        {failedRegen && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Новую карту построить не удалось{failedRegen.model ? ` (модель ${failedRegen.model})` : ""}: {(failedRegen.error ?? "").replace(/[.\s]+$/, "")}. Показана прежняя карта; можно выбрать другую модель («Параметры…») и повторить.</div>}
         {st.stale && <div className="alert info small" style={{ marginTop: 8 }}>Идёт пересоздание: пока показана прежняя карта. Она заменится, только если новая будет построена успешно.</div>}
         {st.status === "failed" && <div className="alert error small" style={{ marginTop: 8 }}>{st.error || "Не удалось построить карту."}</div>}
         {working && <div className="alert info small" style={{ marginTop: 8 }}>

@@ -26,7 +26,7 @@ def test_history_lists_exactly_the_meetings_that_open_directly(client):
             assert client.post(f"{API}/meetings/{mid}/release").status_code == 204
         mids[name] = mid
 
-    meeting("released", plain, ["alice", "bob"], release=["alice", "bob"])        # никто не держит страницу, политики нет
+    meeting("released", plain, ["alice", "bob"], release=["alice", "bob"])        # никто не держит страницу, политики нет; alice начала встречу и остаётся организатором
     meeting("lease", plain, ["alice", "bob"], release=["alice"])                  # у bob «аренда» осталась
     meeting("policy", policy, ["alice", "bob"], release=["alice", "bob"])         # политика комнаты: участникам
     meeting("led", led, ["alice"], release=["alice"])                             # carol — руководитель комнаты, не участник
@@ -37,7 +37,7 @@ def test_history_lists_exactly_the_meetings_that_open_directly(client):
     login(client, "root")
     assert client.post(f"{API}/admin/meetings/{mids['granted']}/grants", json={"user_id": carol_id}).status_code == 201
 
-    expected = {"alice": {"policy", "ongoing"}, "bob": {"lease", "policy"}, "carol": {"led", "granted"}}
+    expected = {"alice": set(mids), "bob": {"lease", "policy"}, "carol": {"led", "granted"}}
     for user, names in expected.items():
         login(client, user)
         listed = {m["id"] for m in client.get(f"{API}/meetings?limit=100").json()}

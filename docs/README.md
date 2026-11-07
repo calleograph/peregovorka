@@ -8,7 +8,11 @@
 | [docs/TECHNICAL_PASSPORT.md](TECHNICAL_PASSPORT.md) | технический паспорт программного комплекса: состав, архитектура, требования, сеть, хранение, безопасность, производительность, ограничения |
 | [docs/STAND_PASSPORT_TEMPLATE.md](STAND_PASSPORT_TEMPLATE.md) | шаблон эксплуатационного паспорта вашего экземпляра |
 | [Вики](https://github.com/calleograph/peregovorka/wiki) | руководства пользователя, администратора и поддержки, справочники |
+| [docs/INSTALL_GUIDE.md](INSTALL_GUIDE.md) | установка сервера и клиентов для тех, кто делает это впервые: шаги, ожидаемый результат, проверка |
 | [docs/INSTALL_AND_UPDATE.md](INSTALL_AND_UPDATE.md) | установка, обновление, откат, восстановление доступа |
+| [DEPLOYMENT.md](../DEPLOYMENT.md) · [ARCHITECTURE.md](../ARCHITECTURE.md) | порты, прокси, ручная установка; принятые архитектурные решения |
+| [docs/STORAGE.md](STORAGE.md) · [docs/MIGRATIONS.md](MIGRATIONS.md) · [docs/MAIL.md](MAIL.md) · [docs/SIP.md](SIP.md) | хранилища; миграции и копии; почта; телефония |
+| [docs/PERFORMANCE.md](PERFORMANCE.md) · [docs/COMPATIBILITY.md](COMPATIBILITY.md) · [docs/DEPENDENCIES.md](DEPENDENCIES.md) · [docs/HTTPS_AND_HSTS.md](HTTPS_AND_HSTS.md) · [docs/ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md) | презентации и приоритеты; версии компонентов; HSTS; приёмка |
 | [docs/SITE_SETTINGS.md](SITE_SETTINGS.md) | оформление под организацию: название, логотип, документы, контакты, темы |
 | [docs/ADMIN_SETUP.md](ADMIN_SETUP.md) | первая настройка в браузере |
 | [docs/ROOMS_AND_ROLES.md](ROOMS_AND_ROLES.md) | роли, комнаты, сцена встречи, модерация |
@@ -37,7 +41,7 @@
 | [docs/BROADCASTS.md](BROADCASTS.md) | массовые трансляции: HLS, внешние площадки, CDN, пароли, нагрузка, что не проверено |
 | [docs/BROADCAST_CDN.md](BROADCAST_CDN.md) | свои узлы CDN: аудит, решения, подключение по SSH, безопасность, нагрузочные испытания |
 | [docs/ROOM_ICONS.md](ROOM_ICONS.md) | значки комнат: библиотека, загрузка, кадрирование, права, лицензии |
-| [docs/DB_AND_SCALING.md](DB_AND_SCALING.md) | масштабирование: процессы, пулы базы, нагрузочные замеры на 2000, сбои, расчёт медиасервера |
+| [docs/DB_AND_SCALING.md](DB_AND_SCALING.md) | масштабирование: процессы, пулы базы, синтетические замеры, сбои, расчёт медиасервера |
 | [docs/CORPORATE_CHECKS.md](CORPORATE_CHECKS.md) | проверки, возможные только в корпоративной среде (AD, SMTP/Exchange, нагрузка) |
 | [docs/LLM.md](LLM.md) | языковые модели по API, протоколы и резюме |
 | [docs/ANONYMIZATION.md](ANONYMIZATION.md) | обезличивание: категории, профили, словари, комнаты, лаборатория |

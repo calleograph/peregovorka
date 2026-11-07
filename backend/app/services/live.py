@@ -351,8 +351,8 @@ class LiveBroadcaster:
             raise LiveError("no_outputs", "Нечего вещать: включите собственный просмотр или добавьте хотя бы одну внешнюю площадку.")
         busy = (await db.execute(select(func.count()).select_from(Broadcast).where(Broadcast.status.in_(LIVE_ACTIVE)))).scalar_one()
         if busy >= cfg.max_concurrent:
-            raise LiveError("live_busy", f"Сейчас идёт максимально допустимое число эфиров ({cfg.max_concurrent}). Обычные конференции от этого не страдают; "
-                                         "повторите позже или обратитесь к администратору.")
+            raise LiveError("live_busy", f"Сейчас идёт максимально допустимое число эфиров ({cfg.max_concurrent}). Повторите позже "
+                                         "или обратитесь к администратору.")
         load = await self.api.cpu_load(cfg.egress_health_url) if hasattr(self.api, "cpu_load") else None
         if load is not None and load >= cfg.max_cpu_load:
             raise LiveError("server_busy", f"Сервер трансляций сейчас загружен ({load}% процессора при пределе {cfg.max_cpu_load}%): эфир не начат, чтобы не ухудшить обычные конференции. Повторите позже "
@@ -379,7 +379,7 @@ class LiveBroadcaster:
         if free is not None and free < vcfg.min_free_gb * 1024**3:
             raise LiveError("record_disk_low", f"Запись эфира невозможна: на томе записей меньше {vcfg.min_free_gb} ГБ свободного места. Эфир не начат — освободите место или обратитесь к администратору.")
         if root.exists() and not os.access(root, os.W_OK):
-            raise LiveError("record_unwritable", "Запись эфира невозможна: каталог записей недоступен для записи. Эфир не начат — сообщите администратору (Администрирование → Состояние системы).")
+            raise LiveError("record_unwritable", "Запись эфира невозможна: каталог записей недоступен для записи. Эфир не начат — сообщите администратору (Администрирование → Обзор).")
         if vcfg.quota_gb:
             used = (await db.execute(select(func.coalesce(func.sum(Recording.size_bytes), 0)).where(Recording.kind == "mix_video"))).scalar_one()
             if used >= vcfg.quota_gb * 1024**3:

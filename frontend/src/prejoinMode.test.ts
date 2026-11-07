@@ -61,5 +61,6 @@ describe("texts", () => {
 
   it("regular rooms keep the old text", () => {
     expect(micFacts("regular", true)).toEqual([{ icon: "mic", title: "Микрофон включится сразу", text: "Выключить его можно кнопкой в комнате." }]);
+    expect(micFacts("regular", false)[0].title).toBe("Микрофон при входе выключен");
   });
 });

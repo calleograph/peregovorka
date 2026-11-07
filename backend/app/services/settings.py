@@ -811,7 +811,7 @@ class VideoSettings(_Group):
 
     enabled: bool = False
     max_concurrent: int = Field(default=2, ge=1, le=20)           # одновременных записей на весь сервер: каждая — отдельный браузер внутри Egress, ≈ 2–4 ядра процессора
-    min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе записей — новая запись не начинается, идущие останавливаются
+    min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе записей — новая запись не начинается; идущие останавливает LiveService._disk_guard по своему запасу, не по этому порогу
     max_hours: int = Field(default=6, ge=1, le=24)                # предел одной записи; длиннее — файл закрывается и запись продолжается следующим фрагментом
     default_quality: str = Field(default="720p", pattern="^(720p|1080p)$")
     quota_gb: int = Field(default=0, ge=0, le=1_000_000)          # общий объём видеозаписей; 0 — без предела. При превышении новые записи не начинаются, старые не удаляются
@@ -849,7 +849,7 @@ class LiveSettings(_Group):
 
     enabled: bool = False
     max_concurrent: int = Field(default=1, ge=1, le=10)           # одновременных эфиров на весь сервер: каждый — браузер внутри Egress (≈ 2–4 ядра) и исходящий поток; сначала 1, увеличивать после замеров
-    min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе трансляций — эфир не начинается, идущий останавливается
+    min_free_gb: int = Field(default=10, ge=1, le=10_000)         # меньше свободного места на томе трансляций — эфир не начинается; идущий останавливает LiveService._disk_guard по своему запасу, не по этому порогу
     max_hours: int = Field(default=12, ge=1, le=48)               # предел одного эфира; длиннее — эфир останавливается (чтобы забытая трансляция не шла сутками)
     default_quality: str = Field(default="1080p", pattern="^(720p|1080p|1440p)$")
     segment_keep_min: int = Field(default=15, ge=3, le=240)       # сегменты HLS старше этого срока во время эфира удаляются: диск не растёт на всё время эфира (перемотки назад нет)
@@ -1065,14 +1065,6 @@ class OutlookSettings(_Group):
     def _sync(cls, v: str) -> str:
         if v not in ("off", "graph", "ews"):
             raise ValueError("Серверная сверка: выключена, Microsoft Graph или EWS")
-        return v
-
-    @field_validator("ews_url")
-    @classmethod
-    def _ews(cls, v: str) -> str:
-        v = v.strip()
-        if v and not re.match(r"^https://[^\s/]+(/[^\s]*)?$", v):
-            raise ValueError("Адрес EWS: https://сервер/EWS/Exchange.asmx")
         return v
 
 

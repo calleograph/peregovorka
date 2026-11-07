@@ -39,7 +39,7 @@ API для интеграций: прочитать список комнат и
    ```
    ```json
    {"items": [{"id": "mtg_5e0f…", "room": {"id": "rom_9a1c…", "slug": "sales", "name": "Продажи"}, "state": "ended",
-               "started_at": "2026-10-08T09:00:00Z", "ended_at": "2026-10-08T09:55:00Z", "duration_s": 3300,
+               "started_at": "2026-10-08T09:00:00+00:00", "ended_at": "2026-10-08T09:55:00+00:00", "duration_s": 3300,
                "participants_count": 4, "transcription_enabled": true, "record_audio": false}],
     "next_cursor": "WyIyMDI2LTEwLTA4VDA5…"}
    ```
@@ -104,7 +104,7 @@ API для интеграций: прочитать список комнат и
 
 ## 4. Идентификаторы
 
-Типизированные: `rom_…` комната, `mtg_…` встреча, `pro_…` документ, `map_…` карта, `rec_…` запись, `usr_…`/`gst_…` участник, `msg_…` сообщение. Идентификатор другого типа или «голый» UUID не принимается (`404`).
+Типизированные: `rom_…` комната, `mtg_…` встреча, `pro_…` документ, `map_…` карта, `rec_…` запись, `usr_…`/`gst_…` участник, `msg_…` сообщение (числовой). У заданий префикса `job_` нет. Идентификатор другого типа или «голый» UUID не принимается (`404`).
 
 ## 5. Ошибки
 
@@ -138,7 +138,7 @@ API для интеграций: прочитать список комнат и
 
 ## 6. Лимиты
 
-Окно — одна минута, отдельно на каждую интеграцию и класс запросов (`read` — чтение, `write` — изменения). Значения задаёт администратор. В каждом ответе: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (секунд до обновления), `X-RateLimit-Class`; при превышении — `429` и `Retry-After`. Лимит одной интеграции не мешает другим. Сбой хранилища счётчиков не отключает API.
+Окно — одна минута, отдельно на каждую интеграцию и класс запросов (четыре класса, включая `read` — чтение и `write` — изменения; см. `publicapi/scopes.py`). Значения задаёт администратор. В каждом ответе: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (секунд до обновления), `X-RateLimit-Class`; при превышении — `429` и `Retry-After`. Лимит одной интеграции не мешает другим. Сбой хранилища счётчиков не отключает API.
 
 ## 7. Постраничный вывод
 
@@ -222,11 +222,11 @@ curl -s -o talk.wav "https://meet.example.com<url из ответа>"      # б�
 
 Администратор создаёт **получателя** (адрес HTTPS, нужные события и комнаты) в **Администрирование → Публичный API → Подписки на события** и получает **секрет подписи** (показывается один раз).
 
-**События**: `meeting.started`, `meeting.ended`, `document.ready`, `document.failed` (протокол, резюме, карта), `job.completed`, `job.failed`; `webhook.test` — проверочное, по кнопке. В событии только идентификаторы — **без персональных данных и текстов**:
+**События**: `meeting.started`, `meeting.ended`, `document.ready`, `document.failed` (протокол, резюме, карта), `job.completed`, `job.failed`; `webhook.test` — проверочное, по кнопке. В событии идентификаторы, название комнаты, при ошибке текст ошибки; **без стенограмм и документов**:
 
 ```json
 {"id": "evt_0f3a9c…", "type": "meeting.ended", "api_version": "1", "created": "2026-10-08T09:55:02Z",
- "data": {"meeting_id": "mtg_5e0f…", "room": {"id": "rom_9a1c…", "slug": "sales", "name": "Продажи"}, "started_at": "2026-10-08T09:00:00Z", "ended_at": "2026-10-08T09:55:00Z", "end_reason": "manual"}}
+ "data": {"meeting_id": "mtg_5e0f…", "room": {"id": "rom_9a1c…", "slug": "sales", "name": "Продажи"}, "started_at": "2026-10-08T09:00:00+00:00", "ended_at": "2026-10-08T09:55:00+00:00", "end_reason": "manual"}}
 ```
 
 **Заголовки запроса**: `X-Peregovorka-Event`, `X-Peregovorka-Event-Id` (то же, что `id` в теле), `X-Peregovorka-Delivery`, `X-Peregovorka-Timestamp` (секунды Unix), `X-Peregovorka-Signature`, `X-Peregovorka-Attempt`, при ручной повторной отправке — `X-Peregovorka-Retry: manual`.

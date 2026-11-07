@@ -280,7 +280,7 @@ verify_deployment() {
   wbad="$(writable_probe backend "${WRITABLE_BACKEND_DIRS[@]}"; writable_probe asr "${WRITABLE_ASR_DIRS[@]}")"
   if [ -z "$wbad" ]; then v_ok "Каталоги данных доступны сервисам на запись (backend: ${WRITABLE_BACKEND_DIRS[*]##*/}; asr: ${WRITABLE_ASR_DIRS[*]##*/})"
   else v_warn "Сервис не может писать в: $(printf '%s' "$wbad" | tr '
-' ' ') — права на каталоги данных неверны (сертификаты, вложения, записи не сохранятся). В браузере: Состояние системы → «Исправить автоматически»; на сервере: sudo scripts/repair.sh data_dirs"; fi
+' ' ') — права на каталоги данных неверны (сертификаты, вложения, записи не сохранятся). В браузере: Администрирование → Обзор → «Исправить автоматически»; на сервере: sudo scripts/repair.sh data_dirs"; fi
   _stage_end "Права на каталоги данных"
 
   log "-- backend, ASR, версия --"
@@ -306,6 +306,7 @@ verify_deployment() {
 
   log "-- SIP-телефония --"
   verify_sip
+  verify_mediamtx
 
   log "-- HTTP-цепочка --"
   if command -v curl >/dev/null 2>&1; then
@@ -360,6 +361,14 @@ writable_probe() {
 }
 
 # SIP-телефония — необязательная возможность: «не включена» — это SKIP (v_ok с пометкой), а не отказ; проблемы включённой службы — предупреждения.
+# Служба низкой задержки эфира необязательна: без неё зрители остаются на обычном HLS. Состояние только показывается, итог проверки от него не зависит.
+verify_mediamtx() {
+  local cid
+  cid="$(dc ps -q mediamtx 2>/dev/null | head -1)"
+  if [ -z "$cid" ]; then log "mediamtx не запущена (необязательная служба низкой задержки)"; return 0; fi
+  log "mediamtx: состояние «$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null)» (необязательная служба низкой задержки)"
+}
+
 verify_sip() {
   local cid st
   if ! sip_enabled; then v_ok "SIP-телефония не включена (пропущено): служба и порты SIP/RTP не создавались"; return 0; fi

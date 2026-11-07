@@ -24,8 +24,10 @@
 | livekit (Python SDK, ASR) | 1.1.21 | `asr-service/requirements.txt` (`==1.1.21`) |
 | livekit-api (Python, backend и ASR) | 1.2.2 | `requirements.txt` (`==1.2.2`) |
 | LiveKit SIP Service | v1.20.0 | `SIP_IMAGE` (по умолчанию в `compose.yml`, `siplib.sh`, `.env.example`) |
+| LiveKit Egress | v1.15.0 | `VIDEO_IMAGE` (`compose.yml`, `videolib.sh`) |
+| MediaMTX | 1.21.3 | `MEDIAMTX_IMAGE` (`compose.yml`, `videolib.sh`) |
 
-Тот же набор записан в `deployment/compat.env` (справочно: установщик при отличии только предупреждает).
+LiveKit Server и SDK записаны также в `deployment/compat.env` (справочно: установщик при отличии только предупреждает). SIP, Egress, RNNoise и MediaMTX в этом файле нет.
 Комплект проверяется целиком при каждом релизе (сервер, SIP-служба, `livekit-client`, оба Python-пакета): живые сценарии `tests/live/` с настоящим LiveKit, запуск SIP-службы с LiveKit и Redis (транки, правило, вызов, `OPTIONS`), ASR с настоящим SDK. Историю версий и решения по каждой новой версии см. в [DEPENDENCIES.md](DEPENDENCIES.md) и разделе «Версии компонентов».
 
 ## Политика: проверенный и закреплённый комплект, новые версии — только через ревизию релиза

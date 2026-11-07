@@ -5,7 +5,7 @@ import { useSite } from "../site";
 import { Icon } from "../components/Icons";
 import { useContextMenu, type MenuItem } from "../components/ContextMenu";
 import { useToast } from "../components/Toast";
-import { copyText } from "../util";
+import { copyText, TEMP_LINK_HINT } from "../util";
 import { Modal } from "../components/Dialogs";
 import { PeerCreateDialog, PeerManageDialog } from "../components/PeerRooms";
 import { magnet, spotlight, tint } from "../fx";
@@ -16,7 +16,7 @@ import { LinkCopy } from "../components/LinkCopy";
 import { isActual, meetingState, span, tickMs } from "../upcomingStatus";
 import "../live.css";
 
-/** «Создать временную переговорку»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
+/** «Временная переговорка»: только название; остальное — значения по умолчанию. Создатель становится руководителем. */
 function TempRoomDialog({ policy, onClose }: { policy: TempRoomPolicy; onClose: () => void }) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -55,10 +55,10 @@ type Toast = (text: string, tone?: "ok" | "error") => void;
 function useRoomMenu(r: Room, onCopy: Toast, isAdmin: boolean, onManagePeer?: (id: string) => void) {
   const navigate = useNavigate();
   const { onContextMenu, node, openAt } = useContextMenu();
-  const copy = async (url: string, what: string) => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
+  const copy = async (url: string, what: string, note = "") => { const ok = await copyText(url); onCopy(ok ? `${what} скопирована.${note}` : "Не удалось скопировать — выделите ссылку вручную", ok ? "ok" : "error"); };
   const items = (): MenuItem[] => [
     { id: "enter", label: "Войти", icon: "arrowR", onSelect: () => navigate(`/rooms/${r.slug}`) },
-    { id: "link", label: "Скопировать ссылку", icon: "copy", onSelect: () => void copy(roomUrl(r), "Ссылка") },
+    { id: "link", label: "Скопировать ссылку", icon: "copy", onSelect: () => void copy(roomUrl(r), "Ссылка", r.lifetime === "temporary" ? ` ${TEMP_LINK_HINT}` : "") },
     { id: "guest", label: "Скопировать гостевую ссылку", icon: "copy", hidden: !r.guest_token, onSelect: () => void copy(guestUrl(r), "Гостевая ссылка") },
     { id: "peer", label: "Управление ссылкой…", icon: "gear", hidden: r.room_type !== "peer" || !onManagePeer, onSelect: () => onManagePeer?.(r.id) },
     { id: "tab", label: "Открыть в новой вкладке", icon: "arrowR", onSelect: () => { window.open(roomUrl(r), "_blank", "noopener"); } },

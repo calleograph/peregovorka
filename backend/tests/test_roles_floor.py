@@ -173,6 +173,21 @@ def test_removed_guest_loses_the_session(client, lk_calls):
     assert client.get(f"/api/v1/meetings/{c['meeting_id']}/chat", headers={"X-Guest-Token": g["guest_token"]}).status_code == 401
 
 
+def test_removed_guest_cannot_return_by_the_same_link_but_others_can(client, lk_calls):
+    room = make_room(client, guest_access_enabled=True, moderators=LEADERS)
+    c = _join(client, "carol", room["id"])
+    tab = {"X-Client-Id": "removed-guest-tab"}
+    client.cookies.clear()
+    g = client.post(f"/api/v1/guest/room/{room['guest_token']}/join", json={"display_name": "Иван Иванов"}, headers=tab).json()
+    login(client, "carol")
+    assert client.post(f"/api/v1/meetings/{c['meeting_id']}/moderation/kick", json={"identity": g["identity"]}).status_code == 200
+    client.cookies.clear()
+    for body, headers in (({"display_name": "Иван Иванов"}, {}), ({"display_name": "Другое Имя"}, tab)):       # тот же человек: другая вкладка или другое имя
+        r = client.post(f"/api/v1/guest/room/{room['guest_token']}/join", json=body, headers=headers)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "removed_from_meeting"
+    assert client.post(f"/api/v1/guest/room/{room['guest_token']}/join", json={"display_name": "Пётр Петров"}, headers={"X-Client-Id": "other-tab"}).status_code == 200, "гость за тем же адресом не страдает"
+
+
 # ------------------------------------------------------------------------------------------ доска
 def test_board_rights_follow_room_type_floor_and_room_policy(client, lk_calls):
     room = presentation(client)

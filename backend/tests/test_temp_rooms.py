@@ -14,6 +14,15 @@ from .test_transcripts import _feed_and_consume, _join, _segment
 API = "/api/v1"
 
 
+def test_environment_defaults_match_the_server_retention_defaults():
+    from app.config import Settings
+    from app.services.settings import GeneralSettings
+
+    for kind in ("text", "audio"):
+        name = f"default_{kind}_retention_days"
+        assert Settings.model_fields[name].default == GeneralSettings.model_fields[name].default, "два разных «срока по умолчанию» вводят в заблуждение"
+
+
 def create_temp(client, user: str = "alice", name: str = "Планёрка"):
     login(client, user)
     return client.post(f"{API}/rooms/temporary", json={"name": name})

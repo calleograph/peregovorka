@@ -11,6 +11,7 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
+case "${1:-}" in -h|--help) sed -n '2,10p' "$0"; exit 0 ;; esac
 CMD="${1:-check}"; [ $# -gt 0 ] && shift
 PUB=""; JSON=""; NTCP=""; NUDP=""
 while [ $# -gt 0 ]; do

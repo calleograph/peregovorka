@@ -5,14 +5,14 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy import delete, func, literal_column, select, union_all
+from sqlalchemy import and_, delete, func, literal_column, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import SessionUser, client_ip, get_db, require_admin, require_user
 from ..models import (MEETING_LITE, Broadcast, GuestParticipant, Meeting, MeetingChatMessage, MeetingGrant, MeetingParticipant, MeetingWhiteboard, Protocol, Recording, Room,
                       TranscriptSegment, User)
 from ..services.live import purge_audience
-from ..services.access import accessible_history, can_access_meeting, release_lease
+from ..services.access import accessible_history, can_access_meeting, has_lasting_access, hide_lease, release_lease, resume_lease
 from ..services import roles
 from ..services.room_icons import icon_out
 from ..services import leave_reasons
@@ -36,6 +36,7 @@ from .schemas import MeetingOut, ParticipantOut, SegmentOut, TranscriptOut
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 KINDS = ("summary", "protocol")
+DOCUMENTS = or_(Protocol.kind.in_(KINDS), and_(Protocol.kind == "transcript", Protocol.content.is_not(None)))   # обычная стенограмма живёт репликами, текст в строке есть только у восстановленной
 CONTENT_TYPES = {
     "md": "text/markdown; charset=utf-8", "txt": "text/plain; charset=utf-8", "html": "text/html; charset=utf-8",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf",
@@ -73,7 +74,7 @@ async def meeting_counts(db: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UU
         return out
     parts = []
     for key, model, extra in (("segments", TranscriptSegment, None), ("recordings", Recording, None),
-                              ("protocols", Protocol, Protocol.kind.in_(KINDS)), ("chat_messages", MeetingChatMessage, None)):
+                              ("protocols", Protocol, DOCUMENTS), ("chat_messages", MeetingChatMessage, None)):
         stmt = select(literal_column(f"'{key}'").label("k"), model.meeting_id.label("m"), func.count().label("n")).where(model.meeting_id.in_(ids)).group_by(model.meeting_id)
         parts.append(stmt.where(extra) if extra is not None else stmt)
     parts.append(select(literal_column("'whiteboard_shapes'").label("k"), MeetingWhiteboard.meeting_id.label("m"), MeetingWhiteboard.shapes.label("n")).where(MeetingWhiteboard.meeting_id.in_(ids)))
@@ -130,11 +131,13 @@ async def meeting_avatars(meeting_id: uuid.UUID, request: Request, su: SessionUs
 @router.get("/{meeting_id}", response_model=MeetingOut)
 async def get_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     m = await get_meeting_for_user(request, db, meeting_id, su)
+    await resume_lease(request.app.state.redis, meeting_id, su.user_id)       # страницу обновили, а не закрыли
     contacts = can_edit_protocol(m, su)           # почта гостей — тем, кто может отправлять материалы (организатор, руководитель, администратор)
     out = meeting_out(m, (await meeting_counts(db, [m.id])).get(m.id), (await meeting_guests(db, [m.id])).get(m.id), contacts=contacts)
     out.can_generate = contacts           # формировать документы и отправлять материалы: администратор, руководитель комнаты, организатор встречи
     out.can_send_materials = out.can_generate
     out.can_manage_access = roles.can_manage_room(m.room, su)
+    out.access_temporary = m.ended_at is not None and not await has_lasting_access(db, m, su)
     return out
 
 
@@ -147,9 +150,9 @@ async def leave_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser
 
 
 @router.post("/{meeting_id}/release", status_code=204)
-async def release_meeting(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user)):
-    """Пользователь покинул страницу завершённой встречи: временный доступ прекращается (если нет иных оснований)."""
-    await release_lease(request.app.state.redis, meeting_id, su.user_id)
+async def release_meeting(meeting_id: uuid.UUID, request: Request, grace: bool = False, su: SessionUser = Depends(require_user)):
+    """Пользователь покинул страницу завершённой встречи: временный доступ прекращается (если нет иных оснований). grace — страница скрыта браузером, это может быть и обновление."""
+    await (hide_lease if grace else release_lease)(request.app.state.redis, meeting_id, su.user_id)
 
 
 @router.post("/{meeting_id}/end", status_code=204)
@@ -363,7 +366,7 @@ def _protocol_dict(p: Protocol, with_content: bool = False, can_edit: bool = Fal
 @router.get("/{meeting_id}/protocols")
 async def list_protocols(meeting_id: uuid.UUID, request: Request, su: SessionUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
     meeting = await get_meeting_for_user(request, db, meeting_id, su)
-    rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, Protocol.kind.in_(KINDS))
+    rows = (await db.execute(select(Protocol).where(Protocol.meeting_id == meeting_id, DOCUMENTS)
                              .order_by(Protocol.created_at.desc()))).scalars().all()
     can = can_edit_protocol(meeting, su)
     ps = request.app.state.protocols
@@ -465,7 +468,7 @@ async def cancel_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
 async def _get_protocol(request: Request, db: AsyncSession, meeting_id: uuid.UUID, pid: uuid.UUID, su: SessionUser) -> Protocol:
     await get_meeting_for_user(request, db, meeting_id, su)
     p = await db.get(Protocol, pid)
-    if p is None or p.meeting_id != meeting_id or p.kind not in KINDS:
+    if p is None or p.meeting_id != meeting_id or not (p.kind in KINDS or (p.kind == "transcript" and p.content is not None)):
         raise HTTPException(status_code=404, detail="Протокол не найден")
     return p
 
@@ -523,7 +526,7 @@ async def export_protocol(meeting_id: uuid.UUID, protocol_id: uuid.UUID, request
     if p.status != "ready" or not p.content:
         raise HTTPException(status_code=409, detail="Протокол ещё не готов")
     meeting = await db.get(Meeting, meeting_id)
-    title = p.title or ("Протокол встречи" if p.kind == "protocol" else "Краткое резюме") + f": {meeting.room.name}"
+    title = p.title or {"protocol": "Протокол встречи", "transcript": "Стенограмма"}.get(p.kind, "Краткое резюме") + f": {meeting.room.name}"
     await audit_now(request.app, actor_user_id=su.user_id, actor_name=su.display_name, action="protocol.export", target_type="protocol", target_id=str(p.id), ip=client_ip(request),
                     details={"format": format, "kind": p.kind, "meeting_id": str(meeting_id)})
     return _file_response(_render(format, with_incomplete_notice(p.content, p.meta), title, p.kind), format, f"{p.kind}-{str(p.id)[:8]}", inline=inline)

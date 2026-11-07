@@ -372,6 +372,82 @@ def test_retention_removes_expired_text_and_audio_but_keeps_the_rest(client):
     assert Room  # импорт используется в сидировании
 
 
+def test_text_retention_removes_map_and_storage_copies_retries_failures_and_keeps_the_rest(tmp_path, directory):
+    from app.models import ConversationMap
+    from app.services.storage import StorageError
+
+    s = make_settings(tmp_path)
+    with running_app(s, directory) as client:
+        login(client, "root")
+        put_settings(client, "storage", enabled=True, local_path=str(tmp_path / "docs"))
+        app = client.app_obj
+        room = make_room(client, name="Срок", text_retention_days=30, audio_retention_days=None)
+        rid = uuid.UUID(room["id"])
+        old = utcnow() - timedelta(days=40)
+        arch = tmp_path / "docs"
+
+        def fill(d: str, *names: str) -> None:
+            (arch / d).mkdir(parents=True)
+            for n in names:
+                (arch / d / n).write_text("текст", encoding="utf8")
+
+        fill("m1", "protocol.txt", "official-protocol.md", "summary.md", "chat.txt", "whiteboard.drawio", "manifest.json", "заметка.txt")
+        fill("m2", "protocol.txt", "manifest.json")          # старая встреча, у которой очистка уже убрала протоколы, но не файлы: путь остался в строке стенограммы
+        fill("restored", "protocol.txt")
+        fill("fresh", "protocol.txt")
+        fill("deferred", "protocol.txt")
+
+        async def seed():
+            out = []
+            async with app.state.session_maker() as db:
+                for d, ended in (("m1", old), ("m2", old), ("restored", old), ("deferred", old), ("fresh", utcnow())):
+                    m = Meeting(room_id=rid, livekit_room=f"m-{uuid.uuid4().hex}", started_at=ended, ended_at=ended, end_reason="manual")
+                    db.add(m)
+                    await db.flush()
+                    db.add(Protocol(meeting_id=m.id, kind="transcript", status="ready", content="текст" if d == "restored" else None, meta={"dir": d, **({"restored": "job"} if d == "restored" else {})}))
+                    if d in ("m1", "fresh"):
+                        db.add(Protocol(meeting_id=m.id, kind="protocol", status="ready", content="итог", meta={"dir": d, "location": "x"}))
+                        db.add(ConversationMap(meeting_id=m.id, status="ready", data={"topics": []}))
+                    out.append(m.id)
+                await db.commit()
+            return out
+
+        client.portal.call(seed)
+        ps = app.state.protocols
+        real = ps._drop_text_copies
+        broken = {"deferred"}
+
+        def flaky(storage, directory, names):
+            if directory in broken:
+                raise StorageError("нет связи")
+            real(storage, directory, names)
+
+        ps._drop_text_copies = flaky
+        stats = client.portal.call(lambda: run_retention_once(app.state.session_maker, ps))
+
+        async def state():
+            async with app.state.session_maker() as db:
+                prots = (await db.execute(select(Protocol.kind, Protocol.status, Protocol.content, Protocol.meta))).all()
+                maps = (await db.execute(select(ConversationMap.id))).scalars().all()
+            return prots, maps
+
+        prots, maps = client.portal.call(lambda: state())
+        assert stats["maps"] == 1 and len(maps) == 1, "карта с истёкшим сроком удалена, карта свежей встречи осталась"
+        assert stats["text_copies"] == 2 and stats["text_copies_deferred"] == 1
+        assert sorted(p.name for p in (arch / "m1").iterdir()) == ["заметка.txt"], "чужой файл не тронут, паспорт ушёл вместе с материалами"
+        assert not list((arch / "m2").iterdir())
+        assert (arch / "fresh" / "protocol.txt").exists() and (arch / "restored" / "protocol.txt").exists()
+        assert (arch / "deferred" / "protocol.txt").exists()
+        assert sorted((p.kind, p.status) for p in prots) == [("protocol", "ready"), ("transcript", "deleting"), ("transcript", "ready")], "текст восстановленной встречи из базы удалён"
+        assert not any(p.content == "текст" for p in prots)
+        broken.clear()
+        again = client.portal.call(lambda: run_retention_once(app.state.session_maker, ps))
+        ps._drop_text_copies = real
+        prots, _ = client.portal.call(lambda: state())
+        assert again["text_copies"] == 1 and "text_copies_deferred" not in again and not (arch / "deferred" / "protocol.txt").exists()
+        assert sorted((p.kind, p.status) for p in prots) == [("protocol", "ready"), ("transcript", "ready")]
+
+
 def test_audio_recording_is_finalized_registered_and_admin_only(tmp_path, directory):
     from pathlib import Path
 

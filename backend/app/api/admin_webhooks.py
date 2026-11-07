@@ -160,8 +160,9 @@ async def test_webhook(endpoint_id: uuid.UUID, request: Request, su: SessionUser
     res = await request.app.state.webhooks.send_test(e.id)
     await db.refresh(e)
     await _audit(request, db, su, "webhook.test", e, {"ok": res["ok"], "status": res["status"]})
+    api_on = (await request.app.state.settings_svc.get(db, "api")).enabled       # type: ignore[attr-defined]
     await db.commit()
-    return res
+    return {**res, "warning": None if api_on else "Публичный API выключен: проверочное событие ушло, но настоящие события не создаются, пока API не включён."}
 
 
 @router.get("/webhooks/{endpoint_id}/deliveries")

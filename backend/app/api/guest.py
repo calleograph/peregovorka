@@ -179,7 +179,8 @@ async def join(token: str, body: GuestJoinIn, request: Request, db: AsyncSession
         await captcha.note_success(request, "guest")      # верный пароль: офис за общим адресом не должен видеть CAPTCHA до конца окна из-за чужой ошибки
 
     try:
-        result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client, email=email, materials_consent=body.materials_consent)
+        result = await request.app.state.meetings.join_guest(db, room, name, ip=ip, client=client, email=email, materials_consent=body.materials_consent,
+                                                                device=request.headers.get("x-client-id", "")[:64])
     except JoinError as exc:
         await audit_now(request.app, actor_user_id=None, actor_name=f"{name} (гость)", action="meeting.join_denied", target_type="room", target_id=str(room.id), ip=ip,
                         result="denied", actor_type="guest", details={"code": exc.code})

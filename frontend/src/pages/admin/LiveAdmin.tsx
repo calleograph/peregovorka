@@ -27,7 +27,7 @@ export default function LiveAdmin({ fields }: { fields: Field[] }) {
             {st.checks && <ChecksList checks={st.checks} ctl={ctl} onRepair={async (id) => { await api.admin.repairFix(id); }} />}
             <p className="small" style={{ margin: "8px 0 0" }}>
               Идёт эфиров: <b>{st.running}</b> из {st.max_concurrent} · зрителей сейчас: <b>{st.viewers}</b> · нагрузка Egress: <b>{st.egress_cpu_load == null ? "нет данных" : `${st.egress_cpu_load}%`}</b> (предел {st.max_cpu_load}%) · площадок: идёт <b>{st.destinations.live ?? 0}</b>, с ошибкой <b>{st.destinations.failed ?? 0}</b> · записей MP4 идёт: <b>{st.recordings_running}</b> · сегментов HLS на диске: <b>{bytes(st.hls_bytes)}</b> · свободно на томе: <b>{st.free_bytes == null ? "нет данных" : bytes(st.free_bytes)}</b>
-              <InfoTip doc={`${WIKI}Массовые-трансляции`}>Эфир ведёт та же служба Egress, что и видеозапись. Новый эфир не начинается при нехватке места или превышении предела, а идущие конференции от этого не страдают.</InfoTip>
+              <InfoTip doc={`${WIKI}Массовые-трансляции`}>Эфир ведёт та же служба Egress, что и видеозапись. Новый эфир не начинается при нехватке места или превышении предела.</InfoTip>
               </p>
             {st.warnings.filter((w) => !st.checks?.some((c) => w.startsWith(c.title))).map((w) => <div key={w} className="alert warn small" role="alert">{w}</div>)}
             {st.active.length > 0 && (

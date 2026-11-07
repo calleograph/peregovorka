@@ -43,10 +43,12 @@ from . import mixdown
 from .recordings import delete_recording_file, drop_pcm, finalize_pcm_files
 from .segments import author_name
 from .settings import SettingsError, SettingsService
-from .storage import StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
+from .manifest import FILENAME as MANIFEST_FILE, classify
+from .storage import StorageBackend, StorageError, WEEKDAYS_RU, meeting_relpath, unique_meeting_dir
 
 DELETE_BACKOFF_S = (60, 300, 900, 3600, 6 * 3600)        # пауза перед повтором удаления файла записи (по номеру попытки; дальше — раз в 6 часов)
 log = logging.getLogger("app.protocols")
+TEXT_COPIES = ((TRANSCRIPTS, ("protocol.txt",)), (PROTOCOLS, ("official-protocol.md", "summary.md")), (CHAT, ("chat.txt",)), (BOARDS, ("whiteboard.drawio",)))   # что выгружается в хранилище документов
 
 FINALIZE_LOCK_S = 180                    # замок обработки встречи продлевается, пока процесс жив
 FINALIZE_GRACE_S = 120                   # столько даём обычному запуску после завершения, прежде чем подбирать встречу
@@ -584,17 +586,18 @@ class ProtocolService:
                 # пустая встреча: автоматический протокол не создаётся и ошибок в журнале не плодит
                 if self.journal is not None:
                     self.journal.emit("llm", "protocol_skipped", meeting_id=str(meeting_id), message="Автоматический протокол не создан: в встрече нет реплик, чата и схемы")
-                return
-            made = await self._auto_kinds(meeting_id)               # повтор после сбоя не создаёт второй протокол
-            if proto_cfg.auto_generate and "protocol" not in made:  # type: ignore[attr-defined]
-                await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
-            if proto_cfg.auto_summary and "summary" not in made:  # type: ignore[attr-defined]
-                await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
-            if self.maps is not None and "map" not in made:
-                try:
-                    await self.maps.maybe_auto(meeting_id)      # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
-                except Exception:  # noqa: BLE001 — сбой постановки карты в очередь не должен отменять рассылку материалов
-                    log.exception("Не удалось поставить карту разговора в очередь", extra={"meeting_id": str(meeting_id)})
+            else:
+                made = await self._auto_kinds(meeting_id)               # повтор после сбоя не создаёт второй протокол
+                if proto_cfg.auto_generate and "protocol" not in made:  # type: ignore[attr-defined]
+                    await self.run_protocol(await self.create_protocol_row(meeting_id, "protocol", "auto", None))
+                if proto_cfg.auto_summary and "summary" not in made:  # type: ignore[attr-defined]
+                    await self.run_protocol(await self.create_protocol_row(meeting_id, "summary", "auto", None))
+                if self.maps is not None and "map" not in made:
+                    try:
+                        await self.maps.maybe_auto(meeting_id)      # карта разговора — только если включена в комнате или системно (по умолчанию выключено)
+                    except Exception:  # noqa: BLE001 — сбой постановки карты в очередь не должен отменять рассылку материалов
+                        log.exception("Не удалось поставить карту разговора в очередь", extra={"meeting_id": str(meeting_id)})
+            # рассылка и у пустой встречи: что не готово, она записывает в журнал сама, а записи и другие материалы могут быть
             if self.after_finalize is not None:
                 await self.after_finalize(meeting_id)
             return None
@@ -1276,5 +1279,36 @@ class ProtocolService:
             log.error("Выгрузка протокола не удалась", extra={"protocol": str(rec.id), "error": str(exc)})
 
     # ------------------------------------------------------------------------- хранение
+    @staticmethod
+    def _drop_text_copies(storage: StorageBackend, directory: str, names: tuple[str, ...]) -> None:
+        """Только файлы, которые пишет сервер: каталог целиком не удаляется, чужое в нём остаётся. Паспорт уходит вместе с последним материалом папки: описывать ему больше нечего."""
+        for name in names:
+            storage.delete(f"{directory}/{name}")
+            if storage.exists(f"{directory}/{name}"):
+                raise StorageError(f"файл {name} остался в хранилище после удаления")
+        if not any(classify(n) for n in storage.list_dir(directory)):
+            storage.delete(f"{directory}/{MANIFEST_FILE}")
+
+    async def purge_text_copies(self, db: AsyncSession, meeting_ids: list[uuid.UUID]) -> tuple[int, dict[tuple[uuid.UUID, str], str]]:
+        """Удаление по сроку текста: копии стенограммы, протокола, резюме, чата и доски в хранилище документов. Ответ — (сколько каталогов очищено, {(встреча, каталог): причина сбоя}).
+        Встречи, восстановленные из хранилища, не трогаем: их исходные файлы обещано не менять, а срок от старой даты завершения истёк бы сразу после восстановления."""
+        rows = (await db.execute(select(Protocol.meeting_id, Protocol.meta).where(Protocol.meeting_id.in_(meeting_ids)))).all()
+        pairs = {(mid, meta["dir"]) for mid, meta in rows if meta and meta.get("dir") and not meta.get("restored")}
+        if not pairs:
+            return 0, {}
+        backends = {folder: await self._open(db, "storage", folder) for folder, _names in TEXT_COPIES}
+        await release(db)                                  # удаление в хранилище (сеть, SMB, WebDAV) идёт без транзакции PostgreSQL
+        cleared, failed = 0, {}
+        for mid, directory in pairs:
+            try:
+                for folder, names in TEXT_COPIES:
+                    if backends[folder] is None:
+                        raise StorageError("хранилище документов выключено или недоступно — файлы могли остаться в нём")
+                    await asyncio.to_thread(self._drop_text_copies, backends[folder], directory, names)
+                cleared += 1
+            except (StorageError, OSError) as exc:
+                failed[(mid, directory)] = (str(exc) or type(exc).__name__)[:300]
+        return cleared, failed
+
     async def purge_recording(self, db: AsyncSession, rec: Recording) -> bool:
         return await self.delete_recording(db, rec)

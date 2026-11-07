@@ -11,7 +11,7 @@ import ConsentGate from "./components/ConsentGate";
 import HelpDialog from "./components/HelpDialog";
 import { Brand } from "./components/Brand";
 import { loadSite, useSite } from "./site";
-import { versionLabel } from "./util";
+import { keepsPathAfterLogin, versionLabel } from "./util";
 import { applyFavicon, pageTitle } from "./pageTitle";
 import NavMenu from "./components/NavMenu";
 import AppRail from "./components/AppRail";
@@ -38,6 +38,7 @@ const RoomRoute = lazy(() => import("./pages/RoomRoute"));
 const RecorderTemplate = lazy(() => import("./recorder/RecorderTemplate"));
 const LivePage = lazy(() => import("./pages/LivePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
+const HelpPage = lazy(() => import("./pages/HelpPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
 import CaptchaHost from "./components/CaptchaDialog";
@@ -107,7 +108,7 @@ function StaffApp() {
     // возврат после входа: окно входа надстройки Outlook или страница конференции из календаря (только эти адреса — открытого перенаправления нет)
     if (next === "/outlook/auth.html") { window.location.assign(next); return; }
     if (/^\/m\/[a-z0-9]{20,32}$/.test(next)) { navigate(next); return; }
-    if (!window.location.pathname.startsWith("/p/")) navigate("/");
+    if (!keepsPathAfterLogin(window.location.pathname)) navigate("/");
   }, [navigate]);        // ссылка на равноправную комнату после входа открывается, а не теряется
   const logout = async () => { await api.logout().catch(() => undefined); setCsrf(""); setMe(null); navigate("/"); };
 
@@ -132,6 +133,7 @@ function StaffApp() {
     { kind: "text", key: "who", label: me.user.is_admin ? "Администратор системы" : "Пользователь" },
     { kind: "link", key: "profile", label: "Личный кабинет", to: "/profile", hint: "профиль, аватарка, данные из AD" },
     { kind: "link", key: "hist", label: "История моих встреч", to: "/history" },
+    { kind: "link", key: "guide", label: "Справка", to: "/help", hint: "инструкции: спросите обычными словами" },
     ...(site.support || site.documents.length > 0 ? [{ kind: "action" as const, key: "help", label: "Помощь и поддержка", hint: "контакты, документы организации", onSelect: () => setHelp(true) }] : []),
     { kind: "divider", key: "sep" },
     ...(version ? [{ kind: "text" as const, key: "ver", label: `Версия ${version}` }] : []),
@@ -179,6 +181,7 @@ function StaffApp() {
           <Route path="/profile" element={<ProfilePage onChanged={onProfile} />} />
           <Route path="/calendar" element={<Suspense fallback={null}><CalendarPage /></Suspense>} />
           <Route path="/chats" element={<ChatsPage />} />
+          <Route path="/help" element={<Suspense fallback={null}><HelpPage /></Suspense>} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />

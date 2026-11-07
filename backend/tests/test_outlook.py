@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.models import Room, utcnow
 from app.services import outlook as ol
 
-from .conftest import login
+from .conftest import login, put_settings
 
 O = "/api/v1/outlook"
 
@@ -127,7 +127,7 @@ def test_public_countdown_page_state_and_join_gate(client):
     j = client.post(f"{O}/meetings", json=soon, headers=h).json()
     code = j["url"].rsplit("/", 1)[1]
     pub = client.get(f"{O}/public/{code}")
-    assert pub.status_code == 200 and pub.json()["state"] == "waiting" and pub.json()["name"] == "Планёрка" and pub.json()["server_time"] and pub.json()["guest_token"] is None
+    assert pub.status_code == 200 and pub.json()["state"] == "waiting" and pub.json()["name"] == "Планёрка" and pub.json()["server_time"]
     assert client.get(f"{O}/public/{'z' * 20}").status_code == 404
     assert client.get(f"{O}/public/abc").status_code == 404
     # раньше окна — вход закрыт, внутри окна — открыт
@@ -135,6 +135,9 @@ def test_public_countdown_page_state_and_join_gate(client):
     rid = j["id"]
     early = client.post(f"/api/v1/rooms/{rid}/join", json={})
     assert early.status_code == 425 and early.json()["detail"]["code"] == "too_early"
+    put_settings(client, "general", timezone="Asia/Tokyo")
+    login(client, "bob")
+    assert " JST" in client.post(f"/api/v1/rooms/{rid}/join", json={}).json()["detail"]["message"], "время открытия — в поясе сервера"
     async def shift(minutes):
         async with client.app_obj.state.session_maker() as db:
             room = await db.get(Room, uuid.UUID(rid))
@@ -184,20 +187,21 @@ def test_recurring_series_has_no_time_gate(client):
     assert client.post(f"/api/v1/rooms/{j['id']}/join", json={}).status_code == 200
 
 
-def test_guest_link_only_when_open(client):
+def test_public_page_never_gives_the_guest_token_so_a_new_link_really_closes_the_old_one(client):
     _enable(client, guest_links=True)
     h = _token(client)
     _anon(client)
     j = client.post(f"{O}/meetings", json=_body(), headers=h).json()
     code = j["url"].rsplit("/", 1)[1]
-    assert client.get(f"{O}/public/{code}").json()["guest_token"] is None and client.get(f"{O}/public/{code}").json()["guests"] is True
+    assert "guest_token" not in client.get(f"{O}/public/{code}").json() and client.get(f"{O}/public/{code}").json()["guests"] is True
     async def open_now():
         async with client.app_obj.state.session_maker() as db:
             room = await db.get(Room, uuid.UUID(j["id"]))
             room.join_opens_at = utcnow() - timedelta(minutes=1)
             await db.commit()
     client.portal.call(open_now)
-    assert client.get(f"{O}/public/{code}").json()["guest_token"]                              # окно открылось — гостевая ссылка отдаётся
+    assert client.get(f"{O}/public/{code}").json()["state"] == "open"
+    assert "guest_token" not in client.get(f"{O}/public/{code}").text, "код страницы есть у всех приглашённых: гость входит только по своей ссылке, иначе отзыв её не закрывает"
 
 
 def test_manifest_is_valid_xml_with_stable_id_and_https(client):

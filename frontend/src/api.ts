@@ -80,7 +80,7 @@ export interface MediaCheck {
 export interface LiveState {
   enabled: boolean; available: boolean; live: boolean; status: "idle" | "starting" | "live" | "ending" | "ended" | "failed"; since: string | null;
   quality: string; record: boolean; own_hls: boolean; viewers: number; error: string | null; hls_ready: boolean; limit: number; can_start: boolean;
-  can_control?: boolean; links?: LiveRoomSettings; destinations?: LiveDestination[];
+  can_control?: boolean; can_edit?: boolean; links?: LiveRoomSettings; destinations?: LiveDestination[];
   /** Когда идущий эфир упрётся в предел длительности (Администрирование → Трансляции); ведущий может продлить на час. */
   ends_at?: string | null;
 }
@@ -348,7 +348,7 @@ export interface Meeting {
   end_reason: string | null; transcription_enabled: boolean; participants: Participant[];
   segments: number; recordings: number; protocols: number;
   /** Сообщений в чате встречи; доска «использовалась», если whiteboard_shapes > 0. */
-  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean; can_generate?: boolean; can_manage_access?: boolean;
+  chat_messages?: number; whiteboard_shapes?: number; guests?: number; can_send_materials?: boolean; can_generate?: boolean; can_manage_access?: boolean; access_temporary?: boolean;
 }
 export interface Segment {
   id: number; uid: string; meeting_id: string; user_id: string | null; guest_id?: string | null; display_name: string; identity: string;
@@ -543,7 +543,7 @@ export interface AccessCheck {
   would_log_in?: boolean; reason?: string; allowed_via?: string[]; admin?: boolean; admin_via?: string[]; groups_total?: number;
 }
 export interface ProfileField { name: "display_name" | "email" | "title" | "department" | "phone"; value: string | null; source: "ad" | "bitrix" | "local"; manual: boolean; manual_at: string | null; ad_value: string | null; editable: boolean }
-export interface OutlookPublic { name: string; state: "waiting" | "open" | "live" | "ended" | "cancelled"; start: string | null; end: string | null; opens_at: string | null; recurring: boolean; early_minutes: number; server_time: string; slug: string; guests: boolean; guest_token: string | null }
+export interface OutlookPublic { name: string; state: "waiting" | "open" | "live" | "ended" | "cancelled"; start: string | null; end: string | null; opens_at: string | null; recurring: boolean; early_minutes: number; server_time: string; slug: string; guests: boolean }
 export interface PeerPolicy { enabled: boolean; create_on_link: boolean; max_per_user: number; active_mine: number; can_create: boolean; ttl_hours: number }
 export interface PeerRoom { id: string; slug: string; name: string; created: boolean; lifecycle: string; access: "link" | "invited"; owner: boolean; link: string; expires_at: string | null; invited: { name: string | null; ref: string }[] }
 export interface CryptoStatus {
@@ -822,8 +822,8 @@ function keepalivePost(path: string): void {
 }
 /** «Выход при закрытии вкладки»: участник снимается с встречи. */
 export const leaveOnUnload = (meetingId: string): void => keepalivePost(guestToken ? "/guest/session/leave" : `/meetings/${meetingId}/leave`);
-/** Участник покинул страницу завершённой встречи: временный доступ к ней прекращается. */
-export const releaseOnUnload = (meetingId: string): void => keepalivePost(`/meetings/${meetingId}/release`);
+/** Участник покинул страницу завершённой встречи: временный доступ к ней прекращается. grace: страницу скрыл браузер, это может быть и обновление (F5), сервер ждёт её возвращения. */
+export const releaseOnUnload = (meetingId: string, grace = false): void => keepalivePost(`/meetings/${meetingId}/release${grace ? "?grace=1" : ""}`);
 
 async function request<T>(method: string, path: string, body?: unknown, captcha?: string | CaptchaAnswer, attempt = 0): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", "X-Client-Id": clientId() };
@@ -1480,7 +1480,7 @@ export const api = {
     webhookDelete: (id: string) => request<void>("DELETE", `/admin/public-api/webhooks/${id}`),
     webhookRotate: (id: string, graceHours: number) => request<WebhookIssued>("POST", `/admin/public-api/webhooks/${id}/rotate-secret`, { grace_hours: graceHours }),
     webhookEnable: (id: string) => request<WebhookEndpointItem>("POST", `/admin/public-api/webhooks/${id}/enable`),
-    webhookTest: (id: string) => request<{ ok: boolean; status: number | null; error: string | null }>("POST", `/admin/public-api/webhooks/${id}/test`),
+    webhookTest: (id: string) => request<{ ok: boolean; status: number | null; error: string | null; warning?: string | null }>("POST", `/admin/public-api/webhooks/${id}/test`),
     webhookDeliveries: (id: string, status?: string) => request<WebhookDeliveryItem[]>("GET", `/admin/public-api/webhooks/${id}/deliveries${status ? `?status=${status}` : ""}`),
     webhookRetry: (deliveryId: string) => request<{ ok: boolean }>("POST", `/admin/public-api/webhooks/deliveries/${deliveryId}/retry`),
     apiLog: (p: { client_id?: string; status_from?: number; before_id?: number; limit?: number }) => {
