@@ -196,7 +196,7 @@ case "$1" in
              *" alembic upgrade "*) echo 0002 > "$FAKE_DB"; exit 0 ;;
              *" pg_dump "*) echo "dump-of-$(cat "$FAKE_DB")"; exit 0 ;;
              *" pg_restore "*) sed 's/^dump-of-//' > "$FAKE_DB"; exit 0 ;;
-             *" psql "*) echo "${@: -1}" >> "$FAKE_DB.sql"; exit 0 ;;
+             *" psql "*) echo "${@: -1}" >> "$FAKE_DB.sql"; case "${@: -1}" in *"count(*)"*) echo 0 ;; *version_num*) echo 0001 ;; esac; exit 0 ;;
            esac; fi
            if [ -n "${HEALTHY_DB:-}" ] && [[ " $* " == *" ps -q "* ]]; then case "${@: -1}" in postgres|redis) echo "cid-${@: -1}" ;; esac; fi; exit 0 ;;
   info) echo overlayfs ;;
@@ -232,7 +232,7 @@ OUTR="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" HEALTHY_DB=1 FAKE_DB="$FDB" bash 
 t "обновление: дошло до миграций и проверки после них, код 1" eq "$RCR" 1
 t "после слияния продолжает НОВАЯ версия скрипта (фаза 2) и печатает прогресс этапов" bash -c 'grep -q "Продолжает уже НОВАЯ версия" <<<"$1" && grep -q "Миграции базы данных" <<<"$1"' _ "$OUTR"
 t "миграция 0001 → 0002 выполнена после копии БД" bash -c 'grep -q "Ревизия БД: текущая 0001 · целевая (head) 0002" <<<"$1" && grep -q "схема БД обновлена" "$2/state/update-actions.log"' _ "$OUTR" "$TMP/upd-data"
-t "сбой после миграции: база точно возвращена к копии (прежняя переименована, не удалена), ревизия снова 0001" bash -c 'grep -q "БД возвращена к состоянию до обновления" <<<"$1" && grep -q "RENAME TO \"pgupd_failed_" "$2.sql" && ! grep -q "DROP DATABASE" "$2.sql" && [ "$(cat "$2")" = 0001 ]' _ "$OUTR" "$FDB"
+t "сбой после миграции: база точно возвращена к копии (прежняя переименована, не удалена), ревизия снова 0001" bash -c 'grep -q "БД возвращена к состоянию до обновления" <<<"$1" && grep -q "RENAME TO \"pgupd_failed_" "$2.sql" && ! grep -q "DROP DATABASE IF EXISTS \"pgupd\"" "$2.sql" && [ "$(cat "$2")" = 0001 ]' _ "$OUTR" "$FDB"
 t "после возврата базы — автоматический откат кода и образов (rollback.sh, схема совместима), код снова прежний" bash -c 'grep -q "откатываю код и образы" <<<"$1" && grep -q "Ревизия БД 0001 известна коду" <<<"$1" && [ "$(git -C "$2" rev-parse HEAD)" = "$3" ]' _ "$OUTR" "$TMP/cl" "$H0"
 t "единый отчёт: итог, этап, действия (копия, миграция, возврат БД, откат), сборка по компонентам" bash -c 'r="$1/updater/report.txt"; grep -q "^ИТОГ: " "$r" && grep -q "^Этап остановки: " "$r" && grep -q "БД возвращена к резервной копии" "$r" && grep -q "откат кода и образов" "$r" && grep -q "^Схема БД: *0001" "$r" && ! grep -q "^  *$" "$r" && grep -q "^  web: " "$r" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert not d[\"ok\"] and d[\"actions\"]" "$1/updater/report.json" && ! grep -qE "Sup3r|masterkey123456" "$r"' _ "$TMP/upd-data"
 t "сборка: commit и время сборки передаются образам (IMAGE_TAG/версия из git, не unknown)" bash -c '! grep -q "commit=unknown" <<<"$1" && grep -q "stage=build" <<<"$1"' _ "$OUTR"

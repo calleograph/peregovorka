@@ -2,7 +2,7 @@
 # в нём невозможен. Берём статический бинарь и кладём его в минимальный alpine
 # (busybox wget для healthcheck). Версия — build-arg из .env (LIVEKIT_IMAGE_TAG).
 ARG LIVEKIT_IMAGE_TAG=v1.13.10
-ARG ALPINE_IMAGE=alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+ARG ALPINE_IMAGE=alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
 FROM livekit/livekit-server:${LIVEKIT_IMAGE_TAG} AS lk
 
 FROM ${ALPINE_IMAGE}

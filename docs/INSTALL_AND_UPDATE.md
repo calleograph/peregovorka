@@ -536,6 +536,7 @@ cd /opt/peregovorka && sudo ./scripts/updater.sh install --yes
 ```bash
 scripts/backup.sh --keep 14 --with-env            # дамп БД (+копия .env с секретами — храните защищённо)
 scripts/backup.sh --with-recordings               # + архив записей и выгрузок
+scripts/backup.sh --full                          # всё для чистого сервера: дамп, .env, файлы; это копия для BACKUP_COPY_DIR
 ```
 Регулярный запуск — cron/systemd-таймер на сервере, например: `15 2 * * *  cd /var/www/projects/peregovorka && scripts/backup.sh --keep 14`.
 Проверяйте раз в квартал восстановление на тестовом экземпляре.

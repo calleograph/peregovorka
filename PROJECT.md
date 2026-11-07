@@ -290,6 +290,8 @@ silero-vad, torch; frontend: React 19, React Router 7, Vite 8, TypeScript 7, Vit
 
 **Из ревизии документации 2026-11-04:** отзыв ссылки эфира, переключатель пароля, подсказки «Эта встреча», порог диска и `ctl.sh restart` исправлены в 0.67.0. Открыто: nginx установщика не слушает порт 80 (менять только с проверкой на настоящем nginx хоста под root: чужой процесс на порту 80 сломает перезагрузку nginx); LICENSE, SECURITY.md, CONTRIBUTING.md — решение владельца.
 
+0zq. **Сервер 0.70.0: аудит и перенос между хранилищами.** Устройство — `docs/STORAGE.md`, раздел «Перенос между хранилищами». Код: `services/storage_migration.py`, `scripts/safefs.py`, `scripts/ci_wait.py`. Живые сценарии: `tests/live/storage/`. Источник — только профиль: вложения с диска сервера не переносятся. `RoomPage.tsx` не разделён сознательно.
+
 0zp. **Сервер 0.69.0: внешние тома.** Устройство — `docs/STORAGE.md`, раздел «Внешние тома». Код: `scripts/lib/vollib.sh`, `scripts/volumes.sh`, `backend/app/services/volumes.py`, `services/mounts.py`, `compose.yml` (`ext`). Испытание: `tests/live/volumes/vm_e2e.sh`.
 * Не проверено: настоящий QNAP и SMB через mount, NFS с `hard`, хосты без общих монтирований, обновление установленного сервера.
 

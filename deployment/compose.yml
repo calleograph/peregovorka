@@ -35,7 +35,7 @@ x-app-env: &app-env
 
 services:
   postgres:
-    image: postgres:16-alpine@sha256:e0e53cfa0884f3cc216a621033e4f38dceb49e52218ac77facc8e48f02973093
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?}
@@ -55,7 +55,7 @@ services:
     logging: *default-logging
 
   redis:
-    image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true      # процесс в контейнере не может получить больше прав (setuid и т. п.); на работу сервиса не влияет

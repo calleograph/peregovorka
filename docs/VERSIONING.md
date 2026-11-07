@@ -56,7 +56,7 @@
 | `/api/v1/version`, `/version.json`, ASR `/readyz` | те же значения, запечённые в образ |
 | страница «Обновления и версии» | «Установлено на сервере» и «Опубликовано на GitHub» — версия и commit; при наличии новой версии показано, что в ней нового (разделы CHANGELOG новее установленной) |
 | `frontend/package.json` и `package-lock.json` | обновляет `release.sh` |
-| git-тег и GitHub Release | тег `vX.Y.Z` создаёт `release.sh`; workflow `.github/workflows/release.yml` публикует релиз с описанием из CHANGELOG |
+| git-тег и GitHub Release | `release.sh push` отправляет ветку, ждёт зелёный CI и только потом тег: серверы обновляются по тегу. Тег `vX.Y.Z` создаёт `release.sh`; workflow `.github/workflows/release.yml` публикует релиз с описанием из CHANGELOG |
 | проверка | `./scripts/release.sh check` (и CI-задача `version`): `VERSION` = верхний раздел CHANGELOG = `package.json`; на сборке тега — тег = `vVERSION` |
 
 В `.env` версия и commit **не задаются** (старые строки `APP_VERSION`/`APP_GIT_COMMIT` в существующем `.env` игнорируются: значения берутся из репозитория).

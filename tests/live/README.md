@@ -17,6 +17,9 @@
    (только для тестового браузера, открывающего локальный стенд).
 Между запусками состояние встречи остаётся в памяти backend — перезапускайте стенд для чистого прогона.
 
+## Хранилища и резервные копии
+`tests/live/storage/` на тестовом экземпляре рядом с настоящим Samba: `run_migration.py` (локальный том ↔ SMB, обрыв, перезапуск backend), `stream_load.py` (сотни открытых записей), `restore_clean.sh` (полный набор на чистом экземпляре), `run_backup_move.py` (копия настроек на новом хранилище). `tests/live/egress/run_two_broadcasts.py` — два эфира подряд на настоящем Egress. `tests/live/volumes/swap_race.sh` — подмена пути при монтировании.
+
 ## Дополнительные сценарии
 
 * **Медиасоединения (NAT, ICE)** — `tests/live/medianet/run.sh [сценарий…]`: модель сети в Docker (интернет, дом за NAT, офис с маршрутизатором и пробросом, сеть Docker сервера, STUN, CGNAT оператора), настоящие `scripts/medianet.py`, `deployment/compose.yml` и образ `deployment/livekit`; клиенты на LiveKit SDK публикуют звук и видео, печатаются фактические ICE-кандидаты и выбранная пара. Сценарии: `before direct nat nat-tcp manual-stundown stun-down nofwd cgnat legacy`. Итог — `tests/live/out/medianet/results.json`. Root на хосте не нужен.
