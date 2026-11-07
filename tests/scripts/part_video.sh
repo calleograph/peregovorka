@@ -23,7 +23,7 @@ t "video.sh enable без root и без --yes отказывается" bash -c
 t "video.sh: неизвестная команда — ошибка" bash -c '! env -i PATH="$PATH" HOME="$TMP" bash "$1/scripts/video.sh" bogus --env "$2" >/dev/null 2>&1' _ "$ROOT" "$VP/env"
 t "sip.sh disable не убирает общую шину Redis, если включена видеозапись" bash -c 'grep -q "VIDEO_ENABLED:-no.*!= \"yes\"" "$1/scripts/sip.sh"' _ "$ROOT"
 t "video: compose — Egress от uid backend (10001) и домашний каталог в памяти (иначе файлы записи принадлежат чужому uid)" bash -c 'b="$(awk "/^  livekit-egress:/{f=1;next} f&&/^  [a-z]/{f=0} f" "$1/deployment/compose.yml")"; grep -q "user: \"10001:0\"" <<<"$b" && grep -q "/home/egress:uid=10001" <<<"$b"' _ "$ROOT"
-t "video: compose — временные файлы Egress на диске, не в памяти (иначе файл записи целиком в tmpfs: эфир 1080p падал на 52-й минуте, запись пропадала)" grep -q "ln -sfn /live/tmp /home/egress/tmp" "$ROOT/deployment/compose.yml"
+t "video: compose — временные файлы Egress на диске, не в памяти (иначе файл записи целиком в tmpfs: эфир 1080p падал на 52-й минуте, запись пропадала)" bash -c 'grep -q "ln -sfn /live/tmp /home/egress/tmp" "$1" && grep -q "user-data-dir=\"\$\$d\"" "$1"' _ "$ROOT/deployment/compose.yml"
 
 # ---- трансляции (HLS): общий том /live, раздача nginx без backend, подпись и закрытие без секрета
 sblock() { awk -v s="$1" '$0 ~ "^  " s ":"{f=1;next} f&&/^  [a-z]/{f=0} f' "$COMPOSE"; }

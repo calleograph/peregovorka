@@ -53,6 +53,15 @@ def eg_state() -> dict:
     return d
 
 
+def receiving(key, wait=1) -> bool:
+    """Приёмник площадки отдаёт поток с этим ключом."""
+    for _ in range(wait):
+        if "h264" in sh("ffprobe", "-v", "error", "-rw_timeout", "4000000", "-show_entries", "stream=codec_name", "-of", "csv=p=0", f"{os.environ.get('RTMP_LOCAL', 'rtmp://127.0.0.1:19360')}/live/{key}"):
+            return True
+        time.sleep(2)
+    return False
+
+
 class Room:
     def __init__(self, c, dest=False):
         self.c = c
@@ -61,7 +70,8 @@ class Room:
         self.token = c.patch(f"/api/v1/rooms/{self.rid}/live", json={"live_enabled": True, "live_quality": "720p", "live_cdn": False}).json()["view_path"].rsplit("/", 1)[-1]
         self.slug = slug
         if dest:
-            c.post(f"/api/v1/rooms/{self.rid}/live/destinations", json={"platform": "custom", "name": "Площадка", "server_url": f"rtmp://{RTMP}:1935/live", "key": slug}).raise_for_status()
+            for name, url, key in (("Площадка", f"rtmp://{RTMP}:1935/live", slug), ("Вторая", f"rtmp://{RTMP}:1935/live", slug + "-2"), ("Недоступная", f"rtmp://{RTMP}:1999/live", "x")):
+                c.post(f"/api/v1/rooms/{self.rid}/live/destinations", json={"platform": "custom", "name": name, "server_url": url, "key": key}).raise_for_status()
         j = c.post(f"/api/v1/rooms/{self.rid}/join", json={}).json()
         self.mid = j["meeting_id"]
         self.pub = subprocess.Popen([sys.executable, str(HERE / "latency_probe.py"), "publish", "--url", os.environ.get("LK_URL", "ws://127.0.0.1:27880"), "--token", j["token"], "--size", "1280x720", "--seconds", "7200"],
@@ -121,6 +131,13 @@ t("временные файлы не копятся", st.get("TMP", 0) < 5 and 
 room = Room(c, dest=True)
 assert room.go() > 0
 time.sleep(14)
+t("две площадки получают поток, третья недоступна и никому не мешает", receiving(room.slug, 8) and receiving(room.slug + "-2", 8) and room.status() == "live")
+sh("docker", "pause", "pgdoc-livekit-1")                      # связь с LiveKit пропала на 10 с
+time.sleep(10)
+sh("docker", "unpause", "pgdoc-livekit-1")
+time.sleep(12)
+t("потеря связи с LiveKit на 10 с: эфир продолжается", room.status() == "live")
+t("потеря связи с LiveKit на 10 с: площадка получает поток", receiving(room.slug, 8))
 sh("docker", "kill", RTMP)                                    # площадка пропала посреди эфира
 time.sleep(10)
 t("отказ площадки: эфир идёт", room.status() == "live")
@@ -129,6 +146,7 @@ acc = httpx.post(f"{BASE}/api/v1/live/{room.token}/access", headers=HDR, json={"
 h = httpx.get(BASE + (acc.get("origin_path") or acc["path"]), timeout=20)
 t("отказ площадки: HLS идёт", h.status_code == 200 and ".ts" in h.text)
 sh("docker", "start", RTMP)
+t("площадка вернулась: поток снова идёт", receiving(room.slug, 45))
 sh("docker", "stop", MTX)                                     # служба низкой задержки упала
 time.sleep(8)
 acc2 = httpx.post(f"{BASE}/api/v1/live/{room.token}/access", headers=HDR, json={"viewer": vw}, timeout=20).json()
@@ -145,10 +163,11 @@ room.close()
 
 # 3. нехватка процессора при запуске: повтор сам доводит эфир
 room = Room(c)
-sh("docker", "update", "--cpus", "0.15", EG)
+sh("docker", "update", "--cpus", "0.05", EG)
 t0 = time.time()
 c.post(f"/api/v1/meetings/{room.mid}/live", json={"enabled": True})
-time.sleep(24)                                                 # браузер не успевает за 20 с
+while time.time() - t0 < 100 and "stage_retry" not in sh("docker", "exec", "pgdoc-postgres-1", "sh", "-c", 'psql -U $POSTGRES_USER -d $POSTGRES_DB -tAc "select code from live_diag_events where code = \'stage_retry\' and at > now() - interval \'100 seconds\'"'):
+    time.sleep(1)                                              # браузер не успевает за 20 с: ждём, пока сервер сам начнёт повтор
 sh("docker", "update", "--cpus", "20", EG)
 ok = False
 while time.time() - t0 < 120:
@@ -158,6 +177,7 @@ while time.time() - t0 < 120:
     time.sleep(0.5)
 ev = sh("docker", "exec", "pgdoc-postgres-1", "sh", "-c", 'psql -U $POSTGRES_USER -d $POSTGRES_DB -tAc "select code from live_diag_events where code like \'stage_%\' order by id desc limit 5"').split()
 t("нехватка процессора: эфир пошёл сам", ok, f"за {time.time() - t0:.0f} с, этапы {ev}")
+t("нехватка процессора: сработал повтор запуска", "stage_retry" in ev, ev)
 room.stop()
 room.close()
 
