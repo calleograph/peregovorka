@@ -468,7 +468,7 @@ class LiveBroadcaster:
         return f"{self._s.lowlatency_rtmp_url.rstrip('/')}/{access}"
 
     async def ll_ready(self, access: str) -> bool:
-        """LL-HLS отвечает только после семи сегментов (около 10 с от начала эфира). До этого зритель смотрит обычный HLS, а плеер потом переходит сам."""
+        """LL-HLS отвечает только после семи сегментов (около 15 с от начала эфира). До этого зритель смотрит обычный HLS, а плеер потом переходит сам."""
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1.0)) as c:
                 return (await c.get(f"{self._s.lowlatency_hls_url.rstrip('/')}/{access}/index.m3u8?cookieCheck=1", headers={"Cookie": "cookieCheck=1"})).status_code == 200
