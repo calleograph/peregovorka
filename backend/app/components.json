@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.70.0",
+ "release": "0.71.0",
  "reviewed_at": "2026-11-07",
  "components": [
   {
@@ -575,7 +575,7 @@
    "group": "Backend",
    "pinned": "0.149.0",
    "tested": "0.149.0",
-   "reviewed_latest": "0.162.0",
+   "reviewed_latest": "0.162.2",
    "source": {
     "type": "pypi",
     "name": "fastapi"
@@ -598,7 +598,7 @@
     "python_package": "fastapi"
    },
    "deferred": {
-    "version": "0.162.0",
+    "version": "0.162.2",
     "reason": "С 0.149.0 вышло 12 выпусков FastAPI 0.x за четыре дня (для 0.x минор считается мажором): нужен разбор изменений и полный регресс backend, ASR, живых сценариев и нагрузочной матрицы, а релиз 0.30.0 — исправление надстройки Outlook; смешивать их нельзя.",
     "issue": "DEP-6",
     "recheck": "2026-11-20",
