@@ -69,11 +69,11 @@ Peregovorka заменяет внешние сервисы видеосвязи,
 ### Windows и Linux
 
 <!-- desktop-release:start -->
-**Версия 1.5.0** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.5.0) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/SHA256SUMS.txt)
+**Версия 1.5.1** · [страница выпуска](https://github.com/calleograph/peregovorka/releases/tag/desktop-v1.5.1) · [контрольные суммы](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/SHA256SUMS.txt)
 
-- **[Peregovorka-Setup-1.5.0.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/Peregovorka-Setup-1.5.0.exe)** — установка для себя, без прав администратора
-- **[Peregovorka-1.5.0-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/Peregovorka-1.5.0-x64.msi)** — для развёртывания в организации (групповые политики)
-- **Linux** (Ubuntu 22.04/24.04, Debian 12/13): [репозиторий APT](https://calleograph.github.io/peregovorka-apt/) — `curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh`, обновления через `apt upgrade`; или пакет [peregovorka_1.5.0_amd64.deb](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.0/peregovorka_1.5.0_amd64.deb)
+- **[Peregovorka-Setup-1.5.1.exe](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/Peregovorka-Setup-1.5.1.exe)** — установка для себя, без прав администратора
+- **[Peregovorka-1.5.1-x64.msi](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/Peregovorka-1.5.1-x64.msi)** — для развёртывания в организации (групповые политики)
+- **Linux** (Ubuntu 22.04/24.04, Debian 12/13): [репозиторий APT](https://calleograph.github.io/peregovorka-apt/) — `curl -fsSL https://calleograph.github.io/peregovorka-apt/install.sh | sudo sh`, обновления через `apt upgrade`; или пакет [peregovorka_1.5.1_amd64.deb](https://github.com/calleograph/peregovorka/releases/download/desktop-v1.5.1/peregovorka_1.5.1_amd64.deb)
 
 Несколько серверов организаций в одном окне, трей и уведомления, оформление «Стекло». Для Windows установщики пока не подписаны сертификатом издателя: при первом запуске Windows может показать SmartScreen — «Подробнее» → «Выполнить в любом случае». Для Linux пакеты ставятся и обновляются через APT, подпись репозитория проверяет сам apt ([docs/LINUX.md](docs/LINUX.md)).
 <!-- desktop-release:end -->
