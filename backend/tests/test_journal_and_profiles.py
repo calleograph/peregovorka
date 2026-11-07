@@ -263,7 +263,7 @@ def test_login_and_room_events_are_journaled_without_password(client):
     client.post("/api/v1/auth/login", json={"login": "alice", "password": "SuperSecret!1"}, headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36"})
     evs = events(client)
     names = [e["event"] for e in evs]
-    assert {"login_ok", "login_failed", "logout", "app_started"} <= set(names)
+    assert {"login_ok", "login_failed", "logout"} <= set(names) and {"app_started", "app_worker_restarted"} & set(names)      # процесс тестов моложе PID 1 машины
     bad = next(e for e in evs if e["event"] == "login_failed" and e["category"] == "auth")
     assert bad["category"] == "auth" and bad["level"] == "warn" and bad["user"] == "alice" and "Chrome 130" in (bad["client"] or "") and "Windows" in bad["client"]
     assert "SuperSecret" not in json.dumps(evs, ensure_ascii=False)

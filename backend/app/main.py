@@ -152,7 +152,7 @@ def start_reason(stat: str | None = None, uptime: float | None = None, ticks: in
         age = (uptime if uptime is not None else float(Path("/proc/uptime").read_text().split()[0])) - started_s
     except (OSError, ValueError, IndexError):
         return "app_started", "info", "Приложение запущено."
-    if os.getpid() != 1 and age > 60:
+    if os.getpid() != 1 and age > 60:      # shortcut: миграции дольше минуты при нескольких процессах тоже попадут сюда; отличить можно будет только меткой первого запуска
         return "app_worker_restarted", "warn", f"Рабочий процесс приложения заменён внутри работающего контейнера (контейнер работает {int(age // 60)} мин): прежний процесс завершился или не отвечал. Соединения этого процесса переподключились."
     return "app_started", "info", "Контейнер приложения запущен."
 

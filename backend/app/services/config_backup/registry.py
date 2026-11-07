@@ -228,6 +228,7 @@ ENV: dict[str, str] = {
     "cookie_secure": ENV_REASON_DEFAULT, "cookie_name": ENV_REASON_DEFAULT, "session_idle_timeout_seconds": ENV_REASON_DEFAULT, "session_absolute_timeout_seconds": ENV_REASON_DEFAULT,
     "app_master_key": "ключ шифрования этой установки: НЕ переносится — секреты в архиве перешифровываются ключом нового сервера", "internal_api_token": "секрет этой установки (не копируется)",
     "meeting_end_grace_seconds": ENV_REASON_DEFAULT, "heavy_concurrency": ENV_REASON_DEFAULT, "heavy_max_defer_seconds": ENV_REASON_DEFAULT, "livekit_metrics_url": "адрес метрик LiveKit этой установки", "default_text_retention_days": ENV_REASON_DEFAULT, "default_audio_retention_days": ENV_REASON_DEFAULT, "segment_consumer_block_ms": ENV_REASON_DEFAULT,
+    "lowlatency_rtmp_url": ENV_REASON_DEFAULT, "lowlatency_hls_url": ENV_REASON_DEFAULT,
     "room_password_max_failures": ENV_REASON_DEFAULT, "room_password_failure_window_seconds": ENV_REASON_DEFAULT,
 }
 # переменные окружения вне Settings, которые читает приложение
@@ -279,6 +280,7 @@ VOLUMES: dict[str, str] = {
 # --------------------------------------------------------------------------------- файл окружения .env (все ключи .env.example)
 # Ключи .env описывают конкретный сервер и не переносятся, но влияют на работу: поэтому они сгруппированы по причинам, а отличия исходного и нового сервера показываются в предпросмотре импорта.
 ENV_FILE_PREFIX: dict[str, str] = {
+    "MEDIAMTX_": "образ службы низкой задержки этой установки",
     "BACKEND_": "число процессов backend этой установки (масштабирование, docs/DB_AND_SCALING.md)",
     "COMPOSE_": "параметры развёртывания (compose)", "INSTALL_": "параметры установки", "APP_": "адреса и ключи этой установки", "DATA_": "каталог данных этой установки", "IMAGE_": "версия образов этой установки",
     "LOG_": "журналирование этой установки", "WEB_": "сетевые порты этой установки", "LIVEKIT_": "параметры LiveKit этой установки (ключи, адреса, порты)", "POSTGRES_": "подключение к базе этой установки",
