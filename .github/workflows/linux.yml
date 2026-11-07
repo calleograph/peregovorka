@@ -68,7 +68,7 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: { name: "linux-deb-${{ matrix.arch }}", path: debs }
       - name: Предыдущий выпуск для проверки обновления поверх
         env: { GH_TOKEN: "${{ github.token }}" }
@@ -98,7 +98,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: { name: "linux-deb-${{ matrix.arch }}", path: debs }
       - name: Установка пакета (apt)
         run: |
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: { name: linux-deb-amd64, path: debs }
       - name: Автопубликация — решения сценария (без сети и ключа)
         run: scripts/linux-apt/test-autopublish.sh
@@ -163,7 +163,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: { pattern: linux-deb-*, path: out, merge-multiple: true }
       - name: Пакеты Linux — в выпуск desktop-vX.Y.Z (вместе с установщиками Windows)
         env: { GH_TOKEN: "${{ github.token }}" }
