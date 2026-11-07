@@ -63,12 +63,22 @@ async def player(token: str, viewer: str, seconds: float) -> dict:
     try:
         await v.start()
         await v.goto(f"/live/{token}", 1.0)
+        if MODE == "rtcfail":                    # у зрителя нет связи с сервером звонков: плеер обязан сам уйти на HLS
+            await v.send("Page.addScriptToEvaluateOnNewDocument", source="if (window !== window.top) window.WebSocket = function () { throw new Error('нет связи'); };")
         await v.js(f"sessionStorage.setItem('pg:live:viewer:{token}', {json.dumps(viewer)}); location.reload()")
         await asyncio.sleep(3)
         await v.js("document.querySelector('.live-stage video')?.play?.()")
         if MODE == "rtc":
             print(await v.js("(()=>{const f=document.querySelector('iframe');return JSON.stringify({f:!!f,src:f&&f.src.slice(0,60),txt:f&&f.contentDocument&&f.contentDocument.body.innerText.slice(0,120),v:f&&f.contentDocument&&f.contentDocument.querySelectorAll('video').length,cls:document.querySelector('.live-stage')?.className})})()"), file=sys.stderr, flush=True)
+        if MODE == "rtcfail":
+            await asyncio.sleep(14)
+            state = await v.js("(()=>{const e=document.querySelector('.live-stage video');return {iframe:!!document.querySelector('iframe'),video:!!e,t0:e&&e.currentTime,src:e&&e.currentSrc.slice(0,5)}})()")
+            await asyncio.sleep(4)
+            state["t1"] = await v.js("document.querySelector('.live-stage video')?.currentTime")
+            return {"откат_на_hls": state, "разрешение": [], "кадры": {}, "задержка_плеера_мс": None}
         end = time.time() + seconds
+        if MODE == "rtc":
+            print("звук:", await v.js("(()=>{const f=document.querySelector('iframe');const a=[...(f?.contentDocument?.querySelectorAll('audio')||[])];return JSON.stringify({кнопка:!!document.querySelector('.live-sound'),дорожек:a.length,идёт:a.filter(x=>!x.paused).length})})()"), file=sys.stderr, flush=True)
         while time.time() < end:
             r = await v.js(P.JS_DECODER.replace("document.querySelector('.live-stage video')", "document.querySelector('iframe')?.contentDocument?.querySelector('video')") if MODE == "rtc" else P.JS_DECODER)
             if r and r.get("lag") is not None:
@@ -85,7 +95,7 @@ async def player(token: str, viewer: str, seconds: float) -> dict:
 
 async def main() -> None:
     c = admin()
-    c.put("/api/v1/admin/settings/live", json={"enabled": True, "max_concurrent": 3, "allow_private_destinations": True, "rtc_viewers_max": 50 if MODE == "rtc" else 0}).raise_for_status()
+    c.put("/api/v1/admin/settings/live", json={"enabled": True, "max_concurrent": 3, "allow_private_destinations": True, "rtc_viewers_max": 50 if MODE.startswith("rtc") else 0}).raise_for_status()
     slug = f"m-{time.strftime('%H%M%S')}"
     rid = c.post("/api/v1/admin/rooms", json={"name": slug, "slug": slug, "room_type": "broadcast", "transcription_enabled": False, "acl": [], "moderators": []}).json()["id"]
     lv = c.patch(f"/api/v1/rooms/{rid}/live", json={"live_enabled": True, "live_quality": QUALITY, "live_cdn": False}).json()
