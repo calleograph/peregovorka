@@ -41,7 +41,8 @@ dc stop web backend asr
 restore_from_dump "$FILE" || die "$RESTORE_ERROR"
 if [ -n "$FILES" ]; then
   # приложение уже принято на новой базе: каталоги заменяются под ним, поэтому контейнеры пересоздаются и видят новые файлы
-  if restore_files "$FILES"; then dc up -d --no-build --force-recreate backend asr web $([ "${VIDEO_ENABLED:-no}" = yes ] && echo livekit-egress); else warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"; fi
+  APP=(backend asr web); [ "${VIDEO_ENABLED:-no}" = yes ] && APP+=(livekit-egress)
+  if restore_files "$FILES"; then dc up -d --no-build --force-recreate "${APP[@]}"; else warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"; fi
 fi
 trap - EXIT
 ok "Восстановление завершено. Прежняя база сохранена как $DB_KEPT. После проверки удалите её: docker exec $(dc ps -q postgres | head -1) dropdb -U $POSTGRES_USER $DB_KEPT"

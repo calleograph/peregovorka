@@ -49,7 +49,7 @@ EOL
   mkdir -p "$RS/src/recordings/a" "$RS/recordings"; echo new > "$RS/src/recordings/a/f.wav"; echo old > "$RS/recordings/old.wav"
   tar -C "$RS/src" -czf "$RS/files.tar.gz" recordings
   t "restore: файлы из архива, прежние отложены" bash -c 'source "$RS/lib.sh"; upd_ensure_data_dirs() { :; }; restore_files "$RS/files.tar.gz" && [ "$(cat "$RS/recordings/a/f.wav")" = new ] && [ "$(cat "$RS"/recordings.before-restore-*/old.wav)" = old ]'
-  t "restore.sh: после замены файлов контейнеры пересоздаются" bash -c 'grep -A1 "if restore_files" "$1/scripts/restore.sh" | grep -q "force-recreate backend asr web .*livekit-egress"' _ "$ROOT"
+  t "restore.sh: после замены файлов контейнеры пересоздаются" bash -c 'grep -q "APP=(backend asr web).*livekit-egress" "$1/scripts/restore.sh" && grep -A1 "if restore_files" "$1/scripts/restore.sh" | grep -q "force-recreate"' _ "$ROOT"
   head -c 100 "$RS/files.tar.gz" > "$RS/cut.tar.gz"
   t "restore: обрезанный архив не трогает каталоги" bash -c 'source "$RS/lib.sh"; ! restore_files "$RS/cut.tar.gz" && [ "$(cat "$RS/recordings/a/f.wav")" = new ] && [ -z "$(ls -d "$RS"/.restore.* 2>/dev/null)" ]'
   docker rm -f "$PGC" >/dev/null 2>&1

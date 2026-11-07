@@ -29,7 +29,7 @@ case "$MODE" in
     prereq_os_detect && ok "ОС: ${PREREQ_ID} ${PREREQ_VERSION} (${PREREQ_FAMILY})" || warn "ОС: ${PREREQ_ID:-?} ${PREREQ_VERSION:-}: ${PREREQ_WHY}"
     if out="$(prereq_verify "$PROFILE_ARG")"; then
       ok "Все системные зависимости на месте (профиль $PROFILE_ARG)."
-      [ "$PROFILE_ARG" = shared-host ] && ! docker buildx version >/dev/null 2>&1 && warn "Buildx не установлен: сборка пойдёт запасным сборщиком, медленнее."
+      if [ "$PROFILE_ARG" = shared-host ] && ! docker buildx version >/dev/null 2>&1; then warn "Buildx не установлен: сборка пойдёт запасным сборщиком, медленнее."; fi
     else
       printf '%s\n' "$out" | sed 's/^/  - /'
       if [ "$PROFILE_ARG" = shared-host ]; then fail "Не хватает зависимостей. Docker и nginx на общем сервере ставит его администратор: --install их не ставит. Остальное: sudo scripts/prereq.sh --install --profile shared-host"
