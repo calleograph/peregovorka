@@ -29,6 +29,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/vollib.sh"
 
 CMD="${1:-run}"; [ $# -gt 0 ] && shift
+case "$CMD" in -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 INTERVAL=3; CHECK_EVERY="${UPDATER_CHECK_EVERY:-1800}"; YES=0; QUIET=0; FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in

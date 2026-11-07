@@ -39,7 +39,10 @@ trap app_back EXIT
 info "Остановка backend/asr/web проекта…"
 dc stop web backend asr
 restore_from_dump "$FILE" || die "$RESTORE_ERROR"
-[ -z "$FILES" ] || restore_files "$FILES" || warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"
+if [ -n "$FILES" ]; then
+  # приложение уже принято на новой базе: каталоги заменяются под ним, поэтому контейнеры пересоздаются и видят новые файлы
+  if restore_files "$FILES"; then dc up -d --no-build --force-recreate backend asr web $([ "${VIDEO_ENABLED:-no}" = yes ] && echo livekit-egress); else warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"; fi
+fi
 trap - EXIT
-ok "Восстановление завершено. Прежняя база сохранена как $DB_KEPT. После проверки удалите её: docker compose exec postgres dropdb -U $POSTGRES_USER $DB_KEPT"
+ok "Восстановление завершено. Прежняя база сохранена как $DB_KEPT. После проверки удалите её: docker exec $(dc ps -q postgres | head -1) dropdb -U $POSTGRES_USER $DB_KEPT"
 ok "Проверка: scripts/status.sh && scripts/smoke-test.sh"

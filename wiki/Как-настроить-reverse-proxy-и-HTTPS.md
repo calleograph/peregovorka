@@ -76,7 +76,7 @@ sudo scripts/install.sh --profile standalone --from nginx
 ### Проверьте WebSocket
 
 ```bash
-scripts/smoke-test.sh
+sudo scripts/smoke-test.sh
 
 curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
      -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://meet.example.org/livekit/rtc?access_token=ТОКЕН'
@@ -91,7 +91,7 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-We
 1. Найдите отклонённый адрес:
 
    ```bash
-   ./scripts/logs.sh backend --tail 500 | grep "Origin отклонён"
+   sudo scripts/logs.sh backend --tail 500 | grep "Origin отклонён"
    ```
 
 2. В `.env` задайте основной адрес и, при необходимости, дополнительные:
@@ -101,7 +101,7 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-We
    ALLOWED_ORIGINS=https://meet.example.org,https://192.0.2.10
    ```
 
-3. Примените изменения: `./scripts/ctl.sh restart backend`.
+3. Примените изменения: `sudo scripts/ctl.sh restart backend`.
 
 Проверка Origin и CSRF остаются включёнными; список лишь расширяет разрешённые адреса. Подстановок `*` нет. Заголовки `X-Forwarded-Host` и `X-Forwarded-Proto` в проверке Origin не доверяются. Cookie привязаны к хосту: у каждого адреса вход свой; при `COOKIE_SECURE=true` каждый адрес должен открываться по HTTPS.
 
@@ -134,7 +134,7 @@ HSTS в приложении и шаблонах **не включён наме�
 ## Что получится
 
 - Страница открывается по `https://meet.example.org`, в браузере нет предупреждений о сертификате.
-- `scripts/smoke-test.sh` завершается без ошибок.
+- `sudo scripts/smoke-test.sh` завершается без ошибок.
 - Тестовый звонок двух участников идёт со звуком и видео.
 - Гость входит по ссылке, зритель открывает эфир.
 - В **Сеть и IP-адреса (прокси, WAF)** блок **Что сервер видит сейчас** показывает ваш настоящий адрес.

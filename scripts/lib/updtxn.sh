@@ -81,6 +81,7 @@ db_restore_back() { # вернуть отложенную базу на мест
 restore_preflight() { # restore_preflight ДАМП: места хватает, дамп читается
   local need free
   RESTORE_ERROR=""
+  dc exec -T postgres pg_isready -q >/dev/null 2>&1 || { RESTORE_ERROR="PostgreSQL не отвечает: запустите его (scripts/ctl.sh start postgres) и повторите"; return 1; }
   dc exec -T postgres pg_restore --list < "$1" >/dev/null 2>&1 || { RESTORE_ERROR="Дамп не читается: файл повреждён или это не дамп backup.sh"; return 1; }
   need="$(_pgq "SELECT pg_database_size(current_database())" 2>/dev/null)"
   free="$(df -B1 --output=avail "${DATA_ROOT:-/}/postgres" 2>/dev/null | tail -1 | tr -d ' ')"

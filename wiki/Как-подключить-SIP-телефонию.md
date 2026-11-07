@@ -71,7 +71,7 @@ sequenceDiagram
 
    ```bash
    sudo scripts/sip.sh enable
-   scripts/sip.sh status
+   sudo scripts/sip.sh status
    ```
 
 3. При необходимости задайте в `.env`: `SIP_BIND_ADDR` (для внутренней АТС укажите внутренний адрес сервера), `SIP_MEDIA_IP` (адрес для голоса за NAT), `SIP_ALLOWED_CIDRS` (подсети АТС), `SIP_SIGNALING_PORT`, `SIP_RTP_START`, `SIP_RTP_END`.
@@ -199,7 +199,7 @@ match=192.0.2.20
 | «Профиль ещё не синхронизирован» | транков нет | нажмите **Синхронизировать** |
 | Нельзя включить телефонию в комнате | в комнате включено сквозное шифрование | выключите его или телефонию |
 
-Журнал службы: `scripts/logs.sh livekit-sip`. Состояние: `scripts/sip.sh status`.
+Журнал службы: `sudo scripts/logs.sh livekit-sip`. Состояние: `sudo scripts/sip.sh status`.
 
 ## Что дальше
 
