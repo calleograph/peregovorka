@@ -40,7 +40,7 @@ describe("автоматическое ухудшение и улучшение 
   it("пустой буфер дольше 4 секунд, а канал в порядке — звук; короткий провал не в счёт", () => {
     const st = initial(0);
     expect(run(st, 20, (t) => good({ buffer: t >= 3 && t < 6 ? 0.2 : 3 }))).toBeNull();
-    expect(run(st, 20, (t) => good({ buffer: 0.2 }), 100)).toBe(104);
+    expect(run(st, 20, () => good({ buffer: 0.2 }), 100)).toBe(104);
     expect(st.reason).toBe("пустой буфер");
   });
 
