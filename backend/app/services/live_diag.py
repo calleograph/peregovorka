@@ -496,7 +496,7 @@ def stage_view(s: dict, findings: list[Finding]) -> list[dict]:
     lk, eg = svc.get("livekit") or {}, svc.get("egress") or {}
     pub = (view.get("publishers") or [{}])[0]
     val = {
-        "source": f"{src['max_w']}×{src['max_h']}" if src.get("max_h") else ("нет видео" if src.get("known") else None),
+        "source": (f"{src['max_w']}×{src['max_h']}" + (f" → {s['quality']}" if s.get("quality") else "")) if src.get("max_h") else ("нет видео" if src.get("known") else None),      # что публикует выступающий и во что оно превращается на выходе
         "livekit": f"{d1(max(lk.get('loss_in') or 0, lk.get('loss_out') or 0))} %" if lk.get("loss_in") is not None or lk.get("loss_out") is not None else (lk.get("st") and "работает"),
         "egress": f"{eg['load']:.0f} %" if eg.get("load") is not None else eg.get("st"),
         "output": f"{d1(hls['ready_s'])} с" if hls.get("ready_s") is not None else (f"{len(s.get('rtmp') or [])} площ." if s.get("rtmp") else None),

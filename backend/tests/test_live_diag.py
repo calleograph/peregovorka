@@ -219,6 +219,11 @@ def test_rtmp_failure_names_the_platform_and_never_the_key():
     assert "Канал" in f.text and KEY not in f.cause and f.kind == "confirmed"
 
 
+def test_source_tile_shows_what_the_speaker_publishes_and_the_ordered_output_quality():
+    st = {x["id"]: x for x in stage_view(ok_sample(source={"known": True, "max_w": 1920, "max_h": 1080}, quality="720p"), [])}
+    assert st["source"]["val"] == "1920×1080 → 720p"
+
+
 def test_stage_view_marks_missing_data_as_unknown_not_as_ok():
     st = {x["id"]: x for x in stage_view({"svc": {}, "viewer_count": 0}, [])}
     assert st["egress"]["lv"] == -1 and st["delivery"]["lv"] == -1

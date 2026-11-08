@@ -101,7 +101,7 @@ function Server({ d }: { d: DiagState }) {
 function Flow({ d }: { d: DiagState }) {
   const n = d.now, lk = n?.svc?.livekit, eg = n?.svc?.egress, m = n?.media, hls = n?.hls, src = n?.source, pubs = n?.viewers?.publishers ?? [], stages = d.stages ?? [];
   return <>
-    <section className="ld-sec"><h3>1. Источник<Tip>Что публикуют участники. Разрешение, кадры и причина снижения качества приходят из браузера выступающего, если в нём открыта комната.</Tip></h3>
+    <section className="ld-sec"><h3>1. Источник<Tip>Что публикуют участники (то, что присылает выступающий; качество самого эфира выбрано в настройках и показано справа от стрелки на плитке этапа и в блоке «Поток на выходе»). Разрешение, кадры и причина снижения качества приходят из браузера выступающего, если в нём открыта комната.</Tip></h3>
       {(src?.list ?? []).length === 0 && <p className="ld-empty">Участников с дорожками нет</p>}
       {(src?.list ?? []).filter((p) => p.tracks.length).map((p) => <Row key={p.id} k={p.name} v={p.tracks.map((t) => (t.kind === "video" ? `${t.src === "screen" ? "экран" : "камера"} ${t.w ?? "?"}×${t.h ?? "?"}${t.muted ? " (выкл.)" : ""}` : t.muted ? "звук выкл." : "звук")).join(" · ")} />)}
       {pubs.map((p, i) => <Row key={i} k={`Браузер: ${p.src === "screen" ? "экран" : "камера"}`} v={`${p.res?.replace("x", "×") ?? "?"} · ${num(p.fps, 0)} к/с · ${kbps(p.kbps)} · потери ${num(p.loss, 1)} %${p.limit && p.limit !== "none" ? ` · ограничение: ${p.limit === "cpu" ? "процессор" : p.limit === "bandwidth" ? "канал" : "другое"}` : ""}`} />)}
