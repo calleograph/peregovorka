@@ -216,14 +216,13 @@ export function DiagHistory({ load }: { load: () => Promise<{ items: DiagHistory
 }
 
 /** Мой просмотр: только то, что видит браузер этого зрителя. */
-function Mine({ viewer, c }: { viewer: ViewerStats; c: ClientStats }) {
+function Mine({ viewer, c, simple }: { viewer: ViewerStats; c: ClientStats; simple: boolean }) {
   const baseline = useRef({ stalls: c.stalls, at: Date.now() });
   if (Date.now() - baseline.current.at > 15_000) baseline.current = { stalls: c.stalls, at: Date.now() };
   const v = clientVerdict(c, baseline.current.stalls), native = c.eng === "native";
   const noHls = native ? "Этот браузер воспроизводит поток сам и не сообщает странице время загрузки сегментов." : "Пока ни один сегмент не загружен.";
   const h = viewer.history;
-  return <>
-    <div className={v.level ? `ld-find ${v.level === 2 ? "crit" : "warn"}` : "ld-fine"} role="status"><Dot lv={v.level} /> <b>{v.text}</b></div>
+  const tech = <>
     <div className="ld-rings">
       <Ring pct={c.buf == null ? null : c.buf * 10} text={c.buf == null ? "—" : num(c.buf)} label="Буфер" lv={c.buf == null ? -1 : c.buf < 0.3 ? 2 : c.buf < 1 ? 1 : 0} sub="с" tip="Сколько видео уже загружено наперёд. Опустеет — картинка остановится." />
       <Ring pct={c.lag == null ? null : c.lag * 100 / 15} text={c.lag == null ? "—" : num(c.lag)} label="Отставание" lv={level(c.lag, 12, 30)} sub="с" tip="На сколько вы позади края эфира. Плеер держит около 3 с и догоняет сам." />
@@ -242,6 +241,17 @@ function Mine({ viewer, c }: { viewer: ViewerStats; c: ClientStats }) {
       <Row k="Остановлено всего" v={`${num(c.stall_ms / 1000)} с`} /><Row k="Переподключений" v={c.reconn} /><Row k="Ошибок" v={c.errs} /><Row k="Плеер" v={native ? "встроенный" : "hls.js"} />
       {c.node && <Row k="Узел CDN" v={c.node} />}
     </div>
+  </>;
+  // Зрителю — вердикт и четыре понятных показателя; кольца, графики и служебные строки (плеер, узел, размер сегмента) — под «Подробнее». Организатор видит всё сразу.
+  return <>
+    <div className={v.level ? `ld-find ${v.level === 2 ? "crit" : "warn"}` : "ld-fine"} role="status"><Dot lv={v.level} /> <b>{v.text}</b></div>
+    {simple ? <>
+      <div className="ld-grid2">
+        <Row k="Показ" v={c.aud ? "только звук" : "видео"} /><Row k="Качество" v={c.res?.replace("x", "×")} na="Пока неизвестно." />
+        <Row k="Задержка" v={c.lat == null ? null : `${num(c.lat)} с`} na="Пока неизвестно." /><Row k="Остановок" v={c.stalls} />
+      </div>
+      <details className="ld-more"><summary>Подробнее</summary>{tech}</details>
+    </> : tech}
   </>;
 }
 
@@ -293,7 +303,7 @@ export default function LiveDiagPanel({ meetingId, roomId, viewer, onClose }: { 
   const tabs: [Tab, string][] = server ? [["over", "Обзор"], ["srv", "Сервер"], ["flow", "Поток"], ["view", "Зрители"], ["log", "Журнал"], ...(roomId ? [["hist", "История"] as [Tab, string]] : []), ...(viewer ? [["me", "Мой просмотр"] as [Tab, string]] : [])] : [];
   const live = d?.status === "live" || d?.status === "starting" || d?.status === "ending";
   let content: ReactNode = null;
-  if (tab === "me" && viewer && c) content = <Mine viewer={viewer} c={c} />;
+  if (tab === "me" && viewer && c) content = <Mine viewer={viewer} c={c} simple={!server} />;
   else if (tab === "hist" && roomId) content = <DiagHistory load={() => api.liveDiagHistory(roomId)} />;
   else if (server && err && !d) content = <p className="ld-empty" role="alert">{err}</p>;
   else if (server && !d) content = <p className="ld-empty">Загрузка…</p>;

@@ -75,3 +75,5 @@
   .ld-sparks, .ld-grid2 { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { .ld-ring .fg { transition: none; } }
+
+.ld-more { margin-top: 12px; } .ld-more > summary { cursor: pointer; color: var(--muted, #667); font-weight: 600; padding: 8px 0; min-height: 44px; display: flex; align-items: center; } .ld-more[open] > summary { margin-bottom: 8px; }

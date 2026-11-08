@@ -471,7 +471,11 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
     for p in view.get("publishers") or []:
         if p.get("limit") in ("cpu", "bandwidth"):
             why_ = "процессор компьютера" if p["limit"] == "cpu" else "исходящий канал"
-            out.append(Finding(f"pub_limit_{p['limit']}", 1, "source", "source", f"Браузер выступающего снижает качество: {why_}", "Причину сообщает сам браузер (getStats).", "confirmed"))
+            lower = {"1440p": "1080p", "1080p": "720p"}.get(s.get("quality") or "")
+            what = f"качество эфира {lower}" if lower else "проводную сеть или другую сеть"
+            todo = (f"Канал выступающего не тянет {s.get('quality') or 'выбранное качество'}: выберите {what} в настройках комнаты." if p["limit"] == "bandwidth"
+                    else f"Компьютеру выступающего не хватает процессора: закройте тяжёлые программы или выберите {what if lower else 'качество ниже'}.")
+            out.append(Finding(f"pub_limit_{p['limit']}", 1, "source", "source", f"Браузер выступающего снижает качество: {why_}", f"Причину сообщает сам браузер (getStats). {todo}", "confirmed"))
             break
 
     rep, bad = view.get("reporting") or 0, view.get("bad") or 0

@@ -3,7 +3,7 @@
 Браузер сам вызывает действие Media Session «enterpictureinpicture», когда человек переключает вкладку со встречей (микрофон включён). В автоматическом
 браузере переключения вкладок нет — сценарий перехватывает зарегистрированный страницей обработчик и вызывает его так же, как браузер: без нажатия на
 странице (CDP userGesture — только чтобы headless-окно открылось; настоящий автопереход жеста не требует).
-Проверяется: обработчик зарегистрирован только во встрече; окно открывается; в нём видео собеседника с идущими кадрами и кнопки; «Микрофон» в окне
+Проверяется: обработчик зарегистрирован только во встрече; окно открывается; в нём видео собеседника с идущими кадрами и кнопки, время, участники; «Микрофон» в окне
 выключает и включает микрофон во встрече; возврат на вкладку закрывает окно; «Выйти» в окне завершает участие; после выхода обработчик снят.
 Запасной путь (браузер без Document PiP): системное окно для видео — главное видео страницы.
 """
@@ -68,16 +68,20 @@ async def main():
         S.check("окно открылось", await A.wait_for(f"!!{PIPDOC}?.querySelector('.pip')", 10))
         f = await A.js(FRAMES)
         S.check("в окне видео собеседника, кадры идут", f.get("video") and f.get("w", 0) > 0 and f.get("grew"), json.dumps(f))
-        names = await A.js(f"[...{PIPDOC}.querySelectorAll('.bar button')].map(b => b.textContent.trim())")
-        S.check("кнопки окна: «Микрофон» и «Выйти»", names == ["Микрофон", "Выйти"], str(names))
+        names = await A.js(f"[...{PIPDOC}.querySelectorAll('.btns button')].map(b => b.getAttribute('aria-label') || b.textContent.trim())")
+        S.check("кнопки окна: «Микрофон», «Камера» и «Выйти»", names == ["Микрофон", "Камера", "Выйти"], str(names))
+        # стили окна применены (за политикой CSP страницы встроенный <style> блокируется: без файла стилей окно выглядит голым HTML)
+        css = await A.js(f"(() => {{ const d = {PIPDOC}; const p = d.querySelector('.pip'); return p ? {{pos: getComputedStyle(p).position, bg: getComputedStyle(d.body).backgroundColor, font: getComputedStyle(d.body).fontFamily.slice(0, 20)}} : null; }})()")
+        S.check("стили окна применены (не голый HTML)", bool(css) and css["pos"] == "relative" and css["bg"] != "rgba(0, 0, 0, 0)" and css["bg"] != "rgb(255, 255, 255)", str(css))
+        S.check("в окне есть заголовок встречи, время и число участников", bool(await A.js(f"!!({PIPDOC}.querySelector('.top b')?.textContent && {PIPDOC}.querySelector('.meta')?.textContent.match(/\\d\\d:\\d\\d:\\d\\d/))")))
         S.check("в окне — имя собеседника", "Борис" in (await A.js(f"{PIPDOC}.querySelector('.who')?.textContent || ''") or ""))
         await A.shot("main-while-pip")
         mic0 = await A.js("!!document.querySelector('button[aria-pressed=\"true\"][aria-label*=\"икрофон\"]')")
-        await A.js(f"{PIPDOC}.querySelector('.bar button').click()"); await asyncio.sleep(2)
+        await A.js(f"{PIPDOC}.querySelector('.btns button').click()"); await asyncio.sleep(2)
         mic1 = await A.js("!!document.querySelector('button[aria-pressed=\"true\"][aria-label*=\"икрофон\"]')")
         S.check("«Микрофон» в окне переключает микрофон встречи", mic0 != mic1, f"{mic0}→{mic1}")
-        S.check("кнопка в окне показывает новое состояние", await A.js(f"{PIPDOC}.querySelector('.bar button').getAttribute('aria-pressed')") == ("true" if mic1 else "false"))
-        await A.js(f"{PIPDOC}.querySelector('.bar button').click()"); await asyncio.sleep(1.5)
+        S.check("кнопка в окне показывает новое состояние", await A.js(f"{PIPDOC}.querySelector('.btns button').getAttribute('aria-pressed')") == ("true" if mic1 else "false"))
+        await A.js(f"{PIPDOC}.querySelector('.btns button').click()"); await asyncio.sleep(1.5)
         # возврат на вкладку: окно закрывается само (браузер присылает visibilitychange с visible)
         await A.js("document.dispatchEvent(new Event('visibilitychange'))")
         S.check("возврат на вкладку закрывает окно", await A.wait_for("!documentPictureInPicture.window", 5))
@@ -94,7 +98,7 @@ async def main():
         await B.click_btn("Остановить показ")
         S.check("показ закончился — в окне снова камера собеседника", await A.wait_for(f"!!{PIPDOC}?.querySelector('.pip video.fill')", 15))
         S.check("снимок окна (камера)", await pip_shot(A, "pip-window-camera"))
-        await A.js(f"{PIPDOC}.querySelector('.bar button.leave').click()")
+        await A.js(f"{PIPDOC}.querySelector('.btns button.leave').click()")
         S.check("«Выйти» в окне — участник вышел из встречи", await A.wait_for("!location.pathname.startsWith('/rooms/')", 15), await A.js("location.pathname"))
         S.check("после выхода окно закрыто и обработчик снят", await A.wait_for("!documentPictureInPicture.window", 5) and await A.js("window.__pipH === null"))
         S.check("у Бориса Алисы больше нет", await B.wait_for("document.querySelectorAll('.tile').length === 1", 20))

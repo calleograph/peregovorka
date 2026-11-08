@@ -1,0 +1,66 @@
+/* Плавающее окно встречи (Document Picture-in-Picture). Отдельный документ: стили страницы сюда не попадают, а встроенный <style> закрыт политикой CSP
+   (style-src 'self'), поэтому окно подключает этот файл ссылкой. Меняя файл, меняйте и имя (кэш): components/room/AutoPip.tsx. Шкала отступов 4·8·12·16·24. */
+@font-face { font-family: "Inter"; src: url("/fonts/inter-cyrillic-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family: "Inter"; src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+
+:root {
+  color-scheme: dark;
+  --bg: #0b1120; --panel: rgb(11 17 32 / .72); --line: rgb(255 255 255 / .12); --text: #eef2fa; --muted: #a7b3c9;
+  --accent: #4d7cff; --ok: #3ddc97; --danger: #e5484d; --danger-soft: #5b2326; --btn: rgb(255 255 255 / .12);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.3 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+button { font: inherit; }
+svg { flex: none; }
+
+.pip { position: relative; height: 100%; overflow: hidden; display: grid; place-items: center;
+  background: radial-gradient(120% 90% at 20% 0%, #1b2c54 0%, #101a33 48%, #0b1120 100%); }
+.pip video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; }
+.pip video.fit { object-fit: contain; } .pip video.fill { object-fit: cover; }
+
+/* Нет изображения: крупный круг с буквой и кольцо речи */
+.ava { position: relative; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; font-weight: 700; color: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / .35), inset 0 0 0 1px rgb(255 255 255 / .2); margin-top: -32px; }
+.ava.sp::after { content: ""; position: absolute; inset: -8px; border-radius: 50%; border: 2px solid var(--ok); animation: ring 1.4s ease-out infinite; }
+@keyframes ring { from { opacity: .9; transform: scale(.92); } to { opacity: 0; transform: scale(1.18); } }
+
+.top, .bot { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 12px; }
+.top { top: 0; justify-content: space-between; background: linear-gradient(rgb(0 0 0 / .62), transparent); padding-bottom: 24px; }
+.bot { bottom: 0; justify-content: space-between; background: linear-gradient(transparent, rgb(0 0 0 / .78)); padding-top: 24px; }
+.ttl { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.ttl b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
+.meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+.meta span, .chip { display: inline-flex; align-items: center; gap: 4px; }
+.chip { padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; background: var(--panel); border: 1px solid var(--line); flex: none; }
+.chip.rec { color: #ffb4b6; border-color: rgb(229 72 77 / .5); }
+.chip.rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+
+/* Кто говорит: имя над нижней панелью */
+.who { position: absolute; left: 12px; bottom: 76px; max-width: calc(100% - 24px); display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+.who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; } .who svg { color: var(--muted); }
+.who.talk svg { color: var(--ok); } .who.muted svg { color: #ff8a80; }
+
+/* Участники */
+.crowd { display: flex; align-items: center; min-width: 0; }
+.crowd .mini { position: relative; width: 32px; height: 32px; margin-left: -8px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff;
+  border: 2px solid #0b1120; }
+.crowd .mini:first-child { margin-left: 0; }
+.crowd .mini.sp { box-shadow: 0 0 0 2px var(--ok); z-index: 1; }
+.crowd .mini.mute::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; background: var(--danger);
+  border: 2px solid #0b1120; }
+.crowd .more { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Кнопки */
+.btns { display: flex; align-items: center; gap: 8px; flex: none; }
+.btns button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; min-width: 44px; padding: 0; border: 1px solid var(--line); border-radius: 24px;
+  color: #fff; background: var(--btn); cursor: pointer; transition: background .15s, transform .1s, filter .15s; }
+.btns button.off { background: var(--danger-soft); border-color: rgb(229 72 77 / .5); color: #ffd1d3; }
+.btns button.leave { padding: 0 16px; background: var(--danger); border-color: transparent; font-weight: 650; }
+.btns button:hover:not(:disabled) { filter: brightness(1.18); } .btns button:active:not(:disabled) { transform: scale(.96); }
+.btns button:disabled { opacity: .4; cursor: default; }
+.btns button:focus-visible { outline: 2px solid #9db8ff; outline-offset: 2px; }
+
+@media (max-width: 340px) { .btns button.leave span { display: none; } .btns button.leave { padding: 0; } .meta .cnt { display: none; } }
+@media (prefers-reduced-motion: reduce) { .ava.sp::after, .chip.rec::before { animation: none; } .btns button { transition: none; } }

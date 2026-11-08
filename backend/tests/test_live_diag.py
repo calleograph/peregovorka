@@ -213,6 +213,13 @@ def test_rules_cover_every_listed_situation(over, code):
     assert code in codes(ok_sample(**over))
 
 
+def test_presenter_limit_says_what_to_do_for_the_chosen_quality():
+    f = codes(ok_sample(quality="1440p", viewers={"reporting": 1, "publishers": [{"limit": "bandwidth"}], "worst": []}))["pub_limit_bandwidth"]
+    assert "1080p" in f.cause, "при 1440p советуем 1080p"
+    f = codes(ok_sample(quality="720p", viewers={"reporting": 1, "publishers": [{"limit": "bandwidth"}], "worst": []}))["pub_limit_bandwidth"]
+    assert "проводную сеть" in f.cause, "ниже 720p опускаться некуда: советуем сеть"
+
+
 def test_rtmp_failure_names_the_platform_and_never_the_key():
     s = ok_sample(rtmp=[{"id": "abcdef12-0000", "name": "Канал", "status": "failed", "error": clean_text(f"connect rtmp://live.example.org/app/{KEY} refused")}])
     f = codes(s)["rtmp_abcdef12"]

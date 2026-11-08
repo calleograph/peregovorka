@@ -1194,6 +1194,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     active: !!join && stage === "ready" && state === ConnectionState.Connected && !ended, title: join?.room.name ?? "Встреча",
     people: participants, micOn: !!meLocal?.mic, canMic: sources.includes("microphone") && (!join?.client.presentation || pubAllowed),
     onMic: () => void toggle("mic"), onLeave: () => void leave(),
+    camOn: !!meLocal?.cam, canCam: sources.includes("camera") && (!join?.client.presentation || pubAllowed), onCam: () => void toggle("cam"), recording: recording || !!video?.recording,
   });
   const desktopRef = useRef({ leave, toggle });
   desktopRef.current = { leave, toggle };

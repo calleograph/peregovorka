@@ -5,7 +5,10 @@ import { Icon } from "../Icons";
 import { lastSpeakerOf, pipFocus, videoShowing, type PipCand, type PipFocus } from "../../webPip";
 
 export interface PipPerson extends PipCand { name: string; mic: boolean; participant: Participant }
-interface Opts { active: boolean; title: string; people: PipPerson[]; micOn: boolean; canMic: boolean; onMic: () => void; onLeave: () => void }
+interface Opts {
+  active: boolean; title: string; people: PipPerson[]; micOn: boolean; canMic: boolean; onMic: () => void; onLeave: () => void;
+  camOn: boolean; canCam: boolean; onCam: () => void; recording: boolean;
+}
 type DocPip = { requestWindow: (o: { width: number; height: number }) => Promise<Window>; window: Window | null };
 const docPip = (): DocPip | undefined => (window as Window & { documentPictureInPicture?: DocPip }).documentPictureInPicture;
 
@@ -15,7 +18,8 @@ const trackOf = (p: PipPerson | undefined, f: PipFocus | null) =>
 /**
  * Плавающее окно встречи при уходе со вкладки. Только автоматически — отдельной кнопки нет; ручной режим для одной плитки остаётся в её меню.
  * - Chrome и Edge на компьютере: браузер сам вызывает действие Media Session «enterpictureinpicture», когда человек переключается на другую вкладку
- *   страницы с включённым микрофоном или камерой (без нажатия). Открываем окно Document Picture-in-Picture — изображение и кнопки «Микрофон» и «Выйти»;
+ *   страницы с включённым микрофоном или камерой (без нажатия). Открываем окно Document Picture-in-Picture — изображение, время во встрече, участники и кнопки
+ *   «Микрофон», «Камера» и «Выйти»;
  *   где его нет — системное окно для видео (только изображение).
  * - Safari (iPhone, iPad, Mac): видео, которое сейчас главное, помечается autopictureinpicture — система переводит его в окно при сворачивании.
  * - Остальные браузеры (Firefox, Chrome на Android, приложение Windows): без автоперехода, страница ведёт себя как раньше.
@@ -77,24 +81,53 @@ export function useAutoPip(o: Opts): ReactNode {
   return createPortal(<PipPanel person={person} focus={focus} o={o} />, win.document.body);
 }
 
+const BOT = /^(EG_|asr-)/;                                  // служебные участники (запись эфира, распознавание) в окне не показываются
+const hue = (s: string) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+const tint = (name: string) => `linear-gradient(135deg, hsl(${hue(name)} 62% 52%), hsl(${(hue(name) + 40) % 360} 58% 38%))`;
+const initial = (name?: string) => (name ?? "?").trim().slice(0, 1).toUpperCase() || "?";
+const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); const p = (n: number) => String(n).padStart(2, "0"); return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}`; };
+
 function PipPanel({ person, focus, o }: { person?: PipPerson; focus: PipFocus | null; o: Opts }) {
   const ref = useRef<HTMLVideoElement>(null);
   const track = trackOf(person, focus);
+  const t0 = useRef(Date.now());
+  const [, tick] = useState(0);
+  useEffect(() => { const t = window.setInterval(() => tick((n) => n + 1), 1000); return () => window.clearInterval(t); }, []);
   useEffect(() => {
     const v = ref.current;
     if (!v || !track) return;
     track.attach(v);                                  // через LiveKit: так он знает, что видео в окне видно, и не останавливает поток
     return () => { track.detach(v); };
   }, [track]);
+  const all = o.people.filter((p) => !BOT.test(p.identity));
+  const crowd = [...all].sort((a, b) => Number(b.speaking) - Number(a.speaking) || Number(a.local) - Number(b.local)).slice(0, 4);
+  const { speaking = false, local: self = true } = person ?? {};
+  const talking = speaking && !self;
   return (
     <div className="pip">
       {track ? <video ref={ref} className={focus?.source === "screen" ? "fit" : "fill"} autoPlay playsInline muted />
-        : <div className="ava">{(person?.name ?? "?").trim().slice(0, 1).toUpperCase()}</div>}
-      {person && <div className="who">{!person.mic && focus?.source !== "screen" && <Icon name="micOff" size={13} />}<span>{whoLabel(person)}</span></div>}
-      <div className="bar">
-        <button type="button" className={o.micOn ? "on" : "off"} disabled={!o.canMic} aria-pressed={o.micOn} onClick={o.onMic}
-                title={o.micOn ? "Выключить микрофон" : "Включить микрофон"}><Icon name={o.micOn ? "mic" : "micOff"} size={18} /><span>Микрофон</span></button>
-        <button type="button" className="leave" onClick={o.onLeave} title="Выйти из встречи"><Icon name="hangup" size={18} /><span>Выйти</span></button>
+        : <div className={`ava${talking ? " sp" : ""}`} style={{ background: tint(person?.name ?? "?") }}>{initial(person?.name)}</div>}
+      <div className="top">
+        <div className="ttl">{o.recording && <span className="chip rec">Запись</span>}<b>{o.title}</b></div>
+        <div className="meta"><span title="Время во встрече"><Icon name="clock" size={13} />{clock(Date.now() - t0.current)}</span><span className="cnt" title="Участников"><Icon name="users" size={13} />{all.length}</span></div>
+      </div>
+      {person && (
+        <div className={`who${talking ? " talk" : ""}${!person.mic && focus?.source !== "screen" ? " muted" : ""}`}>
+          {focus?.source === "screen" ? <Icon name="screen" size={13} /> : <Icon name={person.mic ? "mic" : "micOff"} size={13} />}<span>{whoLabel(person)}</span>
+        </div>
+      )}
+      <div className="bot">
+        <div className="crowd" aria-label="Участники">
+          {crowd.map((p) => <span key={p.identity} className={`mini${p.speaking ? " sp" : ""}${p.mic ? "" : " mute"}`} style={{ background: tint(p.name) }} title={whoLabel(p)}>{initial(p.name)}</span>)}
+          {all.length > crowd.length && <span className="more">+{all.length - crowd.length}</span>}
+        </div>
+        <div className="btns">
+          <button type="button" className={o.micOn ? "on" : "off"} disabled={!o.canMic} aria-pressed={o.micOn} onClick={o.onMic}
+                  title={o.micOn ? "Выключить микрофон" : "Включить микрофон"} aria-label="Микрофон"><Icon name={o.micOn ? "mic" : "micOff"} size={18} /></button>
+          <button type="button" className={o.camOn ? "on" : "off"} disabled={!o.canCam} aria-pressed={o.camOn} onClick={o.onCam}
+                  title={o.camOn ? "Выключить камеру" : "Включить камеру"} aria-label="Камера"><Icon name={o.camOn ? "video" : "videoOff"} size={18} /></button>
+          <button type="button" className="leave" onClick={o.onLeave} title="Выйти из встречи"><Icon name="hangup" size={18} /><span>Выйти</span></button>
+        </div>
       </div>
     </div>
   );
@@ -102,27 +135,17 @@ function PipPanel({ person, focus, o }: { person?: PipPerson; focus: PipFocus | 
 
 const whoLabel = ({ name, local }: PipPerson) => (local ? `${name} (вы)` : name);
 
+/** Файл стилей окна. Лежит в public/: встроенный <style> закрыт политикой страницы (style-src 'self'), а окно её наследует. При правке файла меняйте его имя (кэш). */
+const PIP_CSS = "/pip.v1.css";
+
 /** Окно Document PiP — отдельный документ: свои стили (страницы туда не переходят), язык, заголовок. */
 function prepare(w: Window, title: string) {
   const d = w.document;
   d.documentElement.lang = "ru";
   d.title = title;
-  const st = d.createElement("style");
-  st.textContent = `
-    :root { color-scheme: dark; }
-    html, body { margin: 0; height: 100%; background: #0d1320; color: #e8edf6; font: 13px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-    .pip { position: relative; height: 100%; display: grid; place-items: center; }
-    .pip video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; }
-    .pip video.fit { object-fit: contain; } .pip video.fill { object-fit: cover; }
-    .ava { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: #2b3a5e; font-size: 26px; font-weight: 600; }
-    .who { position: absolute; left: 8px; top: 8px; display: flex; gap: 4px; align-items: center; max-width: calc(100% - 16px); padding: 3px 8px; border-radius: 8px; background: rgb(0 0 0 / .6); }
-    .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .who svg { color: #ff8a80; flex: none; }
-    .bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; justify-content: center; padding: 10px; background: linear-gradient(transparent, rgb(0 0 0 / .7)); }
-    .bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 18px; font: inherit; font-weight: 600; color: #fff; background: #2a3448; cursor: pointer; }
-    .bar button.off { background: #5a2420; } .bar button.leave { background: #cc3535; }
-    .bar button:hover:not(:disabled) { filter: brightness(1.15); } .bar button:disabled { opacity: .45; cursor: default; }
-    .bar button:focus-visible { outline: 2px solid #8fb2ff; outline-offset: 2px; }
-    @media (max-width: 300px) { .bar button span { display: none; } .bar button { padding: 0 10px; } }
-  `;
-  d.head.append(st);
+  d.documentElement.style.background = "#0b1120";             // до загрузки стилей окно не белое (свойство через CSSOM политика разрешает)
+  const l = d.createElement("link");
+  l.rel = "stylesheet";
+  l.href = new URL(PIP_CSS, window.location.href).href;
+  d.head.append(l);
 }
