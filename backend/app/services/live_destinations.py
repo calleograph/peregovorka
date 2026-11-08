@@ -28,6 +28,7 @@ from .settings import SettingsError
 log = logging.getLogger("app.live")
 
 RELAY_KEY = "live:relay:{}"            # эфир идёт через службу ретрансляции: значение — локальный адрес, откуда площадки читают поток
+RELAY_WARMUP_S = 45                    # первые секунды эфира поток ещё не опубликован в MediaMTX: повторы службы в это время не ошибка площадки
 FLAP_RETRIES = 5                       # новых повторов Egress за окно: одиночные обрывы сети (1–2) не считаются
 FLAP_WINDOW_S = 90
 PLATFORMS = {"rutube": "RUTUBE", "vk": "VK Видео", "youtube": "YouTube", "twitch": "Twitch", "custom": "Другой RTMP/RTMPS-сервер"}
@@ -290,7 +291,7 @@ class Destinations:
                         new, err = "live", None
                         if row.status != "live":
                             row.last_ok_at = datetime.now(timezone.utc)
-                    elif state == "retrying" and int(cur.get("fails") or 0) >= 2:
+                    elif state == "retrying" and int(cur.get("fails") or 0) >= 2 and (datetime.now(timezone.utc) - broadcast.started_at).total_seconds() > RELAY_WARMUP_S:
                         new, err = "failed", (err or "площадка не принимает поток") + ". Повторы продолжаются сами; эфир и остальные площадки это не затрагивает."
                     else:
                         new, err = "connecting", None

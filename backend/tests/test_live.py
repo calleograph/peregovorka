@@ -1371,7 +1371,8 @@ def lr(lv, monkeypatch):
     return lv
 
 
-def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(lr, public_dns):
+def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(lr, public_dns, monkeypatch):
+    monkeypatch.setattr("app.services.live_destinations.RELAY_WARMUP_S", 0)
     room = room_live(lr)
     dest(lr, room, name="Первая", key=KEY_A)
     dest(lr, room, name="Вторая", key=KEY_B, server_url="rtmp://other.example.org:1935/live")
@@ -1397,6 +1398,18 @@ def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(l
     assert by["Первая"]["status"] == "live" and by["Вторая"]["status"] == "failed"
     assert KEY_B not in json.dumps(st) and "Connection reset" in by["Вторая"]["last_error"] and "эфир и остальные площадки" in by["Вторая"]["last_error"]
     assert st["live"] is True and lr.fake.updates == [], "неисправная площадка не трогает эфир, а Egress не получает правок выходов"
+
+
+def test_relay_retries_in_the_first_seconds_of_the_broadcast_are_not_a_platform_error(lr, public_dns):
+    room = room_live(lr)
+    did = dest(lr, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    lr.relay.items[did].update(state="retrying", fails=3, error="Connection refused")        # поток ещё не опубликован
+    lr.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    reconcile(lr)
+    login(lr, "carol")
+    assert lr.get(f"/api/v1/meetings/{mid}/live").json()["destinations"][0]["status"] == "connecting"
 
 
 def test_without_the_relay_service_platforms_go_directly_as_before(lr, public_dns):
