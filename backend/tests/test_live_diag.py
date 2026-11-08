@@ -172,6 +172,13 @@ def test_slow_hls_names_the_stage_and_egress_load():
     assert "hls_stall" not in codes(s), "конец эфира — не остановка"
 
 
+def test_platforms_attached_directly_to_egress_are_flagged_when_the_relay_is_not_running():
+    on = [{"enabled": True, "name": "Площадка"}]
+    assert "relay_direct" in codes(ok_sample(rtmp=on, relay=False))
+    assert "relay_direct" not in codes(ok_sample(rtmp=on, relay=True)), "через службу ретрансляции — замечания нет"
+    assert "relay_direct" not in codes(ok_sample(rtmp=[], relay=False)), "площадок нет — замечать нечего"
+
+
 def test_stalled_hls_names_the_broken_link_instead_of_asking_for_more_data():
     idle = {"egress": {"st": "ok", "load": 8.0, "cores": 0.2}, "livekit": {"st": "ok"}}
     f = codes(ok_sample(hls={"age_s": 34.0}, svc=idle, egress_seg_grow=False))["hls_stall"]

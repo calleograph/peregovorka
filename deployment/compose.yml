@@ -164,6 +164,7 @@ services:
       LIVEKIT_TOKEN_TTL_SECONDS: ${LIVEKIT_TOKEN_TTL_SECONDS:-300}
       LIVEKIT_SERVER_VERSION: ${LIVEKIT_IMAGE_TAG:-unknown}
       ASR_INTERNAL_URL: http://asr:8090
+      LIVE_RELAY_URL: ${LIVE_RELAY_URL:-http://live-relay:8099}
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       LIVEKIT_PUBLIC_IP: ${LIVEKIT_PUBLIC_IP:-auto}
       LIVEKIT_STUN_SERVERS: ${LIVEKIT_STUN_SERVERS:-stun.cloudflare.com:3478,global.stun.twilio.com:3478,stun.l.google.com:19302}
@@ -441,6 +442,29 @@ services:
       MTX_WEBRTC: "no"
       MTX_SRT: "no"
       MTX_LOGLEVEL: warn
+    logging: *default-logging
+
+  # Площадки (RUTUBE, VK и другие) получают эфир не из Egress, а от этой службы: по процессу ffmpeg -c copy на площадку, поток читается из MediaMTX.
+  # Площадка, которая рвёт соединение или перестала читать, ломает только свой процесс: сегменты HLS, запись и остальные площадки идут как шли
+  # (через Egress такая площадка замораживала весь его конвейер). Тот же образ, что у backend; наружу портов нет, вход по внутреннему токену.
+  live-relay:
+    profiles: ["video"]
+    image: ${COMPOSE_PROJECT_NAME}-backend:${IMAGE_TAG:?}
+    restart: unless-stopped
+    command: ["uvicorn", "app.relay.main:app", "--host", "0.0.0.0", "--port", "8099", "--no-access-log"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    environment:
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      RELAY_SRC_PREFIX: ${LOWLATENCY_RTMP_PREFIX:-rtmp://mediamtx:1935/}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    cpu_shares: 1024
     logging: *default-logging
 
   web:

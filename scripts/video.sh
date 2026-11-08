@@ -47,12 +47,13 @@ case "$CMD" in
     video_prepare || die "Не удалось скачать образ Egress"
     info "Перезапуск LiveKit с подключением к Redis и запуск livekit-egress…"
     dc up -d --no-build mediamtx || warn "Служба низкой задержки (mediamtx) не запустилась: зрители останутся на обычном HLS"
+    dc up -d --no-build live-relay || warn "Служба ретрансляции на площадки (live-relay) не запустилась: площадки будут подключены прямо к Egress"
     dc up -d --no-build livekit livekit-egress || die "docker compose up не выполнен (scripts/logs.sh livekit-egress)"
     ok "Видеоподсистема включена на сервере. Теперь в приложении: Администрирование → Видеозапись → «Включить видеозапись» (и/или Трансляции), затем режим в настройках комнаты (вкладка «Встреча и запись»)." ;;
   disable)
     need_root
     [ "$YES" -eq 1 ] || { [ -t 0 ] || die "Нужно подтверждение: добавьте --yes"; read -r -p "Выключить видеозапись (идущие записи будут закрыты)? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || die "Отменено."; }
-    dc stop -t 60 livekit-egress mediamtx >/dev/null 2>&1 || true; dc rm -f livekit-egress mediamtx >/dev/null 2>&1 || true
+    dc stop -t 60 livekit-egress mediamtx live-relay >/dev/null 2>&1 || true; dc rm -f livekit-egress mediamtx live-relay >/dev/null 2>&1 || true
     upd_env_set_key "$ENV_FILE" VIDEO_ENABLED no
     # общая шина Redis остаётся, если нужна телефонии
     if [ "${SIP_ENABLED:-no}" != "yes" ]; then upd_env_set_key "$ENV_FILE" LIVEKIT_REDIS_LINE ""; fi

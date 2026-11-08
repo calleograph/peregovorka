@@ -422,6 +422,9 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
     if s.get("egress_status") and s["egress_status"] not in ("EGRESS_ACTIVE", "EGRESS_STARTING", "EGRESS_ENDING"):
         out.append(Finding("egress_state", 2, "egress", "egress", f"Состояние Egress: {s['egress_status']}", s.get("egress_error") or NEED_MORE, "confirmed"))
 
+    if s.get("rtmp") and not s.get("relay") and any(d.get("enabled") for d in s["rtmp"]):
+        out.append(Finding("relay_direct", 1, "egress", "output", "Внешние площадки подключены прямо к Egress",
+                           "Служба ретрансляции live-relay не работает: одна площадка, рвущая соединение, может остановить весь эфир. Запустите её: sudo scripts/ctl.sh start live-relay.", "confirmed"))
     age, dur = hls.get("age_s"), hls.get("dur_s") or 1.5
     if s.get("status") == "live" and hls and not hls.get("ended"):
         logs = " Журнал службы: sudo scripts/logs.sh livekit-egress --tail 200."
@@ -949,6 +952,10 @@ class LiveDiag:
             rows = list((await db.execute(select(LiveDestination).where(LiveDestination.room_id == b.room_id).order_by(LiveDestination.position))).scalars())
             nodes = [n for n in await self.cdn.nodes(db)] if st.get("cdn") and self.cdn is not None else []
         s["rtmp"] = self._destinations(rows)
+        try:
+            s["relay"] = bool(await self._r.get(f"live:relay:{b.id}"))
+        except Exception:  # noqa: BLE001
+            s["relay"] = False
         if info is not None:
             self._rtmp_stats(info, rows, s["rtmp"])
         prev_d = st.get("dest") or {}

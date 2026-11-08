@@ -41,7 +41,7 @@ dc stop web backend asr
 restore_from_dump "$FILE" || die "$RESTORE_ERROR"
 if [ -n "$FILES" ]; then
   # приложение уже принято на новой базе: каталоги заменяются под ним, поэтому контейнеры пересоздаются и видят новые файлы
-  APP=(backend asr web); [ "${VIDEO_ENABLED:-no}" = yes ] && APP+=(livekit-egress)
+  APP=(backend asr web); [ "${VIDEO_ENABLED:-no}" = yes ] && APP+=(livekit-egress live-relay)
   if restore_files "$FILES"; then dc up -d --no-build --force-recreate "${APP[@]}"; else warn "Файлы не восстановлены: $RESTORE_ERROR (база уже восстановлена)"; fi
 fi
 trap - EXIT

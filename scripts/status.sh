@@ -16,7 +16,7 @@ done
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 
 SERVICES=(postgres redis livekit backend asr web)
-[ "${VIDEO_ENABLED:-no}" = yes ] && SERVICES+=(livekit-egress)
+[ "${VIDEO_ENABLED:-no}" = yes ] && SERVICES+=(livekit-egress live-relay)
 [ "${SIP_ENABLED:-no}" = yes ] && SERVICES+=(livekit-sip)
 all_healthy() {
   local s cid st h bad=0

@@ -1333,3 +1333,117 @@ def test_chrome_launch_failure_is_retried_and_keeps_the_recording(lv):
 def test_rtmp_addresses_never_reach_the_error_text():
     text = live_mod.explain_error("stream failed: rtmp://a.example.org/live/SECRETKEY123")
     assert "SECRETKEY123" not in text and "rtmp://…" in text
+
+
+# --------------------------------------------------------------------------------------------- площадки вне Egress (служба ретрансляции)
+class RelayFake:
+    """Служба ретрансляции: помнит процессы площадок и их состояния, которые тест подменяет."""
+    def __init__(self):
+        self.items: dict[str, dict] = {}
+        self.up = True
+
+    async def available(self):
+        return self.up
+
+    async def put(self, rid, src, url):
+        from app.relay.manager import fingerprint
+        if not self.up:
+            return False
+        self.items[rid] = {"id": rid, "state": "starting", "restarts": 0, "fails": 0, "bytes": 0, "since": None, "error": "", "fp": fingerprint(src, url), "src": src, "url": url}
+        return True
+
+    async def delete(self, rid):
+        self.items.pop(rid, None)
+        return True
+
+    async def status(self):
+        return {k: {x: v for x, v in it.items() if x not in ("src", "url")} for k, it in self.items.items()} if self.up else None
+
+
+@pytest.fixture
+def lr(lv, monkeypatch):
+    fake = RelayFake()
+    lv.app_obj.state.destinations.relay = fake
+    async def ready(self):
+        return fake.up
+    monkeypatch.setattr(live_mod.LiveBroadcaster, "_relay_ready", ready)
+    lv.relay = fake
+    return lv
+
+
+def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(lr, public_dns):
+    room = room_live(lr)
+    dest(lr, room, name="Первая", key=KEY_A)
+    dest(lr, room, name="Вторая", key=KEY_B, server_url="rtmp://other.example.org:1935/live")
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    urls = list(lr.fake.started[0].outputs[-1].stream.urls)
+    assert len(urls) == 2 and all(u.startswith("rtmp://mediamtx:1935/live/") for u in urls), "в Egress только поток низкой задержки и поток для ретрансляции"
+    assert any("/live/r-" in u for u in urls)
+    assert len(lr.relay.items) == 2 and {i["url"] for i in lr.relay.items.values()} == {f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"}
+    assert all(i["src"] == [u for u in urls if "/live/r-" in u][0] for i in lr.relay.items.values())
+    login(lr, "carol")
+    by = {x["name"]: x for x in lr.get(f"/api/v1/meetings/{mid}/live").json()["destinations"]}
+    assert by["Первая"]["status"] == "connecting"
+    # служба сообщила: первая идёт, вторая рвёт соединение
+    ids = {x["name"]: x["id"] for x in lr.get(f"/api/v1/meetings/{mid}/live").json()["destinations"]}
+    lr.relay.items[ids["Первая"]].update(state="live", bytes=5000)
+    lr.relay.items[ids["Вторая"]].update(state="retrying", fails=3, error=f"Error writing to {KEY_B}: Connection reset by peer")
+    lr.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    reconcile(lr)
+    login(lr, "carol")
+    st = lr.get(f"/api/v1/meetings/{mid}/live").json()
+    by = {x["name"]: x for x in st["destinations"]}
+    assert by["Первая"]["status"] == "live" and by["Вторая"]["status"] == "failed"
+    assert KEY_B not in json.dumps(st) and "Connection reset" in by["Вторая"]["last_error"] and "эфир и остальные площадки" in by["Вторая"]["last_error"]
+    assert st["live"] is True and lr.fake.updates == [], "неисправная площадка не трогает эфир, а Egress не получает правок выходов"
+
+
+def test_without_the_relay_service_platforms_go_directly_as_before(lr, public_dns):
+    lr.relay.up = False
+    room = room_live(lr)
+    dest(lr, room, name="Первая", key=KEY_A)
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    urls = list(lr.fake.started[0].outputs[-1].stream.urls)
+    assert urls[0] == f"{EXAMPLE}/{KEY_A}" and not any("/live/r-" in u for u in urls)
+    assert lr.relay.items == {}
+
+
+def test_toggle_and_key_change_during_the_broadcast_go_through_the_relay_not_egress(lr, public_dns):
+    room = room_live(lr)
+    did = dest(lr, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    login(lr, "carol")
+    assert lr.post(f"/api/v1/meetings/{mid}/live/destinations/{did}", json={"enabled": False}).status_code == 200
+    assert did not in lr.relay.items
+    assert lr.post(f"/api/v1/meetings/{mid}/live/destinations/{did}", json={"enabled": True}).status_code == 200
+    assert lr.relay.items[did]["url"] == f"{EXAMPLE}/{KEY_A}"
+    assert lr.patch(f"/api/v1/rooms/{room['id']}/live/destinations/{did}", json={"key": KEY_B}).status_code == 200
+    assert lr.relay.items[did]["url"] == f"{EXAMPLE}/{KEY_B}", "новый ключ заменил процесс площадки"
+    assert lr.fake.updates == [], "Egress выходы не менялись"
+    assert lr.delete(f"/api/v1/rooms/{room['id']}/live/destinations/{did}").status_code == 200 and did not in lr.relay.items
+
+
+def test_relay_that_lost_its_state_is_refilled_by_the_next_check_and_stop_cleans_it(lr, public_dns):
+    room = room_live(lr)
+    did = dest(lr, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    lr.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    lr.relay.items.clear()                          # служба перезапущена
+    reconcile(lr)
+    assert did in lr.relay.items, "сверка вернула площадку в службу"
+    lr.relay.up = False
+    reconcile(lr)                                   # служба недоступна: состояния не трогаем, эфир идёт
+    assert broadcasts(lr, mid)[0].status in ("starting", "live")
+    lr.relay.up = True
+    assert start(lr, mid, enabled=False).status_code == 200
+    ev = finish_event("EG_test1", duration_s=60)
+
+    async def go(db):
+        await lr.app_obj.state.video.on_egress_event(db, ev)
+        await lr.app_obj.state.live.on_egress_event(db, ev)
+    call(lr, go)
+    assert broadcasts(lr, mid)[0].status == "ended" and lr.relay.items == {}, "после эфира процессов площадок не остаётся"

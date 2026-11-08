@@ -254,6 +254,10 @@ def create_app(
         app.state.live = meetings_svc.live = LiveBroadcaster(settings, bg_sm, redis, settings_svc, api=app.state.video.api, video=app.state.video, journal=journal)   # трансляции
         from .services.live_destinations import Destinations  # noqa: PLC0415
         app.state.live.destinations = app.state.destinations = Destinations(settings_svc, redis, app.state.video.api, journal=journal)      # внешние площадки трансляций
+        if settings.live_relay_url:
+            from .services.live_relay import RelayClient  # noqa: PLC0415
+
+            app.state.destinations.relay = RelayClient(settings.live_relay_url, settings.internal_api_token)        # площадки вне конвейера Egress
         from .services.cdn import CdnService  # noqa: PLC0415
         from .services.cdn_jobs import CdnJobs  # noqa: PLC0415
 

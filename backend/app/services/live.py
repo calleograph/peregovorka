@@ -30,6 +30,7 @@ from sqlalchemy import func, select
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
 from . import events, media_checks, rec_scene, roles
+from .live_destinations import RELAY_KEY
 from .livekit import list_present_identities, remove_viewers
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoError, VideoRecorder
@@ -408,6 +409,9 @@ class LiveBroadcaster:
             cfg = await self.cfg(db)
             urls, _ids = await self.destinations.start_urls(db, room) if self.destinations is not None else ([], [])
             await self._guards(db, meeting, cfg, urls)
+            relay_src = self.relay_src(meeting) if await self._relay_ready() else None      # площадки вне Egress: сбой одной не останавливает ни эфир, ни запись
+            if relay_src:
+                urls = []
             t0 = time.monotonic()
             present = await list_present_identities(self._s, meeting.livekit_room)
             if present is None:
@@ -429,7 +433,7 @@ class LiveBroadcaster:
             rel = f"{meeting_relpath(room.name, meeting.started_at.astimezone(tz), meeting.id)}/video-{n}.mp4"
             vcfg = await self._svc.get(db, "video")
             # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
-            req = await self._request(meeting, room, quality, rel, hls_dir, urls, cfg, vcfg)
+            req = await self._request(meeting, room, quality, rel, hls_dir, urls, cfg, vcfg, relay_src=relay_src)
             try:
                 info = await self.api.start(req)
             except Exception as exc:  # noqa: BLE001
@@ -447,6 +451,9 @@ class LiveBroadcaster:
             db.add(b)
             meeting.record_video = True
             await db.commit()
+            if relay_src:
+                await self._r.set(RELAY_KEY.format(b.id), relay_src, ex=172800)
+                await self.destinations.relay_sync(db, b, room)
             self.link_access(room.live_view_access, hls_dir)
             self.link_access(room.live_stream_access, hls_dir)
             await self.stage(b, "accepted", "Служба трансляций приняла задание", time.monotonic() - t0)
@@ -457,11 +464,32 @@ class LiveBroadcaster:
         finally:
             await self._r.delete(f"live:start:{meeting.id}")
 
-    async def _request(self, meeting: Meeting, room: Room, quality: str, rel: str, hls_dir: str | None, urls: list[str], cfg, vcfg) -> eg.StartEgressRequest:
+    async def _request(self, meeting: Meeting, room: Room, quality: str, rel: str, hls_dir: str | None, urls: list[str], cfg, vcfg, *, relay_src: str | None = None) -> eg.StartEgressRequest:
         # раскладка — та же общая сцена, что у видеозаписи (показ экрана, доска, выступающие): страница-рекордер приложения, если она не выключена
         tpl = vcfg.template_url or (f"{self._s.recorder_base_url.rstrip('/')}/rec/template?rt={rec_scene.make_token(self._s, meeting.id)}" if vcfg.scene_template and self._s.recorder_base_url else "")
-        out = [*urls, self.ll_url(room.live_view_access)] if hls_dir and cfg.ll_hls else urls
+        out = [*urls, self.ll_url(room.live_view_access)] if hls_dir and cfg.ll_hls else list(urls)
+        if relay_src:
+            out.append(relay_src)                       # единственный выход Egress наружу: локальный поток MediaMTX, откуда площадки читает служба ретрансляции
         return build_live_request(meeting.livekit_room, quality, mp4_path=f"{self.video.out_dir()}/{rel}", hls_prefix=f"{self.egress_dir()}/b/{hls_dir}" if hls_dir else None, urls=out, template_url=tpl)
+
+    def relay_src(self, meeting: Meeting) -> str:
+        """Локальный поток для службы ретрансляции. Имя от встречи, а не от ссылки зрителя: отзыв ссылки во время эфира не обрывает поток на площадку."""
+        return f"{self._s.lowlatency_rtmp_url.rstrip('/')}/r-{meeting.id.hex}"
+
+    async def _relay_ready(self) -> bool:
+        """Служба ретрансляции отвечает и локальный приёмник потока (MediaMTX) принимает соединения. Иначе площадки подключаются прямо к Egress, как раньше."""
+        relay = getattr(self.destinations, "relay", None)
+        if relay is None or not await relay.available():
+            return False
+        m = re.match(r"^rtmps?://([^/:]+)(?::(\d+))?", self._s.lowlatency_rtmp_url)
+        if not m:
+            return False
+        try:
+            _r, w = await asyncio.wait_for(asyncio.open_connection(m.group(1), int(m.group(2) or 1935)), 1.5)
+        except (OSError, asyncio.TimeoutError):
+            return False
+        w.close()
+        return True
 
     def ll_url(self, access: str) -> str:
         """Внутренний выход для LL-HLS. Имя потока — идентификатор доступа: так подпись зрителя и отзыв работают как у обычного HLS."""
@@ -523,8 +551,11 @@ class LiveBroadcaster:
         await self.stage(b, "retry", f"Браузер службы не запустился, попытка {n + 1} из {START_RETRIES + 1}. Причина: {explain_error(info.error)}", level="warn")
         await asyncio.sleep(RETRY_PAUSE_S)
         urls, _ids = await self.destinations.start_urls(db, room) if self.destinations is not None else ([], [])
+        relay_src = await self.destinations.relay_src(b) if self.destinations is not None else None
+        if relay_src:
+            urls = []                                       # эфир идёт через службу ретрансляции: в Egress только локальный поток
         try:
-            new = await self.api.start(await self._request(meeting, room, b.quality, rec.path, b.hls_dir, urls, await self.cfg(db), await self._svc.get(db, "video")))
+            new = await self.api.start(await self._request(meeting, room, b.quality, rec.path, b.hls_dir, urls, await self.cfg(db), await self._svc.get(db, "video"), relay_src=relay_src))
         except Exception as exc:  # noqa: BLE001
             log.warning("Повторный запуск эфира не удался", extra={"broadcast": str(b.id), "error": str(exc)[:200]})
             return False
@@ -622,6 +653,7 @@ class LiveBroadcaster:
         b.peak_viewers = max(b.peak_viewers, await self.viewers(b.room_id))
         await db.commit()
         # новый эфир мог начаться, пока этот завершался: тогда его площадки и объявление не трогаем
+        await self._r.delete(RELAY_KEY.format(b.id))
         running = await self.current(db, b.room_id)
         if self.destinations is not None and running is None:
             await self.destinations.finish_all(db, b.room_id)
@@ -673,6 +705,10 @@ class LiveBroadcaster:
                         await self._announce(meeting, True, "egress")
                 if self.destinations is not None:
                     await self.destinations.on_info(db, b, info)
+                    if b.status in ("starting", "live"):
+                        room_r = await db.get(Room, b.room_id)
+                        if room_r is not None:
+                            await self.destinations.relay_sync(db, b, room_r)         # площадки вне Egress: состояния и самовосстановление службы
                 if b.status in ("starting", "live") and meeting is not None and meeting.ended_at is None and age > STALL_GRACE_S \
                         and await self.api.recorder_present(meeting.livekit_room, b.egress_id) is False:
                     log.warning("Рекордер эфира пропал из комнаты — служба Egress, вероятно, упала", extra={"broadcast": str(b.id)})

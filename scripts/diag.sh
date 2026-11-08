@@ -39,7 +39,7 @@ section() { printf '== %s ==\n' "$1"; }
 dc ps 2>&1 | mask_stream > "$B/containers.txt"
 dc config 2>&1 | mask_stream > "$B/compose.config.masked.yml"
 mask_stream < "$ENV_FILE" > "$B/env.masked"
-for s in postgres redis livekit backend asr web livekit-sip livekit-egress mediamtx; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
+for s in postgres redis livekit backend asr web livekit-sip livekit-egress mediamtx live-relay; do dc logs --no-color --tail "$TAIL" "$s" 2>&1 | mask_stream > "$B/logs/$s.log"; done
 {
   section "SIP-телефония"
   echo "включена: ${SIP_ENABLED:-no}"; echo "signalling: $(sip_port)/udp+tcp"; echo "RTP: $(sip_rtp)/udp"; echo "адрес привязки: ${SIP_BIND_ADDR:-0.0.0.0}"

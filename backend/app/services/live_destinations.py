@@ -27,6 +27,7 @@ from .settings import SettingsError
 
 log = logging.getLogger("app.live")
 
+RELAY_KEY = "live:relay:{}"            # эфир идёт через службу ретрансляции: значение — локальный адрес, откуда площадки читают поток
 FLAP_RETRIES = 5                       # новых повторов Egress за окно: одиночные обрывы сети (1–2) не считаются
 FLAP_WINDOW_S = 90
 PLATFORMS = {"rutube": "RUTUBE", "vk": "VK Видео", "youtube": "YouTube", "twitch": "Twitch", "custom": "Другой RTMP/RTMPS-сервер"}
@@ -129,6 +130,7 @@ def clean_watch_url(raw: str | None) -> str | None:
 class Destinations:
     def __init__(self, settings_svc, redis, api, journal=None):
         self._svc, self._r, self.api, self.journal = settings_svc, redis, api, journal
+        self.relay = None                 # RelayClient (services/live_relay.py); None — служба не настроена, площадки идут напрямую из Egress
 
     # ------------------------------------------------------------------ шифрование
     def _aad(self, did) -> bytes:
@@ -253,13 +255,84 @@ class Destinations:
         await db.commit()
         return urls, ids
 
+    # ------------------------------------------------------------------ ретрансляция: площадки вне конвейера Egress
+    async def relay_src(self, broadcast: Broadcast) -> str | None:
+        v = await self._r.get(RELAY_KEY.format(broadcast.id))
+        return (v.decode() if isinstance(v, bytes) else v) or None
+
+    async def relay_sync(self, db, broadcast: Broadcast, room: Room) -> None:
+        """Привести службу ретрансляции к списку включённых площадок и забрать от неё состояния. Идемпотентно: вызывается при запуске и раз в 10 с из сверки, поэтому
+        перезапуск службы или потеря её состояния устраняются сами. Адрес с ключом уходит в службу только при первом запуске и смене (отпечаток в ответе службы)."""
+        src = await self.relay_src(broadcast)
+        if src is None or self.relay is None:
+            return
+        rows = await self.rows(db, room)
+        st = await self.relay.status()
+        if st is None:                                      # служба не ответила: состояния не трогаем, повторим через 10 с
+            return
+        want = {str(r.id): r for r in rows if r.enabled}
+        from ..relay.manager import fingerprint, scrub as _s, secrets_of  # noqa: PLC0415
+        changed = False
+        for rid, row in want.items():
+            key = self._decrypt(row)
+            if not key:
+                new, err = "failed", "Ключ потока не задан или не читается: задайте его заново."
+            else:
+                url = full_url(row.server_url, key)
+                cur = st.get(rid)
+                if cur is None or cur.get("fp") != fingerprint(src, url):
+                    await self.relay.put(rid, src, url)
+                    new, err = "connecting", None
+                else:
+                    state = cur.get("state")
+                    err = _s(cur.get("error") or "", secrets_of(url)) or None
+                    if state == "live":
+                        new, err = "live", None
+                        if row.status != "live":
+                            row.last_ok_at = datetime.now(timezone.utc)
+                    elif state == "retrying" and int(cur.get("fails") or 0) >= 2:
+                        new, err = "failed", (err or "площадка не принимает поток") + ". Повторы продолжаются сами; эфир и остальные площадки это не затрагивает."
+                    else:
+                        new, err = "connecting", None
+            if (new, err) != (row.status, row.last_error):
+                if new == "failed" and row.status != "failed" and self.journal is not None:
+                    try:
+                        self.journal.emit("storage", "live_destination_failed", level="warning", meeting_id=str(broadcast.meeting_id), message=f"{row.name}: {err}"[:300], data={"platform": row.platform})
+                    except Exception:  # noqa: BLE001
+                        pass
+                row.status, row.last_error = new, err
+                changed = True
+        for rid in st.keys() - want.keys():                 # выключены или удалены: процесс площадки больше не нужен
+            await self.relay.delete(rid)
+        if changed:
+            await db.commit()
+
+    async def relay_stop(self, db, room_id: uuid.UUID) -> None:
+        if self.relay is None:
+            return
+        for row in (await db.execute(select(LiveDestination).where(LiveDestination.room_id == room_id))).scalars():
+            await self.relay.delete(str(row.id))
+
     async def set_live(self, db, broadcast: Broadcast, row: LiveDestination, enabled: bool) -> None:
-        """Включить или выключить площадку во время эфира: адрес добавляется в выход Egress или убирается из него."""
+        """Включить или выключить площадку во время эфира: через службу ретрансляции, а без неё — адрес добавляется в выход Egress или убирается из него."""
         row.enabled = enabled
         key = self._decrypt(row)
         if not key:
             raise DestinationError("no_key", "Ключ потока не задан или не читается: задайте его заново.")
         url = full_url(row.server_url, key)
+        relay_src = await self.relay_src(broadcast)
+        if relay_src is not None and self.relay is not None:
+            if enabled:
+                cfg = await self._svc.get(db, "live")
+                _u, host, _p = normalize_server_url(row.server_url)
+                await check_host_allowed(host, allow_private=cfg.allow_private_destinations)
+                ok = await self.relay.put(str(row.id), relay_src, url)
+                row.status, row.last_error = ("connecting", None) if ok else ("failed", "Служба ретрансляции не отвечает: площадка не подключена.")
+            else:
+                await self.relay.delete(str(row.id))
+                row.status = "finished"
+            await db.commit()
+            return
         try:
             if enabled:
                 cfg = await self._svc.get(db, "live")
@@ -283,11 +356,12 @@ class Destinations:
 
     async def reconnect(self, db, broadcast: Broadcast, row: LiveDestination, old_url: str) -> None:
         """Ключ или адрес сменили во время эфира: прежний выход закрывается, поток идёт по новому. Иначе новый ключ начал бы работать только со следующего эфира."""
-        try:
-            await self.api.update_stream(broadcast.egress_id, remove=[old_url])
-        except Exception:  # noqa: BLE001 — прежний выход мог уже упасть: новый всё равно подключаем
-            pass
-        await self.set_live(db, broadcast, row, True)
+        if await self.relay_src(broadcast) is None:
+            try:
+                await self.api.update_stream(broadcast.egress_id, remove=[old_url])
+            except Exception:  # noqa: BLE001 — прежний выход мог уже упасть: новый всё равно подключаем
+                pass
+        await self.set_live(db, broadcast, row, True)          # в службе ретрансляции новый адрес заменяет прежний процесс
 
     @staticmethod
     def _match(sr_url: str, row: LiveDestination, key: str) -> bool:
@@ -317,6 +391,8 @@ class Destinations:
     async def on_info(self, db, broadcast: Broadcast, info: eg.EgressInfo) -> None:
         """Состояния потоков из ответа Egress → состояния площадок: ACTIVE — идёт, FAILED — ошибка с причиной без ключа, FINISHED — завершена. У выключенной площадки
         прошлые результаты не учитываются (её состояние задал сам владелец)."""
+        if await self.relay_src(broadcast) is not None:
+            return                                          # площадки не в Egress: их состояния берёт relay_sync
         results = list(info.stream_results)
         if not results:
             return
@@ -375,6 +451,7 @@ class Destinations:
         for r in rows:
             r.status = "finished"
         await db.commit()
+        await self.relay_stop(db, room_id)
 
     async def live_state(self, db, room: Room, broadcast: Broadcast | None) -> list[dict]:
         return [self.public(r) for r in await self.rows(db, room)]
