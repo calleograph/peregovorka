@@ -424,9 +424,19 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
 
     age, dur = hls.get("age_s"), hls.get("dur_s") or 1.5
     if s.get("status") == "live" and hls and not hls.get("ended"):
+        logs = " Журнал службы: sudo scripts/logs.sh livekit-egress --tail 200."
+
         def why() -> tuple[str, str]:
             if eg.get("st") == "down":
-                return "Egress не отвечает.", "confirmed"
+                return "Egress не отвечает." + logs, "confirmed"
+            if s.get("egress_status") and s["egress_status"] not in ("EGRESS_ACTIVE", "EGRESS_STARTING"):
+                return f"Egress сообщил: {s.get('egress_error') or s['egress_status']}." + logs, "confirmed"
+            if disk.get("free") is not None and disk["free"] < 2 * 1024**3:
+                return f"На томе трансляций свободно {d1(disk['free'] / 1024**3)} ГБ: Egress держит там файл записи.", "confirmed"
+            if s.get("egress_seg_grow") is True:
+                return "Egress делает сегменты, но в каталог эфира они не попадают: проверьте место и права на томе трансляций (DATA_ROOT/live)." + logs, "confirmed"
+            if s.get("egress_seg_grow") is False and (load is None or load < 50):
+                return "Egress запущен, но не выдаёт видео: кодировщик стоит, а не перегружен. Если выступающий показывает экран или камеру, перезапустите эфир." + logs, "assumed"
             if (disk.get("util") or 0) >= 90:
                 return f"Диск занят на {disk['util']:.0f} %.", "assumed"
             if (eg.get("throttled") or 0) >= 0.1:
@@ -866,8 +876,8 @@ class LiveDiag:
         return out
 
     async def _begin(self, b: Broadcast, room: Room | None, meeting: Meeting | None) -> dict:
-        async with self._sm() as db:
-            n = int((await db.execute(select(func.count()).select_from(LiveDiagEvent).where(LiveDiagEvent.broadcast_id == b.id))).scalar_one())
+        async with self._sm() as db:           # этапы запуска пишутся до сборщика, поэтому «возобновление» узнаётся по его собственной первой записи
+            n = int((await db.execute(select(func.count()).select_from(LiveDiagEvent).where(LiveDiagEvent.broadcast_id == b.id, LiveDiagEvent.code == "started"))).scalar_one())
         st = self._b.setdefault(b.id, {})
         st.update(events=n, room=room.name if room else None, meeting_id=str(b.meeting_id), room_id=b.room_id, status=b.status, lk=meeting.livekit_room if meeting else None, findings={}, last_persist=0.0, last_probe=0.0, media={}, cdn=bool(room and room.live_cdn))
         if n == 0:
@@ -930,6 +940,10 @@ class LiveDiag:
             from livekit.protocol import egress as eg  # noqa: PLC0415
 
             s["egress_status"] = eg.EgressStatus.Name(info.status)
+            seg = info.segment_results[0].segment_count if info.segment_results else None
+            if seg is not None:                         # счётчик самого Egress: растёт — кодирует; стоит — кадров нет
+                prev_seg, st["eg_seg"] = st.get("eg_seg"), seg
+                s["egress_seg_grow"] = None if prev_seg is None else seg > prev_seg
             s["egress_error"] = clean_text(info.error, 200) if info.error else None
         async with self._sm() as db:
             rows = list((await db.execute(select(LiveDestination).where(LiveDestination.room_id == b.room_id).order_by(LiveDestination.position))).scalars())

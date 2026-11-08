@@ -172,6 +172,18 @@ def test_slow_hls_names_the_stage_and_egress_load():
     assert "hls_stall" not in codes(s), "конец эфира — не остановка"
 
 
+def test_stalled_hls_names_the_broken_link_instead_of_asking_for_more_data():
+    idle = {"egress": {"st": "ok", "load": 8.0, "cores": 0.2}, "livekit": {"st": "ok"}}
+    f = codes(ok_sample(hls={"age_s": 34.0}, svc=idle, egress_seg_grow=False))["hls_stall"]
+    assert "не выдаёт видео" in f.cause and "logs.sh livekit-egress" in f.cause, "Egress стоит без нагрузки: кодировщик не получает кадры"
+    f = codes(ok_sample(hls={"age_s": 34.0}, svc=idle, egress_seg_grow=True))["hls_stall"]
+    assert "не попадают" in f.cause and f.kind == "confirmed", "Egress режет сегменты, а файлов нет: путь записи"
+    f = codes(ok_sample(hls={"age_s": 34.0}, svc=idle, egress_status="EGRESS_FAILED", egress_error="pipeline frozen"))["hls_stall"]
+    assert "pipeline frozen" in f.cause
+    f = codes(ok_sample(hls={"age_s": 34.0}, svc=idle, host={"disk": {"free": 1024**3}}))["hls_stall"]
+    assert "свободно" in f.cause
+
+
 def test_one_bad_viewer_is_a_client_problem_many_is_delivery():
     one = ok_sample(viewers={"reporting": 10, "bad": 1, "worst": [{"why": "канал зрителя на пределе"}]})
     f = codes(one)["viewer_single"]

@@ -24,7 +24,7 @@ BASE = os.environ["PEREGOVORKA_URL"]
 QUALITY = sys.argv[1] if len(sys.argv) > 1 else "1080p"
 SECONDS = float(sys.argv[2]) if len(sys.argv) > 2 else 60
 MODE = sys.argv[3] if len(sys.argv) > 3 else "hls"
-SIZE = {"720p": "1280x720", "1080p": "1920x1080", "1440p": "2560x1440"}[QUALITY]
+SIZE = os.environ.get("PUB_SIZE") or {"720p": "1280x720", "1080p": "1920x1080", "1440p": "2560x1440"}[QUALITY]
 RTMP_HOST, RTMP_LOCAL = os.environ.get("RTMP_HOST", "pgrtmp"), os.environ.get("RTMP_LOCAL", "rtmp://127.0.0.1:19360")
 
 
