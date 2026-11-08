@@ -102,6 +102,19 @@ def test_put_is_idempotent_a_changed_key_replaces_the_process_and_delete_removes
     asyncio.run(go())
 
 
+def test_audio_job_asks_ffmpeg_for_sound_only_and_is_a_different_process_from_the_video_one(fake):
+    async def go():
+        m = manager(fake)
+        m.put("a1111111", SRC, "rtmp://mediamtx:1935/live/aabb-a", audio=True)
+        m.put("b2222222", SRC, "rtmp://mediamtx:1935/live/aabb")
+        cmd_a, cmd_v = m.command(m.relays["a1111111"]), m.command(m.relays["b2222222"])
+        assert "-vn" in cmd_a and "0:a" in cmd_a and "-vn" not in cmd_v and cmd_v[cmd_v.index("-map") + 1] == "0"
+        assert fingerprint(SRC, "x", True) != fingerprint(SRC, "x", False)
+        assert m.status()[0]["audio"] is True
+        await m.close()
+    asyncio.run(go())
+
+
 def test_helpers_hide_the_key_and_fingerprint_changes_with_it():
     url = "rtmp://rtmp.example.org/live_push/perm_0123456789abcdef?sinfo=ZYXWVUTSRQ"
     text = scrub(f"Error writing to {url}: perm_0123456789abcdef refused, sinfo ZYXWVUTSRQ", secrets_of(url))

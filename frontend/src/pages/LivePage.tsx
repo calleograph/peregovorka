@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, type ApiError, type LiveAccess, type LiveQuestion, type LiveViewerInfo } from "../api";
 import { Icon } from "../components/Icons";
 import { type Contact, GuestContactFields, contactBody, emailOk, loadContact, nameOk, saveContact } from "../components/GuestContact";
+import { initial as adaptiveInitial, step as adaptiveStep, audioNote, type Mode, type Sample, type State as AdaptiveState } from "../live/adaptive";
 import { ViewerStats } from "../livediag/viewerStats";
 import "../live.css";
 
@@ -196,7 +197,17 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
   const [ui, setUi] = useState(true);
   const hideT = useRef<number>(0);
   const fails = useRef(0);                       // подряд идущие сбои сети плеера; сбрасывается, когда воспроизведение пошло
-  const hlsRef = useRef<{ destroy: () => void; recoverMediaError: () => void; startLoad: () => void; liveSyncPosition?: number | null } | null>(null);
+  const hlsRef = useRef<{ destroy: () => void; recoverMediaError: () => void; startLoad: () => void; loadSource?: (u: string) => void; liveSyncPosition?: number | null } | null>(null);
+  // автоматическое качество: видео ↔ «только звук» (правила и пороги — live/adaptive.ts)
+  const [mode, setMode] = useState<Mode>("video");
+  const [modeWhy, setModeWhy] = useState("");
+  const modeRef = useRef<Mode>("video");
+  const audioOk = useRef(!!access.audio_path);                       // сервер предлагает дорожку со звуком (низкая задержка и служба ретрансляции работают)
+  const [hasAudio, setHasAudio] = useState(!!access.audio_path);
+  const audioMiss = useRef(access.audio_path ? 0 : 2);
+  const needRef = useRef(access.need_kbps ?? 3500);                 // сколько нужно видео (из настроек качества эфира)
+  const ad = useRef<AdaptiveState>(adaptiveInitial(performance.now()));
+  const probe = useRef<{ at: number; kbps: number | null; busy: boolean }>({ at: 0, kbps: null, busy: false });
   const [attempt, setAttempt] = useState(0);     // пересоздание плеера: страж зависания, «Повторить», возврат сети
   const [offline, setOffline] = useState(typeof navigator !== "undefined" && navigator.onLine === false);
   const userPaused = useRef(false);
@@ -219,6 +230,10 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     // уже ушёл на источник, он там и остаётся — как раньше.
     if (a.node || !a.base) { baseRef.current = a.base ?? ""; nodeRef.current = a.node ?? ""; }
     originRef.current = a.origin_path ?? "";
+    // дорожки может не оказаться в одном ответе (проверка готовности не успела): отказываемся от неё только после двух подряд
+    audioMiss.current = a.audio_path ? 0 : audioMiss.current + 1;
+    audioOk.current = audioMiss.current < 2; setHasAudio(audioOk.current);
+    if (a.need_kbps) needRef.current = a.need_kbps;
     prefix.current = (llOff.current && a.origin_path ? a.origin_path : a.path).replace(/[^/]+$/, "");
   }
   // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
@@ -233,6 +248,32 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     return o;
   }
 
+  // Переключение дорожки: тот же плеер, другой плейлист той же подписи (/audio/index.m3u8 — отдельный поток только со звуком).
+  function applyMode(m: Mode, why: string) {
+    modeRef.current = m; setMode(m); setModeWhy(why);
+    stats.current.s.aud = m === "audio" ? 1 : 0;
+    const el = video.current;
+    if (el) el.dataset.mode = m;
+    hlsRef.current?.loadSource?.(baseRef.current + prefix.current + (m === "audio" ? "audio/" : "") + "index.m3u8");
+  }
+  // Скорость канала для решения «вернуться к видео»: пробная загрузка последнего завершённого видеосегмента (на дорожке со звуком оценки hls.js нет)
+  async function probeSpeed() {
+    const p = probe.current;
+    if (p.busy) return;
+    p.busy = true;
+    try {
+      const base = baseRef.current + prefix.current;
+      const list = async (name: string) => (await (await fetch(`${base}${name}`, { cache: "no-store" })).text()).split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+      let uris = await list("index.m3u8");
+      if (uris[0]?.endsWith(".m3u8")) uris = await list(uris[0]);          // главный плейлист ведёт к плейлисту видео: сегменты — в нём
+      const uri = uris[uris.length - 2] ?? uris[uris.length - 1];
+      if (!uri || uri.endsWith(".m3u8")) { p.kbps = null; return; }
+      const t0 = performance.now();
+      const buf = await (await fetch(`${base}${uri}`, { cache: "no-store" })).arrayBuffer();
+      const ms = Math.max(20, performance.now() - t0);                    // на быстром канале замер короче 20 мс неточен: берём нижнюю оценку скорости
+      p.kbps = buf.byteLength > 10_000 ? (buf.byteLength * 8) / ms : null;
+    } catch { p.kbps = null; } finally { p.busy = false; p.at = Date.now(); }
+  }
   // подпись продлевается заранее; адреса сегментов получают свежий префикс без перезапуска плеера
   useEffect(() => {
     let alive = true;
@@ -246,6 +287,46 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     }, Math.max(60, access.refresh_in) * 1000);
     return () => { alive = false; window.clearTimeout(timer); };
   }, [access.refresh_in, renew]);
+
+  // Автоматическое качество: раз в секунду смотрим на приём и решаем, видео или только звук (все признаки — в live/adaptive.ts). Решение не мешает ручному выбору.
+  useEffect(() => {
+    if (native()) return undefined;
+    let first = true;
+    let drop = { t: 0, d: 0, f: 0 };
+    let dropRatio: number | null = null;
+    const timer = window.setInterval(() => {
+      const el = video.current;
+      if (!el) return;
+      if (!audioOk.current || llOff.current || baseRef.current) {         // дорожки больше нет (служба остановилась, переход на обычный HLS или CDN): только видео
+        if (modeRef.current === "audio") { applyMode("video", ""); ad.current = adaptiveInitial(performance.now()); }
+        return;
+      }
+      if (userPaused.current || el.paused || el.readyState < 2) { first = true; return; }
+      const s = stats.current.tick();
+      const now = performance.now();
+      if (first) { ad.current.prevStalls = s.stalls; ad.current.prevStallMs = s.stall_ms; first = false; drop = { t: now, d: s.drop ?? 0, f: s.frames ?? 0 }; }
+      if (now - drop.t >= 10_000) { const df = (s.frames ?? 0) - drop.f; dropRatio = df > 30 ? ((s.drop ?? 0) - drop.d) / df : null; drop = { t: now, d: s.drop ?? 0, f: s.frames ?? 0 }; }
+      const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+      const hidden = document.visibilityState !== "visible";
+      const sample: Sample = {
+        buffer: s.buf ?? 3, stalls: s.stalls, stallMs: s.stall_ms, bwKbps: modeRef.current === "video" && s.est ? s.est : null, probeKbps: probe.current.kbps,
+        fragRatio: null, dropRatio: modeRef.current === "video" ? dropRatio : null, hidden, saveData: !!conn?.saveData, slowNet: /(^|-)2g$/.test(conn?.effectiveType ?? ""), needKbps: needRef.current,
+      };
+      if (modeRef.current === "audio" && !hidden && now >= ad.current.holdUntil - 5000 && Date.now() - probe.current.at > 10_000) void probeSpeed();
+      el.dataset.probe = String(Math.round(probe.current.kbps ?? -1)); el.dataset.hold = String(Math.round((ad.current.holdUntil - now) / 1000));      // для проверок и отладки
+      const d = adaptiveStep(ad.current, sample, now);
+      if (d.changed) applyMode(d.mode, d.mode === "audio" ? audioNote(d.reason) : "");
+    }, 1000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
+
+  // ручной выбор: «Только звук» — до нового нажатия; «Видео» — вернуть картинку, автоматика может снова отключить её при плохом приёме
+  const chooseMode = (m: Mode) => {
+    const now = performance.now();
+    if (m === "audio") { ad.current = { ...adaptiveInitial(now), mode: "audio", since: now, holdUntil: Infinity, reason: "выбран режим «только звук»" }; applyMode("audio", "Только звук: вы выбрали этот режим."); }
+    else { ad.current = { ...adaptiveInitial(now), lastUpgradeAt: now }; probe.current.kbps = null; applyMode("video", ""); }
+  };
 
   // счётчик зрителей: «пульс» раз в полминуты, пока вкладка видима
   useEffect(() => {
@@ -262,7 +343,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     const el = video.current;
     if (!el) return;
     let cancelled = false;
-    const url = baseRef.current + access.path;
+    const url = modeRef.current === "audio" && audioOk.current && !baseRef.current ? prefix.current + "audio/index.m3u8" : baseRef.current + access.path;
     el.muted = false;
     el.dataset.engine = native() ? "native" : "hlsjs";           // для проверок: какой механизм воспроизведения выбран
     const start = () => el.play().catch(() => { el.muted = true; setMuted(true); setNeedSound(true); return el.play().catch(() => undefined); });
@@ -404,6 +485,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
   return (
     <div className={`live-stage ${ui || paused ? "ui" : ""} ${diag ? "diag" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
       <video ref={video} playsInline autoPlay aria-label="Прямой эфир" onClick={toggle} />
+      {mode === "audio" && <div className="live-audio" role="status"><Icon name="volume" size={26} /><p>{modeWhy || "Только звук"}</p><button className="btn primary" onClick={() => chooseMode("video")}>Включить видео</button></div>}
       {buffering && <div className="live-spin" role="status" aria-label="Загрузка" />}
       {offline && <p className="live-net" role="status">Нет подключения к сети. Эфир продолжится автоматически, когда связь восстановится.</p>}
       {needSound && <button className="live-sound btn primary" onClick={unmute}><Icon name="volumeOff" size={18} /> Включить звук</button>}
@@ -414,6 +496,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
         <span className={`live-tag ${behind > 8 ? "late" : "on"}`} title={behind > 8 ? `Вы отстаёте от эфира на ${Math.round(behind)} с` : "Вы смотрите прямой эфир"}><i aria-hidden />{behind > 8 ? `−${Math.round(behind)} с` : "ЭФИР"}</span>
         {behind > 8 && <button className="btn mini" onClick={goLive}>К прямому эфиру</button>}
         <span className="spacer" />
+        {hasAudio && <button className="iconbtn" onClick={() => chooseMode(mode === "audio" ? "video" : "audio")} aria-pressed={mode === "audio"} aria-label={mode === "audio" ? "Включить видео" : "Только звук"} title={mode === "audio" ? "Включить видео" : "Только звук: экономит трафик и работает при слабой связи"}><Icon name="volume" size={22} /></button>}
         <button className="iconbtn" onClick={() => { if (!diag) void api.liveDiagAccess(token).then((r) => setDiagMeeting(r.allowed ? r.meeting_id ?? null : null)).catch(() => undefined); setDiag(!diag); }} aria-label="Статистика воспроизведения" aria-pressed={diag} title="Статистика воспроизведения"><Icon name="gauge" size={22} /></button>
         <button className="iconbtn" onClick={fullscreen} aria-label="Во весь экран"><Icon name="expand" size={22} /></button>
       </div>

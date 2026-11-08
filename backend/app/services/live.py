@@ -454,6 +454,7 @@ class LiveBroadcaster:
             if relay_src:
                 await self._r.set(RELAY_KEY.format(b.id), relay_src, ex=172800)
                 await self.destinations.relay_sync(db, b, room)
+                await self.audio_sync(db, b, room)
             self.link_access(room.live_view_access, hls_dir)
             self.link_access(room.live_stream_access, hls_dir)
             await self.stage(b, "accepted", "Служба трансляций приняла задание", time.monotonic() - t0)
@@ -491,6 +492,41 @@ class LiveBroadcaster:
         w.close()
         return True
 
+    def audio_url(self, access: str) -> str:
+        """Дорожка только со звуком для зрителей со слабой связью: отдельный поток MediaMTX рядом с основным (имя — идентификатор доступа с суффиксом)."""
+        return f"{self.ll_url(access)}-a"
+
+    async def audio_sync(self, db, b: Broadcast, room: Room) -> None:
+        """Процесс «только звук» в службе ретрансляции (ffmpeg -vn -c:a copy). Идемпотентно: сверка раз в 10 с возвращает его после перезапуска службы."""
+        relay = getattr(self.destinations, "relay", None)
+        src = await self.destinations.relay_src(b) if self.destinations is not None else None
+        if relay is None or src is None or not room.live_view_access:
+            return
+        cfg = await self.cfg(db)
+        rid = f"a-{b.id}"
+        if not cfg.adaptive_viewers:
+            await relay.delete(rid)
+            return
+        from ..relay.manager import fingerprint  # noqa: PLC0415
+
+        url = self.audio_url(room.live_view_access)
+        st = await relay.status()
+        if st is not None and (st.get(rid) or {}).get("fp") != fingerprint(src, url, True):
+            await relay.put(rid, src, url, audio=True)
+
+    async def audio_ready(self, access: str) -> bool:
+        """Дорожка со звуком отвечает. Один сорванный запрос не снимает предложение: после успеха 60 с отвечаем «да», иначе у зрителей кнопка мигала бы."""
+        now = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1.5)) as c:
+                ok = (await c.get(f"{self._s.lowlatency_hls_url.rstrip('/')}/{access}-a/index.m3u8?cookieCheck=1", headers={"Cookie": "cookieCheck=1"})).status_code == 200
+        except httpx.HTTPError:
+            ok = False
+        if ok:
+            self._audio_seen = {k: v for k, v in getattr(self, "_audio_seen", {}).items() if now - v < 600} | {access: now}
+            return True
+        return now - getattr(self, "_audio_seen", {}).get(access, -1e9) < 60
+
     def ll_url(self, access: str) -> str:
         """Внутренний выход для LL-HLS. Имя потока — идентификатор доступа: так подпись зрителя и отзыв работают как у обычного HLS."""
         return f"{self._s.lowlatency_rtmp_url.rstrip('/')}/{access}"
@@ -516,6 +552,9 @@ class LiveBroadcaster:
             await self.api.update_stream(b.egress_id, add=[self.ll_url(new)], remove=[self.ll_url(old)])
         except Exception as exc:  # noqa: BLE001 — зритель останется на обычном HLS, эфир важнее
             log.warning("Поток низкой задержки не переключён", extra={"broadcast": str(b.id), "error": type(exc).__name__})
+        relay, src = getattr(self.destinations, "relay", None), await self.destinations.relay_src(b)
+        if relay is not None and src is not None:
+            await relay.put(f"a-{b.id}", src, self.audio_url(new), audio=True)         # дорожка «только звук» переезжает на новое имя вместе с основной
 
     async def _livekit_room(self, b: Broadcast) -> str | None:
         async with self._sm() as db:
@@ -653,6 +692,8 @@ class LiveBroadcaster:
         b.peak_viewers = max(b.peak_viewers, await self.viewers(b.room_id))
         await db.commit()
         # новый эфир мог начаться, пока этот завершался: тогда его площадки и объявление не трогаем
+        if getattr(self.destinations, "relay", None) is not None:
+            await self.destinations.relay.delete(f"a-{b.id}")
         await self._r.delete(RELAY_KEY.format(b.id))
         running = await self.current(db, b.room_id)
         if self.destinations is not None and running is None:
@@ -709,6 +750,7 @@ class LiveBroadcaster:
                         room_r = await db.get(Room, b.room_id)
                         if room_r is not None:
                             await self.destinations.relay_sync(db, b, room_r)         # площадки вне Egress: состояния и самовосстановление службы
+                            await self.audio_sync(db, b, room_r)
                 if b.status in ("starting", "live") and meeting is not None and meeting.ended_at is None and age > STALL_GRACE_S \
                         and await self.api.recorder_present(meeting.livekit_room, b.egress_id) is False:
                     log.warning("Рекордер эфира пропал из комнаты — служба Egress, вероятно, упала", extra={"broadcast": str(b.id)})

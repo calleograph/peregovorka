@@ -304,7 +304,8 @@ class Destinations:
                 row.status, row.last_error = new, err
                 changed = True
         for rid in st.keys() - want.keys():                 # выключены или удалены: процесс площадки больше не нужен
-            await self.relay.delete(rid)
+            if not rid.startswith("a-"):                    # «a-…» — дорожка «только звук» для зрителей, её ведёт LiveBroadcaster.audio_sync
+                await self.relay.delete(rid)
         if changed:
             await db.commit()
 

@@ -219,6 +219,13 @@ def test_rtmp_failure_names_the_platform_and_never_the_key():
     assert "Канал" in f.text and KEY not in f.cause and f.kind == "confirmed"
 
 
+def test_viewer_report_counts_those_switched_to_audio_only_and_rejects_nonsense():
+    assert ld.clean_client({"aud": 1, "stalls": 2}) == {"aud": 1.0, "stalls": 2.0}
+    assert "aud" not in (ld.clean_client({"aud": 5, "stalls": 1}) or {}), "флаг — только 0 или 1"
+    agg = ld.aggregate_clients({"v:a": {"aud": 1, "buf": 1.0, "t": 999.0}, "v:b": {"aud": 0, "buf": 3.0, "t": 999.0}, "v:c": {"buf": 2.0, "t": 999.0}}, {}, 2.0, 3000, 1000.0)
+    assert agg["audio"] == 1 and agg["reporting"] == 3
+
+
 def test_source_tile_shows_what_the_speaker_publishes_and_the_ordered_output_quality():
     st = {x["id"]: x for x in stage_view(ok_sample(source={"known": True, "max_w": 1920, "max_h": 1080}, quality="720p"), [])}
     assert st["source"]["val"] == "1920×1080 → 720p"

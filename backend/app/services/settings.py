@@ -866,6 +866,7 @@ class LiveSettings(_Group):
     max_cpu_load: int = Field(default=85, ge=10, le=100)          # нагрузка Egress (по его health-порту), при которой новые эфиры не начинаются: обычные конференции важнее
     ll_hls: bool = True                                           # низкая задержка (LL-HLS через MediaMTX) для зрителей с этого сервера; CDN и Safari остаются на обычном HLS
     rtc_viewers_max: int = Field(default=0, ge=0, le=1000)        # сколько зрителей смотрит напрямую по WebRTC (задержка меньше секунды); 0 — никто. Каждому нужен выход UDP к серверу звонков
+    adaptive_viewers: bool = True            # зритель сам переходит на «только звук» при плохом приёме и возвращается к видео (нужны служба ретрансляции и MediaMTX)
     ll_viewers_max: int = Field(default=300, ge=0, le=5000)       # сверх этого числа новые зрители идут на обычный HLS: каждый зритель LL-HLS — несколько запросов в секунду
     egress_health_url: str = Field(default="http://livekit-egress:8082/", max_length=300)     # адрес health-порта Egress внутри сети проекта (нагрузка процессора); пусто — не проверять
     cdn_enabled: bool = False                                     # раздавать HLS через CDN: плеер берёт поток прямо с CDN, а не с этого сервера

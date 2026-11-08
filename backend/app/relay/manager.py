@@ -35,8 +35,8 @@ def scrub(text: str, secrets: set[str]) -> str:
     return text
 
 
-def fingerprint(src: str, url: str) -> str:
-    return hashlib.sha256(f"{src}\n{url}".encode()).hexdigest()[:12]
+def fingerprint(src: str, url: str, audio: bool = False) -> str:
+    return hashlib.sha256(f"{src}\n{url}\n{int(audio)}".encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -44,6 +44,7 @@ class Relay:
     id: str
     src: str
     url: str
+    audio: bool = False                   # только звук: дорожка для зрителей со слабой связью (ffmpeg -vn -c:a copy, без перекодирования)
     state: str = "starting"               # starting — первый запуск, live — данные идут, retrying — пауза или повтор после сбоя
     restarts: int = 0
     fails: int = 0                        # подряд неудачных попыток
@@ -55,7 +56,7 @@ class Relay:
 
     def public(self) -> dict:
         return {"id": self.id, "state": self.state, "restarts": self.restarts, "fails": self.fails, "bytes": self.bytes_out, "since": self.live_since,
-                "error": self.last_error, "fp": fingerprint(self.src, self.url)}
+                "error": self.last_error, "fp": fingerprint(self.src, self.url, self.audio), "audio": self.audio}
 
 
 class RelayManager:
@@ -63,13 +64,13 @@ class RelayManager:
         self.ffmpeg, self.backoff, self.stall_s = ffmpeg, backoff, stall_s
         self.relays: dict[str, Relay] = {}
 
-    def put(self, rid: str, src: str, url: str) -> None:
+    def put(self, rid: str, src: str, url: str, audio: bool = False) -> None:
         cur = self.relays.get(rid)
-        if cur is not None and cur.src == src and cur.url == url and cur.task is not None and not cur.task.done():
+        if cur is not None and cur.src == src and cur.url == url and cur.audio == audio and cur.task is not None and not cur.task.done():
             return
         if cur is not None and cur.task is not None:
             cur.task.cancel()               # заменённый адрес или ключ: прежний процесс завершается сам в finally
-        r = Relay(rid, src, url)
+        r = Relay(rid, src, url, audio)
         r.task = asyncio.get_running_loop().create_task(self._run(r))
         self.relays[rid] = r
 
@@ -92,7 +93,7 @@ class RelayManager:
     def command(self, r: Relay) -> list[str]:
         return [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning", "-nostats", "-progress", "pipe:1",
                 "-rw_timeout", "10000000", "-analyzeduration", "1000000", "-probesize", "500000", "-rtmp_live", "live", "-i", r.src,
-                "-map", "0", "-c", "copy", "-rw_timeout", "10000000", "-f", "flv", "-flvflags", "no_duration_filesize", r.url]
+                *(["-vn", "-map", "0:a", "-c:a", "copy"] if r.audio else ["-map", "0", "-c", "copy"]), "-rw_timeout", "10000000", "-f", "flv", "-flvflags", "no_duration_filesize", r.url]
 
     async def _run(self, r: Relay) -> None:
         try:

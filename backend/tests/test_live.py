@@ -1345,11 +1345,11 @@ class RelayFake:
     async def available(self):
         return self.up
 
-    async def put(self, rid, src, url):
+    async def put(self, rid, src, url, audio=False):
         from app.relay.manager import fingerprint
         if not self.up:
             return False
-        self.items[rid] = {"id": rid, "state": "starting", "restarts": 0, "fails": 0, "bytes": 0, "since": None, "error": "", "fp": fingerprint(src, url), "src": src, "url": url}
+        self.items[rid] = {"id": rid, "state": "starting", "restarts": 0, "fails": 0, "bytes": 0, "since": None, "error": "", "fp": fingerprint(src, url, audio), "src": src, "url": url, "audio": audio}
         return True
 
     async def delete(self, rid):
@@ -1381,7 +1381,8 @@ def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(l
     urls = list(lr.fake.started[0].outputs[-1].stream.urls)
     assert len(urls) == 2 and all(u.startswith("rtmp://mediamtx:1935/live/") for u in urls), "в Egress только поток низкой задержки и поток для ретрансляции"
     assert any("/live/r-" in u for u in urls)
-    assert len(lr.relay.items) == 2 and {i["url"] for i in lr.relay.items.values()} == {f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"}
+    platforms = {k: i for k, i in lr.relay.items.items() if not k.startswith("a-")}
+    assert len(platforms) == 2 and {i["url"] for i in platforms.values()} == {f"{EXAMPLE}/{KEY_A}", f"rtmp://other.example.org:1935/live/{KEY_B}"}
     assert all(i["src"] == [u for u in urls if "/live/r-" in u][0] for i in lr.relay.items.values())
     login(lr, "carol")
     by = {x["name"]: x for x in lr.get(f"/api/v1/meetings/{mid}/live").json()["destinations"]}
@@ -1398,6 +1399,40 @@ def test_platforms_are_served_by_the_relay_and_egress_keeps_only_local_outputs(l
     assert by["Первая"]["status"] == "live" and by["Вторая"]["status"] == "failed"
     assert KEY_B not in json.dumps(st) and "Connection reset" in by["Вторая"]["last_error"] and "эфир и остальные площадки" in by["Вторая"]["last_error"]
     assert st["live"] is True and lr.fake.updates == [], "неисправная площадка не трогает эфир, а Egress не получает правок выходов"
+
+
+def test_audio_only_track_for_weak_connections_follows_the_broadcast_and_the_viewer_link(lr, public_dns, monkeypatch):
+    room = room_live(lr)
+    dest(lr, room, name="Первая", key=KEY_A)
+    mid = _join(lr, "alice", room["id"])["meeting_id"]
+    assert start(lr, mid).status_code == 200
+    b = broadcasts(lr, mid)[0]
+    rid = f"a-{b.id}"
+    access = call(lr, lambda db: db.get(Room, b.room_id)).live_view_access
+    item = lr.relay.items[rid]
+    assert item["audio"] is True and item["url"] == f"rtmp://mediamtx:1935/live/{access}-a" and item["src"].startswith("rtmp://mediamtx:1935/live/r-"), "звук идёт в отдельный поток рядом с основным"
+    assert rid not in {x["id"] for x in lr.get(f"/api/v1/rooms/{room['id']}/live").json()["destinations"]}, "это не площадка и в списке площадок не показывается"
+    # служба потеряла состояние: сверка возвращает дорожку
+    lr.fake.infos["EG_test1"] = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+    lr.relay.items.clear()
+    reconcile(lr)
+    assert rid in lr.relay.items
+    # настройка выключена — дорожки нет
+    put_settings(lr, "live", adaptive_viewers=False)
+    reconcile(lr)
+    assert rid not in lr.relay.items
+    put_settings(lr, "live", adaptive_viewers=True)
+    reconcile(lr)
+    assert rid in lr.relay.items
+    # эфир закончился — дорожка убрана
+    assert start(lr, mid, enabled=False).status_code == 200
+    ev = finish_event("EG_test1", duration_s=60)
+
+    async def go(db):
+        await lr.app_obj.state.video.on_egress_event(db, ev)
+        await lr.app_obj.state.live.on_egress_event(db, ev)
+    call(lr, go)
+    assert rid not in lr.relay.items
 
 
 def test_relay_retries_in_the_first_seconds_of_the_broadcast_are_not_a_platform_error(lr, public_dns):

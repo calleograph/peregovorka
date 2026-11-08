@@ -502,6 +502,10 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
         # Низкая задержка: тот же идентификатор и та же подпись, раздаёт MediaMTX. Обычный HLS остаётся запасным путём плеера. CDN и нативный плеер (long) идут обычным HLS.
         if await request.app.state.live.ll_ready(room.live_view_access):
             out.update(path=path.replace("/hls/", "/llhls/", 1), origin_path=path)
+            if cfg.adaptive_viewers and await request.app.state.live.audio_ready(room.live_view_access):
+                from ..services.live import LIVE_QUALITY  # noqa: PLC0415
+
+                out.update(audio_path=out["path"].rsplit("/", 1)[0] + "/audio/index.m3u8", need_kbps=LIVE_QUALITY.get(v.b.quality, LIVE_QUALITY["720p"])[2] + 128)
         else:
             out["ll_soon"] = True
     if room.live_cdn and cfg.cdn_nodes_enabled:

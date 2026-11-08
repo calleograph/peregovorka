@@ -251,7 +251,7 @@ async def probe_segment(path: Path, timeout: float = 5.0) -> dict | None:
 
 
 # ------------------------------------------------------------------------------------------------ отчёты клиентов
-_CLIENT_NUM = {"kbps": 200_000, "est": 2_000_000, "fps": 240, "drop": 1e9, "frames": 1e10, "buf": 3600, "lag": 86400, "lat": 86400, "seg_ms": 600_000, "seg_kb": 200_000, "stalls": 1e7, "stall_ms": 1e11,
+_CLIENT_NUM = {"aud": 1, "kbps": 200_000, "est": 2_000_000, "fps": 240, "drop": 1e9, "frames": 1e10, "buf": 3600, "lag": 86400, "lat": 86400, "seg_ms": 600_000, "seg_kb": 200_000, "stalls": 1e7, "stall_ms": 1e11,
                "errs": 1e7, "reconn": 1e6, "rtt": 60_000, "loss": 100, "out_kbps": 500_000, "in_kbps": 500_000, "jitter": 60_000}
 _CLIENT_STR = {"res": re.compile(r"^\d{1,5}x\d{1,5}$"), "eng": re.compile(r"^(hlsjs|native|webrtc)$"), "limit": re.compile(r"^(none|cpu|bandwidth|other)$"), "src": re.compile(r"^(screen|camera)$"),
                "node": re.compile(r"^[A-Za-z0-9.-]{1,253}$")}
@@ -329,7 +329,7 @@ def aggregate_clients(rows: dict[str, dict], prev: dict[str, dict], seg_s: float
     for k in memo.keys() - viewers.keys():
         del memo[k]
     bad.sort(key=lambda x: -x["lv"])
-    return {"reporting": len(viewers), "bad": len(bad), "bad_share": round(len(bad) / len(viewers), 3) if viewers else None, "worst": bad[:8], "stalls": int(stalls), "reconn": int(reconn), "errs": int(errs),
+    return {"reporting": len(viewers), "bad": len(bad), "bad_share": round(len(bad) / len(viewers), 3) if viewers else None, "worst": bad[:8], "stalls": int(stalls), "reconn": int(reconn), "errs": int(errs), "audio": sum(1 for v in viewers.values() if v.get("aud")),
             "kbps": avg("kbps"), "est": avg("est"), "buf": avg("buf"), "lat": avg("lat"), "lat_p95": p95("lat"), "lag": avg("lag"), "seg_ms": avg("seg_ms"), "seg_ms_p95": p95("seg_ms"), "fps": avg("fps"),
             "publishers": [{"src": v.get("src"), "res": v.get("res"), "fps": v.get("fps"), "kbps": v.get("out_kbps"), "rtt": v.get("rtt"), "loss": v.get("loss"), "limit": v.get("limit")} for v in pubs.values()][:8]}
 
