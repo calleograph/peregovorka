@@ -767,6 +767,34 @@ def test_enabled_destinations_go_into_the_egress_request_and_a_dead_one_does_not
     assert d1 and d2
 
 
+def test_platform_that_keeps_dropping_the_connection_is_removed_before_it_freezes_the_whole_pipeline(lv, public_dns):
+    room = room_live(lv)
+    d1 = dest(lv, room, name="Первая", key=KEY_A).json()["destinations"][0]["id"]
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    assert start(lv, mid).status_code == 200
+
+    def report(retries):
+        info = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_ACTIVE)
+        info.stream_results.add(url=f"{EXAMPLE}/{{{KEY_A[:3]}...{KEY_A[-3:]}}}", status=eg.StreamInfo.Status.ACTIVE, retries=retries)
+        lv.fake.infos["EG_test1"] = info
+        reconcile(lv)
+
+    def row():
+        login(lv, "carol")
+        return {x["name"]: x for x in lv.get(f"/api/v1/meetings/{mid}/live").json()["destinations"]}["Первая"]
+    report(1)
+    report(2)
+    assert row()["enabled"] and row()["status"] == "live", "одиночные обрывы сети не отключают площадку"
+    before = len(lv.fake.updates)
+    report(9)
+    r = row()
+    assert r["enabled"] is False and r["status"] == "failed" and "постоянно обрывает" in r["last_error"] and KEY_A not in json.dumps(r)
+    assert len(lv.fake.updates) == before + 1 and lv.fake.updates[-1][2], "выход убран из конвейера Egress"
+    st = lv.get(f"/api/v1/meetings/{mid}/live").json()
+    assert st["live"] is True, "эфир продолжается без этой площадки"
+    assert d1
+
+
 def test_destination_can_be_switched_on_and_off_during_the_broadcast_without_stopping_it(lv, public_dns):
     room = room_live(lv)
     d1 = dest(lv, room, name="Первая").json()["destinations"][0]["id"]

@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import re
+import time
 import socket
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from .settings import SettingsError
 
 log = logging.getLogger("app.live")
 
+FLAP_RETRIES = 5                       # новых повторов Egress за окно: одиночные обрывы сети (1–2) не считаются
+FLAP_WINDOW_S = 90
 PLATFORMS = {"rutube": "RUTUBE", "vk": "VK Видео", "youtube": "YouTube", "twitch": "Twitch", "custom": "Другой RTMP/RTMPS-сервер"}
 KEY_RE = re.compile(r"^[A-Za-z0-9_\-.~:@%+=&?/!*]{1,512}$")
 PATH_RE = re.compile(r"^(/[A-Za-z0-9_\-.~%+=:@]{1,120}){0,6}$")
@@ -296,6 +299,21 @@ class Destinations:
         server, head, tail = m.group(1).rstrip("/").lower(), m.group(2).replace("...", ""), m.group(3)
         return server == row.server_url.rstrip("/").lower() and key.startswith(head) and key.endswith(tail)
 
+    async def _flapping(self, row: LiveDestination, retries: int) -> bool:
+        """Площадка рвёт соединение раз за разом? Egress считает повторы, но не отключает такую площадку сам, а через десятки секунд или минуты замирает весь его
+        конвейер: перестают идти сегменты HLS, остальные площадки и запись (воспроизведено на настоящем Egress v1.15 и на стенде владельца с RUTUBE). Поэтому
+        ≥ FLAP_RETRIES новых повторов за FLAP_WINDOW_S секунд — повод убрать площадку из эфира до зависания, а не после."""
+        key, now = f"live:flap:{row.id}", time.time()
+        try:
+            prev = await self._r.get(key)
+            await self._r.set(key, f"{retries}:{now:.0f}", ex=FLAP_WINDOW_S * 4)
+        except Exception:  # noqa: BLE001 — Redis недоступен: защита отключается, эфир идёт как раньше
+            return False
+        if not prev:
+            return False
+        was, _, at = (prev.decode() if isinstance(prev, bytes) else prev).partition(":")
+        return retries - int(was or 0) >= FLAP_RETRIES and now - float(at or 0) <= FLAP_WINDOW_S
+
     async def on_info(self, db, broadcast: Broadcast, info: eg.EgressInfo) -> None:
         """Состояния потоков из ответа Egress → состояния площадок: ACTIVE — идёт, FAILED — ошибка с причиной без ключа, FINISHED — завершена. У выключенной площадки
         прошлые результаты не учитываются (её состояние задал сам владелец)."""
@@ -316,6 +334,22 @@ class Destinations:
             if not mine or others:
                 continue                                  # нет результатов или совпадение неоднозначно — состояние не трогаем
             names = {eg.StreamInfo.Status.Name(sr.status): sr for sr in mine}
+            if row.enabled and "FAILED" not in names and "FINISHED" not in names and await self._flapping(row, max(int(getattr(sr, "retries", 0) or 0) for sr in mine)):
+                try:
+                    await self.set_live(db, broadcast, row, False)
+                except DestinationError:
+                    pass
+                row.enabled, row.status = False, "failed"
+                row.last_error = ("Площадка постоянно обрывает соединение: ключ закрыт, просрочен или не принят. Она отключена, чтобы не остановить эфир для остальных. "
+                                  "Проверьте ключ в студии площадки, замените его и включите площадку снова.")
+                changed = True
+                if self.journal is not None:
+                    try:
+                        self.journal.emit("storage", "live_destination_failed", level="warning", meeting_id=str(broadcast.meeting_id), message=f"{row.name}: отключена за частые обрывы"[:300],
+                                          data={"platform": row.platform})
+                    except Exception:  # noqa: BLE001
+                        pass
+                continue
             if "ACTIVE" in names:
                 new, err = "live", None
                 if row.status != "live":
