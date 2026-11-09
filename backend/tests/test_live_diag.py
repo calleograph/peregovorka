@@ -400,3 +400,31 @@ def test_room_without_broadcasts_answers_idle(lv):  # noqa: F811
 
 
 _ = (make_room, LEADERS, access, viewer, vw, uuid)
+
+
+def test_publisher_chain_fields_are_accepted_and_shown_in_the_finding_with_numbers():
+    raw = {"src": "screen", "res": "1366x768", "fps": 6, "out_kbps": 806, "limit": "bandwidth", "rtt": 1, "loss": 0, "scr": "2560x1440", "cap": "1920x1080@15", "tgt": 900, "avail": 1100, "lay": 2,
+           "lim_p": 93, "enc": "libvpx", "junk": "x", "cap_bad": "<script>"}
+    c = ld.clean_client(raw)
+    assert c["scr"] == "2560x1440" and c["cap"] == "1920x1080@15" and c["tgt"] == 900 and c["avail"] == 1100 and c["lay"] == 2 and c["lim_p"] == 93 and c["enc"] == "libvpx"
+    assert "junk" not in c and "cap_bad" not in c
+    assert "cap" not in (ld.clean_client({"cap": "<script>alert(1)</script>", "fps": 1}) or {}), "захват — только «ширина×высота@кадры»"
+    pub = {"src": "screen", "res": "1366x768", "fps": 6, "kbps": 806, "limit": "bandwidth", "rtt": 1, "loss": 0, "scr": "2560x1440", "cap": "1920x1080@15", "tgt": 900, "avail": 1100, "lay": 2, "lim_p": 93}
+    f = codes(ok_sample(quality="720p", viewers={"reporting": 1, "publishers": [pub], "worst": []}))["pub_limit_bandwidth"]
+    for need in ("экран 2560x1440", "захват 1920x1080@15", "отправка 1366x768", "806", "цель кодировщика 900", "оценка исходящего канала 1100", "ограничен каналом 93 %", "Потерь нет, RTT малый"):
+        assert need in f.cause, need
+    lossy = dict(pub, loss=19, rtt=220)
+    assert "Потерь нет" not in codes(ok_sample(quality="720p", viewers={"reporting": 1, "publishers": [lossy], "worst": []}))["pub_limit_bandwidth"].cause
+
+
+def test_broadcast_quality_priority_is_start_choice_then_room_then_server_default():
+    """Качество эфира: выбранное при запуске → настройка комнаты «Трансляция» → умолчание сервера. Качество видеозаписи встреч (rooms.video_quality) к эфиру не относится."""
+    import types
+
+    from app.services.live import LiveBroadcaster
+
+    room = types.SimpleNamespace(live_title="", live_replay=False, live_download=False, live_link_days=5, live_quality="720p", video_quality="1080p")
+    cfg = types.SimpleNamespace(replay_days_max=30, default_quality="1080p")
+    assert LiveBroadcaster.options(room, cfg, {"quality": "1440p"})["quality"] == "1440p", "выбор при запуске"
+    assert LiveBroadcaster.options(room, cfg, {})["quality"] is None and LiveBroadcaster.options(room, cfg, None)["quality"] is None, "не выбрано: решает комната"
+    assert LiveBroadcaster.options(room, cfg, {"quality": "4k"})["quality"] is None and LiveBroadcaster.options(room, cfg, {"quality": 1080})["quality"] is None, "чужое значение отбрасывается"

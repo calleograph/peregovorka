@@ -900,7 +900,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
       setSnapshot(snap);
       if (snap.screenFrozen) { dlog("показ экрана участника «завис»: framesDecoded не растёт"); reportEvent("screen_frozen", { meetingId: meetingRef.current ?? undefined, reason: "framesDecoded_stalled" }); }
       if (++n % 6 === 0 && meetingRef.current) api.clientMetrics(metricsBody(meetingRef.current, snap));
-      if (n % 2 === 0 && meetingRef.current && liveRef.current) void api.liveDiagClient(meetingRef.current, publisherStats(snap)).catch(() => undefined);      // источник эфира — для диагностики; раз в 10 с и только пока идёт эфир
+      if (n % 2 === 0 && meetingRef.current && liveRef.current) void api.liveDiagClient(meetingRef.current, publisherStats({ ...snap, ladder: qualityRef.current?.getScreenLevel() })).catch(() => undefined);      // источник эфира — для диагностики; раз в 10 с и только пока идёт эфир
     }, 5000);
     return () => window.clearInterval(t);
   }, [join, stage]);
@@ -933,7 +933,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           const maxSharers = join.client.max_sharers ?? (join.client.one_sharer_at_a_time ? 1 : 5);
           if (othersSharing >= maxSharers) { setErr("screen", sharesFullText(maxSharers)); return; }
           const profile = loadProfile(join.client.screen_profile);
-          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps, join.client.screen_max_height);
+          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps, join.client.screen_max_height, !!join.client.screen_single_layer);
           userStopRef.current = false;
           screenPhase("SCREEN_CREATE", `profile=${profile} audio=${o.capture.audio ? "yes" : "no"}`);
           screenPhase("SCREEN_PUBLISH_START");

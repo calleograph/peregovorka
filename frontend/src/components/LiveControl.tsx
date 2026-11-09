@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ApiError, type LiveRoomSettings, type LiveStartOptions, type LiveState } from "../api";
+import { api, type ApiError, type LiveStartOptions, type LiveState } from "../api";
 import InfoTip from "./InfoTip";
 import { copyText } from "../util";
 import { Icon } from "./Icons";
@@ -49,7 +49,7 @@ export function LiveDialog({ meetingId, room, state, startOpts, onStartOpts, onS
   const [done, setDone] = useState("");
   const links = state.links;
   // параметры именно этого эфира: по умолчанию — из настроек комнаты, ведущий может поменять их перед запуском (после запуска они фиксируются у эфира)
-  const opts: LiveStartOptions = startOpts ?? { title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5 };
+  const opts: LiveStartOptions = startOpts ?? { title: links?.title ?? "", replay: links?.replay ?? false, download: links?.download ?? false, link_days: links?.link_days ?? 5, quality: undefined };
   const setOpts = onStartOpts;
   const current = links?.broadcasts.find((b) => b.status === "live");
   useEffect(() => {          // статусы площадок меняются сами: окно не должно показывать «идёт» у площадки, которая уже отказала
@@ -72,17 +72,12 @@ export function LiveDialog({ meetingId, room, state, startOpts, onStartOpts, onS
     window.setTimeout(() => setDone(""), 3000);
   };
   const warnBig = links && state.viewers >= links.global.direct_viewers_warn;
-  const setQuality = async (q: LiveRoomSettings["quality"]) => {
-    setErr("");
-    try { await api.patchLive(room.id, { live_quality: q }); onChanged(); }
-    catch (e) { setErr((e as ApiError).message || "Не удалось сохранить качество."); }
-  };
   return (
     <Modal title="Трансляция" onClose={onClose} wide>
       <div className="lv-panel">
         <div className="lv-state">
           {state.live ? <span className="live-tag on big"><i aria-hidden />Прямой эфир</span> : <span className="badge">{STATUS[state.status] ?? state.status}</span>}
-          {state.live && <span className="muted">идёт {clockSince(state.since)} · зрителей: {state.viewers}{links ? ` · ${links.quality}` : ""}</span>}
+          {state.live && <span className="muted">идёт {clockSince(state.since)} · зрителей: {state.viewers}{links ? ` · ${current?.quality ?? links.quality}` : ""}</span>}
         </div>
         {state.status === "failed" && state.error && <div className="alert error" role="alert">{state.error}</div>}
         {err && <div className="alert error" role="alert">{err}</div>}
@@ -93,7 +88,10 @@ export function LiveDialog({ meetingId, room, state, startOpts, onStartOpts, onS
               <Icon name={state.live ? "stop" : "broadcast"} size={18} /> {busy ? "Подождите…" : state.live ? "Остановить эфир" : "Начать эфир"}
             </button>
           </div>)}
-        {!state.live && state.can_control && links && state.can_edit && <QualitySelect value={links.quality} disabled={busy} onChange={(q) => void setQuality(q)} />}
+        {!state.live && state.can_control && links && (
+          <QualitySelect title="Качество этого эфира" value={opts.quality ?? links.quality} disabled={busy} onChange={(q) => setOpts({ ...opts, quality: q })}
+            hint={`Только для этого эфира: запись эфира идёт в том же качестве. В настройках комнаты («Трансляция») сейчас ${links.quality}; их можно изменить там, и это качество подставится само. Качество видеозаписи встреч (720p) к эфиру не относится.`} />)}
+        {!state.live && state.can_control && links && opts.quality && opts.quality !== links.quality && <p className="muted small lv-note">Эфир начнётся в {opts.quality}, в настройках комнаты остаётся {links.quality}.</p>}
         {!state.live && state.can_control && links && (
           <fieldset className="group lv-opts"><legend>Этот эфир<InfoTip>Значения подставлены из настроек комнаты. Здесь их можно поменять только для этого эфира: после запуска они сохраняются у эфира и не меняются от последующих изменений настроек комнаты. Кнопка «Выйти в эфир» запускает эфир с этими же значениями. Качество — настройка комнаты, оно задаётся выше.</InfoTip></legend>
             <label>Название для зрителей <input value={opts.title ?? ""} maxLength={200} onChange={(e) => setOpts({ ...opts, title: e.target.value })} placeholder="Название мероприятия" /></label>

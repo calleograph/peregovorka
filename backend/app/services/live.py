@@ -399,7 +399,8 @@ class LiveBroadcaster:
         return {"title": ((title or "").strip()[:200]) or None,
                 "replay": o["replay"] if isinstance(o.get("replay"), bool) else room.live_replay,
                 "download": o["download"] if isinstance(o.get("download"), bool) else room.live_download,
-                "link_days": max(1, min(int(days or 5), int(cfg.replay_days_max)))}
+                "link_days": max(1, min(int(days or 5), int(cfg.replay_days_max))),
+                "quality": o["quality"] if o.get("quality") in LIVE_QUALITY else None}           # качество только этого эфира; нет — как в настройках комнаты
 
     async def start(self, db, meeting: Meeting, *, by: str = "", opts: dict | None = None) -> Broadcast:
         lock = await self._r.set(f"live:start:{meeting.id}", "1", nx=True, ex=START_LOCK_S)
@@ -427,7 +428,9 @@ class LiveBroadcaster:
             self.unlink_access(room.live_view_access)      # подпись зрителя живёт дольше эфира: новый идентификатор на каждый эфир, чтобы прошлая подпись не открыла следующий
             room.live_view_access = new_access()
             hls_dir = new_access() if room.live_own_hls else None
-            quality = room.live_quality if room.live_quality in LIVE_QUALITY else cfg.default_quality
+            # качество эфира (и его записи: она идёт в том же процессе Egress): выбрано при запуске → настройка комнаты «Трансляция» → умолчание сервера. Качество видеозаписи встреч
+            # (rooms.video_quality, 720p) к эфиру не относится.
+            quality = self.options(room, cfg, opts)["quality"] or (room.live_quality if room.live_quality in LIVE_QUALITY else cfg.default_quality)
             # Запись каждого эфира обязательна и входит в этот же процесс Egress (MP4 рядом с HLS и площадками): отдельную видеозапись комнаты закрываем,
             # чтобы не гонять второй браузер. Прежняя настройка «сохранять запись» (rooms.live_record) больше не отключает запись.
             if await self.video.active_rows(db, meeting.id):

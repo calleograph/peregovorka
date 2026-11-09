@@ -93,12 +93,12 @@ export interface LiveRoomSettings {
 }
 /** Один эфир комнаты для организатора: своя ссылка, параметры доступа к записи, срок, запись. */
 export interface LiveBroadcast {
-  id: string; status: "live" | "ending" | "ended" | "failed"; title: string | null; started_at: string | null; ended_at: string | null; view_path: string | null;
+  id: string; status: "live" | "ending" | "ended" | "failed"; title: string | null; quality?: "720p" | "1080p" | "1440p"; started_at: string | null; ended_at: string | null; view_path: string | null;
   replay: boolean; download: boolean; link_days: number; access_until: string | null; revoked_at: string | null; access: "off" | "open" | "expired" | "revoked";
   password: boolean; meeting_id: string; peak_viewers: number; error: string | null;
   recording: { id: string; status: "ready" | "processing" | "failed"; file_state: string; duration_s: number | null; size_bytes: number } | null;
 }
-export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number }
+export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number; quality?: "720p" | "1080p" | "1440p" }
 export interface LivePatchBody {
   live_download?: boolean; live_link_days?: number;
   live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p" | "1440p"; live_record?: boolean; live_own_hls?: boolean;
@@ -144,8 +144,8 @@ export interface DiagNow {
   hls?: { ll?: boolean; dur_s?: number | null; interval_s?: number | null; ready_s?: number | null; age_s?: number | null; bytes?: number; kbps?: number | null } | null; rtmp?: { id: string; name: string; status: string; error?: string | null; retries?: number | null; flips?: number }[];
   source?: { known?: boolean; list?: { id: string; name: string; tracks: { kind: string; src: string; w?: number | null; h?: number | null; muted?: boolean }[] }[] };
   cdn?: { name: string; state: string; viewers?: number | null; mbit?: number | null; hit?: number | null }[];
-  viewers?: { reporting?: number; bad?: number; stalls?: number; lat?: number | null; lat_p95?: number | null; seg_ms?: number | null; seg_ms_p95?: number | null; buf?: number | null; est?: number | null;
-    worst: { id: string; lv: number; why: string; ua?: string | null; seg_ms?: number | null; buf?: number | null }[]; publishers?: { src?: string; res?: string; fps?: number | null; kbps?: number | null; loss?: number | null; limit?: string }[] };
+  viewers?: { reporting?: number; bad?: number; stalls?: number; lat?: number | null; lag?: number | null; lat_p95?: number | null; seg_ms?: number | null; seg_ms_p95?: number | null; buf?: number | null; est?: number | null;
+    worst: { id: string; lv: number; why: string; ua?: string | null; seg_ms?: number | null; buf?: number | null }[]; publishers?: { src?: string; res?: string; fps?: number | null; kbps?: number | null; loss?: number | null; limit?: string; rtt?: number | null; scr?: string | null; cap?: string | null; tgt?: number | null; avail?: number | null; lay?: number | null; lim_p?: number | null; enc?: string | null; lad?: number | null }[] };
 }
 export type DiagSample = (number | null)[];
 export interface DiagState { stages?: DiagEvent[]; bid: string | null; status: string; quality?: string; enabled: boolean; started_at?: string; ended_at?: string | null; now: DiagNow | null; ring: DiagSample[]; keys: string[]; events?: DiagEvent[] }
@@ -159,6 +159,7 @@ export interface ClientConfig {
   screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean; max_sharers?: number;
   /** Высота захвата показа экрана (1440 — в комнате трансляции с качеством 2K). */
   screen_max_height?: number;
+  screen_single_layer?: boolean;
   /** Комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей. */
   broadcast?: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */

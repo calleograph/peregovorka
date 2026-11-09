@@ -145,6 +145,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         anonymize_mode=body.anonymize_mode, llm_profile_id=body.llm_profile_id, anonymize_profile=body.anonymize_profile or "",
         mute_on_join=body.mute_on_join, mask_profanity=body.mask_profanity, idle_end_minutes=body.idle_end_minutes, welcome_message=body.welcome_message,
         guest_access_enabled=body.guest_access_enabled, guest_token=new_guest_token() if body.guest_access_enabled else None,
+        live_quality=(await request.app.state.settings_svc.get(db, "live")).default_quality,       # новая комната берёт качество эфира из настройки сервера, а не из столбца по умолчанию
         room_type=body.room_type, auto_record=body.auto_record, board_allowed=body.board_allowed, board_access=body.board_access, e2ee_mode=body.e2ee_mode,
         encrypt_storage=body.encrypt_storage or ("encrypt_storage" not in body.model_fields_set and bool((await request.app.state.settings_svc.get(db, "general")).encrypt_new_rooms)
                                                  and await se.ensure_ready(request.app)),

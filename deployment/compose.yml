@@ -416,7 +416,9 @@ services:
     healthcheck:
       # Попутно — счётчик процессора контейнера для диагностики эфира: приложению не выдаётся сокет Docker, другого способа увидеть загрузку этой службы (Chrome и кодировщик) у него нет.
       # Там же уборка: Egress оставляет пустой каталог на каждое задание и блокировку Xvfb, а после аварии и файлы. Срок файлов больше предела эфира в 48 часов.
-      test: ["CMD-SHELL", "find /live/tmp -mindepth 2 ! -type d -mmin +2900 -delete 2>/dev/null; for d in /home/egress/chrome/*; do [ -d \"/proc/$${d##*/}\" ] || rm -rf \"$$d\"; done; find /live/tmp -mindepth 1 -type d -empty -mmin +120 -delete 2>/dev/null; find /tmp -maxdepth 1 -name '.X*-lock' -mmin +2880 -delete 2>/dev/null; cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
+      # Убирать можно только каталоги заданий EGH_*: в соседнем NE_<узел> лежит сокет IPC самой службы (service_ipc.sock, создаётся один раз при запуске). Прежняя уборка по возрасту
+      # файлов удаляла его через 48 ч 20 мин работы службы, после чего каждый новый эфир падал с «Служба трансляций недоступна» до перезапуска Egress. Пропавший сокет теперь делает службу unhealthy.
+      test: ["CMD-SHELL", "find /live/tmp -mindepth 2 -path '/live/tmp/EGH_*' ! -type d -mmin +2900 -delete 2>/dev/null; for d in /home/egress/chrome/*; do [ -d \"/proc/$${d##*/}\" ] || rm -rf \"$$d\"; done; find /live/tmp -mindepth 1 -maxdepth 1 -type d -name 'EGH_*' -empty -mmin +120 -delete 2>/dev/null; find /tmp -maxdepth 1 -name '.X*-lock' -mmin +2880 -delete 2>/dev/null; cat /sys/fs/cgroup/cpu.stat > /live/diag/egress.cpu 2>/dev/null; ls /live/tmp/NE_*/service_ipc.sock > /dev/null 2>&1 || exit 1; wget -q -O /dev/null http://127.0.0.1:8082/ || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

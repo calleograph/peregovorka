@@ -29,13 +29,13 @@ export const clampEcoKbps = (v: unknown): number => {
  * масштабируемого кодирования: SDK для VP9 принудительно выбирает режим «движение» и частоту до 5 к/с), потолок 800 кбит/с на самом отправителе.
  * Серверного перекодирования нет: SFU пересылает этот единственный поток.
  */
-export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080): {
+function baseScreenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080): {
   capture: ScreenShareCaptureOptions;
   publish: TrackPublishOptions;
 } {
   // Комната трансляции с эфиром 2K: захват до 1440p (мелкий текст не растягивается из 1080p), битрейт ~1,6× — у «Экономного» без изменений
   if (maxHeight >= 1440 && profile !== "eco") {
-    const o = screenShareOptions(profile, withAudio, ecoKbps);
+    const o = baseScreenShareOptions(profile, withAudio, ecoKbps);
     const enc = o.publish.screenShareEncoding!;
     const fps = (o.capture.resolution as { frameRate?: number } | undefined)?.frameRate ?? enc.maxFramerate;
     return { capture: { ...o.capture, resolution: { width: 2560, height: 1440, frameRate: fps } },
@@ -70,6 +70,15 @@ export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, e
                    screenShareSimulcastLayers: [p.h720fps5], degradationPreference: "maintain-resolution" },
       };
   }
+}
+
+/**
+ * Параметры показа экрана. `singleLayer` — одним слоем без simulcast: в комнате трансляции показ смотрит только Egress, ему нужен верхний слой, а вторая дорожка (427×240 при нехватке
+ * канала) забирала почти весь бюджет браузера и оставляла верхний слой без битрейта (замер: верхний 1920×1080 — 0–8 кадров/с и ≈ 270 кбит/с при оценке канала ≈ 1,1 Мбит/с на локальной сети).
+ */
+export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080, singleLayer = false): ReturnType<typeof baseScreenShareOptions> {
+  const o = baseScreenShareOptions(profile, withAudio, ecoKbps, maxHeight);
+  return singleLayer ? { ...o, publish: { ...o.publish, simulcast: false, screenShareSimulcastLayers: [] } } : o;
 }
 
 export const isScreenProfile = (v: string | null | undefined): v is ScreenProfile => v === "sharp" || v === "balanced" || v === "motion" || v === "eco";

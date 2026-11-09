@@ -114,3 +114,16 @@ describe("эфир 2K", () => {
     expect(screenShareOptions("eco", false, 800, 1440)).toEqual(screenShareOptions("eco", false, 800));
   });
 });
+
+describe("показ экрана одним слоем (комната трансляции)", () => {
+  it("без simulcast и без дополнительных слоёв, остальное как у профиля", () => {
+    for (const profile of ["sharp", "balanced", "motion"] as const) {
+      const base = screenShareOptions(profile, false, 800, 1080), one = screenShareOptions(profile, false, 800, 1080, true);
+      expect(base.publish.screenShareSimulcastLayers?.length).toBeGreaterThan(0);
+      expect(one.publish.simulcast).toBe(false);
+      expect(one.publish.screenShareSimulcastLayers).toEqual([]);
+      expect(one.publish.screenShareEncoding).toEqual(base.publish.screenShareEncoding);
+      expect(one.capture).toEqual(base.capture);
+    }
+  });
+});

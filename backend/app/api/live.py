@@ -114,7 +114,7 @@ def _broadcast_out(b: Broadcast, rec, now: datetime) -> dict:
     """Эфир для организатора: ссылка, параметры доступа, срок, запись."""
     st = "live" if b.status in ("starting", "live") else b.status
     access = "off" if not b.replay else "revoked" if b.revoked_at else "expired" if (b.access_until and now > b.access_until) else "open"
-    return {"id": str(b.id), "status": st, "title": b.title, "started_at": _utc(b.started_at), "ended_at": _utc(b.ended_at), "view_path": f"/live/{b.view_token}" if b.view_token else None,
+    return {"id": str(b.id), "status": st, "title": b.title, "quality": b.quality, "started_at": _utc(b.started_at), "ended_at": _utc(b.ended_at), "view_path": f"/live/{b.view_token}" if b.view_token else None,
             "replay": b.replay, "download": b.download, "link_days": b.link_days, "access_until": _utc(b.access_until), "revoked_at": _utc(b.revoked_at), "access": access,
             "password": bool(b.password_hash), "meeting_id": str(b.meeting_id), "peak_viewers": b.peak_viewers, "error": b.error,
             "recording": None if rec is None else {"id": str(rec.id), "status": rec.status, "file_state": rec.file_state, "duration_s": rec.duration_s, "size_bytes": rec.size_bytes}}

@@ -11,9 +11,13 @@ export interface MediaStats {
   packetsSent?: number; packetsReceived?: number; packetsLost?: number; jitterMs?: number; rttMs?: number;
   nack?: number; pli?: number; fir?: number; framesEncoded?: number; framesDecoded?: number; framesDropped?: number;
   limitReason?: string; bytes?: number;
+  targetKbps?: number;            // что кодировщик браузера считает допустимым для верхнего слоя (targetBitrate)
+  layers?: number;                // сколько слоёв simulcast реально отправляют данные
+  limitPct?: number;              // доля времени, когда браузер ограничивал качество причиной «канал» (qualityLimitationDurations), %
+  encoder?: string;               // реализация кодировщика (программная или аппаратная)
 }
 /** remote — адрес сервера в выбранной паре («udp 192.0.2.2:17882»): какой из объявленных LiveKit кандидатов сработал у клиента. */
-export interface PathStats { candidate?: string; localType?: string; remoteType?: string; protocol?: string; rttMs?: number; remote?: string }
+export interface PathStats { availOutKbps?: number; candidate?: string; localType?: string; remoteType?: string; protocol?: string; rttMs?: number; remote?: string }
 
 type Rep = Record<string, unknown>;
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -43,7 +47,18 @@ export function parseOutbound(report: Parameters<typeof entries>[0]): MediaStats
     jitterMs: remote.reduce<number | undefined>((m, r) => (ms(r.jitter) !== undefined ? Math.max(m ?? 0, ms(r.jitter)!) : m), undefined),
     rttMs: remote.reduce<number | undefined>((m, r) => (ms(r.roundTripTime) !== undefined ? Math.max(m ?? 0, ms(r.roundTripTime)!) : m), undefined),
     limitReason: lim,
+    targetKbps: num(top.targetBitrate) !== undefined ? Math.round((top.targetBitrate as number) / 1000) : undefined,
+    layers: outs.filter((r) => (num(r.bytesSent) ?? 0) > 0 && r.active !== false).length,
+    limitPct: limitShare(top.qualityLimitationDurations),
+    encoder: typeof top.encoderImplementation === "string" ? top.encoderImplementation.slice(0, 40) : undefined,
   };
+}
+
+/** Доля времени, когда браузер ограничивал качество каналом, из накопленных секунд (qualityLimitationDurations). */
+function limitShare(d: unknown): number | undefined {
+  if (!d || typeof d !== "object") return undefined;
+  const o = d as Record<string, unknown>, total = ["none", "bandwidth", "cpu", "other"].reduce((a, k) => a + (num(o[k]) ?? 0), 0);
+  return total > 0 ? Math.round(((num(o.bandwidth) ?? 0) / total) * 100) : undefined;
 }
 
 /** Входящий видеопоток (то, что получаем от других). */
@@ -70,7 +85,8 @@ export function parsePath(report: Parameters<typeof entries>[0]): PathStats {
   const l = byId.get(pair.localCandidateId as string), r = byId.get(pair.remoteCandidateId as string);
   const lt = l?.candidateType as string | undefined, rt = r?.candidateType as string | undefined, pr = (l?.protocol ?? r?.protocol) as string | undefined;
   const addr = (r?.address ?? r?.ip) as string | undefined, port = r?.port as number | undefined;
-  return { localType: lt, remoteType: rt, protocol: pr, candidate: lt || pr ? `${pr ?? "?"}/${lt ?? "?"}→${rt ?? "?"}` : undefined, rttMs: ms(pair.currentRoundTripTime),
+  const avail = num(pair.availableOutgoingBitrate);
+  return { ...(avail !== undefined ? { availOutKbps: Math.round(avail / 1000) } : {}), localType: lt, remoteType: rt, protocol: pr, candidate: lt || pr ? `${pr ?? "?"}/${lt ?? "?"}→${rt ?? "?"}` : undefined, rttMs: ms(pair.currentRoundTripTime),
     ...(addr && port ? { remote: `${pr ?? "?"} ${addr}:${port}` } : {}) };
 }
 

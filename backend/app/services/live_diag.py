@@ -252,9 +252,10 @@ async def probe_segment(path: Path, timeout: float = 5.0) -> dict | None:
 
 # ------------------------------------------------------------------------------------------------ отчёты клиентов
 _CLIENT_NUM = {"aud": 1, "low": 1, "kbps": 200_000, "est": 2_000_000, "fps": 240, "drop": 1e9, "frames": 1e10, "buf": 3600, "lag": 86400, "lat": 86400, "seg_ms": 600_000, "seg_kb": 200_000, "stalls": 1e7, "stall_ms": 1e11,
-               "errs": 1e7, "reconn": 1e6, "rtt": 60_000, "loss": 100, "out_kbps": 500_000, "in_kbps": 500_000, "jitter": 60_000}
+               "errs": 1e7, "reconn": 1e6, "rtt": 60_000, "loss": 100, "out_kbps": 500_000, "in_kbps": 500_000, "jitter": 60_000, "tgt": 500_000, "avail": 5_000_000, "lay": 8, "lim_p": 100, "lad": 3}
 _CLIENT_STR = {"res": re.compile(r"^\d{1,5}x\d{1,5}$"), "eng": re.compile(r"^(hlsjs|native|webrtc)$"), "limit": re.compile(r"^(none|cpu|bandwidth|other)$"), "src": re.compile(r"^(screen|camera)$"),
-               "node": re.compile(r"^[A-Za-z0-9.-]{1,253}$")}
+               "node": re.compile(r"^[A-Za-z0-9.-]{1,253}$"), "scr": re.compile(r"^\d{1,5}x\d{1,5}$"), "cap": re.compile(r"^\d{1,5}x\d{1,5}(@\d{1,3})?$"),
+               "enc": re.compile(r"^[A-Za-z0-9 ._()/+-]{1,40}$")}
 
 
 def clean_client(raw: Any) -> dict | None:
@@ -331,7 +332,30 @@ def aggregate_clients(rows: dict[str, dict], prev: dict[str, dict], seg_s: float
     bad.sort(key=lambda x: -x["lv"])
     return {"reporting": len(viewers), "bad": len(bad), "bad_share": round(len(bad) / len(viewers), 3) if viewers else None, "worst": bad[:8], "stalls": int(stalls), "reconn": int(reconn), "errs": int(errs), "audio": sum(1 for v in viewers.values() if v.get("aud")),
             "kbps": avg("kbps"), "est": avg("est"), "buf": avg("buf"), "lat": avg("lat"), "lat_p95": p95("lat"), "lag": avg("lag"), "seg_ms": avg("seg_ms"), "seg_ms_p95": p95("seg_ms"), "fps": avg("fps"),
-            "publishers": [{"src": v.get("src"), "res": v.get("res"), "fps": v.get("fps"), "kbps": v.get("out_kbps"), "rtt": v.get("rtt"), "loss": v.get("loss"), "limit": v.get("limit")} for v in pubs.values()][:8]}
+            "publishers": [{"src": v.get("src"), "res": v.get("res"), "fps": v.get("fps"), "kbps": v.get("out_kbps"), "rtt": v.get("rtt"), "loss": v.get("loss"), "limit": v.get("limit"),
+                            "scr": v.get("scr"), "cap": v.get("cap"), "tgt": v.get("tgt"), "avail": v.get("avail"), "lay": v.get("lay"), "lim_p": v.get("lim_p"), "enc": v.get("enc"), "lad": v.get("lad")} for v in pubs.values()][:8]}
+
+
+def _pub_facts(p: dict) -> str:
+    """Цепочка у ведущего одной строкой: экран → захват → отправка, цель кодировщика и оценка исходящего канала (всё из getStats браузера)."""
+    parts = []
+    if p.get("scr"):
+        parts.append(f"экран {p['scr']}")
+    if p.get("cap"):
+        parts.append(f"захват {p['cap']}")
+    if p.get("res"):
+        parts.append(f"отправка {p['res']}" + (f", {p['fps']:g} к/с" if p.get("fps") is not None else "") + (f", {p['kbps']:g} кбит/с" if p.get("kbps") is not None else ""))
+    if p.get("tgt"):
+        parts.append(f"цель кодировщика {p['tgt']:g} кбит/с")
+    if p.get("avail"):
+        parts.append(f"оценка исходящего канала {p['avail']:g} кбит/с")
+    if p.get("lim_p") is not None:
+        parts.append(f"ограничен каналом {p['lim_p']:g} % времени")
+    if p.get("lay") is not None:
+        parts.append(f"слоёв {p['lay']:g}")
+    if p.get("lad"):
+        parts.append(f"автоподстройка показа: ступень {p['lad']:g} из 3")
+    return (" " + "; ".join(parts) + ".") if parts else ""
 
 
 # ------------------------------------------------------------------------------------------------ правила: что подозрительно и почему
@@ -474,9 +498,13 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
             lower = {"1440p": "1080p", "1080p": "720p"}.get(s.get("quality") or "")
             what = f"качество эфира {lower}" if lower else "проводную сеть или другую сеть"
             auto = "Показ экрана подстраивается сам: качество снижается и возвращается, когда связь стабильна."
-            todo = (f"Канал выступающего не тянет {s.get('quality') or 'выбранное качество'}. {auto} Чтобы картинка была лучше сразу, выберите {what} в настройках комнаты." if p["limit"] == "bandwidth"
+            facts = _pub_facts(p)
+            # «канал» по браузеру при нулевых потерях и малом RTT — это оценка самого браузера (она растёт только при трафике), а не потери: так и говорим
+            clean_path = p["limit"] == "bandwidth" and (p.get("loss") or 0) < 1 and (p.get("rtt") or 0) < 100
+            est = " Потерь нет, RTT малый: это консервативная оценка канала самого браузера (растёт только при трафике), а не занятый канал." if clean_path else ""
+            todo = (f"Канал выступающего не тянет {s.get('quality') or 'выбранное качество'}. {auto}{est} Чтобы картинка была лучше сразу, выберите {what} в настройках комнаты." if p["limit"] == "bandwidth"
                     else f"Компьютеру выступающего не хватает процессора. {auto} Чтобы стало лучше сразу, закройте тяжёлые программы или выберите {what if lower else 'качество ниже'}.")
-            out.append(Finding(f"pub_limit_{p['limit']}", 1, "source", "source", f"Браузер выступающего снижает качество: {why_}", f"Причину сообщает сам браузер (getStats). {todo}", "confirmed"))
+            out.append(Finding(f"pub_limit_{p['limit']}", 1, "source", "source", f"Браузер выступающего снижает качество: {why_}", f"Причину сообщает сам браузер (getStats).{facts} {todo}", "confirmed"))
             break
 
     rep, bad = view.get("reporting") or 0, view.get("bad") or 0

@@ -88,3 +88,17 @@ def test_metrics_url_is_derived_inside_the_project_network_only():
     assert "example.com" not in metrics_url(s2)
     s3 = Settings(livekit_internal_url="ws://livekit:7880", livekit_metrics_url="http://lk-metrics:9999/metrics", livekit_api_key="k", livekit_api_secret="s" * 40)
     assert metrics_url(s3) == "http://lk-metrics:9999/metrics"
+
+
+def test_egress_healthcheck_never_cleans_the_service_socket_and_notices_when_it_is_gone():
+    """Уборка в проверке здоровья Egress удаляла файлы старше 2900 минут во всём /live/tmp — в том числе сокет IPC службы (NE_<узел>/service_ipc.sock):
+    через 48 ч 20 мин после запуска каждый новый эфир падал с «Служба трансляций недоступна» до перезапуска Egress. Чистить можно только каталоги заданий EGH_*."""
+    egress = service("livekit-egress")
+    m = re.search(r'test: \["CMD-SHELL", "(.*)"\]', egress)
+    assert m, "у Egress есть проверка здоровья"
+    cmd = m.group(1)
+    for part in re.findall(r"find /live/tmp[^;]*", cmd):
+        if "-delete" in part:
+            assert "EGH_" in part, f"уборка должна быть ограничена каталогами заданий: {part}"
+    assert "NE_" not in " ".join(p for p in re.findall(r"find /live/tmp[^;]*", cmd) if "-delete" in p), "каталог узла NE_* трогать нельзя"
+    assert "/live/tmp/NE_*/service_ipc.sock" in cmd and "|| exit 1" in cmd, "пропавший сокет должен делать службу unhealthy"

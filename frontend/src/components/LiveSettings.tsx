@@ -16,9 +16,9 @@ import InfoTip from "./InfoTip";
 const origin = () => window.location.origin;
 
 /** Качество эфира: комната запоминает его для всех следующих эфиров. Значения входят в рекомендации площадок (H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с). */
-export function QualitySelect({ value, disabled, onChange }: { value: LiveRoomSettings["quality"]; disabled: boolean; onChange: (q: LiveRoomSettings["quality"]) => void }) {
+export function QualitySelect({ value, disabled, onChange, title = "Качество", hint }: { value: LiveRoomSettings["quality"]; disabled: boolean; onChange: (q: LiveRoomSettings["quality"]) => void; title?: string; hint?: string }) {
   return (
-    <label><span className="field-title">Качество<InfoTip>Меняется до начала эфира. Дорожка одна: автоподстройки под канал зрителя нет. Внешним площадкам уходит тот же поток: H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с.</InfoTip></span>
+    <label><span className="field-title">{title}<InfoTip>{hint ?? "Качество эфира и его записи: запись эфира идёт в том же процессе и в том же качестве. Не путать с качеством видеозаписи встреч в настройках комнаты (там 720p отдельно). Меняется до начала эфира. Внешним площадкам уходит тот же поток: H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с."}</InfoTip></span>
       <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as LiveRoomSettings["quality"])}>
         <option value="720p">720p: 3 Мбит/с, запись до ≈ 1,4 ГБ/час</option>
         <option value="1080p">1080p (Full HD), по умолчанию: 5 Мбит/с, запись до ≈ 2,3 ГБ/час</option>
@@ -115,7 +115,7 @@ export default function LiveSettings({ roomId, roomSlug, isBroadcastType, hasSpe
             <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} onBlur={() => { if (title !== cfg.title) void patch({ live_title: title }, "Название сохранено"); }} placeholder="Например: Квартальный отчёт" /></label>
           <label>Начало <span className="muted small">(страница ожидания покажет время и отсчёт)</span>
             <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} onBlur={() => { const iso = startsAt ? new Date(startsAt).toISOString() : null; const cur = cfg.starts_at ? new Date(cfg.starts_at).toISOString() : null; if (iso !== cur) void patch(iso ? { live_starts_at: iso } : { clear_starts_at: true }, "Время начала сохранено"); }} /></label>
-          {!embedded && <QualitySelect value={cfg.quality} disabled={busy || live} onChange={(q) => void patch({ live_quality: q }, "Качество сохранено")} />}
+          {!embedded && <QualitySelect title="Качество эфира" value={cfg.quality} disabled={busy || live} onChange={(q) => void patch({ live_quality: q }, "Качество эфира сохранено")} />}
           <label>Запуск эфира
             <select value={cfg.start} disabled={busy} onChange={(e) => void patch({ live_start: e.target.value as "manual" | "auto" }, "Режим запуска сохранён")}>
               <option value="manual">Вручную: руководитель нажимает «{isBroadcastType ? "Выйти в эфир" : "Начать эфир"}»</option>

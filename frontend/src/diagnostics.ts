@@ -109,6 +109,7 @@ export const reportScreenPhase = (phase: ScreenPhase, instance: string, meetingI
 // ------------------------------------------------------------------------------- статистика WebRTC
 export interface Snapshot {
   at: number; rttMs?: number; lossPct?: number; outKbps?: number; inKbps?: number;
+  capture?: { w?: number; h?: number; fps?: number }; screenPhys?: string; ladder?: number;
   path?: PathStats; camera?: MediaStats; screenOut?: MediaStats; screenIn?: MediaStats; screenFrozen?: boolean;
 }
 
@@ -148,6 +149,9 @@ export async function sampleRoom(room: LkRoom, meter: RateMeter, freeze?: Freeze
       if (!snap.path?.candidate) snap.path = parsePath(micRep as never);
     }
     snap.outKbps = meter.kbps("out", outBytes, now);
+    const st = (lp.getTrackPublication(Track.Source.ScreenShare)?.track as unknown as { mediaStreamTrack?: MediaStreamTrack } | undefined)?.mediaStreamTrack?.getSettings?.();
+    if (st) snap.capture = { w: st.width, h: st.height, fps: st.frameRate !== undefined ? Math.round(st.frameRate) : undefined };
+    if (typeof screen !== "undefined" && screen.width) snap.screenPhys = `${Math.round(screen.width * (window.devicePixelRatio || 1))}x${Math.round(screen.height * (window.devicePixelRatio || 1))}`;
     snap.lossPct = sent > 0 ? Math.round((lost / (lost + sent)) * 1000) / 10 : undefined;
     snap.rttMs = rtt ?? snap.path?.rttMs;
 
@@ -195,7 +199,10 @@ export function publisherStats(snap: Snapshot): Record<string, unknown> {
   const m = snap.screenOut ?? snap.camera;
   const limit = m?.limitReason;
   return { eng: "webrtc", src: snap.screenOut ? "screen" : snap.camera ? "camera" : undefined, res: m?.width && m.height ? `${m.width}x${m.height}` : undefined, fps: m?.fps, rtt: snap.rttMs, loss: snap.lossPct,
-    out_kbps: snap.outKbps, in_kbps: snap.inKbps, limit: limit === "none" || limit === "cpu" || limit === "bandwidth" ? limit : limit ? "other" : undefined };
+    out_kbps: snap.outKbps, in_kbps: snap.inKbps, limit: limit === "none" || limit === "cpu" || limit === "bandwidth" ? limit : limit ? "other" : undefined,
+    // цепочка у ведущего: физический экран → захват → отправка; чем ограничено (цель кодировщика, оценка исходящего канала, доля времени «канал»)
+    scr: snap.screenPhys, cap: snap.capture?.w && snap.capture.h ? `${snap.capture.w}x${snap.capture.h}${snap.capture.fps ? `@${snap.capture.fps}` : ""}` : undefined,
+    tgt: m?.targetKbps, avail: snap.path?.availOutKbps, lay: m?.layers, lim_p: m?.limitPct, enc: m?.encoder, lad: snap.ladder };
 }
 
 /** Тело для /client/metrics: только числа и короткие метки. */
