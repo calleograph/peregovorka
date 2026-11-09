@@ -20,6 +20,7 @@ export function QualitySelect({ value, disabled, onChange, title = "Качест
   return (
     <label><span className="field-title">{title}<InfoTip>{hint ?? "Качество эфира и его записи: запись эфира идёт в том же процессе и в том же качестве. Не путать с качеством видеозаписи встреч в настройках комнаты (там 720p отдельно). Меняется до начала эфира. Внешним площадкам уходит тот же поток: H.264 и AAC, 30 кадров/с, ключевой кадр раз в 2 с."}</InfoTip></span>
       <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as LiveRoomSettings["quality"])}>
+        <option value="360p">360p: 1 Мбит/с, запись до ≈ 0,5 ГБ/час (для слабых каналов и экономии трафика)</option>
         <option value="720p">720p: 3 Мбит/с, запись до ≈ 1,4 ГБ/час</option>
         <option value="1080p">1080p (Full HD), по умолчанию: 5 Мбит/с, запись до ≈ 2,3 ГБ/час</option>
         <option value="1440p">1440p (2K): 9 Мбит/с, запись до ≈ 4 ГБ/час; часть площадок принимает не больше 1080p</option>

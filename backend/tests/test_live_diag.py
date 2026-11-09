@@ -217,7 +217,9 @@ def test_presenter_limit_says_what_to_do_for_the_chosen_quality():
     f = codes(ok_sample(quality="1440p", viewers={"reporting": 1, "publishers": [{"limit": "bandwidth"}], "worst": []}))["pub_limit_bandwidth"]
     assert "1080p" in f.cause, "при 1440p советуем 1080p"
     f = codes(ok_sample(quality="720p", viewers={"reporting": 1, "publishers": [{"limit": "bandwidth"}], "worst": []}))["pub_limit_bandwidth"]
-    assert "проводную сеть" in f.cause, "ниже 720p опускаться некуда: советуем сеть"
+    assert "качество эфира 360p" in f.cause, "при 720p есть ступень ниже — 360p"
+    f = codes(ok_sample(quality="360p", viewers={"reporting": 1, "publishers": [{"limit": "bandwidth"}], "worst": []}))["pub_limit_bandwidth"]
+    assert "проводную сеть" in f.cause, "ниже 360p опускаться некуда: советуем сеть"
 
 
 def test_rtmp_failure_names_the_platform_and_never_the_key():

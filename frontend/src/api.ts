@@ -85,7 +85,7 @@ export interface LiveState {
   ends_at?: string | null;
 }
 export interface LiveRoomSettings {
-  enabled: boolean; start: "manual" | "auto"; quality: "720p" | "1080p" | "1440p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
+  enabled: boolean; start: "manual" | "auto"; quality: "360p" | "720p" | "1080p" | "1440p"; record: boolean; own_hls: boolean; title: string; starts_at: string | null;
   password_enabled: boolean; has_password: boolean; speaker_password_set: boolean; view_path: string | null; stream_path: string | null;
   cdn: boolean; cdn_available: boolean; replay: boolean; download: boolean; link_days: number; link_days_max: number; broadcasts: LiveBroadcast[];
   state: LiveState; global: { enabled: boolean; direct_viewers_warn: number; max_concurrent: number }; is_broadcast_room: boolean;
@@ -93,15 +93,15 @@ export interface LiveRoomSettings {
 }
 /** Один эфир комнаты для организатора: своя ссылка, параметры доступа к записи, срок, запись. */
 export interface LiveBroadcast {
-  id: string; status: "live" | "ending" | "ended" | "failed"; title: string | null; quality?: "720p" | "1080p" | "1440p"; started_at: string | null; ended_at: string | null; view_path: string | null;
+  id: string; status: "live" | "ending" | "ended" | "failed"; title: string | null; quality?: "360p" | "720p" | "1080p" | "1440p"; started_at: string | null; ended_at: string | null; view_path: string | null;
   replay: boolean; download: boolean; link_days: number; access_until: string | null; revoked_at: string | null; access: "off" | "open" | "expired" | "revoked";
   password: boolean; meeting_id: string; peak_viewers: number; error: string | null;
   recording: { id: string; status: "ready" | "processing" | "failed"; file_state: string; duration_s: number | null; size_bytes: number } | null;
 }
-export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number; quality?: "720p" | "1080p" | "1440p" }
+export interface LiveStartOptions { title?: string; replay?: boolean; download?: boolean; link_days?: number; quality?: "360p" | "720p" | "1080p" | "1440p" }
 export interface LivePatchBody {
   live_download?: boolean; live_link_days?: number;
-  live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "720p" | "1080p" | "1440p"; live_record?: boolean; live_own_hls?: boolean;
+  live_cdn?: boolean; live_replay?: boolean; live_enabled?: boolean; live_start?: "manual" | "auto"; live_quality?: "360p" | "720p" | "1080p" | "1440p"; live_record?: boolean; live_own_hls?: boolean;
   live_title?: string; live_starts_at?: string | null; live_password_enabled?: boolean; clear_starts_at?: boolean;
 }
 export interface LiveViewerInfo {

@@ -495,7 +495,7 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
     for p in view.get("publishers") or []:
         if p.get("limit") in ("cpu", "bandwidth"):
             why_ = "процессор компьютера" if p["limit"] == "cpu" else "исходящий канал"
-            lower = {"1440p": "1080p", "1080p": "720p"}.get(s.get("quality") or "")
+            lower = {"1440p": "1080p", "1080p": "720p", "720p": "360p"}.get(s.get("quality") or "")
             what = f"качество эфира {lower}" if lower else "проводную сеть или другую сеть"
             auto = "Показ экрана подстраивается сам: качество снижается и возвращается, когда связь стабильна."
             facts = _pub_facts(p)

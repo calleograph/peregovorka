@@ -97,7 +97,7 @@ def _pass_ok(secret: str, scope: str, token: str | None) -> bool:
 class LivePatch(BaseModel):
     live_enabled: bool | None = None
     live_start: str | None = Field(default=None, pattern="^(manual|auto)$")
-    live_quality: str | None = Field(default=None, pattern="^(720p|1080p|1440p)$")
+    live_quality: str | None = Field(default=None, pattern="^(360p|720p|1080p|1440p)$")
     live_record: bool | None = None
     live_own_hls: bool | None = None
     live_cdn: bool | None = None
