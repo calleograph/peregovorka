@@ -247,7 +247,7 @@ function Mine({ viewer, c, simple }: { viewer: ViewerStats; c: ClientStats; simp
     <div className={v.level ? `ld-find ${v.level === 2 ? "crit" : "warn"}` : "ld-fine"} role="status"><Dot lv={v.level} /> <b>{v.text}</b></div>
     {simple ? <>
       <div className="ld-grid2">
-        <Row k="Показ" v={c.aud ? "только звук" : "видео"} /><Row k="Качество" v={c.res?.replace("x", "×")} na="Пока неизвестно." />
+        <Row k="Показ" v={c.aud ? "только звук" : c.low ? "низкое качество" : "видео"} /><Row k="Качество" v={c.res?.replace("x", "×")} na="Пока неизвестно." />
         <Row k="Задержка" v={c.lat == null ? null : `${num(c.lat)} с`} na="Пока неизвестно." /><Row k="Остановок" v={c.stalls} />
       </div>
       <details className="ld-more"><summary>Подробнее</summary>{tech}</details>

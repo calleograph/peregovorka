@@ -152,7 +152,7 @@ export interface DiagState { stages?: DiagEvent[]; bid: string | null; status: s
 export interface DiagEvent { id: number; at: string; component: string; level: string; code: string; message: string; cause?: string | null; kind?: string | null; details?: Record<string, unknown> | null }
 export interface DiagSummary { version?: string; res?: string | null; mode?: { hls?: boolean; rtmp?: number; cdn?: boolean }; cpu?: { avg: number; max: number } | null; tx_mbit?: { avg: number; max: number } | null; egress_cores?: { avg: number; max: number } | null; video_kbps?: { avg: number; max: number } | null; seg_ready_s?: { avg: number; max: number } | null; latency_s?: { avg: number; max: number } | null; stalls?: number; events?: Record<string, number> }
 export interface DiagHistoryItem { id: string; room: string; title: string | null; status: string; quality: string; started_at: string; ended_at: string | null; peak_viewers: number; summary: DiagSummary | null }
-export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string; ll_soon?: boolean; audio_path?: string; need_kbps?: number; rtc?: { url: string; token: string; rt: string } }
+export interface LiveAccess { base?: string; path: string; expires_at: number; refresh_in: number; vid: string; pass?: string; node?: string; origin_path?: string; ll_soon?: boolean; audio_path?: string; low_path?: string; low_wait?: boolean; low_need_kbps?: number; need_kbps?: number; rtc?: { url: string; token: string; rt: string } }
 export interface RoomRef { id: string; slug: string; name: string; canonical: boolean; lifetime: "permanent" | "temporary"; lifecycle: "active" | "grace_period" | "closed"; room?: Room; live_watch?: string | null }
 export interface TempRoomPolicy { enabled: boolean; max_per_user: number; active_mine: number; can_create: boolean; grace_minutes: number }
 export interface ClientConfig {
@@ -1148,7 +1148,7 @@ export const api = {
   patchBroadcast: (roomId: string, id: string, body: { replay?: boolean; download?: boolean; link_days?: number; revoke?: boolean; password?: string | null }) => request<LiveRoomSettings>("PATCH", `/rooms/${roomId}/live/broadcasts/${id}`, body),
   /** Страница зрителя: без входа в систему. */
   liveInfo: (token: string) => request<LiveViewerInfo>("GET", `/live/${encodeURIComponent(token)}`),
-  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean; viewer?: string; avoid?: string }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
+  liveAccess: (token: string, body: { password?: string; pass?: string; long?: boolean; viewer?: string; avoid?: string; want_low?: boolean }) => request<LiveAccess>("POST", `/live/${encodeURIComponent(token)}/access`, body),
   liveReplay: (token: string, body: { password?: string; pass?: string; viewer?: string }) => request<LiveReplay>("POST", `/live/${encodeURIComponent(token)}/replay`, body),
   liveViewer: (token: string, body: { display_name: string; email: string | null; materials_consent: boolean }) => request<LiveViewerReg>("POST", `/live/${encodeURIComponent(token)}/viewer`, body),
   liveAsk: (token: string, body: { viewer: string; text: string; pass?: string }) => request<LiveQuestion>("POST", `/live/${encodeURIComponent(token)}/questions`, body),

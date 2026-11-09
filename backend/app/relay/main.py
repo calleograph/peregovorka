@@ -19,6 +19,7 @@ class Put(BaseModel):
     src: str
     url: str
     audio: bool = False
+    low: bool = False
 
 
 manager = RelayManager()
@@ -55,7 +56,7 @@ async def put(rid: str, body: Put) -> Response:
         raise HTTPException(422, "недопустимые параметры")
     if not body.url.startswith(("rtmp://", "rtmps://")) or len(body.url) > 700:
         raise HTTPException(422, "адрес площадки: rtmp:// или rtmps://")
-    manager.put(rid, body.src, body.url, body.audio)
+    manager.put(rid, body.src, body.url, body.audio, body.low)
     return Response(status_code=204)
 
 

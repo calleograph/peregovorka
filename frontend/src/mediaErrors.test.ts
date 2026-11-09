@@ -64,3 +64,24 @@ describe("подключение: сброс соединения и этапы"
     expect(describeMediaError(new Error("websocket closed"), "connect").message).toMatch(/сигнальное соединение \(WebSocket\)/);
   });
 });
+
+describe("во встроенном браузере приложения совет «смените браузер» не даётся", () => {
+  it("показ экрана: TypeError", () => {
+    const web = describeMediaError(new TypeError("x"), "screen", { desktop: false });
+    const app = describeMediaError(new TypeError("x"), "screen", { desktop: true });
+    expect(web.message).toMatch(/Браузер не поддерживает/);
+    expect(app.message).not.toMatch(/браузер/i);
+    expect(app.message).toMatch(/Экономный 720p/);
+  });
+  it("сквозное шифрование", () => {
+    const app = describeMediaError(new Error("e2ee_unsupported"), "connect", { desktop: true });
+    expect(app.message).not.toMatch(/браузер/i);
+    expect(app.message).toMatch(/Перезапустите приложение/);
+    expect(describeMediaError(new Error("e2ee_unsupported"), "connect", { desktop: false }).message).toMatch(/браузер/);
+  });
+  it("признак приложения — метка в User-Agent", async () => {
+    const { inDesktopClient } = await import("./clientInfo");
+    expect(inDesktopClient("Mozilla/5.0 Chrome/140 Electron/44 PeregovorkaDesktop/1.5.1")).toBe(true);
+    expect(inDesktopClient("Mozilla/5.0 Chrome/140 Safari/537")).toBe(false);
+  });
+});

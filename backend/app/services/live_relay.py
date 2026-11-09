@@ -29,10 +29,10 @@ class RelayClient:
         self._ok = (time.monotonic(), ok)
         return ok
 
-    async def put(self, rid: str, src: str, url: str, audio: bool = False) -> bool:
+    async def put(self, rid: str, src: str, url: str, audio: bool = False, low: bool = False) -> bool:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as c:
-                return (await c.put(f"{self.base}/relays/{rid}", json={"src": src, "url": url, "audio": audio}, headers=self._h())).status_code == 204
+                return (await c.put(f"{self.base}/relays/{rid}", json={"src": src, "url": url, "audio": audio, "low": low}, headers=self._h())).status_code == 204
         except httpx.HTTPError:
             return False
 

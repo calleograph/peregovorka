@@ -35,8 +35,8 @@ def scrub(text: str, secrets: set[str]) -> str:
     return text
 
 
-def fingerprint(src: str, url: str, audio: bool = False) -> str:
-    return hashlib.sha256(f"{src}\n{url}\n{int(audio)}".encode()).hexdigest()[:12]
+def fingerprint(src: str, url: str, audio: bool = False, low: bool = False) -> str:
+    return hashlib.sha256(f"{src}\n{url}\n{int(audio)}{int(low)}".encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -45,6 +45,7 @@ class Relay:
     src: str
     url: str
     audio: bool = False                   # только звук: дорожка для зрителей со слабой связью (ffmpeg -vn -c:a copy, без перекодирования)
+    low: bool = False                     # низкое качество (360p): облегчённое видео для зрителей, которым не хватает канала; единственный процесс с перекодированием
     state: str = "starting"               # starting — первый запуск, live — данные идут, retrying — пауза или повтор после сбоя
     restarts: int = 0
     fails: int = 0                        # подряд неудачных попыток
@@ -56,7 +57,7 @@ class Relay:
 
     def public(self) -> dict:
         return {"id": self.id, "state": self.state, "restarts": self.restarts, "fails": self.fails, "bytes": self.bytes_out, "since": self.live_since,
-                "error": self.last_error, "fp": fingerprint(self.src, self.url, self.audio), "audio": self.audio}
+                "error": self.last_error, "fp": fingerprint(self.src, self.url, self.audio, self.low), "audio": self.audio, "low": self.low}
 
 
 class RelayManager:
@@ -64,13 +65,13 @@ class RelayManager:
         self.ffmpeg, self.backoff, self.stall_s = ffmpeg, backoff, stall_s
         self.relays: dict[str, Relay] = {}
 
-    def put(self, rid: str, src: str, url: str, audio: bool = False) -> None:
+    def put(self, rid: str, src: str, url: str, audio: bool = False, low: bool = False) -> None:
         cur = self.relays.get(rid)
-        if cur is not None and cur.src == src and cur.url == url and cur.audio == audio and cur.task is not None and not cur.task.done():
+        if cur is not None and cur.src == src and cur.url == url and cur.audio == audio and cur.low == low and cur.task is not None and not cur.task.done():
             return
         if cur is not None and cur.task is not None:
             cur.task.cancel()               # заменённый адрес или ключ: прежний процесс завершается сам в finally
-        r = Relay(rid, src, url, audio)
+        r = Relay(rid, src, url, audio, low)
         r.task = asyncio.get_running_loop().create_task(self._run(r))
         self.relays[rid] = r
 
@@ -91,9 +92,16 @@ class RelayManager:
 
     # ------------------------------------------------------------------------------------------------ процесс одной площадки
     def command(self, r: Relay) -> list[str]:
-        return [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning", "-nostats", "-progress", "pipe:1",
+        # Низкое качество: единственный процесс с перекодированием (360p, ключевой кадр раз в секунду — по ним MediaMTX режет сегменты). Работает с пониженным приоритетом и
+        # в два потока: нехватка процессора у него не должна отнимать время у Egress, записи и распознавания.
+        if r.low:
+            codec = ["-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=-2:360", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "main", "-threads", "2",
+                     "-b:v", "450k", "-maxrate", "550k", "-bufsize", "900k", "-force_key_frames", "expr:gte(t,n_forced*1)", "-sc_threshold", "0", "-c:a", "copy"]
+        else:
+            codec = ["-vn", "-map", "0:a", "-c:a", "copy"] if r.audio else ["-map", "0", "-c", "copy"]
+        return [*(["nice", "-n", "10"] if r.low else []), self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning", "-nostats", "-progress", "pipe:1",
                 "-rw_timeout", "10000000", "-analyzeduration", "1000000", "-probesize", "500000", "-rtmp_live", "live", "-i", r.src,
-                *(["-vn", "-map", "0:a", "-c:a", "copy"] if r.audio else ["-map", "0", "-c", "copy"]), "-rw_timeout", "10000000", "-f", "flv", "-flvflags", "no_duration_filesize", r.url]
+                *codec, "-rw_timeout", "10000000", "-f", "flv", "-flvflags", "no_duration_filesize", r.url]
 
     async def _run(self, r: Relay) -> None:
         try:

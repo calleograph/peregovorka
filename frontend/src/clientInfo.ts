@@ -3,6 +3,9 @@
  * Всё — только технические характеристики; названия устройств (марка микрофона) нужны, чтобы понять причину «звук пропал / занят».
  * Содержимое разговоров и личные данные не собираются. Любая ошибка сбора молча игнорируется — диагностика не должна мешать работе.
  */
+/** Страница открыта во встроенном браузере приложения (Windows, Linux): там «обновите или смените браузер» не помогает, и такой совет не даём. */
+export const inDesktopClient = (ua: string = typeof navigator === "undefined" ? "" : navigator.userAgent): boolean => /PeregovorkaDesktop\//.test(ua);
+
 export type Primitive = string | number | boolean | null;
 export type Info = Record<string, Primitive | string[]>;
 

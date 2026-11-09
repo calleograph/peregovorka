@@ -9,6 +9,8 @@
 //       проверка вёрстки: нет горизонтальной прокрутки, обрезанного текста, наложений элементов, разных высот однотипных кнопок и полей
 //   node scripts/check.mjs av       --app ...   «Настройки → Звук и видео» с поддельными устройствами Chromium: список устройств, шкала уровня микрофона, проверка звука и камеры,
 //       запоминание выбора, понятная диагностика отказа микрофона, отсутствие ошибок в консоли. Настоящее оборудование (USB, Bluetooth, встроенный микрофон) здесь не проверяется
+//   node scripts/check.mjs caps     --app ...   встроенный Chromium умеет всё, что нужно встрече и трансляции: WebRTC (VP8/VP9/H.264/Opus), сквозное шифрование, показ экрана,
+//       MSE с H.264/AAC (просмотр эфира), AudioWorklet (шумоподавление), плавающее окно, версия Chromium не ниже порога. Сторож при обновлении Electron: сборка с «не тем» браузером не пройдёт
 //   node scripts/check.mjs update   --app <exe> --pfx feed.pfx --feed dir --next X.Y.Z   (CI Windows) проверить → скачать → установить
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, createReadStream, existsSync } from "node:fs";
@@ -199,6 +201,41 @@ async function av() {
   }
 }
 
+// -------------------------------------------------------------------------------------------- возможности встроенного браузера
+/** Минимальная версия Chromium: LiveKit-клиент, плавающее окно (Document Picture-in-Picture) и показ экрана с выбором источника опираются на неё. */
+const MIN_CHROMIUM = 130;
+async function caps() {
+  const { app, s } = await start([]);
+  try {
+    check("первый запуск: приветствие", await s.until(WELCOME, 20));
+    const c = await s.js(`(async () => {
+      const lower = (l) => (l ?? []).map((x) => x.mimeType.toLowerCase());
+      const v = lower(RTCRtpSender.getCapabilities?.("video")?.codecs), a = lower(RTCRtpSender.getCapabilities?.("audio")?.codecs);
+      const mse = typeof MediaSource !== "undefined" ? ['video/mp4; codecs="avc1.64001f,mp4a.40.2"', 'video/mp4; codecs="avc1.4d401f"', 'audio/mp4; codecs="mp4a.40.2"'].map((t) => MediaSource.isTypeSupported(t)) : [];
+      const ver = Number(/Chrome\\/(\\d+)/.exec(navigator.userAgent)?.[1] ?? 0);
+      return { ver, rtc: typeof RTCPeerConnection === "function", vp8: v.includes("video/vp8"), vp9: v.includes("video/vp9"), h264: v.includes("video/h264"), opus: a.includes("audio/opus"),
+        e2ee: typeof RTCRtpScriptTransform === "function" || "createEncodedStreams" in RTCRtpSender.prototype, display: typeof navigator.mediaDevices?.getDisplayMedia === "function",
+        mse, worklet: typeof AudioWorkletNode === "function", worker: typeof Worker === "function", secure: window.isSecureContext, pip: "documentPictureInPicture" in window,
+        mediaSession: "mediaSession" in navigator, sink: typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype };
+    })()`);
+    console.log("     возможности:", JSON.stringify(c));
+    check(`версия Chromium не ниже ${MIN_CHROMIUM}`, (c?.ver ?? 0) >= MIN_CHROMIUM, `Chromium ${c?.ver}`);
+    check("WebRTC: VP8, VP9, H.264 и Opus", !!c && c.rtc && c.vp8 && c.vp9 && c.h264 && c.opus, JSON.stringify(c));
+    check("сквозное шифрование комнат (Insertable Streams) доступно", c?.e2ee === true);
+    check("показ экрана доступен (getDisplayMedia)", c?.display === true);
+    check("просмотр эфира: MSE с H.264 и AAC", Array.isArray(c?.mse) && c.mse.length === 3 && c.mse.every(Boolean), JSON.stringify(c?.mse));
+    check("шумоподавление и воркеры: AudioWorklet, Worker", c?.worklet === true && c?.worker === true);
+    check("безопасный контекст (микрофон, камера и экран разрешены)", c?.secure === true);
+    check("плавающее окно встречи: Document Picture-in-Picture и Media Session", c?.pip === true && c?.mediaSession === true, `pip=${c?.pip} mediaSession=${c?.mediaSession}`);
+    check("выбор устройства вывода звука (setSinkId для AudioContext)", c?.sink === true);
+    const errs = s.errors();
+    check("консоль оболочки без ошибок", errs.length === 0, errs.join(" | "));
+    s.close();
+  } finally {
+    app.kill();
+  }
+}
+
 // -------------------------------------------------------------------------------------------- без сервера
 async function offline() {
   // две организации, заданные политикой, на адресах, где сервера нет (TEST-NET-1, RFC 5737)
@@ -356,8 +393,8 @@ async function update() {
 }
 
 try {
-  const run = { firstrun, offline, shots, av, update }[mode];
-  if (!run) throw new Error("режим: firstrun | offline | shots | av | update");
+  const run = { firstrun, offline, shots, av, caps, update }[mode];
+  if (!run) throw new Error("режим: firstrun | offline | shots | av | caps | update");
   await run();
 } catch (e) {
   check("проверка выполнена без исключений", false, e?.stack ?? e);

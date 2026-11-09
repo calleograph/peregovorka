@@ -28,6 +28,7 @@ import { captureOptions, loadMicPrefs, saveMicPrefs, type MicPrefs } from "../mi
 import { MicGuard, type MicGuardState } from "../micGuard";
 import { applyNoiseMode, NOISE_HINT, NOISE_LABEL, NOISE_MODES } from "../audio/noiseMode";
 import { LEVELS, LEVEL_LABEL } from "../quality/adaptive";
+import { inDesktopClient } from "../clientInfo";
 import { QualityManager, type QualityState } from "../quality/manager";
 import RoomIcon from "../components/RoomIcon";
 import { transcriptionStoppedText } from "../recordingNotice";
@@ -683,7 +684,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     connectedOnce = true;
     setE2eeActive(!!e2eeKeys && room.isE2EEEnabled);
     qualityRef.current?.stop();
-    qualityRef.current = new QualityManager(room, setQuality);
+    qualityRef.current = new QualityManager(room, setQuality, (text) => setNotice({ kind: "info", text }));
     qualityRef.current.start();
     tl.mark("mediaConnected");
     phase("ICE_CONNECTED");
@@ -974,9 +975,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     const kbps = infoRef.current?.client.screen_eco_kbps;
     if (!track) { setNotice({ kind: "info", text: `Профиль показа экрана: «${PROFILE_LABELS[pr]}». Он применится при следующем показе.` }); return; }
     const r = await applyProfileLive(track, pr, kbps);
+    void qualityRef.current?.onScreenProfileChanged();
     setNotice({ kind: r === "none" ? "warn" : "info", text: r === "live" ? `Профиль «${PROFILE_LABELS[pr]}» применён к идущему показу без остановки.`
       : r === "partial" ? `Профиль «${PROFILE_LABELS[pr]}»: разрешение, частота и битрейт применены сразу; кодек и число слоёв изменятся при следующем показе.`
-      : "Браузер не позволил изменить параметры идущего показа: профиль применится при следующем показе." });
+      : (inDesktopClient() ? "Не удалось изменить параметры идущего показа: профиль применится при следующем показе." : "Браузер не позволил изменить параметры идущего показа: профиль применится при следующем показе.") });
     if (pr === "eco") void enforceEco(kbps);
   }, [enforceEco]);
 
@@ -1399,6 +1401,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         { id: "vq-auto", label: "Автоматически", checked: !!quality && !quality.manual, onSelect: () => void qualityRef.current?.setManual(null) },
         ...LEVELS.map((lv) => ({ id: `vq-${lv}`, label: LEVEL_LABEL[lv], checked: !!quality?.manual && quality.level === lv, onSelect: () => void qualityRef.current?.setManual(lv) })),
       ] },
+    { id: "sauto", label: `${quality?.screenAuto !== false ? "✓ " : ""}Автоподстройка показа экрана`, icon: "screen", hint: "Если канал не тянет, качество показа снижается по ступеням (звук и зрители не страдают) и возвращается, когда связь стабильна", hidden: !(showScreen && canScreen) || !quality, onSelect: () => void qualityRef.current?.setScreenAuto(quality?.screenAuto === false) },
     { id: "saudio", label: `${withAudio ? "✓ " : ""}Показ экрана со звуком`, icon: "screen", hint: "Звук вкладки или системы при следующем показе экрана", hidden: !(showScreen && join.client.screen_share_audio) || !!me?.screen, onSelect: () => setWithAudio((v) => !v) },
     { id: "sp", label: "Профиль показа экрана", icon: "screen", hint: "Запоминается в этом браузере; во время показа применяется без остановки то, что позволяет браузер", hidden: !(showScreen && canScreen), onSelect: () => undefined,
       submenu: PROFILE_ORDER.map((pr) => ({ id: `sp-${pr}`, label: PROFILE_LABELS[pr], checked: curProfile === pr,

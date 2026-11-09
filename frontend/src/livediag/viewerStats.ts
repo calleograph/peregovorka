@@ -4,7 +4,7 @@
  */
 export interface ClientStats {
   kbps?: number; est?: number; res?: string; fps?: number; frames?: number; drop?: number; buf?: number; lag?: number; lat?: number; seg_ms?: number; seg_kb?: number;
-  stalls: number; stall_ms: number; errs: number; reconn: number; eng?: "hlsjs" | "native"; node?: string; aud?: 0 | 1;       // aud: зритель сейчас на дорожке «только звук"
+  stalls: number; stall_ms: number; errs: number; reconn: number; eng?: "hlsjs" | "native"; node?: string; aud?: 0 | 1; low?: 0 | 1;       // low: зритель на низком качестве (360p); aud: зритель сейчас на дорожке «только звук"
 }
 export interface ClientPoint { t: number; kbps?: number; buf?: number; lag?: number; seg_ms?: number }
 

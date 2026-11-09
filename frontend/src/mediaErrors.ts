@@ -1,4 +1,5 @@
 /** Понятные причины ошибок устройств, демонстрации экрана и подключения вместо общего «Не удалось переключить устройство». */
+import { inDesktopClient } from "./clientInfo";
 import { micErrorKind } from "./micCapture";
 
 export type MediaAction = "mic" | "camera" | "screen" | "device" | "connect" | "playback";
@@ -49,10 +50,11 @@ export function isConnectionReset(e: unknown): boolean {
 
 const NET_CAUSES = "VPN (в том числе слишком большой MTU туннеля — при проблемах попробуйте MTU 1250–1400), прокси, файрвол или антивирус";
 
-export function describeMediaError(e: unknown, action: MediaAction, opts: { secureContext?: boolean; stage?: "server" | "media" } = {}): ErrorInfo {
+export function describeMediaError(e: unknown, action: MediaAction, opts: { secureContext?: boolean; stage?: "server" | "media"; desktop?: boolean } = {}): ErrorInfo {
   const name = String((e as { name?: unknown })?.name ?? "Error");
   const msg = lower(e);
   const secure = opts.secureContext ?? (typeof window === "undefined" ? true : window.isSecureContext);
+  const desktop = opts.desktop ?? inDesktopClient();       // во встроенном браузере приложения совет «смените браузер» не нужен: он тот же и подходящий
 
   if (!secure && action !== "connect") {
     return { reason: "InsecureContext", message: "Страница открыта не по HTTPS: браузер не даёт доступ к микрофону, камере и экрану. Откройте сайт по https:// или обратитесь к администратору." };
@@ -60,6 +62,9 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
   // ошибки публикации/подключения LiveKit определяем по тексту (классы SDK не всегда доступны по имени)
   if (msg.includes("permission") && (msg.includes("publish") || msg.includes("can_publish") || msg.includes("not allowed to"))) {
     return { reason: "PublishNotAllowed", message: "Сервер не разрешил вам публиковать этот источник (ограничено настройками комнаты или ролью)." };
+  }
+  if (msg.includes("e2ee_unsupported") && desktop) {
+    return { reason: "E2eeUnsupported", message: "Не удалось включить сквозное шифрование комнаты. Перезапустите приложение и войдите снова; если ошибка повторяется, откройте «Настройки → Диагностика» и отправьте отчёт администратору." };
   }
   if (msg.includes("e2ee_unsupported")) {
     return { reason: "E2eeUnsupported", message: "Эта комната использует сквозное шифрование, а ваш браузер его не поддерживает. Откройте комнату в актуальном Chrome, Edge или Firefox (в Safari — версии с поддержкой Insertable Streams). Без шифрования войти нельзя: тогда звук не был бы защищён так, как заявлено." };
@@ -109,6 +114,7 @@ export function describeMediaError(e: unknown, action: MediaAction, opts: { secu
     case "SecurityError":
       return { reason: name, message: "Браузер запретил доступ политикой безопасности страницы (нужен HTTPS и разрешение сайта на микрофон/камеру/экран)." };
     case "TypeError":
+      if (desktop) return { reason: name, message: action === "screen" ? "Не удалось начать показ с такими параметрами. Выберите другой экран или окно и повторите; если не помогает, выберите профиль «Экономный 720p» (Ещё → Профиль показа экрана)." : "Параметры устройства не приняты. Выберите другое устройство в «Устройства» и повторите." };
       return { reason: name, message: action === "screen" ? "Браузер не поддерживает показ экрана с такими параметрами (обновите браузер или используйте Chrome/Edge/Firefox актуальной версии)." : "Параметры устройства не приняты браузером." };
     default:
       return { reason: name, message: action === "device" ? `Не удалось переключить устройство (${name}${msg ? `: ${msg.slice(0, 120)}` : ""}). Повторите или выберите другое.`

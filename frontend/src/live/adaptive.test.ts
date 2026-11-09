@@ -123,3 +123,57 @@ describe("автоматическое ухудшение и улучшение 
     expect(st.failedUpgrades).toBe(0);
   });
 });
+
+describe("ручное «Включить видео», низкое качество и ручной выбор", () => {
+  it("накопленные остановки не считаются новыми: ручной возврат к видео не откатывается на звук (отскок со снимка зрителя: «Остановок 11»)", () => {
+    const st = initial(1000, { stalls: 11, stallMs: 3300, grace: true });
+    expect(run(st, 60, () => good({ stalls: 11, stallMs: 3300 }), 1)).toBeNull();
+    expect(st.mode).toBe("video");
+  });
+
+  it("остановки во время загрузки нового потока не в счёт, а после паузы считаются как обычно", () => {
+    const st = initial(0, { grace: true });
+    expect(run(st, 9, (t) => good({ stalls: t, stallMs: t * 800, buffer: 0.1 }))).toBeNull();       // 9 с загрузки: даже пустой буфер и остановки не наказываются
+    expect(run(st, 30, (t) => good({ stalls: 9 + (t - 9) * 2, stallMs: 7200 + (t - 9) * 1500 }), 9)).not.toBeNull();
+  });
+
+  it("плохой приём при доступном низком качестве: сначала низкое, не звук", () => {
+    const st = initial(0);
+    const t = run(st, 60, (t) => good({ lowNeedKbps: 700, stalls: t >= 10 ? (t >= 15 ? 2 : 1) : 0, stallMs: t >= 10 ? 900 : 0, buffer: 2 }));
+    expect(t).toBe(15);
+    expect(st.mode).toBe("low");
+  });
+
+  it("низкое качество тоже не тянет — звук; без низкого качества с сервера сразу звук", () => {
+    const st = initial(0, { mode: "low", grace: true });
+    expect(run(st, 90, (t) => good({ lowNeedKbps: 700, bwKbps: 400, stalls: t >= 20 ? 2 : 0 }))).not.toBeNull();
+    expect(st.mode).toBe("audio");
+    const st2 = initial(0);
+    run(st2, 30, () => good({ stalls: 0, buffer: 0.1 }));
+    expect(st2.mode).toBe("audio");
+  });
+
+  it("режимы среды (фон, экономия трафика, 2g) ведут сразу на звук, минуя низкое качество", () => {
+    const st = initial(0);
+    run(st, 5, () => good({ lowNeedKbps: 700, saveData: true }));
+    expect(st.mode).toBe("audio");
+  });
+
+  it("из звука поднимаемся к низкому качеству, если канала хватает на него, но не на видео; потом к видео", () => {
+    const st = initial(0, { mode: "audio" });
+    expect(run(st, 40, () => good({ lowNeedKbps: 700, probeKbps: 1800 }))).toBe(10);
+    expect(st.mode).toBe("low");
+    expect(run(st, 40, () => good({ lowNeedKbps: 700, probeKbps: 9000 }), 11)).toBe(30);          // 10 с на установку потока и ещё 10 с спокойствия
+    expect(st.mode).toBe("video");
+  });
+
+  it("зритель выбрал качество сам: режим не меняется, автоматика только подсказывает", () => {
+    const st = initial(0, { manual: true });
+    let advice = "";
+    for (let t = 0; t < 40; t++) { const d = step(st, good({ stalls: t >= 10 ? 3 : 0, stallMs: t >= 10 ? 2000 : 0 }), t * 1000); expect(d.changed).toBe(false); advice ||= d.advice ?? ""; }
+    expect(st.mode).toBe("video");
+    expect(advice).toBe("частые остановки");
+    const a = initial(0, { mode: "audio", manual: true });
+    expect(run(a, 120, () => good({ probeKbps: 20000 }))).toBeNull();
+  });
+});

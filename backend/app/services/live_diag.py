@@ -251,7 +251,7 @@ async def probe_segment(path: Path, timeout: float = 5.0) -> dict | None:
 
 
 # ------------------------------------------------------------------------------------------------ отчёты клиентов
-_CLIENT_NUM = {"aud": 1, "kbps": 200_000, "est": 2_000_000, "fps": 240, "drop": 1e9, "frames": 1e10, "buf": 3600, "lag": 86400, "lat": 86400, "seg_ms": 600_000, "seg_kb": 200_000, "stalls": 1e7, "stall_ms": 1e11,
+_CLIENT_NUM = {"aud": 1, "low": 1, "kbps": 200_000, "est": 2_000_000, "fps": 240, "drop": 1e9, "frames": 1e10, "buf": 3600, "lag": 86400, "lat": 86400, "seg_ms": 600_000, "seg_kb": 200_000, "stalls": 1e7, "stall_ms": 1e11,
                "errs": 1e7, "reconn": 1e6, "rtt": 60_000, "loss": 100, "out_kbps": 500_000, "in_kbps": 500_000, "jitter": 60_000}
 _CLIENT_STR = {"res": re.compile(r"^\d{1,5}x\d{1,5}$"), "eng": re.compile(r"^(hlsjs|native|webrtc)$"), "limit": re.compile(r"^(none|cpu|bandwidth|other)$"), "src": re.compile(r"^(screen|camera)$"),
                "node": re.compile(r"^[A-Za-z0-9.-]{1,253}$")}
@@ -473,8 +473,9 @@ def rules(s: dict, cfg: dict) -> list[Finding]:
             why_ = "процессор компьютера" if p["limit"] == "cpu" else "исходящий канал"
             lower = {"1440p": "1080p", "1080p": "720p"}.get(s.get("quality") or "")
             what = f"качество эфира {lower}" if lower else "проводную сеть или другую сеть"
-            todo = (f"Канал выступающего не тянет {s.get('quality') or 'выбранное качество'}: выберите {what} в настройках комнаты." if p["limit"] == "bandwidth"
-                    else f"Компьютеру выступающего не хватает процессора: закройте тяжёлые программы или выберите {what if lower else 'качество ниже'}.")
+            auto = "Показ экрана подстраивается сам: качество снижается и возвращается, когда связь стабильна."
+            todo = (f"Канал выступающего не тянет {s.get('quality') or 'выбранное качество'}. {auto} Чтобы картинка была лучше сразу, выберите {what} в настройках комнаты." if p["limit"] == "bandwidth"
+                    else f"Компьютеру выступающего не хватает процессора. {auto} Чтобы стало лучше сразу, закройте тяжёлые программы или выберите {what if lower else 'качество ниже'}.")
             out.append(Finding(f"pub_limit_{p['limit']}", 1, "source", "source", f"Браузер выступающего снижает качество: {why_}", f"Причину сообщает сам браузер (getStats). {todo}", "confirmed"))
             break
 

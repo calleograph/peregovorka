@@ -31,6 +31,10 @@ from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
 from . import events, media_checks, rec_scene, roles
 from .live_destinations import RELAY_KEY
+
+LOW_KEY = "live:low:{}"                 # зрителю нужно низкое качество: пока ключ жив, процесс «b-…» в службе ретрансляции держится
+LOW_HOLD_S = 90
+LOW_NEED_KBPS = 720                     # сколько нужно зрителю для низкого качества: 450 кбит/с видео + звук + запас
 from .livekit import list_present_identities, remove_viewers
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoError, VideoRecorder
@@ -514,18 +518,46 @@ class LiveBroadcaster:
         if st is not None and (st.get(rid) or {}).get("fp") != fingerprint(src, url, True):
             await relay.put(rid, src, url, audio=True)
 
-    async def audio_ready(self, access: str) -> bool:
-        """Дорожка со звуком отвечает. Один сорванный запрос не снимает предложение: после успеха 60 с отвечаем «да», иначе у зрителей кнопка мигала бы."""
+    def low_url(self, access: str) -> str:
+        """Низкое качество (360p) для зрителей, которым не хватает канала: ещё один поток MediaMTX рядом с основным, суффикс «-l»."""
+        return f"{self.ll_url(access)}-l"
+
+    async def low_hold(self, broadcast_id: uuid.UUID) -> None:
+        """Кому-то из зрителей нужно низкое качество: процесс держится ещё 90 с после последнего запроса (пульс зрителя и запрос ссылки продлевают)."""
+        await self._r.set(LOW_KEY.format(broadcast_id), "1", ex=LOW_HOLD_S)
+
+    async def low_sync(self, db, b: Broadcast, room: Room) -> None:
+        """Процесс низкого качества в службе ретрансляции — только пока он кому-то нужен: перекодирование стоит процессорного времени, пустой запуск не нужен.
+        Идемпотентно; сбой процесса не касается ни эфира, ни записи, ни площадок (служба ретрансляции отдельная)."""
+        relay = getattr(self.destinations, "relay", None)
+        src = await self.destinations.relay_src(b) if self.destinations is not None else None
+        if relay is None or src is None or not room.live_view_access:
+            return
+        rid = f"b-{b.id}"
+        cfg = await self.cfg(db)
+        if not cfg.adaptive_viewers or not await self._r.get(LOW_KEY.format(b.id)):
+            await relay.delete(rid)
+            return
+        from ..relay.manager import fingerprint  # noqa: PLC0415
+
+        url = self.low_url(room.live_view_access)
+        st = await relay.status()
+        if st is not None and (st.get(rid) or {}).get("fp") != fingerprint(src, url, False, True):
+            await relay.put(rid, src, url, low=True)
+
+    async def audio_ready(self, access: str, suffix: str = "a") -> bool:
+        """Дорожка (suffix «a» — только звук, «l» — низкое качество) отвечает. Один сорванный запрос не снимает предложение: после успеха 60 с отвечаем «да», иначе у зрителей кнопка мигала бы."""
         now = time.monotonic()
+        key = f"{access}-{suffix}"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1.5)) as c:
-                ok = (await c.get(f"{self._s.lowlatency_hls_url.rstrip('/')}/{access}-a/index.m3u8?cookieCheck=1", headers={"Cookie": "cookieCheck=1"})).status_code == 200
+                ok = (await c.get(f"{self._s.lowlatency_hls_url.rstrip('/')}/{key}/index.m3u8?cookieCheck=1", headers={"Cookie": "cookieCheck=1"})).status_code == 200
         except httpx.HTTPError:
             ok = False
         if ok:
-            self._audio_seen = {k: v for k, v in getattr(self, "_audio_seen", {}).items() if now - v < 600} | {access: now}
+            self._audio_seen = {k: v for k, v in getattr(self, "_audio_seen", {}).items() if now - v < 600} | {key: now}
             return True
-        return now - getattr(self, "_audio_seen", {}).get(access, -1e9) < 60
+        return now - getattr(self, "_audio_seen", {}).get(key, -1e9) < 60
 
     def ll_url(self, access: str) -> str:
         """Внутренний выход для LL-HLS. Имя потока — идентификатор доступа: так подпись зрителя и отзыв работают как у обычного HLS."""
@@ -555,6 +587,7 @@ class LiveBroadcaster:
         relay, src = getattr(self.destinations, "relay", None), await self.destinations.relay_src(b)
         if relay is not None and src is not None:
             await relay.put(f"a-{b.id}", src, self.audio_url(new), audio=True)         # дорожка «только звук» переезжает на новое имя вместе с основной
+            await relay.delete(f"b-{b.id}")                                            # низкое качество поднимется само на новом имени, когда оно снова понадобится
 
     async def _livekit_room(self, b: Broadcast) -> str | None:
         async with self._sm() as db:
@@ -694,7 +727,8 @@ class LiveBroadcaster:
         # новый эфир мог начаться, пока этот завершался: тогда его площадки и объявление не трогаем
         if getattr(self.destinations, "relay", None) is not None:
             await self.destinations.relay.delete(f"a-{b.id}")
-        await self._r.delete(RELAY_KEY.format(b.id))
+            await self.destinations.relay.delete(f"b-{b.id}")
+        await self._r.delete(RELAY_KEY.format(b.id), LOW_KEY.format(b.id))
         running = await self.current(db, b.room_id)
         if self.destinations is not None and running is None:
             await self.destinations.finish_all(db, b.room_id)
@@ -751,6 +785,7 @@ class LiveBroadcaster:
                         if room_r is not None:
                             await self.destinations.relay_sync(db, b, room_r)         # площадки вне Egress: состояния и самовосстановление службы
                             await self.audio_sync(db, b, room_r)
+                            await self.low_sync(db, b, room_r)
                 if b.status in ("starting", "live") and meeting is not None and meeting.ended_at is None and age > STALL_GRACE_S \
                         and await self.api.recorder_present(meeting.livekit_room, b.egress_id) is False:
                     log.warning("Рекордер эфира пропал из комнаты — служба Egress, вероятно, упала", extra={"broadcast": str(b.id)})

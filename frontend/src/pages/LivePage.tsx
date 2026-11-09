@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import { api, type ApiError, type LiveAccess, type LiveQuestion, type LiveViewerInfo } from "../api";
 import { Icon } from "../components/Icons";
 import { type Contact, GuestContactFields, contactBody, emailOk, loadContact, nameOk, saveContact } from "../components/GuestContact";
-import { initial as adaptiveInitial, step as adaptiveStep, audioNote, type Mode, type Sample, type State as AdaptiveState } from "../live/adaptive";
+import { initial as adaptiveInitial, step as adaptiveStep, audioNote, lowNote, upNote, type Mode, type Sample, type State as AdaptiveState } from "../live/adaptive";
+import { inDesktopClient } from "../clientInfo";
 import { ViewerStats } from "../livediag/viewerStats";
 import "../live.css";
 
@@ -21,6 +22,21 @@ const ssSet = (k: string, v: string) => { try { if (v) sessionStorage.setItem(k,
 const HLS_PREFIX = /^(?:https?:\/\/[^/]+)?\/(?:ll)?hls\/[0-9a-f]{24}\/\d+\/[A-Za-z0-9_-]{22}\//;       // адрес с узлом (CDN) или без него
 
 const isLl = (path: string) => path.includes("/llhls/");
+
+/** Выбор качества зрителем (как на YouTube): «Авто» подбирает ступень по связи, остальное — вручную. Выбор запоминается в браузере. */
+type Choice = "auto" | "video" | "low" | "audio";
+const QKEY = "pg:live:quality";
+const loadChoice = (): Choice => { try { const v = localStorage.getItem(QKEY); return v === "video" || v === "low" || v === "audio" ? v : "auto"; } catch { return "auto"; } };
+const saveChoice = (c: Choice) => { try { localStorage.setItem(QKEY, c); } catch { /* выбор не запомнится */ } };
+interface Switch { to: Mode; from: Mode; at: number; t0: number; base?: number; wait?: boolean }       // идёт переключение качества: ждём, пока новый поток пойдёт
+const MODE_NAME: Record<Mode, string> = { video: "обычное качество", low: "низкое качество", audio: "только звук" };
+const SWITCH_TEXT: Record<Mode, string> = { video: "Включаем видео", low: "Включаем низкое качество", audio: "Переключаем на звук" };
+const QUALITY: { id: Choice; name: string; sub: string }[] = [
+  { id: "auto", name: "Авто", sub: "Подбирается по вашей связи" },
+  { id: "video", name: "Высокое", sub: "Лучшая картинка, нужен хороший интернет" },
+  { id: "low", name: "Низкое (360p)", sub: "Для слабой связи, звук без остановок" },
+  { id: "audio", name: "Только звук", sub: "Меньше всего трафика" },
+];
 
 /** Нативный HLS — в Safari и на iPhone/iPad (там он надёжнее и экономит заряд; на iOS все браузеры — WebKit). Остальным (в том числе новому Chrome, который тоже отвечает «maybe») — hls.js:
  *  одинаковое поведение, продление подписи без перезапуска. Нативный путь остаётся запасным, если у браузера нет MediaSource. */
@@ -178,7 +194,7 @@ function RtcView({ token, rtc, vid, onFail }: { token: string; rtc: NonNullable<
   );
 }
 
-function Player({ token, access, renew, onGone, skew }: { token: string; access: LiveAccess; renew: (avoid?: string) => Promise<LiveAccess | null>; onGone: () => void; skew: number }) {
+function Player({ token, access, renew, onGone, skew }: { token: string; access: LiveAccess; renew: (avoid?: string, wantLow?: boolean) => Promise<LiveAccess | null>; onGone: () => void; skew: number }) {
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const prefix = useRef<string>(access.path.replace(/[^/]+$/, ""));
@@ -199,14 +215,33 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
   const fails = useRef(0);                       // подряд идущие сбои сети плеера; сбрасывается, когда воспроизведение пошло
   const hlsRef = useRef<{ destroy: () => void; recoverMediaError: () => void; startLoad: () => void; loadSource?: (u: string) => void; liveSyncPosition?: number | null } | null>(null);
   // автоматическое качество: видео ↔ «только звук» (правила и пороги — live/adaptive.ts)
-  const [mode, setMode] = useState<Mode>("video");
-  const [modeWhy, setModeWhy] = useState("");
-  const modeRef = useRef<Mode>("video");
+  const saved = useRef<Choice>(loadChoice());                        // выбор прошлого просмотра: «только звук» применяется сразу, «низкое» — когда сервер его подготовит
+  const startAudio = saved.current === "audio" && !!access.audio_path;
+  const [mode, setMode] = useState<Mode>(startAudio ? "audio" : "video");
+  const [modeWhy, setModeWhy] = useState(startAudio ? "Только звук: вы выбрали этот режим." : "");
+  const modeRef = useRef<Mode>(startAudio ? "audio" : "video");
+  const [choice, setChoice] = useState<Choice>(access.audio_path ? saved.current : "auto");
+  const choiceRef = useRef<Choice>(access.audio_path ? saved.current : "auto");
+  const lowOk = useRef(!!access.low_path);                           // сервер готовит низкое качество (360p): оно запускается по запросу зрителя
+  const lowMiss = useRef(access.low_path ? 0 : 2);
+  const lowSeen = useRef(access.low_path ? Date.now() : 0);          // когда сервер последний раз подтвердил низкое качество: процесс живёт 90 с после последнего запроса, старым данным верить нельзя
+  const lowFresh = () => lowOk.current && Date.now() - lowSeen.current < 45_000;
+  const lowNeedRef = useRef(access.low_need_kbps ?? 720);
+  const lastWant = useRef(0);
+  const [sw, setSw] = useState<Switch | null>(null);                 // идёт переключение: баннер «подождите» и закрытые кнопки качества
+  const swRef = useRef<Switch | null>(null);
+  const [slow, setSlow] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [pill, setPill] = useState("");                              // короткое спокойное сообщение поверх картинки
+  const pillT = useRef(0);
+  const lastAdvice = useRef(0);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; window.clearTimeout(pillT.current); }, []);
   const audioOk = useRef(!!access.audio_path);                       // сервер предлагает дорожку со звуком (низкая задержка и служба ретрансляции работают)
   const [hasAudio, setHasAudio] = useState(!!access.audio_path);
   const audioMiss = useRef(access.audio_path ? 0 : 2);
   const needRef = useRef(access.need_kbps ?? 3500);                 // сколько нужно видео (из настроек качества эфира)
-  const ad = useRef<AdaptiveState>(adaptiveInitial(performance.now()));
+  const ad = useRef<AdaptiveState>(adaptiveInitial(performance.now(), startAudio ? { mode: "audio", manual: true } : { manual: access.audio_path ? saved.current === "video" || saved.current === "low" : false }));
   const probe = useRef<{ at: number; kbps: number | null; busy: boolean }>({ at: 0, kbps: null, busy: false });
   const [attempt, setAttempt] = useState(0);     // пересоздание плеера: страж зависания, «Повторить», возврат сети
   const [offline, setOffline] = useState(typeof navigator !== "undefined" && navigator.onLine === false);
@@ -234,6 +269,10 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     audioMiss.current = a.audio_path ? 0 : audioMiss.current + 1;
     audioOk.current = audioMiss.current < 2; setHasAudio(audioOk.current);
     if (a.need_kbps) needRef.current = a.need_kbps;
+    if (a.low_path) lowSeen.current = Date.now();
+    lowMiss.current = a.low_path ? 0 : lowMiss.current + 1;
+    lowOk.current = lowMiss.current < 2;
+    if (a.low_need_kbps) lowNeedRef.current = a.low_need_kbps;
     prefix.current = (llOff.current && a.origin_path ? a.origin_path : a.path).replace(/[^/]+$/, "");
   }
   // свой узел CDN не отвечает: сервер выдаёт другой исправный узел; если его нет — запасной путь к источнику. Возвращает адрес плейлиста или "".
@@ -248,13 +287,46 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     return o;
   }
 
-  // Переключение дорожки: тот же плеер, другой плейлист той же подписи (/audio/index.m3u8 — отдельный поток только со звуком).
+  // Переключение дорожки: тот же плеер, другой плейлист той же подписи (/audio/ — только звук, /low/ — низкое качество 360p). Пока новый поток не пошёл, зритель видит баннер «подождите».
+  const urlFor = (m: Mode) => baseRef.current + prefix.current + (m === "audio" ? "audio/" : m === "low" ? "low/" : "") + "index.m3u8";
+  function flash(text: string, ms = 10_000) {
+    window.clearTimeout(pillT.current); setPill(text);
+    if (text) pillT.current = window.setTimeout(() => setPill(""), ms);
+  }
   function applyMode(m: Mode, why: string) {
-    modeRef.current = m; setMode(m); setModeWhy(why);
-    stats.current.s.aud = m === "audio" ? 1 : 0;
+    const from = modeRef.current;
+    modeRef.current = m; setMode(m); setModeWhy(why); flash(m === "audio" ? "" : why);
+    stats.current.s.aud = m === "audio" ? 1 : 0; stats.current.s.low = m === "low" ? 1 : 0;
     const el = video.current;
     if (el) el.dataset.mode = m;
-    hlsRef.current?.loadSource?.(baseRef.current + prefix.current + (m === "audio" ? "audio/" : "") + "index.m3u8");
+    if (from !== m) { const x: Switch = { to: m, from, at: Date.now(), t0: el?.currentTime ?? 0 }; swRef.current = x; setSw(x); setSlow(false); }
+    hlsRef.current?.loadSource?.(urlFor(m));
+  }
+  // Низкое качество готовится по запросу: просим сервер и ждём ссылку до минуты. Звук всё это время идёт без остановок.
+  async function ensureLow(): Promise<boolean> {
+    for (let i = 0; i < 24 && alive.current; i++) {
+      const a = await cb.current.renew(undefined, true).catch(() => null);
+      if (a) { adopt(a); if (a.low_path) return true; }
+      await new Promise((r) => window.setTimeout(r, 2500));
+    }
+    return false;
+  }
+  async function goTo(m: Mode, why: string): Promise<boolean> {
+    if (m === "low") {
+      // процесс низкого качества живёт, только пока он нужен: перед переключением всегда спрашиваем сервер заново (запрос же и запускает его)
+      const a0 = await cb.current.renew(undefined, true).catch(() => null);
+      if (a0) adopt(a0);
+      if (!alive.current) return false;
+    }
+    if (m === "low" && !(lowOk.current && lowMiss.current === 0)) {
+      const x: Switch = { to: m, from: modeRef.current, at: Date.now(), t0: video.current?.currentTime ?? 0, wait: true };
+      swRef.current = x; setSw(x); setSlow(false);
+      const ok = await ensureLow();
+      if (!alive.current) return false;
+      if (!ok) { swRef.current = null; setSw(null); flash("Низкое качество пока не готово. Эфир продолжается: попробуйте ещё раз чуть позже или выберите «Только звук».", 14_000); return false; }
+    }
+    applyMode(m, why);
+    return true;
   }
   // Скорость канала для решения «вернуться к видео»: пробная загрузка последнего завершённого видеосегмента (на дорожке со звуком оценки hls.js нет)
   async function probeSpeed() {
@@ -278,7 +350,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
   useEffect(() => {
     let alive = true;
     let timer = window.setTimeout(function tick() {
-      void renew().then((a) => {
+      void renew(undefined, modeRef.current === "low").then((a) => {
         if (!alive || !a) return;
         adopt(a);
         const el = video.current;
@@ -288,7 +360,8 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     return () => { alive = false; window.clearTimeout(timer); };
   }, [access.refresh_in, renew]);
 
-  // Автоматическое качество: раз в секунду смотрим на приём и решаем, видео или только звук (все признаки — в live/adaptive.ts). Решение не мешает ручному выбору.
+  // Автоматическое качество: раз в секунду смотрим на приём и решаем, какая ступень (видео, низкое качество, только звук) подходит (все признаки — в live/adaptive.ts).
+  // Если зритель выбрал качество сам, режим не меняется: автоматика только подсказывает.
   useEffect(() => {
     if (native()) return undefined;
     let first = true;
@@ -297,36 +370,118 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     const timer = window.setInterval(() => {
       const el = video.current;
       if (!el) return;
-      if (!audioOk.current || llOff.current || baseRef.current) {         // дорожки больше нет (служба остановилась, переход на обычный HLS или CDN): только видео
-        if (modeRef.current === "audio") { applyMode("video", ""); ad.current = adaptiveInitial(performance.now()); }
+      el.dataset.ll = llOff.current ? "off" : "on"; el.dataset.ad = `${ad.current.mode}${ad.current.manual ? "m" : ""}`; el.dataset.fails = String(fails.current);      // для проверок и отладки
+      if (!audioOk.current || llOff.current || baseRef.current) {         // дорожек больше нет (служба остановилась, переход на обычный HLS или CDN): только видео
+        if (modeRef.current !== "video") { applyMode("video", ""); ad.current = adaptiveInitial(performance.now(), { stalls: stats.current.s.stalls, stallMs: stats.current.s.stall_ms }); }
         return;
       }
-      if (userPaused.current || el.paused || el.readyState < 2) { first = true; return; }
+      if (modeRef.current === "low" && !lowOk.current) {                  // низкое качество пропало (процесс остановился): спокойно уходим на звук
+        applyMode("audio", "Низкое качество стало недоступно, поэтому включён режим «Только звук». Видео вернётся само, как только связь наладится.");
+        ad.current = adaptiveInitial(performance.now(), { stalls: stats.current.s.stalls, stallMs: stats.current.s.stall_ms, mode: "audio", manual: choiceRef.current !== "auto" });
+        return;
+      }
+      // не меряем, пока зритель на паузе или воспроизведение ещё не начиналось; остановки посреди эфира (readyState 1) как раз и надо замечать
+      if (userPaused.current || el.paused || (el.readyState < 2 && el.currentTime === 0)) { first = true; return; }
+      if (swRef.current?.wait) return;                                    // ждём низкое качество от сервера: решения не принимаем
       const s = stats.current.tick();
       const now = performance.now();
-      if (first) { ad.current.prevStalls = s.stalls; ad.current.prevStallMs = s.stall_ms; first = false; drop = { t: now, d: s.drop ?? 0, f: s.frames ?? 0 }; }
+      if (first) { ad.current.prevStalls = s.stalls; ad.current.prevStallMs = s.stall_ms; first = false; drop = { t: now, d: s.drop ?? 0, f: s.frames ?? 0 }; ad.current.graceUntil = Math.max(ad.current.graceUntil, now + 8000); }      // первые секунды набирается буфер: это не плохая связь
       if (now - drop.t >= 10_000) { const df = (s.frames ?? 0) - drop.f; dropRatio = df > 30 ? ((s.drop ?? 0) - drop.d) / df : null; drop = { t: now, d: s.drop ?? 0, f: s.frames ?? 0 }; }
       const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
       const hidden = document.visibilityState !== "visible";
+      const m = modeRef.current;
       const sample: Sample = {
-        buffer: s.buf ?? 3, stalls: s.stalls, stallMs: s.stall_ms, bwKbps: modeRef.current === "video" && s.est ? s.est : null, probeKbps: probe.current.kbps,
-        fragRatio: null, dropRatio: modeRef.current === "video" ? dropRatio : null, hidden, saveData: !!conn?.saveData, slowNet: /(^|-)2g$/.test(conn?.effectiveType ?? ""), needKbps: needRef.current,
+        buffer: s.buf ?? 3, stalls: s.stalls, stallMs: s.stall_ms, bwKbps: m !== "audio" && s.est ? s.est : null, probeKbps: probe.current.kbps,
+        fragRatio: null, dropRatio: m !== "audio" ? dropRatio : null, hidden, saveData: !!conn?.saveData, slowNet: /(^|-)2g$/.test(conn?.effectiveType ?? ""), needKbps: needRef.current,
+        lowNeedKbps: lowFresh() ? lowNeedRef.current : null,       // автоматика не ждёт сервер: нет свежего подтверждения низкого качества — при ухудшении сразу звук, а низкое качество греется в фоне
       };
-      if (modeRef.current === "audio" && !hidden && now >= ad.current.holdUntil - 5000 && Date.now() - probe.current.at > 10_000) void probeSpeed();
+      if (m !== "video" && !hidden && now >= ad.current.holdUntil - 5000 && Date.now() - probe.current.at > 10_000) void probeSpeed();
+      // низкое качество готовится заранее, пока видео ещё идёт, но уже есть тревожные признаки: к моменту ухудшения оно будет готово
+      if (choiceRef.current === "auto" && m === "video" && !lowFresh() && !swRef.current && Date.now() - lastWant.current > 30_000
+        && (ad.current.stallLog.length >= 1 || sample.buffer < 1.5 || (sample.bwKbps !== null && sample.bwKbps < needRef.current * 1.6))) {
+        lastWant.current = Date.now();
+        void cb.current.renew(undefined, true).then((a) => { if (a) adopt(a); });
+      }
       el.dataset.probe = String(Math.round(probe.current.kbps ?? -1)); el.dataset.hold = String(Math.round((ad.current.holdUntil - now) / 1000));      // для проверок и отладки
       const d = adaptiveStep(ad.current, sample, now);
-      if (d.changed) applyMode(d.mode, d.mode === "audio" ? audioNote(d.reason) : "");
+      if (d.advice && now > lastAdvice.current + 90_000) { lastAdvice.current = now; flash("Картинка подвисает. Выберите качество ниже в меню ⚙ или режим «Авто»: звук при этом не пропадёт.", 14_000); }
+      if (d.changed) {
+        const to = d.mode;
+        void goTo(to, d.up ? upNote(to) : to === "audio" ? audioNote(d.reason) : lowNote(d.reason)).then((ok) => { if (!ok) ad.current.mode = modeRef.current; });
+      }
     }, 1000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt]);
 
-  // ручной выбор: «Только звук» — до нового нажатия; «Видео» — вернуть картинку, автоматика может снова отключить её при плохом приёме
-  const chooseMode = (m: Mode) => {
-    const now = performance.now();
-    if (m === "audio") { ad.current = { ...adaptiveInitial(now), mode: "audio", since: now, holdUntil: Infinity, reason: "выбран режим «только звук»" }; applyMode("audio", "Только звук: вы выбрали этот режим."); }
-    else { ad.current = { ...adaptiveInitial(now), lastUpgradeAt: now }; probe.current.kbps = null; applyMode("video", ""); }
+  // Переключение завершено, когда новый поток действительно пошёл: время идёт вперёд и размер картинки соответствует ступени. Долго нет — спокойное пояснение, совсем долго — возврат.
+  useEffect(() => {
+    if (!sw || sw.wait) return undefined;
+    const t = window.setInterval(() => {
+      const x = swRef.current, el = video.current;
+      if (!x || !el) return;
+      const waited = Date.now() - x.at, h = el.videoHeight;
+      const shape = x.to === "audio" ? true : x.to === "low" ? h > 0 && h <= 420 : h > 420;
+      // у каждой ступени своя шкала времени: после смены потока currentTime может скакнуть назад, поэтому ход времени считаем от момента, когда пришла картинка нужного размера
+      if (waited > 1000 && shape && x.base === undefined) x.base = el.currentTime;
+      if (x.base !== undefined && !el.paused && el.readyState >= 3 && Math.abs(el.currentTime - x.base) >= 0.6) { swRef.current = null; setSw(null); setSlow(false); return; }
+      if (waited > 15_000) setSlow(true);
+      if (waited > 50_000) {
+        swRef.current = null; setSw(null); setSlow(false);
+        const back: Mode = x.from;
+        flash(`Не удалось включить ${MODE_NAME[x.to]}: оставляем ${MODE_NAME[back]}. Эфир продолжается, попробуйте позже.`, 14_000);
+        modeRef.current = back; setMode(back); setModeWhy(back === "audio" ? "Только звук." : "");
+        stats.current.s.aud = back === "audio" ? 1 : 0; stats.current.s.low = back === "low" ? 1 : 0;
+        ad.current.mode = back; ad.current.graceUntil = performance.now() + 10_000;
+        hlsRef.current?.loadSource?.(urlFor(back));
+      }
+    }, 500);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sw]);
+
+  // Ручной выбор качества. «Авто» начинает с ступени, которую позволяет канал (пробная загрузка), остальное включается как выбрано и не меняется само.
+  const choose = async (c: Choice) => {
+    if (swRef.current) return;                                // идёт переключение: ждём, чтобы кнопки не конфликтовали
+    setMenu(false); setChoice(c); choiceRef.current = c; saveChoice(c);
+    const now = performance.now(), st = stats.current.s, seed = { stalls: st.stalls, stallMs: st.stall_ms };
+    if (c === "auto") {
+      let to = modeRef.current;
+      if (to !== "video") {
+        await probeSpeed();
+        const sp = probe.current.kbps;
+        to = sp === null || sp >= needRef.current * 1.2 ? "video" : lowOk.current ? "low" : "audio";
+      }
+      ad.current = adaptiveInitial(performance.now(), { ...seed, mode: to, grace: true });
+      if (to !== modeRef.current) { const ok = await goTo(to, to === "video" ? "" : lowNote("связь пока слабая")); if (!ok) ad.current.mode = modeRef.current; }
+      else flash("Режим «Авто»: качество подбирается по вашей связи.");
+      return;
+    }
+    ad.current = adaptiveInitial(now, { ...seed, mode: c, manual: true, grace: true });
+    if (c !== modeRef.current) { const ok = await goTo(c, c === "audio" ? "Только звук: вы выбрали этот режим. Вернуть видео можно в меню качества." : ""); if (!ok) ad.current.mode = modeRef.current; }
   };
+  // «Включить видео» на экране звука: пробуем видео в режиме «Авто» (если связь всё ещё слабая, плеер сам вернёт ступень ниже, но не раньше чем через 10 секунд после загрузки)
+  const tryVideo = () => {
+    if (swRef.current) return;
+    setChoice("auto"); choiceRef.current = "auto"; saveChoice("auto");
+    const st = stats.current.s;
+    ad.current = adaptiveInitial(performance.now(), { stalls: st.stalls, stallMs: st.stall_ms, mode: "video", grace: true });
+    probe.current.kbps = null;
+    void goTo("video", "");
+  };
+  useEffect(() => {
+    if (saved.current !== "low" || !access.audio_path) return undefined;
+    const t = window.setTimeout(() => { if (choiceRef.current === "low" && modeRef.current === "video") { void choose("low"); } }, 2500);     // сохранённое «низкое»: ждём, пока плеер запустится
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!menu) return undefined;
+    const close = (e: Event) => { if (!(e.target as HTMLElement).closest?.(".live-q")) setMenu(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(false); };
+    document.addEventListener("pointerdown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", esc); };
+  }, [menu]);
 
   // счётчик зрителей: «пульс» раз в полминуты, пока вкладка видима
   useEffect(() => {
@@ -360,7 +515,7 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
     } else {
       void import("hls.js").then(({ default: Hls }) => {
         if (cancelled) return;
-        if (!Hls.isSupported()) { setFatal("Этот браузер не умеет воспроизводить прямой эфир. Попробуйте другой браузер."); return; }
+        if (!Hls.isSupported()) { setFatal(inDesktopClient() ? "Не удалось запустить просмотр эфира. Перезапустите приложение; если не помогло, откройте эфир по ссылке в другом браузере и сообщите администратору." : "Этот браузер не умеет воспроизводить прямой эфир. Попробуйте другой браузер."); return; }
         const hls = new Hls({
           // сегменты ≈1,5 с (без частей LL-HLS — Egress их не выпускает): держимся в 2,5 с от края эфира — в секундах, а не в сегментах, потому что
           // TARGETDURATION плейлиста 2 (см. nginx.conf); отставание догоняем ускорением до 1,1×, а не прыжком; дальше 7 с — прыжок к краю.
@@ -482,11 +637,18 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
 
   if (fatal) return <div className="live-stage live-msg"><Icon name="info" size={26} /><p>{fatal}</p>
     <button className="btn primary" onClick={() => { setFatal(""); fails.current = 0; void renew().then((a) => { if (!a) return onGone(); adopt(a); setAttempt((n) => n + 1); }); }}>Повторить</button></div>;
+  const overlay = mode === "audio" || sw?.from === "audio";            // весь экран закрыт сообщением: звук или переключение со звука на картинку
   return (
     <div className={`live-stage ${ui || paused ? "ui" : ""} ${diag ? "diag" : ""}`} ref={wrap} onMouseMove={poke} onTouchStart={poke}>
       <video ref={video} playsInline autoPlay aria-label="Прямой эфир" onClick={toggle} />
-      {mode === "audio" && <div className="live-audio" role="status"><Icon name="volume" size={26} /><p>{modeWhy || "Только звук"}</p><button className="btn primary" onClick={() => chooseMode("video")}>Включить видео</button></div>}
-      {buffering && <div className="live-spin" role="status" aria-label="Загрузка" />}
+      {overlay && (sw
+        ? <div className="live-audio" role="status"><div className="live-spin small" aria-hidden /><p><b>{sw.wait ? "Готовим низкое качество" : SWITCH_TEXT[sw.to]}…</b></p>
+            <p className="live-sub">{sw.wait ? "На сервере это занимает до 30 секунд. Звук идёт без остановок, ничего нажимать не нужно." : slow ? "Загрузка идёт дольше обычного. Эфир не прерывается: просто подождите ещё немного." : "Это займёт несколько секунд, картинка появится сама. Ничего нажимать не нужно."}</p></div>
+        : <div className="live-audio" role="status"><Icon name="volume" size={26} /><p>{modeWhy || "Только звук"}</p>
+            <button className="btn primary" onClick={tryVideo}>Включить видео</button>
+            <p className="live-sub">Если связь слабая, картинка может подвисать: тогда выберите «Низкое качество» в меню <Icon name="gear" size={14} /></p></div>)}
+      {!overlay && (sw || pill || mode === "low") && <p className="live-pill" role="status"><span>{sw ? `${sw.wait ? "Готовим низкое качество" : SWITCH_TEXT[sw.to]}…${slow ? " Это дольше обычного, эфир не прерывается." : " Подождите несколько секунд."}` : pill || "Низкое качество: вернётся само, когда связь наладится"}</span></p>}
+      {buffering && !sw && <div className="live-spin" role="status" aria-label="Загрузка" />}
       {offline && <p className="live-net" role="status">Нет подключения к сети. Эфир продолжится автоматически, когда связь восстановится.</p>}
       {needSound && <button className="live-sound btn primary" onClick={unmute}><Icon name="volumeOff" size={18} /> Включить звук</button>}
       <div className="live-bar" role="group" aria-label="Управление просмотром">
@@ -496,7 +658,15 @@ function Player({ token, access, renew, onGone, skew }: { token: string; access:
         <span className={`live-tag ${behind > 8 ? "late" : "on"}`} title={behind > 8 ? `Вы отстаёте от эфира на ${Math.round(behind)} с` : "Вы смотрите прямой эфир"}><i aria-hidden />{behind > 8 ? `−${Math.round(behind)} с` : "ЭФИР"}</span>
         {behind > 8 && <button className="btn mini" onClick={goLive}>К прямому эфиру</button>}
         <span className="spacer" />
-        {hasAudio && <button className="iconbtn" onClick={() => chooseMode(mode === "audio" ? "video" : "audio")} aria-pressed={mode === "audio"} aria-label={mode === "audio" ? "Включить видео" : "Только звук"} title={mode === "audio" ? "Включить видео" : "Только звук: экономит трафик и работает при слабой связи"}><Icon name="volume" size={22} /></button>}
+        {hasAudio && <div className="live-q">
+          <button className="iconbtn" onClick={() => setMenu(!menu)} aria-haspopup="menu" aria-expanded={menu} aria-label="Качество просмотра" title="Качество просмотра"><Icon name="gear" size={22} /></button>
+          {menu && <div className="live-menu" role="menu" aria-label="Качество просмотра">
+            {QUALITY.map((q) => <button key={q.id} type="button" role="menuitemradio" aria-checked={choice === q.id} disabled={!!sw} onClick={() => void choose(q.id)}>
+              <span className="qn">{q.name}{q.id === "auto" ? ` · сейчас: ${MODE_NAME[mode]}` : ""}</span><span className="qs">{q.sub}</span>{choice === q.id && <Icon name="check" size={16} />}
+            </button>)}
+            <p className="qh">{sw ? "Идёт переключение, подождите несколько секунд." : "Если картинка подвисает, выберите качество ниже. Эфир при этом не прерывается."}</p>
+          </div>}
+        </div>}
         <button className="iconbtn" onClick={() => { if (!diag) void api.liveDiagAccess(token).then((r) => setDiagMeeting(r.allowed ? r.meeting_id ?? null : null)).catch(() => undefined); setDiag(!diag); }} aria-label="Статистика воспроизведения" aria-pressed={diag} title="Статистика воспроизведения"><Icon name="gauge" size={22} /></button>
         <button className="iconbtn" onClick={fullscreen} aria-label="Во весь экран"><Icon name="expand" size={22} /></button>
       </div>
@@ -547,9 +717,9 @@ export default function LivePage() {
     } catch (e) { setErr((e as ApiError).status === 404 ? "Трансляция не найдена: ссылка неверна или отозвана." : (e as ApiError).message || "Нет связи с сервером."); }
   }, [token]);
 
-  const getAccess = useCallback(async (password?: string, avoid?: string): Promise<LiveAccess | null> => {
+  const getAccess = useCallback(async (password?: string, avoid?: string, wantLow?: boolean): Promise<LiveAccess | null> => {
     try {
-      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native(), viewer: viewerRef.current, ...(avoid ? { avoid } : {}) });
+      const a = await api.liveAccess(token, { ...(password ? { password } : pass.current ? { pass: pass.current } : {}), long: native(), viewer: viewerRef.current, ...(avoid ? { avoid } : {}), ...(wantLow ? { want_low: true } : {}) });
       if (a.pass) { pass.current = a.pass; try { sessionStorage.setItem(SEEN_KEY(token), a.pass); } catch { /* пропуск не запомнится */ } }
       return a;
     } catch (e) {
@@ -583,8 +753,8 @@ export default function LivePage() {
     setBusy(false);
     if (a) setAccess(a);
   };
-  const renew = useCallback(async (avoid?: string) => {
-    const a = await getAccess(undefined, avoid);
+  const renew = useCallback(async (avoid?: string, wantLow?: boolean) => {
+    const a = await getAccess(undefined, avoid, wantLow);
     if (!a) { setAccess(null); void load(); }
     return a;
   }, [getAccess, load]);

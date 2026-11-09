@@ -143,3 +143,46 @@ def test_http_interface_requires_the_token_and_rejects_foreign_sources(fake, mon
             time.sleep(0.1)
         assert st[0]["state"] == "live" and "url" not in st[0] and "key" not in str(st[0]) and st[0]["fp"] == fingerprint(SRC, body["url"])
         assert c.delete("/relays/a1111111", headers=h).status_code == 204 and c.get("/relays", headers=h).json() == []
+
+
+def test_low_job_transcodes_to_360p_with_low_priority_and_is_a_different_process(fake):
+    async def go():
+        m = manager(fake)
+        m.put("b3333333", SRC, "rtmp://mediamtx:1935/live/aabb-l", low=True)
+        m.put("b2222222", SRC, "rtmp://mediamtx:1935/live/aabb")
+        cmd_l, cmd_v = m.command(m.relays["b3333333"]), m.command(m.relays["b2222222"])
+        assert cmd_l[:3] == ["nice", "-n", "10"] and "scale=-2:360" in cmd_l and "libx264" in cmd_l and cmd_l[cmd_l.index("-c:a") + 1] == "copy"
+        assert "-force_key_frames" in cmd_l and "libx264" not in cmd_v and cmd_v[0] != "nice"
+        assert fingerprint(SRC, "x", False, True) != fingerprint(SRC, "x", False, False) != fingerprint(SRC, "x", True, False)
+        assert m.status()[0]["low"] is True
+        await m.close()
+    asyncio.run(go())
+
+
+def test_low_job_is_started_only_while_someone_needs_it_and_removed_after():
+    import types
+    from app.services.live import LiveBroadcaster
+
+    calls: list = []
+
+    class Relay:
+        async def status(self): return {}
+        async def put(self, rid, src, url, audio=False, low=False): calls.append(("put", rid, url, low))
+        async def delete(self, rid): calls.append(("delete", rid))
+
+    class Dest:
+        relay = Relay()
+        async def relay_src(self, b): return SRC
+
+    async def run(want: bool, adaptive: bool = True):
+        calls.clear()
+        async def get(_k): return "1" if want else None
+        async def cfg(_db): return types.SimpleNamespace(adaptive_viewers=adaptive)
+        me = types.SimpleNamespace(destinations=Dest(), _r=types.SimpleNamespace(get=get), cfg=cfg, low_url=lambda a: f"rtmp://mediamtx:1935/live/{a}-l")
+        b = types.SimpleNamespace(id="0f0f0f0f-0000-0000-0000-000000000001")
+        await LiveBroadcaster.low_sync(me, None, b, types.SimpleNamespace(live_view_access="aabbccddeeff001122334455"))
+        return list(calls)
+
+    assert asyncio.run(run(True)) == [("put", "b-0f0f0f0f-0000-0000-0000-000000000001", "rtmp://mediamtx:1935/live/aabbccddeeff001122334455-l", True)]
+    assert asyncio.run(run(False)) == [("delete", "b-0f0f0f0f-0000-0000-0000-000000000001")], "никому не нужно — процесс с перекодированием не держим"
+    assert asyncio.run(run(True, adaptive=False)) == [("delete", "b-0f0f0f0f-0000-0000-0000-000000000001")]

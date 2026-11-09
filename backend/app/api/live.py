@@ -443,6 +443,7 @@ class AccessIn(BaseModel):
     viewer: str | None = Field(default=None, max_length=120, repr=False)      # зритель представился (имя обязательно): без этого эфир и запись не выдаются
     long: bool = False                       # нативный HLS (Safari, iPhone) не умеет подменять подпись на лету: ему — долгая подпись (4 часа)
     avoid: str | None = Field(default=None, max_length=253)                  # узел CDN, с которого плеер не смог получить поток: выдать другой
+    want_low: bool = False                   # зритель выбрал (или автоматика выбрала) низкое качество: запустить его, если ещё не идёт
     model_config = {"populate_by_name": True}
 
 
@@ -506,6 +507,18 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
                 from ..services.live import LIVE_QUALITY  # noqa: PLC0415
 
                 out.update(audio_path=out["path"].rsplit("/", 1)[0] + "/audio/index.m3u8", need_kbps=LIVE_QUALITY.get(v.b.quality, LIVE_QUALITY["720p"])[2] + 128)
+                from ..services.live import LOW_NEED_KBPS  # noqa: PLC0415
+
+                # низкое качество (360p) запускается по запросу: пока процесса нет, зритель получает low_wait и спрашивает снова
+                if v.b is not None and v.b.status in ("starting", "live"):
+                    live = request.app.state.live
+                    if body.want_low:
+                        await live.low_hold(v.b.id)
+                        await live.low_sync(db, v.b, room)
+                    if await live.audio_ready(room.live_view_access, "l"):
+                        out.update(low_path=out["path"].rsplit("/", 1)[0] + "/low/index.m3u8", low_need_kbps=LOW_NEED_KBPS)
+                    elif body.want_low:
+                        out["low_wait"] = True
         else:
             out["ll_soon"] = True
     if room.live_cdn and cfg.cdn_nodes_enabled:
@@ -617,6 +630,8 @@ async def viewer_ping(token: str, request: Request, body: dict = Body(default={}
     if not vid or not vid.isalnum():
         raise HTTPException(status_code=422, detail="vid")
     n = await request.app.state.live.viewer_ping(room.id, vid)
+    if v.b is not None and v.b.status in ("starting", "live") and isinstance(body.get("stats"), dict) and body["stats"].get("low"):
+        await request.app.state.live.low_hold(v.b.id)             # зритель смотрит низкое качество: процесс продолжает работать
     if v.b is not None and v.b.status in ("starting", "live") and body.get("stats") is not None:
         await request.app.state.live_diag.report_client(v.b.id, f"v:{vid}", body["stats"], parse_client(request.headers.get("user-agent")))       # диагностика со стороны зрителя: тем же пульсом, без отдельных запросов
     return {"viewers": n}
