@@ -160,6 +160,7 @@ export interface ClientConfig {
   /** Высота захвата показа экрана (1440 — в комнате трансляции с качеством 2K). */
   screen_max_height?: number;
   screen_single_layer?: boolean;
+  camera_quality?: string;               // качество камеры по умолчанию в комнате: auto | high | medium | low | min | off
   /** Комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей. */
   broadcast?: boolean;
   /** Руководитель комнаты или администратор: может выключать микрофоны участников. */
@@ -436,7 +437,7 @@ export interface TransferDetail extends TransferJob { problems: { recording_id: 
 export interface RoomManage {
   icon?: RoomIconInfo | null;
   id: string; slug: string; name: string; description: string | null; is_enabled: boolean; max_participants: number; has_password: boolean;
-  camera_allowed: boolean; screen_share_allowed: boolean; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off"; video_mode?: "off" | "manual" | "auto"; video_quality?: "720p" | "1080p"; video_enabled?: boolean;
+  camera_allowed: boolean; screen_share_allowed: boolean; camera_quality?: string; board_allowed: boolean; board_access?: string; board_level?: string; room_type: RoomType; auto_record: boolean; encrypt_storage?: boolean; e2ee_mode?: "off" | "full" | "trusted"; record_audio: boolean; recording_mode?: "audio" | "audio_video" | "off"; video_mode?: "off" | "manual" | "auto"; video_quality?: "720p" | "1080p"; video_enabled?: boolean;
   transcription_enabled: boolean; mute_on_join: boolean; mask_profanity?: boolean; idle_end_minutes?: number; welcome_message: string | null; guest_access_enabled: boolean; guest_token: string | null; auto_map_mode?: "inherit" | "on" | "off";
   lifetime?: "permanent" | "temporary"; lifecycle?: "active" | "grace_period" | "closed";
   acl: AclEntry[]; moderators: AclEntry[]; active_meeting_id: string | null; can_edit_system_fields: boolean; needs_rejoin?: boolean;

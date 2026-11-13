@@ -686,6 +686,9 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
     qualityRef.current?.stop();
     qualityRef.current = new QualityManager(room, setQuality, (text) => setNotice({ kind: "info", text }));
     qualityRef.current.start();
+    // качество камеры по умолчанию задаёт руководитель комнаты; применяется теми же уровнями, что меню «Качество видео» (участник потом может выбрать своё)
+    const defaultLevel = (LEVELS as readonly string[]).includes(info.client.camera_quality ?? "") ? (info.client.camera_quality as (typeof LEVELS)[number]) : null;
+    if (defaultLevel) void qualityRef.current.setManual(defaultLevel);
     tl.mark("mediaConnected");
     phase("ICE_CONNECTED");
     tl.mark("active");

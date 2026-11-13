@@ -144,6 +144,8 @@ class Room(Base):
     # auto — запись идёт, пока в комнате есть участники (для презентационных комнат включается по умолчанию, если администратор разрешил видеозапись).
     video_mode: Mapped[str] = mapped_column(String(8), default="off", server_default="off", nullable=False)
     video_quality: Mapped[str] = mapped_column(String(8), default="720p", server_default="720p", nullable=False)   # 720p | 1080p
+    # Качество камеры участников по умолчанию (при входе в комнату; участник может сменить у себя): auto | high | medium | low | min | off. «min» — 180p, до 100 кбит/с, 5 кадров/с.
+    camera_quality: Mapped[str] = mapped_column(String(8), default="min", server_default="min", nullable=False)
     # Трансляция (LiveKit Egress → HLS и внешние площадки, зрители смотрят без подключения к LiveKit). Включается на комнате любого типа; тип «broadcast» включает её по умолчанию.
     live_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     live_start: Mapped[str] = mapped_column(String(8), default="manual", server_default="manual", nullable=False)      # manual | auto (эфир начинается с первым выступающим)

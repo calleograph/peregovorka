@@ -22,4 +22,4 @@ def build_client_config(room: Room, screen, result, *, su: SessionUser | None = 
         can_view_board=roles.can_view_board(room, su, guest=guest), board_access=roles.board_level(room),
         recording_allowed=bool(room.record_audio), attachments=attachments, idle_end="off" if not idle_minutes else "standard", idle_minutes=idle_minutes,
         mute_on_join=room.mute_on_join, welcome_message=room.welcome_message or None,
-        broadcast=roles.is_broadcast(room), screen_single_layer=roles.is_broadcast(room) or bool(room.live_enabled), screen_max_height=1440 if roles.is_broadcast(room) and room.live_quality == "1440p" else 1080)
+        broadcast=roles.is_broadcast(room), camera_quality=getattr(room, "camera_quality", "min") or "min", screen_single_layer=roles.is_broadcast(room) or bool(room.live_enabled), screen_max_height=1440 if roles.is_broadcast(room) and room.live_quality == "1440p" else 1080)

@@ -40,7 +40,7 @@ router = APIRouter(prefix="/rooms/{room_id}/manage", tags=["room-manage"])
 
 # поля, которые руководитель может менять; всё остальное — только администратор
 LEADER_FIELDS = ("name", "description", "max_participants", "camera_allowed", "screen_share_allowed", "board_allowed", "board_access", "room_type", "auto_record",
-                 "record_audio", "recording_mode", "video_mode", "video_quality", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode", "mask_profanity", "idle_end_minutes")
+                 "record_audio", "recording_mode", "video_mode", "video_quality", "camera_quality", "mute_on_join", "welcome_message", "guest_access_enabled", "protocol_instructions", "auto_map_mode", "encrypt_storage", "e2ee_mode", "mask_profanity", "idle_end_minutes")
 # изменение этих полей отражается на токенах: у уже вошедших участников вступает в силу при следующем входе
 TOKEN_FIELDS = {"camera_allowed", "screen_share_allowed", "room_type", "board_access"}
 
@@ -67,6 +67,7 @@ class RoomManageOut(BaseModel):
     recording_mode: str = "audio"
     video_mode: str = "off"
     video_quality: str = "720p"
+    camera_quality: str = "min"          # качество камеры участников по умолчанию (auto | high | medium | low | min | off)
     video_enabled: bool = False          # администратор разрешил видеозапись на сервере (иначе режим комнаты ничего не запускает)
     transcription_enabled: bool
     mute_on_join: bool
@@ -116,6 +117,7 @@ class RoomManagePatch(BaseModel):
     recording_mode: str | None = Field(default=None, pattern="^(audio|audio_video|off)$")
     video_mode: str | None = Field(default=None, pattern="^(off|manual|auto)$")
     video_quality: str | None = Field(default=None, pattern="^(720p|1080p)$")
+    camera_quality: str | None = Field(default=None, pattern="^(auto|high|medium|low|min|off)$")
     mute_on_join: bool | None = None
     mask_profanity: bool | None = None
     idle_end_minutes: int | None = Field(default=None, ge=0, le=720)
@@ -201,7 +203,7 @@ async def _out(db: AsyncSession, room: Room, su: SessionUser, request: Request |
         **extra,
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled, max_participants=room.max_participants,
         has_password=bool(room.password_hash), camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
-        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode, video_mode=room.video_mode, video_quality=room.video_quality,
+        board_allowed=room.board_allowed, board_access=room.board_access, board_level=roles.board_level(room), room_type=room.room_type, auto_record=room.auto_record, encrypt_storage=room.encrypt_storage, e2ee_mode=room.e2ee_mode, record_audio=room.record_audio, recording_mode=room.recording_mode, video_mode=room.video_mode, video_quality=room.video_quality, camera_quality=room.camera_quality,
         transcription_enabled=room.transcription_enabled, mute_on_join=room.mute_on_join, mask_profanity=room.mask_profanity, idle_end_minutes=room.idle_end_minutes, welcome_message=room.welcome_message,
         guest_access_enabled=room.guest_access_enabled, auto_map_mode=room.auto_map_mode, guest_token=room.guest_token, lifetime=room.lifetime, lifecycle=room.lifecycle,
         acl=[{"subject_type": a.subject_type, "subject_ref": a.subject_ref, "display_name": a.display_name} for a in room.acl],

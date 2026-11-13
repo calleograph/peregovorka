@@ -28,7 +28,7 @@ from .schemas import AclEntryIn, RoomAdminOut, RoomCreateIn, RoomPatchIn
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _PATCHABLE = ("name", "description", "is_enabled", "max_participants", "transcription_enabled", "record_audio",
-              "camera_allowed", "screen_share_allowed", "text_retention_days", "audio_retention_days", "video_retention_days",
+              "camera_allowed", "camera_quality", "screen_share_allowed", "text_retention_days", "audio_retention_days", "video_retention_days",
               "text_retention_custom", "audio_retention_custom", "video_retention_custom", "protocol_instructions", "history_access",
               "anonymize_mode", "llm_profile_id", "anonymize_profile", "mute_on_join", "mask_profanity", "idle_end_minutes", "welcome_message",
               "guest_access_enabled", "room_type", "auto_record", "board_allowed", "board_access", "encrypt_storage", "e2ee_mode")
@@ -89,7 +89,7 @@ async def _out(db: AsyncSession, room: Room) -> RoomAdminOut:
         id=room.id, slug=room.slug, name=room.name, description=room.description, is_enabled=room.is_enabled,
         max_participants=room.max_participants, has_password=bool(room.password_hash),
         transcription_enabled=room.transcription_enabled, record_audio=room.record_audio,
-        camera_allowed=room.camera_allowed, screen_share_allowed=room.screen_share_allowed,
+        camera_allowed=room.camera_allowed, camera_quality=room.camera_quality, screen_share_allowed=room.screen_share_allowed,
         text_retention_days=room.text_retention_days, audio_retention_days=room.audio_retention_days, video_retention_days=room.video_retention_days,
         text_retention_custom=room.text_retention_custom, audio_retention_custom=room.audio_retention_custom, video_retention_custom=room.video_retention_custom,
         protocol_instructions=room.protocol_instructions, history_access=room.history_access,
@@ -138,7 +138,7 @@ async def create_room(body: RoomCreateIn, request: Request, su: SessionUser = De
         max_participants=body.max_participants,
         password_hash=hash_room_password(body.password) if body.password else None,
         transcription_enabled=body.transcription_enabled, record_audio=body.record_audio,
-        camera_allowed=body.camera_allowed, screen_share_allowed=body.screen_share_allowed,
+        camera_allowed=body.camera_allowed, camera_quality=body.camera_quality, screen_share_allowed=body.screen_share_allowed,
         # срок, переданный явно, — свой у комнаты; иначе комната наследует общий срок сервера (Администрирование → Общие → «Сроки хранения»)
         **_retention_fields(body),
         protocol_instructions=body.protocol_instructions, history_access=body.history_access,

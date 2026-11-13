@@ -8,7 +8,7 @@ const HOVER = typeof window !== "undefined" && typeof window.matchMedia === "fun
  * Внутри `<label>` значок не переключает поле (событие гасится) и не отнимает у поля подпись: это не <button>, а элемент с ролью кнопки.
  * `doc` — ссылка «Подробнее» на статью вики.
  */
-export default function InfoTip({ children, doc, label = "Пояснение" }: { children: ReactNode; doc?: string; label?: string }) {
+export default function InfoTip({ children, doc, label = "Пояснение", tone }: { children: ReactNode; doc?: string; label?: string; tone?: "danger" }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const id = useId();
@@ -25,7 +25,7 @@ export default function InfoTip({ children, doc, label = "Пояснение" }:
   useEffect(() => () => window.clearTimeout(leave.current), []);
   const toggle = () => { const next = !(open && pinned); setPinned(next); setOpen(next); };
   return (
-    <span className="infotip" ref={box}
+    <span className={`infotip${tone ? ` infotip-${tone}` : ""}`} ref={box}
           onMouseEnter={HOVER ? () => { window.clearTimeout(leave.current); setOpen(true); } : undefined}
           onMouseLeave={HOVER ? () => { if (!pinned) leave.current = window.setTimeout(() => setOpen(false), 150); } : undefined}>
       {/* не <button>: внутри <label> кнопка стала бы связанным с меткой элементом и поле ввода потеряло бы подпись */}

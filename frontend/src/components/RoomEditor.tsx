@@ -34,7 +34,7 @@ const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
 export interface RoomForm {
   name: string; description: string; max_participants: number; password: string; clearPassword: boolean; welcome_message: string; mute_on_join: boolean; mask_profanity: boolean; idle_end_minutes: number;
   room_type: RoomType; encrypt_storage: boolean; e2ee_mode: "off" | "full" | "trusted"; record_audio: boolean; auto_record: boolean; recording_mode: "audio" | "audio_video" | "off";
-  video_mode: "off" | "manual" | "auto"; video_quality: "720p" | "1080p"; camera_allowed: boolean; screen_share_allowed: boolean; board_access: string;
+  video_mode: "off" | "manual" | "auto"; video_quality: "720p" | "1080p"; camera_quality: CameraQuality; camera_allowed: boolean; screen_share_allowed: boolean; board_access: string;
   guest_access_enabled: boolean; acl: AclEntry[]; moderators: AclEntry[]; mail_delivery: MailDeliverySpec;
   protocol_instructions: string; llm: LlmChoice; llm_summary: LlmChoice; sip: RoomSip; auto_map_mode: "inherit" | "on" | "off";
   // только администратор сервера
@@ -43,17 +43,23 @@ export interface RoomForm {
 
 export const newRoomForm = (): RoomForm => ({
   name: "", description: "", max_participants: 20, password: "", clearPassword: false, welcome_message: "", mute_on_join: false, mask_profanity: true, idle_end_minutes: 30,
-  room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p",
+  room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p", camera_quality: "min",
   camera_allowed: true, screen_share_allowed: true, board_access: "auto", guest_access_enabled: false, acl: [], moderators: [], mail_delivery: emptySpec(),
   protocol_instructions: "", llm: emptyChoice(), llm_summary: emptyChoice(), sip: emptySip(), auto_map_mode: "inherit",
   slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", video_retention_days: "", retention_custom: { text: false, audio: false, video: false }, anonymize_mode: "off", anonymize_profile: "",
 });
 
+/** Качество камеры по умолчанию в комнате: те же режимы, что в меню «Качество видео» у участника (quality/adaptive.ts), плюс «Автоматически». */
+export type CameraQuality = "auto" | "high" | "medium" | "low" | "min" | "off";
+export const CAMERA_QUALITY_OPTIONS: [CameraQuality, string][] = [
+  ["auto", "Автоматически"], ["high", "Высокое (720p, до 1,5 Мбит/с)"], ["medium", "Среднее (360p, до 600 кбит/с)"], ["low", "Низкое (180p, до 250 кбит/с)"],
+  ["min", "Минимальное (180p, до 100 кбит/с, 5 кадров/с) — рекомендуется"], ["off", "Только звук"],
+];
 export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
   ...newRoomForm(),
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, mask_profanity: r.mask_profanity ?? true, idle_end_minutes: r.idle_end_minutes ?? 30,
   room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
-  video_mode: r.video_mode ?? "off", video_quality: r.video_quality ?? "720p", camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
+  video_mode: r.video_mode ?? "off", video_quality: r.video_quality ?? "720p", camera_quality: (r.camera_quality as CameraQuality | undefined) ?? "min", camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
   board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",
@@ -69,7 +75,7 @@ export function managePayload(f: RoomForm): Record<string, unknown> {
   return {
     name: f.name.trim(), description: f.description.trim() || null, max_participants: f.max_participants, welcome_message: f.welcome_message.trim() || null, mute_on_join: f.mute_on_join,
     mask_profanity: f.mask_profanity, idle_end_minutes: f.idle_end_minutes, room_type: f.room_type, record_audio: f.record_audio || f.auto_record, auto_record: f.auto_record, recording_mode: f.recording_mode,
-    video_mode: f.video_mode, video_quality: f.video_quality, encrypt_storage: f.encrypt_storage, e2ee_mode: f.e2ee_mode, camera_allowed: f.camera_allowed, screen_share_allowed: f.screen_share_allowed,
+    video_mode: f.video_mode, video_quality: f.video_quality, camera_quality: f.camera_quality, encrypt_storage: f.encrypt_storage, e2ee_mode: f.e2ee_mode, camera_allowed: f.camera_allowed, screen_share_allowed: f.screen_share_allowed,
     board_allowed: f.board_access !== "private" && f.board_access !== "leaders", board_access: f.board_access, guest_access_enabled: f.guest_access_enabled, acl: f.acl, moderators: f.moderators,
     mail_delivery: f.mail_delivery, protocol_instructions: f.protocol_instructions.trim() || null, llm: f.llm, llm_summary: f.llm_summary, sip: f.sip, auto_map_mode: f.auto_map_mode,
     anonymize_mode: f.anonymize_mode, anonymize_profile: f.anonymize_profile,
@@ -236,6 +242,9 @@ export default function RoomEditor({ roomId, admin: adminProp, adminRoom, onClos
               <Check checked={form.camera_allowed} onChange={(v) => set("camera_allowed", v)} title="Камера" />
               <Check checked={form.screen_share_allowed} onChange={(v) => set("screen_share_allowed", v)} title="Показ экрана" />
             </div>
+            <label><span className="field-title">Качество камеры по умолчанию<InfoTip tone="danger" label="Предупреждение">Рекомендуем минимальное качество. Повышение качества камеры увеличивает нагрузку на сеть и устройства участников, особенно при большом количестве включенных камер.</InfoTip></span>
+              <select value={form.camera_quality} onChange={(e) => set("camera_quality", e.target.value as CameraQuality)}>{CAMERA_QUALITY_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+            <p className="muted small">Применяется, когда участник входит в комнату. Каждый участник может изменить качество своей камеры в меню «Ещё» → «Качество видео».</p>
             <F title="Общая доска" tip="Руководители рисуют всегда. «Только у руководителей» — для закрытых презентаций: участники не видят доску. Слово (микрофон) право рисовать не даёт, если не выбран вариант «и те, кому дали слово». В презентации права участников действуют, пока у них есть слово.">
               <select value={form.board_access} onChange={(e) => set("board_access", e.target.value)}>{BOARD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></F>
           </fieldset>
