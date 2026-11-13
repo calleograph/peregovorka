@@ -102,7 +102,7 @@ function qualityTitle(q: QualityState): string {
   if (q.limited) parts.push(`ограничение: ${q.limited === "bandwidth" ? "канал" : q.limited === "cpu" ? "процессор" : q.limited}`);
   if (q.lossPct !== undefined) parts.push(`потери ${q.lossPct.toFixed(1)}%`);
   if (q.rttMs !== undefined) parts.push(`задержка ${Math.round(q.rttMs)} мс`);
-  if (q.cameraSuspended) parts.push("камера отключена из-за канала — звук продолжается");
+  if (q.cameraSuspended) parts.push(q.manual && q.level === "off" ? "камера выключена: режим «Только звук»" : "камера отключена из-за канала — звук продолжается");
   return parts.join(" · ") + ". Звук всегда в приоритете.";
 }
 

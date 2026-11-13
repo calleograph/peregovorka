@@ -1,5 +1,5 @@
 import { Track, type LocalVideoTrack, type Room } from "livekit-client";
-import { AdaptiveController, applyLevelToEncodings, cameraAllowed, type ConnQuality, type Decision, type Sample, type VideoLevel } from "./adaptive";
+import { AdaptiveController, applyLevelToEncodings, cameraAllowed, type ConnQuality, type Decision, type EncodingLike, type Sample, type VideoLevel } from "./adaptive";
 import { type Base, ladderNote, ladderParams, ScreenLadder } from "./screenLadder";
 
 export interface QualityState {
@@ -31,6 +31,8 @@ export class QualityManager {
   private timer: ReturnType<typeof setInterval> | undefined;
   private prev: { sent: number; lost: number } | undefined;
   private suspended = false;
+  private camBase: EncodingLike[] | undefined;         // параметры слоёв камеры до первого применения уровня: от них считаются все уровни
+  private camBaseOf: RTCRtpSender | undefined;           // отправитель, для которого снята база: новая публикация камеры — новый отправитель — новая база
   private state: QualityState = { level: "high", manual: false, conn: "unknown", cameraSuspended: false };
   private ladder = new ScreenLadder();
   private screenAuto = true;
@@ -55,7 +57,12 @@ export class QualityManager {
   async onCameraPublished(): Promise<void> {
     this.suspended = false;
     await this.prioritiseAudio();
-    if (this.ctl.level !== "off") await this.applyEncodings(this.ctl.level);
+    if (this.ctl.level === "off") {
+      // «Только звук» (в том числе как значение комнаты): видео не идёт, камера не должна уйти в полном качестве
+      this.suspended = true;
+      try { await this.room.localParticipant.setCameraEnabled(false); } catch { /* камера уже выключена */ }
+      this.onNotice("Камера не включена: у вас режим «Только звук». Выберите качество видео в меню «Ещё» → «Качество видео», и камера включится.");
+    } else await this.applyEncodings(this.ctl.level);
     this.emit({});
   }
 
@@ -165,7 +172,8 @@ export class QualityManager {
     if (!sender) return;
     const p = sender.getParameters();
     if (!p.encodings?.length) return;
-    p.encodings = applyLevelToEncodings(p.encodings, level) as RTCRtpEncodingParameters[];
+    if (this.camBaseOf !== sender) { this.camBase = p.encodings.map((e) => ({ ...e })); this.camBaseOf = sender; }
+    p.encodings = applyLevelToEncodings(p.encodings, level, this.camBase) as RTCRtpEncodingParameters[];
     await sender.setParameters(p);
   }
 

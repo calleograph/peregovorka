@@ -90,23 +90,31 @@ export const cameraAllowed = (l: VideoLevel): l is Exclude<VideoLevel, "off"> =>
 
 export interface EncodingLike { rid?: string; maxBitrate?: number; maxFramerate?: number; scaleResolutionDownBy?: number; active?: boolean; priority?: string; networkPriority?: string }
 
+/** «Минимальное»: на нижние слои simulcast отдаётся по столько, чтобы все слои вместе укладывались в потолок уровня (100 кбит/с), а не 100 + ещё столько же сверху. */
+export const MIN_LOWER_LAYER_BPS = 20_000;
+export const MIN_TOP_LAYER_BPS = 50_000;
+
 /**
- * Применяет уровень к кодировкам отправителя: верхний слой (наименьший scaleResolutionDownBy) получает параметры уровня, остальные слои — не больше своего потолка.
- * Возвращает новый массив (исходный не меняется). Для одиночной кодировки (без simulcast) применяются те же параметры.
+ * Применяет уровень к кодировкам отправителя: верхний слой (наименьший scaleResolutionDownBy) получает параметры уровня, нижние слои — не больше своего потолка и не больше
+ * частоты кадров уровня. На «Минимальном» все слои вместе укладываются в потолок уровня.
+ * `base` — параметры слоёв до первого применения (то, что поставил SDK): расчёт идёт от них, а не от результата прошлого применения, поэтому возврат на «Высокое» восстанавливает
+ * нижние слои, а не оставляет их урезанными навсегда. Возвращает новый массив (исходный не меняется). Одиночная кодировка получает те же параметры.
  */
-export function applyLevelToEncodings(encodings: EncodingLike[], level: Exclude<VideoLevel, "off">): EncodingLike[] {
+export function applyLevelToEncodings(encodings: EncodingLike[], level: Exclude<VideoLevel, "off">, base: EncodingLike[] = encodings): EncodingLike[] {
   const spec = LEVEL_SPEC[level];
-  const ordered = encodings.map((e, idx) => ({ e, idx })).sort((a, b) => (a.e.scaleResolutionDownBy ?? 1) - (b.e.scaleResolutionDownBy ?? 1));
+  const ordered = encodings.map((e, idx) => ({ e: base[idx] ?? e, idx })).sort((a, b) => (a.e.scaleResolutionDownBy ?? 1) - (b.e.scaleResolutionDownBy ?? 1));
   const out = encodings.map((e) => ({ ...e }));
-  ordered.forEach(({ idx }, rank) => {
+  const lowers = Math.max(0, encodings.length - 1);
+  ordered.forEach(({ e, idx }, rank) => {
     if (rank === 0) {
-      out[idx].maxBitrate = spec.maxBitrate;
+      out[idx].maxBitrate = level === "min" ? Math.max(MIN_TOP_LAYER_BPS, spec.maxBitrate - MIN_LOWER_LAYER_BPS * lowers) : spec.maxBitrate;
       out[idx].maxFramerate = spec.maxFramerate;
       out[idx].scaleResolutionDownBy = spec.scaleDown;
     } else {
-      const cap = Math.max(40_000, Math.floor(spec.maxBitrate / (rank + 1)));
-      out[idx].maxBitrate = Math.min(out[idx].maxBitrate ?? cap, cap);
-      out[idx].scaleResolutionDownBy = Math.max(out[idx].scaleResolutionDownBy ?? 1, spec.scaleDown * (rank + 1));
+      const cap = level === "min" ? MIN_LOWER_LAYER_BPS : Math.max(40_000, Math.floor(spec.maxBitrate / (rank + 1)));
+      out[idx].maxBitrate = Math.min(e.maxBitrate ?? cap, cap);
+      out[idx].maxFramerate = Math.min(e.maxFramerate ?? spec.maxFramerate, spec.maxFramerate);
+      out[idx].scaleResolutionDownBy = Math.max(e.scaleResolutionDownBy ?? 1, spec.scaleDown * (rank + 1));
     }
     out[idx].priority = "low"; out[idx].networkPriority = "low";            // видео уступает звуку
   });

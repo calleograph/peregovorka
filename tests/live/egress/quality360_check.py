@@ -59,6 +59,8 @@ def main():
             if acc.get("origin_path"): break
             time.sleep(2)
         path = acc.get("origin_path") or acc["path"]
+        w = vc.post(f"/api/v1/live/{token}/access", json={"viewer": viewer, "want_low": True}).json()
+        t("эфир 360p: перекодированная дорожка «Низкое (360p)» не предлагается", "low_path" not in w and not w.get("low_wait"), str({k: v for k, v in w.items() if k.startswith("low")}))
         time.sleep(10)
         pl = httpx.get(BASE + path, timeout=20).text
         seg = [l for l in pl.splitlines() if l.endswith(".ts")][-1]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AdaptiveController, applyLevelToEncodings, judge, LEVEL_SPEC } from "./adaptive";
+import { AdaptiveController, applyLevelToEncodings, judge, LEVEL_SPEC, MIN_LOWER_LAYER_BPS } from "./adaptive";
 import { lossPercent } from "./manager";
 
 const good = { quality: "good" as const };
@@ -77,6 +77,22 @@ describe("параметры кодировок", () => {
     expect(out[1].maxBitrate).toBeLessThanOrEqual(LEVEL_SPEC.low.maxBitrate / 2);
     expect(out[0].maxBitrate).toBeLessThanOrEqual(out[1].maxBitrate!);
     expect(enc[2].maxBitrate).toBe(1_500_000);                  // исходный массив не изменён
+  });
+  const sdk = () => [{ rid: "q", scaleResolutionDownBy: 4, maxBitrate: 200_000, maxFramerate: 15 }, { rid: "h", scaleResolutionDownBy: 2, maxBitrate: 500_000, maxFramerate: 20 }, { rid: "f", scaleResolutionDownBy: 1, maxBitrate: 1_500_000, maxFramerate: 24 }];
+  it("«Минимальное» — действительно минимум: все слои вместе до 100 кбит/с и не больше 5 кадров/с (раньше нижние слои добавляли ≈90 кбит/с и шли до 20 кадров/с)", () => {
+    const out = applyLevelToEncodings(sdk(), "min");
+    expect(out.reduce((a, e) => a + (e.maxBitrate ?? 0), 0)).toBeLessThanOrEqual(LEVEL_SPEC.min.maxBitrate);
+    expect(out.every((e) => (e.maxFramerate ?? 99) <= LEVEL_SPEC.min.maxFramerate)).toBe(true);
+    expect(out[2]).toMatchObject({ scaleResolutionDownBy: 4 });
+    expect(out[0].maxBitrate).toBe(MIN_LOWER_LAYER_BPS);
+  });
+  it("возврат на «Высокое» от исходных параметров восстанавливает нижние слои, а не оставляет их урезанными", () => {
+    const base = sdk();
+    const min = applyLevelToEncodings(base, "min", base);
+    const high = applyLevelToEncodings(min, "high", base);
+    expect(high[2]).toMatchObject({ maxBitrate: 1_500_000, maxFramerate: 24, scaleResolutionDownBy: 1 });
+    expect(high[1]).toMatchObject({ maxFramerate: 20, scaleResolutionDownBy: 2 });     // как у SDK, а не 5 кадров/с и масштаб 8 от «Минимального»
+    expect(high[0].maxFramerate).toBe(15);
   });
   it("одна кодировка без simulcast тоже получает параметры уровня", () => {
     expect(applyLevelToEncodings([{}], "medium")[0]).toMatchObject({ maxBitrate: 600_000, maxFramerate: 15, scaleResolutionDownBy: 2 });

@@ -507,10 +507,10 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
                 from ..services.live import LIVE_QUALITY  # noqa: PLC0415
 
                 out.update(audio_path=out["path"].rsplit("/", 1)[0] + "/audio/index.m3u8", need_kbps=LIVE_QUALITY.get(v.b.quality, LIVE_QUALITY["720p"])[2] + 128)
-                from ..services.live import LOW_NEED_KBPS  # noqa: PLC0415
+                from ..services.live import LOW_NEED_KBPS, low_useful  # noqa: PLC0415
 
                 # низкое качество (360p) запускается по запросу: пока процесса нет, зритель получает low_wait и спрашивает снова
-                if v.b is not None and v.b.status in ("starting", "live"):
+                if v.b is not None and v.b.status in ("starting", "live") and low_useful(v.b.quality):
                     live = request.app.state.live
                     if body.want_low:
                         await live.low_hold(v.b.id)

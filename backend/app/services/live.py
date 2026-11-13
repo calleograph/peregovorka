@@ -35,6 +35,12 @@ from .live_destinations import RELAY_KEY
 LOW_KEY = "live:low:{}"                 # зрителю нужно низкое качество: пока ключ жив, процесс «b-…» в службе ретрансляции держится
 LOW_HOLD_S = 90
 LOW_NEED_KBPS = 720                     # сколько нужно зрителю для низкого качества: 450 кбит/с видео + звук + запас
+LOW_HEIGHT = 360
+
+
+def low_useful(quality: str) -> bool:
+    """Низкое качество (перекодирование в 360p) имеет смысл, только если сам эфир выше 360p: иначе это тот же размер, а сервер зря тратит около ядра процессора."""
+    return LIVE_QUALITY.get(quality, LIVE_QUALITY["720p"])[1] > LOW_HEIGHT
 from .livekit import list_present_identities, remove_viewers
 from .storage import meeting_relpath
 from .video_rec import ACTIVE_LK, QUALITY, STALL_GRACE_S, EgressApi, VideoError, VideoRecorder
