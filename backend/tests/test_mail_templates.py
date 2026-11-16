@@ -151,3 +151,24 @@ def test_privacy_texts_are_public_editable_by_admin_and_validated(client):
     client.cookies.clear()
     got = client.get("/api/v1/public/privacy").json()
     assert got["operator"] == "ООО Пример" and got["policy_url"].startswith("https://") and set(got) == {"cookie_text", "operator", "purpose", "data_types", "cookies", "retention", "contact", "policy_url"}
+
+
+def test_one_send_to_many_recipients_builds_the_documents_once(client, fake_smtp, monkeypatch):  # noqa: F811
+    import app.services.mail_delivery as md
+    calls: list[str] = []
+    real = md.to_pdf
+
+    def counting(text, title):
+        calls.append(title)
+        return real(text, title)
+    monkeypatch.setattr(md, "to_pdf", counting)
+    add_profile(client)
+    room = make_room(client, moderators=LEADERS)
+    mid = finished_meeting(client, room)
+    login(client, "carol")
+    emails = [f"u{i}@corp.test" for i in range(4)]
+    assert client.post(f"/api/v1/meetings/{mid}/delivery/send", json={"kinds": ["protocol"], "emails": emails, "formats": ["pdf"]}).status_code == 200
+    assert run_queue(client) == 4
+    sent = fake_smtp.sent[-4:]
+    assert sorted(m["To"] for m in sent) == emails and all(any(p.get_filename().endswith(".pdf") for p in m.iter_attachments()) for m in sent)
+    assert len(calls) == 1, "PDF одной рассылки собирается один раз, а не на каждого получателя"

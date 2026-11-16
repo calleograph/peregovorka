@@ -245,3 +245,17 @@ def test_schedule_runs_only_when_due_and_can_be_disabled(client, settings):
     login(client, "root")
     assert client.put("/api/v1/admin/settings/storage_sync", json={"interval_hours": 0}).status_code == 422
     assert client.get("/api/v1/admin/storage-sync").json()["runs"][0]["trigger"] == "auto"
+
+
+def test_recording_stays_found_in_the_storage_it_was_exported_to_after_the_audio_storage_is_switched(client, settings):
+    prof(client, settings)
+    mid, _ = finished_meeting(client, settings)
+    assert sync(client)["missing"] == 0
+    login(client, "root")
+    new = client.post("/api/v1/admin/storages", json={"name": "Новый сервер", "kind": "local", "config": {"local_path": str(Path(settings.data_dir) / "fs2")}}).json()
+    put_settings(client, "audio_storage", enabled=True, profile_id=new["id"], keep_local_copy=False)        # переключили без переноса данных
+    rep = sync(client)
+    assert rep["missing"] == 0 and rep["unavailable"] == 0, "старая запись проверяется там, куда её выгрузили, а не в новом хранилище"
+    assert {r["file_state"] for r in rec_rows(client)} == {"ok"}
+    rec = rec_rows(client)[0]
+    assert client.get(f"/api/v1/meetings/{mid}/recordings/{rec['id']}").status_code == 200

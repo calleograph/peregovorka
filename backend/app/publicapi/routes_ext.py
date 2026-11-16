@@ -11,7 +11,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import client_ip, get_db
-from ..models import ApiClient, ApiJob, Recording, utcnow
+from ..models import ApiClient, ApiJob, ApiKey, Recording, utcnow
 from ..services.audit import write_audit
 from ..services.reconcile import mark_missing
 from ..services.storage import StorageError, StorageNotFound
@@ -163,7 +163,7 @@ async def download_url(meeting_id: str, recording_id: str, request: Request, p: 
         raise ApiError(410, "file_missing", "Файл записи удалён из хранилища.")
     cfg = await api_config(request, db)
     s = request.app.state.settings
-    token, exp = downloads.issue(s.app_master_key, s.internal_api_token, client_id=str(p.client_id), recording_id=str(rec.id), ttl_s=int(cfg.download_url_ttl_s))
+    token, exp = downloads.issue(s.app_master_key, s.internal_api_token, client_id=str(p.client_id), recording_id=str(rec.id), ttl_s=int(cfg.download_url_ttl_s), key_id=p.key_id)
     await write_audit(db, actor_user_id=None, actor_name=f"api:{p.client_name}", action="api.recording.download_url", target_type="recording", target_id=str(rec.id),
                       details={"key": p.key_id, "ttl_s": int(cfg.download_url_ttl_s)}, ip=client_ip(request))
     await db.commit()
@@ -189,6 +189,9 @@ async def download(token: str, request: Request, db: AsyncSession = Depends(get_
     request.state.principal = p
     if not client.enabled:
         raise ApiError(403, "client_disabled", "Сервисная учётная запись отключена.")
+    key = (await db.execute(select(ApiKey).where(ApiKey.key_id == str(data.get("k") or ""), ApiKey.client_id == client.id))).scalar_one_or_none()
+    if key is None or key.revoked_at is not None or (key.expires_at is not None and key.expires_at <= utcnow()):
+        raise ApiError(403, "key_revoked", "Ключ API, по которому выдана ссылка, отозван или истёк.")       # отозванный (например, утёкший) ключ не продлевает доступ ссылками
     if not p.has("recordings:download"):
         raise ApiError(403, "insufficient_scope", "Не хватает права «recordings:download».", extra={"required_scope": "recordings:download"})
     rec = await db.get(Recording, uuid.UUID(data["r"]))

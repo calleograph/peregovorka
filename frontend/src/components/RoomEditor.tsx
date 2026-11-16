@@ -43,7 +43,7 @@ export interface RoomForm {
 
 export const newRoomForm = (): RoomForm => ({
   name: "", description: "", max_participants: 20, password: "", clearPassword: false, welcome_message: "", mute_on_join: false, mask_profanity: true, idle_end_minutes: 30,
-  room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p", camera_quality: "min",
+  room_type: "regular", encrypt_storage: false, e2ee_mode: "off", record_audio: false, auto_record: false, recording_mode: "audio", video_mode: "off", video_quality: "720p", camera_quality: "low",
   camera_allowed: true, screen_share_allowed: true, board_access: "auto", guest_access_enabled: false, acl: [], moderators: [], mail_delivery: emptySpec(),
   protocol_instructions: "", llm: emptyChoice(), llm_summary: emptyChoice(), sip: emptySip(), auto_map_mode: "inherit",
   slug: "", is_enabled: true, history_access: "admin", text_retention_days: "", audio_retention_days: "", video_retention_days: "", retention_custom: { text: false, audio: false, video: false }, anonymize_mode: "off", anonymize_profile: "",
@@ -59,7 +59,7 @@ export const toRoomForm = (r: RoomManage, a?: RoomAdmin): RoomForm => ({
   ...newRoomForm(),
   name: r.name, description: r.description ?? "", max_participants: r.max_participants, welcome_message: r.welcome_message ?? "", mute_on_join: r.mute_on_join, mask_profanity: r.mask_profanity ?? true, idle_end_minutes: r.idle_end_minutes ?? 30,
   room_type: r.room_type, encrypt_storage: !!r.encrypt_storage, e2ee_mode: r.e2ee_mode ?? "off", record_audio: r.record_audio, auto_record: r.auto_record, recording_mode: r.recording_mode ?? "audio",
-  video_mode: r.video_mode ?? "off", video_quality: r.video_quality ?? "720p", camera_quality: (r.camera_quality as CameraQuality | undefined) ?? "min", camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
+  video_mode: r.video_mode ?? "off", video_quality: r.video_quality ?? "720p", camera_quality: (r.camera_quality as CameraQuality | undefined) ?? "low", camera_allowed: r.camera_allowed, screen_share_allowed: r.screen_share_allowed,
   board_access: r.board_access && r.board_access !== "auto" ? r.board_access : (r.board_allowed ? "auto" : "leaders"), guest_access_enabled: r.guest_access_enabled,
   acl: r.acl, moderators: r.moderators, mail_delivery: r.mail_delivery && (r.mail_delivery.enabled || r.mail_delivery.materials.length) ? r.mail_delivery : emptySpec(),
   protocol_instructions: r.protocol_instructions ?? "", llm: r.llm ?? emptyChoice(), llm_summary: r.llm_summary ?? emptyChoice(), sip: r.sip ?? emptySip(), auto_map_mode: r.auto_map_mode ?? "inherit",

@@ -303,9 +303,14 @@ class Destinations:
                         pass
                 row.status, row.last_error = new, err
                 changed = True
-        for rid in st.keys() - want.keys():                 # выключены или удалены: процесс площадки больше не нужен
-            if not rid.startswith(("a-", "b-")):            # «a-…» (только звук) и «b-…» (низкое качество; префикс из hex-символов — так требует служба ретрансляции) — дорожки для зрителей, их ведёт LiveBroadcaster.audio_sync/low_sync
-                await self.relay.delete(rid)
+        # служба одна на все эфиры: убираем только выключенные площадки этой комнаты и процессы удалённых площадок, а не площадки соседнего эфира
+        extra = {rid for rid in st.keys() - want.keys() if not rid.startswith(("a-", "b-"))}   # «a-…»/«b-…» — дорожки зрителей, их ведёт LiveBroadcaster.audio_sync/low_sync
+        if extra:
+            known = {str(i) for i in (await db.execute(select(LiveDestination.id))).scalars()}
+            own = {str(r.id) for r in rows}
+            for rid in extra:
+                if rid in own or rid not in known:
+                    await self.relay.delete(rid)
         if changed:
             await db.commit()
 

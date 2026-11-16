@@ -9,10 +9,10 @@ from app.models import Room
 from app.services.live import LIVE_QUALITY, low_useful
 
 
-def test_default_is_minimum_for_new_rooms_and_for_the_client_config():
-    assert Room.__table__.c.camera_quality.default.arg == "min" and Room.__table__.c.camera_quality.server_default.arg == "min"
-    assert ClientConfig.model_fields["camera_quality"].default == "min"
-    assert RoomCreateIn(slug="a-b", name="x").camera_quality == "min"
+def test_default_is_low_for_new_rooms_and_for_the_client_config():
+    assert Room.__table__.c.camera_quality.default.arg == "low" and Room.__table__.c.camera_quality.server_default.arg == "low"
+    assert ClientConfig.model_fields["camera_quality"].default == "low"
+    assert RoomCreateIn(slug="a-b", name="x").camera_quality == "low"
 
 
 @pytest.mark.parametrize("q", ["auto", "high", "medium", "low", "min", "off"])

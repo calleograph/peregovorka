@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -250,11 +251,15 @@ PROBLEM_TEXT = {"no_email": "в каталоге не указан адрес э
                 "domain_not_allowed": "домен адреса не разрешён политикой отправки"}
 
 
+ATT_CACHE_S = 600
+
+
 class DeliveryService:
     def __init__(self, sm: async_sessionmaker[AsyncSession], settings_svc: SettingsService, mail: MailService, protocols, directory, public_url: str, journal=None):
         self._sm = sm
         self._svc = settings_svc
         self.mail = mail
+        self._att_cache: dict[tuple, tuple[float, tuple]] = {}      # вложения одной рассылки: собираются один раз, а не на каждого получателя
         self.protocols = protocols
         self.directory = directory
         self._public_url = public_url.rstrip("/")
@@ -538,12 +543,26 @@ class DeliveryService:
                 files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.html", FORMAT_MIME["html"], m.html))
                 continue
             for fmt in fmts:
-                data = (to_docx(m.md, m.title) if fmt == "docx" else to_pdf(m.md, m.title) if fmt == "pdf" else to_html(m.md, m.title, kind="summary" if m.kind == "summary" else "protocol").encode("utf-8") if fmt == "html"
-                        else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
+                if fmt in ("docx", "pdf"):              # сборка длинного документа занимает секунды: не в цикле событий ведущего экземпляра
+                    data = await asyncio.to_thread(to_docx if fmt == "docx" else to_pdf, m.md, m.title)
+                else:
+                    data = (to_html(m.md, m.title, kind="summary" if m.kind == "summary" else "protocol").encode("utf-8") if fmt == "html"
+                            else (md_to_plain(m.md) if fmt == "txt" else m.md).encode("utf-8"))
                 files.append((f"{safe_component(m.label)} - {safe_component(meeting.room.name)} - {date}.{fmt}", FORMAT_MIME[fmt], data))
         if archive and files:
             files = self._zip(files, f"Материалы встречи - {safe_component(meeting.room.name)} - {date}.zip")
         return files, mats
+
+    async def _attachments(self, db: AsyncSession, row: MailMessage, meeting: Meeting, fmts: list[str], archive: bool):
+        """Письма одной рассылки получают одинаковые вложения: собираем их один раз (на 300 участников — одно обезличивание и один PDF, а не 300)."""
+        if row.batch_id is None:
+            return await self._render_attachments(db, meeting, list(row.kinds or []), fmts, archive)
+        now = time.monotonic()
+        self._att_cache = {k: v for k, v in self._att_cache.items() if now - v[0] < ATT_CACHE_S}
+        key = (row.batch_id, meeting.id, tuple(row.kinds or []), tuple(fmts), archive)
+        if key not in self._att_cache:
+            self._att_cache[key] = (now, await self._render_attachments(db, meeting, list(row.kinds or []), fmts, archive))
+        return self._att_cache[key][1]
 
     async def deliver(self, message_id: uuid.UUID) -> None:
         """Отправка одного письма из очереди (вызывает работник). Состояние и ошибка записываются в строку очереди."""
@@ -562,7 +581,7 @@ class DeliveryService:
                     raise MailError("content", "встреча удалена — отправлять нечего")
                 opts = row.options or {}
                 fmts = [f for f in (opts.get("formats") or [pol.attach_format]) if f in FORMAT_MIME] or [pol.attach_format]
-                files, mats = await self._render_attachments(db, meeting, list(row.kinds or []), fmts, bool(opts.get("archive")))
+                files, mats = await self._attachments(db, row, meeting, fmts, bool(opts.get("archive")))
                 if not mats:
                     raise MailError("content", "выбранные материалы больше недоступны")
                 total = sum(len(f[2]) for f in files)

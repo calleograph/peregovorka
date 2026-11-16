@@ -15,6 +15,7 @@ import pytest
 from livekit.protocol import egress as eg
 from sqlalchemy import select
 
+from app.api import live as live_api
 from app.models import Broadcast, Meeting, Recording, Room
 from app.services import live as live_mod
 from app.services.live import build_live_request, hls_path, hls_secret, sign
@@ -58,10 +59,16 @@ def lv(client, monkeypatch, tmp_path):
         return present["set"]
 
     monkeypatch.setattr(live_mod, "list_present_identities", fake_present)
+    removed: list[str] = []
+
+    async def fake_remove(settings, room_name):
+        removed.append(room_name)
+
+    monkeypatch.setattr(live_mod, "remove_viewers", fake_remove)
     monkeypatch.setattr("app.services.video_rec.list_present_identities", fake_present)
     monkeypatch.setattr("app.services.video_rec.readable_duration", lambda p: 60)
     app.state.live.prepare()
-    client.fake, client.present, client.dir = fake, present, tmp_path
+    client.fake, client.present, client.dir, client.removed = fake, present, tmp_path, removed
     put_settings(client, "live", enabled=True, min_free_gb=1)
     return client
 
@@ -565,14 +572,24 @@ def test_password_switch_applies_to_the_running_broadcast_both_ways(lv):
     assert access(lv, token).status_code == 200, "выключение снимает пароль с идущего эфира"
 
 
+def vid(client, room) -> str:
+    """Идентификатор пульса, как его выдаёт /access."""
+    return live_api.vid_make(hls_secret(client.app_obj.state.settings), uuid.UUID(room["id"]))
+
+
 def test_viewer_counter_counts_recent_players_only_and_rejects_garbage(lv):
     room = room_live(lv)
     token = get_room(lv, room["id"]).live_token
     lv.cookies.clear()
-    for i in range(3):
-        assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": f"v{i}abc"}).json()["viewers"] == i + 1
-    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "v0abc"}).json()["viewers"] == 3, "тот же зритель — не второй"
+    ids = [vid(lv, room) for _ in range(3)]
+    for i, v in enumerate(ids):
+        assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": v}).json()["viewers"] == i + 1
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": ids[0]}).json()["viewers"] == 3, "тот же зритель — не второй"
     assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "x y/../"}).status_code == 422
+    fake = [lv.post(f"/api/v1/live/{token}/ping", json={"vid": f"{i:016x}{'0' * 12}"}).json()["viewers"] for i in range(20)]
+    assert fake[-1] == 3, "идентификаторы, которых сервер не выдавал, зрителей не накручивают"
+    other = live_api.vid_make(hls_secret(lv.app_obj.state.settings), uuid.uuid4())
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": other}).json()["viewers"] == 3, "подпись другой комнаты не подходит"
 
 
 # --------------------------------------------------------------------------------------------- вход выступающих
@@ -595,7 +612,7 @@ def test_room_list_marks_the_live_room_with_viewers(lv):
     mid = _join(lv, "alice", room["id"])["meeting_id"]
     start(lv, mid)
     lv.cookies.clear()
-    lv.post(f"/api/v1/live/{token}/ping", json={"vid": "aaaa1111"})
+    lv.post(f"/api/v1/live/{token}/ping", json={"vid": vid(lv, room)})
     login(lv, "bob")
     mine = [r for r in lv.get("/api/v1/rooms").json() if r["id"] == room["id"]][0]
     assert mine["live"] is True and mine["live_enabled"] is True and mine["live_viewers"] == 1 and mine["room_type"] == "broadcast"
@@ -1495,3 +1512,116 @@ def test_relay_that_lost_its_state_is_refilled_by_the_next_check_and_stop_cleans
         await lr.app_obj.state.live.on_egress_event(db, ev)
     call(lr, go)
     assert broadcasts(lr, mid)[0].status == "ended" and lr.relay.items == {}, "после эфира процессов площадок не остаётся"
+
+
+# --------------------------------------------------------------------------------------------- гонки запуска/остановки и служба ретрансляции
+def redis_call(client, fn):
+    return client.portal.call(lambda: fn(client.app_obj.state.redis))
+
+
+def test_stop_disconnects_webrtc_viewers_of_the_meeting_room(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    lv.removed.clear()
+    assert start(lv, mid, enabled=False).status_code == 200
+    m = call(lv, lambda db: db.get(Meeting, uuid.UUID(mid)))
+    assert lv.removed == [m.livekit_room], "скрытые зрители WebRTC сидят в комнате встречи: без эфира их там не остаётся"
+
+
+def test_stop_pressed_while_the_broadcast_is_starting_stops_it_once_it_is_written(lv):
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    orig, seen = lv.fake.start, {}
+
+    async def slow_start(req):                 # пока Egress отвечает, руководитель нажимает «Остановить» (строки эфира ещё нет)
+        async with lv.app_obj.state.session_maker() as db:
+            meeting = await db.get(Meeting, uuid.UUID(mid))
+            seen["stopped_rows"] = await lv.app_obj.state.live.stop(db, meeting, by="carol", manual=True)
+        return await orig(req)
+    lv.fake.start = slow_start
+    assert start(lv, mid).status_code == 200
+    b = broadcasts(lv, mid)[-1]
+    assert seen["stopped_rows"] == 0 and b.status == "ending" and lv.fake.stopped == [b.egress_id], "эфир остановлен сразу после записи, а не пошёл в эфир"
+    assert redis_call(lv, lambda r: r.get(f"live:manual_off:{mid}")), "автозапуск больше не включит эфир"
+
+
+def test_egress_relaunch_runs_once_and_an_extra_egress_after_stop_is_stopped(lv, monkeypatch):
+    monkeypatch.setattr(live_mod, "RETRY_PAUSE_S", 0)
+    room = room_live(lv)
+    mid = _join(lv, "alice", room["id"])["meeting_id"]
+    start(lv, mid)
+    failed = eg.EgressInfo(egress_id="EG_test1", status=eg.EgressStatus.EGRESS_FAILED, error="failed to launch chrome")
+    lv.fake.infos["EG_test1"] = failed
+    # сбой уже повторяет другой обработчик (событие Egress на другом экземпляре): сверка второй Egress не запускает и эфир не закрывает
+    redis_call(lv, lambda r: r.set("live:retry_for:EG_test1", "1"))
+    reconcile(lv)
+    assert len(lv.fake.started) == 1 and broadcasts(lv, mid)[0].status == "starting"
+    redis_call(lv, lambda r: r.delete("live:retry_for:EG_test1"))
+    # за паузу эфир остановили: новый Egress лишний — его останавливают, строка эфира его не получает
+    orig = lv.fake.start
+
+    async def start_after_stop(req):
+        async with lv.app_obj.state.session_maker() as db:
+            b = (await db.execute(select(Broadcast).where(Broadcast.meeting_id == uuid.UUID(mid)))).scalar_one()
+            b.status = "ended"
+            await db.commit()
+        return await orig(req)
+    lv.fake.start = start_after_stop
+    reconcile(lv)
+    b = broadcasts(lv, mid)[0]
+    assert len(lv.fake.started) == 2 and lv.fake.stopped == ["EG_test2"] and b.egress_id == "EG_test1" and b.status == "ended"
+
+
+def test_relay_sync_removes_only_its_own_and_orphaned_platforms_not_the_neighbouring_broadcast():
+    import asyncio
+    from app.services.live_destinations import Destinations
+
+    deleted: list[str] = []
+    own_off, neighbour, gone = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    class Relay:
+        async def status(self): return {str(own_off): {}, str(neighbour): {"state": "live"}, str(gone): {}, "a-x": {}, "b-x": {}}
+        async def delete(self, rid): deleted.append(rid)
+
+    class Db:
+        async def execute(self, q): return SimpleNamespace(scalars=lambda: [own_off, neighbour])
+        async def commit(self): pass
+
+    async def relay_src(b): return "rtmp://mediamtx:1935/live/r-x"
+    async def rows(db, room): return [SimpleNamespace(id=own_off, enabled=False)]
+    me = SimpleNamespace(relay=Relay(), relay_src=relay_src, rows=rows)
+    asyncio.run(Destinations.relay_sync(me, Db(), SimpleNamespace(), SimpleNamespace()))
+    assert sorted(deleted) == sorted([str(own_off), str(gone)]), "площадка соседнего эфира не трогается; выключенная своя и удалённая — убраны"
+
+
+def test_viewer_tracks_of_ended_broadcasts_are_removed_from_the_relay_service():
+    import asyncio
+
+    deleted: list[str] = []
+    live_id, ended_id = uuid.uuid4(), uuid.uuid4()
+
+    class Relay:
+        async def status(self): return {f"a-{live_id}": {}, f"b-{live_id}": {}, f"a-{ended_id}": {}, f"b-{ended_id}": {}, str(uuid.uuid4()): {}}
+        async def delete(self, rid): deleted.append(rid)
+
+    class Db:
+        async def execute(self, q): return SimpleNamespace(scalars=lambda: [live_id])
+
+    me = SimpleNamespace(destinations=SimpleNamespace(relay=Relay()))
+    asyncio.run(live_mod.LiveBroadcaster._relay_orphans(me, Db()))
+    assert sorted(deleted) == sorted([f"a-{ended_id}", f"b-{ended_id}"]), "дорожки идущего эфира и площадки не трогаются"
+
+
+def test_correct_viewer_passwords_do_not_use_up_the_address_limit(lv, monkeypatch):
+    monkeypatch.setattr("app.api.live.PW_IP_FAILS", 3)
+    room = room_live(lv)
+    go_live(lv, room)
+    login(lv, "carol")
+    lv.put(f"/api/v1/rooms/{room['id']}/live/password", json={"password": "zritel-2026"})
+    token = get_room(lv, room["id"]).live_token
+    for i in range(6):                                           # сотрудники за общим адресом организации: у каждого свой зритель
+        _VW.pop((id(lv), token), None)
+        assert access(lv, token, password="zritel-2026").status_code == 200, f"зритель {i + 1} вошёл"
+    r = lv.post(f"/api/v1/live/{token}/access", json={"password": "bad", "viewer": "подделка"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "viewer_required", "без настоящего токена зрителя пароль не проверяется (счётчик не обойти случайной строкой)"

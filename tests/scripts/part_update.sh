@@ -216,6 +216,7 @@ t "автопочинка: локальные изменения СОХРАНЕ�
 t "автопочинка: та же копия в git stash, рабочая копия чистая" bash -c '[ "$(git -C "$1" stash list | wc -l)" -eq 1 ] && git -C "$1" stash list | grep -q "peregovorka-update-" && [ ! -e "$1/README.local" ]' _ "$TMP/cl"
 t "сбой сборки: код 1, этап назван, код возвращён на прежнюю версию" bash -c '[ "$1" -eq 1 ] && grep -q "Обновление остановлено на этапе" <<<"$2" && grep -q "код возвращён на прежнюю версию" <<<"$2" && [ "$(git -C "$3" rev-parse HEAD)" = "$4" ]' _ "$RCB" "$OUTB" "$TMP/cl" "$H0"
 t "сбой сборки: маркер прерванного обновления снят (повтор начнётся с начала), итог записан" bash -c '[ ! -e "$1/state/update-in-progress" ] && grep -q "^result=failed_at_.*_restored_previous$" "$1/state/last-update.state"' _ "$TMP/upd-data"
+t "сбой сборки: прежнему коду — прежний .env (правки фазы 2 сняты, копия перед обновлением)" bash -c 'b="$(grep ^env_backup= "$1/state/last-update.state" | cut -d= -f2-)"; [ -f "$b" ] && cmp -s "$b" "$2/.env" && grep -q "^LIVEKIT_IMAGE_TAG=latest$" "$2/.env" && grep -q ".env возвращён из копии" "$1/state/update-actions.log"' _ "$TMP/upd-data" "$TMP/cl"
 
 # 1а) образы собраны не из устанавливаемого кода (другой commit внутри): одна пересборка, затем остановка ДО переключения, код возвращён
 OUTM="$(cd "$TMP/cl" && env PATH="$UBIN:$PATH" FAKE_COMMIT=0000deadbeef bash "$UPD" --yes --skip-preflight --skip-models --skip-smoke --wait 3 2>&1)"; RCM=$?

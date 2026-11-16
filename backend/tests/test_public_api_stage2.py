@@ -14,7 +14,7 @@ import httpx
 import pytest
 from sqlalchemy import insert, select
 
-from app.models import (ApiClient, ApiJob, AuditLog, ConversationMap, Meeting, Recording, TranscriptSegment, WebhookDelivery, WebhookEndpoint, User, utcnow)
+from app.models import (ApiClient, ApiJob, ApiKey, AuditLog, ConversationMap, Meeting, Recording, TranscriptSegment, WebhookDelivery, WebhookEndpoint, User, utcnow)
 from app.publicapi import downloads, ids
 from app.publicapi.ssrf import UrlRejected, parse_allow, pinned_url, validate_url
 from app.publicapi.webhooks import backoff_s, sign, signature_header, verify
@@ -812,6 +812,15 @@ def test_download_link_is_short_lived_signed_keyless_and_rechecked_on_use(tmp_pa
         assert c.get(out["url"]).status_code == 403
         c.patch(f"/api/v1/admin/public-api/clients/{cl['id']}", json={"name": "dl", "scopes": ["recordings:download"], "enabled": True})
         assert c.get(out["url"]).status_code == 200
+
+        async def revoke():
+            async with c.app_obj.state.session_maker() as db:
+                k = (await db.execute(select(ApiKey).where(ApiKey.client_id == uuid.UUID(cl["id"])))).scalar_one()
+                k.revoked_at = utcnow()
+                await db.commit()
+        run(c, revoke)
+        gone = c.get(out["url"])
+        assert gone.status_code == 403 and err(gone)["code"] == "key_revoked", "отозванный (утёкший) ключ не продлевает доступ выданными ссылками"
         c.delete(f"/api/v1/admin/public-api/clients/{cl['id']}")
         assert c.get(out["url"]).status_code == 404, "интеграцию удалили — ссылки мертвы"
         actions = [a["action"] for a in c.get("/api/v1/admin/audit").json()]

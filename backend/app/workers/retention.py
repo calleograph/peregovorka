@@ -15,10 +15,10 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import LiveViewer
+from ..models import Broadcast, ChatAttachment, GuestParticipant, LiveQuestion, LiveViewer
 from ..services.live import purge_audience
 from ..models import ConversationMap, Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
 from ..services import retention_policy
@@ -27,6 +27,20 @@ from ..services.protocols import ProtocolService
 log = logging.getLogger("app.retention")
 RETENTION_GRACE = timedelta(minutes=15)
 MIX_STALE = timedelta(hours=6)
+TEXT_BATCH = 1000                       # встреч за заход: предел параметров запроса и длина транзакции
+RESTORED = ("restored", "restored_unverified")
+
+
+def _has_text():
+    """У встречи ещё есть что удалять по сроку текста. Без этого условия очистка каждый час заново перебирала бы всю историю встреч."""
+    m = Meeting.id
+    bids = select(Broadcast.id).where(Broadcast.meeting_id == m)
+    return or_(exists().where(TranscriptSegment.meeting_id == m),
+               exists().where(Protocol.meeting_id == m, Protocol.kind.in_(("summary", "protocol", "transcript"))),
+               exists().where(ConversationMap.meeting_id == m), exists().where(MeetingChatMessage.meeting_id == m),
+               exists().where(MeetingWhiteboard.meeting_id == m), exists().where(ChatAttachment.meeting_id == m),
+               exists().where(GuestParticipant.meeting_id == m, GuestParticipant.email.is_not(None)),
+               exists().where(LiveQuestion.broadcast_id.in_(bids)), exists().where(LiveViewer.broadcast_id.in_(bids)))
 
 
 async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService) -> dict[str, int]:
@@ -49,53 +63,54 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
         settings_svc0 = getattr(protocols, "_svc", None) or getattr(protocols, "settings_svc", None)
         general = await settings_svc0.get(db, "general") if settings_svc0 is not None else None
         paused = general is not None and retention_policy.inherited_paused(general, now)
-        rooms = (await db.execute(select(Room))).scalars().all()
-        for room in rooms:
-            if general is not None:
-                eff = retention_policy.effective(room, general)
-            else:                                       # без службы настроек (старые тесты) — прежнее поведение: значения комнаты
-                eff = {"text": room.text_retention_days, "audio": room.audio_retention_days, "video": None, "custom": {"text": True, "audio": True, "video": True}}
-            skip = {k for k in ("text", "audio", "video") if paused and not eff["custom"][k]}     # общие сроки ещё не вступили в силу
-            if eff["text"] is not None and "text" not in skip:
-                cutoff = now - (RETENTION_GRACE if eff["text"] == 0 else timedelta(days=eff["text"]))
-                ids = (await db.execute(select(Meeting.id).where(Meeting.room_id == room.id, Meeting.ended_at.is_not(None),
-                                                                 Meeting.ended_at < cutoff))).scalars().all()
-                if ids:
-                    if protocols.chat_files is not None:
-                        await protocols.chat_files.delete_for_meetings(db, list(ids))   # файлы вложений уходят вместе с перепиской
-                    copies, failed = await protocols.purge_text_copies(db, list(ids))     # сначала файлы: пути к ним лежат в строках протоколов
-                    r1 = await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id.in_(ids)))
-                    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol", "transcript"))))
-                    for (mid, directory), why in failed.items():                          # вид transcript не показывается в списках документов и не мешает сверке
-                        db.add(Protocol(meeting_id=mid, kind="transcript", status="deleting", created_by="system", error=why, meta={"dir": directory}))
-                    deferred.update(failed)
-                    stats["segments"] += r1.rowcount or 0
-                    stats["protocols"] += r2.rowcount or 0
-                    if maps := (await db.execute(delete(ConversationMap).where(ConversationMap.meeting_id.in_(ids)))).rowcount:
-                        stats["maps"] = stats.get("maps", 0) + maps
-                    if copies:
-                        stats["text_copies"] = stats.get("text_copies", 0) + copies
-                    stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
-                    stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
-                    if q := await purge_audience(db, list(ids)):        # вопросы зрителей и почта гостей — по сроку текстов
-                        stats["questions"] = stats.get("questions", 0) + q
-                # зрители, представившиеся без идущего эфира (к эфиру не привязаны): имя и почта — по тому же сроку текстов комнаты
-                await db.execute(delete(LiveViewer).where(LiveViewer.room_id == room.id, LiveViewer.broadcast_id.is_(None), LiveViewer.created_at < cutoff))
-            # аудио (файлы участников и общая аудиозапись) и видео (видеозаписи и записи эфиров) — каждое по своему сроку
-            for kind, days in (("audio", eff["audio"]), ("video", eff["video"])):
-                if days is None or kind in skip:
+        for rid in (await db.execute(select(Room.id))).scalars().all():
+            try:
+                room = await db.get(Room, rid)             # по одной: после отката сбойной комнаты прежние объекты сессии устарели
+                if room is None:
                     continue
-                cutoff = now - (RETENTION_GRACE if days == 0 else timedelta(days=days))
-                cond = Recording.kind == "mix_video" if kind == "video" else Recording.kind != "mix_video"
-                recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, cond, Recording.created_at < cutoff,
-                                                                 Recording.file_state != "deleting"))).scalars().all()          # уже удаляемые повторяет run_deletions
-                for rec in recs:
-                    if rec.meeting_id in mixing:
-                        continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
-                    if rec.kind == "mix_video" and rec.status in ("processing", "finishing"):
-                        continue                  # видеофайл ещё пишет Egress — живую запись по сроку не удаляем
-                    key = ("video_recordings" if kind == "video" else "recordings") if await protocols.purge_recording(db, rec) else "deferred_external"      # хранилище недоступно — повтор в следующий раз
-                    stats[key] = stats.get(key, 0) + 1
+                if general is not None:
+                    eff = retention_policy.effective(room, general)
+                else:                                       # без службы настроек (старые тесты) — прежнее поведение: значения комнаты
+                    eff = {"text": room.text_retention_days, "audio": room.audio_retention_days, "video": None, "custom": {"text": True, "audio": True, "video": True}}
+                skip = {k for k in ("text", "audio", "video") if paused and not eff["custom"][k]}     # общие сроки ещё не вступили в силу
+                if eff["text"] is not None and "text" not in skip:
+                    cutoff = now - (RETENTION_GRACE if eff["text"] == 0 else timedelta(days=eff["text"]))
+                    # восстановленные из хранилища не трогаем: срок от их старой даты завершения истёк бы сразу после восстановления (так же щадятся их файлы);
+                    # уже очищенные не перебираем; пачками — иначе история встреч упрётся в предел параметров запроса
+                    base = select(Meeting.id, Meeting.ended_at).where(Meeting.room_id == room.id, Meeting.ended_at.is_not(None), Meeting.ended_at < cutoff,
+                                                                      or_(Meeting.end_reason.is_(None), Meeting.end_reason.not_in(RESTORED)), _has_text())
+                    last = None
+                    while True:
+                        q = base if last is None else base.where(tuple_(Meeting.ended_at, Meeting.id) > last)
+                        batch = (await db.execute(q.order_by(Meeting.ended_at, Meeting.id).limit(TEXT_BATCH))).all()
+                        if not batch:
+                            break
+                        last = (batch[-1][1], batch[-1][0])
+                        await _purge_text(db, protocols, [r[0] for r in batch], stats, deferred)
+                        await db.commit()
+                        if len(batch) < TEXT_BATCH:
+                            break
+                    # зрители, представившиеся без идущего эфира (к эфиру не привязаны): имя и почта — по тому же сроку текстов комнаты
+                    await db.execute(delete(LiveViewer).where(LiveViewer.room_id == room.id, LiveViewer.broadcast_id.is_(None), LiveViewer.created_at < cutoff))
+                # аудио (файлы участников и общая аудиозапись) и видео (видеозаписи и записи эфиров) — каждое по своему сроку
+                for kind, days in (("audio", eff["audio"]), ("video", eff["video"])):
+                    if days is None or kind in skip:
+                        continue
+                    cutoff = now - (RETENTION_GRACE if days == 0 else timedelta(days=days))
+                    cond = Recording.kind == "mix_video" if kind == "video" else Recording.kind != "mix_video"
+                    recs = (await db.execute(select(Recording).where(Recording.room_id == room.id, cond, Recording.created_at < cutoff,
+                                                                     Recording.file_state != "deleting"))).scalars().all()          # уже удаляемые повторяет run_deletions
+                    for rec in recs:
+                        if rec.meeting_id in mixing:
+                            continue                  # общая запись ещё собирается из этих файлов — удалим при следующей очистке
+                        if rec.kind == "mix_video" and rec.status in ("processing", "finishing"):
+                            continue                  # видеофайл ещё пишет Egress — живую запись по сроку не удаляем
+                        key = ("video_recordings" if kind == "video" else "recordings") if await protocols.purge_recording(db, rec) else "deferred_external"      # хранилище недоступно — повтор в следующий раз
+                        stats[key] = stats.get(key, 0) + 1
+                await db.commit()
+            except Exception:  # noqa: BLE001 — сбой одной комнаты не останавливает очистку остальных
+                await db.rollback()
+                log.exception("Ошибка очистки комнаты по срокам хранения", extra={"room": str(rid)})
         if protocols.chat_files is not None:
             orphans = await protocols.chat_files.purge_orphans(db)   # загружены, но не отправлены
             if orphans:
@@ -117,6 +132,28 @@ async def run_retention_once(session_maker: async_sessionmaker[AsyncSession], pr
     if any(stats.values()):
         log.info("Очистка по срокам хранения", extra=stats)
     return stats
+
+
+async def _purge_text(db: AsyncSession, protocols: ProtocolService, ids: list, stats: dict, deferred: dict) -> None:
+    """Текст встреч, у которых истёк срок: вложения чата, копии в хранилище документов, реплики, протоколы, карта, чат, доска, вопросы зрителей."""
+    if protocols.chat_files is not None:
+        await protocols.chat_files.delete_for_meetings(db, ids)   # файлы вложений уходят вместе с перепиской
+    copies, failed = await protocols.purge_text_copies(db, ids)     # сначала файлы: пути к ним лежат в строках протоколов
+    r1 = await db.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id.in_(ids)))
+    r2 = await db.execute(delete(Protocol).where(Protocol.meeting_id.in_(ids), Protocol.kind.in_(("summary", "protocol", "transcript"))))
+    for (mid, directory), why in failed.items():                          # вид transcript не показывается в списках документов и не мешает сверке
+        db.add(Protocol(meeting_id=mid, kind="transcript", status="deleting", created_by="system", error=why, meta={"dir": directory}))
+    deferred.update(failed)
+    stats["segments"] += r1.rowcount or 0
+    stats["protocols"] += r2.rowcount or 0
+    if maps := (await db.execute(delete(ConversationMap).where(ConversationMap.meeting_id.in_(ids)))).rowcount:
+        stats["maps"] = stats.get("maps", 0) + maps
+    if copies:
+        stats["text_copies"] = stats.get("text_copies", 0) + copies
+    stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
+    stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
+    if q := await purge_audience(db, ids):        # вопросы зрителей и почта гостей — по сроку текстов
+        stats["questions"] = stats.get("questions", 0) + q
 
 
 async def run_deletions_once(session_maker: async_sessionmaker[AsyncSession], protocols: ProtocolService, limit: int = 50) -> dict[str, int]:

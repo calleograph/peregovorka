@@ -151,6 +151,7 @@ def test_verified_meeting_is_restored_with_room_participants_and_files_and_acces
         assert any("chat.txt" in x and "не восстанавливается" in x for x in rep["lines"]), "что не восстановлено — названо прямо"
         # база: встреча со своим идентификатором в своей комнате, участники только существующие, записи и документы привязаны
         assert _count(c, Meeting, Meeting.id == uuid.UUID(mid), Meeting.room_id == uuid.UUID(room["id"])) == 1
+        assert _count(c, Meeting, Meeting.id == uuid.UUID(mid), Meeting.finalized_at.is_not(None)) == 1, "материалы готовы: обработка завершённых встреч и авторассылка восстановленную не подбирают"
         assert _count(c, MeetingParticipant, MeetingParticipant.meeting_id == uuid.UUID(mid)) == 2
         assert _count(c, Recording, Recording.meeting_id == uuid.UUID(mid)) == 2
         assert _count(c, Protocol, Protocol.meeting_id == uuid.UUID(mid), Protocol.status == "ready") == 3
@@ -406,6 +407,7 @@ def test_restored_isolated_meeting_is_listed_for_admins_with_its_origin(tmp_path
         assert "Восстановлено: Бухгалтерия/2026-09-01, Вторник/09-00" in titles
         again = _apply(c, _scan(c))
         assert _count(c, Meeting, Meeting.end_reason == "restored_unverified") == 1, "повтор по той же папке вторую встречу не создаёт"
+        assert _count(c, Meeting, Meeting.end_reason == "restored_unverified", Meeting.finalized_at.is_(None)) == 0, "изолированная встреча тоже не уходит в обработку и рассылку"
         assert again["result"]["counts"]["isolated"] == 1
 
 

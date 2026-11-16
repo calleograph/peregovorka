@@ -34,5 +34,7 @@ t "история: источник (веб/терминал), автор, ре�
 t "история: JSON каждой строки корректен" bash -c 'for p in python3 python py; do command -v $p >/dev/null 2>&1 && $p -c "import json" 2>/dev/null && { while IFS= read -r l; do printf "%s" "$l" | $p -c "import json,sys; json.loads(sys.stdin.read())" || exit 1; done < "$1"; exit 0; }; done; exit 0' _ "$HF"
 for _i in $(seq 1 105); do histrun ok "" UPDATE_SOURCE=cli; done
 t "история: хранятся последние 100 попыток" bash -c '[ "$(wc -l < "$1")" = 100 ]' _ "$HF"
+echo "чужой файл" > "$TMP/hist-victim"; chmod 600 "$TMP/hist-victim"; rm -f "$HF"; ln -s "$TMP/hist-victim" "$HF"; histrun ok "" UPDATE_SOURCE=cli
+t "история: подложенная ссылка не ведёт запись в чужой файл (замена файлом, права цели не тронуты)" bash -c '[ ! -L "$1" ] && [ "$(wc -l < "$1")" = 1 ] && [ "$(cat "$2")" = "чужой файл" ] && { [ "$(uname -s)" != Linux ] || [ "$(stat -c %a "$2")" = 600 ]; } && [ -z "$(ls -A "$3" | grep "^\.history\.")" ]' _ "$HF" "$TMP/hist-victim" "$TMP/hist-data/updater"
 t "история: dry-run ничего не пишет" bash -c 'before="$(wc -l < "$2")"; source "$1/scripts/lib/common.sh" >/dev/null 2>&1; REPO_ROOT="$3"; DATA_ROOT="$4"; DRY_RUN=1; upd_history_append ok ""; [ "$(wc -l < "$2")" = "$before" ]' _ "$ROOT" "$HF" "$HR" "$TMP/hist-data"
 t "update.sh: пишет историю при остановке и при успехе; updater.sh передаёт источник «веб»" bash -c 'grep -c "upd_history_append" "$1/scripts/update.sh" | grep -q 3 && grep -q "UPDATE_SOURCE=web" "$1/scripts/updater.sh"' _ "$ROOT"

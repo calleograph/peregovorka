@@ -86,7 +86,7 @@ class ClientConfig(BaseModel):
     screen_eco_kbps: int = 800      # цель битрейта профиля «Экономный 720p» (500–900 кбит/с)
     screen_share_audio: bool = False
     screen_max_height: int = 1080   # захват показа экрана: 1440 — в комнате трансляции с качеством эфира 2K (мелкий текст не растягивается из 1080p)
-    camera_quality: str = "min"     # качество камеры при входе (auto | high | medium | low | min | off): применяется через те же уровни, что и меню «Качество видео»
+    camera_quality: str = "low"     # качество камеры при входе (auto | high | medium | low | min | off): применяется через те же уровни, что и меню «Качество видео»
     screen_single_layer: bool = False   # показ экрана одним слоем без simulcast: комната трансляции или комната с включённым эфиром (кроме Egress показ никто не смотрит, а второй слой отнимает у верхнего бюджет канала)
     broadcast: bool = False         # комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей, без завершения по бездействию
     one_sharer_at_a_time: bool = False
@@ -206,7 +206,7 @@ class RoomAdminOut(BaseModel):
     transcription_enabled: bool
     record_audio: bool
     camera_allowed: bool
-    camera_quality: str = "min"
+    camera_quality: str = "low"
     screen_share_allowed: bool
     text_retention_days: int | None
     audio_retention_days: int | None
@@ -253,7 +253,7 @@ class RoomCreateIn(BaseModel):
     transcription_enabled: bool = True
     record_audio: bool = False
     camera_allowed: bool = True
-    camera_quality: str = Field(default="min", pattern="^(auto|high|medium|low|min|off)$")        # качество камеры участников по умолчанию
+    camera_quality: str = Field(default="low", pattern="^(auto|high|medium|low|min|off)$")        # качество камеры участников по умолчанию
     screen_share_allowed: bool = True
     text_retention_days: int | None = Field(default=None, ge=0, le=36500)
     audio_retention_days: int | None = Field(default=None, ge=0, le=36500)

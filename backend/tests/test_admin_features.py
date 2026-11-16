@@ -372,6 +372,44 @@ def test_retention_removes_expired_text_and_audio_but_keeps_the_rest(client):
     assert Room  # импорт используется в сидировании
 
 
+def test_text_retention_spares_restored_meetings_goes_in_batches_and_one_failing_room_does_not_stop_the_rest(client, monkeypatch):
+    import app.workers.retention as ret
+    monkeypatch.setattr(ret, "TEXT_BATCH", 2)
+    app = client.app_obj
+    bad, good = (make_room(client, name=n, text_retention_days=30) for n in ("Сбойная", "Обычная"))
+
+    async def _seed():
+        old = utcnow() - timedelta(days=400)
+        out = {"good": [], "bad": [], "restored": None}
+        async with app.state.session_maker() as db:
+            for tag, room, n, reason in (("good", good, 5, "manual"), ("bad", bad, 1, "manual"), ("restored", good, 1, "restored")):
+                for _ in range(n):
+                    m = Meeting(room_id=uuid.UUID(room["id"]), livekit_room=f"m-{uuid.uuid4().hex}", started_at=old, ended_at=old + timedelta(hours=1), end_reason=reason)
+                    db.add(m)
+                    await db.flush()
+                    db.add(Protocol(meeting_id=m.id, kind="summary", status="ready", content="итог"))
+                    out[tag] = m.id if tag == "restored" else out[tag] + [m.id]
+            await db.commit()
+        return out
+
+    ids = client.portal.call(_seed)
+    orig = app.state.protocols.purge_text_copies
+
+    async def flaky(db, mids):
+        if ids["bad"][0] in mids:
+            raise RuntimeError("сбой хранилища одной комнаты")
+        return await orig(db, mids)
+    monkeypatch.setattr(app.state.protocols, "purge_text_copies", flaky)
+    stats = client.portal.call(lambda: run_retention_once(app.state.session_maker, app.state.protocols))
+    assert stats["protocols"] == 5, "все пять встреч обычной комнаты очищены пачками по две"
+
+    async def _left():
+        async with app.state.session_maker() as db:
+            return set((await db.execute(select(Protocol.meeting_id))).scalars().all())
+    left = client.portal.call(_left)
+    assert left == {ids["bad"][0], ids["restored"]}, "восстановленная встреча не стёрта по старой дате; сбойная комната осталась до следующего раза"
+
+
 def test_text_retention_removes_map_and_storage_copies_retries_failures_and_keeps_the_rest(tmp_path, directory):
     from app.models import ConversationMap
     from app.services.storage import StorageError

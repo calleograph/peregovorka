@@ -762,6 +762,8 @@ class ProtocolService:
             rec.export_status = "local"
             await db.commit()
             return
+        # профиль — до копирования: перенос хранилища может переключить функцию, пока идёт копия, и запись указывала бы туда, где файла нет
+        pid = await self.files.current_profile(db, area)
         storage = await self.storage_for(db, area=area)
         from pathlib import Path
 
@@ -782,7 +784,7 @@ class ProtocolService:
                 raise StorageError("контрольная сумма копии в хранилище не совпала с исходной")
             rec.export_status, rec.export_location, rec.export_error, rec.exported_at = "exported", loc, None, utcnow()
             rec.export_area, rec.sha256, rec.size_bytes = area, digest, size
-            rec.export_profile_id = await self.files.current_profile(db, area)
+            rec.export_profile_id = pid
             drop_local = not keep_local
         except (OSError, StorageError) as exc:
             rec.export_status, rec.export_error = "failed", str(exc)[:480]

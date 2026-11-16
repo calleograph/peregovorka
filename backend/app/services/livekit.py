@@ -122,11 +122,15 @@ def issue_guest_token(settings: Settings, *, guest_id: uuid.UUID, display_name: 
 
 def issue_viewer_token(settings: Settings, *, viewer_id: uuid.UUID, livekit_room: str) -> str:
     """Зритель эфира по WebRTC: только приём, в списке участников не виден."""
-    return _issue_token(settings, identity=f"{VIEWER_PREFIX}{viewer_id.hex}", display_name="Зритель", livekit_room=livekit_room, sources=[], hidden=True)
+    # короткий срок: подключённым сервер звонков продлевает токен сам, а отключённый при остановке эфира не вернётся по старому токену (отозвать токен LiveKit нельзя)
+    return _issue_token(settings, identity=f"{VIEWER_PREFIX}{viewer_id.hex}", display_name="Зритель", livekit_room=livekit_room, sources=[], hidden=True, ttl_s=VIEWER_TOKEN_TTL_S)
+
+
+VIEWER_TOKEN_TTL_S = 600
 
 
 async def remove_viewers(settings: Settings, room_name: str) -> None:
-    """Отозвана ссылка или сменён пароль: токен проверяется только при входе, поэтому подключённых зрителей отключаем сами. Те, у кого есть доступ, вернутся через страницу эфира."""
+    """Отозвана ссылка, сменён пароль или эфир остановлен: токен проверяется только при входе, поэтому подключённых зрителей отключаем сами. Те, у кого есть доступ, вернутся через страницу эфира."""
     try:
         async with lkapi.LiveKitAPI(settings.livekit_http_url, settings.livekit_api_key, settings.livekit_api_secret) as lk:
             resp = await lk.room.list_participants(lkapi.ListParticipantsRequest(room=room_name))
@@ -137,7 +141,7 @@ async def remove_viewers(settings: Settings, room_name: str) -> None:
         log.warning("Не удалось отключить зрителей WebRTC", extra={"error": type(exc).__name__})
 
 
-def _issue_token(settings: Settings, *, identity: str, display_name: str, livekit_room: str, sources: list[str], hidden: bool = False) -> str:
+def _issue_token(settings: Settings, *, identity: str, display_name: str, livekit_room: str, sources: list[str], hidden: bool = False, ttl_s: int | None = None) -> str:
     if not settings.livekit_api_key or not settings.livekit_api_secret:
         raise RuntimeError("LIVEKIT_API_KEY/LIVEKIT_API_SECRET не заданы")
     grants = lkapi.VideoGrants(
@@ -154,7 +158,7 @@ def _issue_token(settings: Settings, *, identity: str, display_name: str, liveki
         lkapi.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(identity)
         .with_name(display_name)
-        .with_ttl(datetime.timedelta(seconds=settings.livekit_token_ttl_seconds))
+        .with_ttl(datetime.timedelta(seconds=min(ttl_s, settings.livekit_token_ttl_seconds) if ttl_s else settings.livekit_token_ttl_seconds))
         .with_grants(grants)
         .to_jwt()
     )

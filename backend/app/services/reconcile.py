@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import ChatAttachment, Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, StorageSyncRun, utcnow
-from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, FileStore
+from .filestore import AUDIO, BOARDS, CHAT, PROTOCOLS, TRANSCRIPTS, VIDEO, FileStore
 from .storage import StorageBackend, StorageError, StorageNotFound
 
 log = logging.getLogger("app.reconcile")
@@ -53,7 +53,7 @@ async def mark_missing(db: AsyncSession, obj, journal=None, what: str = "фай�
 class Obj:
     model: str                 # recording | protocol | attachment | protocol_extra
     row: object
-    backend_key: str           # ключ хранилища: "audio" | "video" | "docs:<папка>" | "chat:<profile>" | "local"
+    backend_key: str           # ключ хранилища: "audio" | "video" | "profile:<id>:<audio|video>" | "docs:<папка>" | "chat:<profile>" | "local"
     dir: str
     name: str
     # для recording с локальной копией
@@ -107,6 +107,9 @@ class Reconciler:
                 b = await self._files.video_backend(db)
             elif key.startswith("docs:"):
                 b = await self._files.backend(db, "storage", key[5:])
+            elif key.startswith("profile:"):             # запись выгружена в хранилище, с которого функцию уже переключили
+                _p, pid, area = key.split(":", 2)
+                b = await self._files.profile_backend(db, pid, VIDEO if area == "video" else AUDIO)
             elif key.startswith("chat:"):
                 pid = key[5:]
                 b = await self._files.chat_backend_for(db, uuid.UUID(pid) if pid else None)
@@ -126,10 +129,13 @@ class Reconciler:
         # записи, которые ещё пишутся или собираются (processing/finishing), и неудавшиеся не сверяются: файл видеозаписи появляется на диске по ходу записи и закрывается в конце,
         # а «не найден» у неготовой записи — не потеря, а незавершённость (иначе длинная видеозапись помечалась «потерянной» и после завершения оставалась недоступной)
         recs = (await db.execute(select(Recording).where(Recording.meeting_id.in_(meeting_ids), Recording.status == "ready"))).scalars().all()
+        cur = {a: await self._files.current_profile(db, a) for a in ("audio", "video")} if recs else {}
         for r in recs:
             d, n = split_key(r.path)
             local = os.path.isfile(os.path.join(self._rec_path, r.path))
             area = (r.export_area or ("video" if r.kind == "mix_video" else "audio")) if r.export_status == "exported" else "local"
+            if area != "local" and r.export_profile_id and r.export_profile_id != cur.get(area):
+                area = f"profile:{r.export_profile_id}:{area}"       # файл там, куда его выгрузили (как storage_for), а не в нынешнем хранилище функции
             out.append(Obj("recording", r, area, d, n, local_ok=local, label=r.path.rsplit("/", 1)[-1]))
         prots = (await db.execute(select(Protocol).where(Protocol.meeting_id.in_(meeting_ids), Protocol.status == "ready"))).scalars().all()
         for p in prots:
@@ -258,7 +264,7 @@ class Reconciler:
     async def _present(self, db: AsyncSession, o: Obj, cache, dir_cache, rep: Report, expected):
         """True — файл есть, False — нет (хранилище отвечает), None — проверить не удалось, "skip" — выгрузка выключена."""
         if o.model == "recording":
-            if o.backend_key not in ("audio", "video"):       # единственная копия — на локальном диске приложения
+            if o.backend_key == "local":                       # единственная копия — на локальном диске приложения
                 return bool(o.local_ok)
             if o.local_ok:
                 return True                                    # локальная копия есть — запись доступна (даже если выгрузка исчезла)
@@ -305,7 +311,9 @@ class Reconciler:
         for o, present in buf:
             kind = {"recording": "записи", "protocol": "протоколы и стенограммы", "protocol_extra": "переписка и доски", "attachment": "вложения чата"}[o.model]
             k = rep.kind(kind)
-            row = await db.get(type(o.row), o.row.id)    # строка могла быть прочитана в другой (уже закрытой) сессии
+            # свежая строка: за время проверки пользователь мог начать удаление («deleting»), и старая копия вернула бы запись в «ok»;
+            # у переписки и досок одна строка несёт несколько файлов, её правки в этом проходе не сбрасываем
+            row = await db.get(type(o.row), o.row.id, populate_existing=o.model != "protocol_extra")
             if row is None:
                 continue
             if o.model == "protocol_extra":

@@ -8,7 +8,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.api.live import vid_make
 from app.models import LiveDiagEvent, LiveDiagSample
+from app.services.live import hls_secret
 from app.services import live_diag as ld
 from app.services.live_diag import aggregate_clients, clean, clean_client, clean_text, hls_stats, parse_playlist, parse_probe, read_cgroup_cpu, read_cores, read_disk, read_netdev, rules, stage_view, summarize, viewer_verdict
 
@@ -333,15 +335,17 @@ def test_ping_stores_viewer_report_and_participant_report_goes_to_the_same_place
     token = get_view(lv, mid)
     lv.cookies.clear()
     lv.headers.pop("X-CSRF-Token", None)
-    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "abc123", "stats": {"buf": 2.5, "stalls": 1, "evil": "x"}}).status_code == 200
-    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "abc124"}).status_code == 200, "старые страницы без показателей работают как раньше"
-    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "abc125", "stats": "мусор"}).status_code == 200
+    v1, v2, v3 = (vid_make(hls_secret(lv.app_obj.state.settings), uuid.UUID(room["id"])) for _ in range(3))
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": v1, "stats": {"buf": 2.5, "stalls": 1, "evil": "x"}}).status_code == 200
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": v2}).status_code == 200, "старые страницы без показателей работают как раньше"
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": v3, "stats": "мусор"}).status_code == 200
+    assert lv.post(f"/api/v1/live/{token}/ping", json={"vid": "abc999", "stats": {"buf": 1}}).status_code == 200, "чужой идентификатор в диагностику не попадает"
 
     async def read():
         return await lv.app_obj.state.redis.hgetall(f"ld:{bid}:cl")
     rows = lv.portal.call(read)
     keys = {(k.decode() if isinstance(k, bytes) else k): v for k, v in rows.items()}
-    assert set(keys) == {"v:abc123"} and "evil" not in str(keys) and json.loads(keys["v:abc123"])["buf"] == 2.5
+    assert set(keys) == {f"v:{v1}"} and "evil" not in str(keys) and json.loads(keys[f"v:{v1}"])["buf"] == 2.5
     login(lv, "alice")
     assert lv.post(f"/api/v1/meetings/{mid}/live/diag/client", json={"stats": {"src": "screen", "res": "1280x720", "limit": "cpu"}}).status_code == 204
     assert len(lv.portal.call(read)) == 2

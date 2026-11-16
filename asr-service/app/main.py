@@ -113,7 +113,7 @@ async def amain() -> None:
         return {"ok": True, "ms": int((_t.monotonic() - started) * 1000), "provider": models.info.as_dict(), "text_len": len(res.text)}
 
     def authorized(token: str) -> bool:
-        return not settings.internal_api_token or hmac.compare_digest(token, settings.internal_api_token)
+        return bool(settings.internal_api_token) and hmac.compare_digest(token, settings.internal_api_token)     # пустой токен — закрыто, как в backend и relay
 
     from .selfcheck import vad_problem  # noqa: PLC0415
 

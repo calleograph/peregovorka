@@ -38,7 +38,8 @@ declare -A PREREQ_PKG=(
 PREREQ_STANDALONE_ONLY=(docker nginx)
 # Программы, которые скрипты используют, но они не нужны на хосте: выполняются в контейнерах или необязательны.
 # systemctl: в скриптах всегда под проверкой `command -v systemctl`; без systemd не работает только служба-помощник (его ставят вручную: updater.sh run)
-PREREQ_NOT_HOST=(pg_dump redis-cli psql alembic python pip livekit-server ufw sudo journalctl systemctl systemd-run)
+# iptables: только `sip.sh firewall --apply` (под проверкой `command -v`); его ставит сам Docker
+PREREQ_NOT_HOST=(pg_dump redis-cli psql alembic python pip livekit-server ufw iptables sudo journalctl systemctl systemd-run)
 
 prereq_os_detect() {
   local f="${PREREQ_OS_RELEASE:-/etc/os-release}"

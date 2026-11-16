@@ -67,7 +67,7 @@ class RoomManageOut(BaseModel):
     recording_mode: str = "audio"
     video_mode: str = "off"
     video_quality: str = "720p"
-    camera_quality: str = "min"          # качество камеры участников по умолчанию (auto | high | medium | low | min | off)
+    camera_quality: str = "low"          # качество камеры участников по умолчанию (auto | high | medium | low | min | off)
     video_enabled: bool = False          # администратор разрешил видеозапись на сервере (иначе режим комнаты ничего не запускает)
     transcription_enabled: bool
     mute_on_join: bool

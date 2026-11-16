@@ -368,10 +368,12 @@ upd_history_append() {
   case "${UPDATE_SOURCE:-cli}" in web) src=web ;; *) src=cli ;; esac
   stage="$(printf '%s' "$stage" | tr -d '"\\' | tr '\n\r\t' '   ' | cut -c1-90)"
   now="$(date +%s)"
-  printf '{"at":%s,"started":%s,"result":"%s","stage":"%s","from_version":"%s","to_version":"%s","from_commit":"%s","to_commit":"%s","source":"%s","by":"%s"}\n' \
-    "$now" "${UPD_STARTED:-$now}" "$res" "$stage" "$oldv" "$newv" "$(printf '%.12s' "${OLD:-}")" "$(printf '%.12s' "${TARGET:-}")" "$src" "$by" >> "$f" 2>/dev/null || return 0
-  chmod 644 "$f" 2>/dev/null || true
-  if [ "$(wc -l < "$f" 2>/dev/null || echo 0)" -gt 100 ]; then tail -n 100 "$f" > "$f.tmp" 2>/dev/null && cat "$f.tmp" > "$f"; rm -f "$f.tmp"; fi
+  # каталог открыт на запись backend (1777): root не пишет по пути, который мог оказаться ссылкой, а собирает новый файл (mktemp, O_EXCL) и заменяет им прежний (mv заменяет саму ссылку)
+  local tmp; tmp="$(mktemp "$d/.history.XXXXXX" 2>/dev/null)" || return 0
+  { if [ -f "$f" ] && [ ! -L "$f" ]; then tail -n 99 "$f"; fi
+    printf '{"at":%s,"started":%s,"result":"%s","stage":"%s","from_version":"%s","to_version":"%s","from_commit":"%s","to_commit":"%s","source":"%s","by":"%s"}\n' \
+      "$now" "${UPD_STARTED:-$now}" "$res" "$stage" "$oldv" "$newv" "$(printf '%.12s' "${OLD:-}")" "$(printf '%.12s' "${TARGET:-}")" "$src" "$by"; } > "$tmp" 2>/dev/null \
+    && chmod 644 "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
   return 0
 }
 

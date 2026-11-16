@@ -28,7 +28,7 @@ from ..services.journal import parse_client
 from ..services.live import LiveError, hls_path, hls_secret, new_token
 from ..services.livekit import issue_viewer_token
 from ..services.live_destinations import PLATFORMS, DestinationError
-from .guest import _throttle, clean_display_name, clean_email
+from .guest import _throttle, clean_display_name, clean_email, throttle_key
 from .meetings import get_meeting_for_user
 
 router = APIRouter(tags=["live"])
@@ -307,8 +307,8 @@ async def meeting_live_toggle(meeting_id: uuid.UUID, request: Request, body: dic
     try:
         if enabled:
             opts = body.get("options") if isinstance(body.get("options"), dict) else None          # параметры этого эфира, изменённые ведущим при запуске
+            await request.app.state.redis.delete(f"live:manual_off:{meeting_id}")     # до запуска: «Остановить», нажатое во время запуска, ставит отметку заново и не теряется
             await live.start(db, meeting, by=su.display_name, opts=opts)
-            await request.app.state.redis.delete(f"live:manual_off:{meeting_id}")
         else:
             await live.stop(db, meeting, by=su.display_name, manual=True)
     except LiveError as exc:
@@ -447,7 +447,7 @@ class AccessIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-async def _gate(request: Request, db: AsyncSession, v: _View, body: "AccessIn") -> str | None:
+async def _gate(request: Request, db: AsyncSession, v: _View, body: "AccessIn", viewer: "LiveViewer") -> str | None:
     """Пароль зрителя (если задан у эфира): пароль или «пропуск», выданный после пароля. Возвращает новый пропуск (только после ввода пароля) или None."""
     settings, ip = request.app.state.settings, client_ip(request)
     secret = hls_secret(settings)
@@ -455,7 +455,7 @@ async def _gate(request: Request, db: AsyncSession, v: _View, body: "AccessIn") 
     if not h or _pass_ok(secret, _scope(v), body.pass_):
         return None
     room = v.room
-    who = hashlib.sha256((body.viewer or "").encode()).hexdigest()[:16]
+    who = viewer.id.hex[:16]                       # зритель уже проверен (подписанный токен): случайной строкой счётчик на зрителя не обойти
     await _throttle(request, f"live:pwfail:{room.id}:{who}", PW_FAILS, PW_WINDOW, hit=False)
     if not body.password:
         raise HTTPException(status_code=403, detail={"code": "password_required", "message": "Эта трансляция защищена паролем."})
@@ -467,7 +467,10 @@ async def _gate(request: Request, db: AsyncSession, v: _View, body: "AccessIn") 
                         result="denied", actor_type="guest", details={"code": "password_invalid"})
         request.app.state.journal.emit("room", "live_view_denied", level="warn", user="viewer", room=room.name, ip=ip, message="Неверный пароль зрителя трансляции", data={"code": "password_invalid"})
         raise HTTPException(status_code=403, detail={"code": "password_invalid", "message": "Неверный пароль."})
-    await request.app.state.redis.delete(f"live:pwfail:{room.id}:{who}:{ip}")
+    redis = request.app.state.redis
+    await redis.delete(throttle_key(request, f"live:pwfail:{room.id}:{who}"))
+    if int(await redis.decr(throttle_key(request, f"live:pwip:{room.id}")) or 0) < 0:   # потолок на адрес — только для неверных: сотрудники за общим адресом входят все
+        await redis.delete(throttle_key(request, f"live:pwip:{room.id}"))
     return _pass_make(secret, _scope(v))
 
 
@@ -482,8 +485,8 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     if v.b is None or v.b.status not in ("starting", "live"):
         raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Эфир сейчас не идёт."})      # подпись выдаётся только на идущий эфир: _gate проверяет пароль именно этого эфира
     secret = hls_secret(request.app.state.settings)
-    new_pass = await _gate(request, db, v, body)
     viewer = await _viewer_row(request, db, v, body.viewer)
+    new_pass = await _gate(request, db, v, body, viewer)
     if v.b is not None and v.b.status in ("starting", "live") and viewer.broadcast_id != v.b.id:
         viewer.broadcast_id = v.b.id                  # эфир, который зритель смотрит: по нему — вопросы и (с согласия) материалы встречи
         await db.commit()
@@ -493,7 +496,7 @@ async def viewer_access(token: str, body: AccessIn, request: Request, db: AsyncS
     ttl = max(int(cfg.view_link_ttl_s), 4 * 3600) if body.long else int(cfg.view_link_ttl_s)
     bucket = 1800 if body.long else 300
     path, exp = hls_path(secret, room.live_view_access, ttl, bucket_s=bucket)
-    out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": uuid.uuid4().hex[:16],
+    out = {"path": path, "expires_at": exp, "refresh_in": max(60, ttl // 2), "vid": vid_make(secret, room.id),
            "base": cfg.cdn_base_url if (cfg.cdn_enabled and cfg.cdn_base_url and room.live_cdn) else ""}       # CDN: плеер берёт поток прямо с него, а не с этого сервера
     if cfg.rtc_viewers_max and v.b.meeting_id and await request.app.state.live.viewers(room.id) < cfg.rtc_viewers_max:
         settings = request.app.state.settings
@@ -551,8 +554,8 @@ async def viewer_replay(token: str, body: AccessIn, request: Request, db: AsyncS
         raise HTTPException(status_code=403, detail="Недопустимый Origin")
     await _throttle(request, "live:replay", VIEW_IP_LIMIT // 10, 600)      # запись смотрят сотни сотрудников за одним адресом; страница запрашивает её при открытии
     v = await _view(request, db, token)
-    new_pass = await _gate(request, db, v, body)                 # сначала пароль: без него даже наличие записи не раскрывается
-    await _viewer_row(request, db, v, body.viewer)
+    viewer = await _viewer_row(request, db, v, body.viewer)
+    new_pass = await _gate(request, db, v, body, viewer)         # пароль до записи: без него даже наличие записи не раскрывается
     state, rec = await _replay_state(db, v.b)
     if state != "ready":
         raise HTTPException(status_code=404, detail={"code": f"replay_{state}", "message": REPLAY_TEXT.get(state, "Запись недоступна.")})
@@ -621,6 +624,20 @@ async def viewer_replay_file(token: str, request: Request, r: str, e: int, s: st
     return StreamingResponse(iterate_in_threadpool(reader(start, end)), status_code=206 if rng else 200, media_type=rec.mime or "video/mp4", headers=headers)
 
 
+def _vid_sig(secret: str, room_id: uuid.UUID, raw: str) -> str:
+    return hmac.new(secret.encode(), f"live-vid:{room_id.hex}:{raw}".encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def vid_make(secret: str, room_id: uuid.UUID) -> str:
+    """Идентификатор зрителя для пульса: подписан, поэтому счётчик зрителей нельзя накрутить случайными значениями."""
+    raw = uuid.uuid4().hex[:16]
+    return raw + _vid_sig(secret, room_id, raw)
+
+
+def vid_ok(secret: str, room_id: uuid.UUID, vid: str) -> bool:
+    return len(vid) == 28 and hmac.compare_digest(vid[16:], _vid_sig(secret, room_id, vid[:16]))
+
+
 @public_router.post("/{token}/ping")
 async def viewer_ping(token: str, request: Request, body: dict = Body(default={}), db: AsyncSession = Depends(get_db)):
     await _throttle(request, "live:ping", VIEW_IP_LIMIT // 4, 60)
@@ -629,6 +646,8 @@ async def viewer_ping(token: str, request: Request, body: dict = Body(default={}
     vid = str(body.get("vid") or "")[:40]
     if not vid or not vid.isalnum():
         raise HTTPException(status_code=422, detail="vid")
+    if not vid_ok(hls_secret(request.app.state.settings), room.id, vid):
+        return {"viewers": await request.app.state.live.viewers(room.id)}       # идентификатор не выдан сервером (накрутка или страница до обновления): не считаем
     n = await request.app.state.live.viewer_ping(room.id, vid)
     if v.b is not None and v.b.status in ("starting", "live") and isinstance(body.get("stats"), dict) and body["stats"].get("low"):
         await request.app.state.live.low_hold(v.b.id)             # зритель смотрит низкое качество: процесс продолжает работать
@@ -720,8 +739,8 @@ async def viewer_ask(token: str, body: QuestionIn, request: Request, db: AsyncSe
     v = await _view(request, db, token)
     if v.b is None or v.b.status not in ("starting", "live") or not v.room.live_own_hls:
         raise HTTPException(status_code=409, detail={"code": "not_live", "message": "Вопросы принимаются, пока идёт эфир."})
-    await _gate(request, db, v, body)
     viewer = await _viewer_row(request, db, v, body.viewer)
+    await _gate(request, db, v, body, viewer)
     text = clean_question(body.text)
     r = request.app.state.redis
     if not await r.set(f"live:qv:{viewer.id}", "1", nx=True, ex=Q_EVERY_S):

@@ -451,7 +451,7 @@ class RestoreService:
                 t0 = None
             mid = uuid.uuid4()
             meeting = Meeting(id=mid, room_id=room.id, livekit_room=f"restored-{mid.hex}", started_at=t0 or utcnow(), ended_at=(t0 or utcnow()) + timedelta(minutes=1),
-                              end_reason="restored_unverified", transcription_enabled=False, record_audio=False)
+                              end_reason="restored_unverified", transcription_enabled=False, record_audio=False, finalized_at=utcnow())   # материалы уже готовы: без отметки встречу подобрала бы обработка завершённых и разослала заново
             existing = await self._existing_isolated(db, room, d)
             if existing is not None:
                 meeting = existing
@@ -509,7 +509,8 @@ class RestoreService:
         started = _dt(m.get("started_at")) or utcnow()
         ended = _dt(m.get("ended_at")) or started + timedelta(minutes=1)
         meeting = Meeting(id=mid, room_id=room.id, livekit_room=f"restored-{mid.hex}", started_at=started, ended_at=ended, end_reason="restored",
-                          transcription_enabled=bool(m.get("transcription", True)), record_audio=bool(m.get("record_audio", False)))
+                          transcription_enabled=bool(m.get("transcription", True)), record_audio=bool(m.get("record_audio", False)),
+                          finalized_at=utcnow())                 # материалы восстанавливаются готовыми: обработка завершённых встреч и авторассылка их не трогают
         db.add(meeting)
         await db.flush()
         miss = 0

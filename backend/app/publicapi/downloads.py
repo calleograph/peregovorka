@@ -4,7 +4,8 @@
 на несколько минут и отдаёт его дальше. Ссылка:
 * подписана HMAC (ключ выводится из мастер-ключа приложения), содержит интеграцию, запись и срок; подделка и продление срока невозможны;
 * действует `download_url_ttl_s` секунд (по умолчанию 300); после истечения — 410;
-* при использовании заново проверяется, что интеграция включена, право `recordings:download` и область комнат прежние (отзыв ключа/права действует сразу);
+* при использовании заново проверяется, что интеграция включена, ключ, по которому выдана ссылка, не отозван и не истёк, право `recordings:download`
+  и область комнат прежние (отзыв ключа/права действует сразу);
 * адрес не содержит ключа API и в журнале обращений записывается шаблоном пути (без самого токена).
 """
 from __future__ import annotations
@@ -20,9 +21,9 @@ def _key(master: str, internal: str) -> bytes:
     return hashlib.sha256(b"pubapi-download|" + (master or internal or "").encode()).digest()
 
 
-def issue(master: str, internal: str, *, client_id: str, recording_id: str, ttl_s: int, now: float | None = None) -> tuple[str, int]:
+def issue(master: str, internal: str, *, client_id: str, recording_id: str, ttl_s: int, key_id: str = "", now: float | None = None) -> tuple[str, int]:
     exp = int((time.time() if now is None else now) + ttl_s)
-    payload = base64.urlsafe_b64encode(json.dumps({"c": client_id, "r": recording_id, "e": exp}, separators=(",", ":")).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({"c": client_id, "k": key_id, "r": recording_id, "e": exp}, separators=(",", ":")).encode()).decode().rstrip("=")
     sig = hmac.new(_key(master, internal), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}", exp
 

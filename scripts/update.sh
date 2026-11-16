@@ -100,6 +100,11 @@ upd_autorecover() {
     if git -C "$REPO_ROOT" checkout --detach "$prev" >/dev/null 2>&1; then
       rm -f "$(upd_marker_file)"; upd_state_set result "failed_at_${CUR_STAGE}_restored_previous"
       upd_action "код возвращён на прежнюю версию ${prev:0:12}"
+      # фаза 2 могла поправить .env под новую версию (тег LiveKit, параметры сети): прежнему коду — прежний .env, иначе следующий перезапуск собрал бы смесь версий
+      local eb; eb="$(upd_state_get env_backup)"
+      if [ -n "$eb" ] && [ -f "$eb" ] && ! cmp -s "$eb" "$ENV_FILE"; then
+        cat "$eb" > "$ENV_FILE" && upd_action ".env возвращён из копии перед обновлением ($eb)"
+      fi
       warn "Автовосстановление: код возвращён на прежнюю версию ${prev:0:12}; работающие сервисы не перезапускались — сервер работает как до обновления."
     else warn "Автовосстановление: вернуть код на ${prev:0:12} не удалось — работающие сервисы прежней версии не тронуты"; fi
     [ "$(upd_state_get app_stopped)" = 1 ] && upd_app_start_old
@@ -259,8 +264,7 @@ phase1() {
   ok "Резервная копия: $ENVBK (содержит секреты — права 600)"
   : > "$(upd_marker_file)"
   upd_state_set started_at "$(date -Is)"; upd_state_set previous_git_commit "$OLD"; upd_state_set target_git_commit "$TARGET"
-  upd_state_set env_backup "$ENVBK"; upd_state_set migrations_changed "${MIG:-0}"; upd_state_set result "in_progress"
-  upd_state_set update_status in_progress; upd_state_set deploy_status ""; upd_state_set health_status ""; upd_state_set integration_status ""; upd_state_set integration_issues ""
+  upd_state_set env_backup "$ENVBK"; upd_state_set migrations_changed "${MIG:-0}"; upd_state_set result "in_progress"  upd_state_set update_status in_progress; upd_state_set deploy_status ""; upd_state_set health_status ""; upd_state_set integration_status ""; upd_state_set integration_issues ""
   host_version_info; OLD12="${OLD:0:12}"
   if [ "$(upd_svc_state backend)" != missing ]; then
     upd_save_prev_images "$OLD12"; ok "Образы работающей версии сохранены (теги prev-${OLD12}) — для отката без пересборки"
@@ -357,8 +361,13 @@ phase2() {
     [ "$NEED_MIG" -eq 1 ] && { upd_app_stop || stop_update "Не удалось остановить приложение перед резервной копией"; }
     "$REPO_ROOT/scripts/backup.sh" --env "$ENV_FILE" --label "pre-${OLD12:-update}" || stop_update "Резервная копия БД не создана — без неё миграции не выполняются"
     BK="$(ls -1t "${BACKUP_DIR:-$DATA_ROOT/backups}/${COMPOSE_PROJECT_NAME}"-db-*.dump 2>/dev/null | head -1)"
-    [ -n "$BK" ] && upd_state_set db_backup "$BK"
-    upd_state_set backup_after_stop "$NEED_MIG"                       # при миграции копия снята, когда приложение уже остановлено (или не запущено)
+    # продолжение прерванного обновления: схему могли уже мигрировать, и свежая копия — с новой схемой; ссылка на копию до миграции остаётся единственной для отката
+    if [ "$NEED_MIG" -eq 1 ] || [ -z "$(upd_state_get db_backup)" ]; then
+      [ -n "$BK" ] && upd_state_set db_backup "$BK"
+      upd_state_set backup_after_stop "$NEED_MIG"                     # при миграции копия снята, когда приложение уже остановлено (или не запущено)
+    else
+      log "Продолжение обновления: для отката сохранена прежняя копия $(upd_state_get db_backup)"
+    fi
   fi
 
   step "Миграции базы данных (Alembic)"

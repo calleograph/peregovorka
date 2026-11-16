@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import time
 import uuid
 import unicodedata
@@ -100,9 +101,20 @@ async def _outlook_policy(request: Request, db: AsyncSession, room: Room) -> Non
         raise HTTPException(status_code=404, detail="Гостевая ссылка недействительна или отозвана")
 
 
+def throttle_key(request: Request, key: str) -> str:
+    """Ключ счётчика попыток для адреса клиента. IPv6 — по сети /64: у одного абонента их тысячи адресов, и по одному адресу предел не держал бы подбор."""
+    ip = client_ip(request)
+    if ":" in ip:
+        try:
+            ip = str(ipaddress.ip_network(f"{ip}/64", strict=False).network_address) + "/64"
+        except ValueError:
+            pass
+    return f"{key}:{ip}"
+
+
 async def _throttle(request: Request, key: str, limit: int, window: int, *, hit: bool = True) -> None:
     redis = request.app.state.redis
-    k = f"{key}:{client_ip(request)}"
+    k = throttle_key(request, key)
     n = await redis.incr(k) if hit else int(await redis.get(k) or 0)
     if hit and n == 1:
         await redis.expire(k, window)

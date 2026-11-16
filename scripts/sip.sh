@@ -72,19 +72,30 @@ case "$CMD" in
     cidrs="$(printf '%s' "${SIP_ALLOWED_CIDRS:-}" | tr ',;' '  ')"
     if [ -z "${cidrs// /}" ]; then die "SIP_ALLOWED_CIDRS не задан в .env (адреса/подсети вашей АТС через запятую). Открывать SIP всем подряд скрипт не предлагает."; fi
     for c in $cidrs; do [[ "$c" =~ ^[0-9a-fA-F:.]+(/[0-9]{1,3})?$ ]] || die "Некорректный адрес в SIP_ALLOWED_CIDRS: $c"; done
-    log "Правила ufw (только для адресов АТС: ${cidrs}):"
-    for c in $cidrs; do
-      log "  ufw allow from $c to any port $(sip_port) proto udp comment 'peregovorka sip'"
-      log "  ufw allow from $c to any port $(sip_port) proto tcp comment 'peregovorka sip'"
-      log "  ufw allow from $c to any port $(sip_rtp | tr - :) proto udp comment 'peregovorka sip rtp'"
-    done
+    # Порты SIP публикует Docker: его правила NAT обходят цепочку INPUT, поэтому ufw («allow from …») их не ограничивает. Фильтр — в цепочке DOCKER-USER,
+    # которую Docker проверяет первой и не перезаписывает; по исходному порту назначения (conntrack), так как после NAT порт уже контейнерный.
+    ch=PEREGOVORKA-SIP; sp="$(sip_port)"; rtp="$(sip_rtp | tr - :)"; v4=""
+    for c in $cidrs; do if [[ "$c" == *:* ]]; then warn "IPv6-адрес $c пропущен: Docker по умолчанию публикует SIP только по IPv4"; else v4="$v4 $c"; fi; done
+    [ -n "${v4// /}" ] || die "В SIP_ALLOWED_CIDRS нет адресов IPv4 — правила не созданы."
+    rules=("-N $ch")
+    for c in $v4; do rules+=("-A $ch -s $c -j RETURN"); done
+    rules+=("-A $ch -j DROP")
+    jumps=("-p udp -m conntrack --ctorigdstport $sp --ctdir ORIGINAL -j $ch" "-p tcp -m conntrack --ctorigdstport $sp --ctdir ORIGINAL -j $ch" "-p udp -m conntrack --ctorigdstport $rtp --ctdir ORIGINAL -j $ch")
+    log "ufw портов Docker не фильтрует, поэтому правила ставятся в цепочку DOCKER-USER: SIP $sp/udp+tcp и RTP $rtp/udp — только с адресов АТС (${v4# }):"
+    for r in "${rules[@]}"; do log "  iptables $r"; done
+    for r in "${jumps[@]}"; do log "  iptables -I DOCKER-USER $r"; done
     if [ "$APPLY" -eq 1 ]; then
-      need_root; command -v ufw >/dev/null 2>&1 || die "ufw не найден — примените правила вашим файрволом по списку выше"
-      for c in $cidrs; do
-        ufw allow from "$c" to any port "$(sip_port)" proto udp comment 'peregovorka sip' >/dev/null && ufw allow from "$c" to any port "$(sip_port)" proto tcp comment 'peregovorka sip' >/dev/null \
-          && ufw allow from "$c" to any port "$(sip_rtp | tr - :)" proto udp comment 'peregovorka sip rtp' >/dev/null || die "ufw отказал для $c"
+      need_root; command -v iptables >/dev/null 2>&1 || die "iptables не найден — примените правила вашим файрволом по списку выше (фильтр должен стоять до правил Docker)"
+      iptables -N "$ch" 2>/dev/null || iptables -F "$ch" || die "Не удалось подготовить цепочку $ch"
+      for c in $v4; do iptables -A "$ch" -s "$c" -j RETURN || die "iptables отказал для $c"; done
+      iptables -A "$ch" -j DROP || die "iptables: не добавлено правило DROP"
+      for r in "${jumps[@]}"; do
+        # shellcheck disable=SC2086 # правило — набор аргументов
+        iptables -C DOCKER-USER $r 2>/dev/null || iptables -I DOCKER-USER $r || die "iptables: не добавлено правило в DOCKER-USER (Docker запущен?)"
       done
-      ok "Правила ufw добавлены"
+      ok "Правила добавлены: SIP и RTP принимаются только с адресов АТС"
+      if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1 && ok "Правила сохранены (netfilter-persistent)" || warn "netfilter-persistent save не выполнен — после перезагрузки повторите команду"
+      else warn "Правила iptables не переживают перезагрузку: установите iptables-persistent (apt install iptables-persistent) или повторяйте команду после каждой перезагрузки. Надёжнее всего — SIP_BIND_ADDR с внутренним адресом сервера."; fi
     else info "Показано без применения. Применить: sudo scripts/sip.sh firewall --apply"; fi ;;
   *) die "Неизвестная команда: $CMD (enable | disable | status | firewall)" ;;
 esac

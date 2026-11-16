@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 from livekit.protocol import egress as eg
 from livekit.protocol import models as lkm
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from ..config import Settings
 from ..models import Broadcast, Meeting, Recording, Room
@@ -412,6 +412,7 @@ class LiveBroadcaster:
         lock = await self._r.set(f"live:start:{meeting.id}", "1", nx=True, ex=START_LOCK_S)
         if not lock:
             raise LiveError("live_starting", "Эфир уже запускается.")
+        await self._r.delete(f"live:stop_req:{meeting.id}")
         try:
             room = meeting.room
             cur = await self.current(db, room.id)
@@ -474,6 +475,9 @@ class LiveBroadcaster:
             await self._announce(meeting, True, by)
             self._emit("live_started", meeting, by=by, egress=info.egress_id, quality=quality, urls=len(urls), hls=bool(hls_dir), record=True)
             await self._air(db, meeting, True)
+            if await self._r.get(f"live:stop_req:{meeting.id}"):          # «Остановить» нажали, пока шёл запуск: выполняем сейчас
+                await self._r.delete(f"live:stop_req:{meeting.id}")
+                await self.stop(db, meeting, by=by or "stop", manual=True)
             return b
         finally:
             await self._r.delete(f"live:start:{meeting.id}")
@@ -624,6 +628,8 @@ class LiveBroadcaster:
         """Браузер Egress не поднялся за 20 с: при кратком дефиците процессора следующая попытка удаётся. Зритель и ведущий видят «запускается», запись продолжает ту же строку."""
         if info is None or b.status != "starting" or not launch_failed(info.error):
             return False
+        if not await self._r.set(f"live:retry_for:{info.egress_id}", "1", nx=True, ex=600):
+            return True                                     # этот сбой уже повторяет другой обработчик (событие Egress и сверка приходят оба)
         n = await self._r.incr(f"live:retry:{b.id}")
         await self._r.expire(f"live:retry:{b.id}", 600)
         meeting, room, rec = await db.get(Meeting, b.meeting_id), await db.get(Room, b.room_id), await db.get(Recording, b.recording_id) if b.recording_id else None
@@ -640,6 +646,16 @@ class LiveBroadcaster:
         except Exception as exc:  # noqa: BLE001
             log.warning("Повторный запуск эфира не удался", extra={"broadcast": str(b.id), "error": str(exc)[:200]})
             return False
+        # за паузу эфир могли остановить: новый Egress записываем, только если строка всё ещё ждёт именно этот запуск, иначе он лишний
+        res = await db.execute(update(Broadcast).where(Broadcast.id == b.id, Broadcast.status == "starting", Broadcast.egress_id == info.egress_id)
+                               .values(egress_id=new.egress_id).execution_options(synchronize_session=False))
+        if res.rowcount != 1:
+            await db.rollback()
+            try:
+                await self.api.stop(new.egress_id)
+            except Exception:  # noqa: BLE001
+                log.warning("Не удалось остановить лишний Egress повторного запуска", extra={"broadcast": str(b.id), "egress": new.egress_id})
+            return True
         rec.egress_id = b.egress_id = new.egress_id
         await db.commit()
         return True
@@ -650,6 +666,8 @@ class LiveBroadcaster:
         rows = list((await db.execute(select(Broadcast).where(Broadcast.room_id == rid, Broadcast.status.in_(("starting", "live"))))).scalars())
         if manual and meeting is not None:
             await self._r.set(f"live:manual_off:{meeting.id}", "1", ex=24 * 3600)      # автозапуск не перебивает решение руководителя
+        if not rows and meeting is not None and await self._r.get(f"live:start:{meeting.id}"):
+            await self._r.set(f"live:stop_req:{meeting.id}", "1", ex=START_LOCK_S)   # эфир ещё запускается и не записан: остановит сам запуск, когда допишет строку
         for b in rows:
             try:
                 if b.egress_id:
@@ -667,6 +685,7 @@ class LiveBroadcaster:
         if rows:
             m = meeting if meeting is not None else await db.get(Meeting, rows[0].meeting_id)
             if m is not None:
+                await remove_viewers(self._s, m.livekit_room)            # зрители WebRTC сидят в комнате самой встречи: без эфира им там делать нечего
                 await self._announce(m, False, by)
                 self._emit("live_stopped", m, by=by)
                 await self._air(db, m, False)
@@ -861,11 +880,23 @@ class LiveBroadcaster:
                 except VideoError as exc:
                     log.warning("Не удалось остановить запись", extra={"meeting_id": str(meeting.id), "error": exc.message[:300]})
 
+    async def _relay_orphans(self, db) -> None:
+        """Дорожки «только звук» и «низкое качество» закончившихся эфиров: если удаление при окончании не дошло до службы, процесс перезапускался бы вечно."""
+        relay = getattr(self.destinations, "relay", None)
+        st = await relay.status() if relay is not None else None
+        if not st:
+            return
+        active = {str(i) for i in (await db.execute(select(Broadcast.id).where(Broadcast.status.in_(LIVE_ACTIVE)))).scalars()}
+        for rid in st:
+            if rid.startswith(("a-", "b-")) and rid[2:] not in active:
+                await relay.delete(rid)
+
     async def _sweep(self, db) -> None:
         """Диск: старые сегменты идущего эфира, каталоги завершённых эфиров, ссылки доступа. Не чаще раза в минуту."""
         if not await self._r.set("live:sweep", "1", nx=True, ex=SWEEP_EVERY_S):
             return
         await self._disk_guard(db)
+        await self._relay_orphans(db)
         cfg = await self.cfg(db)
         now = time.time()
         base = self.live_dir() / "b"
