@@ -35,12 +35,15 @@ test("журнал доступа Windows к микрофону: время по
   assert.equal(filetimeToIso("0x19DB1DED53E8000"), "1970-01-01T00:00:00.000Z");
 });
 
-test("микрофон: «Could not start audio source» — не занятость; с Kaspersky — шаги для его политики", () => {
+test("микрофон: «Could not start audio source» — не занятость; сначала монопольный режим, Kaspersky — лишь последним шагом", () => {
   const base = { platform: "win32", osAccess: "granted", micCount: 1, selectedMissing: false };
   const start = diagnoseMic({ ...base, error: { name: "NotReadableError", message: "Could not start audio source" }, securityProducts: ["Kaspersky Endpoint Security для Windows"] });
   assert.equal(start.cause, "start_failed");
   assert.doesNotMatch(start.title, /занят/);
-  assert.ok(start.steps.some((s) => /Предотвращение вторжений/.test(s) && /Доверенные/.test(s)));
+  assert.match(start.steps[2], /обе галочки/);
+  assert.doesNotMatch(start.text, /Kaspersky/);
+  const k = start.steps.findIndex((s) => /Предотвращение вторжений/.test(s) && /Доверенные/.test(s));
+  assert.ok(k > 2, "защитная программа — после проверки монопольного режима");
   const busy = diagnoseMic({ ...base, error: { name: "NotReadableError", message: "Device in use" } });
   assert.equal(busy.cause, "busy");
   assert.equal(busy.reboot, true);

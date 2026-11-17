@@ -406,3 +406,13 @@ def test_transient_flag_and_empty_reply_still_work():
     assert e.transient is True and "try again later" in e.message
     e = mailmod.classify(smtplib.SMTPResponseException(554, b""), cfg)
     assert e.transient is False and "554" in e.message
+
+
+def test_mail_link_uses_the_address_set_in_the_mail_policy(client, fake_smtp):
+    add_profile(client)
+    put_settings(client, "mail_policy", link_base="https://meet.example.org")
+    room = make_room(client, moderators=LEADERS)
+    set_delivery(client, room, {"enabled": True, "materials": ["protocol"], "recipients": {"emails": ["partner@example.local"]}})
+    mid = finished_meeting(client, room)
+    run_queue(client)
+    assert f"https://meet.example.org/history/{mid}" in fake_smtp.sent[-1].get_body(("plain",)).get_content()

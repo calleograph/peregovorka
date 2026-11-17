@@ -420,6 +420,8 @@ export const mailPolicyFields: Field[] = [
   { section: "Очередь и повторы", name: "retry_minutes", label: "Пауза до первого повтора", unit: "минут", type: "number", min: 1, max: 240, help: "Каждая следующая пауза вдвое длиннее.", example: "5" },
   { section: "Очередь и повторы", name: "keep_days", label: "Хранить журнал отправки", unit: "дней", type: "number", min: 1, max: 3650, example: "90" },
   { section: "Письмо", name: "subject_prefix", label: "Префикс темы письма", type: "text", placeholder: "[Peregovorka]", help: "Необязательно: помогает настроить фильтры в почтовых программах." },
+  { section: "Письмо", name: "link_base", label: "Адрес сайта в ссылках писем", type: "text", placeholder: "https://meet.example.org", fillOrigin: true,
+    help: "Ссылка «Страница встречи» в письме строится от этого адреса. Откройте админку по доменному имени сервера и нажмите «Взять адрес из браузера» — в письмах не будет IP-адреса. Пусто — адрес приложения из настройки сервера (APP_PUBLIC_URL).", example: "https://meet.example.org" },
   { section: "Дополнительно (расширенные настройки)", name: "allowed_domains", label: "Разрешённые домены получателей", type: "text", placeholder: "example.local, partner.example",
     help: "Через запятую. Пусто — отправка на любые адреса. Если задано, письма на адреса других доменов (например, внешние) не отправляются — ни автоматически, ни вручную.", example: "example.local" },
 ];

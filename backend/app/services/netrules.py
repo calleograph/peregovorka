@@ -186,6 +186,8 @@ def build(n: NetInput) -> dict[str, Any]:
         warnings.append("APP_PUBLIC_URL не задан или некорректен: адрес и порт входа определить нельзя.")
     elif scheme != "https":
         warnings.append("APP_PUBLIC_URL не использует HTTPS: браузер не даст доступ к микрофону и экрану (исключение — localhost).")
+    if host and _is_ip(host) and host not in ("127.0.0.1", "::1"):
+        warnings.append("APP_PUBLIC_URL — IP-адрес: письма и приглашения придут со ссылкой на IP. Задайте DNS-имя сервера.")
     if host and host in ("localhost", "127.0.0.1", "::1"):
         warnings.append("APP_PUBLIC_URL указывает на localhost: пользователи не смогут открыть сервис по этому адресу.")
 

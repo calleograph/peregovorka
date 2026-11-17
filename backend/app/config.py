@@ -5,11 +5,20 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import ipaddress
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
+
+
+def _host_is_ip(host: str | None) -> bool:
+    try:
+        ipaddress.ip_address(host or "")
+        return True
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -191,6 +200,18 @@ class Settings(BaseSettings):
     def public_origin(self) -> str:
         parts = urlsplit(self.app_public_url)
         return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def link_base(self) -> str:
+        """Адрес для ссылок в письмах: APP_PUBLIC_URL, а если там IP — первое доменное имя из ALLOWED_ORIGINS (ссылка с IP у получателя даёт ошибку сертификата)."""
+        base = self.app_public_url.rstrip("/")
+        if _host_is_ip(urlsplit(base).hostname):
+            for o in self.allowed_origins.split(","):
+                n = normalize_origin(o.strip())
+                host = urlsplit(n).hostname if n else None
+                if host and host != "localhost" and not _host_is_ip(host):
+                    return n.rstrip("/")
+        return base
 
     @property
     def allowed_origin_set(self) -> frozenset[str]:

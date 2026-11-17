@@ -45,8 +45,9 @@ describe("ошибки устройств и подключения", () => {
     const start = Object.assign(new Error("Could not start audio source"), { name: "NotReadableError" });
     expect(isDeviceBusyError(start)).toBe(false);
     const s2 = describeMediaError(start, "mic", { secureContext: true });
-    expect(s2.message).toMatch(/не запустился/);
-    expect(s2.message).toMatch(/защитная программа/);
+    expect(s2.message).toMatch(/не запускается/);
+    expect(s2.message).toMatch(/Монопольный режим/);
+    expect(s2.message).not.toMatch(/Kaspersky/);
     expect(s2.message).not.toMatch(/занят другой/);
     const sys = Object.assign(new Error("Permission denied by system"), { name: "NotAllowedError" });
     expect(describeMediaError(sys, "mic", { secureContext: true }).message).toMatch(/конфиденциальности Windows/);

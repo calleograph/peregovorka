@@ -325,7 +325,7 @@ def create_app(
         meetings_svc.on_ended_extra = lambda mid: asyncio.get_running_loop().create_task(app.state.sip_routing.on_meeting_ended(mid))
         app.state.profiles = profiles
         mail = MailService(settings_svc, ca)
-        delivery = DeliveryService(bg_sm, settings_svc, mail, protocols, directory, settings.app_public_url, journal)
+        delivery = DeliveryService(bg_sm, settings_svc, mail, protocols, directory, settings.link_base, journal)
         delivery.redis = redis
         protocols.after_finalize = delivery.run_auto
         async def _sync_audit(db, *, actor, action, target_id, details):

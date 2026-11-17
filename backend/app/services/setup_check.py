@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import ipaddress
 import json
 import logging
 import shutil
@@ -73,6 +74,14 @@ async def _livekit_ctx(app, ctx: Ctx) -> dict:
     return ctx["lk"]
 
 
+def _host_is_ip(host: str | None) -> bool:
+    try:
+        ipaddress.ip_address(host or "")
+        return True
+    except ValueError:
+        return False
+
+
 async def check_public_url(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
     """Публичный адрес приложения: HTTPS (иначе браузер не даст микрофон) и доверие к сертификату — по ответу самого сервера."""
     url = app.state.settings.app_public_url
@@ -83,6 +92,9 @@ async def check_public_url(app, db: AsyncSession, ctx: Ctx) -> list[dict]:
                      "Настройте HTTPS на прокси или в nginx сервера и задайте APP_PUBLIC_URL с https://", "system")]
     if local:
         return [item("public_url", "Публичный адрес и TLS", WARN, "APP_PUBLIC_URL указывает на этот же компьютер (localhost): пользователи по такому адресу не подключатся", "system")]
+    if _host_is_ip(parts.hostname):
+        return [item("public_url", "Публичный адрес и TLS", WARN, f"APP_PUBLIC_URL ({url}) — IP-адрес: ссылки в письмах и приглашениях будут с IP, а браузер покажет ошибку сертификата. "
+                     "Задайте в APP_PUBLIC_URL DNS-имя сервера (IP оставьте в ALLOWED_ORIGINS, если нужен вход и по нему) и перезапустите службы", "system")]
     try:
         async with httpx.AsyncClient(timeout=6.0, follow_redirects=False) as c:
             r = await c.get(url.rstrip("/") + "/api/v1/health/live")

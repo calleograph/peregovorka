@@ -587,6 +587,15 @@ class MailPolicySettings(_Group):
     retry_minutes: int = Field(default=5, ge=1, le=240)            # задержка до первого повтора (дальше удваивается)
     keep_days: int = Field(default=90, ge=1, le=3650)              # сколько хранить записи об отправке
     subject_prefix: str = Field(default="", max_length=60)
+    link_base: str = Field(default="", max_length=200)             # адрес сайта в ссылках писем (https://имя); пусто — адрес приложения из настройки сервера
+
+    @field_validator("link_base")
+    @classmethod
+    def _link_base(cls, v: str) -> str:
+        v = (v or "").strip().rstrip("/")
+        if v and not re.fullmatch(r"https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?", v):
+            raise ValueError("Адрес сайта в ссылках: https://имя-сервера (без пути и пробелов), например https://meet.example.org")
+        return v
 
     @field_validator("allowed_domains")
     @classmethod

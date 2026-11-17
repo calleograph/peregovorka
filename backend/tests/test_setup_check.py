@@ -68,3 +68,30 @@ def test_a_new_check_appears_without_changing_the_interface_and_a_broken_one_doe
 def test_summary_counts_configuration_and_health_together():
     s = sc.summarize([{"done": True}, {"done": False}], [sc.item("a", "a", sc.OK, "x", "p"), sc.item("b", "b", sc.FAIL, "x", "p"), sc.item("c", "c", sc.WARN, "x", "p")])
     assert s == {"ok": 2, "warn": 1, "fail": 1, "todo": 1, "total": 5, "attention": 3}
+
+
+def test_public_url_with_an_ip_address_is_a_warning_because_mail_links_will_carry_it():
+    from types import SimpleNamespace
+    from app.services.setup_check import check_public_url
+    app = SimpleNamespace(state=SimpleNamespace(settings=SimpleNamespace(app_public_url="https://192.0.2.10")))
+    (r,) = asyncio.run(check_public_url(app, None, {}))
+    assert r["status"] == "warn" and "DNS-имя" in r["detail"]
+
+
+def test_mail_links_use_a_domain_from_allowed_origins_when_the_public_url_is_an_ip():
+    from app.config import Settings
+    kw = {"allowed_origins": "https://192.0.2.10, https://meet.example.org"}
+    assert Settings(app_public_url="https://192.0.2.10", **kw).link_base == "https://meet.example.org"
+    assert Settings(app_public_url="https://meet.example.org", **kw).link_base == "https://meet.example.org"
+    assert Settings(app_public_url="https://192.0.2.10").link_base == "https://192.0.2.10"
+
+
+def test_mail_policy_link_base_accepts_a_domain_and_refuses_a_path():
+    import pytest
+    from pydantic import ValidationError
+    from app.services.settings import MailPolicySettings
+    assert MailPolicySettings(link_base=" https://meet.example.org/ ").link_base == "https://meet.example.org"
+    assert MailPolicySettings().link_base == ""
+    for bad in ("meet.example.org", "https://meet.example.org/x", "https://a b"):
+        with pytest.raises(ValidationError):
+            MailPolicySettings(link_base=bad)

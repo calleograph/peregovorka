@@ -46,7 +46,10 @@ export default function FieldsEditor({ fields, values, onChange, secrets, onSecr
           <span className="field-title"><Title text={f.label} tail={<>{f.unit && <span className="muted small"> ({f.unit})</span>}{f.type !== "secret" && <FieldTip f={f} />}</>} />{f.type === "secret" && <span className="muted small"> — {values[`${f.name}_set`] ? "задан (пусто — не менять)" : "не задан"}<FieldTip f={f} /></span>}</span>
           {f.type === "select" && <select value={String(values[f.name] ?? "")} onChange={(e) => set(f.name, e.target.value)}>{f.options?.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}
           {f.type === "textarea" && <textarea rows={f.rows ?? 5} value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />}
-          {f.type === "text" && <input value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />}
+          {f.type === "text" && (f.fillOrigin
+            ? <div className="row"><input value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />
+                <button type="button" className="btn mini" onClick={() => set(f.name, window.location.origin)}>Взять адрес из браузера</button></div>
+            : <input value={String(values[f.name] ?? "")} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />)}
           {f.type === "number" && (
             <input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.nullable ? "не задано" : f.placeholder}
                    value={values[f.name] === null || values[f.name] === undefined ? "" : Number(values[f.name])}

@@ -585,7 +585,7 @@ class DeliveryService:
                 if not mats:
                     raise MailError("content", "выбранные материалы больше недоступны")
                 total = sum(len(f[2]) for f in files)
-                link = f"{self._public_url}/history/{meeting.id}"
+                link = f"{pol.link_base or self._public_url}/history/{meeting.id}"
                 big = total > pol.max_attachment_mb * 1024 * 1024
                 tz = await self.protocols._tz(db)  # noqa: SLF001
                 if opts.get("body"):          # письмо по шаблону (его могли поправить перед отправкой): текст готов, ниже — только перечень и ссылка
