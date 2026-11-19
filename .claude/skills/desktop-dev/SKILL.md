@@ -21,3 +21,4 @@ description: Быстрый цикл разработки приложения P
 * Полный контур (EXE/MSI, установка, обновление, агент подписи) на ветке — ручным запуском workflow `desktop.yml` (`workflow_dispatch`).
 * Ловушка: `npm run release`/`npm run preview` под Linux без `DISPLAY` → «окно app://shell/index.html не появилось за 60 с» (Electron без экрана выходит с кодом 1) → запускать с `DISPLAY=<экран Xvfb>`.
 * Ловушка: шаг CI «EXE: обновление из приложения» на теге `desktop-v*` пропускается (нет ключа обновлений) — зелёный выпуск не доказывает обновление из приложения; смотреть прогон `main`/`workflow_dispatch`.
+* Ловушка: ветки `LINUX ? … : …` в `scripts/check.mjs` под Linux проверяют только вариант Linux → правка текста для Windows проходит локальный `preview` и падает в CI на Windows (было в 1.5.2) → после правки текстов в `src/common/` искать ожидаемые строки в `scripts/check.mjs` (`grep`) и ждать зелёного `preview` на Windows.

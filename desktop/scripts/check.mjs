@@ -181,7 +181,7 @@ async function av() {
     // «Could not start audio source» — любой другой отказ (драйвер, защитная программа): не выдаётся за занятость
     await s.js("navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('Could not start audio source'), { name: 'NotReadableError' }))");
     await s.click("Проверить микрофон");
-    const [startTitle, startHint] = LINUX ? ["Микрофон не удалось открыть", "звуковой сервер"] : ["Захват звука не запустился", "защитн"];
+    const [startTitle, startHint] = LINUX ? ["Микрофон не удалось открыть", "звуковой сервер"] : ["Микрофон не запускается", "монопольный режим"];
     check(`отказ «Could not start audio source»: «${startTitle}», «${startHint}…», не «занят»`, await s.until(`[...document.querySelectorAll('[role=alert]')].some((a) => a.innerText.includes('${startTitle}') && a.innerText.includes('${startHint}') && !a.innerText.includes('Микрофон занят'))`, 10), (await s.text()).slice(0, 300));
     await s.shot(join(OUT, "34-av-start-failed.png"));
     // системные настройки: неизвестный вид отклоняется, вне Windows — честный отказ
