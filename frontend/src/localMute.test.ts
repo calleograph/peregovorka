@@ -31,9 +31,26 @@ describe("локальное «заглушить для себя»", () => {
     applyLocalMute(root, new Set());
     expect(els.map((e) => e.muted)).toEqual([false, false]);
   });
+  it("общее отключение звука глушит всех, а при включении возвращает прежний выбор по участникам", () => {
+    const mk = (id: string) => ({ dataset: { identity: id }, muted: false });
+    const els = [mk("u-1"), mk("u-2")];
+    const root = { querySelectorAll: () => ({ forEach: (f: (e: unknown) => void) => els.forEach(f) }) } as unknown as ParentNode;
+    applyLocalMute(root, new Set(["u-2"]), "", true);
+    expect(els.map((e) => e.muted)).toEqual([true, true]);
+    applyLocalMute(root, new Set(["u-2"]), "", false);
+    expect(els.map((e) => e.muted)).toEqual([false, true]);
+  });
 });
 
-import { sameUser } from "./localMute";
+import { isSilenced, sameUser } from "./localMute";
+describe("правило заглушения для новой дорожки", () => {
+  it("вошедший при выключенном звуке молчит; свои устройства молчат всегда; остальные звучат", () => {
+    expect(isSilenced("u-new", new Set(), "u-me", true)).toBe(true);
+    expect(isSilenced("u-new", new Set(), "u-me", false)).toBe(false);
+    expect(isSilenced("u-me~ab12cd34", new Set(), "u-me", false)).toBe(true);
+    expect(isSilenced("u-x", new Set(["u-x"]), "u-me", false)).toBe(true);
+  });
+});
 describe("свои устройства", () => {
   it("одно лицо на разных устройствах распознаётся по identity, гости и чужие — нет", () => {
     expect(sameUser("u-abc", "u-abc~12ab34cd")).toBe(true);

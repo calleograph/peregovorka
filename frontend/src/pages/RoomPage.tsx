@@ -7,7 +7,7 @@ import { api, ApiError, leaveOnUnload, renewClientId, type GuestJoinInfo, type H
 import Whiteboard from "../board/Whiteboard";
 import PreJoin from "../components/PreJoin";
 import ParticipantCardDialog from "../components/room/ParticipantCardDialog";
-import { applyLocalMute, loadLocalMuted, sameUser, saveLocalMuted, toggleLocalMute } from "../localMute";
+import { applyLocalMute, isSilenced, loadLocalMuted, sameUser, saveLocalMuted, toggleLocalMute } from "../localMute";
 import { idleMinutes, useIdleEnd } from "../idleEnd";
 import { handSoundEnabled, playHandSound, setHandSoundEnabled } from "../handSound";
 import ConnectProgress from "../components/room/ConnectProgress";
@@ -143,17 +143,24 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   // «Заглушить для себя»: только на этом устройстве; не серверный mute, права не нужны; держится до конца встречи (в том числе при переподключении)
   const [localMuted, setLocalMuted] = useState<Set<string>>(() => new Set());
   const localMutedRef = useRef<Set<string>>(localMuted);
+  // «Звук выкл.»: общее отключение воспроизведения встречи только у себя; микрофон и остальные участники не затрагиваются
+  const [soundOff, setSoundOff] = useState(false);
+  const soundOffRef = useRef(false);
+  const toggleSound = useCallback(() => {
+    soundOffRef.current = !soundOffRef.current; setSoundOff(soundOffRef.current);
+    applyLocalMute(audioBox.current, localMutedRef.current, roomRef.current?.localParticipant.identity ?? "", soundOffRef.current);
+  }, []);
   const toggleLocalMuted = useCallback((identity: string) => {
     const next = toggleLocalMute(localMutedRef.current, identity);
     localMutedRef.current = next; setLocalMuted(next);
-    applyLocalMute(audioBox.current, next, roomRef.current?.localParticipant.identity ?? "");
+    applyLocalMute(audioBox.current, next, roomRef.current?.localParticipant.identity ?? "", soundOffRef.current);
     if (meetingRef.current) saveLocalMuted(meetingRef.current, next);
   }, []);
   const meetingId = join?.meeting_id;
   useEffect(() => {
     if (!meetingId) return;
     const saved = loadLocalMuted(meetingId);                  // после перезагрузки страницы во время встречи заглушённые остаются заглушёнными
-    localMutedRef.current = saved; setLocalMuted(saved); applyLocalMute(audioBox.current, saved, roomRef.current?.localParticipant.identity ?? "");
+    localMutedRef.current = saved; setLocalMuted(saved); applyLocalMute(audioBox.current, saved, roomRef.current?.localParticipant.identity ?? "", soundOffRef.current);
   }, [meetingId]);
   const [cardOf, setCardOf] = useState<{ identity: string; name: string; role?: string } | null>(null);
   const [handSound, setHandSound] = useState(handSoundEnabled);
@@ -620,8 +627,8 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           const el = track.attach();
           el.dataset.identity = participant.identity;
           const identity = participant.identity;
-          const own = sameUser(identity, roomRef.current?.localParticipant.identity ?? "");      // своё другое устройство: его звук здесь не воспроизводится (нет акустической петли)
-          const reapply = () => { el.muted = own || localMutedRef.current.has(identity); };      // заглушённый для себя остаётся заглушённым и после переподключения/перезагрузки
+          // своё другое устройство не воспроизводится (нет акустической петли); заглушённый для себя и общий «Звук выкл.» держатся и после переподключения/перезагрузки
+          const reapply = () => { el.muted = isSilenced(identity, localMutedRef.current, roomRef.current?.localParticipant.identity ?? "", soundOffRef.current); };
           reapply();
           el.addEventListener("loadedmetadata", reapply); el.addEventListener("playing", reapply);          // LiveKit при старте воспроизведения сам сбрасывает muted
           audioBox.current.appendChild(el);
@@ -1144,7 +1151,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
         const rest = cur.filter((h) => h.identity !== e.identity);
         return e.raised ? [...rest, { identity: e.identity, name: e.name, at: e.at ?? Date.now() / 1000 }].sort((a, b) => a.at - b.at) : rest;
       });
-      if (e.raised && e.identity !== infoRef.current?.identity) playHandSound();          // один тихий сигнал на событие; своя рука без звука
+      if (e.raised && e.identity !== infoRef.current?.identity && !soundOffRef.current) playHandSound();          // один тихий сигнал на событие; своя рука и выключенный звук встречи — без сигнала
     }
     else if (e.type === "floor_changed") {
       setFloorIds((cur) => { const n = new Set(cur); if (e.granted) n.add(e.identity); else n.delete(e.identity); return n; });
@@ -1395,6 +1402,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
   const moreItems = (): MenuItem[] => [
     // на телефоне «Доска» и «Вид» — здесь, а не в панели: так у оставшихся кнопок хватает места и «Выйти» не стоит вплотную к соседней
     { id: "board", label: boardVisible ? "Скрыть доску" : boardNews ? "Доска · обновлена" : "Доска", icon: "board", hidden: !(mobile && canViewBoard), onSelect: toggleBoard },
+    { id: "sound", label: soundOff ? "Включить звук встречи" : "Выключить звук встречи", icon: soundOff ? "volumeOff" : "volume", hint: "Только у вас: вы никого не слышите и сигнал руки молчит; остальные слышат друг друга и вас", hidden: !mobile, disabled: stage !== "ready", onSelect: toggleSound },
     { id: "layout", label: "Вид сцены", icon: "layout", hidden: !mobile, onSelect: () => undefined, submenu: layoutItems() },
     { id: "devices", label: "Устройства…", icon: "sliders", hint: "Микрофон, динамики и камера", hidden: !roomRef.current, onSelect: () => setDevPop({ left: Math.max(8, window.innerWidth - 392), bottom: 96 }) },
     { id: "noise", label: "Шумоподавление", icon: micPrefs.noiseMode === "off" ? "noiseOff" : "noise", hint: "Обработка вашего микрофона (нейросеть работает на вашем устройстве)", hidden: !canMic, disabled: stage !== "ready", onSelect: () => undefined,
@@ -1571,6 +1579,10 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
                          title={!canMic ? listenerHint : me?.mic ? "Выключить микрофон" : "Включить микрофон"} disabled={ended || stage !== "ready" || !canMic} onClick={() => { setMicFail(null); void toggle("mic"); }}
                          onMore={roomRef.current ? openDevices : undefined} moreLabel="Выбор микрофона, динамиков и камеры" />
           </Ctl>
+          {!mobile && <Ctl onClose={() => undefined}>
+            <RoundButton icon={soundOff ? "volumeOff" : "volume"} label={soundOff ? "Звук выкл." : "Звук"} short="Звук" tone={soundOff ? "off" : "neutral"} pressed={!soundOff}
+                         title={soundOff ? "Включить звук встречи (только у вас)" : "Выключить звук встречи у себя: вы никого не слышите и сигнал руки молчит; остальные слышат друг друга и вас"} disabled={ended || stage !== "ready"} onClick={toggleSound} />
+          </Ctl>}
           {showCam && (
             <Ctl error={ctlErr.cam} onClose={() => setErr("cam")}>
               <RoundButton icon={me?.cam ? "video" : "videoOff"} label={me?.cam ? "Камера" : "Камера выкл."} short="Камера" tone={me?.cam ? "on" : "off"} pressed={!!me?.cam}
@@ -1608,7 +1620,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <RoundButton icon="chat" label="Чат" tone="neutral" title="Открыть чат встречи" disabled={ended} onClick={() => { setTCollapsed(false); if (window.innerWidth > 1000) lsSet("room.tcollapsed", "0"); setChatSignal((n) => n + 1); setBoardFocus(false); }} />
           </Ctl>
           <Ctl error={ctlErr.rec ?? ctlErr.vid ?? ctlErr.tr} onClose={() => { setErr("rec"); setErr("vid"); setErr("tr"); }}>
-            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live || (mobile && !!boardNews && !boardVisible)} disabled={ended}
+            <RoundButton icon="more" label="Ещё" tone={recording || video?.recording || lv.state?.live ? "rec" : "neutral"} badge={recording || !!video?.recording || !!lv.state?.live || (mobile && !!boardNews && !boardVisible) || (mobile && soundOff)} disabled={ended}
                          title="Шумоподавление, устройства, запись, транскрибация и другие действия"
                          onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu.openAt(r.left, r.top - 8, moreItems(), { above: true, anchor: e.currentTarget }); }} />
           </Ctl>
