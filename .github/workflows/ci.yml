@@ -28,7 +28,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
-      - timeout-minutes: 10      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+      # ffmpeg тянет ~63 МБ: при медленном зеркале (0.76.4: ~60 КБ/с) 10 минут не хватало — скачанные .deb хранятся между прогонами
+      - uses: actions/cache@v6
+        with:
+          path: ~/.apt-archives
+          key: apt-backend-${{ runner.os }}-${{ hashFiles('.github/apt-install.sh') }}
+          restore-keys: apt-backend-${{ runner.os }}-
+      - timeout-minutes: 20      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+        env: { APT_ARCHIVES: /home/runner/.apt-archives }
         run: bash .github/apt-install.sh ffmpeg fonts-dejavu-core libkrb5-dev gcc
       # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt
