@@ -159,7 +159,6 @@ export interface ClientConfig {
   screen_profile: string; screen_eco_kbps?: number; screen_share_audio: boolean; one_sharer_at_a_time: boolean; max_sharers?: number;
   /** Высота захвата показа экрана (1440 — в комнате трансляции с качеством 2K). */
   screen_max_height?: number;
-  screen_single_layer?: boolean;
   camera_quality?: string;               // качество камеры по умолчанию в комнате: auto | high | medium | low | min | off
   /** Комната трансляции: подготовка до «Выйти в эфир», вопросы зрителей. */
   broadcast?: boolean;

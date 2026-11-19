@@ -22,8 +22,8 @@ export const clampEcoKbps = (v: unknown): number => {
  *  - захват до 1080p; contentHint подсказывает кодеку, что важнее: детали текста или плавность;
  *  - VP9 (в Chromium заметно чётче VP8 при том же битрейте для экрана), запасной VP8 включается SDK;
  *  - degradationPreference: sharp/balanced держат разрешение (читаемость), motion — частоту кадров;
- *  - дополнительный низкий simulcast-слой — зрителям со слабым каналом и миниатюрам не нужен полный поток.
- * Подписчики получают слой по размеру окна (adaptiveStream), в полноэкранном режиме — максимальный.
+ *  - один слой без simulcast: второй (низкий) слой забирал бюджет канала, верхний 1080p не отправлялся вовсе, и зрители видели 720p/5 к/с,
+ *    а при узком канале у ведущего — 427×231 «кубиками» (замер в обычной комнате, 2026-11-19; в комнате трансляции — 0.75.0).
  *
  * «Экономный 720p» отличается: один слой без simulcast (серверу и сети нечего пересылать лишнего), VP8 (предсказуемый одиночный поток без
  * масштабируемого кодирования: SDK для VP9 принудительно выбирает режим «движение» и частоту до 5 к/с), потолок 800 кбит/с на самом отправителе.
@@ -48,37 +48,34 @@ function baseScreenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoK
     case "eco":
       return {
         capture: { ...common, resolution: { width: ECO.width, height: ECO.height, frameRate: ECO.fps }, contentHint: "text" },
-        publish: { videoCodec: "vp8", simulcast: false, screenShareEncoding: { maxBitrate: clampEcoKbps(ecoKbps) * 1000, maxFramerate: ECO.fps },
-                   screenShareSimulcastLayers: [], degradationPreference: "maintain-resolution" },
+        publish: { videoCodec: "vp8", screenShareEncoding: { maxBitrate: clampEcoKbps(ecoKbps) * 1000, maxFramerate: ECO.fps },
+                   degradationPreference: "maintain-resolution" },
       };
     case "motion":
       return {
         capture: { ...common, resolution: p.h1080fps30.resolution, contentHint: "motion" },
         publish: { videoCodec: "vp9", screenShareEncoding: { maxBitrate: 6_000_000, maxFramerate: 30 },
-                   screenShareSimulcastLayers: [p.h720fps15], degradationPreference: "maintain-framerate" },
+                   degradationPreference: "maintain-framerate" },
       };
     case "balanced":
       return {
         capture: { ...common, resolution: p.h1080fps15.resolution, contentHint: "detail" },
         publish: { videoCodec: "vp9", screenShareEncoding: { maxBitrate: 3_500_000, maxFramerate: 20 },
-                   screenShareSimulcastLayers: [p.h720fps15], degradationPreference: "balanced" },
+                   degradationPreference: "balanced" },
       };
     default:
       return {
         capture: { ...common, resolution: p.h1080fps15.resolution, contentHint: "text" },
         publish: { videoCodec: "vp9", screenShareEncoding: { maxBitrate: 4_000_000, maxFramerate: 15 },
-                   screenShareSimulcastLayers: [p.h720fps5], degradationPreference: "maintain-resolution" },
+                   degradationPreference: "maintain-resolution" },
       };
   }
 }
 
-/**
- * Параметры показа экрана. `singleLayer` — одним слоем без simulcast: в комнате трансляции показ смотрит только Egress, ему нужен верхний слой, а вторая дорожка (427×240 при нехватке
- * канала) забирала почти весь бюджет браузера и оставляла верхний слой без битрейта (замер: верхний 1920×1080 — 0–8 кадров/с и ≈ 270 кбит/с при оценке канала ≈ 1,1 Мбит/с на локальной сети).
- */
-export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080, singleLayer = false): ReturnType<typeof baseScreenShareOptions> {
+/** Параметры показа экрана: всегда один слой (см. выше). */
+export function screenShareOptions(profile: ScreenProfile, withAudio: boolean, ecoKbps: number = ECO.kbps, maxHeight = 1080): ReturnType<typeof baseScreenShareOptions> {
   const o = baseScreenShareOptions(profile, withAudio, ecoKbps, maxHeight);
-  return singleLayer ? { ...o, publish: { ...o.publish, simulcast: false, screenShareSimulcastLayers: [] } } : o;
+  return { ...o, publish: { ...o.publish, simulcast: false, screenShareSimulcastLayers: [] } };
 }
 
 export const isScreenProfile = (v: string | null | undefined): v is ScreenProfile => v === "sharp" || v === "balanced" || v === "motion" || v === "eco";

@@ -20,12 +20,8 @@ describe("screen share profiles", () => {
     expect(o.capture.systemAudio).toBe("include");
   });
 
-  it("the three classic profiles still offer an extra low simulcast layer and VP9 (unchanged by the eco profile)", () => {
-    for (const p of ["sharp", "balanced", "motion"] as const) {
-      const o = screenShareOptions(p, false);
-      expect(o.publish.videoCodec).toBe("vp9");
-      expect(o.publish.screenShareSimulcastLayers?.length).toBe(1);
-    }
+  it("the three classic profiles use VP9 (unchanged by the eco profile)", () => {
+    for (const p of ["sharp", "balanced", "motion"] as const) expect(screenShareOptions(p, false).publish.videoCodec).toBe("vp9");
   });
 
   it("eco: 1280x720, 10 fps, 800 kbps, one layer, no simulcast, resolution is kept for readability", () => {
@@ -115,15 +111,12 @@ describe("эфир 2K", () => {
   });
 });
 
-describe("показ экрана одним слоем (комната трансляции)", () => {
-  it("без simulcast и без дополнительных слоёв, остальное как у профиля", () => {
-    for (const profile of ["sharp", "balanced", "motion"] as const) {
-      const base = screenShareOptions(profile, false, 800, 1080), one = screenShareOptions(profile, false, 800, 1080, true);
-      expect(base.publish.screenShareSimulcastLayers?.length).toBeGreaterThan(0);
-      expect(one.publish.simulcast).toBe(false);
-      expect(one.publish.screenShareSimulcastLayers).toEqual([]);
-      expect(one.publish.screenShareEncoding).toEqual(base.publish.screenShareEncoding);
-      expect(one.capture).toEqual(base.capture);
+describe("показ экрана одним слоем во всех комнатах", () => {
+  it("без simulcast: низкий слой забирал канал, и зрители видели 720p/5 к/с или 427×231", () => {
+    for (const profile of ["sharp", "balanced", "motion", "eco"] as const) {
+      const o = screenShareOptions(profile, false);
+      expect(o.publish.simulcast).toBe(false);
+      expect(o.publish.screenShareSimulcastLayers).toEqual([]);
     }
   });
 });

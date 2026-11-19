@@ -61,7 +61,7 @@ type CtlErrors = Partial<Record<CtlKey, string>>;
 
 // Библиотека звонков на уровне info пишет в консоль адрес подключения целиком (с токеном доступа и большим join_request) — оставляем только предупреждения.
 /** Все места для показа экрана заняты (сервер держит не больше пяти одновременных показов, при «только один показывающий» — один). */
-const sharesFullText = (max: number) => max <= 1 ? "Сейчас экран уже показывает другой участник. Показать свой можно, когда он завершит показ."
+const sharesFullText = (max: number) => max <= 1 ? "Сейчас экран уже показывает другой участник: администратор разрешил только один показ одновременно (Админ → Демонстрация экрана). Показать свой можно, когда он завершит показ."
   : `Сейчас экран показывают ${max} участников — это предел. Место освободится, как только кто-то завершит показ.`;
 setLogLevel(LogLevel.warn);
 
@@ -943,11 +943,14 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
           const maxSharers = join.client.max_sharers ?? (join.client.one_sharer_at_a_time ? 1 : 5);
           if (othersSharing >= maxSharers) { setErr("screen", sharesFullText(maxSharers)); return; }
           const profile = loadProfile(join.client.screen_profile);
-          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps, join.client.screen_max_height, !!join.client.screen_single_layer);
+          const o = screenShareOptions(profile, join.client.screen_share_audio && withAudio, join.client.screen_eco_kbps, join.client.screen_max_height);
           userStopRef.current = false;
           screenPhase("SCREEN_CREATE", `profile=${profile} audio=${o.capture.audio ? "yes" : "no"}`);
           screenPhase("SCREEN_PUBLISH_START");
           await lp.setScreenShareEnabled(true, o.capture, o.publish);
+          // SDK для VP9 ставит подсказку «движение»: тогда при узком канале браузер уменьшает разрешение (текст «кубиками»), а не частоту кадров
+          const scr = lp.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
+          if (scr && o.capture.contentHint) scr.contentHint = o.capture.contentHint;
           reportEvent(screenStoppedOnceRef.current ? "screen_share_restarted" : "screen_share_started", { meetingId: join.meeting_id, detail: `${profile}, audio=${o.capture.audio}` });
           if (profile === "eco") void enforceEco(join.client.screen_eco_kbps);
         }
