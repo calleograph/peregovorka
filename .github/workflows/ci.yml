@@ -29,14 +29,21 @@ jobs:
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       # ffmpeg тянет ~63 МБ: при медленном зеркале (0.76.4: ~60 КБ/с) 10 минут не хватало — скачанные .deb хранятся между прогонами
-      - uses: actions/cache@v6
+      # restore/save раздельно: обычный actions/cache сохраняет только при успехе задания, и при сбое скачанное терялось
+      - uses: actions/cache/restore@v6
         with:
           path: ~/.apt-archives
-          key: apt-backend-${{ runner.os }}-${{ hashFiles('.github/apt-install.sh') }}
+          key: apt-backend-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: apt-backend-${{ runner.os }}-
-      - timeout-minutes: 20      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
-        env: { APT_ARCHIVES: /home/runner/.apt-archives }
+      - timeout-minutes: 25      # зависшее зеркало apt (тег v0.56.0) больше не держит выпуск часами
+        env: { APT_ARCHIVES: /home/runner/.apt-archives, APT_TRIES: 5 }
         run: bash .github/apt-install.sh ffmpeg fonts-dejavu-core libkrb5-dev gcc
+      - if: always()
+        continue-on-error: true    # сбой сохранения кэша не должен краснить CI
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.apt-archives
+          key: apt-backend-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
       # те же точные версии, что в образе (constraints.txt): CI проверяет выпускаемый комплект, а не «самые новые в диапазоне»
       - run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt
       - run: pytest -q --junitxml=junit.xml

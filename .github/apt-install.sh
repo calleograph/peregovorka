@@ -4,7 +4,7 @@
 O=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
 if [ -n "${APT_ARCHIVES:-}" ]; then mkdir -p "$APT_ARCHIVES/partial"; O+=(-o "Dir::Cache::Archives=$APT_ARCHIVES"); fi
 ok=1
-for i in 1 2 3; do
+for i in $(seq 1 "${APT_TRIES:-3}"); do
   timeout -k 10 200 sudo apt-get "${O[@]}" update && timeout -k 10 300 sudo apt-get "${O[@]}" install -y --no-install-recommends "$@" && { ok=0; break; }
   echo "apt: попытка $i не удалась"; sleep 15
 done
