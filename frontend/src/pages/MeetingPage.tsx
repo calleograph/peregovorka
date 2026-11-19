@@ -157,7 +157,8 @@ export default function MeetingPage({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <section>
-      <p><Link to="/history">← К истории</Link></p>
+      <p className="row" style={{ gap: 16, flexWrap: "wrap" }}><Link to="/history">← К истории</Link>
+        {meeting.room_id && <Link to={`/history/rooms/${meeting.room_id}`} title="Как темы этой комнаты развивались от встречи к встрече">Эволюция обсуждений комнаты →</Link>}</p>
       <div className="row"><RoomIcon name={meeting.room_name} icon={meeting.room_icon} size={34} /><h1 style={{ margin: 0 }}>{meeting.room_name}</h1>{!finished && <span className="badge rec">идёт</span>}</div>
       <p className="muted">{fmt(meeting.started_at)} — {meeting.ended_at ? `${fmt(meeting.ended_at)} (${duration(meeting.started_at, meeting.ended_at)})` : "идёт"} · Участвовали: {meeting.participants.map((p) => p.display_name).join(", ") || "—"}
         {(chatCount > 0 || boardUsed) && <> · Материалы: {chatCount > 0 && `чат (${chatCount})`}{chatCount > 0 && boardUsed && ", "}{boardUsed && "общая доска (схема)"}</>}</p>

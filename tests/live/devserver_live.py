@@ -312,6 +312,26 @@ if os.environ.get("LIVE_CLEAN") != "1":          # LIVE_CLEAN=1 — «чиста
                 a = st + dt.timedelta(seconds=i * 200 + 5)
                 db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=rooms[0].id, user_id=who[w].id, participant_identity=who[w].sam_account_name,
                                          started_at=a, ended_at=a + dt.timedelta(seconds=40), text=text))
+        if os.environ.get("LIVE_SEED_MEMORY") == "1":        # «память комнаты»: синтетическая история из 11 встреч (tests/memory_corpus.py) с готовыми картами в комнате rooms[1]
+            import memory_corpus as mc
+            from app.models import ConversationMap
+            rooms[1].memory_mode = "on"
+            for i in range(mc.NO_TRANSCRIPT + 1):
+                st = mc.meeting_start(i)
+                m = Meeting(room_id=rooms[1].id, livekit_room=f"lk-mem{i}", started_at=st, ended_at=st + dt.timedelta(minutes=40), end_reason="manual", started_by_user_id=alice.id,
+                            finalized_at=st + dt.timedelta(minutes=41))
+                db.add(m); db.flush()
+                db.add(MeetingParticipant(meeting_id=m.id, user_id=alice.id, joined_at=st, left_at=st + dt.timedelta(minutes=40)))
+                topics = mc.MEETINGS[i] if i < len(mc.MEETINGS) else ([{"title": "Разное", "summary": "Короткое обсуждение планов.", "segments": [{"start_s": 10, "end_s": 300}]}] if i == mc.NO_MAP else [])
+                for t in topics:
+                    s0 = t["segments"][0]["start_s"]
+                    db.add(TranscriptSegment(segment_uid=uuid.uuid4(), meeting_id=m.id, room_id=rooms[1].id, user_id=alice.id, participant_identity="alice",
+                                             started_at=st + dt.timedelta(seconds=s0), ended_at=st + dt.timedelta(seconds=s0 + 30), text=t["summary"]))
+                if i < len(mc.MEETINGS):
+                    data = {"version": 3, "meeting": {"title": rooms[1].name, "started_at": st.isoformat(), "duration_s": 2400, "timezone": "Europe/Moscow", "participants": 1},
+                            "categories": [], "topics": [{k: v for k, v in t.items() if k != "gold"} | {"ai_title": t["title"], "ai_category": t["category"]} for t in topics],
+                            "speakers": [], "unassigned": {}, "items_ready": True}
+                    db.add(ConversationMap(meeting_id=m.id, status="ready", data=data, meta={}))
         rooms[6].moderators.append(RoomModerator(subject_type="user", subject_ref=ALICE_GUID, display_name="Алиса Крылова"))   # alice — руководитель «Продаж»
         db.commit()
     eng.dispose()

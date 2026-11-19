@@ -18,9 +18,10 @@ from datetime import timedelta
 from sqlalchemy import delete, exists, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..services.room_memory import forget_meetings
 from ..models import Broadcast, ChatAttachment, GuestParticipant, LiveQuestion, LiveViewer
 from ..services.live import purge_audience
-from ..models import ConversationMap, Meeting, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
+from ..models import ConversationMap, Meeting, RoomThreadEvent, MeetingChatMessage, MeetingWhiteboard, Protocol, Recording, Room, TranscriptSegment, utcnow
 from ..services import retention_policy
 from ..services.protocols import ProtocolService
 
@@ -38,6 +39,7 @@ def _has_text():
     return or_(exists().where(TranscriptSegment.meeting_id == m),
                exists().where(Protocol.meeting_id == m, Protocol.kind.in_(("summary", "protocol", "transcript"))),
                exists().where(ConversationMap.meeting_id == m), exists().where(MeetingChatMessage.meeting_id == m),
+               exists().where(RoomThreadEvent.meeting_id == m, RoomThreadEvent.source_gone.is_(False)),
                exists().where(MeetingWhiteboard.meeting_id == m), exists().where(ChatAttachment.meeting_id == m),
                exists().where(GuestParticipant.meeting_id == m, GuestParticipant.email.is_not(None)),
                exists().where(LiveQuestion.broadcast_id.in_(bids)), exists().where(LiveViewer.broadcast_id.in_(bids)))
@@ -150,6 +152,10 @@ async def _purge_text(db: AsyncSession, protocols: ProtocolService, ids: list, s
         stats["maps"] = stats.get("maps", 0) + maps
     if copies:
         stats["text_copies"] = stats.get("text_copies", 0) + copies
+    # память комнаты: события этих встреч удаляются; где комната хранит историю дольше стенограммы — остаются без цитат, с пометкой «первоисточник удалён»
+    keep = set((await db.execute(select(Room.id).join(Meeting, Meeting.room_id == Room.id).where(Meeting.id.in_(ids), Room.memory_keep.is_(True)))).scalars())
+    if n := await forget_meetings(db, ids, keep):
+        stats["memory_events"] = stats.get("memory_events", 0) + n
     stats["chat"] += (await db.execute(delete(MeetingChatMessage).where(MeetingChatMessage.meeting_id.in_(ids)))).rowcount or 0
     stats["whiteboards"] += (await db.execute(delete(MeetingWhiteboard).where(MeetingWhiteboard.meeting_id.in_(ids)))).rowcount or 0
     if q := await purge_audience(db, ids):        # вопросы зрителей и почта гостей — по сроку текстов

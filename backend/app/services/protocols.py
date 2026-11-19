@@ -239,6 +239,7 @@ class ProtocolService:
         self.after_finalize = None  # async (meeting_id) -> None: рассылка материалов после завершения; задаётся при запуске приложения
         self.journal = None  # services.journal.Journal; задаётся при запуске приложения
         self.maps = None  # services.conv_map.MapService (карта разговора); задаётся при запуске приложения
+        self.memory = None  # services.room_memory.MemoryService (память комнаты); задаётся при запуске приложения
         self.on_document = None  # (kind, id, meeting_id, room_id, status, error) -> None: документ или карта готовы/не удались (события публичного API); задаётся при запуске
         self._tasks: set[asyncio.Task] = set()
         self._live: dict[uuid.UUID, Budget] = {}          # идущие задания: время и этап для интерфейса

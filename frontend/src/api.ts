@@ -343,6 +343,29 @@ export interface Participant {
 export interface LiveQuestion { id: string; text: string; status: "new" | "done" | "hidden"; at: string; handled_at?: string | null; seen?: boolean; author?: string; email?: string | null; materials_consent?: boolean }
 export interface LiveQuestionFeed { items: LiveQuestion[]; counts: { new: number; done: number; hidden: number }; can_moderate: boolean; contacts: boolean }
 export interface LiveViewerReg { viewer: string; display_name: string; email: string | null; materials_consent: boolean }
+/** Память комнаты (эволюция обсуждений): сквозные темы, их события по встречам, наблюдения. */
+export type MemoryKind = "mention" | "proposal" | "decision" | "task" | "question";
+export interface MemoryEvent {
+  id: string; thread: string; meeting: string; kind: MemoryKind; text: string; at: string; speaker: string | null; assignee: string | null; deadline: string | null;
+  quote: string | null; sec: number | null; segment_id: number | null; source_gone: boolean; topic_id: string; ref?: string;
+}
+export interface MemoryThread {
+  id: string; title: string; ai_title: string; summary: string | null; category: string; state: string; state_title: string; user_state: string | null;
+  author: string | null; author_is_user: boolean; note: string | null; first_at: string; last_at: string; meetings: string[];
+  counts: { decision: number; task: number; proposal: number; question: number };
+}
+export interface MemoryObservation {
+  key: string; kind: string; tone: "attention" | "info" | "good"; thread: string; title: string; why: string; evidence: string[]; action: string; confidence: string; at: string;
+  feedback: "useful" | null;
+}
+export interface RoomMemoryState {
+  room: { id: string; name: string }; enabled: boolean; keep: boolean; can_manage: boolean; status: "idle" | "running" | "failed"; error: string | null; updated_at: string | null;
+  coverage: { meetings: number; with_transcript: number; with_map: number; in_memory: number; without_map: number; partial_view: boolean };
+  threads: MemoryThread[]; events: MemoryEvent[]; meetings: Record<string, { started_at: string; ended_at: string | null }>;
+  observations: MemoryObservation[]; dismissed: number; states: Record<string, string>;
+}
+export interface MemoryAnswer { events: MemoryEvent[]; answer: string | null; basis: "ai" | "search"; note?: string; anonymized?: boolean }
+
 export interface Meeting {
   room_icon?: RoomIconInfo | null;
   id: string; room_id: string; room_name: string; started_at: string; ended_at: string | null;
@@ -1213,6 +1236,16 @@ export const api = {
     remove: (id: string) => request<void>("DELETE", `/admin/mail/templates/${id}`),
   },
 
+  roomMemory: {
+    get: (roomId: string) => request<RoomMemoryState>("GET", `/rooms/${roomId}/memory`),
+    settings: (roomId: string, b: { mode?: "on" | "off"; keep?: boolean }) => request<{ mode: string; keep: boolean; maps_queued: number }>("POST", `/rooms/${roomId}/memory/settings`, b),
+    refresh: (roomId: string) => request<{ maps_queued: number }>("POST", `/rooms/${roomId}/memory/refresh`),
+    editThread: (roomId: string, id: string, b: { title?: string; state?: string | null; author?: string; note?: string }) => request<{ ok: boolean }>("PATCH", `/rooms/${roomId}/memory/threads/${id}`, b),
+    merge: (roomId: string, id: string, into: string) => request<{ into: string }>("POST", `/rooms/${roomId}/memory/threads/${id}/merge`, { into }),
+    split: (roomId: string, id: string, meetingId: string, topicId: string) => request<{ thread: string }>("POST", `/rooms/${roomId}/memory/threads/${id}/split`, { meeting_id: meetingId, topic_id: topicId }),
+    feedback: (roomId: string, key: string, status: "useful" | "dismissed" | null) => request<{ ok: boolean }>("POST", `/rooms/${roomId}/memory/observations/feedback`, { key, status }),
+    ask: (roomId: string, question: string) => request<MemoryAnswer>("POST", `/rooms/${roomId}/memory/ask`, { question }),
+  },
   conversationMap: (meetingId: string) => request<MapState>("GET", `/meetings/${meetingId}/map`),
   createMap: (meetingId: string, llmOnce?: string, anonymize?: "on" | "off") => request<{ status: string }>("POST", `/meetings/${meetingId}/map`, llmOnce || anonymize ? { ...(llmOnce ? { llm_once: llmOnce } : {}), ...(anonymize ? { anonymize } : {}) } : undefined),
   restoreMap: (meetingId: string) => request<MapState>("POST", `/meetings/${meetingId}/map/restore`),

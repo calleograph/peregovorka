@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icons";
 import { api, type ExportFormat, type Meeting } from "../api";
 import Menu from "../components/Menu";
@@ -46,6 +46,7 @@ function Materials({ m, isAdmin }: { m: Meeting; isAdmin: boolean }) {
 
 export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [q, setQ] = useState("");
+  const navigate = useNavigate();
   // «бесконечная лента»: следующие встречи подгружаются при прокрутке; поиск работает по уже загруженным (лента догружается, пока список виден)
   const list = useInfinite<Meeting>(async (offset) => { const r = await api.meetings(undefined, offset); return { rows: r, more: r.length >= 30 }; }, []);
   const items = list.items;
@@ -56,9 +57,16 @@ export default function HistoryPage({ isAdmin = false }: { isAdmin?: boolean }) 
     return items.filter((m) => !s || m.room_name.toLowerCase().includes(s) || m.participants.some((p) => p.display_name.toLowerCase().includes(s)));
   }, [items, q]);
 
+  const rooms = useMemo(() => [...new Map(items.map((m) => [m.room_id, m.room_name])).entries()].sort((a, b) => a[1].localeCompare(b[1], "ru")), [items]);
+
   return (
     <section>
-      <div className="row"><h1 style={{ margin: 0 }}>История встреч</h1><div className="spacer" />
+      <div className="row" style={{ flexWrap: "wrap", gap: 8 }}><h1 style={{ margin: 0 }}>История встреч</h1><div className="spacer" />
+        {rooms.length > 0 && <select value="" onChange={(e) => e.target.value && navigate(`/history/rooms/${e.target.value}`)} style={{ maxWidth: 260 }}
+                                     aria-label="Эволюция обсуждений комнаты" title="Как темы комнаты развивались от встречи к встрече">
+          <option value="">Эволюция обсуждений…</option>
+          {rooms.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск: комната или участник" style={{ maxWidth: 320 }} aria-label="Поиск по истории" /></div>
       {isAdmin
         ? <p className="muted">Как администратор вы видите все встречи.</p>

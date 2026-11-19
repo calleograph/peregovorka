@@ -39,6 +39,7 @@ const RecorderTemplate = lazy(() => import("./recorder/RecorderTemplate"));
 const LivePage = lazy(() => import("./pages/LivePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const HelpPage = lazy(() => import("./pages/HelpPage"));
+const RoomMemoryPage = lazy(() => import("./pages/RoomMemoryPage"));
 import PeerOpenPage from "./pages/PeerOpenPage";
 import MeetPage from "./pages/MeetPage";
 import CaptchaHost from "./components/CaptchaDialog";
@@ -183,6 +184,7 @@ function StaffApp() {
           <Route path="/chats" element={<ChatsPage />} />
           <Route path="/help" element={<Suspense fallback={null}><HelpPage /></Suspense>} />
           <Route path="/history" element={<HistoryPage isAdmin={me.user.is_admin} />} />
+          <Route path="/history/rooms/:roomId" element={<Suspense fallback={null}><RoomMemoryPage /></Suspense>} />
           <Route path="/history/:meetingId" element={<MeetingPage isAdmin={me.user.is_admin} />} />
           <Route path="/admin" element={me.user.is_admin ? <AdminPage version={version} /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

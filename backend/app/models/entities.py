@@ -198,6 +198,10 @@ class Room(Base):
     welcome_message: Mapped[str | None] = mapped_column(Text)
     # Автоматически формировать «Карту разговора» после встречи: inherit — как в системных настройках («Протоколы»), on / off — явно для комнаты.
     auto_map_mode: Mapped[str] = mapped_column(String(10), default="inherit", server_default="inherit", nullable=False)
+    # «Память комнаты» (эволюция обсуждений): off / on. Включённая память строит карты встреч сама и связывает их темы между встречами (services/room_memory.py).
+    memory_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off", nullable=False)
+    # Хранить историю тем дольше стенограммы: при очистке текста по сроку события остаются без цитат и с пометкой «первоисточник удалён».
+    memory_keep: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     # Прежние технические идентификаторы (адреса) комнаты: по ним старая ссылка перенаправляет на нынешнюю. Список строк.
     slug_history: Mapped[list | None] = mapped_column(JSONType)
     # Срок жизни: permanent — обычная переговорка; temporary — временная, создаётся пользователем на одну встречу и по её окончании закрывается.
@@ -579,6 +583,61 @@ class ConversationMap(Base):
     created_by: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class RoomMemory(Base):
+    """Состояние «памяти комнаты»: какие карты встреч уже учтены, ручные привязки тем и отзывы на наблюдения. Одна строка на комнату."""
+
+    __tablename__ = "room_memories"
+
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(12), default="idle", nullable=False)       # idle | running | failed
+    error: Mapped[str | None] = mapped_column(String(500))
+    processed: Mapped[dict | None] = mapped_column(JSONType)     # {meeting_id: время обновления карты, по которой учтена встреча}
+    overrides: Mapped[dict | None] = mapped_column(JSONType)     # {"<meeting_id>:<topic_id>": thread_id | "new"} — ручные привязки; анализ их не переопределяет
+    feedback: Mapped[dict | None] = mapped_column(JSONType)      # {ключ наблюдения: {"status": "useful"|"dismissed", "by", "at"}}
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class RoomThread(Base):
+    """Сквозная тема комнаты: одна проблема или идея, к которой возвращались на разных встречах. Состояние считается по событиям; поля user_* — правки людей."""
+
+    __tablename__ = "room_threads"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str | None] = mapped_column(String(600))
+    category: Mapped[str] = mapped_column(String(20), default="general", nullable=False)
+    user_title: Mapped[str | None] = mapped_column(String(200))
+    user_state: Mapped[str | None] = mapped_column(String(20))     # закрыта / в работе и т. п. — указал человек
+    user_author: Mapped[str | None] = mapped_column(String(200))   # автор исходного предложения — указал человек
+    note: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class RoomThreadEvent(Base):
+    """Событие сквозной темы на конкретной встрече: обсуждали, предложили, решили, поручили, спросили. Источник — карта встречи (у пунктов есть реплика-основание)."""
+
+    __tablename__ = "room_thread_events"
+    __table_args__ = (Index("ix_thread_events_room_at", "room_id", "at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("room_threads.id", ondelete="CASCADE"), index=True, nullable=False)
+    room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False)
+    topic_id: Mapped[str] = mapped_column(String(40), nullable=False)     # тема в карте встречи
+    source_gone: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)   # до поля text: оно перекрывает text() в теле класса
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)         # mention | proposal | decision | task | question
+    text: Mapped[str] = mapped_column(String(600), nullable=False)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    sec: Mapped[int | None] = mapped_column(Integer)
+    speaker: Mapped[str | None] = mapped_column(String(200))
+    quote: Mapped[str | None] = mapped_column(String(300))
+    assignee: Mapped[str | None] = mapped_column(String(200))
+    deadline: Mapped[str | None] = mapped_column(String(100))
+    segment_id: Mapped[int | None] = mapped_column(Integer)
 
 
 class MailTemplate(Base):

@@ -569,7 +569,8 @@ class MapService:
             if meeting is None or meeting.ended_at is None:
                 return
             mode = meeting.room.auto_map_mode
-            want = mode == "on" or (mode != "off" and bool((await self.ps._svc.get(db, "protocol")).auto_map))      # type: ignore[attr-defined]
+            # включённая «память комнаты» строит карты сама: её источник — карты встреч
+            want = mode == "on" or meeting.room.memory_mode == "on" or (mode != "off" and bool((await self.ps._svc.get(db, "protocol")).auto_map))      # type: ignore[attr-defined]
             if not want or not await self.ps.has_materials(meeting_id):
                 return
             rec = await self.request(db, meeting_id, "auto")
@@ -583,6 +584,16 @@ class MapService:
         finally:
             self._active.discard(map_id)
         await self._notify(map_id)
+        memory = getattr(self.ps, "memory", None)
+        if memory is not None:                                # память комнаты учитывает новую карту; её сбой карту не затрагивает
+            try:
+                async with self.ps._sm() as db:
+                    rec = await db.get(ConversationMap, map_id)
+                    mid = rec.meeting_id if rec is not None and rec.status == "ready" else None
+                if mid is not None:
+                    await memory.after_map(mid)
+            except Exception:  # noqa: BLE001
+                log.exception("Память комнаты: не удалось учесть карту")
 
     async def _notify(self, map_id: uuid.UUID) -> None:
         """События document.ready / document.failed для подписчиков публичного API; сбой уведомления карту не затрагивает."""
