@@ -54,6 +54,7 @@ probe_host_build() { # РЕЖИМ — пробы: hb_leg/hb_none — BuildKit о
   esac; return 0; }
 docker() { [ "$1 $2" = "image inspect" ] && [ -e "$DATA_ROOT/img-$3" ]; }
 src_fingerprint() { echo "fp-$1"; }
+img_build_bases() { BUILD_BASE_ARGS=(); }      # базовые образы и зеркала — part_img.sh
 _compose_build_one() { # СЕРВИС РЕЖИМ ЛОГ
   echo "$1@$BUILD_NETWORK" >> "$BD/$SC.calls"; echo "$1:$2:$BUILD_NETWORK" >> "$BD/$SC.modes"
   local fail=""

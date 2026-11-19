@@ -73,7 +73,7 @@ resolve_image_tag() {
 # (реальный случай: в .env ASR_MAX_CONCURRENT_INFERENCE=1, а в контейнер попадало 2). Вызывать ДО load_env.
 # Сохраняются только управляющие переменные (PEREGOVORKA_KEEP_VARS) и всё, что явно перечислено в PEREGOVORKA_KEEP_ENV (через пробел);
 # PEREGOVORKA_KEEP_ENV=all отключает очистку (для отладки и тестов).
-PEREGOVORKA_KEEP_VARS="ENV_FILE IMAGE_TAG DRY_RUN BUILD_MODE FORCE_BUILD PULL_BASES APP_BUILT_AT_OVERRIDE APP_BUILD_TIME UPDATE_SOURCE UPDATE_BY GIT_RETRIES UPD_POLL UPD_REPORT_EVERY"
+PEREGOVORKA_KEEP_VARS="ENV_FILE IMAGE_TAG DRY_RUN BUILD_MODE FORCE_BUILD APP_BUILT_AT_OVERRIDE APP_BUILD_TIME UPDATE_SOURCE UPDATE_BY GIT_RETRIES UPD_POLL UPD_REPORT_EVERY"
 sanitize_project_env() {
   [ "${PEREGOVORKA_KEEP_ENV:-}" = all ] && return 0
   local f n k keep

@@ -204,7 +204,7 @@ scripts/smoke-test.sh
 - упал `RUN`/`COPY` в Dockerfile → `subsystem=dockerfile/project`, fallback не применяется.
 Режим можно задать явно: `BUILD_MODE=auto|buildkit|legacy` в `.env`. Установщик **никогда** не делает `docker system prune`, не удаляет `/var/lib/docker|containerd`, не размонтирует чужие mount'ы и не перезапускает Docker/containerd. При обнаружении зависших `containerd-mount` он лишь выводит диагностику — решение за администратором сервера.
 
-**Сетевые сбои скачивания.** `docker pull`/сборка при тайм-ауте registry/CDN/зеркала пакетов повторяются до 3 раз (пауза ~10 с, номер попытки в логе), уже скачанные слои не удаляются; итог при полном отказе — `FAIL subsystem=registry-network` (это не ошибка приложения и не Dockerfile).
+**Образы Docker Hub** (PostgreSQL, Redis, базовые образы сборки, Egress, SIP) готовятся до сборки: до 3 попыток с растущими паузами, затем зеркала по дайджесту (`deployment/image-mirrors.conf`, `IMAGE_MIRRORS`), см. `scripts/lib/imglib.sh`. **Сетевые сбои скачивания.** Сборка при тайм-ауте registry/CDN/зеркала пакетов повторяются до 3 раз (пауза ~10 с, номер попытки в логе), уже скачанные слои не удаляются; итог при полном отказе — `FAIL subsystem=registry-network` (это не ошибка приложения и не Dockerfile).
 
 ### 2.6 Итоговая проверка («доказательство работоспособности»), параметры хоста, управление
 
@@ -555,7 +555,7 @@ scripts/backup.sh --full                          # всё для чистого
 | Источник | Для чего | Возможная замена внутри сети |
 | --- | --- | --- |
 | GitHub (`git clone`, теги) | код выбранной версии | внутренний git-сервер с зеркалом репозитория; `PEREGOVORKA_REPO=https://git.example.org/peregovorka.git` (уже поддерживается в `install.sh`; `update.sh` берёт `origin` установленного каталога) |
-| Docker Hub и другие registry | базовые образы (python, node, nginx, postgres, redis, livekit, egress) | registry-прокси (Harbor, Nexus, `registry:2` в режиме pull-through) и `registry-mirrors` в `/etc/docker/daemon.json` — средство Docker, проекту менять ничего не нужно |
+| Docker Hub и другие registry | базовые образы (python, node, nginx, postgres, redis, livekit, egress) | **реализовано с 0.77.0:** образы, закреплённые дайджестом, при отказе Docker Hub берутся из зеркал по очереди — `deployment/image-mirrors.conf` (GitVerse, Timeweb Cloud, mirror.gcr.io) или `IMAGE_MIRRORS` в `.env` (внутренний registry-прокси: Harbor, Nexus, `registry:2` в режиме pull-through); `daemon.json` менять не нужно. Кроме LiveKit Server (закреплён только тегом) |
 | PyPI | зависимости backend и asr при сборке | прокси PyPI (Nexus, devpi); понадобится передавать `PIP_INDEX_URL` в сборку как build-arg — **в Dockerfile этого нет** |
 | npm | зависимости frontend | прокси npm (Nexus, Verdaccio); понадобится `NPM_CONFIG_REGISTRY` как build-arg — **в Dockerfile этого нет** |
 | источник моделей | GigaAM, Silero VAD | каталог на внутреннем ресурсе; `scripts/install.sh --models-from` и `scripts/models.sh --from-dir` (уже поддерживается) |

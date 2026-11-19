@@ -10,6 +10,7 @@
 
 BUILD_SERVICES=(livekit backend asr web)
 SELECTED_BUILD_MODE=""
+BUILD_BASE_ARGS=()   # --build-arg с адресами базовых образов из зеркал (img_build_bases)
 
 # --------------------------------------------------------------- классификация ошибок
 # stdin: лог сборки → stdout: privileges | network | project | infra | unknown
@@ -180,10 +181,8 @@ retry_cmd() {
   done
 }
 
-# Образы сторонних сервисов (PostgreSQL, Redis) — отдельно и с повторами: так сетевой сбой не выглядит ошибкой приложения.
-pull_base_images() {
-  retry_cmd "docker compose pull postgres redis" 3 "${PULL_RETRY_PAUSE:-10}" dc pull postgres redis
-}
+# Образы сторонних сервисов (PostgreSQL, Redis) — заранее, до сборки и остановки чего-либо: повторы, затем зеркала Docker Hub по дайджесту (imglib.sh).
+pull_base_images() { img_hub_core; }
 
 # ------------------------------------------------------------------- образы проекта
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
@@ -247,9 +246,9 @@ _compose_build_one() { # _compose_build_one svc mode log
   compose_args
   _build_ticker "$log" "$svc" "$$" & tp=$!
   if [ "$mode" = "legacy" ]; then
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build "${BUILD_BASE_ARGS[@]}" "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   else
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build ${PULL_BASES:+--pull} "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build "${BUILD_BASE_ARGS[@]}" "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   fi
   kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null
   return "$rc"
@@ -269,6 +268,11 @@ build_images() {
   for s in "${want[@]}"; do
     if ! build_needed "$s"; then ok "stage=build service=$s: образ $(svc_image "$s") актуален (исходники не менялись) — пропуск"; _build_status "$s" "готов, использован без пересборки ($(svc_image "$s"))"; continue; fi
     log="${DATA_ROOT}/state/build-$s.log"; mode="$SELECTED_BUILD_MODE"
+    # базовые образы закреплены дайджестом и готовятся заранее (повторы, зеркала): сборка берёт их с сервера, `--pull` не нужен
+    if ! img_build_bases "$s" "$REPO_ROOT/$(svc_context "$s")/Dockerfile"; then
+      _build_status "$s" "ОШИБКА: базовый образ не загружен ни с Docker Hub, ни с зеркал"; BUILD_FAILED_SVC="$s"; BUILD_FAILED_KIND=network
+      fail "FAIL stage=build service=$s subsystem=registry-network: базовый образ не загружен ни с Docker Hub, ни с зеркал (НЕ ошибка проекта)"; return 1
+    fi
     info "stage=build service=$s builder=$mode → $(svc_image "$s")"
     local attempt=1 built=0 n="${BUILD_ATTEMPTS:-3}" t0; t0=$(date +%s)
     while :; do

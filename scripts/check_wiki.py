@@ -26,7 +26,7 @@ SERVICE_MARKS = [(re.compile(p, re.I | re.M), msg) for p, msg in (
 )]
 SECRETS = [re.compile(p, re.I) for p in (r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"pgk_[A-Za-z0-9]{8}_[A-Za-z0-9]{20,}", r"password\s*[:=]\s*(?!YOUR|CHANGE|ПАРОЛЬ|\*)[^\s`]{6,}")]
 DOMAIN = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:ru|su|рф|local|corp|lan|internal)\b", re.I)
-ALLOWED_DOMAINS = re.compile(r"(?:example\.(?:org|com|test|local)|corp\.example\.org|meet\.example\.org|opensmodel\.sberdevices\.ru|sberdevices\.ru|huggingface\.co|rutube\.ru|vk\.ru|vkvideo\.ru|twitch\.tv|google\.com|youtube\.com)$", re.I)
+ALLOWED_DOMAINS = re.compile(r"(?:example\.(?:org|com|test|local)|corp\.example\.org|meet\.example\.org|opensmodel\.sberdevices\.ru|sberdevices\.ru|huggingface\.co|rutube\.ru|gitverse\.ru|timeweb\.cloud|vk\.ru|vkvideo\.ru|twitch\.tv|google\.com|youtube\.com)$", re.I)
 IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 ALLOWED_IP = re.compile(r"^(?:192\.0\.2\.|127\.|0\.0\.0\.0|198\.51\.100\.|203\.0\.113\.)")
 

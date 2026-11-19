@@ -51,8 +51,8 @@ def test_dockerfiles_install_with_constraints_and_pin_base_images_by_digest():
         text = (REPO / rel).read_text(encoding="utf-8")
         for ln in re.findall(r"^ARG \w+_IMAGE=(\S+)", text, re.M):
             assert re.search(r"@sha256:[0-9a-f]{64}$", ln), f"{rel}: образ {ln} без digest"
-    assert re.search(r"image: postgres:\S+@sha256:[0-9a-f]{64}", (REPO / "deployment" / "compose.yml").read_text(encoding="utf-8"))
-    assert re.search(r"image: redis:\S+@sha256:[0-9a-f]{64}", (REPO / "deployment" / "compose.yml").read_text(encoding="utf-8"))
+    assert re.search(r"image: \$\{POSTGRES_IMAGE:-postgres:\S+@sha256:[0-9a-f]{64}\}", (REPO / "deployment" / "compose.yml").read_text(encoding="utf-8"))
+    assert re.search(r"image: \$\{REDIS_IMAGE:-redis:\S+@sha256:[0-9a-f]{64}\}", (REPO / "deployment" / "compose.yml").read_text(encoding="utf-8"))
 
 
 def test_asr_image_checks_onnx_chain():

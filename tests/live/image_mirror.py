@@ -5,12 +5,16 @@
 Дальше выполняется НАСТОЯЩИЙ img_ensure из scripts/lib/imglib.sh: повторы, переход на разрешённое зеркало, проверка дайджеста и архитектуры, запись в .env, и затем
 `docker compose config` / `docker run` показывают, что именно этот образ используется без обращения к основному реестру.
 
-Запуск: python3 tests/live/image_mirror.py    (нужны docker, образ registry:2 и alpine; ~3 минуты; ничего чужого не трогает, всё убирает за собой)
+Дальше: «плохое» зеркало с другим образом под тем же именем (отклоняется по дайджесту), PostgreSQL через POSTGRES_IMAGE в compose, и сборка docker compose build
+с базовым образом из зеркала аргументом --build-arg при выключенных основном реестре и зеркале (образ берётся с сервера).
+
+Запуск: python3 tests/live/image_mirror.py    (нужны docker и образ registry:2; ~5 минут; ничего чужого не трогает, всё убирает за собой)
 """
 import http.client, http.server, json, os, shutil, socketserver, subprocess, sys, tempfile, threading, time
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PRIMARY, MIRROR = int(os.environ.get("PG_PRIMARY_PORT", "35600")), int(os.environ.get("PG_MIRROR_PORT", "35601"))
+BAD = int(os.environ.get("PG_BAD_PORT", "35602"))          # «плохое» зеркало: под тем же именем лежит ДРУГОЙ образ
 TAG = f"pgmirror{os.getpid()}"
 results = []
 
@@ -27,11 +31,14 @@ def sh(cmd, **kw):
 class Proxy(http.server.BaseHTTPRequestHandler):
     """Основной реестр: манифесты и /v2/ — как есть, слои не отдаёт (ответ не приходит)."""
     calls = {"manifests": 0, "blobs": 0}
+    down = False                               # реестр недоступен целиком (503 на любой запрос)
     default_request_version = "HTTP/1.1"       # иначе на запрос TLS-рукопожатия отвечает «HTTP/0.9» и Docker не переходит на http для localhost
 
     def log_message(self, *a): pass
 
     def do_GET(self):
+        if Proxy.down:
+            self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers(); return
         if "/blobs/" in self.path:
             Proxy.calls["blobs"] += 1
             time.sleep(120)        # заголовки ответа не приходят → таймаут у клиента
@@ -77,7 +84,7 @@ class TS(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     tmp = tempfile.mkdtemp(prefix="pgimg-")
-    reg = f"pgmirror-reg-{os.getpid()}"
+    reg = f"pgmirror-reg-{os.getpid()}"; bad = f"pgmirror-bad-{os.getpid()}"; built = f"pgimgtest-build:{os.getpid()}"
     try:
         r = sh(f"docker run -d --rm --name {reg} -p 127.0.0.1:{MIRROR}:5000 registry:2")
         check("поднят настоящий реестр-зеркало (registry:2)", r.returncode == 0, r.stderr)
@@ -125,8 +132,43 @@ img_ensure egress VIDEO_IMAGE '{primary_ref}'; echo "RC=$?"; echo "VIDEO_IMAGE=$
         envtxt = open(env).read()
         check("при новой закреплённой версии зеркальный адрес снят с .env (возврат на основной источник)", f"VIDEO_IMAGE={mirror_ref}" not in envtxt.replace('"', ""), envtxt)
         check("загрузка новой версии начата с основного источника", "возвращаюсь к основному источнику" in out3.stdout, out3.stdout[-300:])
+
+        # --- «плохое» зеркало первым в списке: у него под тем же именем другой образ — по дайджесту он не находится, берётся следующее зеркало
+        sh(f"docker run -d --rm --name {bad} -p 127.0.0.1:{BAD}:5000 registry:2")
+        for _ in range(30):
+            if sh(f"curl -fs http://127.0.0.1:{BAD}/v2/").returncode == 0: break
+            time.sleep(1)
+        other = push_image(BAD, "library/probe", TAG)
+        check("в «плохом» зеркале под тем же именем и тегом — другой образ (другой дайджест)", other != digest, other)
+        Proxy.down = True
+        iid = sh(f"docker image inspect -f '{{{{.Id}}}}' {mirror_ref}").stdout.strip()      # образ целиком (все имена и слои), иначе основной реестр «отдаст» его без слоёв
+        sh(f"docker rmi -f {iid} >/dev/null 2>&1"); open(env, "w").write(f"COMPOSE_PROJECT_NAME=pgimgtest\nDATA_ROOT={data}\n"); shutil.rmtree(os.path.join(data, "state"), ignore_errors=True)
+        two = script.replace(f"IMAGE_MIRRORS='127.0.0.1:{PRIMARY}=127.0.0.1:{MIRROR}'", f"IMAGE_MIRRORS='127.0.0.1:{PRIMARY}=127.0.0.1:{BAD} 127.0.0.1:{PRIMARY}=127.0.0.1:{MIRROR}'")
+        out4 = sh(["bash", "-c", two.replace("img_ensure egress VIDEO_IMAGE", "img_ensure postgres POSTGRES_IMAGE").replace("VIDEO_IMAGE=${VIDEO_IMAGE:-}", "POSTGRES_IMAGE=${POSTGRES_IMAGE:-}")])
+        print(out4.stdout[-2500:], out4.stderr[-2500:])
+        check("подменённый образ в первом зеркале отклонён, образ взят из второго с тем же дайджестом", "RC=0" in out4.stdout and f"POSTGRES_IMAGE={mirror_ref}" in out4.stdout
+              and sh(f"docker image inspect 127.0.0.1:{BAD}/library/probe@{other}").returncode != 0, (out4.stdout + out4.stderr)[-500:])
+        pg_line = next(l for l in open(os.path.join(ROOT, "deployment/compose.yml"), encoding="utf-8") if "POSTGRES_IMAGE" in l)      # та же строка, что в настоящем compose
+        mini = os.path.join(tmp, "pg-compose.yml"); open(mini, "w").write("services:\n  postgres:\n" + pg_line)
+        sub = sh(f"docker compose -f '{mini}' --env-file '{env}' config --images")
+        check("compose подставляет PostgreSQL из POSTGRES_IMAGE (адрес зеркала с тем же дайджестом)", sub.stdout.strip() == mirror_ref, (sub.stdout + sub.stderr)[-300:])
+        check("без POSTGRES_IMAGE compose берёт закреплённый образ Docker Hub", sh(f"docker compose -f '{mini}' --env-file /dev/null config --images").stdout.strip().startswith("postgres:"))
+
+        # --- сборка: базовый образ из зеркала уходит аргументом, а сама сборка не обращается ни к основному реестру, ни к зеркалу (оба выключены)
+        ctx = os.path.join(tmp, "ctx"); os.makedirs(ctx)
+        open(os.path.join(ctx, "Dockerfile"), "w").write(f"ARG PROBE_IMAGE={primary_ref}\nFROM ${{PROBE_IMAGE}}\nLABEL peregovorka.test=1\n")
+        open(os.path.join(ctx, "compose.yml"), "w").write(f"services:\n  probe:\n    build: .\n    image: {built}\n")
+        sh(f"docker rm -f {reg} {bad} >/dev/null 2>&1"); srv.shutdown(); srv.server_close()
+        calls_before = dict(Proxy.calls)
+        b = sh(["bash", "-c", script.split("img_ensure")[0] + f"""img_build_bases probe '{ctx}/Dockerfile'; echo "ARGS=${{BUILD_BASE_ARGS[*]}}"
+COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker compose -f '{ctx}/compose.yml' build "${{BUILD_BASE_ARGS[@]}}" probe 2>&1 | tail -5; echo "BUILD=${{PIPESTATUS[0]}}"
+"""], timeout=300)
+        print(b.stdout[-1200:], b.stderr[-600:])
+        check("базовый образ сборки: найден на сервере под именем зеркала, передан аргументом --build-arg", f"ARGS=--build-arg PROBE_IMAGE={mirror_ref}" in b.stdout, b.stdout[-300:])
+        check("docker compose build (BuildKit) собрал образ при выключенных основном реестре и зеркале — базовый образ взят с сервера", "BUILD=0" in b.stdout
+              and sh(f"docker image inspect {built}").returncode == 0 and Proxy.calls == calls_before, b.stdout[-400:])
     finally:
-        sh(f"docker rm -f {reg} >/dev/null 2>&1")
+        sh(f"docker rm -f {reg} {bad} >/dev/null 2>&1"); sh(f"docker rmi {built} >/dev/null 2>&1")
         sh(f"docker rmi 127.0.0.1:{MIRROR}/library/probe@{digest if 'digest' in dir() else ''} >/dev/null 2>&1")
         shutil.rmtree(tmp, ignore_errors=True)
 

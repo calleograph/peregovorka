@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "release": "0.76.5",
+ "release": "0.77.0",
  "reviewed_at": "2026-11-19",
  "components": [
   {
@@ -1682,7 +1682,7 @@
     {
      "type": "image-ref",
      "file": "deployment/compose.yml",
-     "regex": "^\\s*image:\\s*postgres:(\\S+)",
+     "regex": "\\$\\{POSTGRES_IMAGE:-postgres:(\\S+?)\\}",
      "suffix": "-alpine",
      "with_digest": true
     }
@@ -1731,7 +1731,7 @@
     {
      "type": "image-ref",
      "file": "deployment/compose.yml",
-     "regex": "^\\s*image:\\s*redis:(\\S+)",
+     "regex": "\\$\\{REDIS_IMAGE:-redis:(\\S+?)\\}",
      "suffix": "-alpine",
      "with_digest": true
     }

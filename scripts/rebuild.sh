@@ -9,6 +9,7 @@
 #   • использует тот же выбор сборщика: BuildKit, а при инфраструктурном сбое (нет buildx, блокировка containerd) — автоматически legacy builder;
 #   • повторяет сборку при временных сетевых ошибках, не пересобирает уже собранное при --if-changed;
 #   • пересоздаёт только пересобранные сервисы (--no-build) и ждёт healthcheck.
+# --pull оставлен для совместимости и ничего не меняет: базовые образы закреплены дайджестом и готовятся заранее (Docker Hub, затем зеркала).
 # По умолчанию пересобирает указанные сервисы (без указания — все три: backend, asr, web) принудительно; --if-changed — только при изменении исходников.
 # Данные, .env и модели не затрагиваются. Для обычного обновления кода используйте scripts/update.sh.
 set -uo pipefail
@@ -34,7 +35,6 @@ host_version_info
 [ "$APP_GIT_COMMIT" != unknown ] || die "Не удалось определить git commit (каталог не является git-репозиторием?) — сборка дала бы образ с «commit unknown»."
 export IMAGE_TAG="$APP_GIT_COMMIT"
 [ "$IF_CHANGED" -eq 1 ] || export FORCE_BUILD=1
-[ "$PULL" -eq 1 ] && export PULL_BASES=1
 [ ${#SVCS[@]} -gt 0 ] || SVCS=(backend asr web)
 
 info "Сборка: ${SVCS[*]} · версия ${APP_VERSION} · commit ${APP_GIT_COMMIT} · $APP_BUILT_AT"

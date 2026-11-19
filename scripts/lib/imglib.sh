@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# imglib.sh — загрузка и проверка Docker-образов дополнительных компонентов (Egress, SIP, локальная LLM): одна общая логика вместо `docker pull … >/dev/null`.
+# imglib.sh — загрузка и проверка Docker-образов с Docker Hub: PostgreSQL и Redis, базовые образы сборки, дополнительные компоненты (Egress, SIP, MediaMTX).
 #
 # Что делает img_ensure КЛЮЧ ПЕРЕМЕННАЯ ОБРАЗ_ПО_УМОЛЧАНИЮ [soft]:
 #   1. Образ уже есть на сервере (под основным именем или под именем зеркала, загруженным раньше) — сеть не трогается.
 #   2. Иначе — до IMAGE_PULL_ATTEMPTS попыток загрузки основным источником с паузами; причина каждого отказа определяется по тексту docker pull
 #      (DNS, соединение, таймаут, TLS, авторизация, лимит, нет образа, контрольная сумма, диск, служба Docker) и показывается короткой фразой.
-#   3. Основной источник не отвечает, а ссылка закреплена дайджестом — по очереди пробуются РАЗРЕШЁННЫЕ зеркала (IMAGE_MIRRORS; по умолчанию mirror.gcr.io
-#      для Docker Hub): сначала проверка манифеста по тому же дайджесту, затем загрузка. Подмены тега или версии нет: зеркало отдаёт тот же дайджест
+#   3. Основной источник не отвечает, а ссылка закреплена дайджестом — по очереди пробуются РАЗРЕШЁННЫЕ зеркала (IMAGE_MIRRORS; по умолчанию
+#      deployment/image-mirrors.conf): сначала проверка манифеста по тому же дайджесту, затем загрузка. Подмены тега или версии нет: зеркало отдаёт тот же дайджест
 #      индекса OCI (его и проверяет Docker при загрузке по `@sha256:…`), мы дополнительно сверяем архитектуру и дайджест в RepoDigests.
 #   4. Образ из зеркала записывается в .env как ПЕРЕМЕННАЯ=адрес_зеркала@дайджест (compose берёт ровно его), а в state/image-sources — пометка «выбрано
 #      автоматически для закреплённой ссылки X». Когда закреплённая ссылка меняется (новая версия), пометка снимается и загрузка снова идёт с основного
@@ -21,7 +21,11 @@
 if [ -n "${_VM_IMGLIB_LOADED:-}" ]; then return 0; fi
 _VM_IMGLIB_LOADED=1
 
-IMG_DEFAULT_MIRRORS="mirror.gcr.io"
+# Зеркала по умолчанию — deployment/image-mirrors.conf (по строке на источник, в порядке попыток); IMAGE_MIRRORS в .env главнее.
+_img_default_mirrors() {
+  local f="${REPO_ROOT:-.}/deployment/image-mirrors.conf"
+  [ -f "$f" ] && sed -e 's/#.*//' "$f" | tr -s ' \t\r' '\n\n\n' | grep -v '^$' | tr '\n' ' ' || echo "mirror.gcr.io"
+}
 
 _img_state_dir() { printf '%s' "${DATA_ROOT:-/tmp}/state"; }
 
@@ -38,13 +42,13 @@ img_parse() {
 }
 
 # ---- разрешённые зеркала для ссылки: по строке на кандидата (только при закреплении дайджестом: подмена версии исключена)
-# IMAGE_MIRRORS="mirror.gcr.io registry.example.org/hub ghcr.io=registry.example.org/ghcr"; «none» — зеркала выключены.
+# IMAGE_MIRRORS="dh-mirror.gitverse.ru mirror.gcr.io registry.example.org/hub ghcr.io=registry.example.org/ghcr"; «none» — зеркала выключены.
 # Запись без «=» — зеркало Docker Hub; «ИСТОЧНИК=ПРЕФИКС» — для образов указанного реестра.
 img_mirror_refs() {
   local ref="$1" spec entry src pfx
   img_parse "$ref"
   [ -n "$IMG_DIGEST" ] || return 0
-  spec="${IMAGE_MIRRORS-$IMG_DEFAULT_MIRRORS}"
+  spec="${IMAGE_MIRRORS-$(_img_default_mirrors)}"
   [ "$spec" = none ] && return 0
   for entry in ${spec//,/ }; do
     case "$entry" in *=*) src="${entry%%=*}"; pfx="${entry#*=}" ;; *) src="docker.io"; pfx="$entry" ;; esac
@@ -279,4 +283,26 @@ img_ensure() {
   fail "Образ не скачан: $(img_summary "$code") Этап: основной источник${tried:+; пробовали: $tried}."
   [ "$code" = timeout ] || [ "$code" = connect ] && info "Подсказка: если в организации выход в интернет идёт через прокси, настройте его для Docker; можно указать внутренний реестр (IMAGE_MIRRORS) — см. вики «Решение проблем: видеозапись и трансляции»."
   [ "$soft" = soft ] && return 0 || return 1
+}
+
+# ---- образы Docker Hub, без которых нет запуска и сборки
+img_compose_default() { grep -oP '\$\{'"$1"':-\K[^}]+' "${REPO_ROOT:-.}/deployment/compose.yml" | head -1; }
+
+# PostgreSQL и Redis: образ из зеркала записывается в POSTGRES_IMAGE / REDIS_IMAGE (compose: `image: ${POSTGRES_IMAGE:-…}`).
+img_hub_core() {
+  img_ensure postgres POSTGRES_IMAGE "$(img_compose_default POSTGRES_IMAGE)" && img_ensure redis REDIS_IMAGE "$(img_compose_default REDIS_IMAGE)"
+}
+
+# Базовые образы сборки компонента (строки `ARG …_IMAGE=образ@sha256:…` в Dockerfile) — заранее и по тем же правилам. Образ из зеркала хранится
+# в BASE_<КОМПОНЕНТ>_<ARG> и уходит сборке аргументом: BUILD_BASE_ARGS (Dockerfile и compose не меняются, сборка берёт образ с сервера, без сети).
+img_build_bases() { # img_build_bases КОМПОНЕНТ DOCKERFILE
+  local svc="$1" arg ref var
+  BUILD_BASE_ARGS=()
+  command -v docker >/dev/null 2>&1 && [ "${DRY_RUN:-0}" != 1 ] || return 0
+  while IFS='=' read -r arg ref; do
+    var="BASE_$(printf '%s' "$svc" | tr 'a-z-' 'A-Z_')_$arg"
+    img_ensure "base-$svc-$(printf '%s' "$arg" | tr 'A-Z_' 'a-z-')" "$var" "$ref" || return 1
+    [ -n "${!var:-}" ] && BUILD_BASE_ARGS+=(--build-arg "$arg=${!var}")
+  done < <(sed -nE 's/^ARG ([A-Z_]+_IMAGE)=([^[:space:]]+@sha256:[0-9a-f]{64})[[:space:]]*$/\1=\2/p' "$2")
+  return 0
 }

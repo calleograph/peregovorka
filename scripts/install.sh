@@ -184,8 +184,8 @@ stage_models() {
 }
 
 stage_pull() {
-  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] docker compose pull postgres redis (до 3 попыток при сетевых сбоях registry/CDN)"; return 0; fi
-  pull_base_images || fail_stage registry-network "Не удалось скачать образы PostgreSQL/Redis (сеть/registry). Повторите установку — докачка продолжится."
+  if [ "$DRY_RUN" = "1" ]; then info "[dry-run] образы PostgreSQL/Redis: Docker Hub (до 3 попыток), затем зеркала по дайджесту (deployment/image-mirrors.conf)"; return 0; fi
+  pull_base_images || fail_stage registry-network "Не удалось скачать образы PostgreSQL/Redis ни с Docker Hub, ни с зеркал (причина выше). Повторите установку — докачка продолжится."
 }
 
 stage_build() {

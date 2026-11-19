@@ -37,9 +37,9 @@ for r in (big or res)[:3]: print("npm|"+r)' 2>/dev/null
 # Базовый образ, в котором выполняется проверка компонента (тот же, где выполняются шаги RUN)
 _nc_image() { # _nc_image СЕРВИС COMMIT
   case "$1" in
-    web) _nc_arg frontend/Dockerfile NODE_IMAGE "$2" ;;
-    backend) _nc_arg backend/Dockerfile PYTHON_IMAGE "$2" ;;
-    asr) _nc_arg asr-service/Dockerfile PYTHON_IMAGE "$2" ;;
+    web) printf '%s' "${BASE_WEB_NODE_IMAGE:-$(_nc_arg frontend/Dockerfile NODE_IMAGE "$2")}" ;;      # BASE_* — образ, загруженный из зеркала (imglib.sh)
+    backend) printf '%s' "${BASE_BACKEND_PYTHON_IMAGE:-$(_nc_arg backend/Dockerfile PYTHON_IMAGE "$2")}" ;;
+    asr) printf '%s' "${BASE_ASR_PYTHON_IMAGE:-$(_nc_arg asr-service/Dockerfile PYTHON_IMAGE "$2")}" ;;
   esac
 }
 

@@ -297,7 +297,7 @@ phase2() {
   export IMAGE_TAG="${APP_GIT_COMMIT}"
   [ "$IMAGE_TAG" != unknown ] || stop_update "Не удалось определить commit для тегов и версии образов"
   [ "$FORCE" -eq 1 ] && export FORCE_BUILD=1
-  [ "$PULL" -eq 1 ] && { export PULL_BASES=1 FORCE_BUILD=1; }
+  [ "$PULL" -eq 1 ] && export FORCE_BUILD=1
 
   step "Параметры .env: безопасные новые значения, адреса медиасоединений и закрепление LiveKit"
   # адреса ICE: адрес интерфейса, публичный адрес (STUN), режим; явные настройки администратора сохраняются (scripts/medianet.py)
@@ -335,7 +335,7 @@ phase2() {
   step "Сборка образов (retry сети, fallback BuildKit → legacy, commit ${APP_GIT_COMMIT} в образах)"
   upd_disk_maintenance || true          # модели и образы видеозаписи могли занять место после Preflight
   info "Сборка ASR (torch, pip install gigaam с GitHub) может занимать 15+ минут — это не зависание; каждую минуту печатается прогресс."
-  [ "$PULL" -eq 1 ] && { pull_base_images || stop_update "docker pull postgres/redis не удался (сеть/registry)"; }
+  pull_base_images || stop_update "Образы PostgreSQL/Redis не загружены ни с Docker Hub, ни с зеркал (причина выше) — контейнеры не тронуты, прежняя версия продолжает работать"
   build_images || stop_update "Сборка образов не удалась (код и контейнеры не тронуты; лог: $DATA_ROOT/state/build-*.log). Уже собранные сервисы повторно не собираются."
   require_images || stop_update "Не хватает образов проекта"
   if ! check_built_images_consistent; then
