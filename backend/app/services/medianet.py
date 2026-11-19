@@ -345,22 +345,39 @@ def diagnose(env: dict[str, str], *, probe: dict[str, Any] | None, hops: list[st
 
 
 def _clients_check(clients: list[dict[str, Any]], p: dict[str, Any]) -> dict[str, str]:
-    seen: dict[str, int] = {}
+    """Пути настоящих клиентов по адресу сервера в выбранной паре ICE: число сеансов, медианы RTT и потерь."""
+    seen: dict[str, list[dict[str, Any]]] = {}
     for c in clients:
         r = str(c.get("remote") or "").strip()
         if r:
-            seen[r] = seen.get(r, 0) + 1
+            seen.setdefault(r, []).append(c)
     if not seen:
         return check("clients", "Адреса ICE у настоящих клиентов", "unknown", "Пока нет данных: клиенты новой версии сообщают адрес сервера, через который идёт звук.",
                      "Войдите в звонок с компьютера в офисе и с устройства вне сети организации.")
+
+    def med(rows: list[dict[str, Any]], key: str) -> float | None:
+        v = sorted(float(x[key]) for x in rows if isinstance(x.get(key), (int, float)))
+        return v[len(v) // 2] if v else None
+
+    def line(r: str, rows: list[dict[str, Any]]) -> str:
+        ip = r.split(" ")[-1].rsplit(":", 1)[0]
+        where = " (адрес в сети сервера: офис, VPN)" if ip == p["lan_ip"] else " (публичный адрес)" if ip == p["public_ip"] else ""
+        rtt, loss = med(rows, "rtt_ms"), med(rows, "packet_loss_pct")
+        q = (f", RTT ≈ {rtt:.0f} мс" if rtt is not None else "") + (f", потери ≈ {loss:.1f} %".replace(".", ",") if loss is not None else "")
+        return f"{r}{where} — {len(rows)}{q}"
+
     foreign = [r for r in seen if r.split(" ")[-1].rsplit(":", 1)[0] not in p["advertised"]]
-    detail = "; ".join(f"{r} — {n}" for r, n in sorted(seen.items(), key=lambda x: -x[1])[:6])
+    detail = "; ".join(line(r, rows) for r, rows in sorted(seen.items(), key=lambda x: -len(x[1]))[:6])
     if foreign:
         return check("clients", "Адреса ICE у настоящих клиентов", "warn", f"{detail}. Не из объявляемых ({', '.join(p['advertised'])}): {', '.join(foreign)}.",
                      "Выполните scripts/medianet.sh apply и перезапустите звонки.")
-    tcp_only = all(r.startswith("tcp ") for r in seen)
-    return check("clients", "Адреса ICE у настоящих клиентов", "warn" if tcp_only else "ok",
-                 detail + (". Все через TCP: проверьте проброс и межсетевой экран для UDP." if tcp_only else "."))
+    if all(r.startswith("tcp ") for r in seen):
+        return check("clients", "Адреса ICE у настоящих клиентов", "warn", detail + ". Все через TCP: проверьте проброс и межсетевой экран для UDP.")
+    lossy = [r for r, rows in seen.items() if (med(rows, "packet_loss_pct") or 0) >= 5]
+    if lossy:  # соединение установлено — это вопрос качества канала, а не адресов
+        return check("clients", "Адреса ICE у настоящих клиентов", "warn", detail + f". Соединение есть, но потери 5 % и больше: {', '.join(lossy)}.",
+                     "Адреса менять не нужно: проверьте канал клиентов (Wi-Fi, VPN, загрузка канала) и «Производительность» по встречам.")
+    return check("clients", "Адреса ICE у настоящих клиентов", "ok", detail + ".")
 
 
 # --- .env

@@ -67,11 +67,16 @@ export default function MapTab({ meetingId, roomName, startedAt, hasMaterials, i
   useEffect(() => {
     const onMsg = async (ev: MessageEvent) => {
       if (ev.source !== frame.current?.contentWindow) return;      // слушаем только своё окно карты
-      const m = ev.data as { pg?: string; type?: string; sec?: number; segmentId?: number | null; height?: number; topicId?: string; patch?: MapTopicEdit };
+      const m = ev.data as { pg?: string; type?: string; sec?: number; segmentId?: number | null; height?: number; topicId?: string; patch?: MapTopicEdit; top?: number; text?: string };
       if (!m || m.pg !== "map") return;
       if (m.type === "ready") { ready.current = true; send(); }
       else if (m.type === "height" && typeof m.height === "number") setHeight(Math.min(Math.max(m.height, 480), 6000));
       else if (m.type === "goto" && typeof m.sec === "number") onGoto(m.sec, m.segmentId ?? null);
+      else if (m.type === "scroll" && typeof m.top === "number" && frame.current) {      // телефон: после выбора темы — к её содержимому (окно карты само прокрутить страницу не может)
+        window.scrollTo({ top: frame.current.getBoundingClientRect().top + window.scrollY + m.top - 8, behavior: "smooth" });
+      } else if (m.type === "copy" && typeof m.text === "string") {                    // у окна карты нет своего источника — буфер обмена доступен только странице
+        navigator.clipboard?.writeText(m.text.slice(0, 200000)).then(() => onToast?.("Итоги карты скопированы"), () => onToast?.("Не удалось скопировать: браузер запретил доступ к буферу обмена", "error"));
+      }
       else if (m.type === "edit" && m.topicId && m.patch) {
         try { setSt(await api.editMapTopic(meetingId, m.topicId, m.patch)); onToast?.("Правка сохранена. Ответ модели не изменён — его можно вернуть."); }
         catch (e) { onToast?.((e as ApiError).message, "error"); }

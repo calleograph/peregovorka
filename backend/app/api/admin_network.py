@@ -198,7 +198,8 @@ async def _recent_paths(request: Request) -> list[dict[str, Any]]:
         except ValueError:
             continue
         if m.get("remote"):
-            out.append({"remote": m["remote"], "candidate": m.get("candidate", ""), "ts": m.get("ts")})
+            out.append({"remote": m["remote"], "candidate": m.get("candidate", ""), "ts": m.get("ts"),
+                        "rtt_ms": m.get("rtt_ms"), "packet_loss_pct": m.get("packet_loss_pct")})
     return out
 
 

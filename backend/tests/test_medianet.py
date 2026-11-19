@@ -107,6 +107,9 @@ def test_clients_check_flags_addresses_not_announced_and_tcp_only():
     assert {c["id"]: c["status"] for c in bad["checks"]}["clients"] == "warn"
     tcp = M.diagnose(env, probe=None, clients=[{"remote": "tcp 192.0.2.2:17881"}])
     assert "UDP" in {c["id"]: c for c in tcp["checks"]}["clients"]["detail"]
+    lossy = M.diagnose(env, probe=None, clients=[{"remote": "udp 10.0.0.5:17882", "rtt_ms": 240, "packet_loss_pct": 7.75}])
+    c = {c["id"]: c for c in lossy["checks"]}["clients"]
+    assert c["status"] == "warn" and "офис, VPN" in c["detail"] and "RTT ≈ 240 мс" in c["detail"] and "7,8 %" in c["detail"]
 
 
 def test_stun_query_against_a_local_stun_responder():

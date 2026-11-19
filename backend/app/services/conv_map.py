@@ -38,7 +38,7 @@ from .topic_categories import CAT_IDS, CAT_LABEL, CATEGORIES  # noqa: F401
 log = logging.getLogger("app.conv_map")
 
 COMMON_STEMS = {norm(w)[:4] for w in ("обсуждение", "обсудили", "вопрос", "встреча", "совещание", "тема", "также", "нужно", "необходимо", "участники", "говорили", "решили")}
-MAP_VERSION = 2
+MAP_VERSION = 3                    # 3: итог встречи (outcome), предложения (proposals); карты версии 2 открываются без них
 CHUNK_CHARS = 6000                 # размер фрагмента для локальной модели (как у протокола: общий кэш требует одинаковых фрагментов)
 MIN_TOPICS = 12                    # сколько тем карта показывает самое меньшее; для длинной встречи — больше (см. max_topics)
 MIN_SEGMENT_S = 15                 # отрезок короче — шум
@@ -245,12 +245,18 @@ def resolve_overlaps(groups: list[dict], run: MapRun) -> None:
     groups[:] = [g for g in groups if g["segs"]]
 
 
-def cap_topics(groups: list[dict], run: MapRun, limit: int = MIN_TOPICS) -> None:
-    """Самые короткие темы сверх предела собираются в «Прочие обсуждения». Ничего не теряется: у «Прочих» остаются все отрезки времени, а их перечень (название, время, суть) сохранён в `members`."""
+def cap_topics(groups: list[dict], run: MapRun, limit: int = MIN_TOPICS, keep_secs: tuple[int, ...] | list[int] = ()) -> None:
+    """Самые короткие темы сверх предела собираются в «Прочие обсуждения». Ничего не теряется: у «Прочих» остаются все отрезки времени, а их перечень (название, время, суть) сохранён в `members`.
+    Тема, в которой есть решение, поручение или вопрос (keep_secs — их время), в «Прочие» не уходит, даже если короткая: короткое решение не должно потеряться."""
     if len(groups) <= limit:
         return
-    ranked = sorted(groups, key=lambda g: -sum(s["end_s"] - s["start_s"] for s in g["segs"]))
-    keep, rest = ranked[:limit - 1], ranked[limit - 1:]
+    def weight(g: dict) -> tuple[bool, int]:
+        return (any(_inside(x, g["segs"]) for x in keep_secs), sum(s["end_s"] - s["start_s"] for s in g["segs"]))
+    ranked = sorted(groups, key=lambda g: weight(g), reverse=True)
+    n = max(limit - 1, sum(1 for g in groups if weight(g)[0]))
+    keep, rest = ranked[:n], ranked[n:]
+    if not rest:
+        return
     members = [{"title": g["title"], "summary": whole_sentences(" ".join(g["summaries"][:1]), 220), "start_s": min(s["start_s"] for s in g["segs"]), "end_s": max(s["end_s"] for s in g["segs"])}
                for g in sorted(rest, key=lambda g: min(s["start_s"] for s in g["segs"]))]
     other = {"key": frozenset(), "title": "Прочие обсуждения", "summaries": ["Короткие темы, не вошедшие в основной перечень: " + "; ".join(m["title"] for m in members[:12]) + ("…" if len(members) > 12 else "") + "."],
@@ -285,7 +291,7 @@ def build_map(meeting: Meeting, tz_name: str, lines: list[MapLine], groups: list
         t = {"id": OTHER_ID if g.get("other") else topic_id(title), "ai_title": title, "title": title, "summary": summary, "category": cat, "ai_category": cat, "total_s": total,
              "segments": [{"start_s": s["start_s"], "end_s": s["end_s"]} for s in segs],
              "speakers": [{"name": n, "seconds": v} for n, v in sorted(sp.items(), key=lambda kv: -kv[1])],
-             "sources": sources, "decisions": [], "tasks": [], "questions": [], "related": [], "basis": "ai"}
+             "sources": sources, "decisions": [], "proposals": [], "tasks": [], "questions": [], "related": [], "basis": "ai"}
         if g.get("members"):
             t["members"] = g["members"]
         topics.append(t)
@@ -303,7 +309,7 @@ def build_map(meeting: Meeting, tz_name: str, lines: list[MapLine], groups: list
         scored = sorted(((len(mine & stems[o["id"]]) / max(1, min(len(mine), len(stems[o["id"]]))), len(mine & stems[o["id"]]), o["id"])
                          for o in topics if o["id"] != t["id"] and o.get("id") != OTHER_ID), reverse=True)
         t["related"] = [i for sim, n, i in scored if n >= 2 and sim >= 0.34][:3]
-    unassigned = {"decisions": [], "tasks": [], "questions": []}
+    unassigned: dict[str, list] = {"decisions": [], "proposals": [], "tasks": [], "questions": []}
     if structured and clock_offset is not None:
         _attach_items(topics, structured, clock_offset, unassigned)
     total_dur = max((m.end_rel for m in lines), default=0)
@@ -322,7 +328,8 @@ def build_map(meeting: Meeting, tz_name: str, lines: list[MapLine], groups: list
             "uncovered_s": max(0, total_dur - covered),
             "unprocessed": unprocessed or [],
             "unassigned": unassigned,
-            "items_ready": bool(structured is not None)}
+            "items_ready": bool(structured is not None),
+            "outcome": None}
 
 
 def to_offset(ts: str, clock_offset: int) -> int | None:
@@ -348,6 +355,10 @@ def _attach_items(topics: list[dict], st: dict, clock_offset: int, unassigned: d
         src = d.get("source") or {}
         put("decisions", {"text": clean_text(d.get("text"), 300), "sec": to_offset(src.get("ts", ""), clock_offset), "speaker": src.get("speaker"),
                           "quote": clean_text(src.get("quote"), QUOTE_LEN), "basis": "source"}, to_offset(src.get("ts", ""), clock_offset))
+    for d in st.get("proposals") or []:              # предложено, но не согласовано: отдельно от решений
+        src = d.get("source") or {}
+        sec = to_offset(src.get("ts", ""), clock_offset)
+        put("proposals", {"text": clean_text(d.get("text"), 300), "sec": sec, "speaker": src.get("speaker"), "quote": clean_text(src.get("quote"), QUOTE_LEN), "basis": "source"}, sec)
     for k in st.get("tasks") or []:
         src = k.get("source") or {}
         sec = to_offset(src.get("ts", ""), clock_offset)
@@ -359,7 +370,7 @@ def _attach_items(topics: list[dict], st: dict, clock_offset: int, unassigned: d
         sec = to_offset(src.get("ts", ""), clock_offset)
         put("questions", {"text": clean_text(q.get("text"), 300), "sec": sec, "speaker": src.get("speaker"), "quote": clean_text(src.get("quote"), QUOTE_LEN),
                           "basis": "source"}, sec)
-    for kind in ("decisions", "tasks", "questions"):
+    for kind in ("decisions", "proposals", "tasks", "questions"):
         unassigned[kind] = unassigned[kind][:30]
 
 
@@ -373,10 +384,11 @@ async def analyse(llm: LlmClient, lines: list[MapLine], *, header: list[str], cl
     found = topics_from_items(ext.items, lines, clock_offset, run)
     groups = merge_topics(found)
     resolve_overlaps(groups, run)
-    cap_topics(groups, run, max_topics(duration_s or max((m.end_rel for m in lines), default=0)))
+    structured = to_structured(merge_items(ext.items))
+    keep = [x for k in ("decisions", "tasks", "open_questions") for i in structured.get(k) or [] if (x := to_offset((i.get("source") or {}).get("ts", ""), clock_offset)) is not None]
+    cap_topics(groups, run, max_topics(duration_s or max((m.end_rel for m in lines), default=0)), keep)
     if not groups:
         raise MapError("Не удалось выделить темы: все ответы модели отвергнуты проверкой")
-    structured = to_structured(merge_items(ext.items))
     if ext.res.failed or ext.uncovered:
         n = sum(u["lines"] for u in ext.uncovered)
         run.warnings.append(f"Не удалось разобрать около {round(100 * n / max(1, len(lines)))}% стенограммы — на карте возможны пропуски (они отмечены на шкале).")
@@ -384,6 +396,49 @@ async def analyse(llm: LlmClient, lines: list[MapLine], *, header: list[str], cl
         why = ", ".join(f"{k} — {v}" for k, v in run.rejected_reasons.items())
         run.warnings.append(f"Проверка отвергла {run.rejected} тем и отрезков ({why}).")
     return groups, run, ext, structured
+
+
+OUTCOME_SYSTEM = ("Ты — секретарь совещания. Ниже проверенные пункты встречи (решения, предложения, поручения, открытые вопросы). Напиши ГЛАВНЫЙ ИТОГ встречи: "
+                  "одно-два коротких предложения — что решили и какой следующий шаг. Используй ТОЛЬКО эти пункты: не добавляй фактов, не меняй имена, числа и сроки; "
+                  "предложение не выдавай за решение. Без вступлений и списков.")
+
+
+def outcome_facts(data: dict) -> list[str]:
+    """Проверенные пункты карты (у каждого есть реплика-основание) → строки для итога: решения, затем поручения, предложения и вопросы."""
+    out: list[str] = []
+    groups = [t for t in data.get("topics", [])] + [data.get("unassigned") or {}]
+    for kind, word in (("decisions", "Решение"), ("tasks", "Поручение"), ("proposals", "Предложено, не согласовано"), ("questions", "Открытый вопрос")):
+        for g in groups:
+            for it in g.get(kind) or []:
+                extra = f" (ответственный: {it.get('assignee') or 'не назван'}; срок: {it.get('deadline') or 'не назван'})" if kind == "tasks" else ""
+                out.append(f"{word}: {it.get('text')}{extra}")
+    return out
+
+
+def code_outcome(data: dict) -> dict:
+    """Итог без модели: по числу проверенных пунктов (когда решений и поручений нет или модель не ответила)."""
+    n = {k: sum(len(t.get(k) or []) for t in data.get("topics", [])) + len((data.get("unassigned") or {}).get(k) or []) for k in ("decisions", "tasks", "questions")}
+    if not n["decisions"] and not n["tasks"]:
+        text = "Решений и поручений в стенограмме не зафиксировано." + (" Остались открытые вопросы — они собраны в разделе «Решения и задачи»." if n["questions"] else "")
+    else:
+        text = f"Зафиксировано решений: {n['decisions']}, поручений: {n['tasks']}, открытых вопросов: {n['questions']}. Подробности — в разделе «Решения и задачи»."
+    return {"text": text, "basis": "code"}
+
+
+async def meeting_outcome(llm: LlmClient, data: dict) -> tuple[dict, int]:
+    """Главный итог встречи (верх карты): ОДНО короткое обращение к модели по уже проверенным пунктам, а не по стенограмме — дёшево и без пересказа заново.
+    Пункты получены из того же (при необходимости обезличенного) представления, что и карта, поэтому в модель не уходит ничего сверх уже отправленного. Возвращает (итог, обращений)."""
+    facts = outcome_facts(data)
+    if not any(f.startswith(("Решение", "Поручение")) for f in facts):
+        return code_outcome(data), 0
+    try:
+        r = await llm.complete(OUTCOME_SYSTEM, "Проверенные пункты встречи:\n\n" + "\n".join(facts[:60]), max_tokens=300)
+    except LlmError:
+        return code_outcome(data), 1
+    text = whole_sentences(clean_text(r.text, 600), 400)
+    if r.truncated or len(text) < 20:
+        return code_outcome(data), 1
+    return {"text": text, "basis": "ai"}, 1
 
 
 def unprocessed_ranges(ext: Extraction, lines: list[MapLine]) -> list[dict]:
@@ -671,11 +726,12 @@ class MapService:
         finally:
             info["llm_s"] = round((datetime.now(timezone.utc) - t0).total_seconds(), 1)
         data = build_map(meeting, getattr(tz, "key", "UTC"), lines, groups, structured, clock_offset, unprocessed_ranges(ext, lines))
+        data["outcome"], outcome_calls = await meeting_outcome(llm, data)
         diag = diagnostics(ext, cache, llm=llm)
         st = llm.stats
         res = ext.res
         meta = {"model": eff.model, "model_title": info["model_title"], "llm_profile": choice.name, "llm_source": choice.source,
-                "chunks": ext.frags, "llm_calls": res.calls, "retries": diag["retries"]["length"] + diag["retries"]["format"], "failed_chunks": res.failed,
+                "chunks": ext.frags, "llm_calls": res.calls + outcome_calls, "outcome_basis": data["outcome"]["basis"], "retries": diag["retries"]["length"] + diag["retries"]["format"], "failed_chunks": res.failed,
                 "length_hits": st["length"], "finish": dict(st["finish"]), "max_tokens": st["max_tokens"] or None, "limit_requested": choice.limit_requested,
                 "limit_applied": st["max_tokens"] or None, "limit_note": limit_report(choice, eff, "map", st), "input_chars": sum(len(m.line.render()) + 1 for m in lines),
                 "prompt_tokens": res.prompt_tokens, "completion_tokens": res.completion_tokens, "tokens_per_s": diag["tokens_per_s"], "llm_s": info["llm_s"],

@@ -10,7 +10,7 @@ from pathlib import Path
 from .glassdoc_css import GLASSDOC_CSS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "mapview"
-META_PUBLIC = ("warnings", "coverage_pct")        # в документе только то, что нужно читателю: предупреждение о неполноте; модель, токены и повторы — в диагностике администратора
+META_PUBLIC = ("warnings", "coverage_pct", "anonymized")        # в документе только то, что нужно читателю: предупреждение о неполноте; модель, токены и повторы — в диагностике администратора
 
 
 def _json_for_script(value: object) -> str:

@@ -495,3 +495,39 @@ def test_related_topics_are_related_by_meaning_not_by_being_next_to_each_other_i
     sert, bud, buy = by["Замена сертификатов сервера"], by["Бюджет следующего года"], by["Покупка новых сертификатов"]
     assert buy["id"] in sert["related"] and sert["id"] in buy["related"], "темы про сертификаты связаны, хотя между ними — бюджет"
     assert bud["id"] not in sert["related"] and sert["id"] not in bud["related"], "соседство во времени связью не считается"
+
+
+# ------------------------------------------------------------------------------------------------ итог встречи, предложения, защита коротких решений (версия 3)
+def test_proposals_are_kept_apart_from_decisions_and_outcome_is_built_from_verified_items_only():
+    lines = lines_of(SPEC + [(530, 580, "Иван", "Предлагаю заказать новый сертификат у другого поставщика.")])
+    llm, seen = llm_for(lambda b, n: reply(
+        [topic("Замена сертификатов", "00:00:00", "00:02:40", "Нужен новый", "infra"), topic("Бюджет на год", "00:03:20", "00:05:30", "Утвердили", "finance")],
+        items=[{"status": "decision", "text": "Бюджет на следующий год утверждаем", "ts": "00:04:20"},
+               {"status": "proposal", "text": "Заказать новый сертификат у другого поставщика", "ts": "00:08:50"}]) if n == 1 else
+        httpx.Response(200, json={"choices": [{"message": {"content": "Бюджет на следующий год утверждён. Следующий шаг — заказать сертификат."}, "finish_reason": "stop"}]}))
+    groups, _run, ext, st = analyse(llm, lines)
+    data = cm.build_map(FakeMeeting, "UTC", lines, groups, st, 0, cm.unprocessed_ranges(ext, lines))
+    assert data["outcome"] is None and all("proposals" in t for t in data["topics"])
+    props = [p["text"] for t in data["topics"] for p in t["proposals"]] + [p["text"] for p in data["unassigned"]["proposals"]]
+    decs = [d["text"] for t in data["topics"] for d in t["decisions"]]
+    assert props == ["Заказать новый сертификат у другого поставщика"] and decs == ["Бюджет на следующий год утверждаем"], "предложение не становится решением"
+    out, calls = run(cm.meeting_outcome(llm, data))
+    assert calls == 1 and out == {"text": "Бюджет на следующий год утверждён. Следующий шаг — заказать сертификат.", "basis": "ai"}
+    user = seen[-1]["messages"][-1]["content"]
+    assert "Решение: Бюджет на следующий год утверждаем" in user and "Предложено, не согласовано: Заказать новый сертификат у другого поставщика" in user and "Начнём с сертификатов" not in user, \
+        "в модель уходят только проверенные пункты, не стенограмма"
+
+
+def test_outcome_without_decisions_is_stated_honestly_without_calling_the_model():
+    data = {"topics": [{"decisions": [], "tasks": [], "questions": [{"text": "Сколько выделят"}], "proposals": []}], "unassigned": {}}
+    llm, seen = llm_for(lambda b, n: reply([]))
+    out, calls = run(cm.meeting_outcome(llm, data))
+    assert calls == 0 and not seen and out["basis"] == "code" and out["text"].startswith("Решений и поручений в стенограмме не зафиксировано")
+
+
+def test_short_topic_with_a_decision_is_not_folded_into_other_discussions():
+    groups = [{"key": frozenset({f"k{i}"}), "title": f"Тема {i}", "summaries": [""], "cats": {"general": 1}, "segs": [{"start_s": i * 100, "end_s": i * 100 + (90 if i else 20), "first": i, "last": i}]}
+              for i in range(cm.MIN_TOPICS + 3)]
+    run_ = cm.MapRun()
+    cm.cap_topics(groups, run_, cm.MIN_TOPICS, keep_secs=[5])          # решение в самой короткой теме (0–20 с)
+    assert any(g["title"] == "Тема 0" for g in groups) and groups[-1]["title"] == "Прочие обсуждения"

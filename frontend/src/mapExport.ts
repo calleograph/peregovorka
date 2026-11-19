@@ -4,7 +4,7 @@ import type { Segment } from "./api";
 export interface MapPayload { data: unknown; meta: Record<string, unknown> | null; canEdit?: boolean; categories?: unknown }
 
 /** Что из сведений о формировании попадает в файл: только предупреждения о полноте. Ни модели, ни повторов и токенов (это диагностика для администратора), ни имён профилей API, ни кто нажал, ни адресов. */
-const META_PUBLIC = ["warnings", "items_from_protocol", "coverage_pct"] as const;
+const META_PUBLIC = ["warnings", "coverage_pct", "anonymized"] as const;
 export function publicMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
   if (!meta) return null;
   const out: Record<string, unknown> = {};

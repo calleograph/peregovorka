@@ -25,6 +25,10 @@ GLASSDOC_CSS = """/* Peregovorka Glass Documents — общее оформлен
   --gd-finance-bg: #f8eed6; --gd-finance-bd: #e1c98e; --gd-finance-ink: #74570f;
   --gd-process-bg: #e4ebf4; --gd-process-bd: #aebfd6; --gd-process-ink: #37526f;
   --gd-data-bg: #f6ebdf; --gd-data-bd: #dcc1a0; --gd-data-ink: #6d471a;
+  --gd-product-bg: #f7e6f2; --gd-product-bd: #dcafcf; --gd-product-ink: #7a2d64;
+  --gd-sales-bg: #fde9dc; --gd-sales-bd: #eebc98; --gd-sales-ink: #7f3f12;
+  --gd-people-bg: #dcf1f8; --gd-people-bd: #94cde0; --gd-people-ink: #135a70;
+  --gd-legal-bg: #edf2d8; --gd-legal-bd: #bfcd8a; --gd-legal-ink: #4c5a14;
   --gd-general-bg: #edf0f5; --gd-general-bd: #c4ccd9; --gd-general-ink: #485369;
   color: var(--gd-text); font: 15px/1.55 var(--gd-font); -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
 }
@@ -45,6 +49,10 @@ GLASSDOC_CSS = """/* Peregovorka Glass Documents — общее оформлен
   --gd-finance-bg: #3b3118; --gd-finance-bd: #96792a; --gd-finance-ink: #f0dca4;
   --gd-process-bg: #222e3e; --gd-process-bd: #51698a; --gd-process-ink: #c0cfe5;
   --gd-data-bg: #39291b; --gd-data-bd: #8f6a3d; --gd-data-ink: #ecd2b0;
+  --gd-product-bg: #3a2135; --gd-product-bd: #9a5689; --gd-product-ink: #f2c6e5;
+  --gd-sales-bg: #3d2a1c; --gd-sales-bd: #a8693d; --gd-sales-ink: #f6cfb2;
+  --gd-people-bg: #173440; --gd-people-bd: #3a8aa3; --gd-people-ink: #ade0ef;
+  --gd-legal-bg: #2f3517; --gd-legal-bd: #7d8c3b; --gd-legal-ink: #dbe6a8;
   --gd-general-bg: #272d39; --gd-general-bd: #596273; --gd-general-ink: #c9cfdb;
   color-scheme: dark;
 }

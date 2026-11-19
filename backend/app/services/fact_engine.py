@@ -31,7 +31,7 @@ from .topic_categories import CATEGORIES, CAT_IDS
 
 log = logging.getLogger("app.fact_engine")
 
-SCHEMA_VERSION = 3            # меняется вместе со схемой/промптом: старые сохранённые ответы перестают подходить
+SCHEMA_VERSION = 4            # меняется вместе со схемой/промптом: старые сохранённые ответы перестают подходить
 MAX_SPLIT_DEPTH = 2           # деление пополам / досчёт хвоста — не более двух уровней подряд
 MIN_TAIL_LINES = 3            # хвост короче не стоит отдельного обращения
 MIN_SPLIT_LINES = 4
