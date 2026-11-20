@@ -125,6 +125,7 @@ class JoinOut(BaseModel):
     asr_ready: bool = False  # транскрибация готова; вход в комнату от этого НЕ зависит
     client: ClientConfig = Field(default_factory=ClientConfig)
     e2ee: E2EEOut | None = None          # ключ сквозного шифрования этой встречи (если у комнаты включено E2EE)
+    started_at: datetime | None = None   # начало встречи — для счётчика длительности в шапке комнаты
 
 
 class ParticipantOut(BaseModel):

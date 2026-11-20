@@ -145,7 +145,7 @@ def _guest_join_out(request: Request, result, room_dto, screen, guest_token: str
         meeting_id=result.meeting.id, room=room_dto, livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
         token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
         asr_ready=asr_ready, client=build_client_config(result.room, screen, result, guest=True, idle_end=idle_end),
-        guest_token=guest_token, guest_id=str(result.guest.id), display_name=display_name, e2ee=e2ee)
+        guest_token=guest_token, guest_id=str(result.guest.id), display_name=display_name, e2ee=e2ee, started_at=result.meeting.started_at)
 
 
 async def _asr_ready(request: Request) -> bool:

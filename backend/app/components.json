@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "release": "0.79.0",
- "reviewed_at": "2026-11-19",
+ "release": "0.79.1",
+ "reviewed_at": "2026-11-20",
  "components": [
   {
    "key": "livekit_server",
@@ -1671,7 +1671,7 @@
    "group": "Инфраструктура и образы",
    "pinned": "16",
    "tested": "16",
-   "reviewed_latest": "18",
+   "reviewed_latest": "19",
    "source": {
     "type": "docker",
     "registry": "hub",
@@ -1707,8 +1707,8 @@
    },
    "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
    "deferred": {
-    "version": "18",
-    "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",
+    "version": "19",
+    "reason": "Мажорное обновление: каталог данных несовместим между 16 и 18/19, нужна процедура дамп/восстановление на существующих серверах (в update.sh её пока нет).",
     "issue": "DEP-4",
     "recheck": "2027-02-10",
     "plan": "Описана процедура (docs/DEPENDENCIES.md, DEP-4); автоматизировать в update.sh и проверить на копии базы; в линии 16.x исправления приходят обновлением digest."
@@ -1900,7 +1900,7 @@
  ],
  "policy": "Каждая вышедшая версия получает решение при подготовке релиза: включена (pinned = версия) или отложена (reason, issue — номер DEP-… из docs/DEPENDENCIES.md, recheck — не позже чем через 120 дней).",
  "security": {
-  "checked_at": "2026-11-19",
+  "checked_at": "2026-11-20",
   "source": "osv.dev",
   "advisories": {
    "hydra-core==1.3.7": [

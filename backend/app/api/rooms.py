@@ -164,5 +164,5 @@ async def join_room(room_id: uuid.UUID, body: JoinIn, request: Request,
         livekit_url=settings.livekit_public_url, livekit_room=result.meeting.livekit_room,
         token=result.token, identity=result.identity, recording=result.meeting.record_audio, transcription=result.meeting.transcription_enabled,
         asr_ready=asr_ready, client=build_client_config(result.room, screen, result, su=su, idle_end=(await request.app.state.settings_svc.get(db, "general")).idle_end_mode),
-        e2ee=await _e2ee_out(request, result.meeting.id),
+        e2ee=await _e2ee_out(request, result.meeting.id), started_at=result.meeting.started_at,
     )

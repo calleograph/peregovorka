@@ -191,6 +191,7 @@ export interface JoinInfo {
   meeting_id: string; room: Room; livekit_url: string; livekit_room: string; token: string; identity: string;
   recording: boolean; transcription?: boolean; asr_ready: boolean; client: ClientConfig;
   e2ee?: { key: string; mode: "full" | "trusted" } | null;     // ключ сквозного шифрования встречи (если у комнаты включено E2EE)
+  started_at?: string | null;     // начало встречи — счётчик длительности в шапке
 }
 /** Ответ на вход гостя: то же, что у сотрудника, плюс сессия гостя (хранится только в этой вкладке). */
 export interface GuestJoinInfo extends JoinInfo { guest_token: string; guest_id: string; display_name: string }

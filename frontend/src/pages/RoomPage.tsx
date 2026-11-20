@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import MeetingClock from "../components/MeetingClock";
 import { useNavigate, useParams } from "react-router-dom";
 import { ConnectionState, DisconnectReason, ExternalE2EEKeyProvider, LogLevel, Participant, Room as LkRoom, RoomEvent, Track, TrackEvent, createLocalAudioTrack, isE2EESupported, setLogLevel, type LocalAudioTrack, type LocalVideoTrack } from "livekit-client";
 import { describeConnection, describeProbe, failStage, probeSignal, redactSecrets, safeUrl, type FailStage, type SignalProbe } from "../lkDiag";
@@ -1463,6 +1464,7 @@ export default function RoomPage({ guest, selfName, roomIdOverride, roomInfo }: 
             <span className="rec-badge off" title={`${transcriptionStoppedText(recording, false)}. Звонок продолжается`}>Транскрибация остановлена</span>
           )}
           <div className="spacer" />
+          <MeetingClock startedAt={ended ? null : join.started_at} />
           {room.lifetime === "temporary" && !guest && (
             <button className="btn mini" onClick={() => void copyText(`${window.location.origin}/rooms/${room.slug}`).then((ok) => setNotice(ok ? { kind: "info", text: `Ссылка скопирована. ${TEMP_LINK_HINT}` } : { kind: "warn", text: "Не удалось скопировать ссылку." }))}
                     title={`Адрес комнаты. ${TEMP_LINK_HINT}`}>Скопировать ссылку</button>

@@ -731,6 +731,10 @@ body.in-room .room-head { padding-top: 0; gap: 6px 8px; flex-wrap: nowrap; overf
 body.in-room .room-head h1 { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 body.in-room .room-head .badge, body.in-room .room-head .rec-badge { flex: none; white-space: nowrap; font-size: 12px; padding: 2px 9px; }
 body.in-room .room-head .btn.mini { flex: none; padding: 4px 9px; white-space: nowrap; }
+/* часы встречи: длительность и время по Москве — мелко, приглушённо, у правого края перед кнопками */
+.meet-clock { flex: none; display: inline-flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meet-clock-el { color: var(--text); opacity: .75; }
+@media (max-width: 600px) { .meet-clock-msk { display: none; } }
 body.in-room .alert { margin: 0; padding: 6px 10px; font-size: 13px; }
 body.in-room .transcript { position: static; height: 100%; min-height: 0; font-size: 13px; }
 body.in-room .transcript .utt { margin-bottom: 6px; font-size: 13px; line-height: 1.4; }
