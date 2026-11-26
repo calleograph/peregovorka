@@ -1,1 +1,1 @@
-[Репозиторий](https://github.com/calleograph/peregovorka) · [Сообщить об ошибке](https://github.com/calleograph/peregovorka/issues) · [Выпуски](https://github.com/calleograph/peregovorka/releases) · Версия сервера 0.79.0, приложений для Windows и Linux 1.5.2 и Android 0.1.9
+[Репозиторий](https://github.com/calleograph/peregovorka) · [Сообщить об ошибке](https://github.com/calleograph/peregovorka/issues) · [Выпуски](https://github.com/calleograph/peregovorka/releases) · Версия сервера 0.79.2, приложений для Windows и Linux 1.5.2 и Android 0.1.9

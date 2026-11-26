@@ -196,6 +196,30 @@ def test_classify_bind_failure(message, code):
     assert classify_bind_failure({"result": 49, "description": "invalidCredentials", "message": message}) == code
 
 
+@pytest.mark.parametrize("password", ["fixture+ascii()", "fixture-\N{NUMERO SIGN}-строка"])
+def test_ldap_simple_bind_preserves_password(password, monkeypatch):
+    from ldap3 import MOCK_SYNC, Connection, Server
+
+    from app.auth.directory import LdapConfig, LdapDirectory
+
+    dn = "CN=Test,DC=example,DC=org"
+    directory = LdapDirectory(LdapConfig(["ldaps://directory.example.org"], "DC=example,DC=org", dn, password, "unused.pem"))
+    monkeypatch.setattr(directory, "_server_pool", lambda: Server("directory.example.org"))
+
+    def connect(*args, **kwargs):
+        conn = Connection(*args, **kwargs, client_strategy=MOCK_SYNC)
+
+        def bind(request, _controls):
+            assert request["authentication"]["simple"].asOctets() == password.encode("utf-8")
+            return {"resultCode": 0, "matchedDN": "", "diagnosticMessage": "", "referral": None, "serverSaslCreds": None}
+
+        conn.strategy.mock_bind = bind
+        return conn
+
+    monkeypatch.setattr("ldap3.Connection", connect)
+    directory.check_service_account()
+
+
 def test_log_scrubbing_hides_secrets():
     out = scrub({"password": "p", "nested": {"api_key": "k", "ok": 1}, "msg": "token=abc123 password: hunter2"})
     assert out["password"] == "***" and out["nested"]["api_key"] == "***" and out["nested"]["ok"] == 1

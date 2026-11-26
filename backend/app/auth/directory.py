@@ -185,7 +185,8 @@ class LdapDirectory:
         from ldap3.core.exceptions import LDAPException
 
         conn = Connection(
-            self._server_pool(), user=user, password=password, authentication=SIMPLE,
+            # ldap3 применяет SASLprep к строке. AD должен получить исходные байты пароля.
+            self._server_pool(), user=user, password=password.encode("utf-8"), authentication=SIMPLE,
             auto_bind=False, raise_exceptions=False, read_only=True,
             receive_timeout=self._s.ldap_timeout_seconds,
         )
