@@ -188,7 +188,7 @@ UBIN="$TMP/ubin"; mkdir -p "$UBIN"
 cat > "$UBIN/docker" <<'DOCK'
 #!/usr/bin/env bash
 case "$1" in
-  version) echo 29.1.3 ;;
+  version) if [[ "$*" == *Server.Arch* ]]; then echo amd64; else echo 29.1.3; fi ;;
   compose) case "$2" in version) echo 2.40.3 ;; esac; [ -n "${FAIL_BUILD:-}" ] && [[ " $* " == *" build "* ]] && exit 1
            if [ -n "${FAKE_DB:-}" ]; then case " $* " in
              *" alembic current "*) cat "$FAKE_DB"; exit 0 ;;
@@ -200,7 +200,9 @@ case "$1" in
            esac; fi
            if [ -n "${HEALTHY_DB:-}" ] && [[ " $* " == *" ps -q "* ]]; then case "${@: -1}" in postgres|redis) echo "cid-${@: -1}" ;; esac; fi; exit 0 ;;
   info) echo overlayfs ;;
-  image) [[ " $* " == *" -f "* ]] && echo "APP_GIT_COMMIT=${FAKE_COMMIT:-${IMAGE_TAG:-}}"; exit 0 ;;
+  image) if [[ "$*" == *RepoDigests* ]]; then
+           ref="${@: -1}"; printf 'amd64|["%s"]|\n' "$ref"
+         elif [[ " $* " == *" -f "* ]]; then echo "APP_GIT_COMMIT=${FAKE_COMMIT:-${IMAGE_TAG:-}}"; fi; exit 0 ;;
   run) [[ " $* " == *version.json* ]] && echo "{\"commit\":\"${FAKE_COMMIT:-${IMAGE_TAG:-}}\"}"; exit 0 ;;
   inspect) [ -n "${HEALTHY_DB:-}" ] && [[ "${@: -1}" == cid-* ]] || exit 1; [[ "$3" == *Health* ]] && echo healthy || echo running ;;
   *) exit 0 ;;

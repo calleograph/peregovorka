@@ -11,6 +11,8 @@
 BUILD_SERVICES=(livekit backend asr web)
 SELECTED_BUILD_MODE=""
 BUILD_BASE_ARGS=()   # --build-arg с адресами базовых образов из зеркал (img_build_bases)
+BUILD_BASE_PRIMARY=()
+BUILD_BASE_FAILURES=()
 
 # --------------------------------------------------------------- классификация ошибок
 # stdin: лог сборки → stdout: privileges | network | project | infra | unknown
@@ -188,7 +190,7 @@ pull_base_images() { img_hub_core; }
 svc_context() { case "$1" in backend) echo backend ;; asr) echo asr-service ;; web) echo frontend ;; livekit) echo deployment/livekit ;; *) return 1 ;; esac; }
 svc_image() { case "$1" in livekit) echo "${COMPOSE_PROJECT_NAME}-livekit:${LIVEKIT_IMAGE_TAG:-v1.13.10}" ;; *) echo "${COMPOSE_PROJECT_NAME}-$1:${IMAGE_TAG:-dev}" ;; esac; }
 svc_extra() { case "$1" in
-  livekit) echo "${LIVEKIT_IMAGE_TAG:-}" ;;
+  livekit) echo "${LIVEKIT_IMAGE_TAG:-}|$(img_livekit_pin)" ;;
   asr) echo "${ASR_TORCH_INDEX_URL:-}|${GIGAAM_GIT_COMMIT:-}|${IMAGE_TAG:-}" ;;
   *) echo "${IMAGE_TAG:-}" ;; esac; }
 
@@ -248,10 +250,91 @@ _compose_build_one() { # _compose_build_one svc mode log
   if [ "$mode" = "legacy" ]; then
     env COMPOSE_BAKE=false DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker "${COMPOSE_ARGS[@]}" build "${BUILD_BASE_ARGS[@]}" "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   else
-    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker "${COMPOSE_ARGS[@]}" build "${BUILD_BASE_ARGS[@]}" "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    env COMPOSE_BAKE=false DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain docker "${COMPOSE_ARGS[@]}" build "${BUILD_BASE_ARGS[@]}" "$svc" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
   fi
   kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null
   return "$rc"
+}
+
+# Из plain-лога BuildKit: ссылка и ошибка конкретной операции FROM. Сетевые ошибки RUN здесь не обрабатываются.
+_build_failed_from() {
+  awk '
+    $1 ~ /^#[0-9]+$/ {
+      if ($0 ~ /^#[0-9]+ \[[^]]+\] (FROM |load metadata for )/) {
+        ref = $0; sub(/^#[0-9]+ \[[^]]+\] (FROM |load metadata for )/, "", ref); sub(/ .*/, "", ref)
+        refs[$1] = ref
+      }
+      if ($2 == "ERROR:" && $1 in refs) {
+        print refs[$1] "\t" substr($0, index($0, "ERROR:") + 7)
+        attributed = 1
+      }
+      if ($2 ~ /^sha256:[a-f0-9]+$/ && $1 in refs) layers[substr($2, 8)] = refs[$1]
+      if ($2 == "DONE" || $2 == "CACHED" || $2 == "CANCELED") finished[$1] = 1
+      next
+    }
+    /failed to resolve source metadata for / {
+      ref = $0; sub(/^.*failed to resolve source metadata for /, "", ref); sub(/: .*$/, "", ref)
+      print ref "\t" $0
+      attributed = 1
+    }
+    /^(ERROR: )?failed to solve:/ && /failed to copy: httpReadSeeker|failed to fetch blob|failed to extract layer|failed to verify layer|digest mismatch/ { transfer = $0 }
+    END {
+      if (attributed || transfer == "") exit
+      for (layer in layers) if (index(transfer, layer)) {
+        print layers[layer] "\t" transfer; exit
+      }
+      for (id in refs) {
+        ref = refs[id]
+        all[ref] = 1
+        if (!(id in finished)) pending[ref] = 1
+        host = ref; sub(/\/.*/, "", host)
+        repo = ref; sub(/@.*$/, "", repo); sub(/:[^/]+$/, "", repo); sub(/^[^/]+\//, "", repo)
+        if (host == "docker.io") host = "registry-1.docker.io"
+        if (index(transfer, host "/v2/" repo "/blobs/")) {
+          print ref "\t" transfer; exit
+        }
+      }
+      if (length(pending) == 1) for (ref in pending) print ref "\t" transfer
+      else if (length(all) == 1) for (ref in all) print ref "\t" transfer
+    }' "$1"
+}
+
+# 0 — повторить сборку, 1 — причина не привязана к FROM, 2 — источники для этого FROM исчерпаны.
+_build_retry_from() {
+  local failed detail identity i arg current code n cand found
+  while IFS=$'\t' read -r failed detail; do
+    img_parse "$failed"
+    identity="$IMG_HOST/$IMG_REPO|${IMG_DIGEST:-$IMG_TAG}"
+    for (( i=1; i<${#BUILD_BASE_ARGS[@]}; i+=2 )); do
+      [ -n "${BUILD_BASE_PRIMARY[i]:-}" ] || continue
+      arg="${BUILD_BASE_ARGS[i]%%=*}"; current="${BUILD_BASE_ARGS[i]#*=}"
+      img_parse "$current"
+      [ "$identity" = "$IMG_HOST/$IMG_REPO|${IMG_DIGEST:-$IMG_TAG}" ] || continue
+      code="$(img_classify "$detail")"
+      img_mirror_allowed "$code" || return 1
+      n="${IMAGE_PULL_ATTEMPTS:-3}"
+      if [ "$current" != "${BUILD_BASE_PRIMARY[i]}" ] && [ "$n" -gt 2 ]; then n=2; fi
+      BUILD_BASE_FAILURES[i]=$((${BUILD_BASE_FAILURES[i]:-0} + 1))
+      if img_retryable "$code" && [ "${BUILD_BASE_FAILURES[i]}" -lt "$n" ]; then
+        warn "stage=build: FROM $current — $(img_summary "$code") Повтор ($((BUILD_BASE_FAILURES[i] + 1))/$n)."
+        _img_pause "${BUILD_BASE_FAILURES[i]}"
+        return 0
+      fi
+      found=0
+      while IFS= read -r cand; do
+        [ -n "$cand" ] || continue
+        if [ "$found" -eq 1 ]; then
+          BUILD_BASE_ARGS[i]="$arg=$cand"; BUILD_BASE_FAILURES[i]=0
+          warn "stage=build: FROM $current — $(img_summary "$code") Следующий источник: $cand."
+          return 0
+        fi
+        [ "$current" != "$cand" ] || found=1
+      done < <(printf '%s\n' "${BUILD_BASE_PRIMARY[i]}"; img_mirror_refs "${BUILD_BASE_PRIMARY[i]}")
+      warn "stage=build: все источники для FROM ($arg) исчерпаны."
+      return 2
+    done
+  done < <(_build_failed_from "$1")
+  return 1
 }
 
 # build_images [svc…] — собирает только то, что нужно. Возврат 0/1; сообщения: stage=build service=… subsystem=…
@@ -259,7 +342,7 @@ _compose_build_one() { # _compose_build_one svc mode log
 _build_log_note() { printf '%s\n' "$2" >> "$1" 2>/dev/null; return 0; }
 _build_status() { declare -F upd_state_set >/dev/null && upd_state_set "build_$1" "$2" 2>/dev/null; return 0; }
 build_images() {
-  local want=("$@") s kind log mode deadline
+  local want=("$@") s kind log mode deadline file prepared
   [ ${#want[@]} -gt 0 ] || want=("${BUILD_SERVICES[@]}")
   [ -n "$SELECTED_BUILD_MODE" ] || select_build_mode || return 1
   mkdir -p "${DATA_ROOT}/state"
@@ -268,13 +351,9 @@ build_images() {
   for s in "${want[@]}"; do
     if ! build_needed "$s"; then ok "stage=build service=$s: образ $(svc_image "$s") актуален (исходники не менялись) — пропуск"; _build_status "$s" "готов, использован без пересборки ($(svc_image "$s"))"; continue; fi
     log="${DATA_ROOT}/state/build-$s.log"; mode="$SELECTED_BUILD_MODE"
-    # базовые образы закреплены дайджестом и готовятся заранее (повторы, зеркала): сборка берёт их с сервера, `--pull` не нужен
-    if ! img_build_bases "$s" "$REPO_ROOT/$(svc_context "$s")/Dockerfile"; then
-      _build_status "$s" "ОШИБКА: базовый образ не загружен ни с Docker Hub, ни с зеркал"; BUILD_FAILED_SVC="$s"; BUILD_FAILED_KIND=network
-      fail "FAIL stage=build service=$s subsystem=registry-network: базовый образ не загружен ни с Docker Hub, ни с зеркал (НЕ ошибка проекта)"; return 1
-    fi
+    file="$REPO_ROOT/$(svc_context "$s")/Dockerfile"; prepared=""
     info "stage=build service=$s builder=$mode → $(svc_image "$s")"
-    local attempt=1 built=0 n="${BUILD_ATTEMPTS:-3}" t0; t0=$(date +%s)
+    local attempt=1 net_attempt=1 built=0 n="${BUILD_ATTEMPTS:-3}" from_rc t0; t0=$(date +%s)
     while :; do
       local bmode="$mode"
       if [ "$BUILD_NETWORK" = host ]; then
@@ -282,6 +361,10 @@ build_images() {
         # а не загадочный отказ BuildKit посреди сборки.
         if select_host_build_mode; then [ "$mode" = buildkit ] && [ -n "$HOST_BUILD_MODE" ] && bmode="$HOST_BUILD_MODE"
         else kind="privileges"; _build_log_note "$log" "host-network: $HOST_BUILD_WHY"; break; fi
+      fi
+      if [ "$prepared" != "$bmode" ]; then
+        if ! img_build_bases "$s" "$file" "$bmode"; then kind=network; break; fi
+        prepared="$bmode"
       fi
       if _compose_build_one "$s" "$bmode" "$log"; then built=1; break; fi
       kind="$(classify_build_error < "$log")"
@@ -291,7 +374,14 @@ build_images() {
         if probe_host_build legacy; then HOST_BUILD_MODE=legacy; continue; fi
         HOST_BUILD_MODE=none; HOST_BUILD_WHY="BuildKit отказал в network.host, классический builder недоступен ($(printf '%s' "$PROBE_TEXT" | tail -1 | cut -c1-160))"; continue
       fi
-      if [ "$kind" = "network" ] && [ "$attempt" -lt "$n" ] && [ "$(date +%s)" -lt "$deadline" ]; then
+      if [ "$bmode" = buildkit ] && [ "$(date +%s)" -lt "$deadline" ]; then
+        from_rc=0; _build_retry_from "$log" || from_rc=$?
+        case "$from_rc" in
+          0) attempt=$((attempt+1)); continue ;;
+          2) kind=network; break ;;
+        esac
+      fi
+      if [ "$kind" = "network" ] && [ "$net_attempt" -lt "$n" ] && [ "$(date +%s)" -lt "$deadline" ]; then
         # Повторная проверка источников компонента: доступны только из сети хоста — сборка переводится туда (системные настройки не меняются);
         # недоступны совсем — повторы бесполезны (остановка с диагнозом); доступны — сбой был временным, повтор.
         if [ "$BUILD_NETWORK" != host ] && declare -F netcheck_build_sources >/dev/null; then
@@ -306,9 +396,9 @@ build_images() {
             break
           fi
         fi
-        warn "stage=build service=$s: временная сетевая ошибка registry/CDN (попытка $attempt/$n) — повтор через ${PULL_RETRY_PAUSE:-10}с; готовые слои сохраняются"
-        declare -F upd_action >/dev/null && upd_action "сборка $s: сетевая ошибка, повтор $((attempt + 1))/$n"
-        sleep "${PULL_RETRY_PAUSE:-10}"; attempt=$((attempt+1)); continue
+        warn "stage=build service=$s: временная сетевая ошибка registry/CDN (попытка $net_attempt/$n) — повтор через ${PULL_RETRY_PAUSE:-10}с; готовые слои сохраняются"
+        declare -F upd_action >/dev/null && upd_action "сборка $s: сетевая ошибка, повтор $((net_attempt + 1))/$n"
+        sleep "${PULL_RETRY_PAUSE:-10}"; net_attempt=$((net_attempt+1)); attempt=$((attempt+1)); continue
       fi
       break
     done
@@ -317,8 +407,10 @@ build_images() {
       warn "FALLBACK: сборка $s через BuildKit упала на уровне Docker/containerd (не из-за Dockerfile) — повтор через legacy builder"
       report_stale_mounts warn
       SELECTED_BUILD_MODE=legacy
-      if _compose_build_one "$s" legacy "$log"; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово (legacy builder)"; _build_status "$s" "собран (legacy builder после сбоя BuildKit)"; continue; fi
-      kind="$(classify_build_error < "$log")"
+      if img_build_bases "$s" "$file" legacy; then
+        if _compose_build_one "$s" legacy "$log"; then fp_set "$s" "$(src_fingerprint "$s")"; ok "stage=build service=$s: готово (legacy builder)"; _build_status "$s" "собран (legacy builder после сбоя BuildKit)"; continue; fi
+        kind="$(classify_build_error < "$log")"
+      else kind=network; fi
     fi
     _build_status "$s" "ОШИБКА ($kind) после $attempt попыт.; лог $log${NET_DIAG:+; источник: $NET_DIAG}"
     BUILD_FAILED_SVC="$s"; BUILD_FAILED_KIND="$kind"

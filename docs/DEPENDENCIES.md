@@ -11,7 +11,7 @@ Peregovorka собрана из чужих компонентов (LiveKit, PyTo
 | Диапазоны допустимых версий Python | `requirements.txt` | разработчик |
 | npm-зависимости | `frontend/package.json` + `package-lock.json` | `npm install`/`npm update` |
 | Базовые образы (Python, Node, nginx, Alpine, PostgreSQL, Redis) | тег **и digest** в `ARG …_IMAGE` Dockerfile и в `deployment/compose.yml` | `scripts/deps.py pin-images` + `apply` |
-| LiveKit Server, SIP-служба, Egress, MediaMTX | тег в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh`, `deployment/compat.env` | `scripts/deps.py apply` |
+| LiveKit Server, SIP-служба, Egress, MediaMTX | тег и дайджест в `.env.example`, Dockerfile, `compose.yml`, `scripts/lib/*.sh` и `deployment/compat.env` в зависимости от компонента | `scripts/deps.py pin-images` и `apply` |
 | PyTorch, torchaudio, GigaAM | `TORCH_VERSION`/`TORCHAUDIO_VERSION` в `asr-service/Dockerfile`, `GIGAAM_GIT_COMMIT` в `.env.example` | `scripts/deps.py apply` |
 | draw.io | `ARG DRAWIO_VERSION` в `frontend/Dockerfile` | `scripts/deps.py apply` |
 | Приложение для Windows (Electron, electron-builder, esbuild, WiX) | точные версии в `desktop/package.json` + `desktop/package-lock.json`, WiX — в `.github/workflows/desktop.yml` | разработчик при выпуске клиента (`desktop-vX.Y.Z`): `npm outdated` в `desktop/`, Electron — последний патч поддерживаемой ветки (исправления безопасности Chromium), запись в `desktop/CHANGELOG.md`. В манифест сервера (`components.json`) не входит: это отдельный продукт со своей версией |
@@ -147,6 +147,8 @@ Torchaudio 2.11.1 (патч) вышел в день выпуска 0.48.2 и и�
 ### DEP-21 — Vite 8.3.5 → 8.3.8
 Патч вышел к выпуску 0.67.0 (2026-11-05). Выпуск посвящён диагностике эфира и проверен на сборке с 8.3.5. Обновить в ближайшей ревизии: сборка, типы, frontend-тесты. Повторная проверка — 2026-11-20. К выпуску 0.74.0 вышла 8.3.7: решение продлено по той же причине (выпуск меняет страницу эфира, а не сборку).
 
+Для 0.79.3 оставлена проверенная 8.3.5. Обновление до 8.4.0 требует отдельной сборки и проверки типов, тестов и запуска собранного сайта. Повторная проверка — 2026-12-03.
+
 ### DEP-22 — pypdf 6.21.4 → 7.1.0
 Основная версия вышла к выпуску 0.70.0, посвящённому хранилищам и исправлениям аудита. Смена основной версии библиотеки разбора PDF — отдельным проходом: заметки выпуска, тесты извлечения текста. Повторная проверка — 2026-11-20. К выпуску 0.76.0 вышла 8.3.8; решение продлено по той же причине (выпуск меняет настройку качества камеры, а не зависимости).
 
@@ -155,6 +157,8 @@ Torchaudio 2.11.1 (патч) вышел в день выпуска 0.48.2 и и�
 
 ### DEP-24 — transcribe-cpp 0.4.1 → 0.4.2
 Патч ASR-движка вышел к выпуску 0.76.0, который не затрагивает распознавание. Смена движка проверяется на контрольной записи и очереди отдельным проходом. Отложено; повторная проверка — 2026-11-27.
+
+Для 0.79.3 обновление до 0.5.0 отложено. План — пересобрать образ ASR и проверить очередь, вывод и время обработки контрольной записи. Повторная проверка — 2026-12-03.
 
 ### DEP-25 — MediaMTX 1.21.3 → 1.21.4, livekit-api (Python) 1.2.2 → 2.0.0, NumPy 2.5.4 → 2.5.5
 Патч MediaMTX, новая основная версия livekit-api и патч NumPy вышли к выпуску 0.76.2 (умолчание качества камеры и исправления по аудиту). MediaMTX проверяется живым сценарием эфира, livekit-api — вместе с комплектом LiveKit, NumPy — на контрольной записи ASR. Отложено; повторная проверка — 2026-11-27.

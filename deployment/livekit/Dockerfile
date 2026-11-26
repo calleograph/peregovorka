@@ -3,7 +3,8 @@
 # (busybox wget для healthcheck). Версия — build-arg из .env (LIVEKIT_IMAGE_TAG).
 ARG LIVEKIT_IMAGE_TAG=v1.13.10
 ARG ALPINE_IMAGE=alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
-FROM livekit/livekit-server:${LIVEKIT_IMAGE_TAG} AS lk
+ARG LIVEKIT_SERVER_IMAGE
+FROM ${LIVEKIT_SERVER_IMAGE:-livekit/livekit-server:${LIVEKIT_IMAGE_TAG}} AS lk
 
 FROM ${ALPINE_IMAGE}
 RUN apk add --no-cache ca-certificates

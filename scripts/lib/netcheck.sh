@@ -37,31 +37,37 @@ for r in (big or res)[:3]: print("npm|"+r)' 2>/dev/null
 # Базовый образ, в котором выполняется проверка компонента (тот же, где выполняются шаги RUN)
 _nc_image() { # _nc_image СЕРВИС COMMIT
   case "$1" in
-    web) printf '%s' "${BASE_WEB_NODE_IMAGE:-$(_nc_arg frontend/Dockerfile NODE_IMAGE "$2")}" ;;      # BASE_* — образ, загруженный из зеркала (imglib.sh)
-    backend) printf '%s' "${BASE_BACKEND_PYTHON_IMAGE:-$(_nc_arg backend/Dockerfile PYTHON_IMAGE "$2")}" ;;
-    asr) printf '%s' "${BASE_ASR_PYTHON_IMAGE:-$(_nc_arg asr-service/Dockerfile PYTHON_IMAGE "$2")}" ;;
+    web) _nc_arg frontend/Dockerfile NODE_IMAGE "$2" ;;
+    backend) _nc_arg backend/Dockerfile PYTHON_IMAGE "$2" ;;
+    asr) _nc_arg asr-service/Dockerfile PYTHON_IMAGE "$2" ;;
   esac
 }
 
-_nc_pull() { # базовый образ: уже есть — ничего; нет — загрузка (до 3 попыток); его отсутствие — тоже недоступный источник (Docker Hub)
-  local img="$1" i
-  docker image inspect "$img" >/dev/null 2>&1 && return 0
-  [ "${DRY_RUN:-0}" = 1 ] && return 2                          # пробный прогон ничего не загружает
-  for i in 1 2 3; do docker pull -q "$img" >/dev/null 2>&1 && return 0; sleep $((i * 5)); done
-  return 1
-}
+# Проверка целевого коммита выполняется до переключения Git. Загружать образы можно, менять .env и состояние установленных образов нельзя.
+_nc_pull() ( # ССЫЛКА СЕРВИС → фактическая ссылка
+  local img="$1" svc="$2" arg=PYTHON_IMAGE var key
+  [ "$svc" != web ] || arg=NODE_IMAGE
+  var="BASE_${svc^^}_$arg"; key="base-$svc-${arg,,}"; key="${key//_/-}"
+  if [ "${DRY_RUN:-0}" = 1 ]; then
+    if ! img_auto_value "$key" "$var"; then img="${!var:-$img}"; fi
+    img_local_ref "$img" || return 2
+    return 0
+  fi
+  IMG_READONLY=1 img_ensure "$key" "$var" "$img" >&2 || return 1
+  printf '%s' "${!var:-$img}"
+)
 
-# Прогон пробника в образе: _nc_run ОБРАЗ СЕТЬ адрес… → JSON-строки. Python-образ — netprobe.py; node-образ — node (как npm) и python-заменитель недоступен,
+# Прогон пробника в образе: _nc_run ОБРАЗ СЕТЬ СЕРВИС адрес… → JSON-строки. В web — Node.js с теми же параметрами, что у npm,
 # поэтому для npm используется сам Node.js с теми же NODE_OPTIONS, что в frontend/Dockerfile (поведение выбора IPv4/IPv6 — как у npm).
 _nc_run() {
-  local img="$1" net="$2"; shift 2
+  local img="$1" net="$2" svc="$3"; shift 3
   local penv=() k
   for k in HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy; do [ -n "${!k:-}" ] && penv+=(-e "$k=${!k}"); done
-  if [[ "$img" == node:* ]]; then
+  if [ "$svc" = web ]; then
     local nopt; nopt="$(git -C "$REPO_ROOT" show "${NETCHECK_COMMIT:-HEAD}:frontend/Dockerfile" 2>/dev/null | sed -n 's/^ENV NODE_OPTIONS="\(.*\)"/\1/p' | head -1)"
-    timeout 300 docker run --rm --network "$net" "${penv[@]}" -e NODE_OPTIONS="$nopt" --entrypoint node "$img" -e "$NETCHECK_NODE_JS" "$@" 2>/dev/null
+    timeout 300 docker run --rm --pull=never --network "$net" "${penv[@]}" -e NODE_OPTIONS="$nopt" --entrypoint node "$img" -e "$NETCHECK_NODE_JS" "$@" 2>/dev/null
   else
-    timeout 300 docker run --rm --network "$net" "${penv[@]}" -v "$REPO_ROOT/scripts/netprobe.py:/netprobe.py:ro" --entrypoint python3 "$img" /netprobe.py "$@" 2>/dev/null
+    timeout 300 docker run --rm --pull=never --network "$net" "${penv[@]}" -v "$REPO_ROOT/scripts/netprobe.py:/netprobe.py:ro" --entrypoint python3 "$img" /netprobe.py "$@" 2>/dev/null
   fi
 }
 
@@ -85,24 +91,25 @@ _nc_field() { printf '%s' "$1" | python3 -c "import json,sys; d=json.loads(sys.s
 # (OLD) — иначе сборка возьмёт слои из кэша Docker, и недоступность — предупреждение.
 netcheck_build_sources() {
   local c="$1"; shift
-  local svcs=("$@") s img line label spec out url res stage detail okhost changed again rtry hostwhy
+  local svcs=("$@") s img selected prc line label spec out url res stage detail okhost changed again rtry hostwhy
   [ ${#svcs[@]} -gt 0 ] || svcs=(web backend asr)
   NETCHECK_STATUS=ok; NETCHECK_LINES=(); NETCHECK_BLOCKING=(); NETCHECK_COMMIT="$c"
   command -v docker >/dev/null 2>&1 || { NETCHECK_LINES+=("пропущено: Docker недоступен"); return 0; }
   for s in "${svcs[@]}"; do
     img="$(_nc_image "$s" "$c")"; [ -n "$img" ] || continue
-    _nc_pull "$img"; local prc=$?
+    prc=0; selected="$(_nc_pull "$img" "$s")" || prc=$?
     if [ "$prc" -eq 2 ]; then NETCHECK_LINES+=("SKIP $s: базового образа $img нет локально, пробный прогон его не загружает — источники не проверены"); continue; fi
     if [ "$prc" -ne 0 ]; then
-      NETCHECK_LINES+=("FAIL $s: базовый образ $img не загружается из реестра Docker (Docker Hub/зеркало реестра недоступны с этого сервера)")
-      NETCHECK_STATUS=fail; NETCHECK_BLOCKING+=("$s"); continue
+      NETCHECK_LINES+=("WARN $s: Docker не загрузил базовый образ $img для пробника. BuildKit проверит источники при выполнении FROM.")
+      [ "$NETCHECK_STATUS" != ok ] || NETCHECK_STATUS=degraded
+      continue
     fi
-    changed=1
+    img="${selected:-$img}"; changed=1
     [ -n "${OLD:-}" ] && git -C "$REPO_ROOT" diff --quiet "$OLD" "$c" -- "$(svc_context "$s")/Dockerfile" "$(svc_context "$s")/package-lock.json" \
       "$(svc_context "$s")/requirements.txt" "$(svc_context "$s")/constraints.txt" 2>/dev/null && changed=0
     while IFS='|' read -r label spec; do
       [ -n "$spec" ] || continue
-      out="$(_nc_run "$img" default "$spec" | tail -1)"
+      out="$(_nc_run "$img" default "$s" "$spec" | tail -1)"
       res="$(_nc_field "$out" result)"; stage="$(_nc_field "$out" stage)"; detail="$(_nc_field "$out" detail)"; url="$(_nc_field "$out" url)"
       if [ -z "$res" ]; then         # пробник не запустился — это не вывод о сети; сборка покажет сама
         NETCHECK_LINES+=("SKIP $s/$label: проверку выполнить не удалось (docker run в образе $img) — источник не проверен"); continue
@@ -116,7 +123,7 @@ netcheck_build_sources() {
           again=""; rtry=0
           while [ "$rtry" -lt "${NETCHECK_BRIDGE_RETRIES:-2}" ]; do
             rtry=$((rtry + 1)); sleep "${NETCHECK_RETRY_PAUSE:-5}"
-            out="$(_nc_run "$img" default "$spec" | tail -1)"
+            out="$(_nc_run "$img" default "$s" "$spec" | tail -1)"
             case "$(_nc_field "$out" result)" in ok|slow) again="$out"; break ;; esac
           done
           if [ -n "$again" ]; then
@@ -125,7 +132,7 @@ netcheck_build_sources() {
             continue
           fi
           okhost=""; hostwhy=""
-          out="$(_nc_run "$img" host "$spec" | tail -1)"
+          out="$(_nc_run "$img" host "$s" "$spec" | tail -1)"
           [ "$(_nc_field "$out" result)" = ok ] && okhost=1
           if [ -n "$okhost" ] && declare -F select_host_build_mode >/dev/null && ! select_host_build_mode; then
             okhost=""; hostwhy="; из сети хоста доступно, но собрать в сети хоста нельзя: $HOST_BUILD_WHY"

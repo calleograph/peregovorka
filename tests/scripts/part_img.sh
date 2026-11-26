@@ -15,7 +15,7 @@ case "$1" in
     echo "${FAKE_IMG_ARCH:-amd64}|[\"${ref%%@*}@${ref##*@}\"]|" ;;
   pull) ref="$2"; echo "pull $ref" >> "$IM/calls"; s="$(src "$ref")"; r="$(cat "$IM/scn/pull-$s" 2>/dev/null || echo ok)"
     if [ "$r" = ok ]; then : > "$IM/have/$(key "$ref")"; echo "Status: Downloaded newer image for $ref"; else printf '%s\n' "$r" >&2; exit 1; fi ;;
-  manifest) ref="${!#}"; echo "manifest $ref" >> "$IM/calls"; s="$(src "$ref")"; r="$(cat "$IM/scn/manifest-$s" 2>/dev/null || echo ok)"
+  manifest) ref="${!#}"; echo "manifest $ref" >> "$IM/calls"; s="$(src "$ref")"; r="$(cat "$IM/scn/pull-$s" 2>/dev/null || echo ok)"
     if [ "$r" = ok ]; then echo '{}'; else printf '%s\n' "$r" >&2; exit 1; fi ;;
   *) exit 0 ;;
 esac
@@ -44,22 +44,22 @@ t "img: образ скачивается основным источником;
 t "img: таймаут слоя CDN → три попытки основного источника, затем зеркало по тому же дайджесту; .env получает адрес зеркала" imgrun '
   cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"
   img_ensure egress VIDEO_IMAGE "'"$PIN"'" || exit 1
-  [ "$(grep -c "^pull livekit/egress" "$IM/calls")" = 3 ] && grep -q "^manifest '"$MIR"'" "$IM/calls" && grep -q "^pull '"$MIR"'" "$IM/calls" \
+  [ "$(grep -c "^pull livekit/egress" "$IM/calls")" = 3 ] && grep -q "^pull '"$MIR"'" "$IM/calls" \
     && grep -q "^VIDEO_IMAGE=.*mirror.gcr.io/livekit/egress@'"$DG"'" "$ENV_FILE" && [ "$VIDEO_IMAGE" = "'"$MIR"'" ]'
 t "img: после зеркала video_image() и локальная проверка видят образ под именем зеркала (рассогласования имён нет)" imgrun '
   cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"
   img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null || exit 1
   [ "$(video_image)" = "'"$MIR"'" ] && docker image inspect "$(video_image)" && [ "$(_comp_img "$(video_image)" egress VIDEO_IMAGE)" = true ] && [ "$(_comp_src egress VIDEO_IMAGE)" = "\"mirror\"" ]'
-t "img: основной недоступен, у зеркала нет манифеста → отказ; причина и пробованные источники записаны, второй раз зеркало не «мерцает»" imgrun '
-  cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/manifest-mirror"
+t "img: основной недоступен, загрузка из зеркала возвращает manifest unknown → отказ; причина и пробованные источники записаны, второй раз зеркало не «мерцает»" imgrun '
+  cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/pull-mirror"
   ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" || exit 1
-  j="$(img_error_json egress)"; grep -q "\"code\":\"timeout\"" <<<"$j" && grep -q "mirror.gcr.io" <<<"$j" && [ "$(grep -c "^pull mirror" "$IM/calls")" = 0 ] && ! grep -q "^VIDEO_IMAGE=." "$ENV_FILE"'
+  j="$(img_error_json egress)"; grep -q "\"code\":\"timeout\"" <<<"$j" && grep -q "mirror.gcr.io" <<<"$j" && [ "$(grep -c "^pull mirror" "$IM/calls")" = 1 ] && ! grep -q "^VIDEO_IMAGE=." "$ENV_FILE"'
 t "img: в сохранённой ошибке нет подписи URL и токенов" imgrun '
-  { cat "'"$IM"'/tt.txt"; printf "\nAuthorization: Bearer abcdefghijklmnop1234\nhttps://user:pa55word@reg.example.org/v2/\n"; } > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/manifest-mirror"
+  { cat "'"$IM"'/tt.txt"; printf "\nAuthorization: Bearer abcdefghijklmnop1234\nhttps://user:pa55word@reg.example.org/v2/\n"; } > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/pull-mirror"
   ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null 2>&1; j="$(img_error_json egress)"
   ! grep -q "SECRETSIG\|abcdefghijklmnop1234\|pa55word" <<<"$j" && grep -q "\*\*\*" <<<"$j"'
 t "img: JSON ошибки корректен (разбирается Python) и содержит этап" imgrun '
-  { cat "'"$IM"'/tt.txt"; printf "%s\n" "line \"quoted\" and back\\slash"; } > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/manifest-mirror"
+  { cat "'"$IM"'/tt.txt"; printf "%s\n" "line \"quoted\" and back\\slash"; } > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/pull-mirror"
   ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null 2>&1; img_error_json egress | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"stage\"] and d[\"code\"]==\"timeout\" and \"quoted\" in d[\"details\"]"'
 t "img: нехватка диска — зеркало не пробуется (причина не в источнике), сообщение про диск" imgrun '
   echo "write /var/lib/docker/tmp/x: no space left on device" > "$IM/scn/pull-primary"
@@ -97,50 +97,109 @@ t "img: образ другой архитектуры отклоняется и
   cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; FAKE_IMG_ARCH=arm64; export FAKE_IMG_ARCH
   ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null 2>&1; ! grep -q "^VIDEO_IMAGE=." "$ENV_FILE" && grep -q "\"code\":\"timeout\"" "$IM/data/state/image-error-egress.json"'
 t "img: успешная загрузка после неудачи стирает прошлую ошибку" imgrun '
-  echo "x509: certificate signed by unknown authority" > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/manifest-mirror"; ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null 2>&1
+  echo "x509: certificate signed by unknown authority" > "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/pull-mirror"; ! img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null 2>&1
   [ -s "$IM/data/state/image-error-egress.json" ] || exit 1; rm "$IM/scn/pull-primary"; img_ensure egress VIDEO_IMAGE "'"$PIN"'" >/dev/null || exit 1; [ ! -s "$IM/data/state/image-error-egress.json" ]'
 t "img: soft-режим — при неудаче код 0 (остальная система работает), ошибка записана" imgrun '
-  echo "no such host" > "$IM/scn/pull-primary"; echo "no such host" > "$IM/scn/manifest-mirror"; img_ensure egress VIDEO_IMAGE "'"$PIN"'" soft >/dev/null 2>&1 && grep -q "\"code\":\"dns\"" "$IM/data/state/image-error-egress.json"'
+  echo "no such host" > "$IM/scn/pull-primary"; echo "no such host" > "$IM/scn/pull-mirror"; img_ensure egress VIDEO_IMAGE "'"$PIN"'" soft >/dev/null 2>&1 && grep -q "\"code\":\"dns\"" "$IM/data/state/image-error-egress.json"'
 t "img: video_prepare использует общий механизм (зеркало подхватывается, VIDEO_IMAGE меняется)" imgrun '
   cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; video_prepare >/dev/null 2>&1 || exit 1; [ "$(video_image)" = "'"$MIR"'" ]'
 
 # --- PostgreSQL, Redis и базовые образы сборки; список зеркал по умолчанию (deployment/image-mirrors.conf)
 PG="$(grep -oP '\$\{POSTGRES_IMAGE:-\K[^}]+' "$ROOT/deployment/compose.yml")"; PGD="${PG##*@}"
-GV="dh-mirror.gitverse.ru/library/postgres@$PGD"; TW="dockerhub.timeweb.cloud/library/postgres@$PGD"
-t "img: список зеркал по умолчанию — из deployment/image-mirrors.conf, по порядку: GitVerse, Timeweb, mirror.gcr.io" imgrun '
+GOOGLE="mirror.gcr.io/library/postgres@$PGD"; TW="dockerhub.timeweb.cloud/library/postgres@$PGD"
+t "img: список зеркал по умолчанию — из deployment/image-mirrors.conf, по порядку: Google, Timeweb" imgrun '
   unset IMAGE_MIRRORS; r="$(img_mirror_refs "'"$PG"'")"
-  [ "$(sed -n 1p <<<"$r")" = "'"$GV"'" ] && [ "$(sed -n 2p <<<"$r")" = "'"$TW"'" ] && [ "$(sed -n 3p <<<"$r")" = "mirror.gcr.io/library/postgres@'"$PGD"'" ] && [ "$(wc -l <<<"$r")" = 3 ]'
+  [ "$(sed -n 1p <<<"$r")" = "'"$GOOGLE"'" ] && [ "$(sed -n 2p <<<"$r")" = "'"$TW"'" ] && [ "$(wc -l <<<"$r")" = 2 ]'
 t "img: compose берёт PostgreSQL и Redis из POSTGRES_IMAGE/REDIS_IMAGE, закреплённые по дайджесту" imgrun '
   [[ "$(img_compose_default POSTGRES_IMAGE)" == postgres:*@sha256:* ]] && [[ "$(img_compose_default REDIS_IMAGE)" == redis:*@sha256:* ]]'
-t "img: Docker Hub недоступен → PostgreSQL из первого зеркала (GitVerse), адрес в POSTGRES_IMAGE; Redis уже на сервере — без сети" imgrun '
+t "img: Docker Hub недоступен → PostgreSQL из первого зеркала (Google), адрес в POSTGRES_IMAGE; Redis уже на сервере — без сети" imgrun '
   unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; : > "$IM/have/$(printf "%s" "$(img_compose_default REDIS_IMAGE)" | tr "/:@" "___")"
   img_hub_core >/dev/null 2>&1 || exit 1
-  [ "$POSTGRES_IMAGE" = "'"$GV"'" ] && grep -q "^POSTGRES_IMAGE=.*'"$GV"'" "$ENV_FILE" && ! grep -q "^REDIS_IMAGE=" "$ENV_FILE" && [ "$(grep -c "^pull redis" "$IM/calls")" = 0 ]'
-t "img: отказ одного зеркала (GitVerse не отвечает) → следующее (Timeweb)" imgrun '
-  unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "dial tcp: lookup dh-mirror.gitverse.ru: no such host" > "$IM/scn/manifest-gitverse"
-  img_ensure postgres POSTGRES_IMAGE "'"$PG"'" >/dev/null 2>&1 || exit 1; [ "$POSTGRES_IMAGE" = "'"$TW"'" ] && [ "$(grep -c "^pull dh-mirror" "$IM/calls")" = 0 ]'
+  [ "$POSTGRES_IMAGE" = "'"$GOOGLE"'" ] && grep -q "^POSTGRES_IMAGE=.*'"$GOOGLE"'" "$ENV_FILE" && ! grep -q "^REDIS_IMAGE=" "$ENV_FILE" && [ "$(grep -c "^pull redis" "$IM/calls")" = 0 ]'
+t "img: отказ одного зеркала (Google не знает дайджест) → следующее (Timeweb)" imgrun '
+  unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "manifest unknown" > "$IM/scn/pull-mirror"
+  img_ensure postgres POSTGRES_IMAGE "'"$PG"'" >/dev/null 2>&1 || exit 1; [ "$POSTGRES_IMAGE" = "'"$TW"'" ] && [ "$(grep -c "^pull mirror.gcr.io" "$IM/calls")" = 1 ]'
 t "img: зеркало отдало не тот образ (контрольная сумма не сошлась) → он отклонён, берётся следующее зеркало" imgrun '
-  unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "failed to verify layer: digest mismatch: expected '"$PGD"' got sha256:bad" > "$IM/scn/pull-gitverse"
-  img_ensure postgres POSTGRES_IMAGE "'"$PG"'" >/dev/null 2>&1 || exit 1; [ "$POSTGRES_IMAGE" = "'"$TW"'" ] && [ "$(grep -c "^pull dh-mirror" "$IM/calls")" -ge 1 ]'
+  unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; echo "failed to verify layer: digest mismatch: expected '"$PGD"' got sha256:bad" > "$IM/scn/pull-mirror"
+  img_ensure postgres POSTGRES_IMAGE "'"$PG"'" >/dev/null 2>&1 || exit 1; [ "$POSTGRES_IMAGE" = "'"$TW"'" ] && [ "$(grep -c "^pull mirror.gcr.io" "$IM/calls")" -ge 1 ]'
 t "img: все источники недоступны → отказ (обновление остановится до остановки служб), .env не тронут, причина записана" imgrun '
   unset IMAGE_MIRRORS; for x in primary; do cp "'"$IM"'/tt.txt" "$IM/scn/pull-$x"; done
-  for x in gitverse timeweb mirror; do echo "dial tcp: connect: connection refused" > "$IM/scn/manifest-$x"; done
+  for x in timeweb mirror; do echo "dial tcp: connect: connection refused" > "$IM/scn/pull-$x"; done
   ! img_hub_core >/dev/null 2>&1 && ! grep -q "^POSTGRES_IMAGE=" "$ENV_FILE" && grep -q "dockerhub.timeweb.cloud" "$IM/data/state/image-error-postgres.json"'
 t "img: PostgreSQL уже скачан из зеркала раньше — Docker Hub и зеркала не опрашиваются (повторной загрузки нет)" imgrun '
   unset IMAGE_MIRRORS; : > "$IM/have/$(printf "%s" "'"$TW"'" | tr "/:@" "___")"
   img_ensure postgres POSTGRES_IMAGE "'"$PG"'" >/dev/null || exit 1; [ ! -e "$IM/calls" ] && [ "$POSTGRES_IMAGE" = "'"$TW"'" ]'
+t "img: исключённое автоматическое зеркало прежней установки не участвует даже при наличии образа" imgrun '
+  unset IMAGE_MIRRORS
+  old="dh-mirror.gitverse.ru/library/postgres@'"$PGD"'"
+  _img_set_var POSTGRES_IMAGE "$old"; img_state_set postgres POSTGRES_IMAGE "'"$PG"'" "$old"
+  : > "$IM/have/$(printf "%s" "$old" | tr "/:@" "___")"
+  img_ensure postgres POSTGRES_IMAGE "'"$PG"'" || exit 1
+  [ -z "${POSTGRES_IMAGE:-}" ] && [ "$(cat "$IM/calls")" = "pull '"$PG"'" ]'
+t "img: проверка обновления берёт целевой дайджест через зеркало и не меняет .env и записи установленной версии" imgrun '
+  unset IMAGE_MIRRORS
+  old="dh-mirror.gitverse.ru/library/node@sha256:'"$(printf 'a%.0s' $(seq 64))"'"
+  _img_set_var BASE_WEB_NODE_IMAGE "$old"; img_state_set base-web-node-image BASE_WEB_NODE_IMAGE node:22 "$old"
+  before="$(cat "$ENV_FILE")"; state="$(cat "$(_img_state_file)")"; cp "$IM/tt.txt" "$IM/scn/pull-primary"
+  result="$(_nc_pull "node:24-alpine@'"$PGD"'" web)" || exit 1
+  [ "$result" = "mirror.gcr.io/library/node@'"$PGD"'" ] && [ "$before" = "$(cat "$ENV_FILE")" ] && [ "$state" = "$(cat "$(_img_state_file)")" ]'
 DF="$IM/Dockerfile"; printf 'ARG PYTHON_IMAGE=python:3.12-slim@%s\nARG OTHER=x\nFROM ${PYTHON_IMAGE}\n' "$PGD" > "$DF"
 t "img: базовый образ сборки доступен в Docker Hub → загружен оттуда, аргументов сборки нет (Dockerfile как есть)" imgrun '
   unset IMAGE_MIRRORS; img_build_bases backend "'"$DF"'" >/dev/null || exit 1; [ "${#BUILD_BASE_ARGS[@]}" = 0 ] && grep -q "^pull python:3.12-slim@" "$IM/calls"'
 t "img: базовый образ сборки из зеркала → --build-arg PYTHON_IMAGE=адрес зеркала, значение сохранено для следующих сборок" imgrun '
   unset IMAGE_MIRRORS; cp "'"$IM"'/tt.txt" "$IM/scn/pull-primary"; img_build_bases backend "'"$DF"'" >/dev/null 2>&1 || exit 1
-  [ "${BUILD_BASE_ARGS[*]}" = "--build-arg PYTHON_IMAGE=dh-mirror.gitverse.ru/library/python@'"$PGD"'" ] && grep -q "^BASE_BACKEND_PYTHON_IMAGE=" "$ENV_FILE"'
+  [ "${BUILD_BASE_ARGS[*]}" = "--build-arg PYTHON_IMAGE=mirror.gcr.io/library/python@'"$PGD"'" ] && grep -q "^BASE_BACKEND_PYTHON_IMAGE=" "$ENV_FILE"'
+t "img: BuildKit повторяет неудавшийся FROM по цепочке Hub → Google → Timeweb с тем же дайджестом" imgrun '
+  unset IMAGE_MIRRORS; SELECTED_BUILD_MODE=buildkit; IMAGE_TAG=img-test; FORCE_BUILD=1
+  _compose_build_one() {
+    local arg="${BUILD_BASE_ARGS[1]}" ref host; ref="${arg#*=}"
+    img_parse "$ref"; host="$IMG_HOST"; printf "%s\n" "$ref" >> "$IM/builds"
+    case "$host" in
+      docker.io) printf "#3 [base 1/2] FROM %s/%s@%s\n#3 ERROR: failed to copy: httpReadSeeker: i/o timeout\n" "$host" "$IMG_REPO" "$IMG_DIGEST" > "$3"; return 1 ;;
+      mirror.gcr.io) printf "#4 [internal] load metadata for %s\n#4 ERROR: manifest unknown\n" "$ref" > "$3"; return 1 ;;
+    esac
+  }
+  expected="$(sed -n "s/^ARG PYTHON_IMAGE=//p" "$REPO_ROOT/backend/Dockerfile")"
+  build_images backend || exit 1
+  dg="${expected##*@}"
+  [ "$(sed -n "1,3p" "$IM/builds" | sort -u)" = "$expected" ] &&
+    [ "$(sed -n "4p" "$IM/builds")" = "mirror.gcr.io/library/python@$dg" ] &&
+    [ "$(sed -n "5p" "$IM/builds")" = "dockerhub.timeweb.cloud/library/python@$dg" ] &&
+    [ "$(wc -l < "$IM/builds")" = 5 ] && [ ! -e "$IM/calls" ]'
+t "img: следующий источник меняет только завершившийся ошибкой FROM, ошибка RUN не переключает источники" imgrun '
+  unset IMAGE_MIRRORS
+  img_build_bases web "$REPO_ROOT/frontend/Dockerfile" buildkit || exit 1
+  node="${BUILD_BASE_ARGS[1]}"; nginx="${BUILD_BASE_ARGS[3]}"; alpine="${BUILD_BASE_ARGS[5]}"
+  printf "#3 [internal] load metadata for %s\n#3 ERROR: manifest unknown\n" "${nginx#*=}" > "$IM/build.log"
+  _build_retry_from "$IM/build.log" || exit 1
+  [ "$node" = "${BUILD_BASE_ARGS[1]}" ] && [ "$alpine" = "${BUILD_BASE_ARGS[5]}" ] &&
+    [ "${BUILD_BASE_ARGS[3]}" = "NGINX_IMAGE=mirror.gcr.io/nginxinc/nginx-unprivileged@${nginx##*@}" ] || exit 1
+  printf "#3 [app 2/3] RUN npm ci\n#3 ERROR: npm error code ETIMEDOUT\n" > "$IM/build.log"
+  ! _build_retry_from "$IM/build.log"'
+t "img: BuildKit связывает ошибку слоя на COPY с завершившимся FROM в многослойной сборке" imgrun '
+  unset IMAGE_MIRRORS; IMAGE_PULL_ATTEMPTS=1
+  img_build_bases web "$REPO_ROOT/frontend/Dockerfile" buildkit || exit 1
+  node="${BUILD_BASE_ARGS[1]}"; nginx="${BUILD_BASE_ARGS[3]}"
+  printf "#1 [stage-2 1/3] FROM docker.io/%s\n#1 DONE 0.1s\n#2 [build 1/3] FROM docker.io/library/%s\n#2 DONE 0.1s\n#3 [stage-2 2/3] COPY --from=build /app /app\n#3 ERROR: failed to copy: httpReadSeeker: 502\nfailed to solve: failed to copy: httpReadSeeker: https://registry-1.docker.io/v2/nginxinc/nginx-unprivileged/blobs/sha256:abcd: 502\n" "${nginx#*=}" "${node#*=}" > "$IM/build.log"
+  _build_retry_from "$IM/build.log" &&
+  [ "$node" = "${BUILD_BASE_ARGS[1]}" ] &&
+  [ "${BUILD_BASE_ARGS[3]}" = "NGINX_IMAGE=mirror.gcr.io/nginxinc/nginx-unprivileged@${nginx##*@}" ]'
+t "img: штатный LiveKit FROM закреплён, явно заданный иной тег продолжает использоваться" imgrun '
+  img_build_bases livekit "$REPO_ROOT/deployment/livekit/Dockerfile" buildkit || exit 1
+  [[ "${BUILD_BASE_ARGS[3]}" == LIVEKIT_SERVER_IMAGE=livekit/livekit-server:*@sha256:* ]] || exit 1
+  LIVEKIT_IMAGE_TAG=v1.99.0 img_build_bases livekit "$REPO_ROOT/deployment/livekit/Dockerfile" buildkit &&
+    [ "${BUILD_BASE_ARGS[3]}" = "LIVEKIT_SERVER_IMAGE=livekit/livekit-server:v1.99.0" ]'
+t "img: новый дайджест LiveKit под тем же тегом помечает образ для пересборки" imgrun '
+  before="$(src_fingerprint livekit)"
+  img_livekit_pin() { printf "livekit/livekit-server:v1.13.10@sha256:%064d\n" 0; }
+  [ "$before" != "$(src_fingerprint livekit)" ]'
 t "img: сборка вызывает подготовку базовых образов и передаёт их аргументами (dockerlib.sh)" bash -c 'grep -qF "img_build_bases \"\$s\"" "$1/scripts/lib/dockerlib.sh" && [ "$(grep -cF "build \"\${BUILD_BASE_ARGS[@]}\" \"\$svc\"" "$1/scripts/lib/dockerlib.sh")" = 2 ]' _ "$ROOT"
 t "img: обновление готовит PostgreSQL/Redis всегда, а не только с --pull" bash -c 'grep -q "^  pull_base_images || stop_update" "$1/scripts/update.sh"' _ "$ROOT"
 
 # классификация причин по настоящим текстам docker
 cls() { [ "$(source "$ROOT/scripts/lib/common.sh" 2>/dev/null; img_classify "$1")" = "$2" ]; }
 t "img: причина — таймаут заголовков (из расследования)" cls "$TIMEOUT_TXT" timeout
+t "img: последовательность 404 в дайджесте не превращает таймаут загрузки в HTTP 404" cls 'Get "https://registry.example.org/v2/image/blobs/sha256:a404c": i/o timeout' timeout
 t "img: причина — обрыв чтения у CDN" cls 'read tcp 192.0.2.10:38688->203.0.113.8:443: read: connection timed out' timeout
 t "img: причина — DNS" cls 'dial tcp: lookup registry-1.docker.io: no such host' dns
 t "img: причина — отказ соединения" cls 'dial tcp 203.0.113.8:443: connect: connection refused' connect

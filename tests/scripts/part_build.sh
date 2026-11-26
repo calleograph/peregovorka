@@ -107,9 +107,9 @@ select_host_build_mode() { [ "$SC" != hostnosup ] || { HOST_BUILD_WHY="BuildKit 
 _nc_image() { echo "img-$1"; }
 _nc_pull() { return 0; }
 _nc_sources() { case "$1" in web) echo "npm|npm:esbuild" ;; backend) echo "pypi|pypi:fastapi" ;; esac; }
-_nc_run() { # ОБРАЗ СЕТЬ СПЕЦ
-  [ "$2" = default ] && [ "$3" = npm:esbuild ] && echo x >> "$BD/ncs.bridge"
-  case "$3:$SC:$2" in
+_nc_run() { # ОБРАЗ СЕТЬ СЕРВИС СПЕЦ
+  [ "$2" = default ] && [ "$4" = npm:esbuild ] && echo x >> "$BD/ncs.bridge"
+  case "$4:$SC:$2" in
     npm:*:flaky:default) [ "$(wc -l < "$BD/ncs.bridge")" -ge "${FLAKY_OK_AT:-2}" ] && echo '{"result":"ok","stage":"","detail":"4 МБ за 1.1 с","url":"https://registry.npmjs.org/esbuild"}' || echo '{"result":"fail","stage":"stall","detail":"тайм-аут","url":"https://registry.npmjs.org/esbuild"}' ;;
     npm:*:flaky:host) echo '{"result":"ok","stage":"","detail":"4 МБ","url":"https://example.org/x"}' ;;
     npm:*:ok:*|npm:*:hostonly:host|npm:*:hostnosup:host|pypi:*) echo '{"result":"ok","stage":"","detail":"4 МБ за 0.4 с","url":"https://example.org/x"}' ;;

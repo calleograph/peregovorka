@@ -6,7 +6,8 @@
 `docker compose config` / `docker run` показывают, что именно этот образ используется без обращения к основному реестру.
 
 Дальше: «плохое» зеркало с другим образом под тем же именем (отклоняется по дайджесту), PostgreSQL через POSTGRES_IMAGE в compose, и сборка docker compose build
-с базовым образом из зеркала аргументом --build-arg при выключенных основном реестре и зеркале (образ берётся с сервера).
+с базовым образом из зеркала при отключённых реестрах. Отдельная холодная сборка через build_images получает HTTP 500
+на слое с основного реестра и пропускает зеркало без нужного дайджеста.
 
 Запуск: python3 tests/live/image_mirror.py    (нужны docker и образ registry:2; ~5 минут; ничего чужого не трогает, всё убирает за собой)
 """
@@ -32,6 +33,8 @@ class Proxy(http.server.BaseHTTPRequestHandler):
     """Основной реестр: манифесты и /v2/ — как есть, слои не отдаёт (ответ не приходит)."""
     calls = {"manifests": 0, "blobs": 0}
     down = False                               # реестр недоступен целиком (503 на любой запрос)
+    blocked_layer = None
+    blocked_reads = 0
     default_request_version = "HTTP/1.1"       # иначе на запрос TLS-рукопожатия отвечает «HTTP/0.9» и Docker не переходит на http для localhost
 
     def log_message(self, *a): pass
@@ -41,8 +44,13 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers(); return
         if "/blobs/" in self.path:
             Proxy.calls["blobs"] += 1
-            time.sleep(120)        # заголовки ответа не приходят → таймаут у клиента
-            return
+            if Proxy.blocked_layer is None:
+                time.sleep(120)    # заголовки ответа не приходят → таймаут у клиента
+                return
+            if self.path.endswith(Proxy.blocked_layer):
+                Proxy.blocked_reads += 1
+                self.send_response(500); self.send_header("Content-Length", "0"); self.end_headers()
+                return
         if "/manifests/" in self.path: Proxy.calls["manifests"] += 1
         c = http.client.HTTPConnection("127.0.0.1", MIRROR, timeout=30)
         c.request("GET", self.path, headers={k: v for k, v in self.headers.items() if k.lower() != "host"})
@@ -69,13 +77,14 @@ def push_image(port, repo, tag):
         c.request("PUT", loc + ("&" if "?" in loc else "?") + "digest=" + d, body=b, headers={"Content-Type": "application/octet-stream"}); r = c.getresponse(); r.read()
         assert r.status == 201, r.status
         return d
+    layer_digest = blob(layer)
     man = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                       "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": blob(cfg), "size": len(cfg)},
-                      "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": blob(layer), "size": len(layer)}]}).encode()
+                      "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": layer_digest, "size": len(layer)}]}).encode()
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
     c.request("PUT", f"/v2/{repo}/manifests/{tag}", body=man, headers={"Content-Type": "application/vnd.oci.image.manifest.v1+json"}); r = c.getresponse(); r.read()
     assert r.status == 201, r.status
-    return "sha256:" + hashlib.sha256(man).hexdigest()
+    return "sha256:" + hashlib.sha256(man).hexdigest(), layer_digest
 
 
 class TS(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -85,13 +94,14 @@ class TS(socketserver.ThreadingMixIn, http.server.HTTPServer):
 def main():
     tmp = tempfile.mkdtemp(prefix="pgimg-")
     reg = f"pgmirror-reg-{os.getpid()}"; bad = f"pgmirror-bad-{os.getpid()}"; built = f"pgimgtest-build:{os.getpid()}"
+    cold = f"pgimgtest-cold:{os.getpid()}"
     try:
         r = sh(f"docker run -d --rm --name {reg} -p 127.0.0.1:{MIRROR}:5000 registry:2")
         check("поднят настоящий реестр-зеркало (registry:2)", r.returncode == 0, r.stderr)
         for _ in range(30):
             if sh(f"curl -fs http://127.0.0.1:{MIRROR}/v2/").returncode == 0: break
             time.sleep(1)
-        digest = push_image(MIRROR, "library/probe", TAG)
+        digest, _ = push_image(MIRROR, "library/probe", TAG)
         check("образ опубликован в зеркале (его слоёв нет в локальном хранилище Docker), получен дайджест", digest.startswith("sha256:"), digest)
         srv = TS(("127.0.0.1", PRIMARY), Proxy); threading.Thread(target=srv.serve_forever, daemon=True).start()
 
@@ -138,7 +148,7 @@ img_ensure egress VIDEO_IMAGE '{primary_ref}'; echo "RC=$?"; echo "VIDEO_IMAGE=$
         for _ in range(30):
             if sh(f"curl -fs http://127.0.0.1:{BAD}/v2/").returncode == 0: break
             time.sleep(1)
-        other = push_image(BAD, "library/probe", TAG)
+        other, _ = push_image(BAD, "library/probe", TAG)
         check("в «плохом» зеркале под тем же именем и тегом — другой образ (другой дайджест)", other != digest, other)
         Proxy.down = True
         iid = sh(f"docker image inspect -f '{{{{.Id}}}}' {mirror_ref}").stdout.strip()      # образ целиком (все имена и слои), иначе основной реестр «отдаст» его без слоёв
@@ -154,6 +164,28 @@ img_ensure egress VIDEO_IMAGE '{primary_ref}'; echo "RC=$?"; echo "VIDEO_IMAGE=$
         check("compose подставляет PostgreSQL из POSTGRES_IMAGE (адрес зеркала с тем же дайджестом)", sub.stdout.strip() == mirror_ref, (sub.stdout + sub.stderr)[-300:])
         check("без POSTGRES_IMAGE compose берёт закреплённый образ Docker Hub", sh(f"docker compose -f '{mini}' --env-file /dev/null config --images").stdout.strip().startswith("postgres:"))
 
+        # Первичный реестр отвечает на манифест и конфигурацию, но не отдаёт новый случайный слой.
+        cold_digest, Proxy.blocked_layer = push_image(MIRROR, "library/probe", TAG + "-cold")
+        Proxy.down = False
+        cold_ref = f"127.0.0.1:{PRIMARY}/library/probe@{cold_digest}"
+        cold_mirror = f"127.0.0.1:{MIRROR}/library/probe@{cold_digest}"
+        ctx = os.path.join(tmp, "cold"); os.makedirs(ctx)
+        with open(os.path.join(ctx, "Dockerfile"), "w") as f:
+            f.write(f"ARG PROBE_IMAGE={cold_ref}\nFROM ${{PROBE_IMAGE}} AS base\nFROM scratch\nCOPY --from=base /payload.bin /payload.bin\n")
+        with open(os.path.join(ctx, "compose.yml"), "w") as f:
+            f.write(f"services:\n  probe:\n    build: .\n    image: {cold}\n")
+        build = sh(["bash", "-c", two.split("img_ensure")[0] + f"""
+REPO_ROOT='{tmp}'; SELECTED_BUILD_MODE=buildkit; IMAGE_PULL_PAUSE=0
+svc_context() {{ echo cold; }}
+svc_image() {{ echo '{cold}'; }}
+compose_args() {{ COMPOSE_ARGS=(compose -p '{TAG}' -f '{ctx}/compose.yml'); }}
+build_images probe
+"""], timeout=180)
+        builds = build.stdout + build.stderr
+        check("BuildKit после HTTP 500 на слое и 404 на зеркале загрузил холодный слой по исходному дайджесту",
+              build.returncode == 0 and Proxy.blocked_reads > 0 and f"Следующий источник: {cold_mirror}" in builds
+              and sh(f"docker image inspect {cold}").returncode == 0, builds[-1700:])
+
         # --- сборка: базовый образ из зеркала уходит аргументом, а сама сборка не обращается ни к основному реестру, ни к зеркалу (оба выключены)
         ctx = os.path.join(tmp, "ctx"); os.makedirs(ctx)
         open(os.path.join(ctx, "Dockerfile"), "w").write(f"ARG PROBE_IMAGE={primary_ref}\nFROM ${{PROBE_IMAGE}}\nLABEL peregovorka.test=1\n")
@@ -168,7 +200,7 @@ COMPOSE_BAKE=false DOCKER_BUILDKIT=1 docker compose -f '{ctx}/compose.yml' build
         check("docker compose build (BuildKit) собрал образ при выключенных основном реестре и зеркале — базовый образ взят с сервера", "BUILD=0" in b.stdout
               and sh(f"docker image inspect {built}").returncode == 0 and Proxy.calls == calls_before, b.stdout[-400:])
     finally:
-        sh(f"docker rm -f {reg} {bad} >/dev/null 2>&1"); sh(f"docker rmi {built} >/dev/null 2>&1")
+        sh(f"docker rm -f {reg} {bad} >/dev/null 2>&1"); sh(f"docker rmi {built} {cold} >/dev/null 2>&1")
         sh(f"docker rmi 127.0.0.1:{MIRROR}/library/probe@{digest if 'digest' in dir() else ''} >/dev/null 2>&1")
         shutil.rmtree(tmp, ignore_errors=True)
 
